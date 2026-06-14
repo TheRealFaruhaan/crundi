@@ -67,7 +67,9 @@ const WEB_MANIFEST = JSON.stringify({
   theme_color: '#0a0a0f',
   icons: [
     { src: '/assets/icon_128x128.png', sizes: '128x128', type: 'image/png', purpose: 'any' },
+    { src: '/assets/icon_192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
     { src: '/assets/icon_256x256.png', sizes: '256x256', type: 'image/png', purpose: 'any maskable' },
+    { src: '/assets/icon_512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
   ],
 });
 

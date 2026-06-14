@@ -6,6 +6,26 @@
  * Telegram Login Widget is used for authentication.
  */
 
+import { readFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Inline the logo images as data URIs so they always render — even inside
+// Telegram's in-app browser, which fails to load the separate /assets request.
+function assetDataUri(file) {
+  for (const dir of [join(__dirname, '..', 'assets'), join(__dirname, '..', '..', 'assets')]) {
+    const p = join(dir, file);
+    if (existsSync(p)) {
+      try { return 'data:image/png;base64,' + readFileSync(p).toString('base64'); } catch { /* fall through */ }
+    }
+  }
+  return '/assets/' + file; // fallback to the served URL
+}
+const LOGO_SM = assetDataUri('icon_64x64.png');   // topbar
+const LOGO_LG = assetDataUri('icon_128x128.png'); // login screen
+
 export function getWebappHtml(botUsername) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1032,7 +1052,7 @@ export function getWebappHtml(botUsername) {
 <body>
   <!-- ─── Login Screen ─── -->
   <div id="login-screen">
-    <img class="login-logo" src="/assets/icon_256x256.png" alt="Crundi" width="96" height="96">
+    <img class="login-logo" src="${LOGO_LG}" alt="Crundi" width="96" height="96">
     <h1>Crundi</h1>
     <p class="subtitle">Claude Code terminal in your browser</p>
     <div class="login-box">
@@ -1072,7 +1092,7 @@ export function getWebappHtml(botUsername) {
         </div>
       </div>
       <button class="hamburger" data-action="toggle-sidebar">&#9776;</button>
-      <span class="logo"><img src="/assets/icon_64x64.png" alt="">Crundi</span>
+      <span class="logo"><img src="${LOGO_SM}" alt="">Crundi</span>
       <span class="separator">/</span>
       <span class="project-name" id="current-project">No project</span>
       <span class="spacer"></span>
