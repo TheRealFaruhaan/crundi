@@ -119,11 +119,16 @@ export function registerProject(alias, path, name, opts = {}) {
   return { ok: true };
 }
 
-/** Remove a project by alias. */
+/**
+ * Remove a project from Crundi's registry. Files on disk are never touched —
+ * this only drops our reference. Only registered (manually added) projects can
+ * be removed; auto-discovered projects under PROJECTS_DIR are not removable
+ * since they'd simply reappear on the next scan.
+ */
 export function removeProject(alias) {
   const key = String(alias).toLowerCase();
   const map = load();
-  if (!map[key]) return { ok: false, error: 'Project not found' };
+  if (!map[key]) return { ok: false, error: 'Project not found in registry (auto-discovered projects can\'t be removed)' };
   delete map[key];
   save(map);
   return { ok: true };

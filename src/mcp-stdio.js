@@ -167,11 +167,31 @@ const TOOLS = [
 
   // RDP tools
   { name: 'disconnect_rdp', description: 'Disconnect RDP session (keeps GUI alive for screenshots).', inputSchema: { type: 'object', properties: {} } },
+
+  // ─── Kanban tools (project-scoped) ───
+  { name: 'kanban_list', description: 'List the Kanban board for the current project: task cards grouped by status, each with its todo checklist. Statuses: backlog, todo, in_progress, done.', inputSchema: { type: 'object', properties: { includeDeleted: { type: 'boolean', description: 'Include soft-deleted tasks/todos (default false)' } } } },
+  { name: 'kanban_add_task', description: 'Add a task card to the Kanban board.', inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'Task title' }, description: { type: 'string', description: 'Optional details' }, status: { type: 'string', description: 'backlog | todo | in_progress | done (default todo)' }, todos: { type: 'array', items: { type: 'string' }, description: 'Optional initial todo checklist items' } }, required: ['title'] } },
+  { name: 'kanban_update_task', description: 'Update a task\'s title, description, and/or status (move between columns).', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, status: { type: 'string', description: 'backlog | todo | in_progress | done' } }, required: ['taskId'] } },
+  { name: 'kanban_move_task', description: 'Move a task to a different status column (and optional position).', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, status: { type: 'string', description: 'backlog | todo | in_progress | done' }, index: { type: 'number', description: 'Optional position within the board' } }, required: ['taskId', 'status'] } },
+  { name: 'kanban_delete_task', description: 'Soft-delete a task (recoverable — it moves to the trash, never truly removed).', inputSchema: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] } },
+  { name: 'kanban_restore_task', description: 'Restore a previously deleted task.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] } },
+  { name: 'kanban_add_todo', description: 'Add a todo checklist item to a task.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, text: { type: 'string' } }, required: ['taskId', 'text'] } },
+  { name: 'kanban_update_todo', description: 'Update a todo\'s text and/or checked state.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, todoId: { type: 'string' }, text: { type: 'string' }, done: { type: 'boolean' } }, required: ['taskId', 'todoId'] } },
+  { name: 'kanban_delete_todo', description: 'Soft-delete a todo (recoverable).', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, todoId: { type: 'string' } }, required: ['taskId', 'todoId'] } },
+  { name: 'kanban_restore_todo', description: 'Restore a previously deleted todo.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, todoId: { type: 'string' } }, required: ['taskId', 'todoId'] } },
+  { name: 'kanban_history', description: 'Get the full immutable change history for this project\'s Kanban board.', inputSchema: { type: 'object', properties: {} } },
+
+  // ─── Secrets tools (global) ───
+  { name: 'secret_search', description: 'Search the global secrets store by name and description (case-insensitive). Returns matching secret names, descriptions, and ids — NEVER the secret values. No approval needed. Use this to discover which secret to request.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Search text matched against name and description. Empty returns all.' } } } },
+  { name: 'secret_get', description: 'Request the decrypted value of a secret. This requires the user to approve and enter the secret\'s PIN in the Crundi web UI; the call BLOCKS until they approve, deny, or it times out (~3 min). The user is notified via Telegram. Identify the secret by id (preferred) or exact name. Always provide a clear reason.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } } } },
 ];
 
 // ─── Tool handler ───
 
-const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'spawn_terminal', 'list_terminals', 'terminal_input', 'terminal_output', 'terminal_wait', 'close_terminal']);
+const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'spawn_terminal', 'list_terminals', 'terminal_input', 'terminal_output', 'terminal_wait', 'close_terminal',
+  'kanban_list', 'kanban_add_task', 'kanban_update_task', 'kanban_move_task', 'kanban_delete_task', 'kanban_restore_task',
+  'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo', 'kanban_restore_todo', 'kanban_history',
+  'secret_get']);
 const IMAGE_TOOLS = new Set(['browser_screenshot', 'capture_window', 'capture_display']);
 
 async function handleToolCall(name, args) {

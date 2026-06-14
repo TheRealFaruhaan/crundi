@@ -11,8 +11,18 @@ export function getWebappHtml(botUsername) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Crundi</title>
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Crundi">
+  <link rel="icon" type="image/png" sizes="256x256" href="/assets/icon_256x256.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon_32x32.png">
+  <link rel="apple-touch-icon" href="/assets/icon_256x256.png">
   <script src="https://telegram.org/js/telegram-web-app.js"><\/script>
   <link rel="stylesheet" href="/vendor/xterm.css">
   <style>
@@ -62,6 +72,13 @@ export function getWebappHtml(botUsername) {
       justify-content: center;
       height: 100dvh;
       gap: 32px;
+    }
+    #login-screen .login-logo {
+      width: 96px;
+      height: 96px;
+      border-radius: 22px;
+      box-shadow: 0 8px 32px rgba(99, 102, 241, 0.25);
+      margin-bottom: -16px;
     }
     #login-screen h1 {
       font-size: 2.5rem;
@@ -165,6 +182,14 @@ export function getWebappHtml(botUsername) {
       font-weight: 700;
       font-size: 1.1rem;
       letter-spacing: -0.01em;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .topbar .logo img {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
     }
     .topbar .separator {
       color: var(--text-muted);
@@ -277,6 +302,18 @@ export function getWebappHtml(botUsername) {
     }
     .sidebar-item:hover .close-btn { display: block; }
     .sidebar-item .close-btn:hover { color: var(--red); }
+    .sidebar-item .remove-btn {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    .sidebar-item:hover .remove-btn { display: block; }
+    .sidebar-item .remove-btn:hover { color: var(--red); }
 
     .sidebar-footer {
       padding: 8px;
@@ -642,8 +679,9 @@ export function getWebappHtml(botUsername) {
       .info-panel { padding: 12px; }
       .info-row { flex-direction: column; gap: 2px; }
       .info-row .value { text-align: left; max-width: 100%; }
-      /* Always show close button on mobile (no hover) */
+      /* Always show close/remove buttons on mobile (no hover) */
       .sidebar-item .close-btn { display: block; }
+      .sidebar-item .remove-btn { display: block; }
       /* Terminal touch scrolling */
       .terminal-container .xterm .xterm-viewport { overflow-y: scroll !important; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
       .terminal-container .xterm .xterm-screen { touch-action: pan-y; pointer-events: auto; }
@@ -731,6 +769,136 @@ export function getWebappHtml(botUsername) {
     .term-tool-btn:active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .term-tool-btn.wide { min-width: 56px; }
 
+    /* ─── Kanban ─── */
+    .kanban-panel { padding: 0; }
+    .kanban-toolbar {
+      display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+      border-bottom: 1px solid var(--border); flex-wrap: wrap;
+    }
+    .kanban-toolbar .spacer { flex: 1; }
+    .kanban-btn {
+      background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary);
+      border-radius: var(--radius-sm); padding: 6px 12px; font-size: 0.82rem; cursor: pointer;
+    }
+    .kanban-btn:hover { background: var(--bg-hover); }
+    .kanban-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .kanban-btn.primary:hover { background: var(--accent-hover); }
+    .kanban-btn.toggled { background: var(--accent-dim); border-color: var(--accent); color: var(--accent-hover); }
+    .kanban-board { display: flex; gap: 12px; padding: 14px; overflow-x: auto; align-items: flex-start; flex: 1; }
+    .kanban-col {
+      flex: 1 1 0; min-width: 220px; max-width: 360px; background: var(--bg-secondary);
+      border: 1px solid var(--border); border-radius: var(--radius); display: flex; flex-direction: column;
+      max-height: 100%;
+    }
+    .kanban-col.drag-over { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+    .kanban-col-head {
+      display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
+      font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle);
+    }
+    .kanban-col-head .count { color: var(--text-muted); font-weight: 500; }
+    .kanban-col-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+    .kanban-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 10px; cursor: grab;
+    }
+    .kanban-card:active { cursor: grabbing; }
+    .kanban-card.deleted { opacity: 0.6; }
+    .kanban-card .card-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; word-break: break-word; }
+    .kanban-card .card-desc { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px; white-space: pre-wrap; word-break: break-word; }
+    .kanban-card .card-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .kanban-card .card-actions button {
+      background: none; border: 1px solid var(--border); color: var(--text-muted);
+      border-radius: 4px; font-size: 0.72rem; padding: 2px 7px; cursor: pointer;
+    }
+    .kanban-card .card-actions button:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    .kanban-card .card-actions select {
+      background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-secondary);
+      border-radius: 4px; font-size: 0.72rem; padding: 2px 4px; cursor: pointer;
+    }
+    .kanban-todos { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+    .kanban-todo { display: flex; align-items: flex-start; gap: 6px; font-size: 0.8rem; }
+    .kanban-todo input[type=checkbox] { margin-top: 2px; cursor: pointer; }
+    .kanban-todo .todo-text { flex: 1; word-break: break-word; }
+    .kanban-todo .todo-text.done { text-decoration: line-through; color: var(--text-muted); }
+    .kanban-todo .todo-del { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; }
+    .kanban-todo .todo-del:hover { color: var(--red); }
+    .kanban-todo-add { display: flex; gap: 4px; margin-top: 6px; }
+    .kanban-todo-add input {
+      flex: 1; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary);
+      border-radius: 4px; padding: 3px 6px; font-size: 0.78rem;
+    }
+    .kanban-progress { font-size: 0.72rem; color: var(--text-muted); margin-top: 6px; }
+    .kanban-empty, .secrets-empty { color: var(--text-muted); padding: 24px; text-align: center; font-size: 0.85rem; }
+    .kanban-history { padding: 14px; overflow-y: auto; flex: 1; }
+    .kanban-history .hist-row { font-size: 0.78rem; color: var(--text-secondary); padding: 4px 0; border-bottom: 1px solid var(--border-subtle); }
+    .kanban-history .hist-row .ts { color: var(--text-muted); margin-right: 8px; font-family: var(--mono); font-size: 0.72rem; }
+
+    /* ─── Secrets ─── */
+    .secrets-panel { padding: 14px; gap: 16px; }
+    .secret-badge {
+      display: inline-flex; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+      background: var(--red); color: #fff; font-size: 0.65rem; font-weight: 700;
+      align-items: center; justify-content: center; margin-left: 2px;
+    }
+    .secrets-section-title { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); margin-bottom: 8px; }
+    .secrets-requests { background: var(--yellow-dim); border: 1px solid var(--yellow); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; }
+    .secret-request { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(245,158,11,0.25); flex-wrap: wrap; }
+    .secret-request:last-child { border-bottom: none; }
+    .secret-request .req-info { flex: 1; min-width: 160px; }
+    .secret-request .req-name { font-weight: 600; font-size: 0.9rem; }
+    .secret-request .req-meta { font-size: 0.76rem; color: var(--text-secondary); }
+    .secret-list { display: flex; flex-direction: column; gap: 8px; }
+    .secret-item {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 10px 12px; display: flex; align-items: center; gap: 10px;
+    }
+    .secret-item .sec-info { flex: 1; min-width: 0; }
+    .secret-item .sec-name { font-weight: 600; font-size: 0.9rem; word-break: break-word; }
+    .secret-item .sec-desc { font-size: 0.78rem; color: var(--text-secondary); word-break: break-word; }
+    .secret-item .sec-value { font-family: var(--mono); font-size: 0.8rem; color: var(--green); margin-top: 4px; word-break: break-all; }
+    .secret-item .sec-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .secret-item .sec-actions button {
+      background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-secondary);
+      border-radius: 4px; font-size: 0.74rem; padding: 4px 9px; cursor: pointer;
+    }
+    .secret-item .sec-actions button:hover { color: var(--text-primary); }
+    .secret-item .sec-actions button.danger:hover { color: var(--red); border-color: var(--red); }
+    .secrets-add {
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 14px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .secrets-add input, .secrets-add textarea {
+      background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary);
+      border-radius: var(--radius-sm); padding: 8px 10px; font-size: 0.85rem; font-family: inherit;
+    }
+    .secrets-add textarea { resize: vertical; min-height: 44px; }
+    .secrets-add input:focus, .secrets-add textarea:focus { border-color: var(--accent); outline: none; }
+    .secrets-add .hint { font-size: 0.74rem; color: var(--text-muted); }
+
+    /* ─── PIN modal ─── */
+    .pin-modal {
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,0.6); align-items: center; justify-content: center; padding: 20px;
+    }
+    .pin-modal.visible { display: flex; }
+    .pin-modal .pin-box {
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 22px; width: 100%; max-width: 320px; text-align: center;
+    }
+    .pin-modal h3 { font-size: 1rem; margin-bottom: 6px; }
+    .pin-modal p { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; word-break: break-word; }
+    .pin-modal input {
+      width: 100%; text-align: center; letter-spacing: 0.5em; font-size: 1.4rem; font-family: var(--mono);
+      background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary);
+      border-radius: var(--radius-sm); padding: 10px; margin-bottom: 12px;
+    }
+    .pin-modal input:focus { border-color: var(--accent); outline: none; }
+    .pin-modal .pin-error { color: var(--red); font-size: 0.78rem; min-height: 16px; margin-bottom: 8px; }
+    .pin-modal .pin-buttons { display: flex; gap: 10px; }
+    .pin-modal .pin-buttons button { flex: 1; border-radius: var(--radius-sm); padding: 9px; font-size: 0.85rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
+    .pin-modal .pin-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
     /* ─── Scrollbar ─── */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -741,6 +909,7 @@ export function getWebappHtml(botUsername) {
 <body>
   <!-- ─── Login Screen ─── -->
   <div id="login-screen">
+    <img class="login-logo" src="/assets/icon_256x256.png" alt="Crundi" width="96" height="96">
     <h1>Crundi</h1>
     <p class="subtitle">Claude Code terminal in your browser</p>
     <div class="login-box">
@@ -766,7 +935,7 @@ export function getWebappHtml(botUsername) {
   <div id="app">
     <div class="topbar">
       <button class="hamburger" data-action="toggle-sidebar">&#9776;</button>
-      <span class="logo">Crundi</span>
+      <span class="logo"><img src="/assets/icon_64x64.png" alt="">Crundi</span>
       <span class="separator">/</span>
       <span class="project-name" id="current-project">No project</span>
       <span class="spacer"></span>
@@ -792,10 +961,12 @@ export function getWebappHtml(botUsername) {
           <button class="tab-btn active" data-tab="terminal">Terminal</button>
           <button class="tab-btn" data-tab="git">Git</button>
           <button class="tab-btn" data-tab="files">Files</button>
+          <button class="tab-btn" data-tab="kanban">Kanban</button>
           <button class="tab-btn" data-tab="services">Services</button>
           <button class="tab-btn" data-tab="terminals">Terminals</button>
           <button class="tab-btn" data-tab="browsers">Browsers</button>
           <button class="tab-btn" data-tab="info">Info</button>
+          <button class="tab-btn" data-tab="secrets">Secrets <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
           <button class="tab-btn" data-tab="settings">Settings</button>
         </div>
         <div class="terminal-wrap tab-panel visible" data-panel="terminal">
@@ -843,6 +1014,8 @@ export function getWebappHtml(botUsername) {
         </div>
         <div class="git-panel tab-panel" id="git-panel" data-panel="git"></div>
         <div class="files-panel tab-panel" id="files-panel" data-panel="files"></div>
+        <div class="kanban-panel tab-panel" id="kanban-panel" data-panel="kanban"></div>
+        <div class="secrets-panel tab-panel" id="secrets-panel" data-panel="secrets"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="services-panel tab-panel" id="terminals-panel" data-panel="terminals"></div>
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
@@ -888,6 +1061,20 @@ export function getWebappHtml(botUsername) {
     </div>
   </div>
 
+  <!-- ─── PIN Modal ─── -->
+  <div class="pin-modal" id="pin-modal">
+    <div class="pin-box">
+      <h3 id="pin-title">Enter PIN</h3>
+      <p id="pin-subtitle"></p>
+      <input type="password" id="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" placeholder="••••••">
+      <div class="pin-error" id="pin-error"></div>
+      <div class="pin-buttons">
+        <button id="pin-cancel-btn">Cancel</button>
+        <button id="pin-submit-btn" class="primary">Unlock</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ─── Toast ─── -->
   <div class="toast" id="toast"></div>
 
@@ -913,6 +1100,13 @@ export function getWebappHtml(botUsername) {
     let resizeTimer = null;
     let projectMode = 'multi'; // 'single' or 'multi'
     let projectsDir = '';
+    let kanbanBoard = null;
+    let kanbanView = 'board'; // 'board' | 'trash' | 'history'
+    let kanbanDragTaskId = null;
+    let secretsList = [];
+    let secretRequests = [];
+    const revealedSecrets = {}; // secretId → decrypted value (in-memory only)
+    let pinOnSubmit = null;     // async (pin) => { ok, error }
 
     const $ = (s) => document.querySelector(s);
     const $$ = (s) => document.querySelectorAll(s);
@@ -952,7 +1146,13 @@ export function getWebappHtml(botUsername) {
       script.setAttribute('data-telegram-login', botUser);
       script.setAttribute('data-size', 'large');
       script.setAttribute('data-radius', '8');
-      script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+      // Use the redirect flow (data-auth-url) instead of the JS callback
+      // (data-onauth). The callback flow relies on a cross-site popup and
+      // postMessage, which Microsoft Edge's tracking prevention blocks; the
+      // redirect does a top-level navigation that works in every browser.
+      // The server validates the auth params and bounces back with the token
+      // in the URL fragment (handled by consumeRedirectToken on load).
+      script.setAttribute('data-auth-url', location.origin + '/auth/telegram/callback');
       script.setAttribute('data-request-access', 'write');
       container.appendChild(script);
     }
@@ -1048,11 +1248,17 @@ export function getWebappHtml(botUsername) {
         const item = document.createElement('div');
         item.className = 'sidebar-item' + (isActive ? ' active' : '') + (hasTerminal ? ' has-terminal' : '');
         item.dataset.project = p.alias;
+        // Project removal is only offered in multi mode (manually-added
+        // projects). In single mode projects are auto-discovered folders and
+        // would just reappear, so we don't show a remove control.
+        const canRemove = projectMode === 'multi';
         item.innerHTML = '<span class="dot"></span>'
           + '<span class="name">' + escHtml(p.name || p.alias) + '</span>'
-          + (hasTerminal ? '<button class="close-btn" data-action="close-terminal" data-project="' + escHtml(p.alias) + '">&times;</button>' : '');
+          + (hasTerminal ? '<button class="close-btn" data-action="close-terminal" data-project="' + escHtml(p.alias) + '" title="Close terminal">&times;</button>' : '')
+          + (canRemove ? '<button class="remove-btn" data-action="remove-project" data-project="' + escHtml(p.alias) + '" data-name="' + escHtml(p.name || p.alias) + '" title="Remove project (keeps files)">&#128465;</button>' : '');
         item.addEventListener('click', (e) => {
-          if (e.target.dataset.action === 'close-terminal') return;
+          const act = e.target.dataset.action;
+          if (act === 'close-terminal' || act === 'remove-project') return;
           selectProject(p.alias);
         });
         list.appendChild(item);
@@ -1141,6 +1347,28 @@ export function getWebappHtml(botUsername) {
         renderProjects();
       } catch (err) {
         toast('Failed to close terminal: ' + err.message, 'error');
+      }
+    }
+
+    // Remove a project reference (files on disk are kept). Stops + deletes its
+    // services and closes its terminal server-side.
+    async function removeProject(alias, name) {
+      if (!confirm('Remove "' + (name || alias) + '" from Crundi?\\n\\nThis only removes the project reference and its services — your files on disk are kept.')) return;
+      try {
+        const res = await apiFetch('/api/projects/' + encodeURIComponent(alias), { method: 'DELETE' });
+        const data = await res.json();
+        if (!data.ok) { toast('Failed to remove project: ' + (data.error || 'Unknown error'), 'error'); return; }
+        terminals = terminals.filter(t => t.project !== alias);
+        if (currentProject === alias) {
+          currentProject = null;
+          $('#current-project').textContent = 'No project';
+          updateTerminalPlaceholder(false);
+          if (term) term.clear();
+        }
+        await loadProjects();
+        toast('Removed "' + (name || alias) + '"' + (data.servicesRemoved ? ' and ' + data.servicesRemoved + ' service(s)' : ''), 'success');
+      } catch (err) {
+        toast('Failed to remove project: ' + err.message, 'error');
       }
     }
 
@@ -1549,6 +1777,22 @@ export function getWebappHtml(botUsername) {
           }
         } catch { /* ignore */ }
       });
+      es.addEventListener('kanban', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (currentTab === 'kanban' && currentProject && d.project === currentProject.toLowerCase()) {
+            loadKanban();
+          }
+        } catch { /* ignore */ }
+      });
+      es.addEventListener('secret-requests', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          secretRequests = d.requests || [];
+          updateSecretBadge();
+          if (currentTab === 'secrets') renderSecrets();
+        } catch { /* ignore */ }
+      });
       es.onerror = () => {
         es.close();
         setTimeout(connectSSE, 5000);
@@ -1700,6 +1944,10 @@ export function getWebappHtml(botUsername) {
 
     // ─── Tabs ───
     function switchTab(tab) {
+      // Leaving the Secrets tab — forget any revealed values for safety.
+      if (currentTab === 'secrets' && tab !== 'secrets') {
+        for (const k in revealedSecrets) delete revealedSecrets[k];
+      }
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.tab-panel').forEach(p => p.classList.toggle('visible', p.dataset.panel === tab));
@@ -1709,6 +1957,8 @@ export function getWebappHtml(botUsername) {
       if (tab === 'browsers') loadBrowsers();
       if (tab === 'git') loadGitInfo();
       if (tab === 'files') loadFiles();
+      if (tab === 'kanban') loadKanban();
+      if (tab === 'secrets') loadSecrets();
       if (tab === 'info') renderInfo();
       if (tab === 'settings') renderSettings();
     }
@@ -3125,6 +3375,11 @@ export function getWebappHtml(botUsername) {
           if (project) { e.stopPropagation(); closeTerminal(project); }
           break;
         }
+        case 'remove-project': {
+          const project = d.project;
+          if (project) { e.stopPropagation(); removeProject(project, d.name); }
+          break;
+        }
         case 'svc-start': svcAction('start', d.key); break;
         case 'svc-stop': svcAction('stop', d.key); break;
         case 'svc-restart': svcAction('restart', d.key); break;
@@ -3187,6 +3442,380 @@ export function getWebappHtml(botUsername) {
       }
     });
 
+    // ─── Kanban ───
+    const KANBAN_STATUS_LABELS = { backlog: 'Backlog', todo: 'To Do', in_progress: 'In Progress', done: 'Done' };
+
+    async function loadKanban() {
+      const panel = $('#kanban-panel');
+      if (!currentProject) {
+        panel.innerHTML = '<div class="kanban-empty">Select a project to use its Kanban board.</div>';
+        return;
+      }
+      try {
+        const inc = kanbanView === 'trash' ? '&includeDeleted=1' : '';
+        const res = await apiFetch('/api/kanban?project=' + encodeURIComponent(currentProject) + inc);
+        const data = await res.json();
+        if (!data.ok) { panel.innerHTML = '<div class="kanban-empty">' + escHtml(data.error || 'Failed to load') + '</div>'; return; }
+        kanbanBoard = data.board;
+        renderKanban();
+      } catch (err) {
+        panel.innerHTML = '<div class="kanban-empty">Failed to load board: ' + escHtml(err.message) + '</div>';
+      }
+    }
+
+    function renderKanban() {
+      const panel = $('#kanban-panel');
+      const b = kanbanBoard;
+      if (!b) return;
+      let h = '<div class="kanban-toolbar">'
+        + '<button class="kanban-btn primary" data-kact="add-task">+ Add task</button>'
+        + '<div class="spacer"></div>'
+        + '<button class="kanban-btn ' + (kanbanView === 'board' ? 'toggled' : '') + '" data-kact="view-board">Board</button>'
+        + '<button class="kanban-btn ' + (kanbanView === 'trash' ? 'toggled' : '') + '" data-kact="view-trash">Trash (' + b.deletedTasks.length + ')</button>'
+        + '<button class="kanban-btn ' + (kanbanView === 'history' ? 'toggled' : '') + '" data-kact="view-history">History</button>'
+        + '</div>';
+      if (kanbanView === 'history') h += renderKanbanHistory();
+      else if (kanbanView === 'trash') h += renderKanbanTrash();
+      else h += renderKanbanBoard();
+      panel.innerHTML = h;
+      if (kanbanView === 'board') attachKanbanDrag();
+    }
+
+    function renderKanbanBoard() {
+      let h = '<div class="kanban-board">';
+      for (const st of kanbanBoard.statuses) {
+        const tasks = kanbanBoard.tasks.filter(t => t.status === st);
+        h += '<div class="kanban-col" data-status="' + st + '">'
+          + '<div class="kanban-col-head"><span>' + KANBAN_STATUS_LABELS[st] + '</span><span class="count">' + tasks.length + '</span></div>'
+          + '<div class="kanban-col-body" data-status="' + st + '">'
+          + tasks.map(renderKanbanCard).join('')
+          + '</div></div>';
+      }
+      return h + '</div>';
+    }
+
+    function renderKanbanCard(t) {
+      const todos = t.todos || [];
+      const done = todos.filter(td => td.done).length;
+      let h = '<div class="kanban-card" draggable="true" data-task="' + t.id + '">';
+      h += '<div class="card-title">' + escHtml(t.title) + '</div>';
+      if (t.description) h += '<div class="card-desc">' + escHtml(t.description) + '</div>';
+      if (todos.length) {
+        h += '<div class="kanban-todos">';
+        for (const td of todos) {
+          h += '<div class="kanban-todo">'
+            + '<input type="checkbox" data-ktodo-toggle="' + t.id + '|' + td.id + '"' + (td.done ? ' checked' : '') + '>'
+            + '<span class="todo-text' + (td.done ? ' done' : '') + '">' + escHtml(td.text) + '</span>'
+            + '<button class="todo-del" data-ktodo-del="' + t.id + '|' + td.id + '" title="Delete todo">&times;</button>'
+            + '</div>';
+        }
+        h += '</div><div class="kanban-progress">' + done + '/' + todos.length + ' done</div>';
+      }
+      h += '<div class="kanban-todo-add"><input type="text" placeholder="+ add todo" data-ktodo-input="' + t.id + '"></div>';
+      let opts = '';
+      for (const st of kanbanBoard.statuses) {
+        opts += '<option value="' + st + '"' + (st === t.status ? ' selected' : '') + '>' + KANBAN_STATUS_LABELS[st] + '</option>';
+      }
+      h += '<div class="card-actions">'
+        + '<select data-kmove="' + t.id + '" title="Move to column">' + opts + '</select>'
+        + '<button data-kact="edit-task" data-task="' + t.id + '">Edit</button>'
+        + '<button data-kact="del-task" data-task="' + t.id + '">Delete</button>'
+        + '</div></div>';
+      return h;
+    }
+
+    function renderKanbanTrash() {
+      const b = kanbanBoard;
+      // Deleted todos live inside (possibly non-deleted) tasks.
+      const deletedTodos = [];
+      for (const t of b.tasks.concat(b.deletedTasks)) {
+        for (const td of (t.todos || [])) {
+          if (td.deleted) deletedTodos.push({ task: t, todo: td });
+        }
+      }
+      let h = '<div class="kanban-history">';
+      h += '<div class="secrets-section-title">Deleted tasks</div>';
+      if (!b.deletedTasks.length) h += '<div class="kanban-empty">No deleted tasks.</div>';
+      for (const t of b.deletedTasks) {
+        h += '<div class="kanban-card deleted"><div class="card-title">' + escHtml(t.title) + '</div>'
+          + '<div class="card-actions"><button data-kact="restore-task" data-task="' + t.id + '">Restore</button></div></div>';
+      }
+      h += '<div class="secrets-section-title" style="margin-top:16px">Deleted todos</div>';
+      if (!deletedTodos.length) h += '<div class="kanban-empty">No deleted todos.</div>';
+      for (const { task, todo } of deletedTodos) {
+        h += '<div class="hist-row">' + escHtml(todo.text) + ' <span class="ts">in ' + escHtml(task.title) + '</span>'
+          + ' <button class="kanban-btn" data-kact="restore-todo" data-task="' + task.id + '" data-todo="' + todo.id + '">Restore</button></div>';
+      }
+      return h + '</div>';
+    }
+
+    function renderKanbanHistory() {
+      const hist = (kanbanBoard.history || []).slice().reverse();
+      let h = '<div class="kanban-history">';
+      if (!hist.length) h += '<div class="kanban-empty">No history yet.</div>';
+      for (const e of hist) {
+        const t = new Date(e.ts).toLocaleString();
+        h += '<div class="hist-row"><span class="ts">' + escHtml(t) + '</span>' + escHtml(e.message) + '</div>';
+      }
+      return h + '</div>';
+    }
+
+    async function kanbanPost(payload) {
+      payload.project = currentProject;
+      try {
+        const res = await apiFetch('/api/kanban', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const d = await res.json();
+        if (!d.ok) toast(d.error || 'Action failed', 'error');
+        return d;
+      } catch (err) { toast('Action failed: ' + err.message, 'error'); return { ok: false }; }
+    }
+
+    function attachKanbanDrag() {
+      const panel = $('#kanban-panel');
+      panel.querySelectorAll('.kanban-card').forEach(card => {
+        card.addEventListener('dragstart', () => { kanbanDragTaskId = card.dataset.task; });
+        card.addEventListener('dragend', () => { kanbanDragTaskId = null; });
+      });
+      panel.querySelectorAll('.kanban-col').forEach(col => {
+        col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('drag-over'); });
+        col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+        col.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          col.classList.remove('drag-over');
+          const taskId = kanbanDragTaskId;
+          const status = col.dataset.status;
+          if (!taskId || !status) return;
+          await kanbanPost({ action: 'moveTask', taskId, status });
+          loadKanban();
+        });
+      });
+    }
+
+    function setupKanbanHandlers() {
+      const panel = $('#kanban-panel');
+      panel.addEventListener('click', async (e) => {
+        const delBtn = e.target.closest('[data-ktodo-del]');
+        if (delBtn) {
+          const [taskId, todoId] = delBtn.dataset.ktodoDel.split('|');
+          await kanbanPost({ action: 'deleteTodo', taskId, todoId }); loadKanban(); return;
+        }
+        const btn = e.target.closest('[data-kact]');
+        if (!btn) return;
+        const act = btn.dataset.kact;
+        const taskId = btn.dataset.task;
+        if (act === 'view-board') { kanbanView = 'board'; loadKanban(); }
+        else if (act === 'view-trash') { kanbanView = 'trash'; loadKanban(); }
+        else if (act === 'view-history') { kanbanView = 'history'; loadKanban(); }
+        else if (act === 'add-task') {
+          const title = prompt('Task title:');
+          if (title && title.trim()) { await kanbanPost({ action: 'addTask', title: title.trim() }); loadKanban(); }
+        } else if (act === 'edit-task') {
+          const task = (kanbanBoard.tasks || []).find(t => t.id === taskId);
+          if (!task) return;
+          const title = prompt('Task title:', task.title);
+          if (title === null) return;
+          const description = prompt('Description:', task.description || '');
+          if (description === null) return;
+          await kanbanPost({ action: 'updateTask', taskId, title: title.trim(), description }); loadKanban();
+        } else if (act === 'del-task') {
+          await kanbanPost({ action: 'deleteTask', taskId }); loadKanban();
+        } else if (act === 'restore-task') {
+          await kanbanPost({ action: 'restoreTask', taskId }); loadKanban();
+        } else if (act === 'restore-todo') {
+          await kanbanPost({ action: 'restoreTodo', taskId, todoId: btn.dataset.todo }); loadKanban();
+        }
+      });
+      panel.addEventListener('change', async (e) => {
+        const cb = e.target.closest('[data-ktodo-toggle]');
+        if (cb) {
+          const [taskId, todoId] = cb.dataset.ktodoToggle.split('|');
+          await kanbanPost({ action: 'updateTodo', taskId, todoId, done: cb.checked }); loadKanban();
+          return;
+        }
+        const sel = e.target.closest('[data-kmove]');
+        if (sel) {
+          await kanbanPost({ action: 'moveTask', taskId: sel.dataset.kmove, status: sel.value }); loadKanban();
+        }
+      });
+      panel.addEventListener('keydown', async (e) => {
+        const inp = e.target.closest('[data-ktodo-input]');
+        if (!inp || e.key !== 'Enter') return;
+        e.preventDefault();
+        const text = inp.value.trim();
+        if (!text) return;
+        await kanbanPost({ action: 'addTodo', taskId: inp.dataset.ktodoInput, text }); loadKanban();
+      });
+    }
+
+    // ─── Secrets ───
+    async function loadSecrets() {
+      try {
+        const res = await apiFetch('/api/secrets');
+        const d = await res.json();
+        if (d.ok) { secretsList = d.secrets || []; secretRequests = d.requests || []; }
+        updateSecretBadge();
+        renderSecrets();
+      } catch (err) {
+        $('#secrets-panel').innerHTML = '<div class="secrets-empty">Failed to load: ' + escHtml(err.message) + '</div>';
+      }
+    }
+
+    function updateSecretBadge() {
+      const el = $('#secret-badge');
+      if (!el) return;
+      if (secretRequests.length) { el.style.display = ''; el.textContent = String(secretRequests.length); }
+      else el.style.display = 'none';
+    }
+
+    function renderSecrets() {
+      const panel = $('#secrets-panel');
+      let h = '';
+      if (secretRequests.length) {
+        h += '<div class="secrets-requests"><div class="secrets-section-title">Pending access requests</div>';
+        for (const r of secretRequests) {
+          h += '<div class="secret-request"><div class="req-info">'
+            + '<div class="req-name">' + escHtml(r.secretName) + '</div>'
+            + '<div class="req-meta">' + (r.project ? 'project: ' + escHtml(r.project) + ' · ' : '') + (r.reason ? escHtml(r.reason) : 'Claude requested access') + '</div>'
+            + '</div><div class="sec-actions">'
+            + '<button class="kanban-btn primary" data-sreq-approve="' + r.id + '" data-sname="' + escHtml(r.secretName) + '">Approve</button>'
+            + '<button class="kanban-btn" data-sreq-deny="' + r.id + '">Deny</button>'
+            + '</div></div>';
+        }
+        h += '</div>';
+      }
+      h += '<div class="secrets-add">'
+        + '<div class="secrets-section-title">Add a secret</div>'
+        + '<input id="sec-add-name" placeholder="Name (e.g. AWS Access Key)" autocomplete="off">'
+        + '<textarea id="sec-add-desc" placeholder="Description — Claude searches names &amp; descriptions"></textarea>'
+        + '<textarea id="sec-add-value" placeholder="Secret value"></textarea>'
+        + '<input id="sec-add-pin" inputmode="numeric" maxlength="6" placeholder="6-digit PIN to encrypt this secret" autocomplete="off">'
+        + '<div class="hint">The PIN is never stored. If you lose it, this secret can only be deleted &amp; recreated.</div>'
+        + '<button class="kanban-btn primary" data-sact="add" style="align-self:flex-start">Save secret</button>'
+        + '</div>';
+      h += '<div><div class="secrets-section-title">Secrets (' + secretsList.length + ')</div><div class="secret-list">';
+      if (!secretsList.length) h += '<div class="secrets-empty">No secrets yet.</div>';
+      for (const s of secretsList) {
+        const revealed = revealedSecrets[s.id];
+        const isRevealed = revealed !== undefined;
+        h += '<div class="secret-item"><div class="sec-info">'
+          + '<div class="sec-name">' + escHtml(s.name) + '</div>'
+          + (s.description ? '<div class="sec-desc">' + escHtml(s.description) + '</div>' : '')
+          + (isRevealed ? '<div class="sec-value">' + escHtml(revealed) + '</div>' : '')
+          + '</div><div class="sec-actions">'
+          + (isRevealed
+              ? '<button data-sact="copy" data-sid="' + s.id + '">Copy</button><button data-sact="hide" data-sid="' + s.id + '">Hide</button>'
+              : '<button data-sact="reveal" data-sid="' + s.id + '" data-sname="' + escHtml(s.name) + '">Reveal</button>')
+          + '<button class="danger" data-sact="delete" data-sid="' + s.id + '" data-sname="' + escHtml(s.name) + '">Delete</button>'
+          + '</div></div>';
+      }
+      h += '</div></div>';
+      panel.innerHTML = h;
+    }
+
+    async function secretsPost(payload) {
+      const res = await apiFetch('/api/secrets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      return res.json();
+    }
+
+    function setupSecretsHandlers() {
+      const panel = $('#secrets-panel');
+      panel.addEventListener('click', async (e) => {
+        const approveBtn = e.target.closest('[data-sreq-approve]');
+        if (approveBtn) {
+          const reqId = approveBtn.dataset.sreqApprove;
+          openPinModal({
+            title: 'Approve access',
+            subtitle: 'Enter the PIN for "' + approveBtn.dataset.sname + '" to release it to Claude.',
+            submitLabel: 'Approve',
+            onSubmit: async (pin) => {
+              const d = await secretsPost({ action: 'approve', reqId, pin });
+              if (d.ok) { toast('Approved', 'success'); loadSecrets(); }
+              return d;
+            },
+          });
+          return;
+        }
+        const denyBtn = e.target.closest('[data-sreq-deny]');
+        if (denyBtn) {
+          await secretsPost({ action: 'deny', reqId: denyBtn.dataset.sreqDeny });
+          loadSecrets();
+          return;
+        }
+        const btn = e.target.closest('[data-sact]');
+        if (!btn) return;
+        const act = btn.dataset.sact;
+        const sid = btn.dataset.sid;
+        if (act === 'add') {
+          const name = $('#sec-add-name').value.trim();
+          const description = $('#sec-add-desc').value;
+          const value = $('#sec-add-value').value;
+          const pin = $('#sec-add-pin').value.trim();
+          if (!name) { toast('Name is required', 'error'); return; }
+          if (!value) { toast('Value is required', 'error'); return; }
+          if (!/^\\d{6}$/.test(pin)) { toast('PIN must be exactly 6 digits', 'error'); return; }
+          const d = await secretsPost({ action: 'add', name, description, value, pin });
+          if (d.ok) { toast('Secret saved', 'success'); loadSecrets(); }
+          else toast(d.error || 'Failed to save', 'error');
+        } else if (act === 'reveal') {
+          openPinModal({
+            title: 'Reveal secret',
+            subtitle: 'Enter the PIN for "' + btn.dataset.sname + '".',
+            submitLabel: 'Reveal',
+            onSubmit: async (pin) => {
+              const d = await secretsPost({ action: 'reveal', id: sid, pin });
+              if (d.ok) { revealedSecrets[sid] = d.value; renderSecrets(); }
+              return d;
+            },
+          });
+        } else if (act === 'hide') {
+          delete revealedSecrets[sid]; renderSecrets();
+        } else if (act === 'copy') {
+          try { await navigator.clipboard.writeText(revealedSecrets[sid] || ''); toast('Copied', 'success'); }
+          catch { toast('Copy failed', 'error'); }
+        } else if (act === 'delete') {
+          if (!confirm('Delete secret "' + btn.dataset.sname + '"? This cannot be undone.')) return;
+          const d = await secretsPost({ action: 'delete', id: sid });
+          if (d.ok) { delete revealedSecrets[sid]; toast('Deleted', 'success'); loadSecrets(); }
+          else toast(d.error || 'Failed to delete', 'error');
+        }
+      });
+    }
+
+    // ─── PIN modal ───
+    function openPinModal({ title, subtitle, submitLabel = 'Unlock', onSubmit }) {
+      pinOnSubmit = onSubmit;
+      $('#pin-title').textContent = title || 'Enter PIN';
+      $('#pin-subtitle').textContent = subtitle || '';
+      $('#pin-error').textContent = '';
+      $('#pin-submit-btn').textContent = submitLabel;
+      const inp = $('#pin-input');
+      inp.value = '';
+      $('#pin-modal').classList.add('visible');
+      setTimeout(() => inp.focus(), 50);
+    }
+    function closePinModal() {
+      $('#pin-modal').classList.remove('visible');
+      pinOnSubmit = null;
+    }
+    async function submitPin() {
+      if (!pinOnSubmit) return;
+      const pin = $('#pin-input').value.trim();
+      if (!/^\\d{6}$/.test(pin)) { $('#pin-error').textContent = 'Enter a 6-digit PIN'; return; }
+      $('#pin-submit-btn').disabled = true;
+      let r;
+      try { r = await pinOnSubmit(pin); } catch (err) { r = { ok: false, error: err.message }; }
+      $('#pin-submit-btn').disabled = false;
+      if (r && r.ok) { closePinModal(); }
+      else { $('#pin-error').textContent = (r && r.error) || 'Failed'; const i = $('#pin-input'); i.select(); i.focus(); }
+    }
+
+    // Wire panel + modal handlers once.
+    setupKanbanHandlers();
+    setupSecretsHandlers();
+    $('#pin-submit-btn').addEventListener('click', submitPin);
+    $('#pin-cancel-btn').addEventListener('click', closePinModal);
+    $('#pin-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitPin(); } });
+
     // ─── Util ───
     function escHtml(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -3237,8 +3866,33 @@ export function getWebappHtml(botUsername) {
       return false;
     }
 
+    // ─── Telegram Login redirect flow ───
+    // After the widget's data-auth-url redirect, the server bounces back with
+    // the session token in the URL fragment (#token=...). Pull it out, persist
+    // it, and clean the URL so it isn't left in history.
+    function consumeRedirectToken() {
+      const m = location.hash.match(/(?:^#|&)token=([a-f0-9]+)/);
+      if (m) {
+        token = m[1];
+        localStorage.setItem('crundi_token', token);
+        history.replaceState(null, '', location.pathname);
+        return true;
+      }
+      const params = new URLSearchParams(location.search);
+      const err = params.get('auth_error');
+      if (err) {
+        history.replaceState(null, '', location.pathname);
+        toast('Login failed: ' + err, 'error');
+      }
+      return false;
+    }
+
     // ─── Init ───
     async function init() {
+      if (consumeRedirectToken() && await checkAuth()) {
+        showApp(); connectSSE(); checkImport();
+        return;
+      }
       if (token && await checkAuth()) {
         showApp(); connectSSE(); checkImport();
       } else if (await tryTelegramWebAppAuth()) {
@@ -3254,6 +3908,14 @@ export function getWebappHtml(botUsername) {
     }
 
     init();
+
+    // ─── PWA service worker ───
+    // Skip under Electron (window.api present) — only useful for the browser PWA.
+    if ('serviceWorker' in navigator && !window.api) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => { /* non-fatal */ });
+      });
+    }
   })();
   <\/script>
 </body>

@@ -19,11 +19,13 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
 import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService } from './services.js';
-import { registerService, deleteRegistered } from './service-registry.js';
+import { registerService, listRegisteredForProject } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
-import { listProjects, getProject, registerProject, getProjectMode, importFromOldData, importServicesFromOldData } from './project-store.js';
+import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData } from './project-store.js';
+import * as kanban from './kanban-store.js';
+import * as secrets from './secrets-store.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +37,73 @@ const VENDOR_MIME = {
   '.css': 'text/css',
   '.map': 'application/json',
 };
+
+// ─── PWA assets (icons) ───
+const ASSETS_DIR = join(__dirname, '..', 'assets');
+const ASSET_MIME = {
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.svg': 'image/svg+xml',
+};
+
+// Web app manifest — makes Crundi installable as a PWA.
+const WEB_MANIFEST = JSON.stringify({
+  name: 'Crundi',
+  short_name: 'Crundi',
+  description: 'Claude Code terminal in your browser',
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  orientation: 'any',
+  background_color: '#0a0a0f',
+  theme_color: '#0a0a0f',
+  icons: [
+    { src: '/assets/icon_128x128.png', sizes: '128x128', type: 'image/png', purpose: 'any' },
+    { src: '/assets/icon_256x256.png', sizes: '256x256', type: 'image/png', purpose: 'any maskable' },
+  ],
+});
+
+// Minimal service worker — registers a fetch handler (required for
+// installability) and serves the cached app shell when offline. API, MCP,
+// WebSocket, SSE, and download routes are always passed straight to the
+// network so live data is never stale.
+const SERVICE_WORKER = `
+const CACHE = 'crundi-shell-v5';
+const SHELL = ['/', '/manifest.webmanifest', '/assets/icon_128x128.png', '/assets/icon_256x256.png'];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+  // Never cache live/dynamic endpoints.
+  if (/^\\/(api|ws|dl|vendor)\\b/.test(url.pathname) || url.pathname.startsWith('/auth/')) return;
+
+  if (req.mode === 'navigate') {
+    // App shell: network-first, fall back to cached '/'.
+    e.respondWith(
+      fetch(req).then((res) => {
+        caches.open(CACHE).then((c) => c.put('/', res.clone()));
+        return res;
+      }).catch(() => caches.match('/'))
+    );
+    return;
+  }
+  // Static assets: cache-first.
+  e.respondWith(caches.match(req).then((hit) => hit || fetch(req)));
+});
+`;
 
 const TUNNEL_KEY = '__webapp__';
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (webapp sessions last longer)
@@ -203,6 +272,77 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
     });
   }
 
+  // ─── Kanban live updates ───
+  function broadcastKanban(projectAlias) {
+    broadcastSSE('kanban', { project: String(projectAlias || '').toLowerCase() });
+  }
+
+  // ─── Secret access requests (Claude → user approval) ───
+  // Each entry: reqId → { id, secretId, secretName, projectAlias, reason, createdAt, fulfill, reject, timer }
+  const pendingSecretRequests = new Map();
+  const SECRET_REQUEST_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes per request
+
+  /** Public-safe view of pending requests (never includes the secret value). */
+  function publicSecretRequests() {
+    return [...pendingSecretRequests.values()].map(r => ({
+      id: r.id, secretId: r.secretId, secretName: r.secretName,
+      project: r.projectAlias, reason: r.reason, createdAt: r.createdAt,
+    }));
+  }
+
+  function broadcastSecretRequests() {
+    broadcastSSE('secret-requests', { requests: publicSecretRequests() });
+  }
+
+  /**
+   * Register a pending secret access request and return a Promise that resolves
+   * once the user approves (with the correct PIN), denies, or it times out.
+   * The value is never cached — every request is independent and needs its own
+   * PIN entry.
+   */
+  function waitForSecretApproval({ secretId, secretName, projectAlias, reason }) {
+    return new Promise((resolve) => {
+      const id = randomBytes(8).toString('hex');
+      const timer = setTimeout(() => {
+        pendingSecretRequests.delete(id);
+        broadcastSecretRequests();
+        resolve({ ok: false, error: 'Request timed out — the user did not approve within 3 minutes.' });
+      }, SECRET_REQUEST_TIMEOUT_MS);
+
+      pendingSecretRequests.set(id, {
+        id, secretId, secretName, projectAlias, reason,
+        createdAt: new Date().toISOString(),
+        timer,
+        fulfill: (value) => {
+          clearTimeout(timer);
+          pendingSecretRequests.delete(id);
+          broadcastSecretRequests();
+          resolve({ ok: true, name: secretName, value });
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          pendingSecretRequests.delete(id);
+          broadcastSecretRequests();
+          resolve({ ok: false, error });
+        },
+      });
+
+      broadcastSecretRequests();
+
+      // Ping the user over Telegram so they know to come approve.
+      try {
+        const chatId = getChatId ? getChatId() : null;
+        if (chatId && bot) {
+          const from = projectAlias ? ` (project: ${projectAlias})` : '';
+          const why = reason ? `\nReason: ${reason}` : '';
+          bot.api.sendMessage(chatId,
+            `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}\n\nOpen Crundi → Secrets to review and approve.`
+          ).catch(() => { /* non-fatal */ });
+        }
+      } catch { /* non-fatal */ }
+    });
+  }
+
   // ─── Request Handling ───
 
   function readBody(req) {
@@ -270,6 +410,48 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       return;
     }
 
+    // ─── PWA: manifest + service worker ───
+    if (path === '/manifest.webmanifest' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'application/manifest+json; charset=utf-8',
+        'Cache-Control': 'public, max-age=3600',
+      });
+      res.end(WEB_MANIFEST);
+      return;
+    }
+    if (path === '/sw.js' && req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        // Allow the SW to control the whole origin.
+        'Service-Worker-Allowed': '/',
+      });
+      res.end(SERVICE_WORKER);
+      return;
+    }
+
+    // Serve PWA / app icons from assets/
+    const assetMatch = path.match(/^\/assets\/([a-z0-9._-]+)$/i);
+    if (assetMatch && req.method === 'GET') {
+      const filename = assetMatch[1];
+      const filePath = join(ASSETS_DIR, filename);
+      if (!existsSync(filePath)) { res.writeHead(404); res.end('Not found'); return; }
+      const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+      const mime = ASSET_MIME[ext] || 'application/octet-stream';
+      try {
+        const st = statSync(filePath);
+        res.writeHead(200, {
+          'Content-Type': mime,
+          'Content-Length': st.size,
+          'Cache-Control': 'public, max-age=86400',
+        });
+        createReadStream(filePath).pipe(res);
+      } catch {
+        res.writeHead(500); res.end('Error reading file');
+      }
+      return;
+    }
+
     // Temporary file download — token in URL IS the auth
     const dlMatch = path.match(/^\/dl\/([a-f0-9]{64})$/);
     if (dlMatch && req.method === 'GET') {
@@ -309,6 +491,26 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       }
 
       return json(res, { ok: false, error: 'Missing auth data' }, 400);
+    }
+
+    // ─── Telegram Login redirect callback (data-auth-url flow) ───
+    // The widget's JS callback (data-onauth) relies on a cross-site popup and
+    // postMessage, which Microsoft Edge's tracking prevention blocks. The
+    // redirect flow does a top-level navigation here with the auth fields as
+    // query params and works in every browser. We validate, mint a token, and
+    // bounce back to the app with the token in the URL fragment.
+    if (path === '/auth/telegram/callback' && req.method === 'GET') {
+      const data = Object.fromEntries(url.searchParams.entries());
+      const result = validateTelegramLogin(data);
+      if (!result.valid) {
+        res.writeHead(302, { Location: '/?auth_error=' + encodeURIComponent(result.error) });
+        res.end();
+        return;
+      }
+      const token = createToken(result.user.username);
+      res.writeHead(302, { Location: '/#token=' + token });
+      res.end();
+      return;
     }
 
     // ─── Telegram WebApp auth (opened inside Telegram) ───
@@ -453,6 +655,110 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       return json(res, result);
     }
 
+    // Remove a project reference (keeps files on disk). Closes its terminal and
+    // stops + deletes all services registered to it. Only registered projects
+    // can be removed — auto-discovered ones would just reappear.
+    const projDelMatch = path.match(/^\/api\/projects\/([^/]+)$/);
+    if (projDelMatch && req.method === 'DELETE') {
+      const alias = decodeURIComponent(projDelMatch[1]).toLowerCase();
+
+      const removal = removeProject(alias);
+      if (!removal.ok) return json(res, removal, 400);
+
+      // Close any running Claude terminal for this project.
+      if (claudeTerminals) {
+        try { claudeTerminals.close(alias); } catch { /* ignore */ }
+      }
+
+      // Stop and delete every service registered to this project.
+      let servicesRemoved = 0;
+      for (const svc of listRegisteredForProject(alias)) {
+        try {
+          stopService(svc.key);     // no-op if not running
+          deleteService(svc.key);   // succeeds now that it's stopped
+          servicesRemoved++;
+        } catch { /* keep going */ }
+      }
+
+      setTimeout(broadcastState, 500);
+      return json(res, { ok: true, servicesRemoved });
+    }
+
+    // ─── Kanban (project-scoped) ───
+    if (path === '/api/kanban' && req.method === 'GET') {
+      const project = url.searchParams.get('project');
+      if (!project) return json(res, { ok: false, error: 'project is required' }, 400);
+      const includeDeleted = url.searchParams.get('includeDeleted') === '1';
+      return json(res, { ok: true, board: kanban.getBoard(project, { includeDeleted }) });
+    }
+
+    if (path === '/api/kanban' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const { action, project } = body;
+      if (!project) return json(res, { ok: false, error: 'project is required' }, 400);
+      let result;
+      switch (action) {
+        case 'addTask': result = kanban.addTask(project, { title: body.title, description: body.description, status: body.status, todos: body.todos }); break;
+        case 'updateTask': result = kanban.updateTask(project, body.taskId, { title: body.title, description: body.description, status: body.status }); break;
+        case 'moveTask': result = kanban.moveTask(project, body.taskId, body.status, body.index); break;
+        case 'deleteTask': result = kanban.deleteTask(project, body.taskId); break;
+        case 'restoreTask': result = kanban.restoreTask(project, body.taskId); break;
+        case 'addTodo': result = kanban.addTodo(project, body.taskId, body.text); break;
+        case 'updateTodo': result = kanban.updateTodo(project, body.taskId, body.todoId, { text: body.text, done: body.done }); break;
+        case 'deleteTodo': result = kanban.deleteTodo(project, body.taskId, body.todoId); break;
+        case 'restoreTodo': result = kanban.restoreTodo(project, body.taskId, body.todoId); break;
+        default: return json(res, { ok: false, error: `Unknown kanban action: ${action}` }, 400);
+      }
+      if (result.ok) broadcastKanban(project);
+      return json(res, result);
+    }
+
+    // ─── Secrets (global) ───
+    if (path === '/api/secrets' && req.method === 'GET') {
+      return json(res, { ok: true, secrets: secrets.listSecrets(), requests: publicSecretRequests() });
+    }
+
+    if (path === '/api/secrets' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const { action } = body;
+      switch (action) {
+        case 'add': {
+          const r = secrets.addSecret({ name: body.name, description: body.description, value: body.value, pin: body.pin });
+          return json(res, r);
+        }
+        case 'updateMeta': {
+          const r = secrets.updateSecretMeta(body.id, { name: body.name, description: body.description });
+          return json(res, r);
+        }
+        case 'delete': {
+          const r = secrets.deleteSecret(body.id);
+          return json(res, r);
+        }
+        case 'reveal': {
+          // The authenticated web user views a secret's value themselves.
+          const r = secrets.decryptSecret(body.id, body.pin);
+          return json(res, r);
+        }
+        case 'approve': {
+          // Approve a pending Claude request: decrypt with the supplied PIN and,
+          // on success, hand the value to the waiting MCP call.
+          const reqEntry = pendingSecretRequests.get(body.reqId);
+          if (!reqEntry) return json(res, { ok: false, error: 'Request no longer pending (it may have timed out)' });
+          const dec = secrets.decryptSecret(reqEntry.secretId, body.pin);
+          if (!dec.ok) return json(res, dec); // wrong PIN — keep request pending for retry
+          reqEntry.fulfill(dec.value);
+          return json(res, { ok: true });
+        }
+        case 'deny': {
+          const reqEntry = pendingSecretRequests.get(body.reqId);
+          if (reqEntry) reqEntry.reject('The user denied this secret access request.');
+          return json(res, { ok: true });
+        }
+        default:
+          return json(res, { ok: false, error: `Unknown secrets action: ${action}` }, 400);
+      }
+    }
+
     // ─── Claude Terminals ───
     if (path === '/api/terminals' && req.method === 'GET') {
       return json(res, { terminals: claudeTerminals ? claudeTerminals.list() : [] });
@@ -522,8 +828,10 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         else if (action === 'stop') result = stopService(key);
         else if (action === 'restart') result = restartService(key);
         else if (action === 'delete') {
+          // Always stop the service before removing it so we never orphan a
+          // running process. stopService is a no-op if it isn't running.
           stopService(key);
-          result = deleteRegistered(key);
+          result = deleteService(key);
         }
         setTimeout(broadcastState, 500);
         return json(res, result || { ok: false, error: 'Unknown action' });
@@ -975,6 +1283,58 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       if (apiKey !== internalApiKey) return json(res, { error: 'Invalid API key' }, 403);
       const body = JSON.parse(await readBody(req));
       if (!body.tool) return json(res, { ok: false, error: 'Missing tool name' }, 400);
+      const a = body.args || {};
+
+      // ─── Kanban tools (project-scoped via args.alias) ───
+      if (body.tool.startsWith('kanban_')) {
+        const alias = a.alias;
+        if (!alias) return json(res, { ok: false, error: 'No project context for kanban tool' });
+        let r;
+        switch (body.tool) {
+          case 'kanban_list': r = { ok: true, board: kanban.getBoard(alias, { includeDeleted: !!a.includeDeleted }) }; break;
+          case 'kanban_add_task': r = kanban.addTask(alias, { title: a.title, description: a.description, status: a.status, todos: a.todos }); break;
+          case 'kanban_update_task': r = kanban.updateTask(alias, a.taskId, { title: a.title, description: a.description, status: a.status }); break;
+          case 'kanban_move_task': r = kanban.moveTask(alias, a.taskId, a.status, a.index); break;
+          case 'kanban_delete_task': r = kanban.deleteTask(alias, a.taskId); break;
+          case 'kanban_restore_task': r = kanban.restoreTask(alias, a.taskId); break;
+          case 'kanban_add_todo': r = kanban.addTodo(alias, a.taskId, a.text); break;
+          case 'kanban_update_todo': r = kanban.updateTodo(alias, a.taskId, a.todoId, { text: a.text, done: a.done }); break;
+          case 'kanban_delete_todo': r = kanban.deleteTodo(alias, a.taskId, a.todoId); break;
+          case 'kanban_restore_todo': r = kanban.restoreTodo(alias, a.taskId, a.todoId); break;
+          case 'kanban_history': r = { ok: true, history: kanban.getHistory(alias) }; break;
+          default: return json(res, { ok: false, error: `Unknown kanban tool: ${body.tool}` }, 404);
+        }
+        if (r.ok && body.tool !== 'kanban_list' && body.tool !== 'kanban_history') broadcastKanban(alias);
+        return json(res, r);
+      }
+
+      // ─── Secret search (no approval — metadata only, never the value) ───
+      if (body.tool === 'secret_search') {
+        return json(res, { ok: true, results: secrets.searchSecrets(a.query || '') });
+      }
+
+      // ─── Secret access (requires user approval + PIN; blocks until then) ───
+      if (body.tool === 'secret_get') {
+        // Resolve which secret: by id, else by exact (case-insensitive) name.
+        let meta = a.id ? secrets.getSecretMeta(a.id) : null;
+        if (!meta && a.name) {
+          const byName = secrets.searchSecrets(a.name)
+            .filter(s => s.name.toLowerCase() === String(a.name).toLowerCase());
+          if (byName.length > 1) {
+            return json(res, { ok: false, error: `Multiple secrets named "${a.name}" — call secret_get with the id instead.`, matches: byName });
+          }
+          meta = byName[0] || null;
+        }
+        if (!meta) return json(res, { ok: false, error: 'Secret not found. Use secret_search to find the right name/id.' });
+
+        const result = await waitForSecretApproval({
+          secretId: meta.id,
+          secretName: meta.name,
+          projectAlias: a.alias || '',
+          reason: a.reason || '',
+        });
+        return json(res, result);
+      }
 
       // Built-in notification tools
       if (body.tool === 'send_message_to_user' && bot) {
@@ -1181,8 +1541,11 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
 
       setupWebSocket();
 
-      // Start Cloudflare tunnel (named if token configured, otherwise quick)
-      if (config.tunnelToken) {
+      // Start Cloudflare tunnel (named if token configured, otherwise quick).
+      // Set DISABLE_TUNNEL=1 to run localhost-only (no Cloudflare at all).
+      if (process.env.DISABLE_TUNNEL === '1') {
+        console.log('[webapp] Tunnel disabled (DISABLE_TUNNEL=1) — localhost only');
+      } else if (config.tunnelToken) {
         const tunnelResult = startNamedTunnel(TUNNEL_KEY, config.tunnelToken, config.tunnelUrl);
         if (!tunnelResult.ok) {
           console.warn('[webapp] Named tunnel failed:', tunnelResult.error, '— running on localhost only');

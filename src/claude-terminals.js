@@ -8,8 +8,9 @@
 
 import { createRequire } from 'module';
 import { EventEmitter } from 'events';
-import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'fs';
+import { existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, dirname, resolve as resolvePath } from 'path';
+import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { getProject } from './project-store.js';
 
@@ -111,6 +112,28 @@ export function ensureGitignore(projectPath) {
 }
 
 /**
+ * Check whether Claude Code has a prior conversation recorded for this
+ * project path. Claude Code stores per-project session transcripts under
+ * ~/.claude/projects/<encoded-path>/*.jsonl, where the path is encoded by
+ * replacing every non-alphanumeric character with a dash
+ * (e.g. C:\Projects\crundi → C--Projects-crundi).
+ *
+ * Passing `--continue` when no conversation exists makes the CLI exit
+ * immediately with "No conversation found to continue", so we only add the
+ * flag when at least one transcript is present.
+ */
+export function hasExistingConversation(projectPath) {
+  try {
+    const encoded = resolvePath(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
+    const sessionDir = join(homedir(), '.claude', 'projects', encoded);
+    if (!existsSync(sessionDir)) return false;
+    return readdirSync(sessionDir).some(f => f.endsWith('.jsonl'));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Create the Claude terminal manager.
  *
  * @param {{ onComplete?: (alias: string) => void, apiUrl?: string, apiKey?: string }} opts
@@ -162,10 +185,16 @@ export function createClaudeTerminals({ onComplete, apiUrl: initApiUrl, apiKey: 
       try { writeMcpConfig(project.path, apiUrl, apiKey, key); } catch { /* non-fatal */ }
     }
 
-    // Spawn claude CLI
-    const flags = '--continue' + (skipPermissions ? ' --dangerously-skip-permissions' : '');
+    // Spawn claude CLI. Only resume a prior conversation when one exists for
+    // this project — `--continue` against a fresh project exits with
+    // "No conversation found to continue".
+    const flagList = [];
+    if (hasExistingConversation(project.path)) flagList.push('--continue');
+    if (skipPermissions) flagList.push('--dangerously-skip-permissions');
+    const flags = flagList.join(' ');
+    const command = flags ? `claude ${flags}` : 'claude';
     const shell = isWin ? 'cmd.exe' : '/bin/bash';
-    const shellArgs = isWin ? ['/c', `claude ${flags}`] : ['-c', `claude ${flags}`];
+    const shellArgs = isWin ? ['/c', command] : ['-c', command];
 
     let proc;
     try {

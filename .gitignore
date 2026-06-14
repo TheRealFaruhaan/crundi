@@ -7,3 +7,8 @@ certs/
 dist/
 dist-build.log
 .mcp.json
+
+.env.dev
+.dev-data/
+node_modules/
+screenshots/
