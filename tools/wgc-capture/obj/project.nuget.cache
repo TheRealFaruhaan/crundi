@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "xkSCIx/dEHg=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\faruh\\OneDrive\\Documents\\CodePilotWorkspace\\telegram-bot\\tools\\wgc-capture\\wgc-capture.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\faruh\\.nuget\\packages\\microsoft.net.illink.tasks\\10.0.2\\microsoft.net.illink.tasks.10.0.2.nupkg.sha512",
+    "C:\\Users\\faruh\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.22000.57\\microsoft.windows.sdk.net.ref.10.0.22000.57.nupkg.sha512"
+  ],
+  "logs": []
+}

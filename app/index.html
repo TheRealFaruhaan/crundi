@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crundi</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; connect-src *; frame-src http://localhost:*;">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary: #0a0a0f;
+      --bg-secondary: #12121a;
+      --bg-tertiary: #1a1a28;
+      --border: #2a2a3d;
+      --text-primary: #e8e8f0;
+      --text-secondary: #8888a8;
+      --text-muted: #5a5a78;
+      --accent: #6366f1;
+      --green: #10b981;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+      --radius: 10px;
+      --radius-sm: 6px;
+      --mono: "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+    }
+
+    body {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ─── Title bar ─── */
+    .titlebar {
+      height: 32px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      -webkit-app-region: drag;
+      padding: 0 12px;
+      user-select: none;
+    }
+    .titlebar .title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      flex: 1;
+    }
+    .titlebar .controls {
+      display: flex;
+      gap: 2px;
+      -webkit-app-region: no-drag;
+    }
+    .titlebar .controls button {
+      width: 36px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .titlebar .controls button:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+    .titlebar .controls button.close:hover { background: var(--red); color: white; }
+
+    /* ─── Content area ─── */
+    .content {
+      height: calc(100vh - 32px);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Loading / Status screen ─── */
+    #status-screen {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+    }
+    #status-screen h1 { font-size: 2rem; font-weight: 700; }
+    #status-screen .status {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #status-screen .status .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    #status-screen .status .dot.starting { background: var(--yellow); animation: pulse 1s infinite; }
+    #status-screen .status .dot.running { background: var(--green); }
+    #status-screen .status .dot.error { background: var(--red); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .log-area {
+      width: 90%;
+      max-width: 700px;
+      max-height: 200px;
+      overflow-y: auto;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .btn-row { display: flex; gap: 10px; }
+    .btn {
+      padding: 8px 20px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .btn:hover { background: var(--accent); border-color: var(--accent); }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    .btn:disabled:hover { background: var(--bg-tertiary); border-color: var(--border); }
+
+    /* ─── Webapp iframe ─── */
+    #webapp-frame {
+      display: none;
+      flex: 1;
+      border: none;
+      width: 100%;
+      height: 100%;
+    }
+    #webapp-frame.visible { display: block; }
+
+    #drop-overlay {
+      display: none;
+      position: fixed;
+      inset: 32px 0 0 0;
+      z-index: 1000;
+      background: rgba(99, 102, 241, 0.08);
+      border: 2px dashed var(--accent);
+      pointer-events: auto;
+    }
+    #drop-overlay.visible { display: block; }
+
+    /* ─── Setup wizard ─── */
+    #setup-screen {
+      display: none;
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+    }
+    #setup-screen.visible { display: flex; }
+    .setup-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      width: 90%;
+      max-width: 480px;
+    }
+    .setup-card h2 { margin-bottom: 20px; font-size: 1.3rem; }
+    .setup-card label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .setup-card input {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+      margin-bottom: 14px;
+      outline: none;
+    }
+    .setup-card input:focus { border-color: var(--accent); }
+    .setup-card .browse-row { display: flex; gap: 8px; margin-bottom: 14px; }
+    .setup-card .browse-row input { flex: 1; margin-bottom: 0; }
+    .setup-card .browse-row button {
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+    .setup-card .setup-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+    .setup-card .btn-primary {
+      padding: 10px 24px;
+      border-radius: var(--radius-sm);
+      border: none;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .setup-card .btn-primary:hover { background: #818cf8; }
+    .setup-advanced {
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0;
+    }
+    .setup-advanced summary {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      user-select: none;
+    }
+    .setup-advanced summary:hover { color: var(--text-primary); }
+    .setup-advanced[open] { padding: 0 12px 8px; }
+    .setup-advanced[open] summary { padding: 8px 0; }
+  </style>
+</head>
+<body>
+  <!-- Title bar -->
+  <div class="titlebar">
+    <span class="title">Crundi</span>
+    <div class="controls">
+      <button onclick="api.minimize()">&#x2013;</button>
+      <button onclick="api.maximize()">&#x25A1;</button>
+      <button class="close" onclick="api.close()">&#x2715;</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Status / Loading screen -->
+    <div id="status-screen">
+      <h1>Crundi</h1>
+      <div class="status">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">Starting...</span>
+      </div>
+      <div class="log-area" id="log-area"></div>
+      <div class="btn-row">
+        <button class="btn" id="btn-start" onclick="api.startBot()" disabled>Start</button>
+        <button class="btn" id="btn-stop" onclick="api.stopBot()" disabled>Stop</button>
+        <button class="btn" id="btn-restart" onclick="api.restartBot()" disabled>Restart</button>
+      </div>
+    </div>
+
+    <!-- Drop overlay (intercepts file drops to get real paths) -->
+    <div id="drop-overlay"></div>
+
+    <!-- Webapp iframe (shown when server is ready) -->
+    <iframe id="webapp-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" allow="clipboard-write; clipboard-read"></iframe>
+
+    <!-- Setup wizard -->
+    <div id="setup-screen">
+      <div class="setup-card">
+        <h2>Welcome to Crundi</h2>
+        <p id="setup-import-hint" style="display:none;font-size:0.82rem;color:var(--green);margin-bottom:14px;">Found previous Claude Telegram Bot config — review and save to continue.</p>
+        <label for="setup-token">Telegram Bot Token</label>
+        <input type="text" id="setup-token" placeholder="123456:ABC-DEF..." autocomplete="off">
+        <label for="setup-username">Your Telegram Username</label>
+        <input type="text" id="setup-username" placeholder="your_username" autocomplete="off">
+        <label>Project Mode</label>
+        <div style="display:flex;gap:12px;margin-bottom:14px;">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:0.88rem;color:var(--text-primary);">
+            <input type="radio" name="setup-mode" value="single" checked onchange="updateProjectMode()"> Single folder
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:0.88rem;color:var(--text-primary);">
+            <input type="radio" name="setup-mode" value="multi" onchange="updateProjectMode()"> Multiple folders
+          </label>
+        </div>
+        <div id="setup-single-fields">
+          <label>Projects Directory</label>
+          <div class="browse-row">
+            <input type="text" id="setup-projects" placeholder="C:\Projects" autocomplete="off">
+            <button onclick="browseProjects()">Browse</button>
+          </div>
+        </div>
+        <div id="setup-multi-hint" style="display:none;font-size:0.78rem;color:var(--text-muted);margin-bottom:14px;">
+          Projects will be added individually with their full paths from the web UI.
+        </div>
+        <details class="setup-advanced">
+          <summary>Advanced (optional)</summary>
+          <div style="margin-top: 12px;">
+            <label for="setup-tunnel-token">Cloudflare Tunnel Token</label>
+            <input type="text" id="setup-tunnel-token" placeholder="eyJhIjoi..." autocomplete="off">
+            <label for="setup-tunnel-url">Tunnel Public URL</label>
+            <input type="text" id="setup-tunnel-url" placeholder="https://crundi.yourdomain.com" autocomplete="off">
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: -8px; margin-bottom: 8px;">
+              Create a named tunnel in Cloudflare Zero Trust for a persistent custom domain.<br>
+              Leave empty to use a random quick tunnel.
+            </div>
+          </div>
+        </details>
+        <div class="setup-actions">
+          <button class="btn-primary" onclick="saveSetup()">Save & Start</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const logArea = document.getElementById('log-area');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const statusScreen = document.getElementById('status-screen');
+    const webappFrame = document.getElementById('webapp-frame');
+    const setupScreen = document.getElementById('setup-screen');
+
+    function addLog(text) {
+      const line = document.createElement('div');
+      line.textContent = typeof text === 'string' ? text : text.text || '';
+      logArea.appendChild(line);
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function updateStatus(status) {
+      statusDot.className = 'dot ' + status;
+      const labels = { stopped: 'Stopped', starting: 'Starting...', running: 'Running', error: 'Error' };
+      statusText.textContent = labels[status] || status;
+      document.getElementById('btn-start').disabled = !(status === 'stopped' || status === 'error');
+      document.getElementById('btn-stop').disabled = !(status === 'running' || status === 'starting');
+      document.getElementById('btn-restart').disabled = status === 'stopped';
+    }
+
+    // Events from main process
+    api.onBotStatus(updateStatus);
+    api.onBotLog(addLog);
+
+    api.onWebappReady((url) => {
+      statusScreen.style.display = 'none';
+      webappFrame.src = url;
+      webappFrame.classList.add('visible');
+    });
+
+    api.onWebappStopped(() => {
+      webappFrame.classList.remove('visible');
+      webappFrame.src = '';
+      statusScreen.style.display = '';
+    });
+
+    api.onShowSetup((oldConfig) => {
+      statusScreen.style.display = 'none';
+      setupScreen.classList.add('visible');
+      if (oldConfig) {
+        // Pre-fill from old "Claude Telegram Bot" config
+        document.getElementById('setup-import-hint').style.display = '';
+        if (oldConfig.TELEGRAM_BOT_TOKEN) document.getElementById('setup-token').value = oldConfig.TELEGRAM_BOT_TOKEN;
+        if (oldConfig.ALLOWED_USERNAME) document.getElementById('setup-username').value = oldConfig.ALLOWED_USERNAME;
+        if (oldConfig.PROJECTS_DIR) {
+          document.getElementById('setup-projects').value = oldConfig.PROJECTS_DIR;
+          document.querySelector('input[name="setup-mode"][value="single"]').checked = true;
+          updateProjectMode();
+        }
+        if (oldConfig.CLOUDFLARE_TUNNEL_TOKEN) document.getElementById('setup-tunnel-token').value = oldConfig.CLOUDFLARE_TUNNEL_TOKEN;
+        if (oldConfig.CLOUDFLARE_TUNNEL_URL) document.getElementById('setup-tunnel-url').value = oldConfig.CLOUDFLARE_TUNNEL_URL;
+        // Open advanced section if tunnel config exists
+        if (oldConfig.CLOUDFLARE_TUNNEL_TOKEN || oldConfig.CLOUDFLARE_TUNNEL_URL) {
+          document.querySelector('.setup-advanced').open = true;
+        }
+      }
+    });
+
+    // Setup
+    function updateProjectMode() {
+      const mode = document.querySelector('input[name="setup-mode"]:checked').value;
+      document.getElementById('setup-single-fields').style.display = mode === 'single' ? '' : 'none';
+      document.getElementById('setup-multi-hint').style.display = mode === 'multi' ? '' : 'none';
+    }
+
+    async function browseProjects() {
+      const path = await api.browseDir();
+      if (path) document.getElementById('setup-projects').value = path;
+    }
+
+    async function saveSetup() {
+      const mode = document.querySelector('input[name="setup-mode"]:checked').value;
+      const config = {
+        botToken: document.getElementById('setup-token').value.trim(),
+        username: document.getElementById('setup-username').value.trim().replace(/^@/, ''),
+        projectsDir: mode === 'single' ? document.getElementById('setup-projects').value.trim() : '',
+        tunnelToken: document.getElementById('setup-tunnel-token').value.trim(),
+        tunnelUrl: document.getElementById('setup-tunnel-url').value.trim(),
+      };
+      if (!config.botToken || !config.username) {
+        alert('Bot token and username are required.');
+        return;
+      }
+      if (mode === 'single' && !config.projectsDir) {
+        alert('Projects directory is required for single folder mode.');
+        return;
+      }
+      setupScreen.classList.remove('visible');
+      statusScreen.style.display = '';
+      await api.saveSetup(config);
+    }
+
+    // Drag-and-drop: disable iframe pointer-events during drag so parent overlay catches the drop
+    const dropOverlay = document.getElementById('drop-overlay');
+    let dragCounter = 0;
+    function showDragOverlay() {
+      if (webappFrame.classList.contains('visible')) {
+        webappFrame.style.pointerEvents = 'none';
+        dropOverlay.classList.add('visible');
+      }
+    }
+    function hideDragOverlay() {
+      dropOverlay.classList.remove('visible');
+      webappFrame.style.pointerEvents = '';
+    }
+    document.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragCounter++;
+      showDragOverlay();
+    });
+    document.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) { dragCounter = 0; hideDragOverlay(); }
+    });
+    document.addEventListener('dragover', (e) => e.preventDefault());
+    dropOverlay.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      hideDragOverlay();
+      const files = e.dataTransfer?.files;
+      if (!files || !files.length) return;
+      const paths = [];
+      for (const f of files) { paths.push(api.getPathForFile(f) || f.name); }
+      if (paths.length && webappFrame.classList.contains('visible') && webappFrame.contentWindow) {
+        webappFrame.contentWindow.postMessage({ type: 'drop-files', paths }, '*');
+      }
+    });
+    document.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      hideDragOverlay();
+    });
+
+    // Bridge clipboard IPC to iframe via postMessage
+    window.addEventListener('message', async (e) => {
+      if (!e.data || e.data.type !== 'clipboard-request') return;
+      const id = e.data.id;
+      try {
+        const image = await api.getClipboardImage();
+        const filePaths = await api.getClipboardFilePaths();
+        webappFrame.contentWindow.postMessage({ type: 'clipboard-response', id, image, filePaths }, '*');
+      } catch (err) {
+        webappFrame.contentWindow.postMessage({ type: 'clipboard-response', id, error: err.message }, '*');
+      }
+    });
+
+    // Init
+    (async () => {
+      const status = await api.getBotStatus();
+      updateStatus(status);
+      const logs = await api.getBotLogs();
+      for (const entry of logs) addLog(entry);
+      try {
+        const logPath = await api.getLogPath();
+        if (logPath) {
+          const pathLine = document.createElement('div');
+          pathLine.style.cssText = 'font-size:0.7rem;color:var(--text-muted);margin-top:8px;text-align:center;user-select:all;';
+          pathLine.textContent = 'Log file: ' + logPath;
+          logArea.parentNode.insertBefore(pathLine, logArea.nextSibling);
+        }
+      } catch {}
+    })();
+  </script>
+</body>
+</html>

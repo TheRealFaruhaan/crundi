@@ -1,0 +1,9 @@
+node_modules/
+.env
+data/
+.claude/
+# Signing certificates
+certs/
+dist/
+dist-build.log
+.mcp.json

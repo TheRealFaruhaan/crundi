@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Windows 10 1903 (18362) minimum for WGC; user is on Win11 26200 -->
+    <!-- SDK 22000 = Windows 11, needed for IsBorderRequired on GraphicsCaptureSession -->
+    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Publish as single file, framework-dependent (requires .NET installed) -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+</Project>
