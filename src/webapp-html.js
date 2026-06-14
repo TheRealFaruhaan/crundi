@@ -995,6 +995,33 @@ export function getWebappHtml(botUsername) {
     body.dragging-active, body.dragging-active * { cursor: grabbing !important; }
     body.dragging-active { user-select: none; -webkit-user-select: none; }
 
+    /* ─── Text input modal (replaces window.prompt, which Electron doesn't support) ─── */
+    .input-modal { display: none; position: fixed; inset: 0; z-index: 210; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; padding: 20px; }
+    .input-modal.visible { display: flex; }
+    .input-modal .im-box { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; width: 100%; max-width: 440px; }
+    .input-modal h3 { font-size: 1rem; margin-bottom: 8px; }
+    .input-modal .im-label { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 10px; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+    .input-modal input, .input-modal textarea { width: 100%; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); border-radius: var(--radius-sm); padding: 9px 11px; font-size: 0.9rem; font-family: inherit; }
+    .input-modal textarea { resize: vertical; min-height: 70px; }
+    .input-modal input:focus, .input-modal textarea:focus { border-color: var(--accent); outline: none; }
+    .input-modal .im-buttons { display: flex; gap: 10px; margin-top: 12px; }
+    .input-modal .im-buttons button { flex: 1; border-radius: var(--radius-sm); padding: 9px; font-size: 0.85rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
+    .input-modal .im-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    /* link picker */
+    .input-modal select { background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); border-radius: var(--radius-sm); padding: 8px 10px; font-size: 0.85rem; max-width: 45%; }
+    .input-modal .lm-row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .input-modal .lm-list { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    .input-modal .lm-item { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border-subtle); font-size: 0.85rem; }
+    .input-modal .lm-item:last-child { border-bottom: none; }
+    .input-modal .lm-item:hover { background: var(--bg-hover); }
+    .input-modal .lm-item.todo { padding-left: 28px; font-size: 0.8rem; color: var(--text-secondary); }
+    .input-modal .lm-item .st { color: var(--text-muted); font-size: 0.72rem; }
+    .input-modal .lm-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.82rem; }
+
+    /* mindmap drag: sibling insert indicators */
+    .mm-node.mm-insert-above { box-shadow: 0 -3px 0 0 var(--accent); }
+    .mm-node.mm-insert-below { box-shadow: 0 3px 0 0 var(--accent); }
+
     /* ─── Scrollbar ─── */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -1072,12 +1099,12 @@ export function getWebappHtml(botUsername) {
           <button class="tab-btn" data-tab="git">Git</button>
           <button class="tab-btn" data-tab="files">Files</button>
           <button class="tab-btn" data-tab="kanban">Kanban</button>
+          <button class="tab-btn" data-tab="mindmap">Mindmap</button>
           <button class="tab-btn" data-tab="services">Services</button>
           <button class="tab-btn" data-tab="terminals">Terminals</button>
           <button class="tab-btn" data-tab="browsers">Browsers</button>
           <button class="tab-btn" data-tab="info">Info</button>
           <button class="tab-btn" data-tab="secrets">Secrets <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
-          <button class="tab-btn" data-tab="mindmap">Mindmap</button>
           <button class="tab-btn" data-tab="settings">Settings</button>
         </div>
         <div class="terminal-wrap tab-panel visible" data-panel="terminal">
@@ -1184,6 +1211,33 @@ export function getWebappHtml(botUsername) {
         <button id="pin-cancel-btn">Cancel</button>
         <button id="pin-submit-btn" class="primary">Unlock</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ─── Text Input Modal (replaces window.prompt) ─── -->
+  <div class="input-modal" id="input-modal">
+    <div class="im-box">
+      <h3 id="im-title">Input</h3>
+      <div class="im-label" id="im-label"></div>
+      <input type="text" id="im-input" autocomplete="off">
+      <textarea id="im-textarea" style="display:none"></textarea>
+      <div class="im-buttons">
+        <button id="im-cancel">Cancel</button>
+        <button id="im-ok" class="primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Link Picker Modal (browse/search tasks & subtasks to link) ─── -->
+  <div class="input-modal" id="link-modal">
+    <div class="im-box" style="max-width:520px">
+      <h3>Link to a Kanban item</h3>
+      <div class="lm-row">
+        <select id="lm-project"></select>
+        <input type="text" id="lm-search" placeholder="Search tasks &amp; subtasks…" autocomplete="off" style="flex:1">
+      </div>
+      <div class="lm-list" id="lm-list"></div>
+      <div class="im-buttons"><button id="lm-cancel">Cancel</button></div>
     </div>
   </div>
 
@@ -1371,15 +1425,21 @@ export function getWebappHtml(botUsername) {
     function renderUsage(u) {
       const bg = $('#usage-bg');
       if (!bg) return;
-      usageData = u;
       const bars = ['wk-usage', 'fh-usage', 'wk-time', 'fh-time'];
       const labels = ['wk-usage-label', 'fh-usage-label', 'wk-time-label', 'fh-time-label'];
       if (!u || !u.ok) {
+        // Transient failure (e.g. rate-limit 429): keep the last-known bars
+        // visible instead of blanking; only clear if we never had good data.
+        if (usageData && usageData.ok) {
+          bg.title = 'Claude usage (last known — refresh failed: ' + ((u && u.error) || '?') + ')';
+          return;
+        }
         bars.forEach(i => { const e = $('#' + i); if (e) e.style.width = '0%'; });
         labels.forEach(i => { const e = $('#' + i); if (e) e.textContent = ''; });
         bg.title = 'Claude usage unavailable: ' + ((u && u.error) || 'unknown');
         return;
       }
+      usageData = u;
       const five = u.fiveHour ? u.fiveHour.utilization : 0;
       const week = u.week ? u.week.utilization : 0;
       setUsageBar('wk-usage', 'wk-usage-label', week, 'wk');
@@ -2977,8 +3037,10 @@ export function getWebappHtml(botUsername) {
 
       panel.innerHTML = addBtn + projectServices.map(s => {
         const statusClass = s.status === 'running' ? 'running' : (s.status === 'error' ? 'error' : 'stopped');
-        const tunnelHtml = s.tunnelUrl
-          ? '<br><a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>'
+        const tunnelOn = (s.tunnelPort || 0) > 0;
+        const tunnelHtml = tunnelOn
+          ? '<br><span style="color:var(--text-muted)">tunnel :' + s.tunnelPort + '</span>'
+            + (s.tunnelUrl ? ' <a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>' : ' <span style="color:var(--yellow)">(starting…)</span>')
           : '';
         return '<div class="svc-card" data-svc-key="' + escHtml(s.key) + '">'
           + '<div class="svc-header">'
@@ -2994,6 +3056,7 @@ export function getWebappHtml(botUsername) {
               + '<button data-action="svc-restart" data-key="' + escHtml(s.key) + '">Restart</button>'
             : '<button data-action="svc-start" data-key="' + escHtml(s.key) + '">Start</button>')
           + '<button data-action="svc-logs" data-key="' + escHtml(s.key) + '">Logs</button>'
+          + '<button data-action="svc-tunnel" data-key="' + escHtml(s.key) + '" data-port="' + (s.tunnelPort || 0) + '">' + (tunnelOn ? 'Tunnel: on' : 'Tunnel: off') + '</button>'
           + '<button class="danger" data-action="svc-delete" data-key="' + escHtml(s.key) + '">Delete</button>'
           + '</div>'
           + '<div class="svc-logs" id="svc-logs-' + escHtml(s.key) + '"></div>'
@@ -3029,6 +3092,26 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    async function svcTunnel(key, currentPort) {
+      const cur = parseInt(currentPort, 10) || 0;
+      const val = await askText({
+        title: cur > 0 ? 'Tunnel (currently :' + cur + ')' : 'Enable tunnel',
+        label: 'Port to expose via Cloudflare tunnel. Enter 0 (or leave blank) to disable.',
+        value: cur > 0 ? String(cur) : '',
+      });
+      if (val === null) return; // cancelled
+      const port = parseInt(val, 10) || 0;
+      try {
+        const res = await apiFetch('/api/services/' + encodeURIComponent(key) + '/tunnel', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port }),
+        });
+        const d = await res.json();
+        if (!d.ok) toast(d.error || 'Failed', 'error');
+        else toast(port > 0 ? 'Tunnel enabled on :' + port : 'Tunnel disabled', 'success');
+        setTimeout(loadServices, 600);
+      } catch (err) { toast('Error: ' + err.message, 'error'); }
+    }
+
     async function svcDelete(key) {
       if (!confirm('Delete service "' + key + '"?')) return;
       try {
@@ -3054,6 +3137,7 @@ export function getWebappHtml(botUsername) {
         + '<input type="text" id="svc-reg-cmd" placeholder="Command (e.g. npm run dev)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
         + '<input type="text" id="svc-reg-cwd" placeholder="Working directory (optional)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
         + '<input type="text" id="svc-reg-stop" placeholder="Stop command (optional, e.g. docker compose down)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
+        + '<input type="number" id="svc-reg-tunnel" placeholder="Tunnel port (optional, e.g. 3000) — exposes it via Cloudflare" min="0" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
         + '<div style="display:flex;gap:6px;">'
         + '<button data-action="svc-reg-submit" style="padding:6px 14px;border-radius:4px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:12px;">Register</button>'
         + '<button data-action="svc-reg-cancel" style="padding:6px 14px;border-radius:4px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12px;">Cancel</button>'
@@ -3071,13 +3155,14 @@ export function getWebappHtml(botUsername) {
       const command = (document.getElementById('svc-reg-cmd') || {}).value || '';
       const cwd = (document.getElementById('svc-reg-cwd') || {}).value || '';
       const stopCommand = (document.getElementById('svc-reg-stop') || {}).value || '';
+      const tunnelPort = parseInt((document.getElementById('svc-reg-tunnel') || {}).value, 10) || 0;
       if (!name.trim()) { toast('Service name is required', 'error'); return; }
       if (!command.trim()) { toast('Command is required', 'error'); return; }
       try {
         const res = await apiFetch('/api/services', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alias: currentProject, name: name.trim(), command: command.trim(), cwd: cwd.trim(), stopCommand: stopCommand.trim() }),
+          body: JSON.stringify({ alias: currentProject, name: name.trim(), command: command.trim(), cwd: cwd.trim(), stopCommand: stopCommand.trim(), tunnelPort }),
         });
         const data = await res.json();
         if (!data.ok) toast(data.error || 'Failed', 'error');
@@ -3607,6 +3692,7 @@ export function getWebappHtml(botUsername) {
         case 'svc-stop': svcAction('stop', d.key); break;
         case 'svc-restart': svcAction('restart', d.key); break;
         case 'svc-logs': svcLogs(d.key); break;
+        case 'svc-tunnel': svcTunnel(d.key, d.port); break;
         case 'svc-delete': svcDelete(d.key); break;
         case 'svc-register': showRegisterServiceForm(); break;
         case 'svc-reg-submit': submitRegisterService(); break;
@@ -3712,6 +3798,16 @@ export function getWebappHtml(botUsername) {
           + '<div class="kanban-col-head"><span>' + KANBAN_STATUS_LABELS[st] + '</span><span class="count">' + tasks.length + '</span></div>'
           + '<div class="kanban-col-body" data-status="' + st + '">'
           + tasks.map(renderKanbanCard).join('')
+          + '</div></div>';
+      }
+      // Safety net: surface any task whose status isn't a known column so it can
+      // never silently disappear (move it back via the card's status dropdown).
+      const orphans = kanbanBoard.tasks.filter(t => !kanbanBoard.statuses.includes(t.status));
+      if (orphans.length) {
+        h += '<div class="kanban-col" data-status="backlog" style="border-color:var(--yellow)">'
+          + '<div class="kanban-col-head"><span style="color:var(--yellow)">Other</span><span class="count">' + orphans.length + '</span></div>'
+          + '<div class="kanban-col-body" data-status="backlog">'
+          + orphans.map(renderKanbanCard).join('')
           + '</div></div>';
       }
       return h + '</div>';
@@ -3882,7 +3978,10 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Mindmap drag (reparent: drop on a node = become its child; drop on empty = root) ───
-    function clearMmDropTargets() { document.querySelectorAll('.mm-node.mm-drop-target').forEach(n => n.classList.remove('mm-drop-target')); }
+    function clearMmDropTargets() {
+      document.querySelectorAll('.mm-node.mm-drop-target, .mm-node.mm-insert-above, .mm-node.mm-insert-below')
+        .forEach(n => n.classList.remove('mm-drop-target', 'mm-insert-above', 'mm-insert-below'));
+    }
     function mindmapDragHandlers(nodeId) {
       let target = null;
       return {
@@ -3890,12 +3989,28 @@ export function getWebappHtml(botUsername) {
           clearMmDropTargets();
           const elAt = document.elementFromPoint(x, y);
           const over = elAt && elAt.closest ? elAt.closest('.mm-node') : null;
-          if (over && over.dataset.node !== nodeId) { over.classList.add('mm-drop-target'); target = { parentId: over.dataset.node }; }
-          else { target = { parentId: null }; }
+          if (!over || over.dataset.node === nodeId) { target = { parentId: null }; return; } // empty → root
+          const overId = over.dataset.node;
+          const r = over.getBoundingClientRect();
+          const rel = (y - r.top) / r.height;
+          if (rel < 0.30 || rel > 0.70) {
+            // drop above/below a node → reorder as its sibling
+            const overNode = mindmapNodes.find(n => n.id === overId);
+            const parentId = (overNode && overNode.parentId) || null;
+            const sibs = mindmapNodes.filter(n => (n.parentId || null) === parentId && n.id !== nodeId);
+            const pos = sibs.findIndex(n => n.id === overId);
+            const before = rel < 0.30;
+            target = { parentId, index: before ? pos : pos + 1 };
+            over.classList.add(before ? 'mm-insert-above' : 'mm-insert-below');
+          } else {
+            // drop onto a node → make it a child (append)
+            over.classList.add('mm-drop-target');
+            target = { parentId: overId };
+          }
         },
         onEnd: async (commit) => {
           clearMmDropTargets();
-          if (commit && target) { await mindmapPost({ action: 'moveNode', id: nodeId, parentId: target.parentId }); loadMindmap(); }
+          if (commit && target) { await mindmapPost({ action: 'moveNode', id: nodeId, parentId: target.parentId, index: target.index }); loadMindmap(); }
           target = null;
         },
       };
@@ -3920,14 +4035,14 @@ export function getWebappHtml(botUsername) {
         else if (act === 'view-trash') { kanbanView = 'trash'; loadKanban(); }
         else if (act === 'view-history') { kanbanView = 'history'; loadKanban(); }
         else if (act === 'add-task') {
-          const title = prompt('Task title:');
+          const title = await askText({ title: 'Add task', label: 'Task title' });
           if (title && title.trim()) { await kanbanPost({ action: 'addTask', title: title.trim() }); loadKanban(); }
         } else if (act === 'edit-task') {
           const task = (kanbanBoard.tasks || []).find(t => t.id === taskId);
           if (!task) return;
-          const title = prompt('Task title:', task.title);
+          const title = await askText({ title: 'Edit task', label: 'Task title', value: task.title });
           if (title === null) return;
-          const description = prompt('Description:', task.description || '');
+          const description = await askText({ title: 'Edit task', label: 'Description', value: task.description || '', multiline: true });
           if (description === null) return;
           await kanbanPost({ action: 'updateTask', taskId, title: title.trim(), description }); loadKanban();
         } else if (act === 'del-task') {
@@ -3940,7 +4055,15 @@ export function getWebappHtml(botUsername) {
           const task = (kanbanBoard.tasks || []).find(t => t.id === taskId);
           if (!task) return;
           const r = await mindmapPost({ action: 'addNode', text: task.title, project: currentProject, taskId });
-          if (r.ok) { toast('Added to Mindmap', 'success'); document.querySelector('.tab-btn[data-tab="mindmap"]').click(); }
+          if (r.ok && r.node) {
+            // Bring the task's todos (subtasks) over as child idea nodes.
+            const todos = (task.todos || []).filter(td => !td.deleted);
+            for (const td of todos) {
+              await mindmapPost({ action: 'addNode', text: td.text, parentId: r.node.id, project: currentProject, taskId, todoId: td.id });
+            }
+            toast('Added to Mindmap' + (todos.length ? ' with ' + todos.length + ' subtask(s)' : ''), 'success');
+            document.querySelector('.tab-btn[data-tab="mindmap"]').click();
+          }
         } else if (act === 'goto-mindmap') {
           document.querySelector('.tab-btn[data-tab="mindmap"]').click();
         }
@@ -4204,10 +4327,15 @@ export function getWebappHtml(botUsername) {
         let badge = '';
         if (linked) {
           if (info && !info.missing) {
-            badge = '<span class="mm-link" title="Linked Kanban task">🔗 ' + escHtml(info.project) + ' · ' + escHtml(info.title || '')
-              + ' <span class="st">[' + escHtml((info.status || '').replace('_', ' ')) + (info.deleted ? ', deleted' : '') + ']</span></span>';
+            if (info.kind === 'todo') {
+              badge = '<span class="mm-link" title="Linked subtask in: ' + escHtml(info.taskTitle || '') + '">🔗 ' + (info.done ? '☑' : '☐') + ' ' + escHtml(info.text || '')
+                + ' <span class="st">· ' + escHtml(info.taskTitle || '') + '</span></span>';
+            } else {
+              badge = '<span class="mm-link" title="Linked Kanban task">🔗 ' + escHtml(info.project) + ' · ' + escHtml(info.title || '')
+                + ' <span class="st">[' + escHtml((info.status || '').replace('_', ' ')) + (info.deleted ? ', deleted' : '') + ']</span></span>';
+            }
           } else {
-            badge = '<span class="mm-link missing" title="Linked task no longer exists">🔗 task removed</span>';
+            badge = '<span class="mm-link missing" title="Linked item no longer exists">🔗 ' + (info && info.kind === 'todo' ? 'subtask removed' : 'task removed') + '</span>';
           }
         }
         html += '<div class="mm-node' + (isRoot ? ' root' : '') + (linked ? ' linked' : '') + '" style="left:' + px(pos[n.id].x) + 'px;top:' + py(pos[n.id].y) + 'px" data-node="' + n.id + '">'
@@ -4227,19 +4355,45 @@ export function getWebappHtml(botUsername) {
       attachMindmapDrag(inner);
     }
 
-    async function mindmapLinkFlow(id) {
-      const proj = currentProject;
-      if (!proj) { toast('Open a project first to pick a task, or use “Brainstorm” on a Kanban card', 'error'); return; }
-      const res = await apiFetch('/api/kanban?project=' + encodeURIComponent(proj));
-      const d = await res.json();
-      const tasks = (d.ok && d.board && d.board.tasks) ? d.board.tasks : [];
-      if (!tasks.length) { toast('No tasks in "' + proj + '" to link', 'error'); return; }
-      const list = tasks.map((t, i) => (i + 1) + '. ' + t.title + ' [' + t.status + ']').join('\\n');
-      const pick = prompt('Link to which task in "' + proj + '"?\\n\\n' + list + '\\n\\nEnter number:');
-      const idx = parseInt(pick, 10) - 1;
-      if (isNaN(idx) || !tasks[idx]) return;
-      await mindmapPost({ action: 'linkNode', id, project: proj, taskId: tasks[idx].id });
-      loadMindmap();
+    // ─── Link picker (browse / search / filter tasks & subtasks) ───
+    let linkPickNodeId = null;
+    let linkPickBoard = null;
+    function openLinkPicker(nodeId) {
+      linkPickNodeId = nodeId;
+      const sel = $('#lm-project');
+      sel.innerHTML = (projects || []).map(p => '<option value="' + escHtml(p.alias) + '">' + escHtml(p.name || p.alias) + '</option>').join('');
+      if (currentProject) sel.value = currentProject;
+      $('#lm-search').value = '';
+      $('#link-modal').classList.add('visible');
+      loadLinkBoard();
+      setTimeout(() => $('#lm-search').focus(), 50);
+    }
+    async function loadLinkBoard() {
+      const proj = $('#lm-project').value;
+      $('#lm-list').innerHTML = '<div class="lm-empty">Loading…</div>';
+      try {
+        const res = await apiFetch('/api/kanban?project=' + encodeURIComponent(proj));
+        const d = await res.json();
+        linkPickBoard = (d.ok && d.board) ? d.board : { tasks: [] };
+      } catch { linkPickBoard = { tasks: [] }; }
+      renderLinkList();
+    }
+    function renderLinkList() {
+      const proj = $('#lm-project').value;
+      const q = $('#lm-search').value.trim().toLowerCase();
+      const tasks = (linkPickBoard && linkPickBoard.tasks) || [];
+      let h = '';
+      for (const t of tasks) {
+        const tMatch = !q || (t.title || '').toLowerCase().includes(q);
+        const todos = (t.todos || []).filter(td => !td.deleted);
+        const matchTodos = todos.filter(td => !q || (td.text || '').toLowerCase().includes(q));
+        if (!tMatch && matchTodos.length === 0) continue;
+        h += '<div class="lm-item" data-project="' + escHtml(proj) + '" data-task="' + t.id + '">' + escHtml(t.title) + ' <span class="st">[' + (t.status || '').replace('_', ' ') + ']</span></div>';
+        for (const td of (q ? matchTodos : todos)) {
+          h += '<div class="lm-item todo" data-project="' + escHtml(proj) + '" data-task="' + t.id + '" data-todo="' + td.id + '">' + (td.done ? '☑' : '☐') + ' ' + escHtml(td.text) + '</div>';
+        }
+      }
+      $('#lm-list').innerHTML = h || '<div class="lm-empty">No matching tasks or subtasks.</div>';
     }
 
     function setupMindmapHandlers() {
@@ -4251,21 +4405,21 @@ export function getWebappHtml(botUsername) {
         const id = btn.dataset.node;
         const node = id ? mindmapNodes.find(n => n.id === id) : null;
         if (act === 'add-root') {
-          const text = prompt('New idea:');
+          const text = await askText({ title: 'Add idea', label: 'New idea' });
           if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim() }); loadMindmap(); }
         } else if (act === 'add-child') {
-          const text = prompt('Child idea:');
+          const text = await askText({ title: 'Add child idea', label: 'Child idea' });
           if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim(), parentId: id }); loadMindmap(); }
         } else if (act === 'edit') {
           if (!node) return;
-          const text = prompt('Idea text:', node.text);
+          const text = await askText({ title: 'Edit idea', label: 'Idea text', value: node.text });
           if (text === null) return;
-          const note = prompt('Note (optional):', node.note || '');
+          const note = await askText({ title: 'Edit idea', label: 'Note (optional)', value: node.note || '', multiline: true });
           if (note === null) return;
           await mindmapPost({ action: 'updateNode', id, text: text.trim(), note }); loadMindmap();
         } else if (act === 'link') {
           if (node && node.linkedTask) { await mindmapPost({ action: 'unlinkNode', id }); loadMindmap(); }
-          else mindmapLinkFlow(id);
+          else openLinkPicker(id);
         } else if (act === 'del') {
           if (!confirm('Delete this idea and all its sub-ideas?')) return;
           await mindmapPost({ action: 'deleteNode', id }); loadMindmap();
@@ -4274,6 +4428,36 @@ export function getWebappHtml(botUsername) {
           renderMindmap();
         }
       });
+    }
+
+    // ─── Text input modal (window.prompt replacement; Electron has no prompt) ───
+    let imResolve = null;
+    function askText({ title = 'Input', label = '', value = '', multiline = false, okLabel = 'OK' } = {}) {
+      return new Promise((resolve) => {
+        imResolve = resolve;
+        $('#im-title').textContent = title;
+        const lbl = $('#im-label');
+        lbl.textContent = label || '';
+        lbl.style.display = label ? '' : 'none';
+        const inp = $('#im-input'), ta = $('#im-textarea');
+        inp.style.display = multiline ? 'none' : '';
+        ta.style.display = multiline ? '' : 'none';
+        const field = multiline ? ta : inp;
+        field.value = value || '';
+        $('#im-ok').textContent = okLabel;
+        $('#input-modal').classList.add('visible');
+        setTimeout(() => { field.focus(); if (field.select) field.select(); }, 50);
+      });
+    }
+    function imSubmit() {
+      const ml = $('#im-textarea').style.display !== 'none';
+      const val = (ml ? $('#im-textarea') : $('#im-input')).value;
+      $('#input-modal').classList.remove('visible');
+      const r = imResolve; imResolve = null; if (r) r(val);
+    }
+    function imCancel() {
+      $('#input-modal').classList.remove('visible');
+      const r = imResolve; imResolve = null; if (r) r(null);
     }
 
     // ─── PIN modal ───
@@ -4312,6 +4496,21 @@ export function getWebappHtml(botUsername) {
     $('#pin-submit-btn').addEventListener('click', submitPin);
     $('#pin-cancel-btn').addEventListener('click', closePinModal);
     $('#pin-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitPin(); } });
+    $('#im-ok').addEventListener('click', imSubmit);
+    $('#im-cancel').addEventListener('click', imCancel);
+    $('#im-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); imSubmit(); } });
+    $('#im-textarea').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); imSubmit(); } });
+    // Link picker
+    $('#lm-project').addEventListener('change', loadLinkBoard);
+    $('#lm-search').addEventListener('input', renderLinkList);
+    $('#lm-cancel').addEventListener('click', () => $('#link-modal').classList.remove('visible'));
+    $('#lm-list').addEventListener('click', async (e) => {
+      const it = e.target.closest('.lm-item');
+      if (!it) return;
+      $('#link-modal').classList.remove('visible');
+      await mindmapPost({ action: 'linkNode', id: linkPickNodeId, project: it.dataset.project, taskId: it.dataset.task, todoId: it.dataset.todo || undefined });
+      loadMindmap();
+    });
 
     // ─── Util ───
     function escHtml(s) {

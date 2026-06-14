@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
 import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService } from './services.js';
-import { registerService, listRegisteredForProject } from './service-registry.js';
+import { registerService, listRegisteredForProject, updateRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
@@ -41,7 +41,13 @@ const VENDOR_MIME = {
 };
 
 // ─── PWA assets (icons) ───
-const ASSETS_DIR = join(__dirname, '..', 'assets');
+// Dev: <repo>/assets (../assets from src). Packaged: electron-builder copies
+// assets to resources/assets via extraResources, which is ../../assets from
+// the unpacked src dir. Pick whichever exists.
+const ASSETS_DIR = [
+  join(__dirname, '..', 'assets'),
+  join(__dirname, '..', '..', 'assets'),
+].find(p => existsSync(p)) || join(__dirname, '..', 'assets');
 const ASSET_MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
@@ -285,9 +291,9 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   }
 
   // ─── Claude usage (real account-wide limits) ───
-  async function broadcastUsage() {
+  async function broadcastUsage(force = false) {
     if (!sseClients.size) return;
-    try { broadcastSSE('usage', await usage.getUsage()); } catch { /* non-fatal */ }
+    try { broadcastSSE('usage', await usage.getUsage({ force })); } catch { /* non-fatal */ }
   }
 
   /**
@@ -795,10 +801,10 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       const { action } = body;
       let result;
       switch (action) {
-        case 'addNode': result = mindmap.addNode({ text: body.text, parentId: body.parentId, note: body.note, project: body.project, taskId: body.taskId }); break;
+        case 'addNode': result = mindmap.addNode({ text: body.text, parentId: body.parentId, note: body.note, project: body.project, taskId: body.taskId, todoId: body.todoId }); break;
         case 'updateNode': result = mindmap.updateNode(body.id, { text: body.text, note: body.note }); break;
         case 'moveNode': result = mindmap.moveNode(body.id, body.parentId, body.index); break;
-        case 'linkNode': result = mindmap.linkNode(body.id, { project: body.project, taskId: body.taskId }); break;
+        case 'linkNode': result = mindmap.linkNode(body.id, { project: body.project, taskId: body.taskId, todoId: body.todoId }); break;
         case 'unlinkNode': result = mindmap.unlinkNode(body.id); break;
         case 'deleteNode': result = mindmap.deleteNode(body.id); break;
         default: return json(res, { ok: false, error: `Unknown mindmap action: ${action}` }, 400);
@@ -849,6 +855,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         projectPath: s.projectPath, status: s.status, pid: s.pid,
         memory: s.memoryBytes,
         uptime: s.startedAt ? formatUptime(Date.now() - new Date(s.startedAt).getTime()) : null,
+        tunnelPort: s.tunnelPort || 0,
         tunnelUrl: s.tunnel?.url || null,
       }));
       return json(res, { services: all });
@@ -858,18 +865,20 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
     if (path === '/api/services' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req));
       if (!body.name || !body.command) return json(res, { ok: false, error: 'name and command are required' }, 400);
+      const alias = body.alias || currentProject || '';
       const result = registerService({
-        alias: body.alias || currentProject || '',
+        alias,
         name: body.name,
         command: body.command,
-        cwd: body.cwd || '',
+        // cwd is optional in the UI — default to the project's directory
+        cwd: body.cwd || getProject(alias)?.path || '',
         stopCommand: body.stopCommand || '',
         tunnelPort: body.tunnelPort || 0,
       });
       return json(res, result);
     }
 
-    const svcMatch = path.match(/^\/api\/services\/([^/]+)\/(start|stop|restart|logs|delete)$/);
+    const svcMatch = path.match(/^\/api\/services\/([^/]+)\/(start|stop|restart|logs|delete|tunnel)$/);
     if (svcMatch) {
       const key = decodeURIComponent(svcMatch[1]);
       const action = svcMatch[2];
@@ -881,6 +890,17 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         if (action === 'start') result = startService(key);
         else if (action === 'stop') result = stopService(key);
         else if (action === 'restart') result = restartService(key);
+        else if (action === 'tunnel') {
+          // Enable/disable (or change the port of) a service's Cloudflare tunnel.
+          // port 0 = disable. Persists to the registry so it also auto-starts
+          // with the service next time.
+          const body = JSON.parse(await readBody(req));
+          const port = parseInt(body.port, 10) || 0;
+          const upd = updateRegistered(key, { tunnelPort: port });
+          if (!upd.ok) result = upd;
+          else if (port > 0) { startTunnel(key, port); result = { ok: true, enabled: true, port }; }
+          else { stopTunnel(key); result = { ok: true, enabled: false }; }
+        }
         else if (action === 'delete') {
           // Always stop the service before removing it so we never orphan a
           // running process. stopService is a no-op if it isn't running.
@@ -1380,10 +1400,10 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           case 'mindmap_list': r = { ok: true, mindmap: mindmap.getMindmap() }; break;
           case 'mindmap_get_subtree': r = mindmap.getSubtree(a.id); break;
           case 'mindmap_get_children': r = mindmap.getChildren(a.id || null); break;
-          case 'mindmap_add_node': r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, project: a.project || a.alias, taskId: a.taskId }); break;
+          case 'mindmap_add_node': r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId }); break;
           case 'mindmap_update_node': r = mindmap.updateNode(a.id, { text: a.text, note: a.note }); break;
           case 'mindmap_move_node': r = mindmap.moveNode(a.id, a.parentId, a.index); break;
-          case 'mindmap_link_node': r = mindmap.linkNode(a.id, { project: a.project || a.alias, taskId: a.taskId }); break;
+          case 'mindmap_link_node': r = mindmap.linkNode(a.id, { project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId }); break;
           case 'mindmap_unlink_node': r = mindmap.unlinkNode(a.id); break;
           case 'mindmap_delete_node': r = mindmap.deleteNode(a.id); break;
           default: return json(res, { ok: false, error: `Unknown mindmap tool: ${body.tool}` }, 404);
@@ -1669,7 +1689,8 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         if (sseClients.size) broadcastState();
       }, 5000);
 
-      // Real Claude usage refresh every 60s (matches the usage-cache TTL)
+      // Real Claude usage refresh every 60s (usage.js cache = 60s, error
+      // backoff = 5 min, and a 15s anti-burst floor on forced fetches)
       setInterval(() => { broadcastUsage(); }, 60_000);
 
       return { port, tunnelUrl };

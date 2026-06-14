@@ -51,9 +51,16 @@ function resolveLink(linkedTask) {
   try {
     const board = getBoard(linkedTask.project, { includeDeleted: true });
     const task = board.tasks.find(t => t.id === linkedTask.taskId);
-    if (!task) return { project: linkedTask.project, taskId: linkedTask.taskId, missing: true };
+    if (!task) return { kind: linkedTask.todoId ? 'todo' : 'task', project: linkedTask.project, taskId: linkedTask.taskId, todoId: linkedTask.todoId, missing: true };
+    // Link to a specific subtask (todo)
+    if (linkedTask.todoId) {
+      const todo = (task.todos || []).find(td => td.id === linkedTask.todoId);
+      if (!todo) return { kind: 'todo', project: linkedTask.project, taskId: task.id, todoId: linkedTask.todoId, taskTitle: task.title, missing: true };
+      return { kind: 'todo', project: linkedTask.project, taskId: task.id, todoId: todo.id, taskTitle: task.title, text: todo.text, done: !!todo.done, deleted: !!todo.deleted };
+    }
     const todos = task.todos || [];
     return {
+      kind: 'task',
       project: linkedTask.project,
       taskId: task.id,
       title: task.title,
@@ -143,17 +150,17 @@ export function getNodesForTask(project, taskId) {
 
 // ─── Writes ───
 
-function normalizeLink(linkedTask, project, taskId) {
-  if (linkedTask && linkedTask.project && linkedTask.taskId) {
-    return { project: String(linkedTask.project).toLowerCase(), taskId: String(linkedTask.taskId) };
-  }
-  if (project && taskId) {
-    return { project: String(project).toLowerCase(), taskId: String(taskId) };
-  }
-  return null;
+function normalizeLink(linkedTask, project, taskId, todoId) {
+  const lt = (linkedTask && linkedTask.project && linkedTask.taskId)
+    ? linkedTask
+    : (project && taskId ? { project, taskId, todoId } : null);
+  if (!lt) return null;
+  const out = { project: String(lt.project).toLowerCase(), taskId: String(lt.taskId) };
+  if (lt.todoId) out.todoId = String(lt.todoId);
+  return out;
 }
 
-export function addNode({ text, parentId = null, note = '', linkedTask = null, project, taskId } = {}) {
+export function addNode({ text, parentId = null, note = '', linkedTask = null, project, taskId, todoId } = {}) {
   const t = String(text || '').trim();
   if (!t) return { ok: false, error: 'Node text is required' };
   const store = load();
@@ -164,7 +171,7 @@ export function addNode({ text, parentId = null, note = '', linkedTask = null, p
     text: t,
     note: String(note || ''),
     parentId: parentId || null,
-    linkedTask: normalizeLink(linkedTask, project, taskId),
+    linkedTask: normalizeLink(linkedTask, project, taskId, todoId),
     createdAt: now,
     updatedAt: now,
   };
@@ -222,11 +229,11 @@ export function moveNode(id, newParentId, index) {
   return { ok: true, node };
 }
 
-export function linkNode(id, { project, taskId, linkedTask } = {}) {
+export function linkNode(id, { project, taskId, todoId, linkedTask } = {}) {
   const store = load();
   const node = findNode(store, id);
   if (!node) return { ok: false, error: 'Node not found' };
-  const link = normalizeLink(linkedTask, project, taskId);
+  const link = normalizeLink(linkedTask, project, taskId, todoId);
   if (!link) return { ok: false, error: 'project and taskId are required' };
   node.linkedTask = link;
   node.updatedAt = new Date().toISOString();
