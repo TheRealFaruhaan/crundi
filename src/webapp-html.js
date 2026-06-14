@@ -167,7 +167,30 @@ export function getWebappHtml(botUsername) {
       padding: 0 16px;
       gap: 12px;
       flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
     }
+    /* Real Claude usage behind the topbar content, split into two stacked rows:
+       weekly (top) and 5-hour (bottom). Each row has two overlapping translucent
+       bars — usage % and time-to-reset % — plus dim trailing labels. */
+    .topbar .usage-bg { position: absolute; inset: 0; pointer-events: none; z-index: 0; display: flex; flex-direction: column; }
+    .topbar .urow { position: relative; flex: 1; overflow: hidden; }
+    .topbar .urow + .urow { border-top: 1px solid rgba(255,255,255,0.05); }
+    .topbar .ub {
+      position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+      transition: width 0.6s ease, background 0.4s ease;
+    }
+    .topbar .ub-time { background: rgba(125,170,255,0.16); }  /* time-to-reset (cool) */
+    .topbar .ub-usage { background: rgba(99,102,241,0.22); }  /* usage (recoloured by level in JS) */
+    .topbar .ublabel {
+      position: absolute; left: 0; transform: translateX(6px);
+      font-size: 0.56rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
+      transition: left 0.6s ease, right 0.6s ease, color 0.4s ease; font-variant-numeric: tabular-nums;
+    }
+    .topbar .ublabel-usage { top: 1px; color: var(--text-primary); opacity: 0.9; }
+    .topbar .ublabel-time { bottom: 1px; color: var(--text-secondary); opacity: 0.7; }
+    /* foreground content stays above the fills */
+    .topbar > *:not(.usage-bg) { position: relative; z-index: 2; }
     .topbar .hamburger {
       display: none;
       background: none;
@@ -674,6 +697,11 @@ export function getWebappHtml(botUsername) {
       }
       .sidebar-overlay.visible { display: block; }
       .topbar .tunnel-url { display: none; }
+      /* Keep the topbar tidy on phones: shrink gaps, let the project name
+         truncate, and keep the usage meter compact so nothing gets clipped. */
+      .topbar { gap: 8px; padding: 0 10px; }
+      .topbar .project-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+      .topbar .ublabel { font-size: 0.52rem; }
       .tab-btn { padding: 8px 12px; font-size: 0.76rem; }
       .svc-card { padding: 12px; }
       .info-panel { padding: 12px; }
@@ -685,6 +713,24 @@ export function getWebappHtml(botUsername) {
       /* Terminal touch scrolling */
       .terminal-container .xterm .xterm-viewport { overflow-y: scroll !important; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
       .terminal-container .xterm .xterm-screen { touch-action: pan-y; pointer-events: auto; }
+
+      /* Kanban: stack columns vertically so the board is usable on a phone.
+         Extra specificity so these win over base rules later in the sheet. */
+      .kanban-panel .kanban-board { flex-direction: column; align-items: stretch; gap: 10px; }
+      .kanban-panel .kanban-col { max-width: 100%; min-width: 0; max-height: none; }
+      .kanban-panel .kanban-col-body { max-height: none; }
+      .kanban-panel .kanban-toolbar { position: sticky; top: 0; z-index: 5; }
+
+      /* Mindmap: no hover on touch, so always show node actions.
+         Extra specificity (.mindmap-panel) so these win over the base rules
+         that appear later in the stylesheet. */
+      .mindmap-panel .mm-node .mm-actions { display: flex; }
+      .mindmap-panel .mm-node { width: 160px; }
+
+      /* Secrets: let request actions wrap nicely */
+      .secret-request .sec-actions { width: 100%; }
+      .secret-item { flex-wrap: wrap; }
+      .secret-item .sec-actions { width: 100%; justify-content: flex-end; }
     }
 
     /* ─── Terminal overlays (outside media query) ─── */
@@ -805,6 +851,11 @@ export function getWebappHtml(botUsername) {
     .kanban-card:active { cursor: grabbing; }
     .kanban-card.deleted { opacity: 0.6; }
     .kanban-card .card-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; word-break: break-word; }
+    .kanban-card .card-mm {
+      font-size: 0.68rem; font-weight: 600; color: var(--accent-hover);
+      background: var(--accent-dim); border-radius: 8px; padding: 0 6px;
+      white-space: nowrap; cursor: pointer; vertical-align: middle;
+    }
     .kanban-card .card-desc { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px; white-space: pre-wrap; word-break: break-word; }
     .kanban-card .card-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
     .kanban-card .card-actions button {
@@ -899,6 +950,51 @@ export function getWebappHtml(botUsername) {
     .pin-modal .pin-buttons button { flex: 1; border-radius: var(--radius-sm); padding: 9px; font-size: 0.85rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
     .pin-modal .pin-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+    /* ─── Mindmap ─── */
+    .mindmap-panel { padding: 0; }
+    .mindmap-canvas { position: relative; flex: 1; overflow: auto; background:
+      radial-gradient(circle, var(--border-subtle) 1px, transparent 1px) 0 0 / 22px 22px; }
+    .mindmap-inner { position: relative; min-width: 100%; min-height: 100%; }
+    .mindmap-edges { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+    .mm-node {
+      position: absolute; transform: translateY(-50%);
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px;
+      padding: 8px 12px; width: 180px; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    }
+    .mm-node.root { border-color: var(--accent); background: var(--accent-dim); }
+    .mm-node.linked { border-color: var(--green); }
+    .mm-node .mm-text { font-size: 0.83rem; font-weight: 600; word-break: break-word; }
+    .mm-node .mm-note { font-size: 0.74rem; color: var(--text-secondary); margin-top: 3px; word-break: break-word; }
+    .mm-node .mm-link {
+      display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+      font-size: 0.68rem; color: var(--green); background: var(--green-dim);
+      padding: 1px 7px; border-radius: 8px; max-width: 100%;
+    }
+    .mm-node .mm-link.missing { color: var(--text-muted); background: var(--bg-tertiary); }
+    .mm-node .mm-link .st { color: var(--text-muted); }
+    .mm-node .mm-actions { display: none; gap: 4px; margin-top: 7px; flex-wrap: wrap; }
+    .mm-node:hover .mm-actions { display: flex; }
+    .mm-node .mm-actions button {
+      background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-muted);
+      border-radius: 4px; font-size: 0.68rem; padding: 2px 6px; cursor: pointer;
+    }
+    .mm-node .mm-actions button:hover { color: var(--text-primary); }
+    .mm-node .mm-actions button.danger:hover { color: var(--red); border-color: var(--red); }
+    .mm-collapse {
+      position: absolute; right: -9px; top: 50%; transform: translateY(-50%);
+      width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border);
+      background: var(--bg-tertiary); color: var(--text-secondary); font-size: 0.7rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
+    }
+
+    /* ─── Drag & drop (kanban cards + mindmap nodes; mouse + long-press touch) ─── */
+    .drag-clone { box-shadow: 0 12px 32px rgba(0,0,0,0.55); pointer-events: none; }
+    .kanban-card.dragging, .mm-node.dragging { opacity: 0.35; }
+    .kb-drop-line { height: 0; border-top: 2px solid var(--accent); margin: 3px 2px; border-radius: 1px; }
+    .mm-node.mm-drop-target { outline: 2px solid var(--accent); outline-offset: 1px; }
+    body.dragging-active, body.dragging-active * { cursor: grabbing !important; }
+    body.dragging-active { user-select: none; -webkit-user-select: none; }
+
     /* ─── Scrollbar ─── */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -933,7 +1029,21 @@ export function getWebappHtml(botUsername) {
 
   <!-- ─── Main App ─── -->
   <div id="app">
-    <div class="topbar">
+    <div class="topbar" id="topbar">
+      <div class="usage-bg" id="usage-bg" title="Claude usage — loading…">
+        <div class="urow" id="row-week">
+          <div class="ub ub-time" id="wk-time"></div>
+          <div class="ub ub-usage" id="wk-usage"></div>
+          <div class="ublabel ublabel-usage" id="wk-usage-label"></div>
+          <div class="ublabel ublabel-time" id="wk-time-label"></div>
+        </div>
+        <div class="urow" id="row-5h">
+          <div class="ub ub-time" id="fh-time"></div>
+          <div class="ub ub-usage" id="fh-usage"></div>
+          <div class="ublabel ublabel-usage" id="fh-usage-label"></div>
+          <div class="ublabel ublabel-time" id="fh-time-label"></div>
+        </div>
+      </div>
       <button class="hamburger" data-action="toggle-sidebar">&#9776;</button>
       <span class="logo"><img src="/assets/icon_64x64.png" alt="">Crundi</span>
       <span class="separator">/</span>
@@ -967,6 +1077,7 @@ export function getWebappHtml(botUsername) {
           <button class="tab-btn" data-tab="browsers">Browsers</button>
           <button class="tab-btn" data-tab="info">Info</button>
           <button class="tab-btn" data-tab="secrets">Secrets <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
+          <button class="tab-btn" data-tab="mindmap">Mindmap</button>
           <button class="tab-btn" data-tab="settings">Settings</button>
         </div>
         <div class="terminal-wrap tab-panel visible" data-panel="terminal">
@@ -1016,6 +1127,7 @@ export function getWebappHtml(botUsername) {
         <div class="files-panel tab-panel" id="files-panel" data-panel="files"></div>
         <div class="kanban-panel tab-panel" id="kanban-panel" data-panel="kanban"></div>
         <div class="secrets-panel tab-panel" id="secrets-panel" data-panel="secrets"></div>
+        <div class="mindmap-panel tab-panel" id="mindmap-panel" data-panel="mindmap"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="services-panel tab-panel" id="terminals-panel" data-panel="terminals"></div>
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
@@ -1107,6 +1219,8 @@ export function getWebappHtml(botUsername) {
     let secretRequests = [];
     const revealedSecrets = {}; // secretId → decrypted value (in-memory only)
     let pinOnSubmit = null;     // async (pin) => { ok, error }
+    let mindmapNodes = [];
+    const mindmapCollapsed = {}; // nodeId → true when its children are hidden
 
     const $ = (s) => document.querySelector(s);
     const $$ = (s) => document.querySelectorAll(s);
@@ -1185,6 +1299,107 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Show App ───
+    // ─── Claude usage meter (real, account-wide) ───
+    let usageData = null;
+    const MS_HOUR = 3600000, MS_DAY = 24 * MS_HOUR;
+
+    // Elapsed fraction (0-100) of a window, i.e. progress toward its reset.
+    function resetProgress(resetsAtISO, windowMs) {
+      if (!resetsAtISO) return null;
+      const end = new Date(resetsAtISO).getTime();
+      if (isNaN(end)) return null;
+      const start = end - windowMs;
+      return Math.max(0, Math.min(100, (Date.now() - start) / windowMs * 100));
+    }
+
+    function fmtRemaining(resetsAtISO) {
+      if (!resetsAtISO) return '—';
+      let ms = new Date(resetsAtISO).getTime() - Date.now();
+      if (isNaN(ms)) return '—';
+      if (ms < 0) ms = 0;
+      const d = Math.floor(ms / MS_DAY), h = Math.floor((ms % MS_DAY) / MS_HOUR), m = Math.floor((ms % MS_HOUR) / 60000);
+      if (d > 0) return d + 'd ' + h + 'h';
+      if (h > 0) return h + 'h ' + m + 'm';
+      return m + 'm';
+    }
+
+    // Advance the time-to-reset bars (driven by wall-clock, not just data refresh)
+    function tickResets() {
+      if (!usageData || !usageData.ok) return;
+      const wk = usageData.week && usageData.week.resetsAt;
+      const fh = usageData.fiveHour && usageData.fiveHour.resetsAt;
+      setTimeBar('wk-time', 'wk-time-label', resetProgress(wk, 7 * MS_DAY), wk);
+      setTimeBar('fh-time', 'fh-time-label', resetProgress(fh, 5 * MS_HOUR), fh);
+    }
+    function setTimeBar(barId, labelId, pct, resetsAtISO) {
+      const bar = $('#' + barId), label = $('#' + labelId);
+      if (!bar) return;
+      if (pct == null) { bar.style.width = '0%'; label.textContent = ''; return; }
+      bar.style.width = pct + '%';
+      label.textContent = '⏳ ' + fmtRemaining(resetsAtISO);
+      label.title = 'resets in ' + fmtRemaining(resetsAtISO);
+      placeUsageLabel(label, pct);
+    }
+
+    async function loadUsage() {
+      try {
+        const res = await apiFetch('/api/usage');
+        renderUsage(await res.json());
+      } catch { /* SSE will retry */ }
+    }
+
+    // Position a usage label relative to its fill's leading edge.
+    // ≤85%: just after the end, reading rightward. >85%: flip to right-aligned
+    // just inside the end, reading leftward — so it never overflows the topbar.
+    function placeUsageLabel(el, pct) {
+      if (pct > 85) {
+        el.style.left = 'auto';
+        el.style.right = (100 - pct) + '%';
+        el.style.transform = 'translateX(-6px)';
+      } else {
+        el.style.right = 'auto';
+        el.style.left = pct + '%';
+        el.style.transform = 'translateX(6px)';
+      }
+    }
+    // translucent fill colour per level (green → amber → red)
+    function ufColor(p, base) {
+      if (p >= 90) return 'rgba(239,68,68,0.28)';
+      if (p >= 70) return 'rgba(245,158,11,0.26)';
+      return base;
+    }
+    function renderUsage(u) {
+      const bg = $('#usage-bg');
+      if (!bg) return;
+      usageData = u;
+      const bars = ['wk-usage', 'fh-usage', 'wk-time', 'fh-time'];
+      const labels = ['wk-usage-label', 'fh-usage-label', 'wk-time-label', 'fh-time-label'];
+      if (!u || !u.ok) {
+        bars.forEach(i => { const e = $('#' + i); if (e) e.style.width = '0%'; });
+        labels.forEach(i => { const e = $('#' + i); if (e) e.textContent = ''; });
+        bg.title = 'Claude usage unavailable: ' + ((u && u.error) || 'unknown');
+        return;
+      }
+      const five = u.fiveHour ? u.fiveHour.utilization : 0;
+      const week = u.week ? u.week.utilization : 0;
+      setUsageBar('wk-usage', 'wk-usage-label', week, 'wk');
+      setUsageBar('fh-usage', 'fh-usage-label', five, '5h');
+      const rs = (w) => (w && w.resetsAt) ? new Date(w.resetsAt).toLocaleString() : '—';
+      bg.title = 'Claude usage (real, account-wide)'
+        + '\\nWeekly: ' + week + '%  (resets ' + rs(u.week) + ')'
+        + '\\n5-hour: ' + five + '%  (resets ' + rs(u.fiveHour) + ')'
+        + (u.subscriptionType ? '\\nPlan: ' + u.subscriptionType : '');
+      tickResets(); // also fills the time bars from resets_at
+    }
+    function setUsageBar(barId, labelId, pct, tag) {
+      const bar = $('#' + barId), label = $('#' + labelId);
+      if (!bar) return;
+      bar.style.width = Math.min(100, pct) + '%';
+      bar.style.background = ufColor(pct, 'rgba(99,102,241,0.22)');
+      label.textContent = tag + ' ' + pct + '%';
+      placeUsageLabel(label, pct);
+    }
+
     function showApp() {
       $('#login-screen').style.display = 'none';
       $('#app').classList.add('visible');
@@ -1192,6 +1407,7 @@ export function getWebappHtml(botUsername) {
       loadProjectConfig();
       loadProjects();
       initTerminal();
+      loadUsage();
       // Electron: enable drag region and window controls
       if (window.api) {
         document.querySelector('.topbar').style.webkitAppRegion = 'drag';
@@ -1793,6 +2009,12 @@ export function getWebappHtml(botUsername) {
           if (currentTab === 'secrets') renderSecrets();
         } catch { /* ignore */ }
       });
+      es.addEventListener('mindmap', () => {
+        if (currentTab === 'mindmap') loadMindmap();
+      });
+      es.addEventListener('usage', (e) => {
+        try { renderUsage(JSON.parse(e.data)); } catch { /* ignore */ }
+      });
       es.onerror = () => {
         es.close();
         setTimeout(connectSSE, 5000);
@@ -1959,6 +2181,7 @@ export function getWebappHtml(botUsername) {
       if (tab === 'files') loadFiles();
       if (tab === 'kanban') loadKanban();
       if (tab === 'secrets') loadSecrets();
+      if (tab === 'mindmap') loadMindmap();
       if (tab === 'info') renderInfo();
       if (tab === 'settings') renderSettings();
     }
@@ -3497,8 +3720,11 @@ export function getWebappHtml(botUsername) {
     function renderKanbanCard(t) {
       const todos = t.todos || [];
       const done = todos.filter(td => td.done).length;
-      let h = '<div class="kanban-card" draggable="true" data-task="' + t.id + '">';
-      h += '<div class="card-title">' + escHtml(t.title) + '</div>';
+      let h = '<div class="kanban-card" data-task="' + t.id + '">';
+      const mmCount = (t.mindmapNodes || []).length;
+      h += '<div class="card-title">' + escHtml(t.title)
+        + (mmCount ? ' <span class="card-mm" data-kact="goto-mindmap" title="' + mmCount + ' linked mindmap idea(s)">🧠 ' + mmCount + '</span>' : '')
+        + '</div>';
       if (t.description) h += '<div class="card-desc">' + escHtml(t.description) + '</div>';
       if (todos.length) {
         h += '<div class="kanban-todos">';
@@ -3518,6 +3744,7 @@ export function getWebappHtml(botUsername) {
       }
       h += '<div class="card-actions">'
         + '<select data-kmove="' + t.id + '" title="Move to column">' + opts + '</select>'
+        + '<button data-kact="brainstorm" data-task="' + t.id + '" title="Brainstorm this task in the Mindmap">🧠 Brainstorm</button>'
         + '<button data-kact="edit-task" data-task="' + t.id + '">Edit</button>'
         + '<button data-kact="del-task" data-task="' + t.id + '">Delete</button>'
         + '</div></div>';
@@ -3570,25 +3797,111 @@ export function getWebappHtml(botUsername) {
       } catch (err) { toast('Action failed: ' + err.message, 'error'); return { ok: false }; }
     }
 
+    // ─── Unified drag controller (mouse drag + mobile long-press) ───
+    // h: { onStart?(), onMove(x,y), onEnd(commit) }. Ignores drags that begin on
+    // interactive controls (buttons/inputs/etc.) so those keep working.
+    function makeDraggable(el, h) {
+      const THRESH = 6, HOLD = 320;
+      let armed = false, dragging = false, sx = 0, sy = 0, holdTimer = null, clone = null, cdx = 0, cdy = 0;
+      const interactive = (t) => t && t.closest && t.closest('button, input, select, textarea, a, label');
+      function begin(x, y) {
+        const r = el.getBoundingClientRect();
+        clone = el.cloneNode(true);
+        clone.classList.add('drag-clone');
+        Object.assign(clone.style, { position: 'fixed', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px', margin: '0', pointerEvents: 'none', zIndex: '9999', opacity: '0.92', transform: 'rotate(1.5deg)' });
+        cdx = r.left - x; cdy = r.top - y;
+        document.body.appendChild(clone);
+        dragging = true;
+        el.classList.add('dragging');
+        document.body.classList.add('dragging-active');
+        h.onStart && h.onStart();
+        move(x, y);
+      }
+      function move(x, y) { if (clone) { clone.style.left = (x + cdx) + 'px'; clone.style.top = (y + cdy) + 'px'; } h.onMove && h.onMove(x, y); }
+      function finish(commit) {
+        if (clone) { clone.remove(); clone = null; }
+        el.classList.remove('dragging');
+        document.body.classList.remove('dragging-active');
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        const was = dragging; dragging = false; armed = false;
+        document.removeEventListener('mousemove', onMM); document.removeEventListener('mouseup', onMU);
+        if (was) h.onEnd && h.onEnd(commit);
+      }
+      function onMD(e) { if (e.button !== 0 || interactive(e.target)) return; armed = true; sx = e.clientX; sy = e.clientY; document.addEventListener('mousemove', onMM); document.addEventListener('mouseup', onMU); }
+      function onMM(e) { if (dragging) { e.preventDefault(); move(e.clientX, e.clientY); } else if (armed && (Math.abs(e.clientX - sx) > THRESH || Math.abs(e.clientY - sy) > THRESH)) begin(e.clientX, e.clientY); }
+      function onMU() { if (dragging) finish(true); else { armed = false; document.removeEventListener('mousemove', onMM); document.removeEventListener('mouseup', onMU); } }
+      function onTS(e) { if (e.touches.length !== 1 || interactive(e.target)) return; const t = e.touches[0]; armed = true; sx = t.clientX; sy = t.clientY; holdTimer = setTimeout(() => { holdTimer = null; if (armed) begin(sx, sy); }, HOLD); }
+      function onTM(e) { const t = e.touches[0]; if (dragging) { e.preventDefault(); move(t.clientX, t.clientY); } else if (armed && (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10)) { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } armed = false; } }
+      function onTE(e) { if (dragging) { e.preventDefault(); finish(true); } else { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } armed = false; } }
+      el.addEventListener('mousedown', onMD);
+      el.addEventListener('touchstart', onTS, { passive: true });
+      el.addEventListener('touchmove', onTM, { passive: false });
+      el.addEventListener('touchend', onTE);
+      el.addEventListener('touchcancel', onTE);
+    }
+
+    // ─── Kanban drag (reorder within + across columns) ───
+    let _kbDropLine = null;
+    function kanbanDropIndex(body, y, draggedId) {
+      const cards = [...body.querySelectorAll('.kanban-card')].filter(c => c.dataset.task !== draggedId);
+      for (let i = 0; i < cards.length; i++) {
+        const r = cards[i].getBoundingClientRect();
+        if (y < r.top + r.height / 2) return i;
+      }
+      return cards.length;
+    }
+    function showKbDropLine(body, idx, draggedId) {
+      if (!_kbDropLine) { _kbDropLine = document.createElement('div'); _kbDropLine.className = 'kb-drop-line'; }
+      const cards = [...body.querySelectorAll('.kanban-card')].filter(c => c.dataset.task !== draggedId);
+      if (idx >= cards.length) body.appendChild(_kbDropLine);
+      else body.insertBefore(_kbDropLine, cards[idx]);
+    }
+    function clearKbDropLine() { if (_kbDropLine && _kbDropLine.parentNode) _kbDropLine.parentNode.removeChild(_kbDropLine); }
+    function kanbanDragHandlers(taskId) {
+      let target = null;
+      return {
+        onMove: (x, y) => {
+          clearKbDropLine();
+          const elAt = document.elementFromPoint(x, y);
+          const col = elAt && elAt.closest ? elAt.closest('.kanban-col') : null;
+          if (!col) { target = null; return; }
+          const body = col.querySelector('.kanban-col-body');
+          const idx = kanbanDropIndex(body, y, taskId);
+          showKbDropLine(body, idx, taskId);
+          target = { status: col.dataset.status, index: idx };
+        },
+        onEnd: async (commit) => {
+          clearKbDropLine();
+          if (commit && target) { await kanbanPost({ action: 'moveTask', taskId, status: target.status, index: target.index }); loadKanban(); }
+          target = null;
+        },
+      };
+    }
     function attachKanbanDrag() {
-      const panel = $('#kanban-panel');
-      panel.querySelectorAll('.kanban-card').forEach(card => {
-        card.addEventListener('dragstart', () => { kanbanDragTaskId = card.dataset.task; });
-        card.addEventListener('dragend', () => { kanbanDragTaskId = null; });
-      });
-      panel.querySelectorAll('.kanban-col').forEach(col => {
-        col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('drag-over'); });
-        col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
-        col.addEventListener('drop', async (e) => {
-          e.preventDefault();
-          col.classList.remove('drag-over');
-          const taskId = kanbanDragTaskId;
-          const status = col.dataset.status;
-          if (!taskId || !status) return;
-          await kanbanPost({ action: 'moveTask', taskId, status });
-          loadKanban();
-        });
-      });
+      $('#kanban-panel').querySelectorAll('.kanban-card').forEach(card => makeDraggable(card, kanbanDragHandlers(card.dataset.task)));
+    }
+
+    // ─── Mindmap drag (reparent: drop on a node = become its child; drop on empty = root) ───
+    function clearMmDropTargets() { document.querySelectorAll('.mm-node.mm-drop-target').forEach(n => n.classList.remove('mm-drop-target')); }
+    function mindmapDragHandlers(nodeId) {
+      let target = null;
+      return {
+        onMove: (x, y) => {
+          clearMmDropTargets();
+          const elAt = document.elementFromPoint(x, y);
+          const over = elAt && elAt.closest ? elAt.closest('.mm-node') : null;
+          if (over && over.dataset.node !== nodeId) { over.classList.add('mm-drop-target'); target = { parentId: over.dataset.node }; }
+          else { target = { parentId: null }; }
+        },
+        onEnd: async (commit) => {
+          clearMmDropTargets();
+          if (commit && target) { await mindmapPost({ action: 'moveNode', id: nodeId, parentId: target.parentId }); loadMindmap(); }
+          target = null;
+        },
+      };
+    }
+    function attachMindmapDrag(inner) {
+      inner.querySelectorAll('.mm-node').forEach(node => makeDraggable(node, mindmapDragHandlers(node.dataset.node)));
     }
 
     function setupKanbanHandlers() {
@@ -3623,6 +3936,13 @@ export function getWebappHtml(botUsername) {
           await kanbanPost({ action: 'restoreTask', taskId }); loadKanban();
         } else if (act === 'restore-todo') {
           await kanbanPost({ action: 'restoreTodo', taskId, todoId: btn.dataset.todo }); loadKanban();
+        } else if (act === 'brainstorm') {
+          const task = (kanbanBoard.tasks || []).find(t => t.id === taskId);
+          if (!task) return;
+          const r = await mindmapPost({ action: 'addNode', text: task.title, project: currentProject, taskId });
+          if (r.ok) { toast('Added to Mindmap', 'success'); document.querySelector('.tab-btn[data-tab="mindmap"]').click(); }
+        } else if (act === 'goto-mindmap') {
+          document.querySelector('.tab-btn[data-tab="mindmap"]').click();
         }
       });
       panel.addEventListener('change', async (e) => {
@@ -3781,6 +4101,181 @@ export function getWebappHtml(botUsername) {
       });
     }
 
+    // ─── Mindmap (global) ───
+    const MM_COL_W = 235, MM_ROW_H = 90, MM_PAD = 24, MM_NODE_W = 180;
+
+    async function loadMindmap() {
+      try {
+        const res = await apiFetch('/api/mindmap');
+        const d = await res.json();
+        mindmapNodes = (d.ok && d.mindmap && d.mindmap.nodes) ? d.mindmap.nodes : [];
+        renderMindmap();
+      } catch (err) {
+        $('#mindmap-panel').innerHTML = '<div class="kanban-empty">Failed to load mindmap: ' + escHtml(err.message) + '</div>';
+      }
+    }
+
+    async function mindmapPost(payload) {
+      try {
+        const res = await apiFetch('/api/mindmap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const d = await res.json();
+        if (!d.ok) toast(d.error || 'Action failed', 'error');
+        return d;
+      } catch (err) { toast('Action failed: ' + err.message, 'error'); return { ok: false }; }
+    }
+
+    function renderMindmap() {
+      const panel = $('#mindmap-panel');
+      let h = '<div class="kanban-toolbar">'
+        + '<button class="kanban-btn primary" data-mact="add-root">+ Add idea</button>'
+        + '<div class="spacer"></div>'
+        + '<span style="font-size:0.76rem;color:var(--text-muted)">Hover a node for actions · green = linked to a Kanban task</span>'
+        + '</div>';
+      if (!mindmapNodes.length) {
+        h += '<div class="kanban-empty">No ideas yet. Add one, or hit “Brainstorm” on a Kanban card to extend a task here.</div>';
+        panel.innerHTML = h;
+        return;
+      }
+      h += '<div class="mindmap-canvas"><div class="mindmap-inner" id="mindmap-inner"></div></div>';
+      panel.innerHTML = h;
+      layoutMindmap($('#mindmap-inner'));
+    }
+
+    function layoutMindmap(inner) {
+      // Responsive spacing: on touch/narrow screens node actions are always
+      // shown (no hover), so rows need more vertical room to avoid overlap.
+      const isMobile = window.innerWidth <= 768;
+      const COL_W = isMobile ? 200 : MM_COL_W;
+      const ROW_H = isMobile ? 150 : MM_ROW_H;
+      const NODE_W = isMobile ? 160 : MM_NODE_W;
+      const byId = {}; mindmapNodes.forEach(n => { byId[n.id] = n; });
+      const children = {};
+      const roots = [];
+      for (const n of mindmapNodes) {
+        const hasParent = n.parentId && byId[n.parentId];
+        if (hasParent) { (children[n.parentId] = children[n.parentId] || []).push(n); }
+        else roots.push(n);
+      }
+      const pos = {}; // id → {x(depth), y(row)}
+      let row = 0, maxDepth = 0;
+      const place = (node, depth) => {
+        maxDepth = Math.max(maxDepth, depth);
+        const kids = (!mindmapCollapsed[node.id] && children[node.id]) ? children[node.id] : [];
+        if (kids.length) {
+          const ys = kids.map(k => place(k, depth + 1));
+          pos[node.id] = { x: depth, y: (ys[0] + ys[ys.length - 1]) / 2 };
+        } else {
+          pos[node.id] = { x: depth, y: row++ };
+        }
+        return pos[node.id].y;
+      };
+      roots.forEach(r => place(r, 0));
+      const rows = Math.max(row, 1);
+
+      const px = (x) => MM_PAD + x * COL_W;
+      const py = (y) => MM_PAD + y * ROW_H + ROW_H / 2;
+      const width = MM_PAD + (maxDepth + 1) * COL_W;
+      const height = MM_PAD * 2 + rows * ROW_H;
+      inner.style.width = width + 'px';
+      inner.style.height = height + 'px';
+
+      // Edges (parent right edge → child left edge), bezier curves.
+      let paths = '';
+      for (const n of mindmapNodes) {
+        if (!pos[n.id]) continue;
+        const kids = (!mindmapCollapsed[n.id] && children[n.id]) ? children[n.id] : [];
+        for (const k of kids) {
+          if (!pos[k.id]) continue;
+          const x1 = px(pos[n.id].x) + NODE_W, y1 = py(pos[n.id].y);
+          const x2 = px(pos[k.id].x), y2 = py(pos[k.id].y);
+          const mid = (x1 + x2) / 2;
+          paths += '<path d="M' + x1 + ',' + y1 + ' C' + mid + ',' + y1 + ' ' + mid + ',' + y2 + ' ' + x2 + ',' + y2 + '" fill="none" stroke="var(--border)" stroke-width="2"/>';
+        }
+      }
+      let html = '<svg class="mindmap-edges" width="' + width + '" height="' + height + '">' + paths + '</svg>';
+
+      for (const n of mindmapNodes) {
+        if (!pos[n.id]) continue;
+        const isRoot = !(n.parentId && byId[n.parentId]);
+        const info = n.linkedTaskInfo;
+        const linked = !!(n.linkedTask);
+        const hasKids = !!(children[n.id] && children[n.id].length);
+        const collapsed = !!mindmapCollapsed[n.id];
+        let badge = '';
+        if (linked) {
+          if (info && !info.missing) {
+            badge = '<span class="mm-link" title="Linked Kanban task">🔗 ' + escHtml(info.project) + ' · ' + escHtml(info.title || '')
+              + ' <span class="st">[' + escHtml((info.status || '').replace('_', ' ')) + (info.deleted ? ', deleted' : '') + ']</span></span>';
+          } else {
+            badge = '<span class="mm-link missing" title="Linked task no longer exists">🔗 task removed</span>';
+          }
+        }
+        html += '<div class="mm-node' + (isRoot ? ' root' : '') + (linked ? ' linked' : '') + '" style="left:' + px(pos[n.id].x) + 'px;top:' + py(pos[n.id].y) + 'px" data-node="' + n.id + '">'
+          + '<div class="mm-text">' + escHtml(n.text) + '</div>'
+          + (n.note ? '<div class="mm-note">' + escHtml(n.note) + '</div>' : '')
+          + badge
+          + '<div class="mm-actions">'
+          + '<button data-mact="add-child" data-node="' + n.id + '">+ child</button>'
+          + '<button data-mact="edit" data-node="' + n.id + '">edit</button>'
+          + '<button data-mact="link" data-node="' + n.id + '">' + (linked ? 'unlink' : 'link') + '</button>'
+          + '<button class="danger" data-mact="del" data-node="' + n.id + '">del</button>'
+          + '</div>'
+          + (hasKids ? '<button class="mm-collapse" data-mact="toggle" data-node="' + n.id + '" title="Collapse/expand">' + (collapsed ? '+' : '−') + '</button>' : '')
+          + '</div>';
+      }
+      inner.innerHTML = html;
+      attachMindmapDrag(inner);
+    }
+
+    async function mindmapLinkFlow(id) {
+      const proj = currentProject;
+      if (!proj) { toast('Open a project first to pick a task, or use “Brainstorm” on a Kanban card', 'error'); return; }
+      const res = await apiFetch('/api/kanban?project=' + encodeURIComponent(proj));
+      const d = await res.json();
+      const tasks = (d.ok && d.board && d.board.tasks) ? d.board.tasks : [];
+      if (!tasks.length) { toast('No tasks in "' + proj + '" to link', 'error'); return; }
+      const list = tasks.map((t, i) => (i + 1) + '. ' + t.title + ' [' + t.status + ']').join('\\n');
+      const pick = prompt('Link to which task in "' + proj + '"?\\n\\n' + list + '\\n\\nEnter number:');
+      const idx = parseInt(pick, 10) - 1;
+      if (isNaN(idx) || !tasks[idx]) return;
+      await mindmapPost({ action: 'linkNode', id, project: proj, taskId: tasks[idx].id });
+      loadMindmap();
+    }
+
+    function setupMindmapHandlers() {
+      const panel = $('#mindmap-panel');
+      panel.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-mact]');
+        if (!btn) return;
+        const act = btn.dataset.mact;
+        const id = btn.dataset.node;
+        const node = id ? mindmapNodes.find(n => n.id === id) : null;
+        if (act === 'add-root') {
+          const text = prompt('New idea:');
+          if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim() }); loadMindmap(); }
+        } else if (act === 'add-child') {
+          const text = prompt('Child idea:');
+          if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim(), parentId: id }); loadMindmap(); }
+        } else if (act === 'edit') {
+          if (!node) return;
+          const text = prompt('Idea text:', node.text);
+          if (text === null) return;
+          const note = prompt('Note (optional):', node.note || '');
+          if (note === null) return;
+          await mindmapPost({ action: 'updateNode', id, text: text.trim(), note }); loadMindmap();
+        } else if (act === 'link') {
+          if (node && node.linkedTask) { await mindmapPost({ action: 'unlinkNode', id }); loadMindmap(); }
+          else mindmapLinkFlow(id);
+        } else if (act === 'del') {
+          if (!confirm('Delete this idea and all its sub-ideas?')) return;
+          await mindmapPost({ action: 'deleteNode', id }); loadMindmap();
+        } else if (act === 'toggle') {
+          mindmapCollapsed[id] = !mindmapCollapsed[id];
+          renderMindmap();
+        }
+      });
+    }
+
     // ─── PIN modal ───
     function openPinModal({ title, subtitle, submitLabel = 'Unlock', onSubmit }) {
       pinOnSubmit = onSubmit;
@@ -3812,6 +4307,8 @@ export function getWebappHtml(botUsername) {
     // Wire panel + modal handlers once.
     setupKanbanHandlers();
     setupSecretsHandlers();
+    setupMindmapHandlers();
+    setInterval(tickResets, 30000); // advance the time-to-reset lines on wall-clock
     $('#pin-submit-btn').addEventListener('click', submitPin);
     $('#pin-cancel-btn').addEventListener('click', closePinModal);
     $('#pin-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitPin(); } });

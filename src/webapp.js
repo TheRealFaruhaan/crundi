@@ -26,6 +26,8 @@ import * as terminalsMod from './terminals.js';
 import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData } from './project-store.js';
 import * as kanban from './kanban-store.js';
 import * as secrets from './secrets-store.js';
+import * as mindmap from './mindmap-store.js';
+import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -275,6 +277,29 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // ─── Kanban live updates ───
   function broadcastKanban(projectAlias) {
     broadcastSSE('kanban', { project: String(projectAlias || '').toLowerCase() });
+  }
+
+  // ─── Mindmap live updates ───
+  function broadcastMindmap() {
+    broadcastSSE('mindmap', {});
+  }
+
+  // ─── Claude usage (real account-wide limits) ───
+  async function broadcastUsage() {
+    if (!sseClients.size) return;
+    try { broadcastSSE('usage', await usage.getUsage()); } catch { /* non-fatal */ }
+  }
+
+  /**
+   * Attach to each task the mindmap nodes that link to it, so both the UI and
+   * Claude (via kanban_list) can see a task's brainstorming nodes. The reverse
+   * direction (a node's linked task details) is already on each mindmap node.
+   */
+  function enrichBoardWithMindmap(alias, board) {
+    const tag = (t) => { t.mindmapNodes = mindmap.getNodesForTask(alias, t.id); };
+    (board.tasks || []).forEach(tag);
+    (board.deletedTasks || []).forEach(tag);
+    return board;
   }
 
   // ─── Secret access requests (Claude → user approval) ───
@@ -581,6 +606,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       sseClients.add(client);
       req.on('close', () => sseClients.delete(client));
       broadcastState();
+      broadcastUsage();
       return;
     }
 
@@ -689,7 +715,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       const project = url.searchParams.get('project');
       if (!project) return json(res, { ok: false, error: 'project is required' }, 400);
       const includeDeleted = url.searchParams.get('includeDeleted') === '1';
-      return json(res, { ok: true, board: kanban.getBoard(project, { includeDeleted }) });
+      return json(res, { ok: true, board: enrichBoardWithMindmap(project, kanban.getBoard(project, { includeDeleted })) });
     }
 
     if (path === '/api/kanban' && req.method === 'POST') {
@@ -757,6 +783,34 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         default:
           return json(res, { ok: false, error: `Unknown secrets action: ${action}` }, 400);
       }
+    }
+
+    // ─── Mindmap (global) ───
+    if (path === '/api/mindmap' && req.method === 'GET') {
+      return json(res, { ok: true, mindmap: mindmap.getMindmap() });
+    }
+
+    if (path === '/api/mindmap' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const { action } = body;
+      let result;
+      switch (action) {
+        case 'addNode': result = mindmap.addNode({ text: body.text, parentId: body.parentId, note: body.note, project: body.project, taskId: body.taskId }); break;
+        case 'updateNode': result = mindmap.updateNode(body.id, { text: body.text, note: body.note }); break;
+        case 'moveNode': result = mindmap.moveNode(body.id, body.parentId, body.index); break;
+        case 'linkNode': result = mindmap.linkNode(body.id, { project: body.project, taskId: body.taskId }); break;
+        case 'unlinkNode': result = mindmap.unlinkNode(body.id); break;
+        case 'deleteNode': result = mindmap.deleteNode(body.id); break;
+        default: return json(res, { ok: false, error: `Unknown mindmap action: ${action}` }, 400);
+      }
+      if (result.ok) broadcastMindmap();
+      return json(res, result);
+    }
+
+    // ─── Claude usage (real, account-wide) ───
+    if (path === '/api/usage' && req.method === 'GET') {
+      const force = url.searchParams.get('force') === '1';
+      return json(res, await usage.getUsage({ force }));
     }
 
     // ─── Claude Terminals ───
@@ -1291,7 +1345,17 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         if (!alias) return json(res, { ok: false, error: 'No project context for kanban tool' });
         let r;
         switch (body.tool) {
-          case 'kanban_list': r = { ok: true, board: kanban.getBoard(alias, { includeDeleted: !!a.includeDeleted }) }; break;
+          case 'kanban_list': r = { ok: true, board: enrichBoardWithMindmap(alias, kanban.getBoard(alias, { includeDeleted: !!a.includeDeleted })) }; break;
+          case 'kanban_get_task': {
+            r = kanban.getTask(alias, a.taskId, { includeDeleted: !!a.includeDeleted });
+            if (r.ok) r.task.mindmapNodes = mindmap.getNodesForTask(alias, r.task.id);
+            break;
+          }
+          case 'kanban_list_column': {
+            r = kanban.getColumn(alias, a.status, { includeDeleted: !!a.includeDeleted });
+            if (r.ok) r.tasks.forEach(t => { t.mindmapCount = mindmap.getNodesForTask(alias, t.id).length; });
+            break;
+          }
           case 'kanban_add_task': r = kanban.addTask(alias, { title: a.title, description: a.description, status: a.status, todos: a.todos }); break;
           case 'kanban_update_task': r = kanban.updateTask(alias, a.taskId, { title: a.title, description: a.description, status: a.status }); break;
           case 'kanban_move_task': r = kanban.moveTask(alias, a.taskId, a.status, a.index); break;
@@ -1304,8 +1368,34 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           case 'kanban_history': r = { ok: true, history: kanban.getHistory(alias) }; break;
           default: return json(res, { ok: false, error: `Unknown kanban tool: ${body.tool}` }, 404);
         }
-        if (r.ok && body.tool !== 'kanban_list' && body.tool !== 'kanban_history') broadcastKanban(alias);
+        const kanbanReadOnly = ['kanban_list', 'kanban_history', 'kanban_get_task', 'kanban_list_column'].includes(body.tool);
+        if (r.ok && !kanbanReadOnly) broadcastKanban(alias);
         return json(res, r);
+      }
+
+      // ─── Mindmap tools (global; alias used as default project for links) ───
+      if (body.tool.startsWith('mindmap_')) {
+        let r;
+        switch (body.tool) {
+          case 'mindmap_list': r = { ok: true, mindmap: mindmap.getMindmap() }; break;
+          case 'mindmap_get_subtree': r = mindmap.getSubtree(a.id); break;
+          case 'mindmap_get_children': r = mindmap.getChildren(a.id || null); break;
+          case 'mindmap_add_node': r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, project: a.project || a.alias, taskId: a.taskId }); break;
+          case 'mindmap_update_node': r = mindmap.updateNode(a.id, { text: a.text, note: a.note }); break;
+          case 'mindmap_move_node': r = mindmap.moveNode(a.id, a.parentId, a.index); break;
+          case 'mindmap_link_node': r = mindmap.linkNode(a.id, { project: a.project || a.alias, taskId: a.taskId }); break;
+          case 'mindmap_unlink_node': r = mindmap.unlinkNode(a.id); break;
+          case 'mindmap_delete_node': r = mindmap.deleteNode(a.id); break;
+          default: return json(res, { ok: false, error: `Unknown mindmap tool: ${body.tool}` }, 404);
+        }
+        const mindmapReadOnly = ['mindmap_list', 'mindmap_get_subtree', 'mindmap_get_children'].includes(body.tool);
+        if (r.ok && !mindmapReadOnly) broadcastMindmap();
+        return json(res, r);
+      }
+
+      // ─── Claude usage (real, account-wide limits) ───
+      if (body.tool === 'get_usage') {
+        return json(res, await usage.getUsage({ force: !!a.force }));
       }
 
       // ─── Secret search (no approval — metadata only, never the value) ───
@@ -1578,6 +1668,9 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       setInterval(() => {
         if (sseClients.size) broadcastState();
       }, 5000);
+
+      // Real Claude usage refresh every 60s (matches the usage-cache TTL)
+      setInterval(() => { broadcastUsage(); }, 60_000);
 
       return { port, tunnelUrl };
     },

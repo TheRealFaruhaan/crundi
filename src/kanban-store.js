@@ -92,6 +92,38 @@ export function getBoard(alias, { includeDeleted = false } = {}) {
   };
 }
 
+/**
+ * Return a single task (with its todos) by id — cheaper than getBoard() when you
+ * only need one card. Todos respect includeDeleted like getBoard.
+ */
+export function getTask(alias, taskId, { includeDeleted = false } = {}) {
+  const map = loadAll();
+  const board = map[String(alias || '').toLowerCase()];
+  const task = board && board.tasks.find(t => t.id === taskId);
+  if (!task) return { ok: false, error: 'Task not found' };
+  return { ok: true, task: { ...task, todos: includeDeleted ? task.todos : task.todos.filter(td => !td.deleted) } };
+}
+
+/**
+ * Return lightweight task summaries for a single status column (no todo text or
+ * descriptions) — the cheapest way to see what's in one column. Use getTask for
+ * full detail of a specific card.
+ */
+export function getColumn(alias, status, { includeDeleted = false } = {}) {
+  const s = normalizeStatus(status);
+  const map = loadAll();
+  const board = map[String(alias || '').toLowerCase()];
+  const tasks = board ? board.tasks.filter(t => t.status === s && (includeDeleted || !t.deleted)) : [];
+  return {
+    ok: true,
+    status: s,
+    tasks: tasks.map(t => {
+      const live = (t.todos || []).filter(td => !td.deleted);
+      return { id: t.id, title: t.title, status: t.status, todosDone: live.filter(td => td.done).length, todosTotal: live.length };
+    }),
+  };
+}
+
 export function getHistory(alias) {
   const map = loadAll();
   const board = map[String(alias || '').toLowerCase()] || emptyBoard();
@@ -163,11 +195,18 @@ export function moveTask(alias, taskId, status, index) {
   task.status = s;
   task.updatedAt = new Date().toISOString();
 
+  // index = desired position WITHIN the target column (among its tasks).
   if (Number.isInteger(index)) {
     const cur = board.tasks.indexOf(task);
     board.tasks.splice(cur, 1);
-    const clamped = Math.max(0, Math.min(index, board.tasks.length));
-    board.tasks.splice(clamped, 0, task);
+    const colIds = board.tasks.filter(t => t.status === s).map(t => t.id);
+    const clamped = Math.max(0, Math.min(index, colIds.length));
+    if (clamped >= colIds.length) {
+      if (colIds.length === 0) board.tasks.push(task);
+      else board.tasks.splice(board.tasks.findIndex(t => t.id === colIds[colIds.length - 1]) + 1, 0, task);
+    } else {
+      board.tasks.splice(board.tasks.findIndex(t => t.id === colIds[clamped]), 0, task);
+    }
   }
   record(board, 'task.move', `Moved task "${task.title}" to ${s}`, { taskId });
   saveAll(map);
