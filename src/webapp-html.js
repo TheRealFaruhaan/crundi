@@ -741,11 +741,8 @@ export function getWebappHtml(botUsername) {
       .kanban-panel .kanban-col-body { max-height: none; }
       .kanban-panel .kanban-toolbar { position: sticky; top: 0; z-index: 5; }
 
-      /* Mindmap: no hover on touch, so always show node actions.
-         Extra specificity (.mindmap-panel) so these win over the base rules
-         that appear later in the stylesheet. */
-      .mindmap-panel .mm-node .mm-actions { display: flex; }
-      .mindmap-panel .mm-node { width: 160px; }
+      /* Mindmap: tap a node to open its detail modal (no hover on touch). */
+      .mindmap-panel .mm-node { width: 168px; }
 
       /* Secrets: let request actions wrap nicely */
       .secret-request .sec-actions { width: 100%; }
@@ -975,31 +972,59 @@ export function getWebappHtml(botUsername) {
     .mindmap-canvas { position: relative; flex: 1; overflow: auto; background:
       radial-gradient(circle, var(--border-subtle) 1px, transparent 1px) 0 0 / 22px 22px; }
     .mindmap-inner { position: relative; min-width: 100%; min-height: 100%; }
+    /* Scaled content layer (zoom). Base-sized; transform: scale applied via JS. */
+    .mm-scale { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
     .mindmap-edges { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
     .mm-node {
       position: absolute; transform: translateY(-50%);
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px;
-      padding: 8px 12px; width: 180px; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
+      padding: 8px 11px; width: 180px; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      cursor: pointer; transition: opacity 0.12s, box-shadow 0.12s, border-color 0.12s;
     }
+    .mm-node:hover { border-color: var(--accent); box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
     .mm-node.root { border-color: var(--accent); background: var(--accent-dim); }
     .mm-node.linked { border-color: var(--green); }
-    .mm-node .mm-text { font-size: 0.83rem; font-weight: 600; word-break: break-word; }
-    .mm-node .mm-note { font-size: 0.74rem; color: var(--text-secondary); margin-top: 3px; word-break: break-word; }
-    .mm-node .mm-link {
-      display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
-      font-size: 0.68rem; color: var(--green); background: var(--green-dim);
-      padding: 1px 7px; border-radius: 8px; max-width: 100%;
+    .mm-node.scoped { border-color: var(--accent); }
+    .mm-node .mm-text {
+      font-size: 0.83rem; font-weight: 600; word-break: break-word; line-height: 1.3;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
-    .mm-node .mm-link.missing { color: var(--text-muted); background: var(--bg-tertiary); }
-    .mm-node .mm-link .st { color: var(--text-muted); }
-    .mm-node .mm-actions { display: none; gap: 4px; margin-top: 7px; flex-wrap: wrap; }
-    .mm-node:hover .mm-actions { display: flex; }
-    .mm-node .mm-actions button {
-      background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-muted);
-      border-radius: 4px; font-size: 0.68rem; padding: 2px 6px; cursor: pointer;
+    /* compact meta chips row */
+    .mm-node .mm-meta { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+    .mm-node .mm-meta:empty { display: none; }
+    .mm-chip {
+      display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+      font-size: 0.66rem; padding: 1px 7px; border-radius: 8px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
     }
-    .mm-node .mm-actions button:hover { color: var(--text-primary); }
-    .mm-node .mm-actions button.danger:hover { color: var(--red); border-color: var(--red); }
+    .mm-chip.link { color: var(--green); background: var(--green-dim); }
+    .mm-chip.link.missing { color: var(--text-muted); background: var(--bg-tertiary); }
+    .mm-chip.scope { color: var(--accent-hover); background: var(--accent-dim); }
+    .mm-chip.note { color: var(--text-secondary); background: var(--bg-tertiary); }
+    /* search filter states */
+    .mm-node.mm-dim { opacity: 0.18; }
+    .mm-node.mm-hit { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+    /* persistent dashed "add idea" ghost node */
+    .mm-node.mm-ghost {
+      border: 1.5px dashed var(--border); background: transparent; box-shadow: none;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      min-height: 40px; opacity: 0.5; color: var(--text-muted);
+    }
+    .mm-node.mm-ghost:hover { border-color: var(--accent); color: var(--accent-hover); opacity: 1; box-shadow: none; }
+    .mm-ghost .mm-ghost-plus { font-size: 1.05rem; font-weight: 700; line-height: 1; }
+    .mm-ghost .mm-ghost-label { font-size: 0.74rem; font-weight: 500; }
+    /* mindmap entrance (only on a fresh render — gated by .mm-anim) */
+    @keyframes mmFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes mmGhostIn { from { opacity: 0; } to { opacity: 0.5; } }
+    @keyframes mmChipIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+    .mindmap-canvas.mm-anim .mm-node:not(.mm-ghost) { animation: mmFadeIn 0.34s ease both; }
+    .mindmap-canvas.mm-anim .mm-ghost { animation: mmGhostIn 0.4s ease 0.12s both; }
+    .mindmap-canvas.mm-anim .mindmap-edges { animation: mmFadeIn 0.5s ease both; }
+    .mm-proj-bar.mm-anim .mm-proj-chip { animation: mmChipIn 0.3s ease both; }
+    @media (prefers-reduced-motion: reduce) {
+      .mindmap-canvas.mm-anim .mm-node:not(.mm-ghost), .mindmap-canvas.mm-anim .mindmap-edges, .mm-proj-bar.mm-anim .mm-proj-chip { animation: none; opacity: 1; transform: none; }
+      .mindmap-canvas.mm-anim .mm-ghost { animation: none; opacity: 0.5; }
+    }
     .mm-collapse {
       position: absolute; right: -9px; top: 50%; transform: translateY(-50%);
       width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border);
@@ -1037,10 +1062,89 @@ export function getWebappHtml(botUsername) {
     .input-modal .lm-item.todo { padding-left: 28px; font-size: 0.8rem; color: var(--text-secondary); }
     .input-modal .lm-item .st { color: var(--text-muted); font-size: 0.72rem; }
     .input-modal .lm-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.82rem; }
+    .input-modal .lm-locked { font-size: 0.76rem; color: var(--amber, #f59e0b); margin-bottom: 8px; }
+    .input-modal .lm-scope-btn { width: 100%; text-align: left; padding: 9px 11px; border-radius: var(--radius-sm); border: 1px solid var(--accent); background: var(--accent-dim); color: var(--text-primary); font-size: 0.85rem; cursor: pointer; }
+    .input-modal .lm-scope-btn:hover { background: var(--accent); color: #fff; }
+    .input-modal .lm-or { text-align: center; font-size: 0.72rem; color: var(--text-muted); margin: 10px 0 8px; }
 
     /* mindmap drag: sibling insert indicators */
     .mm-node.mm-insert-above { box-shadow: 0 -3px 0 0 var(--accent); }
     .mm-node.mm-insert-below { box-shadow: 0 3px 0 0 var(--accent); }
+
+    /* mindmap node detail modal */
+    #mm-detail-modal .mmd-note { font-size: 0.86rem; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; margin: 4px 0 10px; max-height: 40vh; overflow: auto; }
+    #mm-detail-modal .mmd-note:empty { display: none; }
+    #mm-detail-modal .mmd-link { font-size: 0.82rem; color: var(--green); background: var(--green-dim); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; word-break: break-word; }
+    #mm-detail-modal .mmd-link.missing { color: var(--text-muted); background: var(--bg-tertiary); }
+    #mm-detail-modal .mmd-link:empty { display: none; }
+    #mm-detail-modal .mmd-link .st { color: var(--text-muted); }
+    #mm-detail-modal label.im-label { display: block; font-size: 0.78rem; color: var(--text-secondary); margin: 0 0 4px; }
+    #mm-detail-modal .mmd-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    #mm-detail-modal .mmd-actions button { flex: 1; min-width: 72px; border-radius: var(--radius-sm); padding: 8px; font-size: 0.82rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
+    #mm-detail-modal .mmd-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    #mm-detail-modal .mmd-actions button.danger { color: var(--red); }
+    #mm-detail-modal .mmd-actions button.danger:hover { border-color: var(--red); background: rgba(255,80,80,0.12); }
+
+    /* mindmap toolbar search */
+    .mm-search { background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); border-radius: var(--radius-sm); padding: 6px 10px; font-size: 0.82rem; min-width: 160px; }
+    .mm-search:focus { border-color: var(--accent); outline: none; }
+    /* mindmap project filter bar */
+    .mm-proj-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
+    .mm-proj-label { font-size: 0.74rem; color: var(--text-muted); margin-right: 2px; }
+    .mm-proj-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; padding: 3px 10px; border-radius: 20px; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
+    .mm-proj-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .mm-proj-chip.off { color: var(--text-muted); text-decoration: line-through; opacity: 0.7; }
+    .mm-proj-chip.reset { border-style: dashed; color: var(--text-secondary); }
+    .mm-proj-flag { font-size: 0.74rem; color: var(--amber, #f59e0b); margin-left: 4px; }
+
+    /* usage last-updated badge (click → history chart) */
+    .topbar .status-badge.usage-updated { background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
+    .topbar .status-badge.usage-updated:hover { color: var(--text-primary); }
+    /* usage history chart modal */
+    #usage-modal.visible .im-box { animation: ucBoxIn 0.26s cubic-bezier(0.22,1,0.36,1); }
+    @keyframes ucBoxIn { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { #usage-modal.visible .im-box { animation: none; } }
+    .uc-controls { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+    .uc-seg { display: flex; gap: 4px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 3px; }
+    #uc-ranges { flex: 1; }
+    .uc-seg button { flex: 1; border-radius: 5px; padding: 5px 10px; font-size: 0.78rem; cursor: pointer; border: none; background: transparent; color: var(--text-secondary); white-space: nowrap; }
+    .uc-seg button.active { background: var(--accent); color: #fff; }
+    .uc-chart-wrap { position: relative; width: 100%; }
+    .uc-chart { width: 100%; }
+    .uc-svg { width: 100%; height: auto; display: block; touch-action: none; }
+    .uc-svg .uc-axis { fill: rgba(255,255,255,0.4); font-size: 10px; font-family: inherit; letter-spacing: 0.02em; }
+    .uc-svg .uc-now { fill: rgba(255,255,255,0.5); font-size: 9px; font-family: inherit; }
+    /* choreographed reveal: bands fade up, target fades, actual line draws in */
+    @keyframes ucDraw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+    @keyframes ucFade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ucRise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .uc-svg .uc-band { opacity: 0; transform-box: fill-box; animation: ucRise 0.5s cubic-bezier(0.22,1,0.36,1) 0.1s forwards; }
+    .uc-svg .uc-line-target { opacity: 0; animation: ucFade 0.5s ease 0.28s forwards; }
+    .uc-svg .uc-line-actual { stroke-dasharray: 1; stroke-dashoffset: 1; animation: ucDraw 0.75s cubic-bezier(0.65,0,0.35,1) forwards; }
+    .uc-svg .uc-lbl-a, .uc-svg .uc-lbl-o { opacity: 0; animation: ucFade 0.4s ease 0.6s forwards; }
+    @media (prefers-reduced-motion: reduce) {
+      .uc-svg .uc-band, .uc-svg .uc-line-target, .uc-svg .uc-line-actual, .uc-svg .uc-lbl-a, .uc-svg .uc-lbl-o { animation: none; opacity: 1; stroke-dashoffset: 0; transform: none; }
+    }
+    .uc-svg .uc-dot { fill: #fff; stroke: #7da2f0; stroke-width: 1.5; }
+    .uc-svg .uc-dot.dim { fill: rgba(255,255,255,0.85); stroke: none; }
+    .uc-svg .uc-lbl-a { fill: #7da2f0; font-size: 11px; font-weight: 600; font-family: inherit; }
+    .uc-svg .uc-lbl-o { fill: rgba(255,255,255,0.85); font-size: 11px; font-weight: 600; font-family: inherit; }
+    .uc-toggle button { position: relative; }
+    .uc-toggle button.active::before { content: '✓ '; }
+    .uc-tip { position: absolute; display: none; pointer-events: none; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; font-size: 0.74rem; color: var(--text-secondary); box-shadow: 0 6px 20px rgba(0,0,0,0.5); z-index: 5; min-width: 150px; }
+    .uc-tip .uc-tip-t { color: var(--text-primary); font-weight: 600; margin-bottom: 5px; }
+    .uc-tip .uc-tip-row { display: flex; align-items: center; gap: 6px; }
+    .uc-tip .uc-tip-row b { color: var(--text-primary); margin-left: auto; }
+    .uc-tip .uc-tip-tg { color: var(--text-muted); margin-left: 0; }
+    .uc-tip i { width: 14px; height: 6px; border-radius: 2px; display: inline-block; }
+    .uc-tip .uc-tip-v { display: block; margin: 1px 0 6px 20px; }
+    .uc-tip .uc-tip-v:last-child { margin-bottom: 0; }
+    .uc-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 0.74rem; color: var(--text-secondary); }
+    .uc-legend .uc-lg-group { display: inline-flex; align-items: center; gap: 5px; }
+    .uc-legend .uc-lg-group b { font-weight: 600; margin-right: 3px; }
+    .uc-legend i { width: 15px; height: 9px; border-radius: 3px; display: inline-block; }
+    .uc-legend i.dash { height: 0; width: 15px; border-top: 2px dashed; background: none !important; border-radius: 0; }
+    .uc-empty { padding: 60px 16px; text-align: center; color: var(--text-muted); font-size: 0.84rem; }
 
     /* ─── Scrollbar ─── */
     ::-webkit-scrollbar { width: 6px; }
@@ -1096,6 +1200,7 @@ export function getWebappHtml(botUsername) {
       <span class="separator">/</span>
       <span class="project-name" id="current-project">No project</span>
       <span class="spacer"></span>
+      <span class="status-badge usage-updated" id="usage-updated" title="Claude usage — click for history chart" style="display:none"></span>
       <span class="status-badge disconnected" id="tg-badge" title="Telegram bot" style="display:none">tg: offline</span>
       <span class="status-badge disconnected" id="conn-badge">disconnected</span>
       <div class="win-controls" id="win-controls">
@@ -1251,13 +1356,63 @@ export function getWebappHtml(botUsername) {
   <!-- ─── Link Picker Modal (browse/search tasks & subtasks to link) ─── -->
   <div class="input-modal" id="link-modal">
     <div class="im-box" style="max-width:520px">
-      <h3>Link to a Kanban item</h3>
+      <h3>Scope to a project — or link a task</h3>
       <div class="lm-row">
         <select id="lm-project"></select>
         <input type="text" id="lm-search" placeholder="Search tasks &amp; subtasks…" autocomplete="off" style="flex:1">
       </div>
+      <div class="lm-locked" id="lm-locked" style="display:none"></div>
+      <button class="lm-scope-btn" id="lm-scope-project"></button>
+      <div class="lm-or">— or link a specific task —</div>
       <div class="lm-list" id="lm-list"></div>
       <div class="im-buttons"><button id="lm-cancel">Cancel</button></div>
+    </div>
+  </div>
+
+  <!-- ─── Mindmap Node Detail Modal ─── -->
+  <div class="input-modal" id="mm-detail-modal">
+    <div class="im-box" style="max-width:520px">
+      <h3 id="mmd-title">Idea</h3>
+      <div id="mmd-view">
+        <div class="mmd-link" id="mmd-link"></div>
+        <div class="mmd-note" id="mmd-note"></div>
+      </div>
+      <div id="mmd-edit" style="display:none">
+        <label class="im-label">Idea</label>
+        <input type="text" id="mmd-text-input" autocomplete="off">
+        <label class="im-label" style="margin-top:10px">Note</label>
+        <textarea id="mmd-note-input" style="min-height:90px"></textarea>
+      </div>
+      <div class="mmd-actions">
+        <button id="mmd-edit-btn">Edit</button>
+        <button id="mmd-save-btn" class="primary" style="display:none">Save</button>
+        <button id="mmd-addchild-btn">+ Child</button>
+        <button id="mmd-link-btn">Link</button>
+        <button id="mmd-del-btn" class="danger">Delete</button>
+        <button id="mmd-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Usage History Chart Modal ─── -->
+  <div class="input-modal" id="usage-modal">
+    <div class="im-box" style="max-width:680px">
+      <h3>Claude usage over time</h3>
+      <div class="uc-controls">
+        <div class="uc-seg uc-toggle" id="uc-metric" title="Toggle each independently">
+          <button data-metric="week" class="active">Weekly</button>
+          <button data-metric="five">5-hour</button>
+        </div>
+        <div class="uc-seg" id="uc-ranges">
+          <button data-range="5h">5h</button>
+          <button data-range="day">Day</button>
+          <button data-range="week" class="active">Week</button>
+          <button data-range="month">Month</button>
+        </div>
+      </div>
+      <div class="uc-chart-wrap"><div class="uc-chart" id="uc-chart"></div><div class="uc-tip" id="uc-tip"></div></div>
+      <div class="uc-legend" id="uc-legend"></div>
+      <div class="im-buttons"><button id="uc-close">Close</button></div>
     </div>
   </div>
 
@@ -1283,6 +1438,8 @@ export function getWebappHtml(botUsername) {
     let userTerminals = []; // { name, status, alias, command }
     let services = [];
     let reconnectTimer = null;
+    let sse = null;             // EventSource (kept so we can health-check it)
+    let sseReconnectTimer = null;
     let resizeTimer = null;
     let projectMode = 'multi'; // 'single' or 'multi'
     let projectsDir = '';
@@ -1295,6 +1452,28 @@ export function getWebappHtml(botUsername) {
     let pinOnSubmit = null;     // async (pin) => { ok, error }
     let mindmapNodes = [];
     const mindmapCollapsed = {}; // nodeId → true when its children are hidden
+    let mindmapZoom = 1;          // current zoom scale
+    let mindmapZoomInit = false;  // whether initial fit-vertical zoom was applied
+    let mindmapBaseW = 0, mindmapBaseH = 0; // unscaled content size
+    let mindmapSearch = '';       // active filter query
+    let mmSearchSavedCollapsed = null; // collapse snapshot to restore when search clears
+    let lastMmDrag = 0;           // timestamp of last node drag-end (suppress click-after-drag)
+    let mmDetailId = null;        // node id open in detail modal
+    let mmAnimate = false;        // play entrance animation on the next render (fresh load only)
+    const mindmapHiddenProjects = new Set(); // project keys toggled off ('' = general)
+    // Resolved scope from the backend (link > parent inheritance > own); '' = general.
+    function mmNodeProjectKey(n) { return n.effectiveProject || ''; }
+    // A node is hidden if its own project OR any ancestor's project is toggled
+    // off — so hiding a project hides its whole subtree (children never orphan).
+    function mmNodePassesProject(n) {
+      let cur = n; const seen = new Set();
+      while (cur && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        if (mindmapHiddenProjects.has(cur.effectiveProject || '')) return false;
+        cur = cur.parentId ? mindmapNodes.find(x => x.id === cur.parentId) : null;
+      }
+      return true;
+    }
 
     const $ = (s) => document.querySelector(s);
     const $$ = (s) => document.querySelectorAll(s);
@@ -1375,7 +1554,26 @@ export function getWebappHtml(botUsername) {
     // ─── Show App ───
     // ─── Claude usage meter (real, account-wide) ───
     let usageData = null;
+    let usageUpdatedAt = 0; // epoch ms of the currently-shown sample
     const MS_HOUR = 3600000, MS_DAY = 24 * MS_HOUR;
+
+    function fmtAgo(ms) {
+      const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+      if (s < 60) return 'just now';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ago';
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + 'h ago';
+      return Math.floor(h / 24) + 'd ago';
+    }
+    function updateUsageBadge() {
+      const el = $('#usage-updated');
+      if (!el) return;
+      if (!usageUpdatedAt) { el.style.display = 'none'; return; }
+      el.style.display = '';
+      el.textContent = '📊 ' + fmtAgo(usageUpdatedAt);
+      el.title = 'Claude usage updated ' + new Date(usageUpdatedAt).toLocaleString() + ' · click for history chart';
+    }
 
     // Elapsed fraction (0-100) of a window, i.e. progress toward its reset.
     function resetProgress(resetsAtISO, windowMs) {
@@ -1416,10 +1614,26 @@ export function getWebappHtml(botUsername) {
     }
 
     async function loadUsage() {
+      // 1) instant: paint last stored sample right away (no network round-trip)
+      try {
+        const r = await apiFetch('/api/usage/latest');
+        const d = await r.json();
+        if (d && d.ok) renderUsage(d);
+      } catch { /* ignore */ }
+      // 2) live refresh (may be slow or rate-limited; SSE also pushes updates)
       try {
         const res = await apiFetch('/api/usage');
         renderUsage(await res.json());
       } catch { /* SSE will retry */ }
+    }
+
+    // Periodic check against the backend's stored sample, in addition to SSE.
+    async function pollStoredUsage() {
+      try {
+        const r = await apiFetch('/api/usage/latest');
+        const d = await r.json();
+        if (d && d.ok && (Date.parse(d.fetchedAt) || 0) >= usageUpdatedAt) renderUsage(d);
+      } catch { /* ignore */ }
     }
 
     // Position a usage label relative to its fill's leading edge.
@@ -1460,6 +1674,8 @@ export function getWebappHtml(botUsername) {
         return;
       }
       usageData = u;
+      usageUpdatedAt = Date.parse(u.fetchedAt) || Date.now();
+      updateUsageBadge();
       const five = u.fiveHour ? u.fiveHour.utilization : 0;
       const week = u.week ? u.week.utilization : 0;
       setUsageBar('wk-usage', 'wk-usage-label', week, 'wk');
@@ -1478,6 +1694,255 @@ export function getWebappHtml(botUsername) {
       bar.style.background = ufColor(pct, 'rgba(99,102,241,0.22)');
       label.textContent = tag + ' ' + pct + '%';
       placeUsageLabel(label, pct);
+    }
+
+    // ─── Usage history chart (hand-drawn SVG: smooth monotone curves with a
+    // transparent over/under band — actual vs optimal pace) ───
+    let usageChartRange = 'week';
+    // Each metric toggles independently so both can be viewed at once or alone.
+    const usageChartShow = { week: true, five: false };
+    let usageChartRecords = [];
+    const UC = { W: 660, H: 300, padL: 40, padR: 58, padT: 16, padB: 28 };
+    // Distinct palette per metric so the two never interfere. Semantics:
+    // over target = warm (warning), under target = cool (good).
+    const UC_PAL = {
+      week: {
+        key: 'week', name: 'Weekly', short: 'Wk', aKey: 'week', oKey: 'weekOpt',
+        line: '#6366f1', target: 'rgba(129,140,248,0.8)',
+        over: 'rgba(239,68,68,0.42)', under: 'rgba(16,185,129,0.4)',
+        overGrad: ['rgba(239,68,68,0.5)', 'rgba(239,68,68,0.08)'],
+        underGrad: ['rgba(16,185,129,0.46)', 'rgba(16,185,129,0.06)'],
+        overName: 'over (red)', underName: 'under (green)',
+      },
+      five: {
+        key: 'five', name: '5-hour', short: '5h', aKey: 'five', oKey: 'fiveOpt',
+        line: '#a78bfa', target: 'rgba(196,181,253,0.8)',
+        over: 'rgba(245,158,11,0.46)', under: 'rgba(56,189,248,0.42)',
+        overGrad: ['rgba(245,158,11,0.52)', 'rgba(245,158,11,0.08)'],
+        underGrad: ['rgba(56,189,248,0.46)', 'rgba(56,189,248,0.06)'],
+        overName: 'over (amber)', underName: 'under (blue)',
+      },
+    };
+
+    function openUsageModal() {
+      $('#usage-modal').classList.add('visible');
+      loadUsageChart(usageChartRange);
+    }
+    function closeUsageModal() { $('#usage-modal').classList.remove('visible'); }
+    async function loadUsageChart(range) {
+      usageChartRange = range;
+      $$('#uc-ranges button').forEach(b => b.classList.toggle('active', b.dataset.range === range));
+      $$('#uc-metric button').forEach(b => b.classList.toggle('active', !!usageChartShow[b.dataset.metric]));
+      $('#uc-chart').innerHTML = '<div class="uc-empty">Loading…</div>';
+      try {
+        const r = await apiFetch('/api/usage/history?range=' + encodeURIComponent(range));
+        const d = await r.json();
+        usageChartRecords = (d && d.records) || [];
+      } catch { usageChartRecords = []; }
+      renderUsageChart();
+    }
+
+    // Fritsch–Carlson monotone cubic interpolation → smooth, non-overshooting.
+    function monotoneFn(xs, ys) {
+      const n = xs.length;
+      if (n < 2) return () => ys[0];
+      const dx = [], slope = [];
+      for (let i = 0; i < n - 1; i++) { dx[i] = xs[i + 1] - xs[i]; slope[i] = (ys[i + 1] - ys[i]) / dx[i]; }
+      const m = new Array(n);
+      m[0] = slope[0]; m[n - 1] = slope[n - 2];
+      for (let i = 1; i < n - 1; i++) {
+        if (slope[i - 1] * slope[i] <= 0) m[i] = 0;
+        else { const w1 = 2 * dx[i] + dx[i - 1], w2 = dx[i] + 2 * dx[i - 1]; m[i] = (w1 + w2) / (w1 / slope[i - 1] + w2 / slope[i]); }
+      }
+      return (x) => {
+        if (x <= xs[0]) return ys[0];
+        if (x >= xs[n - 1]) return ys[n - 1];
+        let i = 0; while (x > xs[i + 1]) i++;
+        const h = dx[i], t = (x - xs[i]) / h, t2 = t * t, t3 = t2 * t;
+        return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * m[i]
+          + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h * m[i + 1];
+      };
+    }
+
+    // Build the band + line + dot layers for one metric. Returns null when there
+    // isn't enough data to draw a curve (the caller shows a friendly empty state).
+    function buildMetricLayers(pal, t0, span, x, y) {
+      const aKey = pal.aKey, oKey = pal.oKey;
+      const recs = Array.isArray(usageChartRecords) ? usageChartRecords : [];
+      // strictly-increasing timestamps (drop dupes) so the interpolator is safe
+      const pts = recs
+        .filter(r => r && r.at >= t0 && r[aKey] != null && r[oKey] != null)
+        .filter((p, i, a) => i === 0 || p.at !== a[i - 1].at);
+      if (pts.length < 2) return null; // need at least two samples for a curve
+      const xs = pts.map(p => p.at);
+      const fA = monotoneFn(xs, pts.map(p => p[aKey]));
+      const fO = monotoneFn(xs, pts.map(p => p[oKey]));
+      const x0p = x(xs[0]), x1p = x(xs[xs.length - 1]);
+      const steps = Math.max(2, Math.min(260, Math.round((x1p - x0p) / 2)));
+      const S = [];
+      for (let i = 0; i <= steps; i++) {
+        const t = xs[0] + (xs[xs.length - 1] - xs[0]) * (i / steps);
+        const a = Math.max(0, Math.min(100, fA(t))), o = Math.max(0, Math.min(100, fO(t)));
+        S.push({ px: x(t), ay: y(a), oy: y(o), d: a - o });
+      }
+      let overP = '', underP = '';
+      const quad = (x0, oy0, ay0, x1, ay1, oy1) => 'M' + x0 + ',' + oy0 + ' L' + x0 + ',' + ay0 + ' L' + x1 + ',' + ay1 + ' L' + x1 + ',' + oy1 + ' Z ';
+      const tri = (ax, ay, bx, by, cx, cy) => 'M' + ax + ',' + ay + ' L' + bx + ',' + by + ' L' + cx + ',' + cy + ' Z ';
+      for (let i = 0; i < S.length - 1; i++) {
+        const p = S[i], q = S[i + 1];
+        if (p.d === 0 && q.d === 0) continue;
+        if ((p.d >= 0 && q.d >= 0) || (p.d <= 0 && q.d <= 0)) {
+          const seg = quad(p.px, p.oy, p.ay, q.px, q.ay, q.oy);
+          if ((p.d + q.d) > 0) overP += seg; else underP += seg;
+        } else {
+          const fr = p.d / (p.d - q.d);
+          const cx = p.px + (q.px - p.px) * fr, cy = p.ay + (q.ay - p.ay) * fr;
+          const left = tri(p.px, p.oy, p.px, p.ay, cx, cy);
+          const right = tri(cx, cy, q.px, q.ay, q.px, q.oy);
+          if (p.d > 0) { overP += left; underP += right; } else { underP += left; overP += right; }
+        }
+      }
+      const linePath = (key) => 'M' + S.map(s => s.px + ',' + s[key]).join(' L');
+      // No per-point dots (they clutter); exact values come from the hover tooltip.
+      const last = pts[pts.length - 1];
+      const label = '<text x="' + (x(last.at) + 8) + '" y="' + (y(last[aKey]) + 4) + '" class="uc-lbl-a" style="fill:' + pal.line + '">' + pal.short + '</text>';
+      const band = '<path d="' + underP + '" fill="url(#uc-g-' + pal.key + '-under)" class="uc-band"/>'
+        + '<path d="' + overP + '" fill="url(#uc-g-' + pal.key + '-over)" class="uc-band"/>';
+      const lines = '<path d="' + linePath('oy') + '" fill="none" stroke="' + pal.target + '" stroke-width="1.8" stroke-dasharray="6 5" stroke-linecap="round" class="uc-line-target"/>'
+        + '<path d="' + linePath('ay') + '" pathLength="1" fill="none" stroke="' + pal.line + '" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round" class="uc-line-actual"/>';
+      return { band, lines, dotsLabel: label };
+    }
+
+    function renderUsageChart() {
+      const host = $('#uc-chart'); if (!host) return;
+      const { W, H, padL, padR, padT, padB } = UC;
+      const spans = { '5h': 5 * MS_HOUR, day: MS_DAY, week: 7 * MS_DAY, month: 30 * MS_DAY };
+      const span = spans[usageChartRange] || spans.week;
+      // For the 5h / week ranges, frame the CURRENT window (start → reset) using
+      // the reset time of the latest sample, rather than a trailing window — so
+      // you see the whole live window with the remaining time to reset.
+      const recsAll = Array.isArray(usageChartRecords) ? usageChartRecords : [];
+      const lastRec = recsAll[recsAll.length - 1];
+      let t1 = Date.now();
+      if (usageChartRange === '5h' && lastRec && lastRec.fiveReset) t1 = new Date(lastRec.fiveReset).getTime();
+      else if (usageChartRange === 'week' && lastRec && lastRec.weekReset) t1 = new Date(lastRec.weekReset).getTime();
+      const t0 = t1 - span;
+      const x = (t) => padL + (W - padL - padR) * Math.max(0, Math.min(1, (t - t0) / span));
+      const y = (v) => padT + (H - padT - padB) * (1 - Math.max(0, Math.min(100, v)) / 100);
+      const now = Date.now();
+      const nowMark = (now > t0 && now < t1)
+        ? '<line x1="' + x(now) + '" y1="' + padT + '" x2="' + x(now) + '" y2="' + (H - padB) + '" stroke="rgba(255,255,255,0.32)" stroke-dasharray="2 3"/>'
+          + '<text x="' + x(now) + '" y="' + (padT + 9) + '" text-anchor="middle" class="uc-now">now</text>'
+        : '';
+
+      $$('#uc-metric button').forEach(b => b.classList.toggle('active', !!usageChartShow[b.dataset.metric]));
+
+      let grid = '';
+      for (let v = 0; v <= 100; v += 25) {
+        const yy = y(v);
+        grid += '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="rgba(255,255,255,0.08)"/>';
+        grid += '<text x="' + (padL - 6) + '" y="' + (yy + 3) + '" text-anchor="end" class="uc-axis">' + v + '%</text>';
+      }
+      const fmtT = (t) => { const dt = new Date(t); return span <= MS_DAY ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (dt.getMonth() + 1) + '/' + dt.getDate(); };
+      let xlabels = '';
+      for (let i = 0; i <= 4; i++) { const t = t0 + span * i / 4; xlabels += '<text x="' + x(t) + '" y="' + (H - 8) + '" text-anchor="middle" class="uc-axis">' + fmtT(t) + '</text>'; }
+
+      const enabled = ['week', 'five'].filter(m => usageChartShow[m]);
+      const lg = $('#uc-legend');
+      if (!enabled.length) {
+        host.innerHTML = '<div class="uc-empty">Enable “Weekly” or “5-hour” above to see the chart.</div>';
+        if (lg) lg.innerHTML = '';
+        return;
+      }
+
+      // bands underneath, lines/dots on top — so the two metrics don't bury each other
+      let bands = '', lines = '', dotsLabels = '', legend = '';
+      const activePals = [];
+      for (const m of enabled) {
+        const pal = UC_PAL[m];
+        const layers = buildMetricLayers(pal, t0, span, x, y);
+        if (!layers) continue;
+        bands += layers.band; lines += layers.lines; dotsLabels += layers.dotsLabel;
+        activePals.push(pal);
+        legend += '<span class="uc-lg-group"><b style="color:' + pal.line + '">' + pal.name + '</b>'
+          + '<i style="background:' + pal.line + '"></i>actual'
+          + '<i class="dash" style="border-color:' + pal.target + '"></i>target'
+          + '<i style="background:' + pal.under + '"></i>' + pal.underName
+          + '<i style="background:' + pal.over + '"></i>' + pal.overName + '</span>';
+      }
+      if (!activePals.length) {
+        host.innerHTML = '<div class="uc-empty">No usage recorded in this range yet — the chart fills in as samples are collected.</div>';
+        if (lg) lg.innerHTML = '';
+        return;
+      }
+
+      const grad = (id, stops) => '<linearGradient id="' + id + '" x1="0" y1="' + padT + '" x2="0" y2="' + (H - padB)
+        + '" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="' + stops[0] + '"/><stop offset="1" stop-color="' + stops[1] + '"/></linearGradient>';
+      let defs = '';
+      for (const pal of activePals) {
+        defs += grad('uc-g-' + pal.key + '-under', pal.underGrad) + grad('uc-g-' + pal.key + '-over', pal.overGrad);
+      }
+      host.innerHTML =
+        '<svg viewBox="0 0 ' + W + ' ' + H + '" class="uc-svg" preserveAspectRatio="none">'
+        + '<defs>' + defs + '</defs>'
+        + '<g>' + grid + xlabels + '</g>' + bands + lines + dotsLabels + nowMark
+        + '<line id="uc-guide" x1="0" y1="' + padT + '" x2="0" y2="' + (H - padB) + '" stroke="rgba(255,255,255,0.25)" stroke-dasharray="3 3" style="display:none"/>'
+        + '</svg>';
+      if (lg) lg.innerHTML = legend;
+
+      bindUsageHover(host, activePals, x, t0, span);
+    }
+
+    function bindUsageHover(host, pals, x, t0, span) {
+      const svg = host.querySelector('.uc-svg');
+      const guide = host.querySelector('#uc-guide');
+      const tip = $('#uc-tip');
+      if (!svg) return;
+      const inRange = usageChartRecords.filter(r => r.at >= t0);
+      const fmtFull = (t) => { const dt = new Date(t); return span <= MS_DAY ? dt.toLocaleString([], { hour: '2-digit', minute: '2-digit' }) : dt.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+      const onMove = (ev) => {
+        const rect = svg.getBoundingClientRect();
+        const relX = (ev.clientX - rect.left) / rect.width * UC.W;
+        let best = null, bestDx = Infinity;
+        for (const p of inRange) { const dxp = Math.abs(x(p.at) - relX); if (dxp < bestDx) { bestDx = dxp; best = p; } }
+        if (!best) return;
+        const gx = x(best.at);
+        guide.setAttribute('x1', gx); guide.setAttribute('x2', gx); guide.style.display = '';
+        let rows = '<div class="uc-tip-t">' + fmtFull(best.at) + '</div>';
+        for (const pal of pals) {
+          const a = best[pal.aKey], o = best[pal.oKey];
+          if (a == null || o == null) continue;
+          const over = a - o;
+          const verdict = over > 0 ? '<span style="color:#f87171">▲ ' + over + '% over</span>' : (over < 0 ? '<span style="color:#4ade80">▼ ' + (-over) + '% under</span>' : 'on pace');
+          rows += '<div class="uc-tip-row"><i style="background:' + pal.line + '"></i><span>' + pal.name + '</span><b>' + a + '%</b> <span class="uc-tip-tg">/ ' + o + '%</span></div>'
+            + '<div class="uc-tip-v">' + verdict + '</div>';
+        }
+        tip.innerHTML = rows;
+        tip.style.display = 'block';
+        const px = gx / UC.W * host.clientWidth;
+        tip.style.left = Math.min(host.clientWidth - tip.offsetWidth - 6, Math.max(6, px + 10)) + 'px';
+        tip.style.top = '10px';
+      };
+      const onLeave = () => { guide.style.display = 'none'; tip.style.display = 'none'; };
+      svg.addEventListener('mousemove', onMove);
+      svg.addEventListener('mouseleave', onLeave);
+      svg.addEventListener('touchstart', (e) => { if (e.touches[0]) onMove(e.touches[0]); }, { passive: true });
+      svg.addEventListener('touchmove', (e) => { if (e.touches[0]) onMove(e.touches[0]); }, { passive: true });
+    }
+
+    function setupUsageModal() {
+      const updated = $('#usage-updated'), bg = $('#usage-bg');
+      if (updated) updated.addEventListener('click', openUsageModal);
+      if (bg) bg.addEventListener('click', openUsageModal);
+      $('#uc-close').addEventListener('click', closeUsageModal);
+      $('#usage-modal').addEventListener('click', (e) => { if (e.target.id === 'usage-modal') closeUsageModal(); });
+      $('#uc-ranges').addEventListener('click', (e) => { const b = e.target.closest('button[data-range]'); if (b) loadUsageChart(b.dataset.range); });
+      $('#uc-metric').addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-metric]');
+        if (!b) return;
+        usageChartShow[b.dataset.metric] = !usageChartShow[b.dataset.metric]; // independent on/off
+        renderUsageChart();
+      });
     }
 
     function showApp() {
@@ -2017,8 +2482,11 @@ export function getWebappHtml(botUsername) {
 
     // ─── WebSocket ───
     function connectWS() {
-      if (ws) { try { ws.close(); } catch {} }
       clearTimeout(reconnectTimer);
+      // Detach the previous socket's handlers BEFORE closing it, so replacing a
+      // (possibly still-open) socket can't fire a stray onclose that schedules
+      // another reconnect — which would loop every few seconds and flap the badge.
+      if (ws) { ws.onopen = ws.onmessage = ws.onerror = null; ws.onclose = null; try { ws.close(); } catch {} }
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const url = proto + '//' + location.host + '/ws?token=' + encodeURIComponent(token);
@@ -2056,7 +2524,9 @@ export function getWebappHtml(botUsername) {
 
     // ─── SSE for state updates ───
     function connectSSE() {
-      const es = new EventSource('/api/events?token=' + encodeURIComponent(token));
+      clearTimeout(sseReconnectTimer);
+      if (sse) { try { sse.close(); } catch {} }
+      const es = sse = new EventSource('/api/events?token=' + encodeURIComponent(token));
       es.addEventListener('state', (e) => {
         try {
           const state = JSON.parse(e.data);
@@ -2096,9 +2566,44 @@ export function getWebappHtml(botUsername) {
         try { renderUsage(JSON.parse(e.data)); } catch { /* ignore */ }
       });
       es.onerror = () => {
-        es.close();
-        setTimeout(connectSSE, 5000);
+        es.onerror = null; // avoid re-entrancy while we reschedule
+        try { es.close(); } catch {}
+        clearTimeout(sseReconnectTimer);
+        sseReconnectTimer = setTimeout(connectSSE, 5000);
       };
+    }
+
+    // ─── Reconnect ONLY when actually disconnected ───
+    // Mobile PWAs suspend backgrounded tabs and can silently drop the socket; on
+    // return we reconnect *only if it's closed*. We never touch a live socket
+    // (forcing a reconnect on a healthy connection makes the badge flap).
+    function wsHealthy() { return ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING); }
+    function sseHealthy() { return sse && sse.readyState !== EventSource.CLOSED; }
+    function ensureConnections() {
+      if (!token) return false;
+      let reconnected = false;
+      if (!wsHealthy()) { connectWS(); reconnected = true; }   // re-subscribes on open
+      if (!sseHealthy()) { connectSSE(); reconnected = true; } // server re-pushes state + usage
+      return reconnected;
+    }
+    let resumeTimer = null;
+    function onResume() {
+      if (document.visibilityState === 'hidden') return;
+      if (!ensureConnections()) return; // already alive → leave it completely alone
+      clearTimeout(resumeTimer);
+      resumeTimer = setTimeout(() => { // we actually had to reconnect → refresh the view
+        if (!token || !$('#app').classList.contains('visible')) return;
+        loadUsage();
+        if (currentTab === 'kanban') loadKanban();
+        else if (currentTab === 'mindmap') loadMindmap();
+        else if (currentTab === 'secrets') loadSecrets();
+        else if (currentTab === 'services') loadServices();
+      }, 400);
+    }
+    function setupReconnectHandlers() {
+      document.addEventListener('visibilitychange', onResume);
+      window.addEventListener('online', onResume); // network returned → reconnect if dropped
+      window.addEventListener('pageshow', onResume); // bfcache restore
     }
 
     // ─── Sidebar ───
@@ -4030,13 +4535,14 @@ export function getWebappHtml(botUsername) {
         },
         onEnd: async (commit) => {
           clearMmDropTargets();
+          lastMmDrag = Date.now(); // suppress the click that follows a drag
           if (commit && target) { await mindmapPost({ action: 'moveNode', id: nodeId, parentId: target.parentId, index: target.index }); loadMindmap(); }
           target = null;
         },
       };
     }
     function attachMindmapDrag(inner) {
-      inner.querySelectorAll('.mm-node').forEach(node => makeDraggable(node, mindmapDragHandlers(node.dataset.node)));
+      inner.querySelectorAll('.mm-node:not(.mm-ghost)').forEach(node => makeDraggable(node, mindmapDragHandlers(node.dataset.node)));
     }
 
     function setupKanbanHandlers() {
@@ -4252,6 +4758,7 @@ export function getWebappHtml(botUsername) {
         const res = await apiFetch('/api/mindmap');
         const d = await res.json();
         mindmapNodes = (d.ok && d.mindmap && d.mindmap.nodes) ? d.mindmap.nodes : [];
+        mmAnimate = true; // a fresh load → play the entrance animation
         renderMindmap();
       } catch (err) {
         $('#mindmap-panel').innerHTML = '<div class="kanban-empty">Failed to load mindmap: ' + escHtml(err.message) + '</div>';
@@ -4268,20 +4775,52 @@ export function getWebappHtml(botUsername) {
     }
 
     function renderMindmap() {
+      const anim = mmAnimate; mmAnimate = false; // entrance plays once per fresh load
       const panel = $('#mindmap-panel');
       let h = '<div class="kanban-toolbar">'
         + '<button class="kanban-btn primary" data-mact="add-root">+ Add idea</button>'
+        + '<input type="text" class="mm-search" id="mm-search" placeholder="Filter ideas…" autocomplete="off" value="' + escHtml(mindmapSearch) + '">'
         + '<div class="spacer"></div>'
-        + '<span style="font-size:0.76rem;color:var(--text-muted)">Hover a node for actions · green = linked to a Kanban task</span>'
+        + '<span style="font-size:0.74rem;color:var(--text-muted)">Tap a node for details · Ctrl+scroll / pinch to zoom · green = linked</span>'
         + '</div>';
       if (!mindmapNodes.length) {
         h += '<div class="kanban-empty">No ideas yet. Add one, or hit “Brainstorm” on a Kanban card to extend a task here.</div>';
         panel.innerHTML = h;
         return;
       }
-      h += '<div class="mindmap-canvas"><div class="mindmap-inner" id="mindmap-inner"></div></div>';
+      h += renderMindmapProjectBar(anim);
+      h += '<div class="mindmap-canvas' + (anim ? ' mm-anim' : '') + '" id="mindmap-canvas"><div class="mindmap-inner" id="mindmap-inner"><div class="mm-scale" id="mm-scale"></div></div></div>';
       panel.innerHTML = h;
-      layoutMindmap($('#mindmap-inner'));
+      layoutMindmap($('#mm-scale'));
+      const search = $('#mm-search');
+      if (search) {
+        search.addEventListener('input', () => setMindmapSearch(search.value));
+        if (mindmapSearch) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
+      }
+    }
+
+    // Project filter chips. All projects shown by default; toggle any off to
+    // hide its nodes. Shows a "filtered" indicator when a filter is active.
+    function renderMindmapProjectBar(anim) {
+      const keys = [...new Set(mindmapNodes.map(mmNodeProjectKey))];
+      // Show the filter when there's anything to filter by: 2+ groups, or even a
+      // single real project (so it's discoverable). Hide only when everything is
+      // General (one '' group → no projects to filter).
+      const realKeys = keys.filter(k => k !== '');
+      if (realKeys.length === 0) return '';
+      keys.sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b))); // Unlinked last
+      const projName = (k) => k === '' ? 'General' : ((projects.find(p => p.alias === k) || {}).name || k);
+      const hiddenCount = keys.filter(k => mindmapHiddenProjects.has(k)).length;
+      let chips = keys.map(k => {
+        const off = mindmapHiddenProjects.has(k);
+        return '<button class="mm-proj-chip' + (off ? ' off' : '') + '" data-mmproj="' + escHtml(k) + '">'
+          + (off ? '' : '<span class="dot"></span>') + escHtml(projName(k)) + '</button>';
+      }).join('');
+      const indicator = hiddenCount
+        ? '<span class="mm-proj-flag">🔽 filtered (' + hiddenCount + ' hidden)</span>'
+          + '<button class="mm-proj-chip reset" data-mmproj-all="1">Show all</button>'
+        : '';
+      return '<div class="mm-proj-bar' + (anim ? ' mm-anim' : '') + '"><span class="mm-proj-label">Projects:</span>' + chips + indicator + '</div>';
     }
 
     function layoutMindmap(inner) {
@@ -4289,90 +4828,250 @@ export function getWebappHtml(botUsername) {
       // shown (no hover), so rows need more vertical room to avoid overlap.
       const isMobile = window.innerWidth <= 768;
       const COL_W = isMobile ? 200 : MM_COL_W;
-      const ROW_H = isMobile ? 150 : MM_ROW_H;
-      const NODE_W = isMobile ? 160 : MM_NODE_W;
-      const byId = {}; mindmapNodes.forEach(n => { byId[n.id] = n; });
+      const NODE_W = isMobile ? 168 : MM_NODE_W;
+      const GAP = isMobile ? 22 : 16;   // vertical gap between stacked nodes
+      const MIN_H = isMobile ? 60 : 48; // fallback height before measuring
+      // Work only with nodes whose project (and every ancestor's project) is
+      // enabled — hiding a project hides its whole subtree, no orphaned children.
+      const nodes = mindmapNodes.filter(mmNodePassesProject);
+      const byId = {}; nodes.forEach(n => { byId[n.id] = n; });
       const children = {};
       const roots = [];
-      for (const n of mindmapNodes) {
+      for (const n of nodes) {
         const hasParent = n.parentId && byId[n.parentId];
         if (hasParent) { (children[n.parentId] = children[n.parentId] || []).push(n); }
         else roots.push(n);
       }
-      const pos = {}; // id → {x(depth), y(row)}
-      let row = 0, maxDepth = 0;
-      const place = (node, depth) => {
-        maxDepth = Math.max(maxDepth, depth);
-        const kids = (!mindmapCollapsed[node.id] && children[node.id]) ? children[node.id] : [];
-        if (kids.length) {
-          const ys = kids.map(k => place(k, depth + 1));
-          pos[node.id] = { x: depth, y: (ys[0] + ys[ys.length - 1]) / 2 };
-        } else {
-          pos[node.id] = { x: depth, y: row++ };
-        }
-        return pos[node.id].y;
+      // A node is visible only if no ancestor is collapsed.
+      const isVisible = (n) => {
+        let p = n.parentId && byId[n.parentId];
+        while (p) { if (mindmapCollapsed[p.id]) return false; p = p.parentId && byId[p.parentId]; }
+        return true;
       };
-      roots.forEach(r => place(r, 0));
-      const rows = Math.max(row, 1);
+      const depthOf = (n) => {
+        let d = 0, p = n;
+        while (p.parentId && byId[p.parentId]) { d++; p = byId[p.parentId]; }
+        return d;
+      };
 
       const px = (x) => MM_PAD + x * COL_W;
-      const py = (y) => MM_PAD + y * ROW_H + ROW_H / 2;
-      const width = MM_PAD + (maxDepth + 1) * COL_W;
-      const height = MM_PAD * 2 + rows * ROW_H;
-      inner.style.width = width + 'px';
-      inner.style.height = height + 'px';
 
-      // Edges (parent right edge → child left edge), bezier curves.
-      let paths = '';
-      for (const n of mindmapNodes) {
-        if (!pos[n.id]) continue;
-        const kids = (!mindmapCollapsed[n.id] && children[n.id]) ? children[n.id] : [];
-        for (const k of kids) {
-          if (!pos[k.id]) continue;
-          const x1 = px(pos[n.id].x) + NODE_W, y1 = py(pos[n.id].y);
-          const x2 = px(pos[k.id].x), y2 = py(pos[k.id].y);
-          const mid = (x1 + x2) / 2;
-          paths += '<path d="M' + x1 + ',' + y1 + ' C' + mid + ',' + y1 + ' ' + mid + ',' + y2 + ' ' + x2 + ',' + y2 + '" fill="none" stroke="var(--border)" stroke-width="2"/>';
-        }
+      // --- pass 1: build compact markup for VISIBLE nodes (left from depth;
+      // top deferred until we've measured real heights). ---
+      const trunc = (s, m) => { s = String(s || ''); return s.length > m ? s.slice(0, m - 1) + '…' : s; };
+      const pos = {}; // id → {x(depth), y(center-px)}
+      let maxDepth = 0;
+      const visNodes = nodes.filter(isVisible);
+      visNodes.forEach(n => { pos[n.id] = { x: depthOf(n), y: 0 }; maxDepth = Math.max(maxDepth, pos[n.id].x); });
+
+      // A persistent dashed "add idea" ghost under every visible, expanded node —
+      // one tap adds a child linked/scoped to it. Appended after real children.
+      const phantomFor = {};
+      const phantoms = [];
+      for (const n of visNodes) {
+        if (mindmapCollapsed[n.id]) continue;
+        const ph = { id: '__add__' + n.id, parentId: n.id, ghost: true };
+        phantomFor[n.id] = ph; phantoms.push(ph);
+        pos[ph.id] = { x: pos[n.id].x + 1, y: 0 };
+        maxDepth = Math.max(maxDepth, pos[ph.id].x);
       }
-      let html = '<svg class="mindmap-edges" width="' + width + '" height="' + height + '">' + paths + '</svg>';
+      const hasRealKids = (id) => !mindmapCollapsed[id] && children[id] && children[id].length;
+      // For packing: a parent's ghost appends after its real children (drives a
+      // row below them); a leaf's ghost sits BESIDE it (placed later) so the
+      // leaf still reserves its own height and siblings never overlap.
+      const kidsOf = (node) => {
+        const real = hasRealKids(node.id) ? children[node.id] : [];
+        return (phantomFor[node.id] && real.length) ? real.concat(phantomFor[node.id]) : real;
+      };
 
-      for (const n of mindmapNodes) {
-        if (!pos[n.id]) continue;
+      const ghostHtml = (ph) => '<div class="mm-node mm-ghost" style="left:' + px(pos[ph.id].x) + 'px" data-node="' + ph.id + '" data-addparent="' + ph.parentId + '" title="Add a child idea here">'
+        + '<span class="mm-ghost-plus">+</span><span class="mm-ghost-label">add idea</span></div>';
+
+      const nodeHtml = (n) => {
         const isRoot = !(n.parentId && byId[n.parentId]);
         const info = n.linkedTaskInfo;
         const linked = !!(n.linkedTask);
         const hasKids = !!(children[n.id] && children[n.id].length);
         const collapsed = !!mindmapCollapsed[n.id];
-        let badge = '';
+        let chip = '';
         if (linked) {
           if (info && !info.missing) {
-            if (info.kind === 'todo') {
-              badge = '<span class="mm-link" title="Linked subtask in: ' + escHtml(info.taskTitle || '') + '">🔗 ' + (info.done ? '☑' : '☐') + ' ' + escHtml(info.text || '')
-                + ' <span class="st">· ' + escHtml(info.taskTitle || '') + '</span></span>';
-            } else {
-              badge = '<span class="mm-link" title="Linked Kanban task">🔗 ' + escHtml(info.project) + ' · ' + escHtml(info.title || '')
-                + ' <span class="st">[' + escHtml((info.status || '').replace('_', ' ')) + (info.deleted ? ', deleted' : '') + ']</span></span>';
-            }
+            if (info.kind === 'todo') chip = '<span class="mm-chip link">🔗 ' + (info.done ? '☑' : '☐') + ' ' + escHtml(trunc(info.text || info.taskTitle || 'subtask', 20)) + '</span>';
+            else chip = '<span class="mm-chip link">🔗 ' + escHtml(trunc(info.title || info.project || 'task', 20)) + '</span>';
           } else {
-            badge = '<span class="mm-link missing" title="Linked item no longer exists">🔗 ' + (info && info.kind === 'todo' ? 'subtask removed' : 'task removed') + '</span>';
+            chip = '<span class="mm-chip link missing">🔗 removed</span>';
           }
+        } else if (n.project) {
+          // scoped to a project without a task link
+          const nm = (projects.find(p => p.alias === n.project) || {}).name || n.project;
+          chip = '<span class="mm-chip scope">📁 ' + escHtml(trunc(nm, 18)) + '</span>';
         }
-        html += '<div class="mm-node' + (isRoot ? ' root' : '') + (linked ? ' linked' : '') + '" style="left:' + px(pos[n.id].x) + 'px;top:' + py(pos[n.id].y) + 'px" data-node="' + n.id + '">'
+        const noteChip = n.note ? '<span class="mm-chip note">📝 note</span>' : '';
+        return '<div class="mm-node' + (isRoot ? ' root' : '') + (linked ? ' linked' : (n.project ? ' scoped' : '')) + '" style="left:' + px(pos[n.id].x) + 'px" data-node="' + n.id + '">'
           + '<div class="mm-text">' + escHtml(n.text) + '</div>'
-          + (n.note ? '<div class="mm-note">' + escHtml(n.note) + '</div>' : '')
-          + badge
-          + '<div class="mm-actions">'
-          + '<button data-mact="add-child" data-node="' + n.id + '">+ child</button>'
-          + '<button data-mact="edit" data-node="' + n.id + '">edit</button>'
-          + '<button data-mact="link" data-node="' + n.id + '">' + (linked ? 'unlink' : 'link') + '</button>'
-          + '<button class="danger" data-mact="del" data-node="' + n.id + '">del</button>'
-          + '</div>'
+          + '<div class="mm-meta">' + chip + noteChip + '</div>'
           + (hasKids ? '<button class="mm-collapse" data-mact="toggle" data-node="' + n.id + '" title="Collapse/expand">' + (collapsed ? '+' : '−') + '</button>' : '')
           + '</div>';
+      };
+      inner.innerHTML = visNodes.map(nodeHtml).join('') + phantoms.map(ghostHtml).join('');
+
+      // measure rendered heights (real nodes + ghosts)
+      const nodeEls = {};
+      inner.querySelectorAll('.mm-node').forEach(el => { nodeEls[el.dataset.node] = el; });
+      const heights = {};
+      const allNodes = visNodes.concat(phantoms);
+      allNodes.forEach(n => { const el = nodeEls[n.id]; heights[n.id] = (el && el.offsetHeight) || MIN_H; });
+
+      // --- pass 2: pack vertical centers using real heights (post-order) ---
+      let cursor = MM_PAD;
+      const placeY = (node) => {
+        const kids = kidsOf(node);
+        if (kids.length) {
+          const cs = kids.map(placeY);
+          pos[node.id].y = (cs[0] + cs[cs.length - 1]) / 2;
+        } else {
+          pos[node.id].y = cursor + heights[node.id] / 2;
+          cursor += heights[node.id] + GAP;
+        }
+        return pos[node.id].y;
+      };
+      roots.forEach(placeY);
+      // Leaf ghosts weren't packed (so the leaf reserves its own height) — sit
+      // them beside their parent at the same row.
+      for (const n of visNodes) {
+        const ph = phantomFor[n.id];
+        if (ph && !hasRealKids(n.id)) pos[ph.id].y = pos[n.id].y;
       }
-      inner.innerHTML = html;
+      const contentH = Math.max(cursor + MM_PAD, 120);
+      const width = MM_PAD + maxDepth * COL_W + NODE_W + MM_PAD;
+
+      // apply vertical positions
+      allNodes.forEach(n => { if (nodeEls[n.id]) nodeEls[n.id].style.top = pos[n.id].y + 'px'; });
+
+      // edges: solid to real children, dashed to the "add idea" ghosts
+      const edge = (n, k, dash) => {
+        const x1 = px(pos[n.id].x) + NODE_W, y1 = pos[n.id].y;
+        const x2 = px(pos[k.id].x), y2 = pos[k.id].y;
+        const mid = (x1 + x2) / 2;
+        return '<path d="M' + x1 + ',' + y1 + ' C' + mid + ',' + y1 + ' ' + mid + ',' + y2 + ' ' + x2 + ',' + y2 + '" fill="none" stroke="var(--border)" stroke-width="2"' + dash + '/>';
+      };
+      let paths = '';
+      for (const n of visNodes) {
+        if (hasRealKids(n.id)) for (const k of children[n.id]) { if (pos[k.id]) paths += edge(n, k, ''); }
+      }
+      for (const ph of phantoms) {
+        const n = byId[ph.parentId];
+        if (n && pos[n.id] && pos[ph.id]) paths += edge(n, ph, ' stroke-dasharray="5 5" opacity="0.45"');
+      }
+      inner.insertAdjacentHTML('afterbegin', '<svg class="mindmap-edges" width="' + width + '" height="' + contentH + '">' + paths + '</svg>');
+
+      mindmapBaseW = width; mindmapBaseH = contentH;
+      inner.style.width = width + 'px';
+      inner.style.height = contentH + 'px';
+
+      // initial zoom: fit everything vertically on first render
+      const canvas = $('#mindmap-canvas');
+      if (!mindmapZoomInit && canvas && canvas.clientHeight > 0) {
+        const avail = canvas.clientHeight - 16;
+        mindmapZoom = (contentH > avail) ? Math.max(0.25, avail / contentH) : 1;
+        mindmapZoomInit = true;
+      }
+      applyMindmapZoom();
       attachMindmapDrag(inner);
+      attachMindmapZoom(canvas, inner);
+      applyMindmapSearch();
+    }
+
+    // Apply current zoom: scale the content layer, size the scroll wrapper to match.
+    function applyMindmapZoom() {
+      const scale = $('#mm-scale'), inner = $('#mindmap-inner');
+      if (!scale || !inner) return;
+      scale.style.transform = 'scale(' + mindmapZoom + ')';
+      inner.style.width = (mindmapBaseW * mindmapZoom) + 'px';
+      inner.style.height = (mindmapBaseH * mindmapZoom) + 'px';
+    }
+
+    function setMindmapZoom(z, cx, cy) {
+      const canvas = $('#mindmap-canvas');
+      const prev = mindmapZoom;
+      mindmapZoom = Math.min(3, Math.max(0.15, z));
+      if (canvas && cx != null) {
+        // keep the point under the cursor stationary
+        const rect = canvas.getBoundingClientRect();
+        const ox = cx - rect.left + canvas.scrollLeft;
+        const oy = cy - rect.top + canvas.scrollTop;
+        const ratio = mindmapZoom / prev;
+        applyMindmapZoom();
+        canvas.scrollLeft = ox * ratio - (cx - rect.left);
+        canvas.scrollTop = oy * ratio - (cy - rect.top);
+      } else {
+        applyMindmapZoom();
+      }
+    }
+
+    let _mmZoomBound = null;
+    function attachMindmapZoom(canvas, inner) {
+      if (!canvas || canvas === _mmZoomBound) return;
+      _mmZoomBound = canvas;
+      canvas.addEventListener('wheel', (e) => {
+        if (!e.ctrlKey) return;          // Ctrl+scroll to zoom
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+        setMindmapZoom(mindmapZoom * factor, e.clientX, e.clientY);
+      }, { passive: false });
+      // pinch zoom
+      let pinchStart = 0, pinchZoom0 = 1;
+      const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+      canvas.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) { pinchStart = dist(e.touches); pinchZoom0 = mindmapZoom; }
+      }, { passive: true });
+      canvas.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2 && pinchStart) {
+          e.preventDefault();
+          const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          setMindmapZoom(pinchZoom0 * (dist(e.touches) / pinchStart), mx, my);
+        }
+      }, { passive: false });
+      canvas.addEventListener('touchend', (e) => { if (e.touches.length < 2) pinchStart = 0; });
+    }
+
+    // ─── Mindmap search/filter (highlight matches, dim the rest) ───
+    function setMindmapSearch(q) {
+      const had = !!mindmapSearch;
+      mindmapSearch = q || '';
+      const has = !!mindmapSearch.trim();
+      if (has && !had) {
+        // expand everything so matches in collapsed subtrees become visible
+        mmSearchSavedCollapsed = { ...mindmapCollapsed };
+        for (const k of Object.keys(mindmapCollapsed)) delete mindmapCollapsed[k];
+        renderMindmap();
+      } else if (!has && had) {
+        if (mmSearchSavedCollapsed) { Object.assign(mindmapCollapsed, mmSearchSavedCollapsed); mmSearchSavedCollapsed = null; }
+        renderMindmap();
+      } else {
+        applyMindmapSearch();
+      }
+    }
+    function nodeMatches(n, q) {
+      if ((n.text || '').toLowerCase().includes(q)) return true;
+      if ((n.note || '').toLowerCase().includes(q)) return true;
+      const i = n.linkedTaskInfo;
+      if (i && ((i.title || '') + ' ' + (i.text || '') + ' ' + (i.taskTitle || '') + ' ' + (i.project || '')).toLowerCase().includes(q)) return true;
+      return false;
+    }
+    function applyMindmapSearch() {
+      const inner = $('#mm-scale'); if (!inner) return;
+      const q = mindmapSearch.trim().toLowerCase();
+      inner.querySelectorAll('.mm-node:not(.mm-ghost)').forEach(el => {
+        if (!q) { el.classList.remove('mm-dim', 'mm-hit'); return; }
+        const n = mindmapNodes.find(x => x.id === el.dataset.node);
+        const hit = n && nodeMatches(n, q);
+        el.classList.toggle('mm-hit', !!hit);
+        el.classList.toggle('mm-dim', !hit);
+      });
+      // hide the "add idea" ghosts while filtering, to keep results clean
+      inner.querySelectorAll('.mm-ghost').forEach(el => { el.style.display = q ? 'none' : ''; });
     }
 
     // ─── Link picker (browse / search / filter tasks & subtasks) ───
@@ -4380,15 +5079,38 @@ export function getWebappHtml(botUsername) {
     let linkPickBoard = null;
     function openLinkPicker(nodeId) {
       linkPickNodeId = nodeId;
+      const node = mindmapNodes.find(n => n.id === nodeId);
+      const parent = node && node.parentId ? mindmapNodes.find(n => n.id === node.parentId) : null;
+      const locked = parent ? (parent.effectiveProject || '') : ''; // child strictly inherits parent's project
       const sel = $('#lm-project');
-      sel.innerHTML = (projects || []).map(p => '<option value="' + escHtml(p.alias) + '">' + escHtml(p.name || p.alias) + '</option>').join('');
-      if (currentProject) sel.value = currentProject;
+      let opts = (projects || []).map(p => '<option value="' + escHtml(p.alias) + '">' + escHtml(p.name || p.alias) + '</option>');
+      if (locked && !(projects || []).some(p => p.alias === locked)) opts.unshift('<option value="' + escHtml(locked) + '">' + escHtml(locked) + '</option>');
+      sel.innerHTML = opts.join('');
+      const note = $('#lm-locked');
+      if (locked) {
+        sel.value = locked; sel.disabled = true;
+        const nm = (projects.find(p => p.alias === locked) || {}).name || locked;
+        note.textContent = '🔒 Scoped to “' + nm + '” (inherited from parent) — can only link tasks in this project.';
+        note.style.display = '';
+      } else {
+        sel.disabled = false;
+        if (currentProject) sel.value = currentProject;
+        note.style.display = 'none';
+      }
       $('#lm-search').value = '';
+      updateScopeBtn();
       $('#link-modal').classList.add('visible');
       loadLinkBoard();
       setTimeout(() => $('#lm-search').focus(), 50);
     }
+    function updateScopeBtn() {
+      const sel = $('#lm-project'), btn = $('#lm-scope-project');
+      if (!sel || !btn) return;
+      const nm = (projects.find(p => p.alias === sel.value) || {}).name || sel.value;
+      btn.textContent = '📁 Scope to “' + nm + '” (no task)';
+    }
     async function loadLinkBoard() {
+      updateScopeBtn();
       const proj = $('#lm-project').value;
       $('#lm-list').innerHTML = '<div class="lm-empty">Loading…</div>';
       try {
@@ -4419,35 +5141,118 @@ export function getWebappHtml(botUsername) {
     function setupMindmapHandlers() {
       const panel = $('#mindmap-panel');
       panel.addEventListener('click', async (e) => {
-        const btn = e.target.closest('[data-mact]');
-        if (!btn) return;
-        const act = btn.dataset.mact;
-        const id = btn.dataset.node;
-        const node = id ? mindmapNodes.find(n => n.id === id) : null;
-        if (act === 'add-root') {
-          const text = await askText({ title: 'Add idea', label: 'New idea' });
-          if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim() }); loadMindmap(); }
-        } else if (act === 'add-child') {
-          const text = await askText({ title: 'Add child idea', label: 'Child idea' });
-          if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim(), parentId: id }); loadMindmap(); }
-        } else if (act === 'edit') {
-          if (!node) return;
-          const text = await askText({ title: 'Edit idea', label: 'Idea text', value: node.text });
-          if (text === null) return;
-          const note = await askText({ title: 'Edit idea', label: 'Note (optional)', value: node.note || '', multiline: true });
-          if (note === null) return;
-          await mindmapPost({ action: 'updateNode', id, text: text.trim(), note }); loadMindmap();
-        } else if (act === 'link') {
-          if (node && node.linkedTask) { await mindmapPost({ action: 'unlinkNode', id }); loadMindmap(); }
-          else openLinkPicker(id);
-        } else if (act === 'del') {
-          if (!confirm('Delete this idea and all its sub-ideas?')) return;
-          await mindmapPost({ action: 'deleteNode', id }); loadMindmap();
-        } else if (act === 'toggle') {
-          mindmapCollapsed[id] = !mindmapCollapsed[id];
+        // project filter chips
+        const projBtn = e.target.closest('[data-mmproj]');
+        if (projBtn) {
+          const k = projBtn.dataset.mmproj;
+          if (mindmapHiddenProjects.has(k)) mindmapHiddenProjects.delete(k); else mindmapHiddenProjects.add(k);
           renderMindmap();
+          return;
         }
+        if (e.target.closest('[data-mmproj-all]')) { mindmapHiddenProjects.clear(); renderMindmap(); return; }
+        // dashed "add idea" ghost → add a child to its parent
+        const ghost = e.target.closest('.mm-ghost');
+        if (ghost) {
+          const pid = ghost.dataset.addparent;
+          const text = await askText({ title: 'Add idea', label: 'New idea' });
+          if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim(), parentId: pid }); loadMindmap(); }
+          return;
+        }
+        const btn = e.target.closest('[data-mact]');
+        if (btn) {
+          const act = btn.dataset.mact;
+          const id = btn.dataset.node;
+          if (act === 'add-root') {
+            const text = await askText({ title: 'Add idea', label: 'New idea' });
+            if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim() }); loadMindmap(); }
+          } else if (act === 'toggle') {
+            mindmapCollapsed[id] = !mindmapCollapsed[id];
+            renderMindmap();
+          }
+          return;
+        }
+        // Click on a node card → open its detail modal (ignore the click that
+        // immediately follows a drag-reorder).
+        const nodeEl = e.target.closest('.mm-node');
+        if (nodeEl && Date.now() - lastMmDrag > 300) openMmDetail(nodeEl.dataset.node);
       });
+      setupMmDetailModal();
+    }
+
+    // Action helpers shared by the detail modal.
+    async function mmAddChild(id) {
+      const text = await askText({ title: 'Add child idea', label: 'Child idea' });
+      if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim(), parentId: id }); loadMindmap(); }
+    }
+    async function mmToggleLink(id) {
+      const node = mindmapNodes.find(n => n.id === id);
+      // "Unlink" clears both a task link and a project-only scope.
+      if (node && (node.linkedTask || node.project)) { await mindmapPost({ action: 'unlinkNode', id }); loadMindmap(); }
+      else openLinkPicker(id);
+    }
+    async function mmDelete(id) {
+      if (!confirm('Delete this idea and all its sub-ideas?')) return;
+      await mindmapPost({ action: 'deleteNode', id }); loadMindmap();
+    }
+
+    // ─── Mindmap node detail modal ───
+    function mmLinkHtml(n) {
+      const info = n.linkedTaskInfo;
+      if (!n.linkedTask) {
+        if (n.project) {
+          const nm = (projects.find(p => p.alias === n.project) || {}).name || n.project;
+          return '📁 Scoped to project “' + escHtml(nm) + '” <span class="st">(no task linked)</span>';
+        }
+        return '';
+      }
+      if (info && !info.missing) {
+        if (info.kind === 'todo') return '🔗 Subtask ' + (info.done ? '☑' : '☐') + ' ' + escHtml(info.text || '') + ' <span class="st">· in ' + escHtml(info.taskTitle || '') + '</span>';
+        return '🔗 Kanban: ' + escHtml(info.project || '') + ' · ' + escHtml(info.title || '') + ' <span class="st">[' + escHtml((info.status || '').replace('_', ' ')) + (info.deleted ? ', deleted' : '') + ']</span>';
+      }
+      return '🔗 Linked item no longer exists';
+    }
+    function openMmDetail(id) {
+      const n = mindmapNodes.find(x => x.id === id);
+      if (!n) return;
+      mmDetailId = id;
+      $('#mmd-title').textContent = n.text || 'Idea';
+      const linkEl = $('#mmd-link');
+      linkEl.innerHTML = mmLinkHtml(n);
+      linkEl.className = 'mmd-link' + (n.linkedTask && (!n.linkedTaskInfo || n.linkedTaskInfo.missing) ? ' missing' : '');
+      $('#mmd-note').textContent = n.note || '';
+      $('#mmd-link-btn').textContent = (n.linkedTask || n.project) ? 'Unlink' : 'Link / scope';
+      mmDetailSetEditing(false);
+      $('#mm-detail-modal').classList.add('visible');
+    }
+    function closeMmDetail() { $('#mm-detail-modal').classList.remove('visible'); mmDetailId = null; }
+    function mmDetailSetEditing(on) {
+      $('#mmd-view').style.display = on ? 'none' : '';
+      $('#mmd-edit').style.display = on ? '' : 'none';
+      $('#mmd-edit-btn').style.display = on ? 'none' : '';
+      $('#mmd-save-btn').style.display = on ? '' : 'none';
+      if (on) {
+        const n = mindmapNodes.find(x => x.id === mmDetailId);
+        $('#mmd-text-input').value = n ? (n.text || '') : '';
+        $('#mmd-note-input').value = n ? (n.note || '') : '';
+        setTimeout(() => $('#mmd-text-input').focus(), 30);
+      }
+    }
+    let _mmDetailBound = false;
+    function setupMmDetailModal() {
+      if (_mmDetailBound) return; _mmDetailBound = true;
+      $('#mmd-close-btn').addEventListener('click', closeMmDetail);
+      $('#mm-detail-modal').addEventListener('click', (e) => { if (e.target.id === 'mm-detail-modal') closeMmDetail(); });
+      $('#mmd-edit-btn').addEventListener('click', () => mmDetailSetEditing(true));
+      $('#mmd-save-btn').addEventListener('click', async () => {
+        const id = mmDetailId; if (!id) return;
+        const text = $('#mmd-text-input').value.trim();
+        if (!text) { toast('Idea text is required', 'error'); return; }
+        await mindmapPost({ action: 'updateNode', id, text, note: $('#mmd-note-input').value });
+        closeMmDetail(); loadMindmap();
+      });
+      $('#mmd-addchild-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmAddChild(id); });
+      $('#mmd-link-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmToggleLink(id); });
+      $('#mmd-del-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmDelete(id); });
     }
 
     // ─── Text input modal (window.prompt replacement; Electron has no prompt) ───
@@ -4512,7 +5317,11 @@ export function getWebappHtml(botUsername) {
     setupKanbanHandlers();
     setupSecretsHandlers();
     setupMindmapHandlers();
+    setupUsageModal();
+    setupReconnectHandlers();
     setInterval(tickResets, 30000); // advance the time-to-reset lines on wall-clock
+    setInterval(updateUsageBadge, 30000); // refresh "updated Xm ago"
+    setInterval(pollStoredUsage, 90000);  // periodic check against the stored sample
     $('#pin-submit-btn').addEventListener('click', submitPin);
     $('#pin-cancel-btn').addEventListener('click', closePinModal);
     $('#pin-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitPin(); } });
@@ -4524,12 +5333,17 @@ export function getWebappHtml(botUsername) {
     $('#lm-project').addEventListener('change', loadLinkBoard);
     $('#lm-search').addEventListener('input', renderLinkList);
     $('#lm-cancel').addEventListener('click', () => $('#link-modal').classList.remove('visible'));
+    $('#lm-scope-project').addEventListener('click', async () => {
+      const proj = $('#lm-project').value;
+      if (!proj) return;
+      const d = await mindmapPost({ action: 'scopeProject', id: linkPickNodeId, project: proj });
+      if (d && d.ok) { $('#link-modal').classList.remove('visible'); loadMindmap(); }
+    });
     $('#lm-list').addEventListener('click', async (e) => {
       const it = e.target.closest('.lm-item');
       if (!it) return;
-      $('#link-modal').classList.remove('visible');
-      await mindmapPost({ action: 'linkNode', id: linkPickNodeId, project: it.dataset.project, taskId: it.dataset.task, todoId: it.dataset.todo || undefined });
-      loadMindmap();
+      const d = await mindmapPost({ action: 'linkNode', id: linkPickNodeId, project: it.dataset.project, taskId: it.dataset.task, todoId: it.dataset.todo || undefined });
+      if (d && d.ok) { $('#link-modal').classList.remove('visible'); loadMindmap(); }
     });
 
     // ─── Util ───

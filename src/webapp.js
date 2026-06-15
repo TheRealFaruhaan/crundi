@@ -807,6 +807,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         case 'updateNode': result = mindmap.updateNode(body.id, { text: body.text, note: body.note }); break;
         case 'moveNode': result = mindmap.moveNode(body.id, body.parentId, body.index); break;
         case 'linkNode': result = mindmap.linkNode(body.id, { project: body.project, taskId: body.taskId, todoId: body.todoId }); break;
+        case 'scopeProject': result = mindmap.setNodeProject(body.id, body.project); break;
         case 'unlinkNode': result = mindmap.unlinkNode(body.id); break;
         case 'deleteNode': result = mindmap.deleteNode(body.id); break;
         default: return json(res, { ok: false, error: `Unknown mindmap action: ${action}` }, 400);
@@ -819,6 +820,17 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
     if (path === '/api/usage' && req.method === 'GET') {
       const force = url.searchParams.get('force') === '1';
       return json(res, await usage.getUsage({ force }));
+    }
+    // Last stored sample — instant, no network call (shown on load).
+    if (path === '/api/usage/latest' && req.method === 'GET') {
+      return json(res, usage.getLatestStored());
+    }
+    // Time series for the chart. range = 5h | day | week | month | all
+    if (path === '/api/usage/history' && req.method === 'GET') {
+      const range = url.searchParams.get('range') || 'week';
+      const spans = { '5h': 5 * 3600e3, day: 24 * 3600e3, week: 7 * 24 * 3600e3, month: 30 * 24 * 3600e3, all: 3650 * 24 * 3600e3 };
+      const records = usage.getHistory(spans[range] || spans.week);
+      return json(res, { ok: true, range, records });
     }
 
     // ─── Claude Terminals ───
@@ -1399,10 +1411,10 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       if (body.tool.startsWith('mindmap_')) {
         let r;
         switch (body.tool) {
-          case 'mindmap_list': r = { ok: true, mindmap: mindmap.getMindmap() }; break;
-          case 'mindmap_get_subtree': r = mindmap.getSubtree(a.id); break;
-          case 'mindmap_get_children': r = mindmap.getChildren(a.id || null); break;
-          case 'mindmap_add_node': r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId }); break;
+          case 'mindmap_list': r = { ok: true, mindmap: mindmap.getMindmap(a.alias || null) }; break;
+          case 'mindmap_get_subtree': r = mindmap.getSubtree(a.id, a.alias || null); break;
+          case 'mindmap_get_children': r = mindmap.getChildren(a.id || null, a.alias || null); break;
+          case 'mindmap_add_node': r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId, scope: a.alias }); break;
           case 'mindmap_update_node': r = mindmap.updateNode(a.id, { text: a.text, note: a.note }); break;
           case 'mindmap_move_node': r = mindmap.moveNode(a.id, a.parentId, a.index); break;
           case 'mindmap_link_node': r = mindmap.linkNode(a.id, { project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId }); break;
