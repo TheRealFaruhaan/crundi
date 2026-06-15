@@ -1768,12 +1768,15 @@ export function getWebappHtml(botUsername) {
       } catch { /* SSE will retry */ }
     }
 
-    // Periodic check against the backend's stored sample, in addition to SSE.
+    // Periodic refresh that works even when SSE is down/backgrounded. Hits the
+    // LIVE endpoint, which is server-cached for 60s — so this 90s poll causes at
+    // most one real Anthropic call per minute (same rate as the SSE interval, no
+    // extra rate-limit risk, never forced).
     async function pollStoredUsage() {
       try {
-        const r = await apiFetch('/api/usage/latest');
-        const d = await r.json();
-        if (d && d.ok && (Date.parse(d.fetchedAt) || 0) >= usageUpdatedAt) renderUsage(d);
+        const res = await apiFetch('/api/usage');
+        const d = await res.json();
+        if (d && d.ok) renderUsage(d);
       } catch { /* ignore */ }
     }
 
@@ -2764,11 +2767,11 @@ export function getWebappHtml(botUsername) {
     let resumeTimer = null;
     function onResume() {
       if (document.visibilityState === 'hidden') return;
-      if (!ensureConnections()) return; // already alive → leave it completely alone
+      if (token) loadUsage(); // always refresh usage on resume (cheap, server-cached, no force)
+      if (!ensureConnections()) return; // connections already alive → don't touch them
       clearTimeout(resumeTimer);
-      resumeTimer = setTimeout(() => { // we actually had to reconnect → refresh the view
+      resumeTimer = setTimeout(() => { // we actually had to reconnect → refresh the active view
         if (!token || !$('#app').classList.contains('visible')) return;
-        loadUsage();
         if (currentTab === 'kanban') loadKanban();
         else if (currentTab === 'mindmap') loadMindmap();
         else if (currentTab === 'secrets') loadSecrets();

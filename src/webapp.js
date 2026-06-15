@@ -303,9 +303,14 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   }
 
   // ─── Claude usage (real account-wide limits) ───
+  // Always fetch (so the usage HISTORY / graph keeps updating even with no
+  // viewer); getUsage is cached (~1 real Anthropic call per minute). Push to SSE
+  // clients only when some are connected.
   async function broadcastUsage(force = false) {
-    if (!sseClients.size) return;
-    try { broadcastSSE('usage', await usage.getUsage({ force })); } catch { /* non-fatal */ }
+    try {
+      const u = await usage.getUsage({ force });
+      if (sseClients.size) broadcastSSE('usage', u);
+    } catch { /* non-fatal */ }
   }
 
   /**
