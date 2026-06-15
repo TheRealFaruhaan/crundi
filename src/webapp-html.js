@@ -960,13 +960,19 @@ export function getWebappHtml(botUsername) {
     .kanban-todo input[type=checkbox] { margin-top: 2px; cursor: pointer; }
     .kanban-todo .todo-text { flex: 1; word-break: break-word; }
     .kanban-todo .todo-text.done { text-decoration: line-through; color: var(--text-muted); }
-    .kanban-todo .todo-del { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; }
+    .kanban-todo .todo-edit, .kanban-todo .todo-del { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; padding: 0 3px; line-height: 1; flex-shrink: 0; }
+    .kanban-todo .todo-edit:hover { color: var(--accent-hover); }
     .kanban-todo .todo-del:hover { color: var(--red); }
     .kanban-todo-add { display: flex; gap: 4px; margin-top: 6px; }
     .kanban-todo-add input {
       flex: 1; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary);
       border-radius: 4px; padding: 3px 6px; font-size: 0.78rem;
     }
+    .kanban-todo-add .ktodo-add-btn {
+      flex-shrink: 0; padding: 0 11px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+      border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent-hover);
+    }
+    .kanban-todo-add .ktodo-add-btn:hover { background: var(--accent); color: #fff; }
     .kanban-progress { font-size: 0.72rem; color: var(--text-muted); margin-top: 6px; }
     .kanban-empty, .secrets-empty { color: var(--text-muted); padding: 24px; text-align: center; font-size: 0.85rem; }
     .kanban-history { padding: 14px; overflow-y: auto; flex: 1; }
@@ -4533,12 +4539,16 @@ export function getWebappHtml(botUsername) {
           h += '<div class="kanban-todo">'
             + '<input type="checkbox" data-ktodo-toggle="' + t.id + '|' + td.id + '"' + (td.done ? ' checked' : '') + '>'
             + '<span class="todo-text' + (td.done ? ' done' : '') + '">' + escHtml(td.text) + '</span>'
-            + '<button class="todo-del" data-ktodo-del="' + t.id + '|' + td.id + '" title="Delete todo">&times;</button>'
+            + '<button class="todo-edit" data-ktodo-edit="' + t.id + '|' + td.id + '" title="Edit subtask">&#9998;</button>'
+            + '<button class="todo-del" data-ktodo-del="' + t.id + '|' + td.id + '" title="Delete subtask">&times;</button>'
             + '</div>';
         }
         h += '</div><div class="kanban-progress">' + done + '/' + todos.length + ' done</div>';
       }
-      h += '<div class="kanban-todo-add"><input type="text" placeholder="+ add todo" data-ktodo-input="' + t.id + '"></div>';
+      h += '<div class="kanban-todo-add">'
+        + '<input type="text" placeholder="+ add subtask" data-ktodo-input="' + t.id + '">'
+        + '<button class="ktodo-add-btn" data-ktodo-add="' + t.id + '" title="Add subtask">&#10003;</button>'
+        + '</div>';
       let opts = '';
       for (const st of kanbanBoard.statuses) {
         opts += '<option value="' + st + '"' + (st === t.status ? ' selected' : '') + '>' + KANBAN_STATUS_LABELS[st] + '</option>';
@@ -4732,6 +4742,24 @@ export function getWebappHtml(botUsername) {
         if (delBtn) {
           const [taskId, todoId] = delBtn.dataset.ktodoDel.split('|');
           await kanbanPost({ action: 'deleteTodo', taskId, todoId }); loadKanban(); return;
+        }
+        // Save/add a subtask (mobile-friendly; the Enter key still works too)
+        const addBtn = e.target.closest('[data-ktodo-add]');
+        if (addBtn) {
+          const inp = addBtn.closest('.kanban-todo-add').querySelector('input');
+          const text = inp ? inp.value.trim() : '';
+          if (text) { await kanbanPost({ action: 'addTodo', taskId: addBtn.dataset.ktodoAdd, text }); loadKanban(); }
+          return;
+        }
+        // Rename a subtask inline
+        const editTodoBtn = e.target.closest('[data-ktodo-edit]');
+        if (editTodoBtn) {
+          const [taskId, todoId] = editTodoBtn.dataset.ktodoEdit.split('|');
+          const task = (kanbanBoard.tasks || []).find(t => t.id === taskId);
+          const td = task && (task.todos || []).find(x => x.id === todoId);
+          const text = await askText({ title: 'Edit subtask', label: 'Subtask', value: td ? td.text : '' });
+          if (text && text.trim()) { await kanbanPost({ action: 'updateTodo', taskId, todoId, text: text.trim() }); loadKanban(); }
+          return;
         }
         const btn = e.target.closest('[data-kact]');
         if (!btn) return;
