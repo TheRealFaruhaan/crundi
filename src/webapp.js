@@ -29,8 +29,18 @@ import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
 import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
+import { ensureGitignore } from './claude-terminals.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Single per-project folder for uploads/screenshots/pasted images.
+export const ATTACHMENTS_DIRNAME = 'crundi_attachments';
+function ensureAttachmentsDir(projectPath) {
+  const dir = join(projectPath, ATTACHMENTS_DIRNAME);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  ensureGitignore(projectPath); // keep the attachments folder (and .mcp.json) out of git
+  return dir;
+}
 
 // ─── Vendor files (xterm.js, addon-fit) ───
 const VENDOR_DIR = join(__dirname, '..', 'app', 'vendor');
@@ -803,8 +813,10 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       const { action } = body;
       let result;
       switch (action) {
-        case 'addNode': result = mindmap.addNode({ text: body.text, parentId: body.parentId, note: body.note, project: body.project, taskId: body.taskId, todoId: body.todoId }); break;
-        case 'updateNode': result = mindmap.updateNode(body.id, { text: body.text, note: body.note }); break;
+        case 'addNode': result = mindmap.addNode({ text: body.text, parentId: body.parentId, note: body.note, notes: body.notes, project: body.project, taskId: body.taskId, todoId: body.todoId }); break;
+        case 'updateNode': result = mindmap.updateNode(body.id, { text: body.text, note: body.note, notes: body.notes }); break;
+        case 'addNote': result = mindmap.addNote(body.id, body.text); break;
+        case 'removeNote': result = mindmap.removeNote(body.id, body.index); break;
         case 'moveNode': result = mindmap.moveNode(body.id, body.parentId, body.index); break;
         case 'linkNode': result = mindmap.linkNode(body.id, { project: body.project, taskId: body.taskId, todoId: body.todoId }); break;
         case 'scopeProject': result = mindmap.setNodeProject(body.id, body.project); break;
@@ -1035,10 +1047,29 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
       if (!body.data) return json(res, { ok: false, error: 'No image data' }, 400);
       try {
-        const name = 'clipboard-' + Date.now() + '.png';
-        const filePath = join(project.path, name);
+        const dir = ensureAttachmentsDir(project.path);
+        const name = 'screenshot-' + Date.now() + '.png';
+        const filePath = join(dir, name);
         writeFileSync(filePath, Buffer.from(body.data, 'base64'));
         return json(res, { ok: true, path: filePath, name });
+      } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    // ─── Attachment Upload (file picker → crundi_attachments) ───
+    if (path === '/api/attachments/upload' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const project = getProject(body.project);
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      if (!body.name || !body.data) return json(res, { ok: false, error: 'Missing name or data' }, 400);
+      try {
+        const dir = ensureAttachmentsDir(project.path);
+        // unique, filesystem-safe name: <ts>-<sanitized original>
+        const safe = basename(String(body.name)).replace(/[^\w.\-]+/g, '_').slice(-80) || 'file';
+        const name = Date.now() + '-' + safe;
+        const filePath = join(dir, name);
+        const buf = Buffer.from(body.data, 'base64');
+        writeFileSync(filePath, buf);
+        return json(res, { ok: true, path: filePath, name, size: buf.length });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
@@ -1411,18 +1442,22 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       if (body.tool.startsWith('mindmap_')) {
         let r;
         switch (body.tool) {
-          case 'mindmap_list': r = { ok: true, mindmap: mindmap.getMindmap(a.alias || null) }; break;
+          case 'mindmap_list': r = { ok: true, mindmap: mindmap.getMindmap(a.alias || null, { compact: !!a.compact }) }; break;
+          case 'mindmap_search': r = mindmap.searchMindmap(a.query, a.alias || null, a.limit); break;
           case 'mindmap_get_subtree': r = mindmap.getSubtree(a.id, a.alias || null); break;
           case 'mindmap_get_children': r = mindmap.getChildren(a.id || null, a.alias || null); break;
-          case 'mindmap_add_node': r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId, scope: a.alias }); break;
-          case 'mindmap_update_node': r = mindmap.updateNode(a.id, { text: a.text, note: a.note }); break;
+          case 'mindmap_get_ancestors': r = mindmap.getAncestors(a.id, a.alias || null); break;
+          case 'mindmap_add_node': r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, notes: a.notes, project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId, scope: a.alias }); break;
+          case 'mindmap_update_node': r = mindmap.updateNode(a.id, { text: a.text, note: a.note, notes: a.notes }); break;
+          case 'mindmap_add_note': r = mindmap.addNote(a.id, a.text); break;
+          case 'mindmap_remove_note': r = mindmap.removeNote(a.id, a.index); break;
           case 'mindmap_move_node': r = mindmap.moveNode(a.id, a.parentId, a.index); break;
           case 'mindmap_link_node': r = mindmap.linkNode(a.id, { project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId }); break;
           case 'mindmap_unlink_node': r = mindmap.unlinkNode(a.id); break;
           case 'mindmap_delete_node': r = mindmap.deleteNode(a.id); break;
           default: return json(res, { ok: false, error: `Unknown mindmap tool: ${body.tool}` }, 404);
         }
-        const mindmapReadOnly = ['mindmap_list', 'mindmap_get_subtree', 'mindmap_get_children'].includes(body.tool);
+        const mindmapReadOnly = ['mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors'].includes(body.tool);
         if (r.ok && !mindmapReadOnly) broadcastMindmap();
         return json(res, r);
       }

@@ -15,6 +15,7 @@ import { config, getOldAppDataDir, isFreshInstall } from './config.js';
 import { createBot } from './bot.js';
 import { createWebApp } from './webapp.js';
 import { createClaudeTerminals, stripAnsi } from './claude-terminals.js';
+import { killAllServices } from './services.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -329,7 +330,11 @@ async function shutdown(signal) {
   // Save state
   if (getChatId()) saveState({ ...loadState(), chatId: getChatId() });
 
-  // Close Claude terminals
+  // Stop all running services + their Cloudflare tunnels (await so
+  // `docker compose down` / taskkill actually finish before we exit).
+  try { await killAllServices(); } catch { /* ignore */ }
+
+  // Close Claude terminals (node-pty sessions)
   claudeTerminals.closeAll();
 
   // Stop webapp

@@ -13,3 +13,4 @@ dist-build.log
 node_modules/
 screenshots/
 clipboard-*.png
+crundi_attachments/

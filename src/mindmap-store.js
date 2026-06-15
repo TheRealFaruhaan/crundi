@@ -106,17 +106,96 @@ function scopeOf(project) { return project ? String(project).toLowerCase() : nul
  * Pass a `project` alias to return ONLY that project's nodes (used by MCP so a
  * project's agent sees just its own mindmap; the web UI passes nothing → all).
  */
-export function getMindmap(project = null) {
+// Notes are a list. Normalise legacy single-string `note` into a `notes` array.
+function normNotes(n) {
+  if (Array.isArray(n.notes)) return n.notes.map(String).filter(s => s.trim());
+  if (n.note && String(n.note).trim()) return [String(n.note)];
+  return [];
+}
+
+export function getMindmap(project = null, { compact = false } = {}) {
   const store = load();
   const p = scopeOf(project);
   const nodes = p ? store.nodes.filter(n => effectiveProject(store, n) === p) : store.nodes;
+  if (compact) {
+    // Skeleton only — no note bodies — so even huge maps stay token-cheap.
+    const hasKid = new Set(store.nodes.map(n => n.parentId).filter(Boolean));
+    return {
+      compact: true,
+      nodes: nodes.map(n => {
+        const info = resolveLink(n.linkedTask);
+        const link = info ? (info.missing ? 'missing'
+          : info.kind === 'todo' ? ('todo: ' + (info.text || info.taskTitle || ''))
+          : (info.project + ' · ' + (info.title || ''))) : null;
+        return {
+          id: n.id, text: n.text, parentId: n.parentId || null,
+          effectiveProject: effectiveProject(store, n),
+          noteCount: normNotes(n).length,
+          hasChildren: hasKid.has(n.id),
+          link,
+        };
+      }),
+    };
+  }
   return {
     nodes: nodes.map(n => ({
       ...n,
+      note: undefined,
+      notes: normNotes(n),
       effectiveProject: effectiveProject(store, n), // resolved scope (link > parent > own)
       linkedTaskInfo: resolveLink(n.linkedTask),
     })),
   };
+}
+
+/**
+ * Return a node's ancestor chain up to the root, in order (root → … → parent),
+ * plus the node itself — handy for breadcrumbs and re-establishing context after
+ * a search hit. Scoped: errors if the node isn't in this project.
+ */
+export function getAncestors(nodeId, project = null) {
+  const store = load();
+  const node = findNode(store, nodeId);
+  if (!node) return { ok: false, error: 'Node not found' };
+  const p = scopeOf(project);
+  if (p && effectiveProject(store, node) !== p) return { ok: false, error: 'Node not in this project' };
+  const byId = {}; for (const n of store.nodes) byId[n.id] = n;
+  const compact = (n) => ({ id: n.id, text: n.text, noteCount: normNotes(n).length, linkedTaskInfo: resolveLink(n.linkedTask), effectiveProject: effectiveProject(store, n) });
+  const chain = []; let cur = node; const seen = new Set();
+  while (cur && !seen.has(cur.id)) { seen.add(cur.id); chain.unshift(compact(cur)); cur = cur.parentId ? byId[cur.parentId] : null; }
+  return { ok: true, node: compact(node), depth: chain.length - 1, ancestors: chain.slice(0, -1) }; // root → parent
+}
+
+/**
+ * Keyword search over node text + notes (within the project scope). Returns
+ * compact hits with a breadcrumb path and a matching-note snippet — so an agent
+ * can locate a node in a large map without fetching the whole thing.
+ */
+export function searchMindmap(query, project = null, limit = 30) {
+  const store = load();
+  const p = scopeOf(project);
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return { ok: true, total: 0, results: [] };
+  const byId = {}; for (const n of store.nodes) byId[n.id] = n;
+  const hasKid = new Set(store.nodes.map(n => n.parentId).filter(Boolean));
+  const pathOf = (n) => {
+    const out = []; let cur = n, seen = new Set();
+    while (cur && !seen.has(cur.id)) { seen.add(cur.id); out.unshift(cur.text); cur = cur.parentId ? byId[cur.parentId] : null; }
+    return out.slice(0, -1).join(' › '); // ancestors only
+  };
+  const cap = Math.max(1, Math.min(Number(limit) || 30, 100));
+  const results = [];
+  for (const n of store.nodes) {
+    if (p && effectiveProject(store, n) !== p) continue;
+    const notes = normNotes(n);
+    const hay = (n.text + ' ' + notes.join(' ')).toLowerCase();
+    if (!hay.includes(q)) continue;
+    let snippet = null;
+    const hitNote = notes.find(t => t.toLowerCase().includes(q));
+    if (hitNote) { const i = hitNote.toLowerCase().indexOf(q); snippet = (i > 30 ? '…' : '') + hitNote.slice(Math.max(0, i - 30), i + q.length + 50) + (i + q.length + 50 < hitNote.length ? '…' : ''); }
+    results.push({ id: n.id, text: n.text, path: pathOf(n), noteCount: notes.length, hasChildren: hasKid.has(n.id), effectiveProject: effectiveProject(store, n), snippet });
+  }
+  return { ok: true, total: results.length, results: results.slice(0, cap) };
 }
 
 /**
@@ -137,7 +216,7 @@ export function getSubtree(nodeId, project = null) {
   const build = (n) => ({
     id: n.id,
     text: n.text,
-    note: n.note,
+    notes: normNotes(n),
     linkedTaskInfo: resolveLink(n.linkedTask),
     children: (childrenOf[n.id] || [])
       .filter(c => !p || effectiveProject(store, c) === p) // don't leak other projects' branches
@@ -165,7 +244,7 @@ export function getChildren(nodeId = null, project = null) {
     children: kids.map(n => ({
       id: n.id,
       text: n.text,
-      note: n.note,
+      notes: normNotes(n),
       linkedTaskInfo: resolveLink(n.linkedTask),
       hasChildren: store.nodes.some(c => c.parentId === n.id),
     })),
@@ -224,12 +303,15 @@ function parentScope(store, node) {
   return parent ? effectiveProject(store, parent) : null;
 }
 
-export function addNode({ text, parentId = null, note = '', linkedTask = null, project, taskId, todoId, scope } = {}) {
+export function addNode({ text, parentId = null, note = '', notes, linkedTask = null, project, taskId, todoId, scope } = {}) {
   const t = String(text || '').trim();
   if (!t) return { ok: false, error: 'Node text is required' };
   const store = load();
   const parent = parentId ? findNode(store, parentId) : null;
   if (parentId && !parent) return { ok: false, error: 'Parent node not found' };
+  const initNotes = Array.isArray(notes)
+    ? notes.map(String).filter(s => s.trim())
+    : (note && String(note).trim() ? [String(note)] : []);
   const link = normalizeLink(linkedTask, project, taskId, todoId);
   // A child linked to a task must match the project its parent branch is scoped to.
   if (parent && link) {
@@ -242,7 +324,7 @@ export function addNode({ text, parentId = null, note = '', linkedTask = null, p
   const node = {
     id: genId(),
     text: t,
-    note: String(note || ''),
+    notes: initNotes,
     parentId: parentId || null,
     project: scopeOf(scope) || null, // creation scope (used when this node is a root)
     linkedTask: link,
@@ -254,12 +336,42 @@ export function addNode({ text, parentId = null, note = '', linkedTask = null, p
   return { ok: true, node };
 }
 
-export function updateNode(id, { text, note } = {}) {
+export function updateNode(id, { text, note, notes } = {}) {
   const store = load();
   const node = findNode(store, id);
   if (!node) return { ok: false, error: 'Node not found' };
   if (text !== undefined && String(text).trim()) node.text = String(text).trim();
-  if (note !== undefined) node.note = String(note);
+  // Notes are a list now. `notes` (array) replaces the whole list; `note`
+  // (legacy string) is accepted as a single-item list.
+  if (Array.isArray(notes)) { node.notes = notes.map(String).filter(s => s.trim()); delete node.note; }
+  else if (note !== undefined) { node.notes = String(note).trim() ? [String(note)] : []; delete node.note; }
+  node.updatedAt = new Date().toISOString();
+  save(store);
+  return { ok: true, node };
+}
+
+/** Append a single note to a node's list. */
+export function addNote(id, text) {
+  const store = load();
+  const node = findNode(store, id);
+  if (!node) return { ok: false, error: 'Node not found' };
+  const t = String(text || '').trim();
+  if (!t) return { ok: false, error: 'Note text is required' };
+  node.notes = normNotes(node); node.notes.push(t); delete node.note;
+  node.updatedAt = new Date().toISOString();
+  save(store);
+  return { ok: true, node };
+}
+
+/** Remove the note at `index` from a node's list. */
+export function removeNote(id, index) {
+  const store = load();
+  const node = findNode(store, id);
+  if (!node) return { ok: false, error: 'Node not found' };
+  node.notes = normNotes(node);
+  const i = Number(index);
+  if (!Number.isInteger(i) || i < 0 || i >= node.notes.length) return { ok: false, error: 'Invalid note index' };
+  node.notes.splice(i, 1); delete node.note;
   node.updatedAt = new Date().toISOString();
   save(store);
   return { ok: true, node };

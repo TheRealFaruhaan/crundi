@@ -12,7 +12,7 @@ import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, clipboard
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 
@@ -210,7 +210,7 @@ function updateTrayMenu() {
     { type: 'separator' },
     {
       label: 'Quit',
-      click: () => { stopBot(); app.isQuitting = true; app.quit(); },
+      click: () => gracefulShutdownAndExit(),
     },
   ]);
 
@@ -371,28 +371,56 @@ function startBot() {
   });
 }
 
+// Force-kill a process AND its whole subtree so spawned services / cloudflared
+// tunnels / PTYs can't orphan (Windows doesn't kill children with the parent).
+function killTree(pid) {
+  if (!pid) return;
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } else {
+      try { process.kill(-pid, 'SIGKILL'); } catch { process.kill(pid, 'SIGKILL'); }
+    }
+  } catch { /* already gone */ }
+}
+
+// Gracefully stop the server process (it stops services/tunnels/terminals via
+// the IPC 'shutdown' message — reliable on Windows where SIGTERM isn't catchable),
+// then hard-kill the tree as a guaranteed fallback.
+async function stopServerProcess() {
+  // Local (main-process) children first.
+  for (const [, entry] of userTerminals) { try { entry.proc.kill(); } catch { /* ignore */ } }
+  userTerminals.clear();
+  for (const [, entry] of browserWindows) { try { entry.win.destroy(); } catch { /* ignore */ } }
+  browserWindows.clear();
+  if (!botProcess) return;
+  const proc = botProcess, pid = botProcess.pid;
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    proc.once('exit', finish);
+    try { proc.send('shutdown'); } catch { finish(); }
+    setTimeout(finish, 6000); // never hang on a wedged process
+  });
+  killTree(pid); // nuke any survivors (services, cloudflared) so nothing is left running
+  if (botProcess === proc) botProcess = null;
+}
+
 function stopBot() {
   if (!botProcess) { setBotStatus('stopped'); return; }
   userStopped = true;
   appendLog('Stopping...');
-  // Close all user terminals
-  for (const [key, entry] of userTerminals) {
-    try { entry.proc.kill(); } catch { /* ignore */ }
-  }
-  userTerminals.clear();
-  // Close all browser windows
-  for (const [key, entry] of browserWindows) {
-    try { entry.win.destroy(); } catch { /* ignore */ }
-  }
-  browserWindows.clear();
-  try { botProcess.kill(); } catch { /* ignore */ }
-  const timer = setTimeout(() => {
-    if (botProcess) {
-      try { botProcess.kill('SIGKILL'); } catch { /* ignore */ }
-      botProcess = null;
-    }
-  }, 10000);
-  botProcess.once('exit', () => clearTimeout(timer));
+  stopServerProcess();
+}
+
+let quitting = false;
+async function gracefulShutdownAndExit() {
+  if (quitting) return;
+  quitting = true;
+  app.isQuitting = true;
+  appendLog('[lifecycle] Quitting — stopping services, terminals, and tunnels...');
+  try { await stopServerProcess(); } catch { /* ignore */ }
+  app.exit(0);
 }
 
 // ─── Setup Wizard ───
@@ -1001,7 +1029,9 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => showWindow());
 
-app.on('before-quit', () => {
-  app.isQuitting = true;
-  stopBot();
+app.on('before-quit', (e) => {
+  // Defer the real quit until services/terminals/tunnels are stopped, then exit.
+  if (quitting) return;
+  e.preventDefault();
+  gracefulShutdownAndExit();
 });

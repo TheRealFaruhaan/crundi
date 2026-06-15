@@ -98,16 +98,20 @@ function writeMcpConfig(projectPath, apiUrl, apiKey, projectAlias) {
 }
 
 /**
- * Add .mcp.json to .gitignore if .gitignore exists and doesn't already list it.
+ * Add Crundi's local artifacts (.mcp.json and the crundi_attachments folder) to
+ * .gitignore if a .gitignore exists and doesn't already list them.
  */
 export function ensureGitignore(projectPath) {
   const gitignoreFile = join(projectPath, '.gitignore');
   if (!existsSync(gitignoreFile)) return;
   try {
     const content = readFileSync(gitignoreFile, 'utf-8');
-    if (content.split('\n').some(line => line.trim() === '.mcp.json')) return;
+    const lines = content.split('\n').map(l => l.trim());
+    const wanted = ['.mcp.json', 'crundi_attachments/'];
+    const missing = wanted.filter(w => !lines.includes(w) && !lines.includes(w.replace(/\/$/, '')));
+    if (!missing.length) return;
     const nl = content.endsWith('\n') ? '' : '\n';
-    writeFileSync(gitignoreFile, content + nl + '.mcp.json\n');
+    writeFileSync(gitignoreFile, content + nl + missing.join('\n') + '\n');
   } catch { /* non-fatal */ }
 }
 

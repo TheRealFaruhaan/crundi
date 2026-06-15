@@ -73,11 +73,24 @@ export function getWebappHtml(botUsername) {
       --radius: 10px;
       --radius-sm: 6px;
       --mono: "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+      /* depth + signature accent (terminal-native console aesthetic) */
+      --accent-grad: linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.45);
+      --shadow-md: 0 6px 20px rgba(0,0,0,0.5);
+      --shadow-lg: 0 24px 60px rgba(0,0,0,0.6);
+      --surface-hi: inset 0 1px 0 rgba(255,255,255,0.045);  /* top edge highlight */
+      --ring: 0 0 0 3px rgba(99,102,241,0.28);               /* focus glow */
+      --glow: 0 0 24px rgba(99,102,241,0.35);
     }
 
     body {
       font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
-      background: var(--bg-primary);
+      /* atmospheric depth: faint indigo glows in opposite corners over near-black */
+      background:
+        radial-gradient(1100px 560px at 82% -12%, rgba(99,102,241,0.10), transparent 60%),
+        radial-gradient(820px 480px at -8% 112%, rgba(129,140,248,0.06), transparent 60%),
+        var(--bg-primary);
+      background-attachment: fixed;
       color: var(--text-primary);
       height: 100dvh;
       overflow: hidden;
@@ -97,21 +110,25 @@ export function getWebappHtml(botUsername) {
       width: 96px;
       height: 96px;
       border-radius: 22px;
-      box-shadow: 0 8px 32px rgba(99, 102, 241, 0.25);
+      box-shadow: 0 10px 44px rgba(99, 102, 241, 0.4);
       margin-bottom: -16px;
+      animation: loginReveal 0.6s cubic-bezier(0.22,1,0.36,1) both;
     }
     #login-screen h1 {
-      font-size: 2.5rem;
+      font-family: var(--mono);
+      font-size: 2.3rem;
       font-weight: 700;
-      letter-spacing: -0.02em;
+      letter-spacing: 0.06em;
+      animation: loginReveal 0.6s cubic-bezier(0.22,1,0.36,1) 0.08s both;
     }
     #login-screen .subtitle {
       color: var(--text-secondary);
       font-size: 0.95rem;
       margin-top: -20px;
+      animation: loginReveal 0.6s cubic-bezier(0.22,1,0.36,1) 0.16s both;
     }
     #login-screen .login-box {
-      background: var(--bg-secondary);
+      background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent 40%), var(--bg-secondary);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 40px 48px;
@@ -120,6 +137,12 @@ export function getWebappHtml(botUsername) {
       flex-direction: column;
       align-items: center;
       gap: 24px;
+      box-shadow: var(--shadow-lg), var(--surface-hi);
+      animation: loginReveal 0.6s cubic-bezier(0.22,1,0.36,1) 0.24s both;
+    }
+    @keyframes loginReveal { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      #login-screen .login-logo, #login-screen h1, #login-screen .subtitle, #login-screen .login-box { animation: none; }
     }
     #login-screen .login-box p {
       color: var(--text-secondary);
@@ -201,7 +224,20 @@ export function getWebappHtml(botUsername) {
       transition: width 0.6s ease, background 0.4s ease;
     }
     .topbar .ub-time { background: rgba(125,170,255,0.16); }  /* time-to-reset (cool) */
-    .topbar .ub-usage { background: rgba(99,102,241,0.22); }  /* usage (recoloured by level in JS) */
+    .topbar .ub-usage { background: rgba(99,102,241,0.22); overflow: hidden; }  /* usage (recoloured by level in JS) */
+    /* a light streak sweeps across the usage bar when its value changes */
+    .topbar .ub-usage::after {
+      content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 55%;
+      background: linear-gradient(100deg, transparent, rgba(255,255,255,0.45), transparent);
+      transform: translateX(-180%); opacity: 0; pointer-events: none;
+    }
+    .topbar .ub-usage.shine::after { animation: ubShine 0.9s ease; }
+    @keyframes ubShine {
+      0% { transform: translateX(-180%); opacity: 0; }
+      12% { opacity: 1; } 88% { opacity: 1; }
+      100% { transform: translateX(300%); opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) { .topbar .ub-usage.shine::after { animation: none; } }
     .topbar .ublabel {
       position: absolute; left: 0; transform: translateX(6px);
       font-size: 0.56rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
@@ -222,17 +258,19 @@ export function getWebappHtml(botUsername) {
       -webkit-app-region: no-drag;
     }
     .topbar .logo {
+      font-family: var(--mono);
       font-weight: 700;
-      font-size: 1.1rem;
-      letter-spacing: -0.01em;
+      font-size: 1.02rem;
+      letter-spacing: 0.04em;
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 9px;
     }
     .topbar .logo img {
       width: 22px;
       height: 22px;
       border-radius: 6px;
+      box-shadow: 0 0 0 1px var(--border), 0 2px 10px rgba(99,102,241,0.45);
     }
     .topbar .separator {
       color: var(--text-muted);
@@ -247,6 +285,8 @@ export function getWebappHtml(botUsername) {
       padding: 3px 10px;
       border-radius: 12px;
       font-family: var(--mono);
+      white-space: nowrap;
+      flex-shrink: 0;
       -webkit-app-region: no-drag;
     }
     .topbar .status-badge.connected { background: var(--green-dim); color: var(--green); }
@@ -311,6 +351,7 @@ export function getWebappHtml(botUsername) {
       padding: 4px 8px;
     }
     .sidebar-item {
+      position: relative;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -319,11 +360,15 @@ export function getWebappHtml(botUsername) {
       cursor: pointer;
       font-size: 0.88rem;
       color: var(--text-secondary);
-      transition: background 0.1s;
+      transition: background 0.12s, color 0.12s;
       user-select: none;
     }
     .sidebar-item:hover { background: var(--bg-hover); color: var(--text-primary); }
     .sidebar-item.active { background: var(--accent-dim); color: var(--accent-hover); }
+    .sidebar-item.active::before {
+      content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px;
+      border-radius: 0 3px 3px 0; background: var(--accent-grad);
+    }
     .sidebar-item .dot {
       width: 8px; height: 8px;
       border-radius: 50%;
@@ -333,6 +378,13 @@ export function getWebappHtml(botUsername) {
     .sidebar-item.active .dot { background: var(--green); }
     .sidebar-item.has-terminal .dot { background: var(--green); }
     .sidebar-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar-item .svc-heart { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-muted); }
+    .sidebar-item .svc-heart .svc-ecg { display: block; }
+    .sidebar-item .svc-heart.live { color: var(--green); }
+    /* live = the ECG trace sweeps across, like a monitor */
+    .sidebar-item .svc-heart.live .svc-ecg path { stroke-dasharray: 12 44; animation: ecgSweep 1.6s linear infinite; }
+    @keyframes ecgSweep { from { stroke-dashoffset: 56; } to { stroke-dashoffset: 0; } }
+    @media (prefers-reduced-motion: reduce) { .sidebar-item .svc-heart.live .svc-ecg path { animation: none; stroke-dasharray: none; } }
     .sidebar-item .close-btn {
       display: none;
       background: none;
@@ -422,6 +474,7 @@ export function getWebappHtml(botUsername) {
     .tab-bar::-webkit-scrollbar { display: none; }
     .tab-bar.visible { display: flex; }
     .tab-btn {
+      position: relative;
       padding: 10px 14px;
       white-space: nowrap;
       border: none;
@@ -430,11 +483,16 @@ export function getWebappHtml(botUsername) {
       font-size: 0.82rem;
       font-weight: 500;
       cursor: pointer;
-      border-bottom: 2px solid transparent;
       transition: color 0.15s;
     }
+    .tab-btn::after {
+      content: ''; position: absolute; left: 50%; right: 50%; bottom: 0; height: 2px;
+      background: var(--accent-grad); border-radius: 2px 2px 0 0;
+      transition: left 0.22s cubic-bezier(0.22,1,0.36,1), right 0.22s cubic-bezier(0.22,1,0.36,1);
+    }
     .tab-btn:hover { color: var(--text-primary); }
-    .tab-btn.active { color: var(--accent-hover); border-bottom-color: var(--accent); }
+    .tab-btn.active { color: var(--accent-hover); }
+    .tab-btn.active::after { left: 12px; right: 12px; }
 
     /* ─── Tab Panels ─── */
     .tab-panel { display: none; flex: 1; overflow: auto; }
@@ -722,6 +780,12 @@ export function getWebappHtml(botUsername) {
       .topbar { gap: 8px; padding: 0 10px; }
       .topbar .project-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
       .topbar .ublabel { font-size: 0.52rem; }
+      /* Reclaim width so badges never overflow: drop the wordmark text (icon
+         stays) and collapse the connection badge to just its status dot. */
+      .topbar .logo .logo-text { display: none; }
+      .topbar .status-badge.connected, .topbar .status-badge.disconnected {
+        font-size: 0; padding: 6px; gap: 0; border-radius: 50%;
+      }
       .tab-btn { padding: 8px 12px; font-size: 0.76rem; }
       .svc-card { padding: 12px; }
       .info-panel { padding: 12px; }
@@ -802,6 +866,13 @@ export function getWebappHtml(botUsername) {
       white-space: nowrap; align-self: flex-end;
     }
     .term-send-btn:hover { background: var(--accent-hover); }
+    .term-attach-btn {
+      align-self: flex-end; padding: 6px 9px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg-tertiary);
+      color: var(--text-secondary); cursor: pointer; font-size: 14px; line-height: 1;
+    }
+    .term-attach-btn:hover { color: var(--accent-hover); border-color: var(--accent); }
+    .term-attach-btn.busy { opacity: 0.6; pointer-events: none; }
 
     /* ─── Tool Panel ─── */
     .term-tool-toggle {
@@ -1000,6 +1071,7 @@ export function getWebappHtml(botUsername) {
     .mm-chip.link { color: var(--green); background: var(--green-dim); }
     .mm-chip.link.missing { color: var(--text-muted); background: var(--bg-tertiary); }
     .mm-chip.scope { color: var(--accent-hover); background: var(--accent-dim); }
+    .mm-chip.inherited { color: var(--text-muted); background: var(--bg-tertiary); border: 1px dashed var(--border); }
     .mm-chip.note { color: var(--text-secondary); background: var(--bg-tertiary); }
     /* search filter states */
     .mm-node.mm-dim { opacity: 0.18; }
@@ -1072,8 +1144,22 @@ export function getWebappHtml(botUsername) {
     .mm-node.mm-insert-below { box-shadow: 0 3px 0 0 var(--accent); }
 
     /* mindmap node detail modal */
-    #mm-detail-modal .mmd-note { font-size: 0.86rem; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; margin: 4px 0 10px; max-height: 40vh; overflow: auto; }
-    #mm-detail-modal .mmd-note:empty { display: none; }
+    /* notes as a list — view */
+    #mm-detail-modal .mmd-notes { list-style: none; margin: 6px 0 10px; padding: 0; max-height: 42vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+    #mm-detail-modal .mmd-notes:empty { display: none; }
+    #mm-detail-modal .mmd-notes li {
+      position: relative; font-size: 0.86rem; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
+      padding: 8px 10px 8px 26px; background: var(--bg-tertiary); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);
+    }
+    #mm-detail-modal .mmd-notes li::before { content: ''; position: absolute; left: 11px; top: 14px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+    /* notes editor */
+    #mm-detail-modal .mmd-notes-edit { display: flex; flex-direction: column; gap: 6px; }
+    #mm-detail-modal .mmd-note-row { display: flex; gap: 6px; align-items: flex-start; }
+    #mm-detail-modal .mmd-note-row textarea { flex: 1; min-height: 38px; }
+    #mm-detail-modal .mmd-note-row .mmd-note-del { flex-shrink: 0; align-self: stretch; padding: 0 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-muted); cursor: pointer; }
+    #mm-detail-modal .mmd-note-row .mmd-note-del:hover { color: var(--red); border-color: var(--red); }
+    #mm-detail-modal .mmd-add-note { margin-top: 8px; width: 100%; padding: 7px; border-radius: var(--radius-sm); border: 1px dashed var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 0.82rem; }
+    #mm-detail-modal .mmd-add-note:hover { border-color: var(--accent); color: var(--accent-hover); }
     #mm-detail-modal .mmd-link { font-size: 0.82rem; color: var(--green); background: var(--green-dim); border-radius: 8px; padding: 7px 10px; margin-bottom: 6px; word-break: break-word; }
     #mm-detail-modal .mmd-link.missing { color: var(--text-muted); background: var(--bg-tertiary); }
     #mm-detail-modal .mmd-link:empty { display: none; }
@@ -1147,10 +1233,62 @@ export function getWebappHtml(botUsername) {
     .uc-empty { padding: 60px 16px; text-align: center; color: var(--text-muted); font-size: 0.84rem; }
 
     /* ─── Scrollbar ─── */
-    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ─── UI polish pass (depth, signature accent, micro-interactions) ─── */
+    /* topbar lifts off the content with a soft shadow */
+    .topbar { box-shadow: 0 1px 0 rgba(255,255,255,0.03), 0 8px 22px rgba(0,0,0,0.28); }
+
+    /* primary actions: signature indigo gradient + glow (overrides flat fills) */
+    button.primary, .kanban-btn.primary {
+      background: var(--accent-grad) !important; border-color: transparent !important; color: #fff;
+      box-shadow: 0 2px 12px rgba(99,102,241,0.35); transition: filter 0.15s, box-shadow 0.15s, transform 0.1s;
+    }
+    button.primary:hover, .kanban-btn.primary:hover { filter: brightness(1.08); box-shadow: 0 4px 18px rgba(99,102,241,0.5); }
+    button.primary:active, .kanban-btn.primary:active { transform: translateY(1px); }
+
+    /* surfaces: subtle elevation + top highlight, tactile hover lift */
+    .svc-card, .info-section, .secret-item {
+      box-shadow: var(--shadow-sm), var(--surface-hi);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .svc-card:hover, .info-section:hover, .secret-item:hover {
+      transform: translateY(-1px); box-shadow: var(--shadow-md), var(--surface-hi); border-color: #34344d;
+    }
+    .kanban-card { box-shadow: var(--shadow-sm), var(--surface-hi); }
+
+    /* modals: deep shadow + faint backdrop blur */
+    #add-project-modal .modal, #import-dialog .dialog, .input-modal .im-box, .pin-modal .pin-box, #mm-detail-modal .im-box {
+      box-shadow: var(--shadow-lg), var(--surface-hi);
+    }
+    #add-project-modal, #import-dialog, .input-modal, .pin-modal, .fe-editor { backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+
+    /* form fields: soft accent focus ring everywhere (xterm helper is offscreen) */
+    input:focus, textarea:focus, select:focus { outline: none; box-shadow: var(--ring); border-color: var(--accent) !important; }
+
+    /* connection badge → live status dot */
+    .topbar .status-badge.connected, .topbar .status-badge.disconnected { display: inline-flex; align-items: center; gap: 6px; }
+    .topbar .status-badge.connected::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: connPulse 2.2s ease-out infinite; }
+    .topbar .status-badge.disconnected::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--red); opacity: 0.8; }
+    @keyframes connPulse {
+      0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.5); }
+      70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+      100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+    }
+
+    /* toast: depth + accent edge */
+    .toast { box-shadow: var(--shadow-md); border-left: 3px solid var(--accent); }
+    .toast.error { border-left-color: var(--red); }
+    .toast.success { border-left-color: var(--green); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .topbar .status-badge.connected::before { animation: none; }
+      .svc-card, .info-section, .secret-item { transition: none; }
+      .svc-card:hover, .info-section:hover, .secret-item:hover { transform: none; }
+    }
   </style>
 </head>
 <body>
@@ -1196,7 +1334,7 @@ export function getWebappHtml(botUsername) {
         </div>
       </div>
       <button class="hamburger" data-action="toggle-sidebar">&#9776;</button>
-      <span class="logo"><img src="${LOGO_SM}" alt="">Crundi</span>
+      <span class="logo"><img src="${LOGO_SM}" alt=""><span class="logo-text">Crundi</span></span>
       <span class="separator">/</span>
       <span class="project-name" id="current-project">No project</span>
       <span class="spacer"></span>
@@ -1272,6 +1410,8 @@ export function getWebappHtml(botUsername) {
           <div class="term-input-bar" id="term-input-bar">
             <button class="term-tool-toggle" id="term-tool-toggle" data-action="term-tool-toggle" title="Keyboard tools">&#9881;</button>
             <textarea id="term-input" class="term-input" rows="1" placeholder="Type here... (Ctrl+Enter or Send button)"></textarea>
+            <button class="term-attach-btn" data-action="term-attach" title="Attach a file (uploads to crundi_attachments)">&#128206;</button>
+            <input type="file" id="term-attach-input" style="display:none">
             <button class="term-send-btn" data-action="term-send" title="Send to terminal">Send</button>
           </div>
         </div>
@@ -1375,13 +1515,14 @@ export function getWebappHtml(botUsername) {
       <h3 id="mmd-title">Idea</h3>
       <div id="mmd-view">
         <div class="mmd-link" id="mmd-link"></div>
-        <div class="mmd-note" id="mmd-note"></div>
+        <ul class="mmd-notes" id="mmd-notes"></ul>
       </div>
       <div id="mmd-edit" style="display:none">
         <label class="im-label">Idea</label>
         <input type="text" id="mmd-text-input" autocomplete="off">
-        <label class="im-label" style="margin-top:10px">Note</label>
-        <textarea id="mmd-note-input" style="min-height:90px"></textarea>
+        <label class="im-label" style="margin-top:10px">Notes</label>
+        <div class="mmd-notes-edit" id="mmd-notes-edit"></div>
+        <button type="button" class="mmd-add-note" id="mmd-add-note">+ Add note</button>
       </div>
       <div class="mmd-actions">
         <button id="mmd-edit-btn">Edit</button>
@@ -1687,6 +1828,7 @@ export function getWebappHtml(botUsername) {
         + (u.subscriptionType ? '\\nPlan: ' + u.subscriptionType : '');
       tickResets(); // also fills the time bars from resets_at
     }
+    const ubLast = {}; // last shown usage % per bar (to shine only on change)
     function setUsageBar(barId, labelId, pct, tag) {
       const bar = $('#' + barId), label = $('#' + labelId);
       if (!bar) return;
@@ -1694,6 +1836,10 @@ export function getWebappHtml(botUsername) {
       bar.style.background = ufColor(pct, 'rgba(99,102,241,0.22)');
       label.textContent = tag + ' ' + pct + '%';
       placeUsageLabel(label, pct);
+      if (ubLast[barId] !== undefined && ubLast[barId] !== pct) {
+        bar.classList.remove('shine'); void bar.offsetWidth; bar.classList.add('shine'); // restart sweep
+      }
+      ubLast[barId] = pct;
     }
 
     // ─── Usage history chart (hand-drawn SVG: smooth monotone curves with a
@@ -2013,8 +2159,18 @@ export function getWebappHtml(botUsername) {
         // projects). In single mode projects are auto-discovered folders and
         // would just reappear, so we don't show a remove control.
         const canRemove = projectMode === 'multi';
+        // Heartbeat for projects with registered services: alive (green pulse)
+        // if any are running, dim if all stopped, absent if none registered.
+        const svcs = services.filter(s => String(s.alias || '').toLowerCase() === p.alias.toLowerCase());
+        const runningCount = svcs.filter(s => s.status === 'running').length;
+        const heart = svcs.length
+          ? '<span class="svc-heart' + (runningCount ? ' live' : '') + '" title="' + (runningCount ? runningCount + ' of ' + svcs.length + ' service(s) running' : svcs.length + ' service(s), all stopped') + '">'
+            + '<svg class="svc-ecg" viewBox="0 0 26 12" width="20" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6 H7 L9 2.5 L12 10 L14.5 4 L16 6 H25"/></svg>'
+            + '</span>'
+          : '';
         item.innerHTML = '<span class="dot"></span>'
           + '<span class="name">' + escHtml(p.name || p.alias) + '</span>'
+          + heart
           + (hasTerminal ? '<button class="close-btn" data-action="close-terminal" data-project="' + escHtml(p.alias) + '" title="Close terminal">&times;</button>' : '')
           + (canRemove ? '<button class="remove-btn" data-action="remove-project" data-project="' + escHtml(p.alias) + '" data-name="' + escHtml(p.name || p.alias) + '" title="Remove project (keeps files)">&#128465;</button>' : '');
         item.addEventListener('click', (e) => {
@@ -2188,40 +2344,36 @@ export function getWebappHtml(botUsername) {
         }
       });
 
-      // Handle Ctrl+V paste directly into xterm — text and images
+      // Ctrl/Cmd+V into xterm: only intercept IMAGES (upload + paste the saved
+      // path). TEXT is left to xterm's own paste handler — sending it here too
+      // is what double-pasted text. Return true so xterm always pastes text once.
       term.attachCustomKeyEventHandler((e) => {
-        if (e.type === 'keydown' && e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+        if (e.type === 'keydown' && e.key === 'v' && (e.ctrlKey || e.metaKey) && currentProject) {
           (async () => {
             try {
+              if (!navigator.clipboard || !navigator.clipboard.read) return;
               const items = await navigator.clipboard.read();
               for (const item of items) {
-                if (item.types.some(t => t.startsWith('image/'))) {
-                  const imageType = item.types.find(t => t.startsWith('image/'));
-                  const blob = await item.getType(imageType);
-                  const buf = await blob.arrayBuffer();
-                  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-                  const r = await apiFetch('/api/clipboard/paste-image', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ project: currentProject, data: b64 }),
-                  });
-                  const data = await r.json();
-                  if (data.ok && data.path) {
-                    if (ws && ws.readyState === 1 && currentProject) {
-                      ws.send(JSON.stringify({ type: 'input', project: currentProject, data: data.path }));
-                    }
-                    toast('Screenshot saved: ' + data.name);
-                  }
-                  return;
+                const imageType = item.types.find(t => t.startsWith('image/'));
+                if (!imageType) continue;
+                const blob = await item.getType(imageType);
+                const b64 = arrayBufferToBase64(await blob.arrayBuffer());
+                const r = await apiFetch('/api/clipboard/paste-image', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ project: currentProject, data: b64 }),
+                });
+                const data = await r.json();
+                if (data.ok && data.path && ws && ws.readyState === 1) {
+                  ws.send(JSON.stringify({ type: 'input', project: currentProject, data: data.path }));
+                  toast('Screenshot saved: ' + data.name);
                 }
+                return;
               }
-              // No image — paste text
-              const text = await navigator.clipboard.readText();
-              if (text && ws && ws.readyState === 1 && currentProject) {
-                ws.send(JSON.stringify({ type: 'input', project: currentProject, data: text }));
-              }
-            } catch { /* clipboard access denied or empty */ }
+            } catch { /* no clipboard image / permission denied */ }
           })();
+          // Return false so xterm does NOT consume/preventDefault the key — the
+          // browser then fires its native paste, which delivers TEXT exactly once.
+          // (We only sent text ourselves before, which is what doubled it.)
           return false;
         }
         return true;
@@ -2231,47 +2383,29 @@ export function getWebappHtml(botUsername) {
       const termInputEl = document.getElementById('term-input');
       termInputEl.addEventListener('paste', async (e) => {
         if (!currentProject) return;
-        const items = e.clipboardData?.items;
-        if (!items) return;
+        // Find a pasted image in items or files (mobile browsers vary). Text
+        // paste falls through untouched so it inserts normally.
+        let imgFile = null;
+        const items = e.clipboardData?.items || [];
         for (const item of items) {
-          if (item.type.startsWith('image/')) {
-            e.preventDefault();
-            const blob = item.getAsFile();
-            if (!blob) return;
-            const buf = await blob.arrayBuffer();
-            const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-            try {
-              const r = await apiFetch('/api/clipboard/paste-image', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ project: currentProject, data: b64 }),
-              });
-              const data = await r.json();
-              if (data.ok && data.path) {
-                termInputEl.value += data.path;
-                termInputEl.focus();
-                toast('Screenshot saved: ' + data.name);
-              }
-            } catch (err) { toast('Paste failed: ' + err.message, 'error'); }
-            return;
-          }
+          if (item.type && item.type.startsWith('image/')) { imgFile = item.getAsFile(); break; }
+        }
+        if (!imgFile && e.clipboardData?.files?.length) {
+          for (const f of e.clipboardData.files) { if (f.type && f.type.startsWith('image/')) { imgFile = f; break; } }
+        }
+        if (imgFile) {
+          e.preventDefault();
+          await uploadAttachment(imgFile); // chunk-safe base64, cursor-aware insert, → crundi_attachments
+          return;
         }
         // In Electron: check for copied file paths when no text is being pasted
         if (!e.clipboardData?.getData('text/plain') && window.api) {
           e.preventDefault();
           try {
             const filePaths = await window.api.getClipboardFilePaths();
-            if (filePaths?.length) {
-              termInputEl.value += filePaths.join(' ');
-              termInputEl.focus();
-              return;
-            }
+            if (filePaths?.length) { insertIntoTermInput(filePaths.join(' ')); return; }
             const image = await window.api.getClipboardImage();
-            if (image) {
-              termInputEl.value += image.tmpPath;
-              termInputEl.focus();
-              toast('Screenshot from clipboard: ' + image.name);
-            }
+            if (image) { insertIntoTermInput(image.tmpPath); toast('Screenshot from clipboard: ' + image.name); }
           } catch { /* ignore */ }
         }
       });
@@ -2296,39 +2430,24 @@ export function getWebappHtml(botUsername) {
         if (!currentProject) return;
         const files = e.dataTransfer?.files;
         if (files && files.length > 0) {
-          // Check for image files — upload and insert path
           const paths = [];
           for (const file of files) {
-            if (file.type.startsWith('image/')) {
-              const buf = await file.arrayBuffer();
-              const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-              try {
-                const r = await apiFetch('/api/clipboard/paste-image', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ project: currentProject, data: b64 }),
-                });
-                const data = await r.json();
-                if (data.ok) paths.push(data.path);
-              } catch { /* ignore */ }
+            if (file.type && file.type.startsWith('image/')) {
+              await uploadAttachment(file); // uploads to crundi_attachments + inserts path (chunk-safe)
             } else {
               const resolved = window.api?.getPathForFile?.(file);
               paths.push(resolved || file.path || file.name);
             }
           }
           if (paths.length) {
-            const ta = document.getElementById('term-input');
-            if (ta) { ta.value += paths.join(' '); ta.focus(); }
+            insertIntoTermInput(paths.join(' '));
             toast(paths.length === 1 ? 'File added' : paths.length + ' files added');
           }
           return;
         }
         // Text drop
         const text = e.dataTransfer?.getData('text/plain');
-        if (text) {
-          const ta = document.getElementById('term-input');
-          if (ta) { ta.value += text; ta.focus(); }
-        }
+        if (text) insertIntoTermInput(text);
       });
 
       // Touch scroll interceptor for mobile
@@ -2427,6 +2546,55 @@ export function getWebappHtml(botUsername) {
       if (term) term.scrollToBottom();
     }
 
+    // Insert text at the caret in the terminal input (or append if not focused),
+    // padding with spaces so a path doesn't fuse onto adjacent words.
+    function insertIntoTermInput(text) {
+      const ta = document.getElementById('term-input');
+      if (!ta) return;
+      const focused = document.activeElement === ta && typeof ta.selectionStart === 'number';
+      const s = focused ? ta.selectionStart : ta.value.length;
+      const e = focused ? ta.selectionEnd : ta.value.length;
+      const before = ta.value.slice(0, s), after = ta.value.slice(e);
+      const lead = (before && !/\\s$/.test(before)) ? ' ' : '';
+      const trail = (!after || !/^\\s/.test(after)) ? ' ' : '';
+      const ins = lead + text + trail;
+      ta.value = before + ins + after;
+      const pos = s + ins.length;
+      ta.focus();
+      try { ta.setSelectionRange(pos, pos); } catch { /* ignore */ }
+      ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+    }
+
+    // Attach button → pick a file, upload to crundi_attachments, insert its path.
+    async function termAttachFile() {
+      if (!currentProject) { toast('Select a project first', 'error'); return; }
+      const input = document.getElementById('term-attach-input');
+      if (input) input.click();
+    }
+    function arrayBufferToBase64(buf) {
+      // chunked to stay clear of the call-stack/arg limits big images hit
+      const bytes = new Uint8Array(buf); let bin = ''; const CH = 0x8000;
+      for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+      return btoa(bin);
+    }
+    async function uploadAttachment(file) {
+      if (!file || !currentProject) return;
+      const btn = document.querySelector('.term-attach-btn');
+      if (btn) btn.classList.add('busy');
+      try {
+        const name = file.name || ('image.' + ((file.type || 'image/png').split('/')[1] || 'png'));
+        const b64 = arrayBufferToBase64(await file.arrayBuffer());
+        const r = await apiFetch('/api/attachments/upload', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: currentProject, name, data: b64 }),
+        });
+        const d = await r.json();
+        if (d.ok && d.path) { insertIntoTermInput(d.path); toast('Attached: ' + d.name); }
+        else toast('Upload failed: ' + (d.error || '?'), 'error');
+      } catch (err) { toast('Upload failed: ' + err.message, 'error'); }
+      finally { if (btn) btn.classList.remove('busy'); }
+    }
+
     // Auto-grow textarea + Ctrl+Enter to send
     document.addEventListener('DOMContentLoaded', () => {
       const ta = document.getElementById('term-input');
@@ -2440,6 +2608,12 @@ export function getWebappHtml(botUsername) {
           e.preventDefault();
           termSendInput();
         }
+      });
+      const attachInput = document.getElementById('term-attach-input');
+      if (attachInput) attachInput.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) uploadAttachment(file);
+        e.target.value = ''; // allow re-selecting the same file
       });
     });
 
@@ -2532,6 +2706,7 @@ export function getWebappHtml(botUsername) {
           const state = JSON.parse(e.data);
           terminals = state.terminals || [];
           userTerminals = state.userTerminals || [];
+          if (state.services) services = state.services; // keep sidebar heartbeat fresh
           if (state.projects) {
             projects = state.projects;
           }
@@ -3537,6 +3712,7 @@ export function getWebappHtml(botUsername) {
         const data = await res.json();
         services = data.services || [];
         renderServices();
+        renderProjects(); // refresh sidebar heartbeats
       } catch (err) {
         toast('Failed to load services: ' + err.message, 'error');
       }
@@ -4250,6 +4426,7 @@ export function getWebappHtml(botUsername) {
         case 'term-select': termToggleSelect(); break;
         case 'term-scroll-bottom': if (term) term.scrollToBottom(); break;
         case 'term-send': termSendInput(); break;
+        case 'term-attach': termAttachFile(); break;
         case 'term-tool-toggle': termToggleTools(); break;
         case 'term-key': termSendKey(d.key); break;
         case 'launch-claude': launchClaude(d.mode); break;
@@ -4905,8 +5082,13 @@ export function getWebappHtml(botUsername) {
           // scoped to a project without a task link
           const nm = (projects.find(p => p.alias === n.project) || {}).name || n.project;
           chip = '<span class="mm-chip scope">📁 ' + escHtml(trunc(nm, 18)) + '</span>';
+        } else if (n.effectiveProject) {
+          // in a project's scope via an ancestor (no link/scope of its own)
+          const nm = (projects.find(p => p.alias === n.effectiveProject) || {}).name || n.effectiveProject;
+          chip = '<span class="mm-chip inherited" title="In ' + escHtml(nm) + ' (inherited from parent)">↳ ' + escHtml(trunc(nm, 16)) + '</span>';
         }
-        const noteChip = n.note ? '<span class="mm-chip note">📝 note</span>' : '';
+        const nNotes = (n.notes && n.notes.length) || 0;
+        const noteChip = nNotes ? '<span class="mm-chip note">📝 ' + nNotes + (nNotes === 1 ? ' note' : ' notes') + '</span>' : '';
         return '<div class="mm-node' + (isRoot ? ' root' : '') + (linked ? ' linked' : (n.project ? ' scoped' : '')) + '" style="left:' + px(pos[n.id].x) + 'px" data-node="' + n.id + '">'
           + '<div class="mm-text">' + escHtml(n.text) + '</div>'
           + '<div class="mm-meta">' + chip + noteChip + '</div>'
@@ -5055,7 +5237,7 @@ export function getWebappHtml(botUsername) {
     }
     function nodeMatches(n, q) {
       if ((n.text || '').toLowerCase().includes(q)) return true;
-      if ((n.note || '').toLowerCase().includes(q)) return true;
+      if ((n.notes || []).join(' ').toLowerCase().includes(q)) return true;
       const i = n.linkedTaskInfo;
       if (i && ((i.title || '') + ' ' + (i.text || '') + ' ' + (i.taskTitle || '') + ' ' + (i.project || '')).toLowerCase().includes(q)) return true;
       return false;
@@ -5219,12 +5401,27 @@ export function getWebappHtml(botUsername) {
       const linkEl = $('#mmd-link');
       linkEl.innerHTML = mmLinkHtml(n);
       linkEl.className = 'mmd-link' + (n.linkedTask && (!n.linkedTaskInfo || n.linkedTaskInfo.missing) ? ' missing' : '');
-      $('#mmd-note').textContent = n.note || '';
+      $('#mmd-notes').innerHTML = (n.notes || []).map(t => '<li>' + escHtml(t) + '</li>').join('');
       $('#mmd-link-btn').textContent = (n.linkedTask || n.project) ? 'Unlink' : 'Link / scope';
       mmDetailSetEditing(false);
       $('#mm-detail-modal').classList.add('visible');
     }
     function closeMmDetail() { $('#mm-detail-modal').classList.remove('visible'); mmDetailId = null; }
+    function addMmNoteRow(value) {
+      const row = document.createElement('div');
+      row.className = 'mmd-note-row';
+      const ta = document.createElement('textarea');
+      ta.value = value || ''; ta.placeholder = 'Note…';
+      const autosize = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+      ta.addEventListener('input', autosize);
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'mmd-note-del'; del.textContent = '✕'; del.title = 'Remove note';
+      del.addEventListener('click', () => row.remove());
+      row.appendChild(ta); row.appendChild(del);
+      $('#mmd-notes-edit').appendChild(row);
+      setTimeout(autosize, 0);
+      return ta;
+    }
     function mmDetailSetEditing(on) {
       $('#mmd-view').style.display = on ? 'none' : '';
       $('#mmd-edit').style.display = on ? '' : 'none';
@@ -5233,7 +5430,8 @@ export function getWebappHtml(botUsername) {
       if (on) {
         const n = mindmapNodes.find(x => x.id === mmDetailId);
         $('#mmd-text-input').value = n ? (n.text || '') : '';
-        $('#mmd-note-input').value = n ? (n.note || '') : '';
+        $('#mmd-notes-edit').innerHTML = '';
+        ((n && n.notes) || []).forEach(t => addMmNoteRow(t));
         setTimeout(() => $('#mmd-text-input').focus(), 30);
       }
     }
@@ -5243,11 +5441,13 @@ export function getWebappHtml(botUsername) {
       $('#mmd-close-btn').addEventListener('click', closeMmDetail);
       $('#mm-detail-modal').addEventListener('click', (e) => { if (e.target.id === 'mm-detail-modal') closeMmDetail(); });
       $('#mmd-edit-btn').addEventListener('click', () => mmDetailSetEditing(true));
+      $('#mmd-add-note').addEventListener('click', () => addMmNoteRow('').focus());
       $('#mmd-save-btn').addEventListener('click', async () => {
         const id = mmDetailId; if (!id) return;
         const text = $('#mmd-text-input').value.trim();
         if (!text) { toast('Idea text is required', 'error'); return; }
-        await mindmapPost({ action: 'updateNode', id, text, note: $('#mmd-note-input').value });
+        const notes = [...$('#mmd-notes-edit').querySelectorAll('textarea')].map(t => t.value.trim()).filter(Boolean);
+        await mindmapPost({ action: 'updateNode', id, text, notes });
         closeMmDetail(); loadMindmap();
       });
       $('#mmd-addchild-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmAddChild(id); });
