@@ -1,7 +1,7 @@
 {
   "name": "crundi",
   "version": "7.1.0",
-  "description": "Web terminal for Claude Code with Telegram login and notifications",
+  "description": "Self-hosted remote workbench for your projects — agent terminals, files, git, kanban, mindmap and scheduling, reachable from anywhere.",
   "type": "module",
   "main": "app/main.js",
   "scripts": {
