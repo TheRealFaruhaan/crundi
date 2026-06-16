@@ -1,0 +1,20 @@
+node_modules/
+.env
+data/
+.claude/
+# Signing certificates
+certs/
+dist/
+dist-build.log
+logs/
+.mcp.json
+# .NET build output (wgc-capture tool) — generated, and embeds absolute paths
+**/bin/
+**/obj/
+
+.env.dev
+.dev-data/
+node_modules/
+screenshots/
+clipboard-*.png
+crundi_attachments/

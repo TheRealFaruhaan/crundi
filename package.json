@@ -1,0 +1,86 @@
+{
+  "name": "crundi",
+  "version": "7.1.0",
+  "description": "Web terminal for Claude Code with Telegram login and notifications",
+  "type": "module",
+  "main": "app/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:headless": "node src/index.js",
+    "dev": "electron . --dev",
+    "dev:headless": "node --watch src/index.js",
+    "build": "electron-builder --win",
+    "service:start": "pm2 start ecosystem.config.cjs",
+    "service:stop": "pm2 stop crundi",
+    "service:restart": "pm2 restart crundi",
+    "service:status": "pm2 status crundi",
+    "service:logs": "pm2 logs crundi",
+    "service:install": "pm2 start ecosystem.config.cjs && pm2 save && powershell -ExecutionPolicy Bypass -File scripts/startup-install.ps1",
+    "service:uninstall": "pm2 stop crundi && pm2 delete crundi && pm2 save && powershell -ExecutionPolicy Bypass -File scripts/startup-uninstall.ps1"
+  },
+  "build": {
+    "appId": "com.crundi.app",
+    "productName": "Crundi",
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico",
+      "signtoolOptions": {
+        "publisherName": [
+          "TheRealFaruhaan"
+        ]
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "include": "build/installer.nsh"
+    },
+    "asarUnpack": [
+      "src/**/*",
+      "app/vendor/**/*",
+      "scripts/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "files": [
+      "app/**/*",
+      "src/**/*",
+      "scripts/**/*",
+      "package.json",
+      "!**/.env"
+    ],
+    "extraResources": [
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      },
+      {
+        "from": "assets",
+        "to": "assets"
+      }
+    ]
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cloudflared": "^0.7.1",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.35.0",
+    "node-pty": "^1.1.0",
+    "node-screenshots": "^0.2.8",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "electron": "^41.2.0",
+    "electron-builder": "^26.8.1"
+  }
+}

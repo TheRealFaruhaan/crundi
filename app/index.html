@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crundi</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; connect-src *; frame-src http://localhost:*;">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary: #0a0a0f;
+      --bg-secondary: #12121a;
+      --bg-tertiary: #1a1a28;
+      --border: #2a2a3d;
+      --text-primary: #e8e8f0;
+      --text-secondary: #8888a8;
+      --text-muted: #5a5a78;
+      --accent: #6366f1;
+      --green: #10b981;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+      --radius: 10px;
+      --radius-sm: 6px;
+      --mono: "Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace;
+    }
+
+    body {
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ─── Title bar ─── */
+    .titlebar {
+      height: 32px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      -webkit-app-region: drag;
+      padding: 0 12px;
+      user-select: none;
+    }
+    .titlebar .title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      flex: 1;
+    }
+    .titlebar .controls {
+      display: flex;
+      gap: 2px;
+      -webkit-app-region: no-drag;
+    }
+    .titlebar .controls button {
+      width: 36px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .titlebar .controls button:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+    .titlebar .controls button.close:hover { background: var(--red); color: white; }
+
+    /* ─── Content area ─── */
+    .content {
+      height: calc(100vh - 32px);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Loading / Status screen ─── */
+    #status-screen {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+    }
+    #status-screen h1 { font-size: 2rem; font-weight: 700; }
+    #status-screen .status {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #status-screen .status .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+    #status-screen .status .dot.starting { background: var(--yellow); animation: pulse 1s infinite; }
+    #status-screen .status .dot.running { background: var(--green); }
+    #status-screen .status .dot.error { background: var(--red); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .log-area {
+      width: 90%;
+      max-width: 700px;
+      max-height: 200px;
+      overflow-y: auto;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .btn-row { display: flex; gap: 10px; }
+    .btn {
+      padding: 8px 20px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .btn:hover { background: var(--accent); border-color: var(--accent); }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    .btn:disabled:hover { background: var(--bg-tertiary); border-color: var(--border); }
+
+    /* ─── Webapp iframe ─── */
+    #webapp-frame {
+      display: none;
+      flex: 1;
+      border: none;
+      width: 100%;
+      height: 100%;
+    }
+    #webapp-frame.visible { display: block; }
+
+    #drop-overlay {
+      display: none;
+      position: fixed;
+      inset: 32px 0 0 0;
+      z-index: 1000;
+      background: rgba(99, 102, 241, 0.08);
+      border: 2px dashed var(--accent);
+      pointer-events: auto;
+    }
+    #drop-overlay.visible { display: block; }
+
+    /* ─── Setup wizard ─── */
+    #setup-screen {
+      display: none;
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+    }
+    #setup-screen.visible { display: flex; }
+    .setup-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      width: 90%;
+      max-width: 480px;
+    }
+    .setup-card h2 { margin-bottom: 20px; font-size: 1.3rem; }
+    .setup-card label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .setup-card input {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+      margin-bottom: 14px;
+      outline: none;
+    }
+    .setup-card input:focus { border-color: var(--accent); }
+    .setup-card .browse-row { display: flex; gap: 8px; margin-bottom: 14px; }
+    .setup-card .browse-row input { flex: 1; margin-bottom: 0; }
+    .setup-card .browse-row button {
+      padding: 8px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+    .setup-card .btn-primary {
+      padding: 10px 24px;
+      border-radius: var(--radius-sm);
+      border: none;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .setup-card .btn-primary:hover { background: #818cf8; }
+
+    /* ─── Step-by-step wizard ─── */
+    .setup-progress { display: flex; gap: 8px; margin-bottom: 22px; }
+    .setup-progress .dot {
+      flex: 1; height: 4px; border-radius: 2px; background: var(--border);
+      transition: background 0.2s ease;
+    }
+    .setup-progress .dot.done { background: var(--accent); }
+    .setup-progress .dot.current { background: #818cf8; }
+    .setup-stepnum { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+    .setup-step { animation: stepFade 0.18s ease; }
+    @keyframes stepFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .setup-howto {
+      list-style: none; counter-reset: howto; margin: 0 0 18px; padding: 14px 14px 14px 14px;
+      background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;
+    }
+    .setup-howto li { counter-increment: howto; position: relative; padding-left: 28px; margin-bottom: 8px; }
+    .setup-howto li:last-child { margin-bottom: 0; }
+    .setup-howto li::before {
+      content: counter(howto); position: absolute; left: 0; top: 0;
+      width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff;
+      font-size: 0.72rem; font-weight: 700; display: flex; align-items: center; justify-content: center;
+    }
+    .setup-howto b { color: var(--text-primary); }
+    .setup-howto code {
+      font-family: ui-monospace, monospace; background: var(--bg-secondary);
+      border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--accent);
+    }
+    .setup-hint { font-size: 0.78rem; color: var(--text-muted); margin: -6px 0 10px; }
+    .setup-warn {
+      font-size: 0.82rem; line-height: 1.5; color: var(--text-secondary);
+      background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.45);
+      border-left-width: 3px; border-radius: var(--radius-sm);
+      padding: 10px 12px; margin-bottom: 16px;
+    }
+    .setup-warn b { color: var(--text-primary); }
+    .setup-warn code {
+      font-family: ui-monospace, monospace; background: var(--bg-secondary);
+      border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--accent);
+    }
+    .setup-nav { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+    .setup-nav .spacer { flex: 1; }
+    .setup-card .btn-ghost {
+      padding: 10px 18px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+      cursor: pointer; font-size: 0.88rem;
+    }
+    .setup-card .btn-ghost:hover { color: var(--text-primary); border-color: var(--accent); }
+    .setup-card .btn-ghost:disabled { opacity: 0.4; cursor: default; }
+
+    /* ─── Locked-screen capture (DisconnectRDP) panel + modal ─── */
+    .rdp-body .rdp-desc { font-size: 0.86rem; line-height: 1.55; color: var(--text-secondary); margin-bottom: 14px; }
+    .rdp-body .rdp-desc b { color: var(--text-primary); }
+    .rdp-body .rdp-status {
+      font-size: 0.85rem; line-height: 1.5; border-radius: var(--radius-sm);
+      padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--border);
+    }
+    .rdp-body .rdp-status.ok { background: rgba(16, 185, 129, 0.10); border-color: rgba(16, 185, 129, 0.45); }
+    .rdp-body .rdp-status.ok b { color: var(--green); }
+    .rdp-body .rdp-status.warn { background: rgba(245, 158, 11, 0.10); border-color: rgba(245, 158, 11, 0.45); }
+    .rdp-body .rdp-status.warn b { color: var(--yellow); }
+    .rdp-body .rdp-setup-btn { width: 100%; }
+    .rdp-body code {
+      font-family: ui-monospace, monospace; background: var(--bg-secondary);
+      border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--accent);
+    }
+    #rdp-modal {
+      display: none; position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,0.55); align-items: center; justify-content: center;
+    }
+    #rdp-modal.visible { display: flex; }
+    .rdp-modal-card {
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 28px; width: 90%; max-width: 460px;
+    }
+    .rdp-modal-card h2 { font-size: 1.2rem; margin-bottom: 16px; }
+    .rdp-modal-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <!-- Title bar -->
+  <div class="titlebar">
+    <span class="title">Crundi</span>
+    <div class="controls">
+      <button onclick="api.minimize()">&#x2013;</button>
+      <button onclick="api.maximize()">&#x25A1;</button>
+      <button class="close" onclick="api.close()">&#x2715;</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Status / Loading screen -->
+    <div id="status-screen">
+      <h1>Crundi</h1>
+      <div class="status">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">Starting...</span>
+      </div>
+      <div class="log-area" id="log-area"></div>
+      <div class="btn-row">
+        <button class="btn" id="btn-start" onclick="api.startBot()" disabled>Start</button>
+        <button class="btn" id="btn-stop" onclick="api.stopBot()" disabled>Stop</button>
+        <button class="btn" id="btn-restart" onclick="api.restartBot()" disabled>Restart</button>
+      </div>
+    </div>
+
+    <!-- Drop overlay (intercepts file drops to get real paths) -->
+    <div id="drop-overlay"></div>
+
+    <!-- Webapp iframe (shown when server is ready) -->
+    <iframe id="webapp-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" allow="clipboard-write; clipboard-read"></iframe>
+
+    <!-- Setup wizard -->
+    <div id="setup-screen">
+      <div class="setup-card">
+        <div class="setup-progress" id="setup-progress">
+          <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
+        </div>
+        <p id="setup-import-hint" style="display:none;font-size:0.82rem;color:var(--green);margin-bottom:14px;">Found a previous config — values are pre-filled. Step through and Save to continue.</p>
+
+        <!-- Step 1: Bot token -->
+        <div class="setup-step" data-step="1">
+          <div class="setup-stepnum">Step 1 of 6</div>
+          <h2>Create your Telegram bot</h2>
+          <ol class="setup-howto">
+            <li>Open <b>Telegram</b> and search for <b>@BotFather</b> (the account with the blue checkmark).</li>
+            <li>Open the chat, press <b>Start</b>, then send <code>/newbot</code>.</li>
+            <li>Choose a <b>name</b>, then a <b>username</b> that ends in <code>bot</code>.</li>
+            <li>BotFather replies with a line <i>"Use this token to access the HTTP API:"</i> — copy that token and paste it below.</li>
+          </ol>
+          <label for="setup-token">Telegram Bot Token</label>
+          <input type="text" id="setup-token" placeholder="123456:ABC-DEF..." autocomplete="off">
+        </div>
+
+        <!-- Step 2: Username -->
+        <div class="setup-step" data-step="2" hidden>
+          <div class="setup-stepnum">Step 2 of 6</div>
+          <h2>Your Telegram username</h2>
+          <ol class="setup-howto">
+            <li>In Telegram, open <b>Settings</b> (desktop: <b>&#9776; menu &rarr; Settings</b>; phone: <b>Settings</b> tab, bottom-right).</li>
+            <li>Tap <b>Edit profile &rarr; Username</b> and set one if you don't have it yet.</li>
+            <li>Type it below <b>without</b> the leading <code>@</code>. Only this user may control the bot.</li>
+          </ol>
+          <label for="setup-username">Your Telegram Username</label>
+          <input type="text" id="setup-username" placeholder="your_username" autocomplete="off">
+        </div>
+
+        <!-- Step 3: Projects -->
+        <div class="setup-step" data-step="3" hidden>
+          <div class="setup-stepnum">Step 3 of 6</div>
+          <h2>Where are your projects?</h2>
+          <ol class="setup-howto">
+            <li><b>Single folder</b>: point Crundi at one parent folder — every subfolder becomes a project.</li>
+            <li><b>Multiple folders</b>: add projects individually (with full paths) later from the web UI.</li>
+            <li>For single folder, press <b>Browse</b> and pick the folder that holds your code.</li>
+          </ol>
+          <label>Project Mode</label>
+          <div style="display:flex;gap:12px;margin-bottom:14px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:0.88rem;color:var(--text-primary);">
+              <input type="radio" name="setup-mode" value="single" checked onchange="updateProjectMode()"> Single folder
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:0.88rem;color:var(--text-primary);">
+              <input type="radio" name="setup-mode" value="multi" onchange="updateProjectMode()"> Multiple folders
+            </label>
+          </div>
+          <div id="setup-single-fields">
+            <label>Projects Directory</label>
+            <div class="browse-row">
+              <input type="text" id="setup-projects" placeholder="C:\Projects" autocomplete="off">
+              <button onclick="browseProjects()">Browse</button>
+            </div>
+          </div>
+          <div id="setup-multi-hint" style="display:none;font-size:0.78rem;color:var(--text-muted);margin-bottom:14px;">
+            Projects will be added individually with their full paths from the web UI.
+          </div>
+        </div>
+
+        <!-- Step 4: Remote access (optional, skippable) -->
+        <div class="setup-step" data-step="4" hidden>
+          <div class="setup-stepnum">Step 4 of 6 &middot; optional</div>
+          <h2>Remote access (optional)</h2>
+          <ol class="setup-howto">
+            <li>Skip this to use a <b>free random quick tunnel</b> — Crundi generates a URL each start.</li>
+            <li>For a fixed custom domain: open <b>Cloudflare Zero Trust &rarr; Networks &rarr; Tunnels &rarr; Create a tunnel &rarr; Cloudflared</b>.</li>
+            <li>Name it. On the <b>"Install and run a connector"</b> screen, <b>only copy the token</b> from the install command (the long <code>eyJ...</code> string) and paste it below.</li>
+            <li>Add a <b>Public Hostname</b> for the tunnel and enter that full URL below.</li>
+          </ol>
+          <div class="setup-warn">
+            <b>Don't install Cloudflare's connector.</b> Cloudflare's page tells you to download/run <code>cloudflared</code> (or a <code>.msi</code>/service) to "install the connector" — <b>skip that entirely</b>. Crundi already bundles and runs <code>cloudflared</code> itself; installing it again creates a second connector that fights ours and breaks the tunnel. You only need the <b>token</b> and the <b>public hostname URL</b> from that screen.
+          </div>
+          <label for="setup-tunnel-token">Cloudflare Tunnel Token</label>
+          <input type="text" id="setup-tunnel-token" placeholder="eyJhIjoi..." autocomplete="off">
+          <label for="setup-tunnel-url">Tunnel Public URL</label>
+          <input type="text" id="setup-tunnel-url" placeholder="https://crundi.yourdomain.com" autocomplete="off">
+          <p class="setup-hint">Leave empty (or press Skip) to use a random quick tunnel.</p>
+        </div>
+
+        <!-- Step 5: Telegram login domain (required for web login) -->
+        <div class="setup-step" data-step="5" hidden>
+          <div class="setup-stepnum">Step 5 of 6</div>
+          <h2>Enable Telegram login</h2>
+          <p class="setup-hint" style="margin-top:0;">The web UI logs in with the "Log in with Telegram" button. Telegram only shows it on a domain you've registered for your bot.</p>
+          <ol class="setup-howto">
+            <li>Press <b>Save &amp; Start</b> below. When Crundi is running it shows your <b>public URL</b> (your custom domain, or the random quick-tunnel URL in the logs).</li>
+            <li>Open <b>@BotFather</b> &rarr; send <code>/setdomain</code> (or <b>/mybots &rarr; your bot &rarr; Bot Settings &rarr; Domain</b>).</li>
+            <li>Select your bot and send that <b>full URL</b> (e.g. <code>https://crundi.yourdomain.com</code>) as the domain.</li>
+          </ol>
+          <div class="setup-warn">
+            <b>Use only the bare domain/URL — nothing else.</b> Don't add a path, port, or trailing text, and don't enter <code>http://localhost</code>; Telegram rejects those and the login button won't appear. If you use a <b>random quick tunnel</b>, the URL changes every launch, so you'd have to re-run <code>/setdomain</code> each time — a fixed custom domain (previous step) is strongly recommended for login.
+          </div>
+        </div>
+
+        <!-- Step 6: Locked-screen capture (DisconnectRDP task) -->
+        <div class="setup-step" data-step="6" hidden>
+          <div class="setup-stepnum">Step 6 of 6 &middot; optional</div>
+          <h2>Locked-screen capture</h2>
+          <div id="rdp-wizard-body" class="rdp-body"><p class="rdp-desc">Checking&hellip;</p></div>
+        </div>
+
+        <div class="setup-nav">
+          <button class="btn-ghost" id="setup-back" onclick="setupPrev()">Back</button>
+          <span class="spacer"></span>
+          <button class="btn-ghost" id="setup-skip" onclick="setupSkip()" style="display:none;">Skip</button>
+          <button class="btn-primary" id="setup-next" onclick="setupNext()">Next</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recurring "locked-screen capture not configured" prompt (shown on launch). -->
+    <div id="rdp-modal">
+      <div class="rdp-modal-card">
+        <h2>Finish locked-screen capture setup</h2>
+        <div id="rdp-modal-body" class="rdp-body"><p class="rdp-desc">Checking&hellip;</p></div>
+        <div class="rdp-modal-actions">
+          <button class="btn-ghost" id="rdp-modal-later" onclick="hideRdpModal()">Later</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const logArea = document.getElementById('log-area');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const statusScreen = document.getElementById('status-screen');
+    const webappFrame = document.getElementById('webapp-frame');
+    const setupScreen = document.getElementById('setup-screen');
+
+    function addLog(text) {
+      const line = document.createElement('div');
+      line.textContent = typeof text === 'string' ? text : text.text || '';
+      logArea.appendChild(line);
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function updateStatus(status) {
+      statusDot.className = 'dot ' + status;
+      const labels = { stopped: 'Stopped', starting: 'Starting...', running: 'Running', error: 'Error' };
+      statusText.textContent = labels[status] || status;
+      document.getElementById('btn-start').disabled = !(status === 'stopped' || status === 'error');
+      document.getElementById('btn-stop').disabled = !(status === 'running' || status === 'starting');
+      document.getElementById('btn-restart').disabled = status === 'stopped';
+    }
+
+    // Events from main process
+    api.onBotStatus(updateStatus);
+    api.onBotLog(addLog);
+
+    api.onWebappReady((url) => {
+      statusScreen.style.display = 'none';
+      webappFrame.src = url;
+      webappFrame.classList.add('visible');
+      // Recurring nudge: if locked-screen capture isn't configured, prompt now.
+      setTimeout(maybePromptRdp, 1500);
+    });
+
+    api.onWebappStopped(() => {
+      webappFrame.classList.remove('visible');
+      webappFrame.src = '';
+      statusScreen.style.display = '';
+    });
+
+    api.onShowSetup((oldConfig) => {
+      statusScreen.style.display = 'none';
+      setupScreen.classList.add('visible');
+      if (oldConfig) {
+        // Pre-fill from old "Claude Telegram Bot" config
+        document.getElementById('setup-import-hint').style.display = '';
+        if (oldConfig.TELEGRAM_BOT_TOKEN) document.getElementById('setup-token').value = oldConfig.TELEGRAM_BOT_TOKEN;
+        if (oldConfig.ALLOWED_USERNAME) document.getElementById('setup-username').value = oldConfig.ALLOWED_USERNAME;
+        if (oldConfig.PROJECTS_DIR) {
+          document.getElementById('setup-projects').value = oldConfig.PROJECTS_DIR;
+          document.querySelector('input[name="setup-mode"][value="single"]').checked = true;
+          updateProjectMode();
+        }
+        if (oldConfig.CLOUDFLARE_TUNNEL_TOKEN) document.getElementById('setup-tunnel-token').value = oldConfig.CLOUDFLARE_TUNNEL_TOKEN;
+        if (oldConfig.CLOUDFLARE_TUNNEL_URL) document.getElementById('setup-tunnel-url').value = oldConfig.CLOUDFLARE_TUNNEL_URL;
+      }
+      setupStep = 1;
+      showSetupStep(1);
+    });
+
+    // ─── Step-by-step setup wizard ───
+    let setupStep = 1;
+    const SETUP_TOTAL = 6;
+    const SETUP_SKIPPABLE = 4; // the optional Cloudflare tunnel step
+    function showSetupStep(n) {
+      setupStep = Math.max(1, Math.min(SETUP_TOTAL, n));
+      document.querySelectorAll('.setup-step').forEach(s => { s.hidden = Number(s.dataset.step) !== setupStep; });
+      if (setupStep === 6) loadRdpInto(document.getElementById('rdp-wizard-body'));
+      // Progress bar
+      [...document.querySelectorAll('#setup-progress .dot')].forEach((d, i) => {
+        d.classList.toggle('done', i + 1 < setupStep);
+        d.classList.toggle('current', i + 1 === setupStep);
+      });
+      document.getElementById('setup-back').disabled = setupStep === 1;
+      const last = setupStep === SETUP_TOTAL;
+      document.getElementById('setup-next').textContent = last ? 'Save & Start' : 'Next';
+      document.getElementById('setup-skip').style.display = setupStep === SETUP_SKIPPABLE ? '' : 'none';
+      const firstInput = document.querySelector('.setup-step[data-step="' + setupStep + '"] input[type="text"]');
+      if (firstInput) setTimeout(() => firstInput.focus(), 30);
+    }
+    function validateSetupStep(n) {
+      if (n === 1 && !document.getElementById('setup-token').value.trim()) { alert('Paste your Telegram bot token to continue.'); return false; }
+      if (n === 2 && !document.getElementById('setup-username').value.trim()) { alert('Enter your Telegram username to continue.'); return false; }
+      if (n === 3) {
+        const mode = document.querySelector('input[name="setup-mode"]:checked').value;
+        if (mode === 'single' && !document.getElementById('setup-projects').value.trim()) { alert('Choose your projects directory (or switch to Multiple folders).'); return false; }
+      }
+      return true;
+    }
+    function setupNext() {
+      if (!validateSetupStep(setupStep)) return;
+      if (setupStep === SETUP_TOTAL) { saveSetup(); return; }
+      showSetupStep(setupStep + 1);
+    }
+    function setupPrev() { if (setupStep > 1) showSetupStep(setupStep - 1); }
+    function setupSkip() {
+      // Shown on the optional tunnel step: drop tunnel config and move on to the
+      // next step rather than finishing.
+      document.getElementById('setup-tunnel-token').value = '';
+      document.getElementById('setup-tunnel-url').value = '';
+      showSetupStep(setupStep + 1);
+    }
+
+    // ─── Locked-screen capture (DisconnectRDP scheduled task) ───
+    function rdpPanelHtml(st) {
+      if (st && st.supported === false) {
+        return '<p class="rdp-desc">Locked-screen capture uses a Windows-only trick (the <b>DisconnectRDP</b> scheduled task). This machine isn\'t Windows, so there\'s nothing to set up here.</p>';
+      }
+      const desc = '<p class="rdp-desc"><b>What this is:</b> so Crundi can take screenshots and control the desktop even while the screen is locked, it uses a Windows scheduled task called <b>DisconnectRDP</b> (the <code>tscon</code> trick). It mainly matters when you connect to this PC over Remote Desktop. Creating the task needs administrator rights once.</p>';
+      if (st && st.installed) {
+        return desc + '<div class="rdp-status ok"><b>✓ Configured</b> — the DisconnectRDP task is set up. Nothing to do here.</div>';
+      }
+      return desc
+        + '<div class="rdp-status warn"><b>Not set up yet.</b> Locked-screen capture won\'t work until the task is created. You can ignore this and do it later.</div>'
+        + '<button class="btn-primary rdp-setup-btn" data-rdp-setup>Set up now (requires admin)</button>';
+    }
+    async function loadRdpInto(container, onConfigured) {
+      if (!container) return null;
+      container.innerHTML = '<p class="rdp-desc">Checking&hellip;</p>';
+      let st = { ok: true, supported: true, installed: false };
+      try { st = await api.getRdpStatus(); } catch (e) { st = { ok: false, supported: true, installed: false, error: e.message }; }
+      container.innerHTML = rdpPanelHtml(st);
+      const btn = container.querySelector('[data-rdp-setup]');
+      if (btn) {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true; btn.textContent = 'Waiting for Windows admin prompt…';
+          let res = { ok: false };
+          try { res = await api.setupRdp(); } catch (e) { res = { ok: false, error: e.message }; }
+          if (res.ok) {
+            await loadRdpInto(container, onConfigured);
+            if (onConfigured) onConfigured();
+          } else {
+            btn.disabled = false; btn.textContent = 'Set up now (requires admin)';
+            const m = document.createElement('div');
+            m.className = 'rdp-status warn'; m.style.marginTop = '12px';
+            m.innerHTML = '<b>Setup didn\'t complete.</b> ' + (res.error ? String(res.error).slice(0, 200) : 'You can retry, or run the app as administrator once.');
+            container.appendChild(m);
+          }
+        });
+      }
+      return st;
+    }
+    function hideRdpModal() { document.getElementById('rdp-modal').classList.remove('visible'); }
+    // On launch (config already exists), nudge the user if the task is missing.
+    async function maybePromptRdp() {
+      try {
+        const st = await api.getRdpStatus();
+        if (st && st.supported && !st.installed) {
+          await loadRdpInto(document.getElementById('rdp-modal-body'), () => setTimeout(hideRdpModal, 1200));
+          document.getElementById('rdp-modal').classList.add('visible');
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Setup
+    function updateProjectMode() {
+      const mode = document.querySelector('input[name="setup-mode"]:checked').value;
+      document.getElementById('setup-single-fields').style.display = mode === 'single' ? '' : 'none';
+      document.getElementById('setup-multi-hint').style.display = mode === 'multi' ? '' : 'none';
+    }
+
+    async function browseProjects() {
+      const path = await api.browseDir();
+      if (path) document.getElementById('setup-projects').value = path;
+    }
+
+    async function saveSetup() {
+      const mode = document.querySelector('input[name="setup-mode"]:checked').value;
+      const config = {
+        botToken: document.getElementById('setup-token').value.trim(),
+        username: document.getElementById('setup-username').value.trim().replace(/^@/, ''),
+        projectsDir: mode === 'single' ? document.getElementById('setup-projects').value.trim() : '',
+        tunnelToken: document.getElementById('setup-tunnel-token').value.trim(),
+        tunnelUrl: document.getElementById('setup-tunnel-url').value.trim(),
+      };
+      if (!config.botToken || !config.username) {
+        alert('Bot token and username are required.');
+        return;
+      }
+      if (mode === 'single' && !config.projectsDir) {
+        alert('Projects directory is required for single folder mode.');
+        return;
+      }
+      setupScreen.classList.remove('visible');
+      statusScreen.style.display = '';
+      await api.saveSetup(config);
+    }
+
+    // Drag-and-drop: disable iframe pointer-events during drag so parent overlay catches the drop
+    const dropOverlay = document.getElementById('drop-overlay');
+    let dragCounter = 0;
+    function showDragOverlay() {
+      if (webappFrame.classList.contains('visible')) {
+        webappFrame.style.pointerEvents = 'none';
+        dropOverlay.classList.add('visible');
+      }
+    }
+    function hideDragOverlay() {
+      dropOverlay.classList.remove('visible');
+      webappFrame.style.pointerEvents = '';
+    }
+    document.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragCounter++;
+      showDragOverlay();
+    });
+    document.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) { dragCounter = 0; hideDragOverlay(); }
+    });
+    document.addEventListener('dragover', (e) => e.preventDefault());
+    dropOverlay.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      hideDragOverlay();
+      const files = e.dataTransfer?.files;
+      if (!files || !files.length) return;
+      const paths = [];
+      for (const f of files) { paths.push(api.getPathForFile(f) || f.name); }
+      if (paths.length && webappFrame.classList.contains('visible') && webappFrame.contentWindow) {
+        webappFrame.contentWindow.postMessage({ type: 'drop-files', paths }, '*');
+      }
+    });
+    document.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      hideDragOverlay();
+    });
+
+    // Bridge clipboard IPC to iframe via postMessage
+    window.addEventListener('message', async (e) => {
+      if (!e.data || e.data.type !== 'clipboard-request') return;
+      const id = e.data.id;
+      try {
+        const image = await api.getClipboardImage();
+        const filePaths = await api.getClipboardFilePaths();
+        webappFrame.contentWindow.postMessage({ type: 'clipboard-response', id, image, filePaths }, '*');
+      } catch (err) {
+        webappFrame.contentWindow.postMessage({ type: 'clipboard-response', id, error: err.message }, '*');
+      }
+    });
+
+    // Init
+    (async () => {
+      const status = await api.getBotStatus();
+      updateStatus(status);
+      const logs = await api.getBotLogs();
+      for (const entry of logs) addLog(entry);
+      try {
+        const logPath = await api.getLogPath();
+        if (logPath) {
+          const pathLine = document.createElement('div');
+          pathLine.style.cssText = 'font-size:0.7rem;color:var(--text-muted);margin-top:8px;text-align:center;user-select:all;';
+          pathLine.textContent = 'Log file: ' + logPath;
+          logArea.parentNode.insertBefore(pathLine, logArea.nextSibling);
+        }
+      } catch {}
+    })();
+  </script>
+</body>
+</html>
