@@ -439,12 +439,86 @@ export function getWebappHtml(botUsername) {
       overflow: hidden;
       position: relative;
     }
-    .terminal-container {
+    .terminal-wrap { position: relative; overflow: hidden; }
+
+    /* Multi-terminal grid: columns side-by-side on desktop (min-width +
+       horizontal scroll), stacked on mobile (min-height + vertical scroll).
+       With few terminals each flexes to fill the available space. */
+    .term-grid {
       flex: 1;
-      padding: 4px;
+      display: flex;
+      flex-direction: row;
+      gap: 6px;
+      padding: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      min-height: 0;
+    }
+    .term-cell {
+      flex: 1 1 0;
+      min-width: 340px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
       overflow: hidden;
     }
-    .terminal-container .xterm { height: 100%; flex: 1; }
+    .term-cell.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .term-head {
+      display: flex; align-items: center; gap: 4px;
+      padding: 3px 4px 3px 2px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0; user-select: none;
+    }
+    .term-drag { cursor: grab; color: var(--text-muted); font-size: 12px; padding: 0 3px; line-height: 1; letter-spacing: -2px; }
+    .term-title {
+      font-size: 12px; font-weight: 600; color: var(--text-primary);
+      padding: 2px 6px; border-radius: var(--radius-sm); cursor: text;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px;
+    }
+    .term-title:hover { background: var(--bg-tertiary); }
+    .term-title-input {
+      font-size: 12px; font-weight: 600; font-family: inherit;
+      padding: 2px 6px; border-radius: var(--radius-sm);
+      border: 1px solid var(--accent); background: var(--bg-primary); color: var(--text-primary);
+      max-width: 160px; outline: none;
+    }
+    .term-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+    .term-status-dot.exited { background: var(--text-muted); }
+    .term-head-spacer { flex: 1; }
+    .term-font-btn, .term-head-btn {
+      border: 1px solid var(--border); background: var(--bg-primary);
+      color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-sm);
+      font-size: 11px; line-height: 1; padding: 3px 6px; flex-shrink: 0;
+    }
+    .term-font-btn:hover, .term-head-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+    .term-head-btn.term-close { font-size: 14px; padding: 1px 7px; }
+    .term-head-btn.term-close:hover { color: var(--red); border-color: var(--red); }
+    .term-body { position: relative; flex: 1; padding: 4px; overflow: hidden; min-height: 0; }
+    .term-mount { height: 100%; }
+    .term-body .xterm { height: 100%; }
+    .term-launch {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; gap: 10px; color: var(--text-muted);
+    }
+    .term-launch .icon { font-size: 2.4rem; opacity: 0.3; }
+    .term-launch button { min-width: 190px; padding: 9px 24px; border-radius: var(--radius-sm); cursor: pointer; font-size: 14px; }
+    .term-launch .btn-normal { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+    .term-launch .btn-skip { border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
+    /* "+ new terminal" lives in the tab bar (next to the Terminal tab) to save
+       space instead of floating over the terminals. */
+    .tab-add-term {
+      align-self: center; flex-shrink: 0; margin-right: 6px;
+      width: 24px; height: 24px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+      cursor: pointer; font-size: 17px; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .tab-add-term:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .term-drop-line { width: 3px; align-self: stretch; background: var(--accent); border-radius: 2px; flex-shrink: 0; }
 
     .terminal-placeholder {
       display: flex;
@@ -845,6 +919,14 @@ export function getWebappHtml(botUsername) {
     }
     .term-scroll-bottom:hover { background: var(--bg-tertiary); color: var(--text-primary); }
     .term-scroll-bottom.visible { display: flex; }
+    /* Mobile: stack terminals vertically (like the kanban board) with a min
+       height and vertical scroll; a lone terminal still fills the space. */
+    @media (max-width: 768px) {
+      .term-grid { flex-direction: column; overflow-x: hidden; overflow-y: auto; }
+      .term-cell { min-width: 0; min-height: 320px; flex: 1 0 auto; }
+      .term-drop-line { width: auto; height: 3px; }
+      .term-title, .term-title-input { max-width: 110px; }
+    }
     .term-input-bar {
       display: flex; gap: 6px; padding: 6px 8px;
       background: var(--bg-secondary); border-top: 1px solid var(--border);
@@ -1190,8 +1272,8 @@ export function getWebappHtml(botUsername) {
     .mm-proj-flag { font-size: 0.74rem; color: var(--amber, #f59e0b); margin-left: 4px; }
 
     /* usage last-updated badge (click → history chart) */
-    .topbar .status-badge.usage-updated { background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
-    .topbar .status-badge.usage-updated:hover { color: var(--text-primary); }
+    .topbar .status-badge.usage-updated { background: rgba(148, 163, 184, 0.15); color: var(--text-secondary); cursor: pointer; }
+    .topbar .status-badge.usage-updated:hover { background: rgba(148, 163, 184, 0.22); color: var(--text-primary); }
     /* usage history chart modal */
     #usage-modal.visible .im-box { animation: ucBoxIn 0.26s cubic-bezier(0.22,1,0.36,1); }
     @keyframes ucBoxIn { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
@@ -1365,6 +1447,7 @@ export function getWebappHtml(botUsername) {
       <div class="terminal-area">
         <div class="tab-bar" id="tab-bar">
           <button class="tab-btn active" data-tab="terminal">Terminal</button>
+          <button class="tab-add-term" id="tab-add-term" data-action="term-add" title="New terminal" style="display:none;">+</button>
           <button class="tab-btn" data-tab="git">Git</button>
           <button class="tab-btn" data-tab="files">Files</button>
           <button class="tab-btn" data-tab="kanban">Kanban</button>
@@ -1377,16 +1460,12 @@ export function getWebappHtml(botUsername) {
           <button class="tab-btn" data-tab="settings">Settings</button>
         </div>
         <div class="terminal-wrap tab-panel visible" data-panel="terminal">
-          <div class="terminal-container" id="terminal-container" style="position:relative;flex:1;overflow:hidden;">
-            <div class="terminal-placeholder" id="terminal-placeholder">
-              <div class="icon">&gt;_</div>
-              <p>Select a project to open a Claude Code terminal</p>
-              <p class="hint">Or add a new project from the sidebar</p>
-            </div>
-            <button class="term-select-toggle" data-action="term-select" title="Toggle text selection mode">Select</button>
-            <button class="term-scroll-bottom" id="term-scroll-bottom" data-action="term-scroll-bottom" title="Scroll to bottom">&#8595;</button>
-            <div class="term-select-overlay" id="term-select-overlay"></div>
+          <div class="terminal-placeholder" id="terminal-placeholder">
+            <div class="icon">&gt;_</div>
+            <p>Select a project to open a Claude Code terminal</p>
+            <p class="hint">Or add a new project from the sidebar</p>
           </div>
+          <div class="term-grid" id="term-grid" style="display:none;"></div>
           <div class="term-tool-panel" id="term-tool-panel">
             <div class="term-tool-row">
               <button class="term-tool-btn" data-action="term-key" data-key="Escape">Esc</button>
@@ -1576,12 +1655,19 @@ export function getWebappHtml(botUsername) {
     // ─── State ───
     let token = localStorage.getItem('crundi_token');
     let ws = null;
-    let term = null;
-    let fitAddon = null;
+    // Multi-terminal state: each live terminal gets an xterm view; the unified
+    // input box / tool buttons act on whichever terminal is focused. Pending
+    // cells are client-only placeholders that show the launch buttons.
+    const termViews = new Map();   // termId → { term, fit, mount, cellEl, scrollBtn }
+    let focusedTermId = null;
+    let pendingCells = [];         // local ids of un-launched cells for the current project
+    let pendingProject = null;     // which project pendingCells belong to
+    let lastTermSig = '';          // signature of the last-rendered server terminal set (skip redundant grid rebuilds)
+    const termFont = JSON.parse(localStorage.getItem('crundi_term_font') || '{}'); // termId → px
     let currentProject = null;
     let currentTab = 'terminal';
     let projects = [];
-    let terminals = []; // { project, status }
+    let terminals = []; // { id, project, title, order, status }
     let userTerminals = []; // { name, status, alias, command }
     let services = [];
     let reconnectTimer = null;
@@ -2106,7 +2192,7 @@ export function getWebappHtml(botUsername) {
       connectWS();
       loadProjectConfig();
       loadProjects();
-      initTerminal();
+      setupTerminalArea();
       loadUsage();
       // Electron: enable drag region and window controls
       if (window.api) {
@@ -2177,14 +2263,15 @@ export function getWebappHtml(botUsername) {
             + '<svg class="svc-ecg" viewBox="0 0 26 12" width="20" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1 6 H7 L9 2.5 L12 10 L14.5 4 L16 6 H25"/></svg>'
             + '</span>'
           : '';
+        // Per-terminal close lives on each terminal's header now; the project
+        // row only shows a "has terminals" dot + the remove-project control.
         item.innerHTML = '<span class="dot"></span>'
           + '<span class="name">' + escHtml(p.name || p.alias) + '</span>'
           + heart
-          + (hasTerminal ? '<button class="close-btn" data-action="close-terminal" data-project="' + escHtml(p.alias) + '" title="Close terminal">&times;</button>' : '')
           + (canRemove ? '<button class="remove-btn" data-action="remove-project" data-project="' + escHtml(p.alias) + '" data-name="' + escHtml(p.name || p.alias) + '" title="Remove project (keeps files)">&#128465;</button>' : '');
         item.addEventListener('click', (e) => {
           const act = e.target.dataset.action;
-          if (act === 'close-terminal' || act === 'remove-project') return;
+          if (act === 'remove-project') return;
           selectProject(p.alias);
         });
         list.appendChild(item);
@@ -2198,82 +2285,68 @@ export function getWebappHtml(botUsername) {
       gitRefreshTimer = null;
       const p = projects.find(x => x.alias === alias);
       $('#current-project').textContent = p ? (p.name || p.alias) : alias;
+      // Switching project: the un-launched placeholder cells belong to the
+      // project they were created under, so reset them for the new project.
+      if (pendingProject !== alias) { pendingCells = []; pendingProject = alias; }
+      focusedTermId = null;
       renderProjects();
       closeSidebar();
-
-      // Subscribe WebSocket to this project
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'subscribe', project: alias }));
-      }
-
-      // Show tabs
       $('#tab-bar').classList.add('visible');
-
-      // Show launch buttons or terminal depending on whether Claude is running
-      const hasTerminal = terminals.some(t => t.project === alias);
-      updateTerminalPlaceholder(hasTerminal);
-
       switchTab('terminal');
-      if (hasTerminal && term) {
-        term.clear();
-        fitTerminal();
-        term.focus();
-      }
+      renderTermGrid();
     }
 
-    function updateTerminalPlaceholder(hasTerminal) {
-      const ph = $('#terminal-placeholder');
-      if (!ph) return;
-      if (hasTerminal) {
-        ph.style.display = 'none';
-      } else {
-        ph.style.display = '';
-        ph.innerHTML = '<div class="icon">&gt;_</div>'
-          + '<p style="font-size:1rem;margin:0 0 18px;">Launch Claude</p>'
-          + '<div style="display:flex;flex-direction:column;gap:10px;align-items:center;">'
-          + '<button data-action="launch-claude" data-mode="normal" style="padding:10px 28px;border-radius:var(--radius-sm);border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:14px;min-width:200px;">Normal Mode</button>'
-          + '<button data-action="launch-claude" data-mode="skip" style="padding:10px 28px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);cursor:pointer;font-size:14px;min-width:200px;">Skip Permissions Mode</button>'
-          + '</div>';
-      }
-    }
-
-    async function launchClaude(mode) {
+    // Launch Claude into a pending cell: create a server terminal, then swap the
+    // placeholder for the live terminal (SSE state will reconcile shortly).
+    async function launchClaude(mode, localId) {
       if (!currentProject) return;
       const skipPerms = mode === 'skip';
       try {
-        const r = await apiFetch('/api/terminals/' + encodeURIComponent(currentProject) + '/create', {
+        const r = await apiFetch('/api/terminals/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ skipPermissions: skipPerms }),
+          body: JSON.stringify({ project: currentProject, skipPermissions: skipPerms }),
         });
         const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to launch', 'error'); return; }
-        updateTerminalPlaceholder(true);
-        // Re-subscribe WS so terminal output starts flowing immediately
-        if (ws && ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: 'subscribe', project: currentProject }));
+        if (!data.ok) { toast(data.error || 'Failed to launch', 'error'); return; }
+        if (localId) pendingCells = pendingCells.filter(x => x !== localId);
+        if (!terminals.some(t => t.id === data.id)) {
+          terminals.push({ id: data.id, project: currentProject, title: data.title || 'Terminal', order: data.order || 0, status: 'running' });
         }
-        if (term) {
-          term.clear();
-          setTimeout(() => { fitTerminal(); term.focus(); }, 100);
-        }
+        focusedTermId = data.id;
+        renderTermGrid();
+        renderProjects();
       } catch (err) {
-        showToast('Failed to launch Claude: ' + err.message, 'error');
+        toast('Failed to launch Claude: ' + err.message, 'error');
       }
     }
 
-    async function closeTerminal(alias) {
+    async function closeTerminal(id) {
       try {
-        await apiFetch('/api/terminals/' + encodeURIComponent(alias) + '/close', { method: 'POST' });
-        if (currentProject === alias) {
-          updateTerminalPlaceholder(false);
-          if (term) term.clear();
-        }
-        terminals = terminals.filter(t => t.project !== alias);
+        await apiFetch('/api/terminals/' + encodeURIComponent(id) + '/close', { method: 'POST' });
+        terminals = terminals.filter(t => t.id !== id);
+        if (focusedTermId === id) focusedTermId = null;
+        delete termFont[id];
+        renderTermGrid();
         renderProjects();
       } catch (err) {
         toast('Failed to close terminal: ' + err.message, 'error');
       }
+    }
+
+    // Discard an un-launched placeholder cell.
+    function closePendingCell(localId) {
+      pendingCells = pendingCells.filter(x => x !== localId);
+      renderTermGrid();
+    }
+
+    // Tab-bar "+": add another un-launched terminal for this project.
+    function addTerminalCell() {
+      if (!currentProject) { toast('Select a project first', 'error'); return; }
+      if (currentTab !== 'terminal') { switchTab('terminal'); }
+      if (pendingProject !== currentProject) { pendingCells = []; pendingProject = currentProject; }
+      pendingCells.push(genLocalId());
+      renderTermGrid();
     }
 
     // Remove a project reference (files on disk are kept). Stops + deletes its
@@ -2288,8 +2361,8 @@ export function getWebappHtml(botUsername) {
         if (currentProject === alias) {
           currentProject = null;
           $('#current-project').textContent = 'No project';
-          updateTerminalPlaceholder(false);
-          if (term) term.clear();
+          focusedTermId = null;
+          renderTermGrid();
         }
         await loadProjects();
         toast('Removed "' + (name || alias) + '"' + (data.servicesRemoved ? ' and ' + data.servicesRemoved + ' service(s)' : ''), 'success');
@@ -2298,72 +2371,161 @@ export function getWebappHtml(botUsername) {
       }
     }
 
-    // ─── Terminal ───
-    function initTerminal() {
-      if (term) return;
-      const container = $('#terminal-container');
-      term = new Terminal({
+    // ─── Terminal grid (multiple Claude terminals per project) ───
+    const TERM_THEME = {
+      background: '#0a0a0f', foreground: '#e8e8f0', cursor: '#6366f1', cursorAccent: '#0a0a0f',
+      selectionBackground: 'rgba(99, 102, 241, 0.3)',
+      black: '#1a1a28', brightBlack: '#5a5a78', red: '#ef4444', brightRed: '#f87171',
+      green: '#10b981', brightGreen: '#34d399', yellow: '#f59e0b', brightYellow: '#fbbf24',
+      blue: '#6366f1', brightBlue: '#818cf8', magenta: '#a855f7', brightMagenta: '#c084fc',
+      cyan: '#06b6d4', brightCyan: '#22d3ee', white: '#e8e8f0', brightWhite: '#ffffff',
+    };
+    const TERM_FONT_FAMILY = '"Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace';
+
+    function genLocalId() { let s = 'p'; for (let i = 0; i < 12; i++) s += Math.floor(Math.random() * 16).toString(16); return s; }
+    function isMobileTerm() { return window.matchMedia('(max-width: 768px)').matches; }
+
+    function liveTermsForProject() {
+      if (!currentProject) return [];
+      const k = currentProject.toLowerCase();
+      return terminals.filter(t => String(t.project).toLowerCase() === k).sort((a, b) => (a.order || 0) - (b.order || 0));
+    }
+
+    // Reconcile the grid DOM against the desired set of cells (live terminals +
+    // un-launched placeholders). Existing xterm views are preserved; cells are
+    // re-appended in order (moving a cell within its parent doesn't disturb the
+    // embedded terminal).
+    function renderTermGrid() {
+      const grid = $('#term-grid'); const ph = $('#terminal-placeholder');
+      const addBtn = $('#tab-add-term'); const bar = $('#term-input-bar');
+      if (!grid) return;
+      if (!currentProject) {
+        grid.style.display = 'none';
+        if (ph) { ph.style.display = ''; ph.innerHTML = '<div class="icon">&gt;_</div><p>Select a project to open a Claude Code terminal</p><p class="hint">Or add a new project from the sidebar</p>'; }
+        if (addBtn) addBtn.style.display = 'none';
+        if (bar) bar.style.display = 'none';
+        return;
+      }
+      if (ph) ph.style.display = 'none';
+      grid.style.display = '';
+      if (addBtn) addBtn.style.display = '';
+      if (bar) bar.style.display = '';
+
+      if (pendingProject !== currentProject) { pendingCells = []; pendingProject = currentProject; }
+      const live = liveTermsForProject();
+      // "Terminal by default opens in one column": seed a single placeholder when
+      // a project has no terminals yet.
+      if (!live.length && !pendingCells.length) pendingCells = [genLocalId()];
+
+      const desired = [
+        ...live.map(t => ({ key: 'live:' + t.id, type: 'live', t })),
+        ...pendingCells.map(lid => ({ key: 'pend:' + lid, type: 'pending', localId: lid })),
+      ];
+      const wanted = new Set(desired.map(d => d.key));
+      [...grid.children].forEach(ch => { const k = ch.dataset && ch.dataset.cellkey; if (k && !wanted.has(k)) destroyCell(ch); });
+
+      for (const d of desired) {
+        let el = grid.querySelector(':scope > [data-cellkey="' + d.key + '"]');
+        if (!el) {
+          el = buildCellEl(d);
+          grid.appendChild(el);
+          if (d.type === 'live') mountXterm(d.t, el);
+        } else if (d.type === 'live') {
+          updateCellHead(el, d.t);
+        }
+        grid.appendChild(el); // enforce display order
+      }
+
+      if (!focusedTermId || !live.some(t => t.id === focusedTermId)) focusedTermId = live[0] ? live[0].id : null;
+      updateFocusStyles();
+      setTimeout(fitAllTerms, 30);
+    }
+
+    function buildCellEl(d) {
+      const el = document.createElement('div');
+      el.className = 'term-cell';
+      el.dataset.cellkey = d.key;
+      const head = document.createElement('div'); head.className = 'term-head';
+      const body = document.createElement('div'); body.className = 'term-body';
+      if (d.type === 'pending') {
+        el.dataset.lid = d.localId;
+        head.innerHTML = '<span class="term-drag" style="opacity:.25">\\u22ee\\u22ee</span>'
+          + '<span class="term-title">New terminal</span>'
+          + '<span class="term-head-spacer"></span>'
+          + '<button class="term-head-btn term-close" data-action="term-close-pending" data-lid="' + d.localId + '" title="Remove">\\u00d7</button>';
+        body.innerHTML = '<div class="term-launch">'
+          + '<div class="icon">&gt;_</div>'
+          + '<button class="btn-normal" data-action="launch-claude" data-mode="normal" data-lid="' + d.localId + '">Normal Mode</button>'
+          + '<button class="btn-skip" data-action="launch-claude" data-mode="skip" data-lid="' + d.localId + '">Skip Permissions Mode</button>'
+          + '</div>';
+      } else {
+        el.dataset.tid = d.t.id;
+        head.innerHTML = headHtmlLive(d.t);
+        body.innerHTML = '<div class="term-mount"></div>'
+          + '<button class="term-select-toggle" data-action="term-select" data-tid="' + d.t.id + '" title="Toggle text selection">Select</button>'
+          + '<button class="term-scroll-bottom" data-action="term-scroll-bottom" data-tid="' + d.t.id + '" title="Scroll to bottom">\\u2193</button>'
+          + '<div class="term-select-overlay"></div>';
+      }
+      el.appendChild(head);
+      el.appendChild(body);
+      if (d.type === 'live') {
+        // Clicking a cell focuses it (so the unified input targets it).
+        el.addEventListener('mousedown', () => focusTerm(d.t.id), true);
+        el.addEventListener('touchstart', () => focusTerm(d.t.id), { passive: true, capture: true });
+        // Drag the header to reorder (reuses the kanban drag controller).
+        makeDraggable(el, Object.assign({ handle: head }, termDragHandlers(d.t.id)));
+      }
+      return el;
+    }
+
+    function headHtmlLive(t) {
+      const exited = t.status === 'exited';
+      return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
+        + '<span class="term-status-dot' + (exited ? ' exited' : '') + '" title="' + (exited ? 'exited' : 'running') + '"></span>'
+        + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || 'Terminal') + '</span>'
+        + '<span class="term-head-spacer"></span>'
+        + '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
+        + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">\\u21ba</button>'
+        + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>'
+        + '<button class="term-head-btn term-close" data-action="term-close" data-tid="' + t.id + '" title="Close terminal">\\u00d7</button>';
+    }
+
+    function updateCellHead(el, t) {
+      const titleEl = el.querySelector('.term-title');
+      if (titleEl && titleEl.tagName !== 'INPUT' && titleEl.textContent !== (t.title || 'Terminal')) titleEl.textContent = t.title || 'Terminal';
+      const dot = el.querySelector('.term-status-dot');
+      if (dot) dot.classList.toggle('exited', t.status === 'exited');
+    }
+
+    function mountXterm(t, cellEl) {
+      if (termViews.has(t.id)) return;
+      const mount = cellEl.querySelector('.term-mount');
+      if (!mount) return;
+      const xterm = new Terminal({
         cursorBlink: true,
-        fontSize: 14,
-        fontFamily: '"Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace',
-        theme: {
-          background: '#0a0a0f',
-          foreground: '#e8e8f0',
-          cursor: '#6366f1',
-          cursorAccent: '#0a0a0f',
-          selectionBackground: 'rgba(99, 102, 241, 0.3)',
-          black: '#1a1a28',
-          brightBlack: '#5a5a78',
-          red: '#ef4444',
-          brightRed: '#f87171',
-          green: '#10b981',
-          brightGreen: '#34d399',
-          yellow: '#f59e0b',
-          brightYellow: '#fbbf24',
-          blue: '#6366f1',
-          brightBlue: '#818cf8',
-          magenta: '#a855f7',
-          brightMagenta: '#c084fc',
-          cyan: '#06b6d4',
-          brightCyan: '#22d3ee',
-          white: '#e8e8f0',
-          brightWhite: '#ffffff',
-        },
+        fontSize: termFont[t.id] || 14,
+        fontFamily: TERM_FONT_FAMILY,
+        theme: TERM_THEME,
         allowProposedApi: true,
         scrollback: 10000,
         convertEol: true,
       });
+      xterm.onSelectionChange(() => { const sel = xterm.getSelection(); if (sel) navigator.clipboard.writeText(sel).catch(() => {}); });
+      const fit = new FitAddon.FitAddon();
+      xterm.loadAddon(fit);
+      xterm.open(mount);
+      xterm.onData((data) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', id: t.id, data })); });
+      if (xterm.textarea) xterm.textarea.addEventListener('focus', () => focusTerm(t.id));
 
-      // Auto-copy selection to clipboard
-      term.onSelectionChange(() => {
-        const sel = term.getSelection();
-        if (sel) {
-          navigator.clipboard.writeText(sel).catch(() => {});
-        }
-      });
-
-      fitAddon = new FitAddon.FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(container);
-      fitTerminal();
-
-      term.onData((data) => {
-        if (ws && ws.readyState === 1 && currentProject) {
-          ws.send(JSON.stringify({ type: 'input', project: currentProject, data }));
-        }
-      });
-
-      // Ctrl/Cmd+V into xterm: only intercept IMAGES (upload + paste the saved
-      // path). TEXT is left to xterm's own paste handler — sending it here too
-      // is what double-pasted text. Return true so xterm always pastes text once.
-      term.attachCustomKeyEventHandler((e) => {
+      // Ctrl/Cmd+V image paste → upload + paste path; text left to xterm (paste once).
+      xterm.attachCustomKeyEventHandler((e) => {
         if (e.type === 'keydown' && e.key === 'v' && (e.ctrlKey || e.metaKey) && currentProject) {
           (async () => {
             try {
               if (!navigator.clipboard || !navigator.clipboard.read) return;
               const items = await navigator.clipboard.read();
               for (const item of items) {
-                const imageType = item.types.find(t => t.startsWith('image/'));
+                const imageType = item.types.find(tp => tp.startsWith('image/'));
                 if (!imageType) continue;
                 const blob = await item.getType(imageType);
                 const b64 = arrayBufferToBase64(await blob.arrayBuffer());
@@ -2373,142 +2535,211 @@ export function getWebappHtml(botUsername) {
                 });
                 const data = await r.json();
                 if (data.ok && data.path && ws && ws.readyState === 1) {
-                  ws.send(JSON.stringify({ type: 'input', project: currentProject, data: data.path }));
+                  ws.send(JSON.stringify({ type: 'input', id: t.id, data: data.path }));
                   toast('Screenshot saved: ' + data.name);
                 }
                 return;
               }
             } catch { /* no clipboard image / permission denied */ }
           })();
-          // Return false so xterm does NOT consume/preventDefault the key — the
-          // browser then fires its native paste, which delivers TEXT exactly once.
-          // (We only sent text ourselves before, which is what doubled it.)
           return false;
         }
         return true;
       });
 
-      // Clipboard paste — only intercept images, never block text paste
-      const termInputEl = document.getElementById('term-input');
-      termInputEl.addEventListener('paste', async (e) => {
-        if (!currentProject) return;
-        // Find a pasted image in items or files (mobile browsers vary). Text
-        // paste falls through untouched so it inserts normally.
-        let imgFile = null;
-        const items = e.clipboardData?.items || [];
-        for (const item of items) {
-          if (item.type && item.type.startsWith('image/')) { imgFile = item.getAsFile(); break; }
-        }
-        if (!imgFile && e.clipboardData?.files?.length) {
-          for (const f of e.clipboardData.files) { if (f.type && f.type.startsWith('image/')) { imgFile = f; break; } }
-        }
-        if (imgFile) {
-          e.preventDefault();
-          await uploadAttachment(imgFile); // chunk-safe base64, cursor-aware insert, → crundi_attachments
-          return;
-        }
-        // In Electron: check for copied file paths when no text is being pasted
-        if (!e.clipboardData?.getData('text/plain') && window.api) {
-          e.preventDefault();
-          try {
-            const filePaths = await window.api.getClipboardFilePaths();
-            if (filePaths?.length) { insertIntoTermInput(filePaths.join(' ')); return; }
-            const image = await window.api.getClipboardImage();
-            if (image) { insertIntoTermInput(image.tmpPath); toast('Screenshot from clipboard: ' + image.name); }
-          } catch { /* ignore */ }
-        }
-      });
-
-      // Drag and drop files onto terminal — insert file path into input
-      const termWrap = container.parentElement;
-      termWrap.addEventListener('dragover', (e) => {
-        if (!currentProject) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-        termWrap.style.outline = '2px solid var(--accent)';
-        termWrap.style.outlineOffset = '-2px';
-      });
-      termWrap.addEventListener('dragleave', () => {
-        termWrap.style.outline = '';
-        termWrap.style.outlineOffset = '';
-      });
-      termWrap.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        termWrap.style.outline = '';
-        termWrap.style.outlineOffset = '';
-        if (!currentProject) return;
-        const files = e.dataTransfer?.files;
-        if (files && files.length > 0) {
-          const paths = [];
-          for (const file of files) {
-            if (file.type && file.type.startsWith('image/')) {
-              await uploadAttachment(file); // uploads to crundi_attachments + inserts path (chunk-safe)
-            } else {
-              const resolved = window.api?.getPathForFile?.(file);
-              paths.push(resolved || file.path || file.name);
-            }
-          }
-          if (paths.length) {
-            insertIntoTermInput(paths.join(' '));
-            toast(paths.length === 1 ? 'File added' : paths.length + ' files added');
-          }
-          return;
-        }
-        // Text drop
-        const text = e.dataTransfer?.getData('text/plain');
-        if (text) insertIntoTermInput(text);
-      });
-
-      // Touch scroll interceptor for mobile
-      let touchStartY = 0;
-      let touchStartX = 0;
-      let touchAccum = 0;
-      let touchScrolling = false;
-      const scrollThreshold = 12;
-      const scrollStartThreshold = 10; // min vertical px before engaging scroll
-      container.addEventListener('touchstart', (e) => {
-        if (e.touches.length === 1) {
-          touchStartY = e.touches[0].clientY;
-          touchStartX = e.touches[0].clientX;
-          touchAccum = 0;
-          touchScrolling = false;
-        }
-      }, { passive: true });
-      container.addEventListener('touchmove', (e) => {
-        if (e.touches.length !== 1 || !term) return;
-        const dy = touchStartY - e.touches[0].clientY;
-        const dx = Math.abs(e.touches[0].clientX - touchStartX);
-        // Only engage scroll mode for clearly vertical swipes
-        if (!touchScrolling) {
-          if (Math.abs(dy) > scrollStartThreshold && Math.abs(dy) > dx) {
-            touchScrolling = true;
-          } else { return; }
-        }
-        touchAccum += dy;
-        touchStartY = e.touches[0].clientY;
-        const lines = Math.trunc(touchAccum / scrollThreshold);
-        if (lines !== 0) {
-          term.scrollLines(lines);
-          touchAccum -= lines * scrollThreshold;
-        }
+      // Touch scroll interceptor (mobile) on this terminal's mount.
+      let tsy = 0, tsx = 0, acc = 0, scrolling = false; const TH = 12, START = 10;
+      mount.addEventListener('touchstart', (e) => { if (e.touches.length === 1) { tsy = e.touches[0].clientY; tsx = e.touches[0].clientX; acc = 0; scrolling = false; } }, { passive: true });
+      mount.addEventListener('touchmove', (e) => {
+        if (e.touches.length !== 1) return;
+        const dy = tsy - e.touches[0].clientY; const dx = Math.abs(e.touches[0].clientX - tsx);
+        if (!scrolling) { if (Math.abs(dy) > START && Math.abs(dy) > dx) scrolling = true; else return; }
+        acc += dy; tsy = e.touches[0].clientY;
+        const lines = Math.trunc(acc / TH);
+        if (lines !== 0) { xterm.scrollLines(lines); acc -= lines * TH; }
         e.preventDefault();
       }, { passive: false });
 
-      // Scroll-to-bottom floating button
-      const scrollBtn = document.getElementById('term-scroll-bottom');
-      function updateScrollBtn() {
-        if (!term || !scrollBtn) return;
-        const buf = term.buffer.active;
-        const atBottom = buf.viewportY >= buf.baseY;
-        scrollBtn.classList.toggle('visible', !atBottom);
-      }
-      term.onScroll(updateScrollBtn);
-      term.onWriteParsed(updateScrollBtn);
+      // Scroll-to-bottom button.
+      const scrollBtn = cellEl.querySelector('.term-scroll-bottom');
+      const updateScrollBtn = () => { if (!scrollBtn) return; const buf = xterm.buffer.active; scrollBtn.classList.toggle('visible', buf.viewportY < buf.baseY); };
+      xterm.onScroll(updateScrollBtn);
+      xterm.onWriteParsed(updateScrollBtn);
 
-      window.addEventListener('resize', () => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(fitTerminal, 100);
-      });
+      termViews.set(t.id, { term: xterm, fit, mount, cellEl, scrollBtn });
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'subscribe', id: t.id }));
+      setTimeout(() => fitTerm(t.id), 30);
+    }
+
+    function destroyCell(cellEl) {
+      const tid = cellEl.dataset.tid;
+      if (tid && termViews.has(tid)) {
+        const v = termViews.get(tid);
+        try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'unsubscribe', id: tid })); } catch { /* ignore */ }
+        try { v.term.dispose(); } catch { /* ignore */ }
+        termViews.delete(tid);
+      }
+      cellEl.remove();
+    }
+
+    function focusTerm(id) {
+      if (!id) return;
+      if (focusedTermId !== id) { focusedTermId = id; updateFocusStyles(); }
+    }
+    function updateFocusStyles() {
+      const grid = $('#term-grid'); if (!grid) return;
+      [...grid.children].forEach(ch => ch.classList && ch.classList.toggle('focused', !!ch.dataset.tid && ch.dataset.tid === focusedTermId));
+    }
+
+    function fitTerm(id) {
+      const v = termViews.get(id); if (!v) return;
+      try { v.fit.fit(); if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', id, cols: v.term.cols, rows: v.term.rows })); } catch { /* ignore */ }
+    }
+    function fitAllTerms() { for (const id of termViews.keys()) fitTerm(id); }
+
+    function setTermFont(id, dir) {
+      const v = termViews.get(id); if (!v) return;
+      const cur = termFont[id] || 14;
+      const next = Math.max(8, Math.min(28, cur + (dir < 0 ? -1 : 1)));
+      termFont[id] = next;
+      try { v.term.options.fontSize = next; } catch { /* ignore */ }
+      localStorage.setItem('crundi_term_font', JSON.stringify(termFont));
+      fitTerm(id);
+    }
+
+    function resetTermFont(id) {
+      const v = termViews.get(id); if (!v) return;
+      delete termFont[id];
+      try { v.term.options.fontSize = 14; } catch { /* ignore */ }
+      localStorage.setItem('crundi_term_font', JSON.stringify(termFont));
+      fitTerm(id);
+    }
+
+    function renameTerminal(id) {
+      const grid = $('#term-grid'); if (!grid) return;
+      const el = grid.querySelector(':scope > [data-tid="' + id + '"]');
+      if (!el) return;
+      const titleEl = el.querySelector('.term-title');
+      if (!titleEl || titleEl.tagName === 'INPUT') return;
+      const cur = (terminals.find(t => t.id === id) || {}).title || 'Terminal';
+      const input = document.createElement('input');
+      input.className = 'term-title-input';
+      input.value = cur;
+      titleEl.replaceWith(input);
+      input.focus(); input.select();
+      let done = false;
+      const commit = async (save) => {
+        if (done) return; done = true;
+        const val = (input.value || '').trim() || 'Terminal';
+        const span = document.createElement('span');
+        span.className = 'term-title';
+        span.dataset.action = 'term-rename';
+        span.dataset.tid = id;
+        span.title = 'Click to rename';
+        span.textContent = save ? val : cur;
+        input.replaceWith(span);
+        if (save && val !== cur) {
+          const tt = terminals.find(t => t.id === id); if (tt) tt.title = val;
+          try { await apiFetch('/api/terminals/' + encodeURIComponent(id) + '/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: val }) }); } catch { /* ignore */ }
+        }
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(true); } else if (e.key === 'Escape') { e.preventDefault(); commit(false); } });
+      input.addEventListener('blur', () => commit(true));
+    }
+
+    // Drag-to-reorder terminals (horizontal on desktop, vertical on mobile).
+    let _termDropLine = null;
+    function termReorderTarget(x, y, draggedId) {
+      const grid = $('#term-grid'); if (!grid) return null;
+      const cells = [...grid.children].filter(c => c.dataset.tid && c.dataset.tid !== draggedId && c !== _termDropLine);
+      const mobile = isMobileTerm();
+      for (let i = 0; i < cells.length; i++) {
+        const r = cells[i].getBoundingClientRect();
+        const mid = mobile ? r.top + r.height / 2 : r.left + r.width / 2;
+        if ((mobile ? y : x) < mid) return { index: i, before: cells[i] };
+      }
+      return { index: cells.length, before: null };
+    }
+    function termDragHandlers(id) {
+      let target = null;
+      return {
+        onMove: (x, y) => {
+          const grid = $('#term-grid'); if (!grid) return;
+          if (!_termDropLine) { _termDropLine = document.createElement('div'); _termDropLine.className = 'term-drop-line'; }
+          target = termReorderTarget(x, y, id);
+          if (!target) { if (_termDropLine.parentNode) _termDropLine.remove(); return; }
+          if (target.before) grid.insertBefore(_termDropLine, target.before);
+          else grid.appendChild(_termDropLine);
+        },
+        onEnd: async (commit) => {
+          if (_termDropLine && _termDropLine.parentNode) _termDropLine.remove();
+          if (commit && target) {
+            const order = liveTermsForProject().map(t => t.id);
+            const from = order.indexOf(id);
+            if (from !== -1) {
+              order.splice(from, 1);
+              order.splice(Math.min(target.index, order.length), 0, id);
+              order.forEach((tid, i) => { const tt = terminals.find(t => t.id === tid); if (tt) tt.order = i; });
+              renderTermGrid();
+              try { await apiFetch('/api/terminals/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: currentProject, order }) }); } catch { /* ignore */ }
+            }
+          }
+          target = null;
+        },
+      };
+    }
+
+    // One-time wiring for the terminal area: unified-input paste (images), file
+    // drag-drop onto the grid, and a debounced refit on window resize.
+    function setupTerminalArea() {
+      const ta = document.getElementById('term-input');
+      if (ta) {
+        ta.addEventListener('paste', async (e) => {
+          if (!currentProject) return;
+          let imgFile = null;
+          const items = e.clipboardData?.items || [];
+          for (const item of items) { if (item.type && item.type.startsWith('image/')) { imgFile = item.getAsFile(); break; } }
+          if (!imgFile && e.clipboardData?.files?.length) { for (const f of e.clipboardData.files) { if (f.type && f.type.startsWith('image/')) { imgFile = f; break; } } }
+          if (imgFile) { e.preventDefault(); await uploadAttachment(imgFile); return; }
+          if (!e.clipboardData?.getData('text/plain') && window.api) {
+            e.preventDefault();
+            try {
+              const filePaths = await window.api.getClipboardFilePaths();
+              if (filePaths?.length) { insertIntoTermInput(filePaths.join(' ')); return; }
+              const image = await window.api.getClipboardImage();
+              if (image) { insertIntoTermInput(image.tmpPath); toast('Screenshot from clipboard: ' + image.name); }
+            } catch { /* ignore */ }
+          }
+        });
+      }
+
+      const wrap = document.querySelector('.terminal-wrap');
+      if (wrap) {
+        wrap.addEventListener('dragover', (e) => {
+          if (!currentProject) return;
+          e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+          wrap.style.outline = '2px solid var(--accent)'; wrap.style.outlineOffset = '-2px';
+        });
+        wrap.addEventListener('dragleave', () => { wrap.style.outline = ''; wrap.style.outlineOffset = ''; });
+        wrap.addEventListener('drop', async (e) => {
+          e.preventDefault(); wrap.style.outline = ''; wrap.style.outlineOffset = '';
+          if (!currentProject) return;
+          const files = e.dataTransfer?.files;
+          if (files && files.length > 0) {
+            const paths = [];
+            for (const file of files) {
+              if (file.type && file.type.startsWith('image/')) await uploadAttachment(file);
+              else { const resolved = window.api?.getPathForFile?.(file); paths.push(resolved || file.path || file.name); }
+            }
+            if (paths.length) { insertIntoTermInput(paths.join(' ')); toast(paths.length === 1 ? 'File added' : paths.length + ' files added'); }
+            return;
+          }
+          const text = e.dataTransfer?.getData('text/plain');
+          if (text) insertIntoTermInput(text);
+        });
+      }
+
+      window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(fitAllTerms, 100); });
     }
 
     function termToggleTools() {
@@ -2517,11 +2748,11 @@ export function getWebappHtml(botUsername) {
       if (!panel) return;
       panel.classList.toggle('visible');
       if (btn) btn.classList.toggle('active', panel.classList.contains('visible'));
-      setTimeout(fitTerminal, 50);
+      setTimeout(fitAllTerms, 50);
     }
 
     function termSendKey(key) {
-      if (!ws || ws.readyState !== 1 || !currentProject) return;
+      if (!ws || ws.readyState !== 1 || !focusedTermId) return;
       const keyMap = {
         'Escape': '\\x1b',
         'Tab': '\\t',
@@ -2541,18 +2772,19 @@ export function getWebappHtml(botUsername) {
         'Space': ' ',
       };
       const seq = keyMap[key];
-      if (seq) ws.send(JSON.stringify({ type: 'input', project: currentProject, data: seq }));
+      if (seq) ws.send(JSON.stringify({ type: 'input', id: focusedTermId, data: seq }));
     }
 
     function termSendInput() {
       const ta = document.getElementById('term-input');
-      if (!ta || !ws || ws.readyState !== 1 || !currentProject) return;
+      if (!ta || !ws || ws.readyState !== 1 || !focusedTermId) return;
       const text = ta.value;
       if (!text) return;
-      ws.send(JSON.stringify({ type: 'input', project: currentProject, data: text + '\\r' }));
+      ws.send(JSON.stringify({ type: 'input', id: focusedTermId, data: text + '\\r' }));
       ta.value = '';
       ta.style.height = 'auto';
-      if (term) term.scrollToBottom();
+      const v = termViews.get(focusedTermId);
+      if (v) v.term.scrollToBottom();
     }
 
     // Insert text at the caret in the terminal input (or append if not focused),
@@ -2626,29 +2858,23 @@ export function getWebappHtml(botUsername) {
       });
     });
 
-    function fitTerminal() {
-      if (!fitAddon || !term) return;
-      try {
-        fitAddon.fit();
-        if (ws && ws.readyState === 1 && currentProject) {
-          ws.send(JSON.stringify({ type: 'resize', project: currentProject, cols: term.cols, rows: term.rows }));
-        }
-      } catch { /* ignore */ }
-    }
+    // Back-compat alias: a few callers still say "fit the terminal".
+    function fitTerminal() { fitAllTerms(); }
 
-    function termToggleSelect() {
-      const overlay = document.getElementById('term-select-overlay');
-      const btn = document.querySelector('.term-select-toggle');
-      if (!overlay || !term) return;
+    // Per-terminal selection overlay (mobile: lets you select/copy text without
+    // the touch-scroll interceptor fighting the selection).
+    function termToggleSelect(id) {
+      const v = termViews.get(id); if (!v) return;
+      const overlay = v.cellEl.querySelector('.term-select-overlay');
+      const btn = v.cellEl.querySelector('.term-select-toggle');
+      if (!overlay) return;
       const isActive = overlay.classList.contains('visible');
       if (isActive) {
         overlay.classList.remove('visible');
-        if (btn) btn.classList.remove('active');
-        if (btn) btn.textContent = 'Select';
+        if (btn) { btn.classList.remove('active'); btn.textContent = 'Select'; }
         return;
       }
-      // Fill overlay with terminal buffer text from current viewport
-      const buf = term.buffer.active;
+      const buf = v.term.buffer.active;
       const lines = [];
       for (let i = 0; i < buf.length; i++) {
         const line = buf.getLine(i);
@@ -2656,11 +2882,9 @@ export function getWebappHtml(botUsername) {
       }
       overlay.textContent = lines.join('\\n');
       overlay.classList.add('visible');
-      // Scroll overlay to match terminal viewport position
       const lineH = overlay.scrollHeight / Math.max(lines.length, 1);
       overlay.scrollTop = buf.viewportY * lineH;
-      if (btn) btn.classList.add('active');
-      if (btn) btn.textContent = 'Done';
+      if (btn) { btn.classList.add('active'); btn.textContent = 'Done'; }
     }
 
     // ─── WebSocket ───
@@ -2678,18 +2902,21 @@ export function getWebappHtml(botUsername) {
       ws.onopen = () => {
         $('#conn-badge').className = 'status-badge connected';
         $('#conn-badge').textContent = 'connected';
-        // Re-subscribe if we had a project selected
-        if (currentProject) {
-          ws.send(JSON.stringify({ type: 'subscribe', project: currentProject }));
-          fitTerminal();
+        // Re-subscribe every mounted terminal. Reset each first so the scrollback
+        // the server re-sends on subscribe replaces (not duplicates) the buffer.
+        for (const [id, v] of termViews) {
+          try { v.term.reset(); } catch { /* ignore */ }
+          ws.send(JSON.stringify({ type: 'subscribe', id }));
         }
+        fitAllTerms();
       };
 
       ws.onmessage = (e) => {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
-        if (msg.type === 'output' && msg.project === currentProject && term) {
-          term.write(msg.data);
+        if (msg.type === 'output' && msg.id) {
+          const v = termViews.get(msg.id);
+          if (v) v.term.write(msg.data);
         }
         if (msg.type === 'server-log') {
           appendServerLog(msg);
@@ -2721,10 +2948,11 @@ export function getWebappHtml(botUsername) {
           }
           renderProjects();
           renderTerminals();
-          if (currentProject) {
-            const hasTerminal = terminals.some(t => t.project === currentProject);
-            updateTerminalPlaceholder(hasTerminal);
-          }
+          // The server re-broadcasts state every 5s; only rebuild the terminal
+          // grid when the terminal set actually changed, otherwise the periodic
+          // re-append + refit makes the live terminals flicker.
+          const termSig = JSON.stringify(terminals);
+          if (termSig !== lastTermSig) { lastTermSig = termSig; renderTermGrid(); }
         } catch { /* ignore */ }
       });
       es.addEventListener('kanban', (e) => {
@@ -2942,7 +3170,7 @@ export function getWebappHtml(botUsername) {
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.tab-panel').forEach(p => p.classList.toggle('visible', p.dataset.panel === tab));
-      if (tab === 'terminal' && term) { fitTerminal(); term.focus(); }
+      if (tab === 'terminal') { renderTermGrid(); setTimeout(() => { fitAllTerms(); const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
       if (tab === 'services') loadServices();
       if (tab === 'terminals') renderTerminals();
       if (tab === 'browsers') loadBrowsers();
@@ -4388,11 +4616,6 @@ export function getWebappHtml(botUsername) {
         case 'modal-add': addProject(); break;
         case 'import-yes': doImport(); break;
         case 'import-skip': $('#import-dialog').classList.remove('visible'); break;
-        case 'close-terminal': {
-          const project = d.project;
-          if (project) { e.stopPropagation(); closeTerminal(project); }
-          break;
-        }
         case 'remove-project': {
           const project = d.project;
           if (project) { e.stopPropagation(); removeProject(project, d.name); }
@@ -4432,13 +4655,19 @@ export function getWebappHtml(botUsername) {
         case 'files-upload': filesUpload(); break;
         case 'files-download': filesDownload(d.file); break;
         case 'files-copy-path': filesCopyPath(d.file); break;
-        case 'term-select': termToggleSelect(); break;
-        case 'term-scroll-bottom': if (term) term.scrollToBottom(); break;
+        case 'term-select': if (d.tid) termToggleSelect(d.tid); break;
+        case 'term-scroll-bottom': { const v = d.tid && termViews.get(d.tid); if (v) v.term.scrollToBottom(); break; }
         case 'term-send': termSendInput(); break;
         case 'term-attach': termAttachFile(); break;
         case 'term-tool-toggle': termToggleTools(); break;
         case 'term-key': termSendKey(d.key); break;
-        case 'launch-claude': launchClaude(d.mode); break;
+        case 'term-add': addTerminalCell(); break;
+        case 'term-close': if (d.tid) { e.stopPropagation(); closeTerminal(d.tid); } break;
+        case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
+        case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
+        case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
+        case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
+        case 'launch-claude': launchClaude(d.mode, d.lid); break;
       }
     });
 
@@ -4609,9 +4838,12 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Unified drag controller (mouse drag + mobile long-press) ───
-    // h: { onStart?(), onMove(x,y), onEnd(commit) }. Ignores drags that begin on
-    // interactive controls (buttons/inputs/etc.) so those keep working.
+    // h: { onStart?(), onMove(x,y), onEnd(commit), handle? }. Ignores drags that
+    // begin on interactive controls (buttons/inputs/etc.) so those keep working.
+    // When h.handle is given, the pointer listeners attach to that element while
+    // the whole cell element is what gets cloned/dragged.
     function makeDraggable(el, h) {
+      const trigger = h.handle || el;
       const THRESH = 6, HOLD = 320;
       let armed = false, dragging = false, sx = 0, sy = 0, holdTimer = null, clone = null, cdx = 0, cdy = 0;
       const interactive = (t) => t && t.closest && t.closest('button, input, select, textarea, a, label');
@@ -4644,11 +4876,11 @@ export function getWebappHtml(botUsername) {
       function onTS(e) { if (e.touches.length !== 1 || interactive(e.target)) return; const t = e.touches[0]; armed = true; sx = t.clientX; sy = t.clientY; holdTimer = setTimeout(() => { holdTimer = null; if (armed) begin(sx, sy); }, HOLD); }
       function onTM(e) { const t = e.touches[0]; if (dragging) { e.preventDefault(); move(t.clientX, t.clientY); } else if (armed && (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10)) { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } armed = false; } }
       function onTE(e) { if (dragging) { e.preventDefault(); finish(true); } else { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } armed = false; } }
-      el.addEventListener('mousedown', onMD);
-      el.addEventListener('touchstart', onTS, { passive: true });
-      el.addEventListener('touchmove', onTM, { passive: false });
-      el.addEventListener('touchend', onTE);
-      el.addEventListener('touchcancel', onTE);
+      trigger.addEventListener('mousedown', onMD);
+      trigger.addEventListener('touchstart', onTS, { passive: true });
+      trigger.addEventListener('touchmove', onTM, { passive: false });
+      trigger.addEventListener('touchend', onTE);
+      trigger.addEventListener('touchcancel', onTE);
     }
 
     // ─── Kanban drag (reorder within + across columns) ───

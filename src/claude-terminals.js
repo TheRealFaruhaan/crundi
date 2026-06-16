@@ -22,24 +22,7 @@ try { pty = require('node-pty'); }
 catch (err) { console.warn('[claude-terminals] node-pty unavailable:', err?.message || err); }
 
 const MAX_SCROLLBACK = 100_000;    // characters of scrollback per terminal
-const IDLE_DETECT_MS = 2000;       // ms of silence before checking for prompt
-const SPAWN_GRACE_MS = 10_000;     // ignore idle detection for first 10s after spawn
 const isWin = process.platform === 'win32';
-
-// Claude Code idle prompt patterns — match full last non-empty line
-const PROMPT_PATTERNS = [
-  /^\s*>\s*$/,                 // Claude Code input prompt (actual character)
-  /^\s*❯\s*$/,                 // Claude Code alternate prompt
-  /^\s*\$\s*$/,                // Shell prompt
-];
-
-// Completion phrases in scrollback — alternative idle signal
-const COMPLETION_PATTERNS = [
-  /total cost:/i,
-  /what would you like/i,
-  /is there anything else/i,
-  /I've (?:completed|finished|updated|created|fixed|implemented|added)/i,
-];
 
 /**
  * Comprehensive ANSI/VT escape code stripping.
@@ -137,49 +120,63 @@ export function hasExistingConversation(projectPath) {
   }
 }
 
+/** 16-char hex id for a terminal (project-independent). */
+function genTermId() {
+  let s = '';
+  for (let i = 0; i < 16; i++) s += Math.floor(Math.random() * 16).toString(16);
+  return s;
+}
+
 /**
  * Create the Claude terminal manager.
  *
- * @param {{ onComplete?: (alias: string) => void, apiUrl?: string, apiKey?: string }} opts
- *   onComplete is called when Claude appears to finish (idle prompt detected).
+ * Terminals are keyed by a unique id (not project), so a single project can
+ * host several concurrent Claude sessions. Each entry remembers its project
+ * `alias`, a user-editable `title`, and an `order` (for drag reordering).
+ *
+ * @param {{ apiUrl?: string, apiKey?: string }} opts
  *   apiUrl/apiKey are passed to MCP stdio servers via .mcp.json env vars.
  */
-export function createClaudeTerminals({ onComplete, apiUrl: initApiUrl, apiKey: initApiKey } = {}) {
-  // alias → { proc, scrollback, emitter, idleTimer, busy, cols, rows }
+export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey } = {}) {
+  // id → { id, alias, title, order, proc, scrollback, emitter, cols, rows }
   const terminals = new Map();
   let apiUrl = initApiUrl;
   let apiKey = initApiKey;
 
   /**
-   * List all active terminals.
-   * @returns {{ project: string, status: string }[]}
+   * List all terminals, sorted by project then display order.
+   * @returns {{ id, project, title, order, status }[]}
    */
   function list() {
     const result = [];
-    for (const [alias, t] of terminals) {
+    for (const t of terminals.values()) {
       result.push({
-        project: alias,
+        id: t.id,
+        project: t.alias,
+        title: t.title,
+        order: t.order,
         status: t.proc ? 'running' : 'exited',
-        busy: t.busy,
       });
     }
+    result.sort((a, b) => a.project === b.project ? (a.order - b.order) : a.project.localeCompare(b.project));
     return result;
   }
 
+  /** All terminal entries belonging to a project alias. */
+  function entriesForAlias(key) {
+    return [...terminals.values()].filter(t => t.alias === key);
+  }
+
   /**
-   * Create a Claude Code terminal for a project.
+   * Create a Claude Code terminal for a project. Multiple may coexist per
+   * project; only the FIRST live terminal for a project resumes the prior
+   * conversation (`--continue`), so additional terminals start fresh sessions
+   * rather than fighting over the same transcript.
    */
-  async function create(alias, { cols = 120, rows = 30, skipPermissions = false } = {}) {
+  async function create(alias, { cols = 120, rows = 30, skipPermissions = false, title } = {}) {
     if (!pty) return { ok: false, error: 'node-pty is not available. Install it with: npm install node-pty' };
 
     const key = alias.toLowerCase();
-    if (terminals.has(key)) {
-      const existing = terminals.get(key);
-      if (existing.proc) return { ok: false, error: `Terminal already running for "${alias}"` };
-      // Exited — clean up and re-create
-      terminals.delete(key);
-    }
-
     const project = getProject(key);
     if (!project) return { ok: false, error: `Project "${alias}" not found` };
     if (!existsSync(project.path)) return { ok: false, error: `Project path does not exist: ${project.path}` };
@@ -189,11 +186,15 @@ export function createClaudeTerminals({ onComplete, apiUrl: initApiUrl, apiKey: 
       try { writeMcpConfig(project.path, apiUrl, apiKey, key); } catch { /* non-fatal */ }
     }
 
+    const siblings = entriesForAlias(key);
+    const aliasHasLive = siblings.some(t => t.proc);
+
     // Spawn claude CLI. Only resume a prior conversation when one exists for
-    // this project — `--continue` against a fresh project exits with
-    // "No conversation found to continue".
+    // this project AND no other live terminal is already attached to it —
+    // `--continue` against a fresh project exits with "No conversation found",
+    // and two simultaneous `--continue` would clobber the same session file.
     const flagList = [];
-    if (hasExistingConversation(project.path)) flagList.push('--continue');
+    if (!aliasHasLive && hasExistingConversation(project.path)) flagList.push('--continue');
     if (skipPermissions) flagList.push('--dangerously-skip-permissions');
     const flags = flagList.join(' ');
     const command = flags ? `claude ${flags}` : 'claude';
@@ -216,18 +217,20 @@ export function createClaudeTerminals({ onComplete, apiUrl: initApiUrl, apiKey: 
     const emitter = new EventEmitter();
     emitter.setMaxListeners(50);
 
+    const id = genTermId();
+    const nextOrder = siblings.length ? Math.max(...siblings.map(t => t.order)) + 1 : 0;
     const entry = {
+      id,
+      alias: key,
+      title: (title && String(title).trim()) || 'Terminal',
+      order: nextOrder,
       proc,
       scrollback: '',
       emitter,
-      idleTimer: null,
-      busy: false,
       cols,
       rows,
-      lastOutputTime: 0,
-      spawnedAt: Date.now(),
     };
-    terminals.set(key, entry);
+    terminals.set(id, entry);
 
     proc.onData((data) => {
       // Append to scrollback (trim if too long)
@@ -235,88 +238,51 @@ export function createClaudeTerminals({ onComplete, apiUrl: initApiUrl, apiKey: 
       if (entry.scrollback.length > MAX_SCROLLBACK) {
         entry.scrollback = entry.scrollback.slice(-MAX_SCROLLBACK);
       }
-      entry.lastOutputTime = Date.now();
-
       // Broadcast to WebSocket subscribers
       emitter.emit('data', data);
-
-      // Only reset idle timer on meaningful output (not cursor blinks / TUI re-renders)
-      const meaningful = stripAnsi(data).replace(/\s/g, '').length > 0;
-      if (meaningful) {
-        entry.busy = true;
-        clearTimeout(entry.idleTimer);
-        entry.idleTimer = setTimeout(() => checkIdle(key), IDLE_DETECT_MS);
-      } else if (!entry.idleTimer && entry.busy) {
-        // No timer running but still marked busy — start one
-        entry.idleTimer = setTimeout(() => checkIdle(key), IDLE_DETECT_MS);
-      }
     });
 
     proc.onExit(({ exitCode }) => {
-      console.log(`[claude-terminals] "${alias}" exited (code ${exitCode})`);
+      console.log(`[claude-terminals] "${key}" (${id}) exited (code ${exitCode})`);
       entry.proc = null;
-      entry.busy = false;
-      clearTimeout(entry.idleTimer);
       emitter.emit('data', `\r\n[Process exited with code ${exitCode}]\r\n`);
     });
 
-    console.log(`[claude-terminals] Spawned claude for "${alias}" in ${project.path} (${cols}x${rows})`);
-    return { ok: true, project: alias };
+    console.log(`[claude-terminals] Spawned claude "${entry.title}" for "${key}" (${id}) in ${project.path} (${cols}x${rows})`);
+    return { ok: true, id, project: key, title: entry.title, order: entry.order };
   }
 
   /**
-   * Check if Claude has returned to its idle prompt.
+   * Close a single terminal by id.
    */
-  function checkIdle(alias) {
-    const entry = terminals.get(alias);
-    if (!entry || !entry.proc) return;
+  function close(id) {
+    const entry = terminals.get(id);
+    if (!entry) return { ok: false, error: `No terminal "${id}"` };
 
-    // Don't fire during startup grace period (avoids false positive on initial prompt)
-    if (Date.now() - entry.spawnedAt < SPAWN_GRACE_MS) return;
-
-    // Strip all ANSI escapes, check last non-empty line + completion phrases
-    const raw = entry.scrollback.slice(-2000);
-    const clean = stripAnsi(raw);
-    const lines = clean.split('\n').map(l => l.trimEnd()).filter(Boolean);
-    const lastLine = lines[lines.length - 1] || '';
-
-    const isPrompt = PROMPT_PATTERNS.some(re => re.test(lastLine));
-    const hasCompletion = COMPLETION_PATTERNS.some(re => re.test(clean));
-
-    // Require prompt match; completion text alone is not enough (could be mid-task)
-    if (isPrompt && entry.busy) {
-      entry.busy = false;
-      console.log(`[claude-terminals] "${alias}" appears idle (prompt: ${JSON.stringify(lastLine)}, completion: ${hasCompletion})`);
-      if (onComplete) {
-        try { onComplete(alias); } catch { /* ignore */ }
-      }
-    }
-  }
-
-  /**
-   * Close a terminal.
-   */
-  function close(alias) {
-    const key = alias.toLowerCase();
-    const entry = terminals.get(key);
-    if (!entry) return { ok: false, error: `No terminal for "${alias}"` };
-
-    clearTimeout(entry.idleTimer);
     if (entry.proc) {
       try { entry.proc.kill(); } catch { /* ignore */ }
     }
     entry.emitter.removeAllListeners();
-    terminals.delete(key);
-    console.log(`[claude-terminals] Closed "${alias}"`);
+    terminals.delete(id);
+    console.log(`[claude-terminals] Closed "${entry.alias}" (${id})`);
     return { ok: true };
+  }
+
+  /**
+   * Close every terminal for a project (used when a project is removed).
+   */
+  function closeProject(alias) {
+    const key = alias.toLowerCase();
+    let closed = 0;
+    for (const t of entriesForAlias(key)) { close(t.id); closed++; }
+    return { ok: true, closed };
   }
 
   /**
    * Write input to a terminal.
    */
-  function write(alias, data) {
-    const key = alias.toLowerCase();
-    const entry = terminals.get(key);
+  function write(id, data) {
+    const entry = terminals.get(id);
     if (!entry?.proc) return;
     entry.proc.write(data);
   }
@@ -324,10 +290,9 @@ export function createClaudeTerminals({ onComplete, apiUrl: initApiUrl, apiKey: 
   /**
    * Resize a terminal.
    */
-  function resize(alias, cols, rows) {
-    const key = alias.toLowerCase();
-    const entry = terminals.get(key);
-    if (!entry?.proc) return { ok: false, error: `No terminal for "${alias}"` };
+  function resize(id, cols, rows) {
+    const entry = terminals.get(id);
+    if (!entry?.proc) return { ok: false, error: `No terminal "${id}"` };
     try {
       entry.proc.resize(cols, rows);
       entry.cols = cols;
@@ -339,29 +304,54 @@ export function createClaudeTerminals({ onComplete, apiUrl: initApiUrl, apiKey: 
   }
 
   /**
+   * Rename a terminal (display title only).
+   */
+  function rename(id, title) {
+    const entry = terminals.get(id);
+    if (!entry) return { ok: false, error: `No terminal "${id}"` };
+    entry.title = (title && String(title).trim()) || 'Terminal';
+    return { ok: true, title: entry.title };
+  }
+
+  /**
+   * Reorder a project's terminals to match the given id sequence. Ids not in
+   * the list keep a stable relative order after the listed ones.
+   */
+  function setOrder(alias, ids) {
+    const key = alias.toLowerCase();
+    if (!Array.isArray(ids)) return { ok: false, error: 'ids must be an array' };
+    let n = 0;
+    for (const id of ids) {
+      const entry = terminals.get(id);
+      if (entry && entry.alias === key) entry.order = n++;
+    }
+    for (const t of entriesForAlias(key)) {
+      if (!ids.includes(t.id)) t.order = n++;
+    }
+    return { ok: true };
+  }
+
+  /**
    * Get scrollback buffer for a terminal.
    */
-  function getScrollback(alias) {
-    const key = alias.toLowerCase();
-    const entry = terminals.get(key);
+  function getScrollback(id) {
+    const entry = terminals.get(id);
     return entry?.scrollback || '';
   }
 
   /**
    * Subscribe to terminal output.
    */
-  function on(alias, handler) {
-    const key = alias.toLowerCase();
-    const entry = terminals.get(key);
+  function on(id, handler) {
+    const entry = terminals.get(id);
     if (entry) entry.emitter.on('data', handler);
   }
 
   /**
    * Unsubscribe from terminal output.
    */
-  function off(alias, handler) {
-    const key = alias.toLowerCase();
-    const entry = terminals.get(key);
+  function off(id, handler) {
+    const entry = terminals.get(id);
     if (entry) entry.emitter.off('data', handler);
   }
 
@@ -369,20 +359,19 @@ export function createClaudeTerminals({ onComplete, apiUrl: initApiUrl, apiKey: 
    * Close all terminals (for shutdown).
    */
   function closeAll() {
-    for (const [alias] of terminals) {
-      close(alias);
+    for (const id of [...terminals.keys()]) {
+      close(id);
     }
   }
 
-  function info(alias) {
-    const key = alias.toLowerCase();
-    const entry = terminals.get(key);
+  function info(id) {
+    const entry = terminals.get(id);
     if (!entry) return null;
-    return { alias: key, busy: entry.busy, scrollback: entry.scrollback, lastOutputTime: entry.lastOutputTime };
+    return { id, alias: entry.alias, title: entry.title, scrollback: entry.scrollback };
   }
 
   const self = {
-    list, create, close, write, resize, getScrollback, on, off, closeAll, info,
+    list, create, close, closeProject, write, resize, rename, setOrder, getScrollback, on, off, closeAll, info,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },

@@ -1,6 +1,6 @@
 {
   "name": "crundi",
-  "version": "6.1.2",
+  "version": "7.0.0",
   "description": "Web terminal for Claude Code with Telegram login and notifications",
   "type": "module",
   "main": "app/main.js",

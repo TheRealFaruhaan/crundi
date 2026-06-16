@@ -714,9 +714,9 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       const removal = removeProject(alias);
       if (!removal.ok) return json(res, removal, 400);
 
-      // Close any running Claude terminal for this project.
+      // Close any running Claude terminals for this project.
       if (claudeTerminals) {
-        try { claudeTerminals.close(alias); } catch { /* ignore */ }
+        try { claudeTerminals.closeProject(alias); } catch { /* ignore */ }
       }
 
       // Stop and delete every service registered to this project.
@@ -855,26 +855,46 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       return json(res, { terminals: claudeTerminals ? claudeTerminals.list() : [] });
     }
 
-    const termMatch = path.match(/^\/api\/terminals\/([^/]+)\/(create|close|resize)$/);
+    // Create a new terminal for a project (multiple per project allowed).
+    if (path === '/api/terminals/create' && req.method === 'POST') {
+      if (!claudeTerminals) return json(res, { ok: false, error: 'Terminal manager not available' });
+      const body = JSON.parse(await readBody(req));
+      if (!body.project) return json(res, { ok: false, error: 'project is required' }, 400);
+      const result = await claudeTerminals.create(body.project, body);
+      broadcastState();
+      return json(res, result);
+    }
+
+    // Reorder a project's terminals: body { project, order: [id, …] }.
+    if (path === '/api/terminals/reorder' && req.method === 'POST') {
+      if (!claudeTerminals) return json(res, { ok: false, error: 'Terminal manager not available' });
+      const body = JSON.parse(await readBody(req));
+      const result = claudeTerminals.setOrder(body.project, body.order);
+      broadcastState();
+      return json(res, result);
+    }
+
+    // Per-terminal actions keyed by terminal id.
+    const termMatch = path.match(/^\/api\/terminals\/([^/]+)\/(close|resize|rename)$/);
     if (termMatch && req.method === 'POST') {
-      const projectAlias = decodeURIComponent(termMatch[1]);
+      const termId = decodeURIComponent(termMatch[1]);
       const action = termMatch[2];
       if (!claudeTerminals) return json(res, { ok: false, error: 'Terminal manager not available' });
 
-      if (action === 'create') {
-        const body = JSON.parse(await readBody(req));
-        const result = await claudeTerminals.create(projectAlias, body);
-        broadcastState();
-        return json(res, result);
-      }
       if (action === 'close') {
-        const result = claudeTerminals.close(projectAlias);
+        const result = claudeTerminals.close(termId);
         broadcastState();
         return json(res, result);
       }
       if (action === 'resize') {
         const body = JSON.parse(await readBody(req));
-        const result = claudeTerminals.resize(projectAlias, body.cols, body.rows);
+        const result = claudeTerminals.resize(termId, body.cols, body.rows);
+        return json(res, result);
+      }
+      if (action === 'rename') {
+        const body = JSON.parse(await readBody(req));
+        const result = claudeTerminals.rename(termId, body.title);
+        broadcastState();
         return json(res, result);
       }
     }
@@ -1620,9 +1640,8 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
     }
 
     wss.on('connection', (ws) => {
-      let subscribedProject = null;
-      let outputHandler = null;
-      let subscribedToLogs = false;
+      // One socket can watch several terminals at once: id → output handler.
+      const subs = new Map();
 
       ws.on('message', (raw) => {
         let msg;
@@ -1630,53 +1649,51 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
 
         // Server log subscription
         if (msg.type === 'subscribe-logs') {
-          subscribedToLogs = true;
           logSubscribers.add(ws);
           return;
         }
 
         if (!claudeTerminals) return;
+        const id = msg.id;
 
         switch (msg.type) {
           case 'subscribe': {
-            // Unsubscribe from previous
-            if (subscribedProject && outputHandler) {
-              claudeTerminals.off(subscribedProject, outputHandler);
-            }
-            subscribedProject = msg.project;
+            if (!id) break;
+            // Replace an existing subscription for this id (re-subscribe is safe).
+            if (subs.has(id)) { claudeTerminals.off(id, subs.get(id)); subs.delete(id); }
             // Send existing scrollback
-            const scrollback = claudeTerminals.getScrollback(msg.project);
+            const scrollback = claudeTerminals.getScrollback(id);
             if (scrollback) {
-              ws.send(JSON.stringify({ type: 'output', project: msg.project, data: scrollback }));
+              ws.send(JSON.stringify({ type: 'output', id, data: scrollback }));
             }
             // Subscribe to new output
-            outputHandler = (data) => {
+            const handler = (data) => {
               if (ws.readyState === 1) {
-                ws.send(JSON.stringify({ type: 'output', project: msg.project, data }));
+                ws.send(JSON.stringify({ type: 'output', id, data }));
               }
             };
-            claudeTerminals.on(msg.project, outputHandler);
+            subs.set(id, handler);
+            claudeTerminals.on(id, handler);
+            break;
+          }
+          case 'unsubscribe': {
+            if (id && subs.has(id)) { claudeTerminals.off(id, subs.get(id)); subs.delete(id); }
             break;
           }
           case 'input': {
-            if (msg.project && msg.data) {
-              claudeTerminals.write(msg.project, msg.data);
-            }
+            if (id && msg.data) claudeTerminals.write(id, msg.data);
             break;
           }
           case 'resize': {
-            if (msg.project && msg.cols && msg.rows) {
-              claudeTerminals.resize(msg.project, msg.cols, msg.rows);
-            }
+            if (id && msg.cols && msg.rows) claudeTerminals.resize(id, msg.cols, msg.rows);
             break;
           }
         }
       });
 
       ws.on('close', () => {
-        if (subscribedProject && outputHandler) {
-          claudeTerminals.off(subscribedProject, outputHandler);
-        }
+        for (const [id, handler] of subs) claudeTerminals.off(id, handler);
+        subs.clear();
         logSubscribers.delete(ws);
       });
     });

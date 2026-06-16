@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { config, getOldAppDataDir, isFreshInstall } from './config.js';
 import { createBot } from './bot.js';
 import { createWebApp } from './webapp.js';
-import { createClaudeTerminals, stripAnsi } from './claude-terminals.js';
+import { createClaudeTerminals } from './claude-terminals.js';
 import { killAllServices } from './services.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -105,21 +105,7 @@ onChatId((id) => {
 
 // ─── Claude terminal manager ───
 // apiUrl and apiKey will be set after webapp starts
-const claudeTerminals = createClaudeTerminals({
-  onComplete(alias) {
-    // Notify user via Telegram when Claude finishes in a project
-    const info = claudeTerminals.info(alias);
-    let msg = `✅ Claude finished in "${alias}"`;
-    if (info && info.scrollback) {
-      const clean = stripAnsi(info.scrollback);
-      const lines = clean.split('\n').map(l => l.trimEnd()).filter(Boolean).slice(-5);
-      if (lines.length) msg += '\n\n' + lines.join('\n').substring(0, 300);
-    }
-    notify(msg).then(r => {
-      if (!r?.ok) console.warn(`[crundi] Notification failed for "${alias}":`, r?.error || 'unknown');
-    }).catch(e => console.warn(`[crundi] Notification error for "${alias}":`, e.message));
-  },
-});
+const claudeTerminals = createClaudeTerminals();
 
 // ─── MCP dispatch handler (for browser, screenshots, terminals, RDP) ───
 async function mcpDispatch(tool, args) {
