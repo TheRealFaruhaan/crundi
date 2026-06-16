@@ -1,0 +1,36 @@
+name: Release
+
+# Push a version tag (e.g. v7.2.0) to cut a release. CI creates a DRAFT release
+# with auto-generated notes and a clean source archive attached. Upload the
+# signed Windows installer to the draft, then publish it.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build source archive
+        run: |
+          mkdir -p out
+          git archive --format=zip --prefix=crundi/ -o "out/crundi-${{ github.ref_name }}-source.zip" HEAD
+
+      - name: Create draft release with source zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            "out/crundi-${{ github.ref_name }}-source.zip" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            --draft
