@@ -81,7 +81,7 @@ That power is the point — but treat it accordingly: **run it only for yourself
 
 ## Contributing
 
-This project is **not accepting external contributions** right now — issues and pull requests aren't monitored, repo collaboration features are disabled, and `main` is protected. You're welcome to fork and build your own version. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports and questions are welcome — open an [issue](../../issues). External **code** contributions (pull requests) aren't being accepted right now, and `main` is protected; fork freely under MIT. For security issues see [SECURITY.md](SECURITY.md); details in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
