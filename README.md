@@ -79,6 +79,10 @@ Crundi is a **single-user remote-control tool**. Whoever authenticates gets, on 
 
 That power is the point — but treat it accordingly: **run it only for yourself**, keep your tunnel URL private, set the login domain, and never share your bot token. Anyone who reaches the URL and passes auth controls the machine.
 
+## Contributing
+
+This project is **not accepting external contributions** right now — issues and pull requests aren't monitored, repo collaboration features are disabled, and `main` is protected. You're welcome to fork and build your own version. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
-Not yet specified — add a `LICENSE` file before relying on it.
+[MIT](LICENSE) © 2026 Hussain Faruhaan.

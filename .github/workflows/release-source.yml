@@ -1,0 +1,30 @@
+name: Attach source zip to release
+
+# When a release is published, build a clean source archive (no .git / no
+# build output) and attach it so people can build Crundi themselves. The signed
+# Windows installer is uploaded separately (manually).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  source-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the released tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Build source archive
+        run: |
+          mkdir -p out
+          git archive --format=zip --prefix=crundi/ -o "out/crundi-${{ github.event.release.tag_name }}-source.zip" HEAD
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "out/crundi-${{ github.event.release.tag_name }}-source.zip" --clobber
