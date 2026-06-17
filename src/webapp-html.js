@@ -836,15 +836,19 @@ export function getWebappHtml(botUsername) {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .svc-card .svc-meta .svc-up { color: var(--text-secondary); }
-    /* Action buttons — one consistent button style across the card. */
-    .svc-card .svc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-    .svc-btn {
+    /* Action buttons — one consistent button style across the card. The bare
+       .svc-actions button selector also covers panels that reuse this row
+       (Terminals, Browsers) without needing the explicit class. */
+    .svc-card .svc-actions, .svc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .svc-btn, .svc-actions button {
       display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
       padding: 5px 10px; border-radius: var(--radius-sm);
       border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
       font-size: 0.76rem; white-space: nowrap;
     }
-    .svc-btn .ic { width: 13px; height: 13px; }
+    .svc-actions button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .svc-actions button.danger:hover { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    .svc-btn .ic, .svc-actions button .ic { width: 13px; height: 13px; }
     .svc-btn:hover { border-color: var(--accent); color: var(--text-primary); }
     .svc-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     .svc-btn.primary:hover { background: var(--accent-hover); }
@@ -1083,18 +1087,25 @@ export function getWebappHtml(botUsername) {
         min-width: 360px; min-height: 200px;
         border: 1px solid var(--border); border-radius: var(--radius);
         box-shadow: 0 24px 70px -12px rgba(0,0,0,0.75);
-        resize: both; /* native drag-to-resize handle (bottom-right) */
       }
-      .fe-window.maximized { top: 6px !important; left: 6px !important; width: calc(100vw - 12px) !important; height: calc(100vh - 12px) !important; resize: none; }
+      .fe-window.maximized { top: 6px !important; left: 6px !important; width: calc(100vw - 12px) !important; height: calc(100vh - 12px) !important; }
+      .fe-window.maximized .fe-resize { display: none; }
       .fe-header { cursor: move; }
-      /* Arrange toolbar (top-center) — shown when ≥1 window is open. */
+      /* Custom resize handles (the editor content covers a native corner grip). */
+      .fe-resize { position: absolute; z-index: 6; }
+      .fe-resize-e { top: 0; right: -2px; width: 8px; height: 100%; cursor: ew-resize; }
+      .fe-resize-s { left: 0; bottom: -2px; height: 8px; width: 100%; cursor: ns-resize; }
+      .fe-resize-se { right: -2px; bottom: -2px; width: 16px; height: 16px; cursor: nwse-resize; }
+      .fe-resize-se::after { content: ''; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted); border-bottom-right-radius: 3px; }
+      .fe-window:hover .fe-resize-se::after { border-color: var(--accent); }
+      /* Arrange toolbar (top-center) — only while dragging a window (+ brief linger). */
       .fe-arrange {
         pointer-events: auto; position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
         z-index: 2400; align-items: center; gap: 6px; padding: 5px 8px;
         background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 999px;
         box-shadow: 0 6px 22px rgba(0,0,0,0.5);
       }
-      .fe-editor.has-windows .fe-arrange { display: flex; }
+      .fe-editor.show-arrange .fe-arrange { display: flex; }
       .fe-arrange-label { font-size: 0.72rem; color: var(--text-muted); padding: 0 4px; }
       .fe-arrange button { border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: 999px; padding: 4px 11px; font-size: 0.74rem; cursor: pointer; }
       .fe-arrange button:hover { border-color: var(--accent); color: #fff; background: var(--accent); }
@@ -1765,11 +1776,13 @@ export function getWebappHtml(botUsername) {
     #mm-detail-modal .mmd-link:empty { display: none; }
     #mm-detail-modal .mmd-link .st { color: var(--text-muted); }
     #mm-detail-modal label.im-label { display: block; font-size: 0.78rem; color: var(--text-secondary); margin: 0 0 4px; }
-    #mm-detail-modal .mmd-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
-    #mm-detail-modal .mmd-actions button { flex: 1; min-width: 72px; border-radius: var(--radius-sm); padding: 8px; font-size: 0.82rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
-    #mm-detail-modal .mmd-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    #mm-detail-modal .mmd-actions button.danger { color: var(--red); }
-    #mm-detail-modal .mmd-actions button.danger:hover { border-color: var(--red); background: rgba(255,80,80,0.12); }
+    /* Shared by the mindmap detail modal AND the media modal's action row. */
+    .mmd-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    .mmd-actions button { flex: 1; min-width: 72px; border-radius: var(--radius-sm); padding: 8px; font-size: 0.82rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
+    .mmd-actions button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .mmd-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .mmd-actions button.danger { color: var(--red); }
+    .mmd-actions button.danger:hover { border-color: var(--red); background: rgba(255,80,80,0.12); }
 
     /* mindmap toolbar search */
     .mm-search { background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); border-radius: var(--radius-sm); padding: 6px 10px; font-size: 0.82rem; min-width: 160px; }
@@ -5395,18 +5408,26 @@ export function getWebappHtml(botUsername) {
         + '<button class="fe-expand" title="Expand / restore">' + ic('maximize') + '</button>'
         + '<button class="save fe-save" style="display:none">Save</button>'
         + '<button class="fe-close">Close</button>'
-        + '</div><div class="fe-content"></div>';
+        + '</div><div class="fe-content"></div>'
+        + '<div class="fe-resize fe-resize-e"></div>'
+        + '<div class="fe-resize fe-resize-s"></div>'
+        + '<div class="fe-resize fe-resize-se"></div>';
       o.appendChild(w);
       if (!feMobile()) {
         const step = 28, n = (feCascade++ % 6);
         w.style.top = (54 + n * step) + 'px';
         w.style.left = (Math.max(40, window.innerWidth * 0.18) + n * step) + 'px';
+        // Pin starting size as explicit px so resize math has a baseline.
+        const r = w.getBoundingClientRect();
+        w.style.width = r.width + 'px'; w.style.height = r.height + 'px';
       }
       w.querySelector('.fe-close').addEventListener('click', () => feCloseWin(w));
       w.querySelector('.fe-save').addEventListener('click', () => feSaveWin(w));
       w.querySelector('.fe-expand').addEventListener('click', () => feExpandWin(w));
       w.addEventListener('mousedown', () => feBringFront(w), true);
       feWireDrag(w);
+      feWireResize(w);
+      feWireArrangeBar();
       feBringFront(w);
       return w;
     }
@@ -5543,6 +5564,7 @@ export function getWebappHtml(botUsername) {
       head.addEventListener('mousedown', (e) => {
         if (e.target.closest('button') || feMobile()) return;
         feBringFront(w);
+        feShowArrange(); // reveal the Tile/Grid/Cascade bar while moving windows
         const r = w.getBoundingClientRect();
         ol = r.left; ot = r.top; sx = e.clientX; sy = e.clientY; dragging = true;
         w.classList.remove('maximized');
@@ -5563,12 +5585,50 @@ export function getWebappHtml(botUsername) {
         document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
         feOverlay().classList.remove('snapping');
         if (zone) { feApplyRect(w, feSnapRect(zone)); zone = null; }
+        feHideArrangeSoon(); // keep the bar briefly so it stays clickable after a drag
       }
+    }
+
+    // Custom resize handles (right edge, bottom edge, SE corner). Native CSS
+    // resize is covered by the editor content, so we drive it ourselves.
+    function feWireResize(w) {
+      w.querySelectorAll('.fe-resize').forEach(handle => {
+        const dir = handle.classList.contains('fe-resize-e') ? 'e' : handle.classList.contains('fe-resize-s') ? 's' : 'se';
+        handle.addEventListener('mousedown', (e) => {
+          if (feMobile()) return;
+          e.preventDefault(); e.stopPropagation();
+          feBringFront(w); w.classList.remove('maximized');
+          const r = w.getBoundingClientRect();
+          const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height;
+          w.style.left = r.left + 'px'; w.style.top = r.top + 'px'; // pin origin
+          const MINW = 360, MINH = 200;
+          const mv = (ev) => {
+            if (dir === 'e' || dir === 'se') w.style.width = Math.max(MINW, sw + ev.clientX - sx) + 'px';
+            if (dir === 's' || dir === 'se') w.style.height = Math.max(MINH, sh + ev.clientY - sy) + 'px';
+          };
+          const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+          document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+        });
+      });
+    }
+
+    // Arrange bar visibility — shown only while dragging a window, with a short
+    // linger afterwards so its buttons stay clickable.
+    let feArrangeTimer = null;
+    function feShowArrange() { const o = feOverlay(); if (o) o.classList.add('show-arrange'); clearTimeout(feArrangeTimer); }
+    function feHideArrangeSoon(ms = 3500) { clearTimeout(feArrangeTimer); feArrangeTimer = setTimeout(() => { const o = feOverlay(); if (o) o.classList.remove('show-arrange'); }, ms); }
+    let feArrangeBarWired = false;
+    function feWireArrangeBar() {
+      if (feArrangeBarWired) return; const bar = document.getElementById('fe-arrange'); if (!bar) return;
+      feArrangeBarWired = true;
+      bar.addEventListener('mouseenter', feShowArrange);
+      bar.addEventListener('mouseleave', () => feHideArrangeSoon(1200));
     }
 
     // ── Arrange: tile / grid / cascade ──
     function feArrange(mode) {
       const wins = feWins(); if (!wins.length || feMobile()) return;
+      feShowArrange(); feHideArrangeSoon(); // keep the bar up briefly after a click
       const vw = window.innerWidth, vh = window.innerHeight, top = 4, gap = 6, h = vh - 8;
       wins.forEach(w => w.classList.remove('maximized'));
       if (mode === 'cascade') {
@@ -5981,8 +6041,8 @@ export function getWebappHtml(botUsername) {
           + '  <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:11px;">Click to take screenshot</div>'
           + '</div>'
           + '<div class="svc-actions">'
-          + '<button data-action="browser-screenshot" data-key="' + ek + '">Screenshot</button>'
-          + '<button data-action="browser-close" data-key="' + ek + '">Close</button>'
+          + '<button class="svc-btn" data-action="browser-screenshot" data-key="' + ek + '">' + ic('image') + 'Screenshot</button>'
+          + '<button class="svc-btn danger" data-action="browser-close" data-key="' + ek + '">' + ic('x') + 'Close</button>'
           + '</div>'
           + '</div>';
       }).join('');
