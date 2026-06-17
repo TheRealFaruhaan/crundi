@@ -6132,8 +6132,10 @@ export function getWebappHtml(botUsername) {
       }
 
       // Server logs
-      let logsHtml = '<div class="info-section"><h4>Server Logs</h4>'
-        + '<div id="server-logs-area" style="max-height:300px;overflow-y:auto;background:var(--bg-primary);'
+      let logsHtml = '<div class="info-section">'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><h4 style="margin:0;flex:1;">Server Logs</h4>'
+        + '<button class="svc-btn" data-action="copy-logs" onmousedown="event.preventDefault()" title="Copy selection, or all logs">' + ic('copy') + 'Copy</button></div>'
+        + '<div id="server-logs-area" style="user-select:text;-webkit-user-select:text;max-height:300px;overflow-y:auto;background:var(--bg-primary);'
         + 'border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;'
         + 'font-family:var(--mono);font-size:0.75rem;line-height:1.5;color:var(--text-muted);">'
         + '(loading...)</div></div>';
@@ -6151,6 +6153,17 @@ export function getWebappHtml(botUsername) {
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'subscribe-logs' }));
       }
+    }
+
+    // Copy the current selection if it's within the logs box, otherwise all logs.
+    // (Ctrl+C is dead in the frameless Electron window; this uses the clipboard API.)
+    function copyServerLogs() {
+      const area = document.getElementById('server-logs-area');
+      if (!area) return;
+      const sel = window.getSelection && window.getSelection();
+      const text = (sel && !sel.isCollapsed && sel.toString().trim() && area.contains(sel.anchorNode))
+        ? sel.toString() : area.innerText;
+      navigator.clipboard.writeText(text).then(() => toast('Logs copied'), () => toast('Copy failed', 'error'));
     }
 
     function renderServerLogs(logs) {
@@ -6313,6 +6326,7 @@ export function getWebappHtml(botUsername) {
         case 'svc-reg-submit': submitRegisterService(); break;
         case 'svc-reg-cancel': cancelRegisterService(); break;
         case 'settings-save': saveSettings(); break;
+        case 'copy-logs': copyServerLogs(); break;
         case 'term-spawn': termSpawnUser(); break;
         case 'term-view-output': termViewOutput(d.name); break;
         case 'term-close-user': termCloseUser(d.name); break;
