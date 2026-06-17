@@ -1088,7 +1088,7 @@ export function getWebappHtml(botUsername) {
         border: 1px solid var(--border); border-radius: var(--radius);
         box-shadow: 0 24px 70px -12px rgba(0,0,0,0.75);
       }
-      .fe-window.maximized { top: 6px !important; left: 6px !important; width: calc(100vw - 12px) !important; height: calc(100vh - 12px) !important; }
+      .fe-window.maximized { top: 48px !important; left: 6px !important; width: calc(100vw - 12px) !important; height: calc(100vh - 54px) !important; }
       .fe-window.maximized .fe-resize { display: none; }
       .fe-header { cursor: move; }
       /* Custom resize handles (the editor content covers a native corner grip). */
@@ -1100,7 +1100,7 @@ export function getWebappHtml(botUsername) {
       .fe-window:hover .fe-resize-se::after { border-color: var(--accent); }
       /* Arrange toolbar (top-center) — only while dragging a window (+ brief linger). */
       .fe-arrange {
-        pointer-events: auto; position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+        pointer-events: auto; position: fixed; top: 54px; left: 50%; transform: translateX(-50%);
         z-index: 2400; align-items: center; gap: 6px; padding: 5px 8px;
         background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 999px;
         box-shadow: 0 6px 22px rgba(0,0,0,0.5);
@@ -5566,8 +5566,13 @@ export function getWebappHtml(botUsername) {
     window.feClose = feClose; window.feSave = feSave;
 
     // ── Drag + edge-snap (desktop) ──
+    // Editor windows stay below this Y (px). The web UI runs in an iframe under a
+    // 32px OS title bar (an app-region drag region); keeping windows — and their
+    // header, hence the drag pointer — clear of the top avoids Windows hijacking
+    // the gesture into a full-app move. Matches --topbar-height (48px).
+    const FE_TOP = 48;
     function feSnapRect(zone) {
-      const vw = window.innerWidth, vh = window.innerHeight, top = 4, h = vh - 8, w2 = vw / 2, hh = (h / 2) - 2;
+      const vw = window.innerWidth, vh = window.innerHeight, top = FE_TOP, h = vh - FE_TOP - 4, w2 = vw / 2, hh = (h / 2) - 2;
       const R = { left: { left: 4, top, width: w2 - 6, height: h }, right: { left: w2 + 2, top, width: w2 - 6, height: h },
         max: { left: 4, top, width: vw - 8, height: h },
         tl: { left: 4, top, width: w2 - 6, height: hh }, tr: { left: w2 + 2, top, width: w2 - 6, height: hh },
@@ -5610,7 +5615,7 @@ export function getWebappHtml(botUsername) {
       function mv(e) {
         if (!dragging) return;
         w.style.left = (ol + e.clientX - sx) + 'px';
-        w.style.top = Math.max(2, ot + e.clientY - sy) + 'px';
+        w.style.top = Math.max(FE_TOP, ot + e.clientY - sy) + 'px';
         zone = feZoneAt(e.clientX, e.clientY);
         const o = feOverlay(), hint = document.getElementById('fe-snap-hint');
         if (zone) { const rc = feSnapRect(zone); o.classList.add('snapping'); Object.assign(hint.style, { left: rc.left + 'px', top: rc.top + 'px', width: rc.width + 'px', height: rc.height + 'px' }); }
@@ -5671,11 +5676,11 @@ export function getWebappHtml(botUsername) {
     function feArrange(mode) {
       const wins = feWins(); if (!wins.length || feMobile()) return;
       feShowArrange(); feHideArrangeSoon(); // keep the bar up briefly after a click
-      const vw = window.innerWidth, vh = window.innerHeight, top = 4, gap = 6, h = vh - 8;
+      const vw = window.innerWidth, vh = window.innerHeight, top = FE_TOP, gap = 6, h = vh - FE_TOP - 4;
       wins.forEach(w => w.classList.remove('maximized'));
       if (mode === 'cascade') {
         const dw = Math.min(900, vw * 0.7), dh = Math.min(vh * 0.7, 760);
-        wins.forEach((w, i) => { const off = 28 * (i % 8); feApplyRect(w, { left: 40 + off, top: 40 + off, width: dw, height: dh }); });
+        wins.forEach((w, i) => { const off = 28 * (i % 8); feApplyRect(w, { left: 40 + off, top: FE_TOP + off, width: dw, height: dh }); });
       } else if (mode === 'tile') {
         const n = wins.length, cw = (vw - gap) / n;
         wins.forEach((w, i) => feApplyRect(w, { left: gap / 2 + i * cw, top, width: cw - gap, height: h }));
