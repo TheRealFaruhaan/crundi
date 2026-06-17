@@ -403,7 +403,11 @@ export function getWebappHtml(botUsername) {
       flex-shrink: 0;
     }
     .sidebar-item.active .dot { background: var(--green); }
-    .sidebar-item.has-terminal .dot { background: var(--green); }
+    /* Terminal-state indicator (precedence computed in JS): purple = a terminal
+       needs input, amber = a terminal is working, green = running/idle. */
+    .sidebar-item.ts-running .dot { background: var(--green); }
+    .sidebar-item.ts-working .dot { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim, rgba(245,180,60,0.18)); }
+    .sidebar-item.ts-input .dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
     .sidebar-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sidebar-item .svc-heart { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-muted); }
     .sidebar-item .svc-heart .svc-ecg { display: block; }
@@ -487,6 +491,10 @@ export function getWebappHtml(botUsername) {
       }
       .sidebar.collapsed .sidebar-item:hover .proj-initials { border-color: var(--accent); color: var(--text-primary); }
       .sidebar.collapsed .sidebar-item.active:hover .proj-initials { color: #fff; }
+      /* Collapsed-rail border reflects terminal state (overrides active ring). */
+      .sidebar.collapsed .sidebar-item.ts-running .proj-initials { border-color: var(--green); color: var(--text-primary); }
+      .sidebar.collapsed .sidebar-item.ts-working .proj-initials { border-color: var(--yellow); color: var(--text-primary); box-shadow: 0 0 10px -2px var(--yellow); }
+      .sidebar.collapsed .sidebar-item.ts-input .proj-initials { border-color: var(--accent); color: #fff; box-shadow: 0 0 12px -2px var(--accent); }
       /* services heartbeat sits below the circle as a vital sign */
       .sidebar.collapsed .sidebar-item .svc-heart { margin: 0; }
       .sidebar.collapsed .sidebar-item .svc-heart .svc-ecg { width: 22px; height: 9px; }
@@ -555,6 +563,11 @@ export function getWebappHtml(botUsername) {
     }
     .term-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
     .term-status-dot.exited { background: var(--text-muted); }
+    .term-status-dot.working { background: var(--yellow); }
+    .term-status-dot.input { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+    .term-agent-badge { flex-shrink: 0; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 999px; }
+    .term-agent-badge.working { background: var(--yellow-dim, rgba(245,180,60,0.16)); color: var(--yellow); }
+    .term-agent-badge.input { background: var(--accent-dim); color: var(--accent-hover); }
     .term-head-spacer { flex: 1; }
     .term-font-btn, .term-head-btn {
       border: 1px solid var(--border); background: var(--bg-primary);
@@ -2874,10 +2887,16 @@ export function getWebappHtml(botUsername) {
       const list = $('#project-list');
       list.innerHTML = '';
       for (const p of projects) {
-        const hasTerminal = terminals.some(t => t.project === p.alias);
+        // Terminal-state precedence for this project's dot/border:
+        // needs-input (purple) > working (amber) > running/idle (green) > none.
+        const projTerms = terminals.filter(t => t.project === p.alias && t.status === 'running');
+        let ts = '';
+        if (projTerms.some(t => t.agentState === 'needs-input')) ts = 'ts-input';
+        else if (projTerms.some(t => t.agentState === 'working')) ts = 'ts-working';
+        else if (projTerms.length) ts = 'ts-running';
         const isActive = currentProject === p.alias;
         const item = document.createElement('div');
-        item.className = 'sidebar-item' + (isActive ? ' active' : '') + (hasTerminal ? ' has-terminal' : '');
+        item.className = 'sidebar-item' + (isActive ? ' active' : '') + (ts ? ' ' + ts : '');
         item.dataset.project = p.alias;
         item.title = p.name || p.alias; // full name on hover (esp. when collapsed)
         // Project removal is only offered in multi mode (manually-added
@@ -3287,9 +3306,14 @@ export function getWebappHtml(botUsername) {
 
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
+      const as = exited ? '' : (t.agentState || 'idle');
+      const dotCls = exited ? ' exited' : (as === 'working' ? ' working' : as === 'needs-input' ? ' input' : '');
+      const badge = (!exited && as === 'working') ? '<span class="term-agent-badge working">working</span>'
+        : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>' : '';
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
-        + '<span class="term-status-dot' + (exited ? ' exited' : '') + '" title="' + (exited ? 'exited' : 'running') + '"></span>'
+        + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
         + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || 'Terminal') + '</span>'
+        + badge
         + '<span class="term-head-spacer"></span>'
         + '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
         + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
@@ -3300,8 +3324,24 @@ export function getWebappHtml(botUsername) {
     function updateCellHead(el, t) {
       const titleEl = el.querySelector('.term-title');
       if (titleEl && titleEl.tagName !== 'INPUT' && titleEl.textContent !== (t.title || 'Terminal')) titleEl.textContent = t.title || 'Terminal';
+      const exited = t.status === 'exited';
+      const as = exited ? '' : (t.agentState || 'idle');
       const dot = el.querySelector('.term-status-dot');
-      if (dot) dot.classList.toggle('exited', t.status === 'exited');
+      if (dot) {
+        dot.classList.toggle('exited', exited);
+        dot.classList.toggle('working', as === 'working');
+        dot.classList.toggle('input', as === 'needs-input');
+        dot.title = exited ? 'exited' : as;
+      }
+      // Agent-state badge (working / needs input) next to the title.
+      let badge = el.querySelector('.term-agent-badge');
+      const want = (!exited && as === 'working') ? ['working', 'working']
+        : (!exited && as === 'needs-input') ? ['input', 'needs input'] : null;
+      if (!want) { if (badge) badge.remove(); }
+      else {
+        if (!badge && titleEl) { badge = document.createElement('span'); titleEl.after(badge); }
+        if (badge) { badge.className = 'term-agent-badge ' + want[0]; badge.textContent = want[1]; }
+      }
     }
 
     function mountXterm(t, cellEl) {
@@ -6182,6 +6222,10 @@ export function getWebappHtml(botUsername) {
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Data Directory</label>'
           + '<input type="text" id="set-data-dir" style="' + monoStyle + '" value="' + escHtml(s.DATA_DIR || '') + '" placeholder="(default: platform app dir)" />'
           + '<p style="' + hintStyle + '">Override data storage location. Leave empty for default.</p></div>'
+          + '<div style="' + fieldStyle + '"><label style="display:flex;align-items:center;gap:9px;cursor:pointer;color:var(--text-secondary);font-size:0.82rem;">'
+          + '<input type="checkbox" id="set-notify-agent"' + (data.notifyAgentStatus !== false ? ' checked' : '') + ' style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;" />'
+          + 'Notify me when an agent finishes or needs input</label>'
+          + '<p style="' + hintStyle + '">Telegram ping on a terminal\\u2019s Claude reaching done or waiting for input.</p></div>'
           + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
           + '<button data-action="settings-save" style="padding:8px 20px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">Save</button>'
           + '<span id="settings-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
@@ -6208,13 +6252,14 @@ export function getWebappHtml(botUsername) {
         return;
       }
       const chatId = ($('#set-chat-id') || {}).value || '';
+      const notifyAgentStatus = !($('#set-notify-agent') && $('#set-notify-agent').checked === false);
       const status = $('#settings-status');
       if (status) status.textContent = 'Saving...';
       try {
         const r = await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ settings, chatId }),
+          body: JSON.stringify({ settings, chatId, notifyAgentStatus }),
         });
         const data = await r.json();
         if (data.ok) {

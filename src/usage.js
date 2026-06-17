@@ -8,13 +8,18 @@
  * reset timestamps. No local aggregation, no configured budgets needed.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { config } from './config.js';
 
 const CRED_FILE = () => join(homedir(), '.claude', '.credentials.json');
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+// Claude Code's public OAuth client + token endpoint, used to refresh the access
+// token ourselves so usage stays live even when the CLI isn't being used (the
+// access token rotates ~hourly; otherwise only `claude` use would refresh it).
+const TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
+const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const TTL_OK_MS = 60_000;     // refresh good data at most once a minute (~60 req/hr, well under limit)
 const TTL_ERR_MS = 300_000;   // back off 5 min after a failure (e.g. 429) so we don't hammer
 const MIN_FETCH_MS = 15_000;  // hard floor: even force can't fetch more often than this (anti-burst)
@@ -37,6 +42,47 @@ function readOAuth() {
     const j = JSON.parse(readFileSync(CRED_FILE(), 'utf-8'));
     return j.claudeAiOauth || null;
   } catch { return null; }
+}
+
+// Persist a refreshed token back to .credentials.json without clobbering other
+// fields. Atomic (temp + rename) since Claude Code reads/writes the same file.
+function persistOAuth(tok) {
+  try {
+    const file = CRED_FILE();
+    const j = existsSync(file) ? JSON.parse(readFileSync(file, 'utf-8')) : {};
+    j.claudeAiOauth = { ...(j.claudeAiOauth || {}), accessToken: tok.accessToken, refreshToken: tok.refreshToken, expiresAt: tok.expiresAt };
+    const tmp = file + '.tmp';
+    writeFileSync(tmp, JSON.stringify(j, null, 2));
+    renameSync(tmp, file);
+  } catch { /* non-fatal — we still use the in-memory token */ }
+}
+
+let refreshing = null; // shared promise so concurrent fetches don't double-refresh
+// Exchange the refresh token for a fresh access token; returns the updated token
+// fields or null on failure (caller falls back to the existing token).
+async function refreshAccessToken(oauth) {
+  if (!oauth || !oauth.refreshToken) return null;
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    try {
+      const res = await fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: oauth.refreshToken, client_id: OAUTH_CLIENT_ID }),
+      });
+      if (!res.ok) return null;
+      const j = await res.json();
+      if (!j.access_token) return null;
+      const updated = {
+        accessToken: j.access_token,
+        refreshToken: j.refresh_token || oauth.refreshToken,
+        expiresAt: Date.now() + (Number(j.expires_in) || 3600) * 1000,
+      };
+      persistOAuth(updated);
+      return updated;
+    } catch { return null; }
+  })();
+  try { return await refreshing; } finally { refreshing = null; }
 }
 
 function normWindow(w) {
@@ -132,20 +178,34 @@ export async function getUsage({ force = false } = {}) {
     if (force && age < MIN_FETCH_MS) return cache.data; // throttle bursts even when forced
   }
 
-  const oauth = readOAuth();
+  let oauth = readOAuth();
   if (!oauth || !oauth.accessToken) {
     return (cache = { data: { ok: false, error: 'Not signed in to Claude (no OAuth token found)' }, at: Date.now() }).data;
   }
 
+  // Proactively refresh when the access token is expired or about to be — so a
+  // long-running instance never goes stale waiting for the CLI to refresh it.
+  if (oauth.refreshToken && oauth.expiresAt && (oauth.expiresAt - Date.now()) < 60_000) {
+    const r = await refreshAccessToken(oauth);
+    if (r) oauth = { ...oauth, ...r };
+  }
+
+  const fetchUsage = (token) => fetch(USAGE_URL, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'anthropic-beta': 'oauth-2025-04-20',
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json',
+    },
+  });
+
   try {
-    const res = await fetch(USAGE_URL, {
-      headers: {
-        Authorization: `Bearer ${oauth.accessToken}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json',
-      },
-    });
+    let res = await fetchUsage(oauth.accessToken);
+    // A 401 despite our check → token rotated out-of-band; refresh once and retry.
+    if (res.status === 401 && oauth.refreshToken) {
+      const r = await refreshAccessToken(oauth);
+      if (r && r.accessToken) { oauth = { ...oauth, ...r }; res = await fetchUsage(r.accessToken); }
+    }
     if (res.status === 401) {
       return (cache = { data: { ok: false, error: 'Claude session expired — use Claude once to refresh it', status: 401 }, at: Date.now() }).data;
     }

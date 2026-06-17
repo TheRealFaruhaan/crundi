@@ -266,6 +266,54 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // ─── SSE ───
   const sseClients = new Set();
 
+  // ─── Claude agent state (driven by Claude Code lifecycle hooks) ───
+  // terminalId → 'working' | 'needs-input' | 'idle'. Liveness is the source of
+  // truth: states are reconciled against the live terminal list (see
+  // broadcastState), so a crash/force-close that never fires a Stop hook can't
+  // leave a stale state.
+  const agentStates = new Map();
+  let notifyAgentStatus = true;
+  try {
+    const sf = join(config.dataDir, '.crundi-state.json');
+    if (existsSync(sf)) { const st = JSON.parse(readFileSync(sf, 'utf-8')); if (st && st.notifyAgentStatus === false) notifyAgentStatus = false; }
+  } catch { /* default on */ }
+
+  function persistNotifyToggle() {
+    try {
+      const sf = join(config.dataDir, '.crundi-state.json');
+      let st = {};
+      try { if (existsSync(sf)) st = JSON.parse(readFileSync(sf, 'utf-8')) || {}; } catch { st = {}; }
+      st.notifyAgentStatus = notifyAgentStatus;
+      writeFileSync(sf, JSON.stringify(st));
+    } catch { /* non-fatal */ }
+  }
+
+  async function notifyAgentState(term, state) {
+    try {
+      const chatId = getChatId ? getChatId() : null;
+      if (!chatId || !bot) return;
+      const name = term.title || 'Claude';
+      const proj = term.project ? ` (${term.project})` : '';
+      const msg = state === 'needs-input'
+        ? `⏳ ${name} needs your input${proj}.`
+        : `✅ ${name} finished${proj}.`;
+      bot.api.sendMessage(chatId, msg).catch(() => { /* non-fatal */ });
+    } catch { /* non-fatal */ }
+  }
+
+  // Apply a hook-reported state for a terminal; notify on transitions to
+  // done(idle)/needs-input. Unknown terminals are ignored.
+  function handleAgentState(tid, state) {
+    const term = claudeTerminals ? claudeTerminals.list().find(t => t.id === tid) : null;
+    if (!term) return;
+    const prev = agentStates.get(tid);
+    agentStates.set(tid, state);
+    if (state !== prev && (state === 'idle' || state === 'needs-input') && notifyAgentStatus) {
+      notifyAgentState(term, state);
+    }
+    broadcastState();
+  }
+
   function broadcastSSE(event, data) {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of sseClients) {
@@ -286,7 +334,16 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       tunnelStatus: s.tunnel?.status || null,
       tunnelUrl: s.tunnel?.url || null,
     }));
-    const terminals = claudeTerminals ? claudeTerminals.list() : [];
+    const liveTerms = claudeTerminals ? claudeTerminals.list() : [];
+    // Reconcile agent states against the live terminals: drop states for
+    // terminals that are gone or no longer running (crash/force-close safety).
+    const liveIds = new Set(liveTerms.map(t => t.id));
+    for (const k of [...agentStates.keys()]) if (!liveIds.has(k)) agentStates.delete(k);
+    for (const t of liveTerms) if (t.status !== 'running') agentStates.delete(t.id);
+    // A running terminal with no hook state yet is "idle" (alive → green).
+    const terminals = liveTerms.map(t => ({
+      ...t, agentState: t.status === 'running' ? (agentStates.get(t.id) || 'idle') : null,
+    }));
     const userTerminals = terminalsMod.listTerminals();
     // Project aliases that have at least one enabled schedule (for the sidebar
     // "upcoming schedule" clock indicator).
@@ -694,8 +751,19 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
 
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
-    // MCP call endpoint uses its own X-Api-Key auth (not session tokens)
-    if (path !== '/api/mcp/call' && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+    // MCP call + hook status endpoints use their own X-Api-Key auth (not tokens)
+    if (path !== '/api/mcp/call' && path !== '/api/terminal-status' && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+
+    // Claude Code lifecycle hooks report a terminal's agent state here.
+    if (path === '/api/terminal-status' && req.method === 'POST') {
+      if (req.headers['x-api-key'] !== internalApiKey) return json(res, { error: 'Invalid API key' }, 403);
+      const body = JSON.parse(await readBody(req));
+      const tid = String(body.terminal || '');
+      const state = ['working', 'needs-input', 'idle'].includes(body.state) ? body.state : null;
+      if (!tid || !state) return json(res, { ok: false, error: 'terminal and valid state required' }, 400);
+      handleAgentState(tid, state);
+      return json(res, { ok: true });
+    }
 
     // ─── Import (from old Claude Telegram Bot) ───
     if (path === '/api/import/check' && req.method === 'GET') {
@@ -1145,7 +1213,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           settings[key] = m ? m[1].trim() : '';
         }
         const chatId = getChatId ? getChatId() : '';
-        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '' });
+        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyAgentStatus });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
@@ -1171,6 +1239,11 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           state.chatId = newId;
           writeFileSync(stateFile, JSON.stringify(state));
           if (setChatId) setChatId(newId);
+        }
+        // Live toggle (no restart): notify on agent done / needs-input.
+        if (body.notifyAgentStatus !== undefined) {
+          notifyAgentStatus = !!body.notifyAgentStatus;
+          persistNotifyToggle();
         }
         return json(res, { ok: true, restartRequired: true });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
