@@ -3376,7 +3376,15 @@ export function getWebappHtml(botUsername) {
       if (!ta || !ws || ws.readyState !== 1 || !focusedTermId) return;
       const text = ta.value;
       if (!text) return;
-      ws.send(JSON.stringify({ type: 'input', id: focusedTermId, data: text + '\\r' }));
+      const tid = focusedTermId;
+      // Send the text first, then the Enter as a SEPARATE write. For a large or
+      // multi-line chunk the agent TUI treats the burst as a paste and would
+      // otherwise swallow a trailing \r into the pasted buffer instead of
+      // submitting — so the carriage return must arrive on its own.
+      ws.send(JSON.stringify({ type: 'input', id: tid, data: text }));
+      setTimeout(() => {
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', id: tid, data: '\\r' }));
+      }, 60);
       ta.value = '';
       ta.style.height = 'auto';
       const v = termViews.get(focusedTermId);
