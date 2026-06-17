@@ -215,6 +215,12 @@ const TOOLS = [
   { name: 'schedule_set_enabled', description: 'Enable or disable a scheduled task (must belong to this project).', inputSchema: { type: 'object', properties: { id: { type: 'string' }, enabled: { type: 'boolean' } }, required: ['id', 'enabled'] } },
   { name: 'schedule_delete', description: 'Delete a scheduled task (must belong to this project).', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
 
+  // ─── Media tools (attached files — strictly scoped to THIS project) ───
+  { name: 'media_list', description: 'List media files (images, PDFs, video/audio, or any file) attached within THIS project. Each item includes: id, originalName, mime, kind (image|pdf|video|audio|other), size, `path` (the absolute on-disk path so you can open/read the file yourself), `link` (what it is attached to: {type:"task",taskId} | {type:"todo",taskId,todoId} | {type:"node",nodeId} | null for unlinked) and `linkStatus` (alive|deleted|none). Use the `path` to inspect a file directly.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'media_get', description: 'Get one media item by id (must belong to this project), including its absolute on-disk `path`.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'media_add_path', description: 'Attach a file that already exists on disk as a media item in THIS project (the file is copied into Crundi\'s media store). Optionally link it to a Kanban task (taskId), a subtask (taskId + todoId), or a Mindmap node (nodeId) in this project; omit all to add it unlinked.', inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the source file' }, name: { type: 'string', description: 'Optional display name (defaults to the file name)' }, taskId: { type: 'string', description: 'Optional Kanban task id to attach to' }, todoId: { type: 'string', description: 'Optional subtask id (requires taskId)' }, nodeId: { type: 'string', description: 'Optional Mindmap node id to attach to' } }, required: ['path'] } },
+  { name: 'media_delete', description: 'Delete a media item by id (must belong to this project). Removes the stored file too.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+
   // ─── Secrets tools (global) ───
   { name: 'secret_search', description: 'Search the global secrets store by name and description (case-insensitive). Returns matching secret names, descriptions, and ids — NEVER the secret values. No approval needed. Use this to discover which secret to request.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Search text matched against name and description. Empty returns all.' } } } },
   { name: 'secret_get', description: 'Request the decrypted value of a secret. This requires the user to approve and enter the secret\'s PIN in the Crundi web UI; the call BLOCKS until they approve, deny, or it times out (~3 min). The user is notified via Telegram. Identify the secret by id (preferred) or exact name. Always provide a clear reason.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } } } },
@@ -227,6 +233,7 @@ const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service',
   'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo', 'kanban_restore_todo', 'kanban_history',
   'mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors', 'mindmap_add_node', 'mindmap_link_node',
   'schedule_list', 'schedule_get', 'schedule_add', 'schedule_update', 'schedule_set_enabled', 'schedule_delete',
+  'media_list', 'media_get', 'media_add_path', 'media_delete',
   'secret_get']);
 const IMAGE_TOOLS = new Set(['browser_screenshot', 'capture_window', 'capture_display']);
 

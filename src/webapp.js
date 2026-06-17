@@ -19,14 +19,15 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
 import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService } from './services.js';
-import { registerService, listRegisteredForProject, updateRegistered } from './service-registry.js';
+import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
-import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData } from './project-store.js';
+import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder } from './project-store.js';
 import * as kanban from './kanban-store.js';
 import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
+import * as media from './media-store.js';
 import * as schedule from './schedule-store.js';
 import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
@@ -265,6 +266,54 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // ─── SSE ───
   const sseClients = new Set();
 
+  // ─── Claude agent state (driven by Claude Code lifecycle hooks) ───
+  // terminalId → 'working' | 'needs-input' | 'idle'. Liveness is the source of
+  // truth: states are reconciled against the live terminal list (see
+  // broadcastState), so a crash/force-close that never fires a Stop hook can't
+  // leave a stale state.
+  const agentStates = new Map();
+  let notifyAgentStatus = true;
+  try {
+    const sf = join(config.dataDir, '.crundi-state.json');
+    if (existsSync(sf)) { const st = JSON.parse(readFileSync(sf, 'utf-8')); if (st && st.notifyAgentStatus === false) notifyAgentStatus = false; }
+  } catch { /* default on */ }
+
+  function persistNotifyToggle() {
+    try {
+      const sf = join(config.dataDir, '.crundi-state.json');
+      let st = {};
+      try { if (existsSync(sf)) st = JSON.parse(readFileSync(sf, 'utf-8')) || {}; } catch { st = {}; }
+      st.notifyAgentStatus = notifyAgentStatus;
+      writeFileSync(sf, JSON.stringify(st));
+    } catch { /* non-fatal */ }
+  }
+
+  async function notifyAgentState(term, state) {
+    try {
+      const chatId = getChatId ? getChatId() : null;
+      if (!chatId || !bot) return;
+      const name = term.title || 'Claude';
+      const proj = term.project ? ` (${term.project})` : '';
+      const msg = state === 'needs-input'
+        ? `⏳ ${name} needs your input${proj}.`
+        : `✅ ${name} finished${proj}.`;
+      bot.api.sendMessage(chatId, msg).catch(() => { /* non-fatal */ });
+    } catch { /* non-fatal */ }
+  }
+
+  // Apply a hook-reported state for a terminal; notify on transitions to
+  // done(idle)/needs-input. Unknown terminals are ignored.
+  function handleAgentState(tid, state) {
+    const term = claudeTerminals ? claudeTerminals.list().find(t => t.id === tid) : null;
+    if (!term) return;
+    const prev = agentStates.get(tid);
+    agentStates.set(tid, state);
+    if (state !== prev && (state === 'idle' || state === 'needs-input') && notifyAgentStatus) {
+      notifyAgentState(term, state);
+    }
+    broadcastState();
+  }
+
   function broadcastSSE(event, data) {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of sseClients) {
@@ -280,9 +329,21 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       projectPath: s.projectPath, status: s.status, pid: s.pid,
       memory: s.memoryBytes,
       uptime: s.startedAt ? formatUptime(Date.now() - new Date(s.startedAt).getTime()) : null,
+      tunnelPort: s.tunnelPort || 0,
+      tunnelEnabled: !!s.tunnelEnabled,
+      tunnelStatus: s.tunnel?.status || null,
       tunnelUrl: s.tunnel?.url || null,
     }));
-    const terminals = claudeTerminals ? claudeTerminals.list() : [];
+    const liveTerms = claudeTerminals ? claudeTerminals.list() : [];
+    // Reconcile agent states against the live terminals: drop states for
+    // terminals that are gone or no longer running (crash/force-close safety).
+    const liveIds = new Set(liveTerms.map(t => t.id));
+    for (const k of [...agentStates.keys()]) if (!liveIds.has(k)) agentStates.delete(k);
+    for (const t of liveTerms) if (t.status !== 'running') agentStates.delete(t.id);
+    // A running terminal with no hook state yet is "idle" (alive → green).
+    const terminals = liveTerms.map(t => ({
+      ...t, agentState: t.status === 'running' ? (agentStates.get(t.id) || 'idle') : null,
+    }));
     const userTerminals = terminalsMod.listTerminals();
     // Project aliases that have at least one enabled schedule (for the sidebar
     // "upcoming schedule" clock indicator).
@@ -305,6 +366,47 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // ─── Mindmap live updates ───
   function broadcastMindmap() {
     broadcastSSE('mindmap', {});
+  }
+
+  // ─── Media live updates ───
+  function broadcastMedia() {
+    broadcastSSE('media', {});
+  }
+
+  /**
+   * Public view of a media item, enriched with its link's live status so the UI
+   * can render a "jump to source" button (and a "deleted" badge when the linked
+   * task / subtask / node is gone). projectName is added for display.
+   */
+  function enrichMedia(item) {
+    const proj = item.project ? getProject(item.project) : null;
+    let linkStatus = 'none', linkLabel = null;
+    const l = item.link;
+    if (l) {
+      linkStatus = 'deleted'; // assume gone until proven alive
+      try {
+        if (l.type === 'task' || l.type === 'todo') {
+          const r = kanban.getTask(item.project, l.taskId, { includeDeleted: true });
+          if (r.ok && !r.task.deleted) {
+            if (l.type === 'task') { linkStatus = 'alive'; linkLabel = r.task.title; }
+            else {
+              const td = (r.task.todos || []).find(t => t.id === l.todoId);
+              if (td && !td.deleted) { linkStatus = 'alive'; linkLabel = td.text; }
+            }
+          }
+        } else if (l.type === 'node') {
+          const n = mindmap.getNode(l.nodeId);
+          if (n) { linkStatus = 'alive'; linkLabel = n.text; }
+        }
+      } catch { /* treat as deleted */ }
+    }
+    return {
+      id: item.id, originalName: item.originalName, mime: item.mime, ext: item.ext,
+      size: item.size, kind: item.kind, project: item.project,
+      projectName: proj ? proj.name : (item.project || null),
+      link: l || null, linkStatus, linkLabel, createdAt: item.createdAt,
+      path: media.mediaFilePath(item), // absolute on-disk path (for drag-insert + copy-path)
+    };
   }
 
   // ─── Claude usage (real account-wide limits) ───
@@ -649,8 +751,19 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
 
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
-    // MCP call endpoint uses its own X-Api-Key auth (not session tokens)
-    if (path !== '/api/mcp/call' && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+    // MCP call + hook status endpoints use their own X-Api-Key auth (not tokens)
+    if (path !== '/api/mcp/call' && path !== '/api/terminal-status' && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+
+    // Claude Code lifecycle hooks report a terminal's agent state here.
+    if (path === '/api/terminal-status' && req.method === 'POST') {
+      if (req.headers['x-api-key'] !== internalApiKey) return json(res, { error: 'Invalid API key' }, 403);
+      const body = JSON.parse(await readBody(req));
+      const tid = String(body.terminal || '');
+      const state = ['working', 'needs-input', 'idle'].includes(body.state) ? body.state : null;
+      if (!tid || !state) return json(res, { ok: false, error: 'terminal and valid state required' }, 400);
+      handleAgentState(tid, state);
+      return json(res, { ok: true });
+    }
 
     // ─── Import (from old Claude Telegram Bot) ───
     if (path === '/api/import/check' && req.method === 'GET') {
@@ -699,6 +812,14 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
 
     if (path === '/api/projects' && req.method === 'GET') {
       return json(res, { projects: listProjects() });
+    }
+
+    // Persist the sidebar order (array of aliases).
+    if (path === '/api/projects/reorder' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = setProjectOrder(body.order || []);
+      if (result.ok) broadcastState();
+      return json(res, result);
     }
 
     if (path === '/api/projects' && req.method === 'POST') {
@@ -941,6 +1062,8 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         memory: s.memoryBytes,
         uptime: s.startedAt ? formatUptime(Date.now() - new Date(s.startedAt).getTime()) : null,
         tunnelPort: s.tunnelPort || 0,
+        tunnelEnabled: !!s.tunnelEnabled,
+        tunnelStatus: s.tunnel?.status || null,
         tunnelUrl: s.tunnel?.url || null,
       }));
       return json(res, { services: all });
@@ -976,15 +1099,38 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         else if (action === 'stop') result = stopService(key);
         else if (action === 'restart') result = restartService(key);
         else if (action === 'tunnel') {
-          // Enable/disable (or change the port of) a service's Cloudflare tunnel.
-          // port 0 = disable. Persists to the registry so it also auto-starts
-          // with the service next time.
+          // Tunnel PORT and ON/OFF are two separate states. Body may carry
+          // { port } (set the port) and/or { enabled } (toggle). Enabling is
+          // blocked unless a port is set. The tunnel only actually runs while the
+          // service is running; the enabled flag persists and auto-applies on start.
           const body = JSON.parse(await readBody(req));
-          const port = parseInt(body.port, 10) || 0;
-          const upd = updateRegistered(key, { tunnelPort: port });
-          if (!upd.ok) result = upd;
-          else if (port > 0) { startTunnel(key, port); result = { ok: true, enabled: true, port }; }
-          else { stopTunnel(key); result = { ok: true, enabled: false }; }
+          const reg = getRegistered(key);
+          if (!reg) { result = { ok: false, error: 'Not registered' }; }
+          else {
+            const updates = {};
+            if (body.port !== undefined) updates.tunnelPort = parseInt(body.port, 10) || 0;
+            const newPort = updates.tunnelPort !== undefined ? updates.tunnelPort : (reg.tunnelPort || 0);
+            let newEnabled = reg.tunnelEnabled !== undefined ? reg.tunnelEnabled : (reg.tunnelPort > 0);
+            if (body.enabled !== undefined) {
+              if (body.enabled && newPort <= 0) {
+                result = { ok: false, error: 'Set a tunnel port before turning the tunnel on' };
+              } else {
+                newEnabled = !!body.enabled; updates.tunnelEnabled = newEnabled;
+              }
+            }
+            // Clearing the port also turns the tunnel off.
+            if (updates.tunnelPort === 0) { updates.tunnelEnabled = false; newEnabled = false; }
+            if (!result) {
+              const upd = updateRegistered(key, updates);
+              if (!upd.ok) result = upd;
+              else {
+                const isRunning = getAllServiceStatus().some(s => s.key === key && s.status === 'running');
+                stopTunnel(key); // also restarts cleanly on a port change
+                if (newEnabled && newPort > 0 && isRunning) startTunnel(key, newPort);
+                result = { ok: true, enabled: newEnabled, port: newPort };
+              }
+            }
+          }
         }
         else if (action === 'delete') {
           // Always stop the service before removing it so we never orphan a
@@ -1067,7 +1213,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           settings[key] = m ? m[1].trim() : '';
         }
         const chatId = getChatId ? getChatId() : '';
-        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '' });
+        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyAgentStatus });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
@@ -1093,6 +1239,11 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           state.chatId = newId;
           writeFileSync(stateFile, JSON.stringify(state));
           if (setChatId) setChatId(newId);
+        }
+        // Live toggle (no restart): notify on agent done / needs-input.
+        if (body.notifyAgentStatus !== undefined) {
+          notifyAgentStatus = !!body.notifyAgentStatus;
+          persistNotifyToggle();
         }
         return json(res, { ok: true, restartRequired: true });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
@@ -1367,6 +1518,87 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         rmSync(fullPath, { recursive: true, force: true });
         return json(res, { ok: true });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    // ─── Media library ───
+
+    // List media, enriched with link liveness. Filters: project, kind
+    // (kanban/mindmap/unlinked) or an exact target (type + ids), and
+    // includeGeneral (also show unlinked general items when scoped to a project).
+    if (path === '/api/media/list' && req.method === 'GET') {
+      const sp = url.searchParams;
+      const project = sp.get('project') || null;
+      let linkFilter = null;
+      const kind = sp.get('kind');
+      if (kind) linkFilter = { kind };
+      else if (sp.get('linkType')) {
+        const type = sp.get('linkType');
+        if (type === 'task') linkFilter = { type: 'task', taskId: sp.get('taskId') };
+        else if (type === 'todo') linkFilter = { type: 'todo', taskId: sp.get('taskId'), todoId: sp.get('todoId') };
+        else if (type === 'node') linkFilter = { type: 'node', nodeId: sp.get('nodeId') };
+      }
+      const items = media.listMedia({
+        project,
+        includeGeneral: sp.get('includeGeneral') === '1',
+        linkFilter,
+      }).map(enrichMedia);
+      return json(res, { ok: true, items });
+    }
+
+    // Upload media (base64). Optional project + link { type, ... }.
+    if (path === '/api/media/upload' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      if (!body.name || !body.data) return json(res, { ok: false, error: 'Missing name or data' }, 400);
+      let project = body.project || null;
+      // A link to a kanban task/todo forces the item's project to that task's
+      // project; a node link forces it to the node's effective project.
+      const link = body.link || null;
+      try {
+        if (link && (link.type === 'task' || link.type === 'todo') && project) {
+          const r = kanban.getTask(project, link.taskId, { includeDeleted: true });
+          if (!r.ok) return json(res, { ok: false, error: 'Linked task not found' }, 404);
+        } else if (link && link.type === 'node') {
+          const n = mindmap.getNode(link.nodeId);
+          if (!n) return json(res, { ok: false, error: 'Linked idea not found' }, 404);
+          project = n.effectiveProject || null;
+        }
+        const buf = Buffer.from(body.data, 'base64');
+        const r = media.addMediaFromBuffer({ name: body.name, buffer: buf, project, link });
+        if (!r.ok) return json(res, r);
+        broadcastMedia();
+        return json(res, { ok: true, item: enrichMedia(r.item) });
+      } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    if (path === '/api/media/delete' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const r = media.deleteMedia(body.id);
+      if (r.ok) broadcastMedia();
+      return json(res, r);
+    }
+
+    // Serve a media file's bytes. Auth is the normal session token (header or
+    // ?token= query — so <img>/<video>/<iframe> tags work). ?download=1 forces a
+    // download; otherwise it's served inline for in-app preview.
+    if (path.startsWith('/api/media/raw/') && req.method === 'GET') {
+      const id = path.slice('/api/media/raw/'.length);
+      const item = media.getMedia(id);
+      const fp = item && media.mediaFilePath(item);
+      if (!item || !fp || !existsSync(fp)) { res.writeHead(404); res.end('Not found'); return; }
+      try {
+        const st = statSync(fp);
+        const download = url.searchParams.get('download') === '1';
+        const fname = item.originalName.replace(/"/g, '\\"');
+        res.writeHead(200, {
+          'Content-Type': download ? 'application/octet-stream' : item.mime,
+          'Content-Length': st.size,
+          'Content-Disposition': (download ? 'attachment' : 'inline') + '; filename="' + fname + '"',
+          'Cache-Control': 'private, max-age=3600',
+          'Access-Control-Allow-Origin': '*',
+        });
+        createReadStream(fp).pipe(res);
+      } catch (err) { res.writeHead(500); res.end(err.message); }
+      return;
     }
 
     // ─── User Terminals (API for Terminals tab) ───
@@ -1644,6 +1876,53 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         }
         const schedReadOnly = ['schedule_list', 'schedule_get'].includes(body.tool);
         if (r.ok && !schedReadOnly) broadcastSSE('schedule', {});
+        return json(res, r);
+      }
+
+      // ─── Media tools (strictly project-scoped via args.alias) ───
+      if (body.tool.startsWith('media_')) {
+        const alias = String(a.alias || '').toLowerCase();
+        if (!alias) return json(res, { ok: false, error: 'No project context for media tool' });
+        // MCP view: include the local on-disk path so an agent can open the file.
+        const mcpView = (item) => {
+          const e = enrichMedia(item);
+          return { ...e, path: media.mediaFilePath(item) };
+        };
+        const ownsId = (id) => { const it = media.getMedia(id); return it && it.project === alias ? it : null; };
+        let r;
+        switch (body.tool) {
+          case 'media_list':
+            r = { ok: true, items: media.listMedia({ project: alias }).map(mcpView) };
+            break;
+          case 'media_get': {
+            const it = ownsId(a.id);
+            r = it ? { ok: true, item: mcpView(it) } : { ok: false, error: 'Media not found in this project' };
+            break;
+          }
+          case 'media_add_path': {
+            // Optional link to a task/todo/node in THIS project.
+            let link = null;
+            if (a.taskId && a.todoId) link = { type: 'todo', taskId: a.taskId, todoId: a.todoId };
+            else if (a.taskId) link = { type: 'task', taskId: a.taskId };
+            else if (a.nodeId) link = { type: 'node', nodeId: a.nodeId };
+            if (link && (link.type === 'task' || link.type === 'todo')) {
+              const t = kanban.getTask(alias, link.taskId, { includeDeleted: true });
+              if (!t.ok) { r = { ok: false, error: 'Linked task not found in this project' }; break; }
+            } else if (link && link.type === 'node') {
+              const n = mindmap.getNode(link.nodeId);
+              if (!n || (n.effectiveProject || null) !== alias) { r = { ok: false, error: 'Linked idea not found in this project' }; break; }
+            }
+            const add = media.addMediaFromPath({ path: a.path, name: a.name, project: alias, link });
+            r = add.ok ? { ok: true, item: mcpView(add.item) } : add;
+            break;
+          }
+          case 'media_delete':
+            r = ownsId(a.id) ? media.deleteMedia(a.id) : { ok: false, error: 'Media not found in this project' };
+            break;
+          default: return json(res, { ok: false, error: `Unknown media tool: ${body.tool}` }, 404);
+        }
+        const mediaReadOnly = ['media_list', 'media_get'].includes(body.tool);
+        if (r.ok && !mediaReadOnly) broadcastMedia();
         return json(res, r);
       }
 

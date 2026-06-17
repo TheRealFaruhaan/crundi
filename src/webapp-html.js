@@ -388,6 +388,9 @@ export function getWebappHtml(botUsername) {
       user-select: none;
     }
     .sidebar-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .sidebar-item.dragging { opacity: 0.4; }
+    /* drop indicator while reordering projects */
+    .proj-drop-line { height: 3px; margin: 1px 6px; border-radius: 2px; background: var(--accent); pointer-events: none; }
     .sidebar-item.active { background: var(--accent-dim); color: var(--accent-hover); }
     .sidebar-item.active::before {
       content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px;
@@ -400,7 +403,11 @@ export function getWebappHtml(botUsername) {
       flex-shrink: 0;
     }
     .sidebar-item.active .dot { background: var(--green); }
-    .sidebar-item.has-terminal .dot { background: var(--green); }
+    /* Terminal-state indicator (precedence computed in JS): purple = a terminal
+       needs input, amber = a terminal is working, green = running/idle. */
+    .sidebar-item.ts-running .dot { background: var(--green); }
+    .sidebar-item.ts-working .dot { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim, rgba(245,180,60,0.18)); }
+    .sidebar-item.ts-input .dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
     .sidebar-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sidebar-item .svc-heart { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-muted); }
     .sidebar-item .svc-heart .svc-ecg { display: block; }
@@ -484,6 +491,10 @@ export function getWebappHtml(botUsername) {
       }
       .sidebar.collapsed .sidebar-item:hover .proj-initials { border-color: var(--accent); color: var(--text-primary); }
       .sidebar.collapsed .sidebar-item.active:hover .proj-initials { color: #fff; }
+      /* Collapsed-rail border reflects terminal state (overrides active ring). */
+      .sidebar.collapsed .sidebar-item.ts-running .proj-initials { border-color: var(--green); color: var(--text-primary); }
+      .sidebar.collapsed .sidebar-item.ts-working .proj-initials { border-color: var(--yellow); color: var(--text-primary); box-shadow: 0 0 10px -2px var(--yellow); }
+      .sidebar.collapsed .sidebar-item.ts-input .proj-initials { border-color: var(--accent); color: #fff; box-shadow: 0 0 12px -2px var(--accent); }
       /* services heartbeat sits below the circle as a vital sign */
       .sidebar.collapsed .sidebar-item .svc-heart { margin: 0; }
       .sidebar.collapsed .sidebar-item .svc-heart .svc-ecg { width: 22px; height: 9px; }
@@ -528,7 +539,7 @@ export function getWebappHtml(botUsername) {
     }
     .term-cell.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
     .term-cell.term-drop-hover { outline: 2px dashed var(--accent); outline-offset: -2px; }
-    .file-item[data-drag-ref], .git-file[data-drag-ref], .kanban-todo[data-drag-ref] { cursor: grab; }
+    .file-item[data-drag-ref], .git-file[data-drag-ref], .kanban-todo[data-drag-ref], .media-card[data-drag-ref] { cursor: grab; }
     body.wb-drag-armed .term-cell[data-tid] { outline: 2px dashed var(--accent); outline-offset: -2px; }
     .term-head {
       display: flex; align-items: center; gap: 4px;
@@ -552,6 +563,11 @@ export function getWebappHtml(botUsername) {
     }
     .term-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
     .term-status-dot.exited { background: var(--text-muted); }
+    .term-status-dot.working { background: var(--yellow); }
+    .term-status-dot.input { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+    .term-agent-badge { flex-shrink: 0; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 999px; }
+    .term-agent-badge.working { background: var(--yellow-dim, rgba(245,180,60,0.16)); color: var(--yellow); }
+    .term-agent-badge.input { background: var(--accent-dim); color: var(--accent-hover); }
     .term-head-spacer { flex: 1; }
     .term-font-btn, .term-head-btn {
       border: 1px solid var(--border); background: var(--bg-primary);
@@ -613,6 +629,109 @@ export function getWebappHtml(botUsername) {
     .wb-add-menu button:hover { background: var(--accent); color: #fff; }
     .wb-add-menu button .ic { font-size: 1rem; color: var(--accent-hover); }
     .wb-add-menu button:hover .ic { color: #fff; }
+    /* ─── Interactive browser panel ─── */
+    .browser-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+    .brz-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); flex: 0 0 auto; }
+    .brz-nav { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: var(--radius-sm); cursor: pointer; padding: 0; }
+    .brz-nav:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+    .brz-nav:disabled { opacity: 0.35; cursor: default; }
+    .brz-nav .ic { width: 15px; height: 15px; }
+    .brz-url { flex: 1 1 auto; min-width: 0; height: 30px; padding: 0 12px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 999px; font-size: 0.8rem; font-family: var(--mono); outline: none; }
+    .brz-url:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+    .brz-device { height: 30px; max-width: 168px; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: 0.74rem; cursor: pointer; padding: 0 6px; flex: 0 0 auto; }
+    .brz-device:hover { border-color: var(--accent); }
+    .brz-stage { flex: 1 1 auto; min-height: 0; position: relative; background-color: var(--bg-primary); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 16px 16px; overflow: hidden; }
+    .brz-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.8rem; pointer-events: none; }
+    .browser-panel.brz-loading .brz-nav[data-brz="reload"] .ic { animation: brz-spin 0.8s linear infinite; }
+    @keyframes brz-spin { to { transform: rotate(360deg); } }
+    .brz-unavail { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--text-muted); text-align: center; padding: 24px; line-height: 1.5; }
+    .brz-unavail .ic { width: 38px; height: 38px; opacity: 0.45; }
+    .brz-unavail b { color: var(--text-secondary); }
+    /* "Layout" submenu flyout (desktop only) */
+    .wb-sub { position: relative; }
+    .wb-sub-caret { margin-left: auto; opacity: 0.55; }
+    .wb-subitems {
+      display: none; position: absolute; left: 100%; top: -5px; margin-left: 4px; min-width: 178px;
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 5px; box-shadow: 0 6px 22px rgba(0,0,0,0.55); flex-direction: column; gap: 2px;
+    }
+    .wb-sub:hover .wb-subitems, .wb-subitems:hover { display: flex; }
+    @media (max-width: 768px) { .wb-sub { display: none; } }
+    .wb-subitems button .lay-ic { width: 22px; height: 16px; flex-shrink: 0; color: var(--accent-hover); }
+    .wb-subitems button:hover .lay-ic { color: #fff; }
+
+    /* ─── Mosaic layout (desktop) ─── */
+    /* Overflow-x:auto so that once panes hit their min-width the row scrolls
+       horizontally instead of squashing further. */
+    .term-grid.mosaic { display: flex; overflow-x: auto; overflow-y: hidden; padding: 6px; }
+    /* The root node (leaf OR split) always grows to fill the grid — so a single
+       panel takes the full width + height, never compact. */
+    .term-grid.mosaic > .mosaic-leaf,
+    .term-grid.mosaic > .mosaic-split { flex: 1 1 0; }
+    /* Nested splits get an inline flex from their proportion; align-items:stretch
+       fills the cross axis. */
+    .mosaic-split { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
+    .mosaic-split.row { flex-direction: row; }
+    .mosaic-split.col { flex-direction: column; }
+    .mosaic-leaf { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+    .mosaic-leaf > .term-cell { flex: 1 1 0; min-width: 0; min-height: 0; }
+    /* Desktop: every pane has a min-width floor; splits size to their content so
+       the grid scrolls when the floors exceed the viewport. (Mobile overrides
+       these with full-width snap columns.) */
+    .term-grid.mosaic:not(.mobile) .mosaic-leaf { min-width: 340px; }
+    .term-grid.mosaic:not(.mobile) .mosaic-split { min-width: min-content; }
+    .mosaic-gutter { flex: 0 0 7px; position: relative; z-index: 3; touch-action: none; }
+    .mosaic-split.row > .mosaic-gutter { cursor: col-resize; }
+    .mosaic-split.col > .mosaic-gutter { cursor: row-resize; }
+    .mosaic-gutter::after { content: ''; position: absolute; background: var(--border); transition: background 0.12s; }
+    .mosaic-split.row > .mosaic-gutter::after { top: 0; bottom: 0; left: 3px; width: 1px; }
+    .mosaic-split.col > .mosaic-gutter::after { left: 0; right: 0; top: 3px; height: 1px; }
+    .mosaic-gutter:hover::after, body.mosaic-resizing .mosaic-gutter::after { background: var(--accent); }
+    .mosaic-empty {
+      flex: 1 1 0; position: relative; margin: 3px; display: flex; flex-direction: column; gap: 10px;
+      align-items: center; justify-content: center; border: 2px dashed var(--border);
+      border-radius: var(--radius); color: var(--text-muted); font-size: 0.82rem;
+    }
+    .mosaic-empty.drop-hover { border-color: var(--accent); color: var(--accent-hover); background: var(--accent-dim); }
+    .mosaic-empty .me-acts { display: flex; gap: 6px; }
+    .mosaic-empty .me-acts button {
+      display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+      border-radius: var(--radius-sm); font-size: 0.72rem;
+    }
+    .mosaic-empty .me-acts button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .mosaic-empty .me-acts button .ic { width: 13px; height: 13px; }
+    /* per-leaf split controls (hover) */
+    .leaf-ctrls { position: absolute; top: 3px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 3px; opacity: 0; transition: opacity 0.12s; }
+    .mosaic-leaf:hover .leaf-ctrls { opacity: 1; }
+    .leaf-ctrls button {
+      display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 18px;
+      padding: 0; cursor: pointer; border: 1px solid var(--border); background: var(--bg-secondary);
+      color: var(--text-secondary); border-radius: 5px;
+    }
+    .leaf-ctrls button:hover { border-color: var(--accent); color: var(--accent-hover); }
+    .leaf-ctrls button .lay-ic { width: 14px; height: 11px; }
+    body.mosaic-cell-drag .mosaic-leaf { outline: 1px dashed var(--border); outline-offset: -2px; }
+    body.mosaic-cell-drag .mosaic-leaf.drop-hover { outline: 2px solid var(--accent); }
+    /* ── Mobile mosaic: horizontal scroll of fixed full-width columns that snap;
+       only the rows (vertical splits) inside a column are resizable. ── */
+    /* Force horizontal layout — override the flat-stack flex-direction:column the
+       mobile media query sets on .term-grid (else a column grid collapses panes). */
+    .term-grid.mosaic.mobile { flex-direction: row; overflow: hidden; }
+    /* The single root node (leaf OR split) always fills the grid — so a
+       non-split column takes the full width AND height. */
+    .term-grid.mosaic.mobile > .mosaic-leaf,
+    .term-grid.mosaic.mobile > .mosaic-split { flex: 1 1 auto !important; min-width: 0; min-height: 0; }
+    /* A top-level ROW split is the horizontal snap-scroller of full-width columns. */
+    .term-grid.mosaic.mobile > .mosaic-split.row { overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+    .term-grid.mosaic.mobile > .mosaic-split.row > .mosaic-leaf,
+    .term-grid.mosaic.mobile > .mosaic-split.row > .mosaic-split {
+      flex: 0 0 100% !important; min-width: 100%; scroll-snap-align: start;
+    }
+    /* No horizontal (between-column) resizing anywhere on mobile — only rows. */
+    .term-grid.mosaic.mobile .mosaic-split.row > .mosaic-gutter { display: none; }
+    /* Pane split controls have no hover on touch — always show them. */
+    .term-grid.mosaic.mobile .leaf-ctrls { opacity: 1; }
 
     /* Workbench panel cells (Files / Git / Kanban / Mindmap embedded in the grid).
        The real tab-panel node is relocated into .wb-cell-body while the Workbench
@@ -654,6 +773,7 @@ export function getWebappHtml(botUsername) {
     .tab-bar.visible { display: flex; }
     .tab-btn {
       position: relative;
+      display: inline-flex; align-items: center; gap: 6px;
       padding: 10px 14px;
       white-space: nowrap;
       border: none;
@@ -663,6 +783,13 @@ export function getWebappHtml(botUsername) {
       font-weight: 500;
       cursor: pointer;
       transition: color 0.15s;
+    }
+    .tab-btn .ic { width: 15px; height: 15px; flex-shrink: 0; }
+    /* Mobile: icon-only tabs to fit the bar; labels hidden. */
+    @media (max-width: 768px) {
+      .tab-btn { padding: 10px 12px; gap: 0; }
+      .tab-btn .tab-label { display: none; }
+      .tab-btn .ic { width: 17px; height: 17px; }
     }
     .tab-btn::after {
       content: ''; position: absolute; left: 50%; right: 50%; bottom: 0; height: 2px;
@@ -688,63 +815,78 @@ export function getWebappHtml(botUsername) {
       color: var(--text-muted);
       gap: 12px;
     }
-    .services-empty .icon { font-size: 2.5rem; opacity: 0.3; }
+    .services-empty .icon { display: inline-flex; opacity: 0.4; }
+    .services-empty .icon .ic { width: 40px; height: 40px; }
+    /* Toolbar: title + primary register button (matches the kanban/mindmap toolbars). */
+    .svc-toolbar { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; }
+    .svc-toolbar .svc-title { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); }
+    .svc-toolbar .spacer { flex: 1; }
+    .svc-add-btn {
+      display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+      padding: 7px 13px; border-radius: var(--radius-sm);
+      border: 1px solid var(--accent); background: var(--accent); color: #fff; font-size: 0.8rem; font-weight: 500;
+    }
+    .svc-add-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .svc-add-btn .ic { width: 15px; height: 15px; }
     .svc-card {
-      background: var(--bg-secondary);
+      background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
+      border-radius: var(--radius);
       padding: 14px 16px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-    }
-    .svc-card .svc-header {
-      display: flex;
-      align-items: center;
       gap: 10px;
     }
-    .svc-card .svc-name {
-      font-weight: 600;
-      font-size: 0.9rem;
-      flex: 1;
-    }
+    .svc-card .svc-header { display: flex; align-items: center; gap: 9px; }
+    .svc-card .svc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+    .svc-card .svc-dot.running { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
+    .svc-card .svc-dot.error { background: var(--red); box-shadow: 0 0 0 3px var(--red-dim); }
+    .svc-card .svc-name { font-weight: 600; font-size: 0.9rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .svc-card .svc-status {
-      font-size: 0.75rem;
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-family: var(--mono);
+      font-size: 0.68rem; padding: 2px 9px; border-radius: 999px; font-family: var(--mono);
+      text-transform: uppercase; letter-spacing: 0.04em;
     }
     .svc-card .svc-status.running { background: var(--green-dim); color: var(--green); }
     .svc-card .svc-status.stopped { background: var(--bg-tertiary); color: var(--text-muted); }
     .svc-card .svc-status.error { background: var(--red-dim); color: var(--red); }
     .svc-card .svc-meta {
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      font-family: var(--mono);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      font-size: 0.76rem; color: var(--text-muted); font-family: var(--mono);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .svc-card .svc-meta .tunnel-link {
-      color: var(--accent);
-      text-decoration: none;
+    .svc-card .svc-meta .svc-up { color: var(--text-secondary); }
+    /* Action buttons — one consistent button style across the card. The bare
+       .svc-actions button selector also covers panels that reuse this row
+       (Terminals, Browsers) without needing the explicit class. */
+    .svc-card .svc-actions, .svc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .svc-btn, .svc-actions button {
+      display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+      padding: 5px 10px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+      font-size: 0.76rem; white-space: nowrap;
     }
-    .svc-card .svc-meta .tunnel-link:hover { text-decoration: underline; }
-    .svc-card .svc-actions {
-      display: flex;
-      gap: 6px;
-    }
-    .svc-card .svc-actions button {
-      padding: 4px 12px;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-      background: var(--bg-tertiary);
-      color: var(--text-secondary);
-      cursor: pointer;
-      font-size: 0.78rem;
-    }
-    .svc-card .svc-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
-    .svc-card .svc-actions button.danger:hover { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+    .svc-actions button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .svc-actions button.danger:hover { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    .svc-btn .ic, .svc-actions button .ic { width: 13px; height: 13px; }
+    .svc-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+    .svc-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .svc-btn.primary:hover { background: var(--accent-hover); }
+    .svc-btn.danger:hover { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    .svc-btn.on { border-color: var(--green); color: var(--green); }
+    .svc-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+    /* Tunnel controls grouped on their own row. */
+    .svc-tunnel { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding-top: 9px; border-top: 1px dashed var(--border-subtle); }
+    .svc-tunnel .svc-tunnel-ic { display: inline-flex; color: var(--text-muted); }
+    .svc-tunnel .svc-tunnel-ic .ic { width: 14px; height: 14px; }
+    .svc-tunnel .svc-tunnel-badge { font-size: 0.72rem; font-family: var(--mono); color: var(--text-muted); }
+    .svc-tunnel .tunnel-link { color: var(--accent); text-decoration: none; }
+    .svc-tunnel .tunnel-link:hover { text-decoration: underline; }
+    /* Register-service form — matches the card + input system. */
+    .svc-register-form { padding: 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin: 0 0 12px; display: flex; flex-direction: column; gap: 9px; }
+    .svc-register-form .srf-title { font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
+    .svc-reg-input { padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.82rem; font-family: var(--mono); }
+    .svc-reg-input::placeholder { color: var(--text-muted); }
+    .svc-reg-input:focus { border-color: var(--accent); outline: none; }
+    .svc-register-form .srf-actions { display: flex; gap: 6px; margin-top: 2px; }
 
     /* ─── Service Logs ─── */
     .svc-logs {
@@ -946,25 +1088,51 @@ export function getWebappHtml(botUsername) {
     .fe-editor { position: fixed; inset: 0; z-index: 2000; display: none; }
     .fe-editor.visible { display: block; }
     .fe-window { display: flex; flex-direction: column; background: var(--bg-primary); overflow: hidden; }
-    /* Mobile: full-screen modal (dimmed) as before. */
+    .fe-arrange, .fe-snap-hint { display: none; }
+    /* Mobile: full-screen modal (dimmed); only one window at a time. */
     @media (max-width: 768px) {
       .fe-editor.visible { background: rgba(0,0,0,0.6); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
       .fe-window { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .fe-expand { display: none; } /* expand/snap are desktop-only */
     }
-    /* Desktop: a NON-modal floating, draggable window — no backdrop, and clicks
-       in the empty area pass through so you can keep working behind it. */
+    /* Desktop: NON-modal floating, draggable + resizable windows — no backdrop,
+       clicks in the empty area pass through so you can keep working behind them. */
     @media (min-width: 769px) {
       .fe-editor { pointer-events: none; }
       .fe-window {
-        pointer-events: auto;
-        position: fixed; top: 60px; left: 50%; margin-left: calc(min(1100px, 90vw) * -0.5);
-        width: min(1100px, 90vw); height: min(78vh, 860px);
+        pointer-events: auto; position: fixed;
+        width: min(900px, 80vw); height: min(72vh, 820px);
+        min-width: 360px; min-height: 200px;
         border: 1px solid var(--border); border-radius: var(--radius);
         box-shadow: 0 24px 70px -12px rgba(0,0,0,0.75);
       }
+      .fe-window.maximized { top: 48px !important; left: 6px !important; width: calc(100vw - 12px) !important; height: calc(100vh - 54px) !important; }
+      .fe-window.maximized .fe-resize { display: none; }
       .fe-header { cursor: move; }
+      /* Custom resize handles (the editor content covers a native corner grip). */
+      .fe-resize { position: absolute; z-index: 6; }
+      .fe-resize-e { top: 0; right: -2px; width: 8px; height: 100%; cursor: ew-resize; }
+      .fe-resize-s { left: 0; bottom: -2px; height: 8px; width: 100%; cursor: ns-resize; }
+      .fe-resize-se { right: -2px; bottom: -2px; width: 16px; height: 16px; cursor: nwse-resize; }
+      .fe-resize-se::after { content: ''; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted); border-bottom-right-radius: 3px; }
+      .fe-window:hover .fe-resize-se::after { border-color: var(--accent); }
+      /* Arrange toolbar (top-center) — only while dragging a window (+ brief linger). */
+      .fe-arrange {
+        pointer-events: auto; position: fixed; top: 54px; left: 50%; transform: translateX(-50%);
+        z-index: 2400; align-items: center; gap: 6px; padding: 5px 8px;
+        background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 999px;
+        box-shadow: 0 6px 22px rgba(0,0,0,0.5);
+      }
+      .fe-editor.show-arrange .fe-arrange { display: flex; }
+      .fe-arrange-label { font-size: 0.72rem; color: var(--text-muted); padding: 0 4px; }
+      .fe-arrange button { border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: 999px; padding: 4px 11px; font-size: 0.74rem; cursor: pointer; }
+      .fe-arrange button:hover { border-color: var(--accent); color: #fff; background: var(--accent); }
+      /* Snap target preview while dragging to an edge. */
+      .fe-snap-hint { position: fixed; z-index: 2390; background: var(--accent-dim); border: 2px solid var(--accent); border-radius: var(--radius); pointer-events: none; transition: all 0.08s ease; }
+      .fe-editor.snapping .fe-snap-hint { display: block; }
     }
     .fe-header { padding: 8px 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; user-select: none; }
+    .fe-header .fe-expand { padding: 4px 9px; }
     .fe-header .fe-path { flex: 1; font-size: 12px; font-family: var(--mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fe-header button { padding: 4px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; font-size: 12px; }
     .fe-header button:hover { background: var(--accent); border-color: var(--accent); }
@@ -1104,25 +1272,26 @@ export function getWebappHtml(botUsername) {
       align-items: flex-end;
     }
     .term-input {
-      flex: 1; resize: none; padding: 6px 10px;
+      flex: 1; resize: none; padding: 7px 10px; box-sizing: border-box;
+      min-height: 34px; max-height: 120px; overflow-y: auto;
       border-radius: var(--radius-sm); border: 1px solid var(--border);
       background: var(--bg-primary); color: var(--text-primary);
       font-family: var(--mono); font-size: 13px; line-height: 1.4;
-      max-height: 120px; overflow-y: auto;
       outline: none;
     }
     .term-input:focus { border-color: var(--accent); }
-    .term-send-btn {
-      padding: 6px 14px; border-radius: var(--radius-sm);
-      border: 1px solid var(--accent); background: var(--accent);
-      color: #fff; cursor: pointer; font-size: 12px; font-weight: 600;
-      white-space: nowrap; align-self: flex-end;
+    /* All bottom controls share one square footprint, bottom-aligned with the
+       input (which grows upward as you type). */
+    .term-send-btn, .term-attach-btn {
+      align-self: flex-end; width: 34px; height: 34px; padding: 0; flex-shrink: 0;
+      border-radius: var(--radius-sm); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
     }
+    .term-send-btn .ic, .term-attach-btn .ic { width: 16px; height: 16px; }
+    .term-send-btn { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
     .term-send-btn:hover { background: var(--accent-hover); }
     .term-attach-btn {
-      align-self: flex-end; padding: 6px 9px; border-radius: var(--radius-sm);
-      border: 1px solid var(--border); background: var(--bg-tertiary);
-      color: var(--text-secondary); cursor: pointer; font-size: 14px; line-height: 1;
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
     }
     .term-attach-btn:hover { color: var(--accent-hover); border-color: var(--accent); }
     .term-attach-btn.busy { opacity: 0.6; pointer-events: none; }
@@ -1169,14 +1338,19 @@ export function getWebappHtml(botUsername) {
       padding: 0 10px; white-space: nowrap;
     }
     .term-tool-btn:active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    #mobile-layout-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    /* The horizontal-layout toggle lives in the bottom tools menu, mobile only. */
+    .ttg-mobile-only { display: none; }
     /* Mobile: compact the three groups (keys / ctrl grid / nav d-pad) so they
        stay on one row instead of the nav cluster wrapping to a second line. */
     @media (max-width: 768px) {
-      .term-tool-panel { gap: 8px; padding: 8px; flex-wrap: nowrap; }
+      .term-tool-panel { gap: 8px; padding: 8px; flex-wrap: wrap; }
       .ttg { gap: 4px; }
       .ttg-mid { gap: 4px; }
       .ttg-nav { grid-template-columns: repeat(3, minmax(32px, 1fr)); grid-auto-rows: 32px; gap: 4px; }
       .term-tool-btn { min-width: 32px; height: 32px; padding: 0 5px; font-size: 11px; }
+      .ttg-mobile-only { display: flex; width: 100%; }
+      .ttg-mobile-only .term-tool-btn { width: 100%; }
     }
 
     /* ─── Kanban ─── */
@@ -1384,6 +1558,116 @@ export function getWebappHtml(botUsername) {
     .pin-modal .pin-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
     /* ─── Mindmap ─── */
+    /* ─── Media library ─── */
+    /* Visibility/flex come from .tab-panel / .tab-panel.visible — do NOT force
+       display here or the panel stays in the layout while hidden and steals
+       height from the workbench. */
+    .media-panel { padding: 0; }
+    .media-body { flex: 1; overflow: auto; padding: 12px; }
+    .media-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .media-toolbar .spacer { flex: 1; }
+    /* Search field — cohesive with the mono/dark system + accent focus ring. */
+    .media-search {
+      flex: 1 1 150px; max-width: 280px; min-width: 130px;
+      background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary);
+      border-radius: var(--radius-sm); padding: 6px 10px; font-size: 0.8rem; font-family: var(--mono);
+    }
+    .media-search::placeholder { color: var(--text-muted); }
+    .media-search:focus { border-color: var(--accent); outline: none; }
+    .media-chip {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; cursor: pointer;
+      padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--bg-tertiary); color: var(--text-secondary);
+    }
+    .media-chip:hover { border-color: var(--accent); color: var(--text-primary); }
+    .media-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .media-chip .ic { width: 14px; height: 14px; }
+    .media-upload-btn {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; cursor: pointer;
+      padding: 7px 13px; border-radius: var(--radius-sm); border: 1px solid var(--accent);
+      background: var(--accent); color: #fff;
+    }
+    .media-upload-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+    .media-empty { color: var(--text-muted); text-align: center; padding: 40px 12px; font-size: 0.88rem; }
+    .media-card {
+      position: relative; border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--bg-card); overflow: hidden; display: flex; flex-direction: column;
+    }
+    .media-card.dropping { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+    .media-thumb {
+      position: relative; height: 110px; cursor: pointer; background:
+        repeating-conic-gradient(var(--bg-secondary) 0% 25%, var(--bg-primary) 0% 50%) 50% / 18px 18px;
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
+    }
+    .media-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .media-thumb .media-glyph { color: var(--text-muted); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .media-thumb .media-glyph .ic { width: 34px; height: 34px; }
+    .media-thumb .media-glyph .ext { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .media-kindbadge {
+      position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.55); color: #fff;
+      border-radius: 6px; padding: 2px 5px; display: inline-flex; align-items: center;
+    }
+    .media-kindbadge .ic { width: 13px; height: 13px; }
+    .media-info { padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; }
+    .media-name { font-size: 0.76rem; font-weight: 600; word-break: break-word; line-height: 1.25;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .media-sub { font-size: 0.66rem; color: var(--text-muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .media-link-tag { display: inline-flex; align-items: center; gap: 3px; color: var(--green); }
+    .media-link-tag.deleted { color: var(--text-muted); text-decoration: line-through; }
+    .media-actions { display: flex; gap: 4px; padding: 0 9px 9px; }
+    .media-actions button {
+      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+      font-size: 0.68rem; padding: 5px; border-radius: var(--radius-sm); cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+    }
+    .media-actions button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .media-actions button.danger:hover { border-color: var(--red); color: var(--red); }
+    .media-actions button .ic { width: 13px; height: 13px; }
+    /* Lightbox */
+    .media-lightbox {
+      display: none; position: fixed; inset: 0; z-index: 2200; background: rgba(0,0,0,0.86);
+      align-items: center; justify-content: center; flex-direction: column; padding: 24px;
+    }
+    .media-lightbox.visible { display: flex; }
+    .media-lightbox .ml-head { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 12px 16px; color: #fff; }
+    .media-lightbox .ml-title { font-size: 0.86rem; font-weight: 600; word-break: break-word; }
+    .media-lightbox .ml-head .spacer { flex: 1; }
+    .media-lightbox .ml-btn { background: rgba(255,255,255,0.12); color: #fff; border: none; border-radius: var(--radius-sm); padding: 7px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; }
+    .media-lightbox .ml-btn:hover { background: rgba(255,255,255,0.25); }
+    .media-lightbox .ml-stage { max-width: 100%; max-height: 100%; display: flex; align-items: center; justify-content: center; }
+    .media-lightbox .ml-stage img { max-width: 90vw; max-height: 82vh; object-fit: contain; box-shadow: 0 8px 30px rgba(0,0,0,0.6); }
+    .media-lightbox .ml-stage iframe { width: 90vw; height: 82vh; border: none; background: #fff; border-radius: 6px; }
+    .media-lightbox .ml-stage video, .media-lightbox .ml-stage audio { max-width: 90vw; max-height: 82vh; }
+    /* Inline media strip on kanban cards / mindmap detail */
+    .card-media { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin: 6px 0 2px; }
+    .media-mini {
+      width: 38px; height: 38px; border-radius: 7px; overflow: hidden; cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg-tertiary);
+      display: flex; align-items: center; justify-content: center; color: var(--text-muted); flex-shrink: 0;
+    }
+    .media-mini:hover { border-color: var(--accent); }
+    .media-mini img { width: 100%; height: 100%; object-fit: cover; }
+    .media-mini .ic { width: 18px; height: 18px; }
+    .card-media-add, .todo-media {
+      display: inline-flex; align-items: center; gap: 2px; cursor: pointer;
+      border: 1px dashed var(--border); background: transparent; color: var(--text-muted);
+      border-radius: 7px; padding: 0 6px; height: 24px; font-size: 0.66rem;
+    }
+    .card-media-add { width: 38px; height: 38px; justify-content: center; border-radius: 7px; }
+    .card-media-add:hover, .todo-media:hover { border-color: var(--accent); color: var(--accent-hover); }
+    .card-media-add .ic, .todo-media .ic { width: 14px; height: 14px; }
+    .todo-media .cnt { font-weight: 700; color: var(--accent-hover); }
+    /* Media browser inside the modal */
+    #media-modal .media-modal-body { display: flex; flex-direction: column; min-height: 0; flex: 1; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    #media-modal .media-toolbar { border-bottom: 1px solid var(--border); }
+    #media-modal .media-body { max-height: 58vh; }
+    /* highlight pulse used by jump-to-source */
+    .jump-flash { animation: jumpFlash 2.2s ease-out; }
+    @keyframes jumpFlash {
+      0%, 60% { box-shadow: 0 0 0 3px var(--accent), 0 0 18px 4px var(--accent-dim); }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
     .mindmap-panel { padding: 0; }
     .mindmap-canvas { position: relative; flex: 1; overflow: auto; background:
       radial-gradient(circle, var(--border-subtle) 1px, transparent 1px) 0 0 / 22px 22px; }
@@ -1510,11 +1794,13 @@ export function getWebappHtml(botUsername) {
     #mm-detail-modal .mmd-link:empty { display: none; }
     #mm-detail-modal .mmd-link .st { color: var(--text-muted); }
     #mm-detail-modal label.im-label { display: block; font-size: 0.78rem; color: var(--text-secondary); margin: 0 0 4px; }
-    #mm-detail-modal .mmd-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
-    #mm-detail-modal .mmd-actions button { flex: 1; min-width: 72px; border-radius: var(--radius-sm); padding: 8px; font-size: 0.82rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
-    #mm-detail-modal .mmd-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    #mm-detail-modal .mmd-actions button.danger { color: var(--red); }
-    #mm-detail-modal .mmd-actions button.danger:hover { border-color: var(--red); background: rgba(255,80,80,0.12); }
+    /* Shared by the mindmap detail modal AND the media modal's action row. */
+    .mmd-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    .mmd-actions button { flex: 1; min-width: 72px; border-radius: var(--radius-sm); padding: 8px; font-size: 0.82rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
+    .mmd-actions button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .mmd-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .mmd-actions button.danger { color: var(--red); }
+    .mmd-actions button.danger:hover { border-color: var(--red); background: rgba(255,80,80,0.12); }
 
     /* mindmap toolbar search */
     .mm-search { background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); border-radius: var(--radius-sm); padding: 6px 10px; font-size: 0.82rem; min-width: 160px; }
@@ -1706,19 +1992,20 @@ export function getWebappHtml(botUsername) {
       <div class="sidebar-overlay" id="sidebar-overlay" data-action="close-sidebar"></div>
       <div class="terminal-area">
         <div class="tab-bar" id="tab-bar">
-          <button class="tab-btn active" data-tab="workbench">Workbench</button>
+          <button class="tab-btn active" data-tab="workbench" title="Workbench"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="tab-label">Workbench</span></button>
           <button class="tab-add-term" id="tab-add-term" data-action="wb-add-menu" title="Add to workbench" style="display:none;">+</button>
-          <button class="tab-btn" data-tab="git">Git</button>
-          <button class="tab-btn" data-tab="files">Files</button>
-          <button class="tab-btn" data-tab="kanban">Kanban</button>
-          <button class="tab-btn" data-tab="mindmap">Mindmap</button>
-          <button class="tab-btn" data-tab="schedule">Schedule</button>
-          <button class="tab-btn" data-tab="services">Services</button>
-          <button class="tab-btn" data-tab="terminals">Terminals</button>
-          <button class="tab-btn" data-tab="browsers">Browsers</button>
-          <button class="tab-btn" data-tab="info">Info</button>
-          <button class="tab-btn" data-tab="secrets">Secrets <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
-          <button class="tab-btn" data-tab="settings">Settings</button>
+          <button class="tab-btn" data-tab="git" title="Git"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span class="tab-label">Git</span></button>
+          <button class="tab-btn" data-tab="files" title="Files"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="tab-label">Files</span></button>
+          <button class="tab-btn" data-tab="kanban" title="Kanban"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg><span class="tab-label">Kanban</span></button>
+          <button class="tab-btn" data-tab="mindmap" title="Mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span class="tab-label">Mindmap</span></button>
+          <button class="tab-btn" data-tab="media" title="Media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg><span class="tab-label">Media</span></button>
+          <button class="tab-btn" data-tab="schedule" title="Schedule"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg><span class="tab-label">Schedule</span></button>
+          <button class="tab-btn" data-tab="services" title="Services"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg><span class="tab-label">Services</span></button>
+          <button class="tab-btn" data-tab="terminals" title="Terminals"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><span class="tab-label">Terminals</span></button>
+          <button class="tab-btn" data-tab="browsers" title="Browsers"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browsers</span></button>
+          <button class="tab-btn" data-tab="info" title="Info"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span class="tab-label">Info</span></button>
+          <button class="tab-btn" data-tab="secrets" title="Secrets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tab-label">Secrets</span> <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
+          <button class="tab-btn" data-tab="settings" title="Settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="tab-label">Settings</span></button>
         </div>
         <div class="wb-add-menu" id="wb-add-menu" style="display:none;">
           <button data-action="wb-add" data-kind="terminal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal</button>
@@ -1726,6 +2013,18 @@ export function getWebappHtml(botUsername) {
           <button data-action="wb-add" data-kind="git"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> Git</button>
           <button data-action="wb-add" data-kind="kanban"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Kanban</button>
           <button data-action="wb-add" data-kind="mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Mindmap</button>
+          <button data-action="wb-add" data-kind="media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg> Media</button>
+          <button data-action="wb-add" data-kind="browser"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Browser</button>
+          <div class="wb-sub" id="wb-layout-sub">
+            <button type="button"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg> Layout <span class="wb-sub-caret">&#9656;</span></button>
+            <div class="wb-subitems">
+              <button data-action="wb-layout" data-mlayout="cols2"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="10" height="16" rx="1.5"/><rect x="13" y="1" width="10" height="16" rx="1.5"/></svg> 2 columns</button>
+              <button data-action="wb-layout" data-mlayout="cols3"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="6.3" height="16" rx="1.2"/><rect x="8.85" y="1" width="6.3" height="16" rx="1.2"/><rect x="16.7" y="1" width="6.3" height="16" rx="1.2"/></svg> 3 columns</button>
+              <button data-action="wb-layout" data-mlayout="cross4"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/></svg> 2&#215;2 cross</button>
+              <button data-action="wb-layout" data-mlayout="left-right2"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="10" height="16" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/></svg> Left + right split</button>
+              <button data-action="wb-layout" data-mlayout="top-bottom2"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="22" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/></svg> Top + bottom split</button>
+            </div>
+          </div>
         </div>
         <div class="terminal-wrap tab-panel visible" data-panel="workbench">
           <div class="terminal-placeholder" id="terminal-placeholder">
@@ -1758,13 +2057,16 @@ export function getWebappHtml(botUsername) {
               <button class="term-tool-btn" data-action="term-key" data-key="ArrowRight">&#9654;</button>
               <button class="term-tool-btn" data-action="term-key" data-key="ArrowDown">&#9660;</button>
             </div>
+            <div class="ttg ttg-mobile-only">
+              <button class="term-tool-btn span2" id="mobile-layout-toggle" data-action="toggle-mobile-layout" title="Toggle horizontal column layout"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:14px;height:14px;vertical-align:-2px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Layout</button>
+            </div>
           </div>
           <div class="term-input-bar" id="term-input-bar">
             <button class="term-tool-toggle" id="term-tool-toggle" data-action="term-tool-toggle" title="Keyboard tools"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
             <textarea id="term-input" class="term-input" rows="1" placeholder="Type here... (Ctrl+Enter or Send button)"></textarea>
             <button class="term-attach-btn" data-action="term-attach" title="Attach a file (uploads to crundi_attachments)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
             <input type="file" id="term-attach-input" style="display:none">
-            <button class="term-send-btn" data-action="term-send" title="Send to terminal">Send</button>
+            <button class="term-send-btn" data-action="term-send" title="Send to terminal" aria-label="Send"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
           </div>
         </div>
         <div class="git-panel tab-panel" id="git-panel" data-panel="git"></div>
@@ -1772,6 +2074,8 @@ export function getWebappHtml(botUsername) {
         <div class="kanban-panel tab-panel" id="kanban-panel" data-panel="kanban"></div>
         <div class="secrets-panel tab-panel" id="secrets-panel" data-panel="secrets"></div>
         <div class="mindmap-panel tab-panel" id="mindmap-panel" data-panel="mindmap"></div>
+        <div class="media-panel tab-panel" id="media-panel" data-panel="media"></div>
+        <div class="browser-panel tab-panel" id="browser-panel" data-panel="browser"></div>
         <div class="schedule-panel tab-panel" id="schedule-panel" data-panel="schedule"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="services-panel tab-panel" id="terminals-panel" data-panel="terminals"></div>
@@ -1786,15 +2090,17 @@ export function getWebappHtml(botUsername) {
   <div id="sched-modal"><div class="sched-modal-card" id="sched-modal-card"></div></div>
 
   <!-- ─── File Editor Modal ─── -->
+  <!-- Floating editor/diff windows are created dynamically inside this overlay.
+       Desktop: multiple draggable / resizable windows with snap + tile. Mobile:
+       a single full-screen window. -->
   <div class="fe-editor" id="file-editor">
-    <div class="fe-window" id="fe-window">
-      <div class="fe-header" id="fe-header">
-        <span class="fe-path" id="fe-path"></span>
-        <button onclick="feClose()">Close</button>
-        <button class="save" id="fe-save-btn" onclick="feSave()">Save</button>
-      </div>
-      <div class="fe-content" id="fe-container"></div>
+    <div class="fe-arrange" id="fe-arrange">
+      <span class="fe-arrange-label">Arrange</span>
+      <button data-fe-arrange="tile" title="Tile windows side by side">Tile</button>
+      <button data-fe-arrange="grid" title="Tile windows in a grid">Grid</button>
+      <button data-fe-arrange="cascade" title="Cascade windows">Cascade</button>
     </div>
+    <div class="fe-snap-hint" id="fe-snap-hint"></div>
   </div>
 
   <!-- ─── Add Project Modal ─── -->
@@ -1874,6 +2180,7 @@ export function getWebappHtml(botUsername) {
       <div id="mmd-view">
         <div class="mmd-link" id="mmd-link"></div>
         <ul class="mmd-notes" id="mmd-notes"></ul>
+        <div class="card-media" id="mmd-media"></div>
       </div>
       <div id="mmd-edit" style="display:none">
         <label class="im-label">Idea</label>
@@ -1887,9 +2194,32 @@ export function getWebappHtml(botUsername) {
         <button id="mmd-save-btn" class="primary" style="display:none">Save</button>
         <button id="mmd-addchild-btn">+ Child</button>
         <button id="mmd-link-btn">Link</button>
+        <button id="mmd-media-btn">Media</button>
         <button id="mmd-del-btn" class="danger">Delete</button>
         <button id="mmd-close-btn">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ─── Media lightbox (large preview) ─── -->
+  <div class="media-lightbox" id="media-lightbox">
+    <div class="ml-head">
+      <span class="ml-title" id="ml-title"></span>
+      <div class="spacer"></div>
+      <button class="ml-btn" id="ml-download">Download</button>
+      <button class="ml-btn" id="ml-close">Close</button>
+    </div>
+    <div class="ml-stage" id="ml-stage"></div>
+  </div>
+  <!-- hidden input used for media uploads -->
+  <input type="file" id="media-file-input" multiple style="display:none">
+
+  <!-- ─── Media library modal (used by Kanban / Mindmap "Media" buttons) ─── -->
+  <div class="input-modal" id="media-modal">
+    <div class="im-box" style="max-width:780px;width:96%;display:flex;flex-direction:column;max-height:88vh">
+      <h3 id="media-modal-title" style="margin-bottom:10px">Media</h3>
+      <div class="media-modal-body" id="media-modal-body"></div>
+      <div class="mmd-actions" style="margin-top:12px"><button id="media-modal-close">Close</button></div>
     </div>
   </div>
 
@@ -1939,6 +2269,30 @@ export function getWebappHtml(botUsername) {
     let wbCells = [];              // client-only workbench panel cells: { id, kind:'files'|'git', dir }
     let wbStateProject = null;     // which project wbCells/wbOrder belong to
     let wbOrder = [];             // unified display order of cell keys (live:/pend:/panel:) for the current project
+    // Per-project workbench cell state (open panels, ordering, un-launched
+    // placeholders), persisted so switching projects — or reloading — no longer
+    // wipes the layout. The mosaic *tree* (splits/sizes) is stored separately in
+    // crundi_wb_mosaic and references these cells by key, so both must survive.
+    let wbByProject = {};
+    try { wbByProject = JSON.parse(localStorage.getItem('crundi_wb_cells') || '{}') || {}; } catch { wbByProject = {}; }
+    function persistWbState() {
+      if (wbStateProject != null) wbByProject[wbStateProject] = { cells: wbCells, order: wbOrder, pending: pendingCells };
+      try { localStorage.setItem('crundi_wb_cells', JSON.stringify(wbByProject)); } catch { /* ignore */ }
+    }
+    // Save the outgoing project's workbench state and restore the incoming one.
+    // Replaces the old "reset to empty on project change" behaviour.
+    function syncWbStateProject() {
+      if (wbStateProject === currentProject && pendingProject === currentProject) return;
+      if (wbStateProject != null && wbStateProject !== currentProject) {
+        wbByProject[wbStateProject] = { cells: wbCells, order: wbOrder, pending: pendingCells };
+      }
+      const s = wbByProject[currentProject] || {};
+      wbCells = Array.isArray(s.cells) ? s.cells.slice() : [];
+      wbOrder = Array.isArray(s.order) ? s.order.slice() : [];
+      pendingCells = Array.isArray(s.pending) ? s.pending.slice() : [];
+      wbStateProject = currentProject; pendingProject = currentProject;
+      persistWbState();
+    }
     const termFont = JSON.parse(localStorage.getItem('crundi_term_font') || '{}'); // termId → px
     let currentProject = null;
     let currentTab = 'workbench';
@@ -2016,9 +2370,22 @@ export function getWebappHtml(botUsername) {
       plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
       kanban: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>',
       'chevrons-left': '<polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/>',
+      'chevron-left': '<polyline points="15 18 9 12 15 6"/>',
+      'chevron-right': '<polyline points="9 18 15 12 9 6"/>',
       'bar-chart': '<line x1="6" y1="20" x2="6" y2="14"/><line x1="12" y1="20" x2="12" y2="9"/><line x1="18" y1="20" x2="18" y2="4"/>',
       clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>',
       mindmap: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
+      film: '<rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>',
+      music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+      'external-link': '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+      x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+      images: '<rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/>',
+      info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+      server: '<rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/>',
+      send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+      maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/>',
+      play: '<polygon points="6 4 20 12 6 20 6 4"/>',
+      stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
     };
     function ic(name) {
       const p = ICON_PATHS[name]; if (!p) return '';
@@ -2507,6 +2874,7 @@ export function getWebappHtml(botUsername) {
       loadProjectConfig();
       loadProjects();
       setupTerminalArea();
+      updateMobileLayoutBtn();
       loadUsage();
       // Electron: enable drag region and window controls
       if (window.api) {
@@ -2578,10 +2946,16 @@ export function getWebappHtml(botUsername) {
       const list = $('#project-list');
       list.innerHTML = '';
       for (const p of projects) {
-        const hasTerminal = terminals.some(t => t.project === p.alias);
+        // Terminal-state precedence for this project's dot/border:
+        // needs-input (purple) > working (amber) > running/idle (green) > none.
+        const projTerms = terminals.filter(t => t.project === p.alias && t.status === 'running');
+        let ts = '';
+        if (projTerms.some(t => t.agentState === 'needs-input')) ts = 'ts-input';
+        else if (projTerms.some(t => t.agentState === 'working')) ts = 'ts-working';
+        else if (projTerms.length) ts = 'ts-running';
         const isActive = currentProject === p.alias;
         const item = document.createElement('div');
-        item.className = 'sidebar-item' + (isActive ? ' active' : '') + (hasTerminal ? ' has-terminal' : '');
+        item.className = 'sidebar-item' + (isActive ? ' active' : '') + (ts ? ' ' + ts : '');
         item.dataset.project = p.alias;
         item.title = p.name || p.alias; // full name on hover (esp. when collapsed)
         // Project removal is only offered in multi mode (manually-added
@@ -2615,10 +2989,50 @@ export function getWebappHtml(botUsername) {
         item.addEventListener('click', (e) => {
           const act = e.target.dataset.action;
           if (act === 'remove-project') return;
+          // Ignore the click that trails a drag-reorder.
+          if (Date.now() - _projDragEndAt < 300) return;
           selectProject(p.alias);
         });
+        makeDraggable(item, projectDragHandlers(p.alias));
         list.appendChild(item);
       }
+    }
+
+    // ─── Sidebar project reordering (drag to rearrange; persisted server-side) ──
+    let _projDropLine = null, _projDragEndAt = 0;
+    function projectReorderTarget(y, draggedAlias) {
+      const list = $('#project-list'); if (!list) return null;
+      const items = [...list.children].filter(c => c.dataset && c.dataset.project && c.dataset.project !== draggedAlias && c !== _projDropLine);
+      for (let i = 0; i < items.length; i++) {
+        const r = items[i].getBoundingClientRect();
+        if (y < r.top + r.height / 2) return { index: i, before: items[i] };
+      }
+      return { index: items.length, before: null };
+    }
+    function projectDragHandlers(alias) {
+      let target = null;
+      return {
+        onMove: (x, y) => {
+          const list = $('#project-list'); if (!list) return;
+          if (!_projDropLine) { _projDropLine = document.createElement('div'); _projDropLine.className = 'proj-drop-line'; }
+          target = projectReorderTarget(y, alias);
+          if (!target) { if (_projDropLine.parentNode) _projDropLine.remove(); return; }
+          if (target.before) list.insertBefore(_projDropLine, target.before);
+          else list.appendChild(_projDropLine);
+        },
+        onEnd: async (commit) => {
+          if (_projDropLine && _projDropLine.parentNode) _projDropLine.remove();
+          _projDragEndAt = Date.now();
+          if (commit && target) {
+            const order = projects.map(p => p.alias).filter(a => a !== alias);
+            order.splice(Math.min(target.index, order.length), 0, alias);
+            projects.sort((a, b) => order.indexOf(a.alias) - order.indexOf(b.alias));
+            renderProjects();
+            try { await apiFetch('/api/projects/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) }); } catch { /* ignore */ }
+          }
+          target = null;
+        },
+      };
     }
 
     async function selectProject(alias) {
@@ -2629,9 +3043,9 @@ export function getWebappHtml(botUsername) {
       gitRefreshTimer = null;
       const p = projects.find(x => x.alias === alias);
       $('#current-project').textContent = p ? (p.name || p.alias) : alias;
-      // Switching project: the un-launched placeholder cells belong to the
-      // project they were created under, so reset them for the new project.
-      if (pendingProject !== alias) { pendingCells = []; pendingProject = alias; }
+      // Switching project: save the outgoing workbench state and restore this
+      // project's (open panels, ordering, placeholders) instead of wiping it.
+      syncWbStateProject();
       focusedTermId = null;
       renderProjects();
       closeSidebar();
@@ -2683,6 +3097,7 @@ export function getWebappHtml(botUsername) {
     // Discard an un-launched placeholder cell.
     function closePendingCell(localId) {
       pendingCells = pendingCells.filter(x => x !== localId);
+      persistWbState();
       renderTermGrid();
     }
 
@@ -2690,8 +3105,9 @@ export function getWebappHtml(botUsername) {
     function addTerminalCell() {
       if (!currentProject) { toast('Select a project first', 'error'); return; }
       if (currentTab !== 'workbench') { switchTab('workbench'); }
-      if (pendingProject !== currentProject) { pendingCells = []; pendingProject = currentProject; }
+      syncWbStateProject();
       pendingCells.push(genLocalId());
+      persistWbState();
       renderTermGrid();
     }
 
@@ -2757,8 +3173,7 @@ export function getWebappHtml(botUsername) {
       if (addBtn) addBtn.style.display = '';
       if (bar) bar.style.display = '';
 
-      if (pendingProject !== currentProject) { pendingCells = []; pendingProject = currentProject; }
-      if (wbStateProject !== currentProject) { wbCells = []; wbOrder = []; wbStateProject = currentProject; }
+      syncWbStateProject();
       const live = liveTermsForProject();
       // "Terminal by default opens in one column": seed a single placeholder when
       // a project has no cells of any kind yet.
@@ -2777,26 +3192,101 @@ export function getWebappHtml(botUsername) {
       for (const d of items) if (byKey.has(d.key)) ordered.push(d);
       wbOrder = ordered.map(d => d.key);
       const desired = ordered;
+      wbLastKeys = desired.map(d => d.key);
+      persistWbState(); // capture latest panels/order/placeholders for this project
 
+      // Reconcile the set of cell elements (search the WHOLE grid, since in mosaic
+      // mode cells live nested inside leaves — not just top-level children).
       const wanted = new Set(desired.map(d => d.key));
-      [...grid.children].forEach(ch => { const k = ch.dataset && ch.dataset.cellkey; if (k && !wanted.has(k)) destroyCell(ch); });
-
+      grid.querySelectorAll('[data-cellkey]').forEach(ch => { const k = ch.dataset.cellkey; if (k && !wanted.has(k)) destroyCell(ch); });
+      const elByKey = {};
+      const newLive = [];
       for (const d of desired) {
-        let el = grid.querySelector(':scope > [data-cellkey="' + d.key + '"]');
-        if (!el) {
-          el = buildCellEl(d);
-          grid.appendChild(el);
-          if (d.type === 'live') mountXterm(d.t, el);
-        } else if (d.type === 'live') {
-          updateCellHead(el, d.t);
-        }
-        grid.appendChild(el); // enforce display order
+        let el = grid.querySelector('[data-cellkey="' + d.key + '"]');
+        if (!el) { el = buildCellEl(d); if (d.type === 'live') newLive.push([d, el]); }
+        else if (d.type === 'live') updateCellHead(el, d.t);
+        elByKey[d.key] = el;
       }
+
+      // Arrange: mosaic on desktop (always); on mobile only when the user opts in
+      // via the bottom-tools toggle (otherwise the classic flat vertical stack).
+      if (mosaicActive()) {
+        grid.classList.add('mosaic');
+        grid.classList.toggle('mobile', isMobileTerm()); // mobile = fixed full-width snap columns, only rows resize
+        arrangeMosaic(grid, desired, elByKey);
+      } else {
+        grid.classList.remove('mosaic', 'mobile');
+        // replaceChildren moves the cells in order and drops any leftover mosaic
+        // skeleton from a previous desktop render.
+        grid.replaceChildren(...desired.map(d => elByKey[d.key]));
+      }
+
+      // Mount xterm for newly built live cells AFTER they're attached to the DOM.
+      for (const [d, el] of newLive) mountXterm(d.t, el);
 
       if (!focusedTermId || !live.some(t => t.id === focusedTermId)) focusedTermId = live[0] ? live[0].id : null;
       updateFocusStyles();
       embedWbPanels();
       setTimeout(fitAllTerms, 30);
+    }
+    let wbLastKeys = [];
+    function currentDesiredKeys() { return wbLastKeys.slice(); }
+
+    // Build the mosaic DOM from the (synced) tree and relocate each cell element
+    // into its leaf. Empty leaves render as drop targets. Cells are MOVED (not
+    // rebuilt), so running terminals survive.
+    function arrangeMosaic(grid, desired, elByKey) {
+      const tree = mosaicSync(desired.map(d => d.key));
+      const leafMap = [];
+      const skeleton = buildMosaicDom(tree, leafMap);
+      for (const { node, dom } of leafMap) {
+        if (node.key && elByKey[node.key]) {
+          dom.appendChild(elByKey[node.key]);
+          dom.insertAdjacentHTML('beforeend', leafCtrlsHtml(node._id));
+        } else {
+          dom.innerHTML = emptyLeafHtml(node._id);
+        }
+      }
+      grid.replaceChildren(skeleton); // old skeleton dropped; cells already moved into new one
+    }
+    function buildMosaicDom(node, leafMap) {
+      if (node.t === 'leaf') {
+        const d = document.createElement('div');
+        d.className = 'mosaic-leaf'; d.dataset.leafId = node._id;
+        leafMap.push({ node, dom: d });
+        return d;
+      }
+      const s = document.createElement('div');
+      s.className = 'mosaic-split ' + node.dir; s.dataset.splitId = node._id;
+      node.kids.forEach((kid, i) => {
+        if (i > 0) {
+          const g = document.createElement('div');
+          g.className = 'mosaic-gutter'; g.dataset.splitId = node._id; g.dataset.gutter = i;
+          s.appendChild(g);
+        }
+        const kEl = buildMosaicDom(kid, leafMap);
+        const size = (node.sizes && node.sizes[i] != null) ? node.sizes[i] : (100 / node.kids.length);
+        kEl.style.flex = size + ' 1 0';
+        s.appendChild(kEl);
+      });
+      return s;
+    }
+    function leafCtrlsHtml(id) {
+      const sr = '<svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="12" y1="1" x2="12" y2="17"/></svg>';
+      const sd = '<svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="1" y1="9" x2="23" y2="9"/></svg>';
+      return '<div class="leaf-ctrls">'
+        + '<button data-action="leaf-split" data-leaf="' + id + '|row" title="Split right">' + sr + '</button>'
+        + '<button data-action="leaf-split" data-leaf="' + id + '|col" title="Split down">' + sd + '</button>'
+        + '</div>';
+    }
+    function emptyLeafHtml(id) {
+      return '<div class="mosaic-empty" data-leaf-drop="' + id + '">'
+        + '<div class="me-msg">Drop a panel here</div>'
+        + '<div class="me-acts">'
+        + '<button data-action="leaf-split" data-leaf="' + id + '|row" title="Split right">' + ic('plus') + 'Split &#9656;</button>'
+        + '<button data-action="leaf-split" data-leaf="' + id + '|col" title="Split down">' + ic('plus') + 'Split &#9662;</button>'
+        + '<button data-action="leaf-remove" data-leaf="' + id + '" title="Remove pane">' + ic('x') + '</button>'
+        + '</div></div>';
     }
 
     function buildCellEl(d) {
@@ -2863,6 +3353,8 @@ export function getWebappHtml(botUsername) {
       git: { icon: 'git-branch', label: 'Git' },
       kanban: { icon: 'kanban', label: 'Kanban' },
       mindmap: { icon: 'mindmap', label: 'Mindmap' },
+      media: { icon: 'images', label: 'Media' },
+      browser: { icon: 'globe', label: 'Browser' },
     };
     function headHtmlPanel(cell) {
       const m = WB_KIND_META[cell.kind] || { icon: 'file', label: cell.kind };
@@ -2876,9 +3368,14 @@ export function getWebappHtml(botUsername) {
 
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
+      const as = exited ? '' : (t.agentState || 'idle');
+      const dotCls = exited ? ' exited' : (as === 'working' ? ' working' : as === 'needs-input' ? ' input' : '');
+      const badge = (!exited && as === 'working') ? '<span class="term-agent-badge working">working</span>'
+        : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>' : '';
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
-        + '<span class="term-status-dot' + (exited ? ' exited' : '') + '" title="' + (exited ? 'exited' : 'running') + '"></span>'
+        + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
         + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || 'Terminal') + '</span>'
+        + badge
         + '<span class="term-head-spacer"></span>'
         + '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
         + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
@@ -2889,8 +3386,24 @@ export function getWebappHtml(botUsername) {
     function updateCellHead(el, t) {
       const titleEl = el.querySelector('.term-title');
       if (titleEl && titleEl.tagName !== 'INPUT' && titleEl.textContent !== (t.title || 'Terminal')) titleEl.textContent = t.title || 'Terminal';
+      const exited = t.status === 'exited';
+      const as = exited ? '' : (t.agentState || 'idle');
       const dot = el.querySelector('.term-status-dot');
-      if (dot) dot.classList.toggle('exited', t.status === 'exited');
+      if (dot) {
+        dot.classList.toggle('exited', exited);
+        dot.classList.toggle('working', as === 'working');
+        dot.classList.toggle('input', as === 'needs-input');
+        dot.title = exited ? 'exited' : as;
+      }
+      // Agent-state badge (working / needs input) next to the title.
+      let badge = el.querySelector('.term-agent-badge');
+      const want = (!exited && as === 'working') ? ['working', 'working']
+        : (!exited && as === 'needs-input') ? ['input', 'needs input'] : null;
+      if (!want) { if (badge) badge.remove(); }
+      else {
+        if (!badge && titleEl) { badge = document.createElement('span'); titleEl.after(badge); }
+        if (badge) { badge.className = 'term-agent-badge ' + want[0]; badge.textContent = want[1]; }
+      }
     }
 
     function mountXterm(t, cellEl) {
@@ -3022,6 +3535,8 @@ export function getWebappHtml(botUsername) {
       else if (kind === 'git') loadGitInfo();
       else if (kind === 'kanban') loadKanban();
       else if (kind === 'mindmap') loadMindmap();
+      else if (kind === 'media') loadMedia();
+      else if (kind === 'browser') initBrowserPanel();
     }
     // Move each workbench cell's panel node into its body (if not already there)
     // and refresh it. Only loads when it actually (re)mounts to avoid churn.
@@ -3044,26 +3559,351 @@ export function getWebappHtml(botUsername) {
       if (!currentProject) { toast('Select a project first', 'error'); return; }
       if (!WB_KIND_META[kind]) return;
       if (currentTab !== 'workbench') switchTab('workbench');
-      if (wbStateProject !== currentProject) { wbCells = []; wbOrder = []; wbStateProject = currentProject; }
+      syncWbStateProject();
       const existing = wbCells.find(c => c.kind === kind);
       if (existing) { toast(WB_KIND_META[kind].label + ' is already in the workbench', ''); return; }
       wbCells.push({ id: genLocalId(), kind });
+      persistWbState();
       renderTermGrid();
     }
     function closeWbCell(wbid) {
       const cell = wbCells.find(c => c.id === wbid);
       if (cell) {
+        if (cell.kind === 'browser') brzPost('close');
         const node = document.getElementById(cell.kind + '-panel');
         const body = document.querySelector('.wb-cell-body[data-wb="' + wbid + '"]');
         if (node && body && node.parentNode === body) parkPanelNode(node);
       }
       wbCells = wbCells.filter(c => c.id !== wbid);
       wbOrder = wbOrder.filter(k => k !== 'panel:' + wbid);
+      persistWbState();
       renderTermGrid();
     }
     function refreshWbCell(wbid) {
       const cell = wbCells.find(c => c.id === wbid);
       if (cell) wbLoad(cell.kind);
+    }
+
+    // ─── Interactive browser panel (desktop app only) ───────────────────────────
+    // A real Chromium WebContentsView is managed in the Electron main process and
+    // overlaid on this panel's stage (see app/main.js). In the desktop app the web
+    // UI is the top-level page, so the preload's window.api.wbrowser is available
+    // and we call it directly (rect / navigation / device-emulation), and receive
+    // page state via api.wbrowser.onState. Picking a device constrains the view
+    // (scaled + centered + touch); "Responsive" fills the panel.
+    const BRZ_API = () => (window.api && window.api.wbrowser) || null;
+    const BRZ_DESKTOP = !!BRZ_API();
+    const BRZ_ID = 'wb';
+    const BRZ_START = 'https://www.google.com';
+    const BRZ_DEVICES = [
+      { name: 'Responsive', responsive: true },
+      { name: 'iPhone SE', w: 375, h: 667, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPhone 12 Pro', w: 390, h: 844, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPhone 15 Pro', w: 393, h: 852, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPhone 16 Pro', w: 393, h: 852, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPhone 16 Pro Max', w: 430, h: 932, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPad Mini', w: 768, h: 1024, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPad Air', w: 820, h: 1180, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPad Pro', w: 1024, h: 1366, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+      { name: 'Pixel 5', w: 393, h: 851, dpr: 2.75, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36' },
+      { name: 'Pixel 7', w: 412, h: 915, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+      { name: 'Pixel 8 Pro', w: 430, h: 932, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+      { name: 'Galaxy S22', w: 360, h: 800, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+      { name: 'Galaxy S24 Ultra', w: 412, h: 915, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+      { name: 'Galaxy Z Fold 5', w: 344, h: 882, dpr: 2.8, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-F946B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36' },
+      { name: 'Galaxy Z Flip 5', w: 264, h: 844, dpr: 2.8, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-F731B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36' },
+      { name: 'Surface Pro 9', w: 1200, h: 1800, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+      { name: 'Desktop 1280', w: 1280, h: 800, dpr: 1, mobile: false, ua: '' },
+      { name: 'Full HD 1920', w: 1920, h: 1080, dpr: 1, mobile: false, ua: '' },
+    ];
+    let brzUrl = BRZ_START, brzDevice = 0, brzLastEmu = '', brzSyncTimer = null;
+
+    function brzPost(action, extra) {
+      const w = BRZ_API(); extra = extra || {};
+      if (w) {
+        if (action === 'open') w.open(BRZ_ID, extra.url);
+        else if (action === 'sync') w.sync(BRZ_ID, extra.rect, extra.visible);
+        else if (action === 'navigate') w.navigate(BRZ_ID, extra.url);
+        else if (action === 'nav') w.nav(BRZ_ID, extra.dir);
+        else if (action === 'emulate') w.emulate(BRZ_ID, extra.config, extra.scale);
+        else if (action === 'devtools') w.devtools(BRZ_ID);
+        else if (action === 'close') w.close(BRZ_ID);
+        return;
+      }
+      // Fallback: if ever embedded in a shell parent, post to it instead.
+      try { if (window.parent && window.parent !== window) window.parent.postMessage(Object.assign({ ns: 'crundi-browser', id: BRZ_ID, action }, extra), '*'); } catch { /* ignore */ }
+    }
+    function brzStage() { return document.getElementById('brz-stage'); }
+    function brzModalOpen() { return !!document.querySelector('.input-modal.visible, .lightbox.visible, #image-lightbox.visible, .modal.visible'); }
+    // A native WebContentsView floats above the DOM, so it must hide whenever
+    // something should appear over the panel: an open dropdown, a drag, a resize.
+    function brzOverlayActive() {
+      const menu = document.getElementById('wb-add-menu');
+      if (menu && menu.classList.contains('visible')) return true;
+      if (document.body.classList.contains('mosaic-cell-drag') || document.body.classList.contains('mosaic-resizing')) return true;
+      return false;
+    }
+    function brzVisibleNow() {
+      if (!BRZ_DESKTOP || currentTab !== 'workbench' || brzModalOpen() || brzOverlayActive()) return false;
+      const st = brzStage(); if (!st || !st.closest('.wb-cell-body')) return false;
+      const r = st.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return false;
+      // A native webview floats above the page, so hide it if a floating editor
+      // window overlaps the stage (otherwise it would cover the editor).
+      for (const w of document.querySelectorAll('.fe-window')) {
+        const wr = w.getBoundingClientRect();
+        if (wr.left < r.right && wr.right > r.left && wr.top < r.bottom && wr.bottom > r.top) return false;
+      }
+      return true;
+    }
+    function brzComputeRect() {
+      const st = brzStage(); if (!st) return null;
+      const r = st.getBoundingClientRect();
+      const dev = BRZ_DEVICES[brzDevice];
+      if (!dev || dev.responsive) {
+        return { left: r.left, top: r.top, width: Math.round(r.width), height: Math.round(r.height), scale: 1, config: null };
+      }
+      const pad = 10;
+      const availW = Math.max(40, r.width - pad * 2), availH = Math.max(40, r.height - pad * 2);
+      const scale = Math.min(availW / dev.w, availH / dev.h); // fit both dims (may zoom in for small devices)
+      const bw = Math.round(dev.w * scale), bh = Math.round(dev.h * scale);
+      return {
+        left: r.left + (r.width - bw) / 2, top: r.top + (r.height - bh) / 2, width: bw, height: bh, scale,
+        config: { width: dev.w, height: dev.h, deviceScaleFactor: dev.dpr || 0, mobile: !!dev.mobile, ua: dev.ua || '' },
+      };
+    }
+    function brzSync() {
+      if (!BRZ_DESKTOP) return;
+      if (!brzVisibleNow()) { brzPost('sync', { rect: null, visible: false }); return; }
+      const c = brzComputeRect(); if (!c) { brzPost('sync', { rect: null, visible: false }); return; }
+      // The web UI is the top-level page, so getBoundingClientRect coords map
+      // directly to the window content (WebContentsView setBounds) — no offset.
+      // scale rides along so the view zooms to fit on resize (no reload needed).
+      brzPost('sync', { rect: { x: c.left, y: c.top, width: c.width, height: c.height }, visible: true });
+      // Re-apply emulation when the device OR the fit-scale changes. Main rescales
+      // the image for a scale-only change and reloads only when the device itself
+      // changes (so the site re-serves the right mobile/desktop markup).
+      const key = JSON.stringify(c.config) + '|' + (c.scale ? c.scale.toFixed(3) : '');
+      if (key !== brzLastEmu) { brzLastEmu = key; brzPost('emulate', { config: c.config, scale: c.scale }); }
+    }
+    function brzGo(v) {
+      v = (v || '').trim(); if (!v) return;
+      let url = v;
+      const hasScheme = /^https?:\\/\\//i.test(v) || v.indexOf('about:') === 0;
+      const looksDomain = v.indexOf(' ') < 0 && v.indexOf('.') > 0;
+      if (!hasScheme && !looksDomain) url = 'https://www.google.com/search?q=' + encodeURIComponent(v);
+      else if (!hasScheme) url = 'https://' + v;
+      brzUrl = url;
+      brzPost('navigate', { url });
+      const inp = document.querySelector('#browser-panel .brz-url'); if (inp) inp.blur();
+    }
+    function brzDeviceOptions() {
+      return BRZ_DEVICES.map((d, i) => '<option value="' + i + '">' + escHtml(d.responsive ? 'Responsive (fill)' : (d.name + '  ' + d.w + '×' + d.h)) + '</option>').join('');
+    }
+    function initBrowserPanel() {
+      const node = document.getElementById('browser-panel');
+      if (!node) return;
+      if (!BRZ_DESKTOP) {
+        node.innerHTML = '<div class="brz-unavail">' + ic('globe') + '<div>The interactive browser runs a real Chromium view on the host, so it is available in the <b>Crundi desktop app</b> only \\u2014 not over the web.</div></div>';
+        return;
+      }
+      if (!node.querySelector('.brz-bar')) {
+        node.innerHTML = ''
+          + '<div class="brz-bar">'
+          + '<button class="brz-nav" data-brz="back" title="Back" disabled>' + ic('chevron-left') + '</button>'
+          + '<button class="brz-nav" data-brz="forward" title="Forward" disabled>' + ic('chevron-right') + '</button>'
+          + '<button class="brz-nav" data-brz="reload" title="Reload">' + ic('refresh') + '</button>'
+          + '<input class="brz-url" type="text" spellcheck="false" autocomplete="off" placeholder="Enter URL or search\\u2026">'
+          + '<select class="brz-device" title="Emulate device">' + brzDeviceOptions() + '</select>'
+          + '<button class="brz-nav" data-brz="devtools" title="Toggle DevTools">' + ic('terminal') + '</button>'
+          + '</div>'
+          + '<div class="brz-stage" id="brz-stage"><div class="brz-hint">Loading\\u2026</div></div>';
+        const inp = node.querySelector('.brz-url');
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') brzGo(inp.value); });
+        node.querySelector('.brz-device').addEventListener('change', (e) => { brzDevice = Number(e.target.value) || 0; brzLastEmu = '__force__'; brzSync(); });
+        node.addEventListener('click', (e) => {
+          const b = e.target.closest('[data-brz]'); if (!b) return;
+          const a = b.dataset.brz;
+          if (a === 'reload') brzPost('nav', { dir: 'reload' });
+          else if (a === 'back') brzPost('nav', { dir: 'back' });
+          else if (a === 'forward') brzPost('nav', { dir: 'forward' });
+          else if (a === 'devtools') brzPost('devtools');
+        });
+        const sel = node.querySelector('.brz-device'); if (sel) sel.value = String(brzDevice);
+      }
+      brzPost('open', { url: brzUrl || BRZ_START });
+      brzLastEmu = '__force__';
+      if (!brzSyncTimer) brzSyncTimer = setInterval(brzSync, 200);
+      brzSync();
+    }
+    // Reflect page state (url/title/loading/history or a diagnostic) in the toolbar.
+    function brzApplyState(d) {
+      if (!d || (d.id && d.id !== BRZ_ID)) return;
+      const node = document.getElementById('browser-panel'); if (!node) return;
+      if (d.diag) { const hint = node.querySelector('.brz-hint'); if (hint) { hint.style.display = 'flex'; hint.textContent = d.diag; } return; }
+      const inp = node.querySelector('.brz-url');
+      if (inp && document.activeElement !== inp && d.url) { inp.value = d.url; brzUrl = d.url; }
+      const back = node.querySelector('[data-brz="back"]'); if (back) back.disabled = !d.canGoBack;
+      const fwd = node.querySelector('[data-brz="forward"]'); if (fwd) fwd.disabled = !d.canGoForward;
+      node.classList.toggle('brz-loading', !!d.loading);
+      const hint = node.querySelector('.brz-hint'); if (hint && d.url && d.url !== 'about:blank') hint.style.display = 'none';
+    }
+    // Desktop: receive state directly from the main process via the preload.
+    if (BRZ_API() && BRZ_API().onState) { try { BRZ_API().onState(brzApplyState); } catch { /* ignore */ } }
+    // Fallback: state relayed from a shell parent (if ever embedded in an iframe).
+    window.addEventListener('message', (ev) => {
+      const d = ev.data; if (!d || d.ns !== 'crundi-browser-evt') return;
+      brzApplyState(d.type === 'diag' ? { id: d.id, diag: d.text } : d);
+    });
+
+    // ─── Mosaic workbench layout (desktop only; always-on; persisted per project) ─
+    // Tree node: { t:'split', dir:'row'|'col', sizes:[%..], kids:[node..] }
+    //          | { t:'leaf', key:<cellKey>|null }
+    let wbMosaicByProject = {};
+    try { wbMosaicByProject = JSON.parse(localStorage.getItem('crundi_wb_mosaic') || '{}') || {}; } catch { wbMosaicByProject = {}; }
+    function saveMosaic() { try { localStorage.setItem('crundi_wb_mosaic', JSON.stringify(wbMosaicByProject)); } catch { /* ignore */ } }
+    let _mosSeq = 0;
+    function genMosId() { return 'm' + Date.now().toString(36) + (_mosSeq++).toString(36); }
+    function mosaicDesktop() { return !isMobileTerm(); }
+    // Global mobile preference: opt into the mosaic on phone-width screens (fixed
+    // full-width snap columns, only rows resizable). Off by default → flat stack.
+    let mobileMosaic = false;
+    try { mobileMosaic = localStorage.getItem('crundi_mobile_mosaic') === '1'; } catch { mobileMosaic = false; }
+    // Mosaic is used on desktop always, and on mobile only when opted in.
+    function mosaicActive() { return !isMobileTerm() || mobileMosaic; }
+    function toggleMobileMosaic() {
+      mobileMosaic = !mobileMosaic;
+      try { localStorage.setItem('crundi_mobile_mosaic', mobileMosaic ? '1' : '0'); } catch { /* ignore */ }
+      updateMobileLayoutBtn();
+      renderTermGrid();
+    }
+    function updateMobileLayoutBtn() {
+      const b = document.getElementById('mobile-layout-toggle');
+      if (b) b.classList.toggle('active', mobileMosaic);
+    }
+    function currentMosaic() { return currentProject ? (wbMosaicByProject[currentProject] || null) : null; }
+    function setMosaic(tree) { if (currentProject) { wbMosaicByProject[currentProject] = tree; saveMosaic(); } }
+    function mosLeaf(key) { return { t: 'leaf', _id: genMosId(), key: key || null }; }
+    function mosSplit(dir, kids) { return { t: 'split', _id: genMosId(), dir, kids, sizes: kids.map(() => 100 / kids.length) }; }
+    function mosaicLeaves(node, out = []) {
+      if (!node) return out;
+      if (node.t === 'leaf') out.push(node); else node.kids.forEach(k => mosaicLeaves(k, out));
+      return out;
+    }
+    function mosaicKeySet(node) { return new Set(mosaicLeaves(node).filter(l => l.key).map(l => l.key)); }
+    function mosaicHasKey(node, key) { return mosaicLeaves(node).some(l => l.key === key); }
+    function mosaicLeafById(node, id) { return mosaicLeaves(node).find(l => l._id === id) || null; }
+    function mosaicFind(root, id, parent = null, index = -1) {
+      if (!root) return null;
+      if (root._id === id) return { node: root, parent, index };
+      if (root.t === 'split') for (let i = 0; i < root.kids.length; i++) { const r = mosaicFind(root.kids[i], id, root, i); if (r) return r; }
+      return null;
+    }
+    function mosaicDefault(keys) {
+      if (!keys.length) return mosLeaf(null);
+      if (keys.length === 1) return mosLeaf(keys[0]);
+      return mosSplit('row', keys.map(k => mosLeaf(k)));
+    }
+    // Keep the tree in sync with the live cell-key set: drop gone cells (collapse),
+    // add new cells into an empty leaf or append a column.
+    function mosaicSync(keys) {
+      let tree = currentMosaic();
+      if (!tree) { tree = mosaicDefault(keys); setMosaic(tree); return tree; }
+      for (const k of [...mosaicKeySet(tree)]) if (!keys.includes(k)) tree = mosaicRemoveKey(tree, k);
+      for (const k of keys) if (!mosaicHasKey(tree, k)) tree = mosaicAddKey(tree, k);
+      setMosaic(tree);
+      return tree;
+    }
+    function mosaicAddKey(tree, key) {
+      const empty = mosaicLeaves(tree).find(l => !l.key);
+      if (empty) { empty.key = key; return tree; }
+      if (tree.t === 'leaf') return mosSplit('row', [tree, mosLeaf(key)]);
+      tree.kids.push(mosLeaf(key));
+      tree.sizes = tree.kids.map(() => 100 / tree.kids.length);
+      return tree;
+    }
+    function mosaicRemoveKey(tree, key) {
+      const leaf = mosaicLeaves(tree).find(l => l.key === key);
+      return leaf ? mosaicCollapseLeaf(tree, leaf._id) : tree;
+    }
+    // Remove a leaf, collapsing its parent if it drops to a single child.
+    function mosaicCollapseLeaf(tree, leafId) {
+      const f = mosaicFind(tree, leafId);
+      if (!f) return tree;
+      if (!f.parent) return mosLeaf(null); // root leaf -> empty
+      const parent = f.parent;
+      parent.kids.splice(f.index, 1);
+      parent.sizes = parent.kids.map(() => 100 / parent.kids.length);
+      if (parent.kids.length === 1) {
+        const only = parent.kids[0];
+        const pf = mosaicFind(tree, parent._id);
+        if (!pf.parent) return only;            // parent was root
+        pf.parent.kids[pf.index] = only;        // hoist the single child
+      }
+      return tree;
+    }
+    // Split a leaf: keep its cell, add an empty leaf beside it (drop target).
+    function mosaicSplitLeaf(tree, leafId, dir) {
+      const f = mosaicFind(tree, leafId);
+      if (!f || f.node.t !== 'leaf') return tree;
+      const leaf = f.node, parent = f.parent, newLeaf = mosLeaf(null);
+      if (parent && parent.dir === dir) {
+        parent.kids.splice(f.index + 1, 0, newLeaf);
+        parent.sizes = parent.kids.map(() => 100 / parent.kids.length);
+        return tree;
+      }
+      const split = mosSplit(dir, [leaf, newLeaf]);
+      if (!parent) return split;
+      parent.kids[f.index] = split;
+      return tree;
+    }
+    // Drag a cell onto a leaf: swap if occupied, else move (collapse source slot).
+    function mosaicAssignToLeaf(tree, leafId, key) {
+      const target = mosaicLeafById(tree, leafId);
+      if (!target) return tree;
+      const source = mosaicLeaves(tree).find(l => l.key === key);
+      if (source && source._id === target._id) return tree;
+      if (!source) { target.key = key; return tree; }
+      if (target.key) { const tmp = target.key; target.key = source.key; source.key = tmp; return tree; }
+      target.key = key; source.key = null;
+      return mosaicCollapseLeaf(tree, source._id);
+    }
+    // Double-click a pane → expand it to fill its parent split (siblings drop to
+    // their min-width floor); double-click again → even split.
+    function mosaicMaximizeLeaf(tree, leafId) {
+      const f = mosaicFind(tree, leafId);
+      if (!f || !f.parent) return tree; // a lone root pane is already full
+      const parent = f.parent, n = parent.kids.length;
+      const big = 100 - (n - 1) * 8;
+      const alreadyMax = parent.sizes[f.index] >= big - 0.5;
+      parent.sizes = parent.kids.map((_, i) => alreadyMax ? 100 / n : (i === f.index ? big : 8));
+      return tree;
+    }
+    // Double-click a gutter → reset that split to an even distribution.
+    function mosaicEvenSplit(tree, splitId) {
+      const f = mosaicFind(tree, splitId);
+      if (f && f.node.t === 'split') f.node.sizes = f.node.kids.map(() => 100 / f.node.kids.length);
+      return tree;
+    }
+    function mosaicApplyPreset(preset) {
+      if (!mosaicDesktop()) { toast('Layouts are available on desktop only', ''); return; }
+      const keys = currentDesiredKeys();
+      const L = (i) => mosLeaf(keys[i] || null);
+      let tree;
+      switch (preset) {
+        case 'cols2': tree = mosSplit('row', [L(0), L(1)]); break;
+        case 'cols3': tree = mosSplit('row', [L(0), L(1), L(2)]); break;
+        case 'cross4': tree = mosSplit('row', [mosSplit('col', [L(0), L(2)]), mosSplit('col', [L(1), L(3)])]); break;
+        case 'left-right2': tree = mosSplit('row', [L(0), mosSplit('col', [L(1), L(2)])]); break;
+        case 'top-bottom2': tree = mosSplit('col', [L(0), mosSplit('row', [L(1), L(2)])]); break;
+        default: return;
+      }
+      setMosaic(tree);
+      // place any cells beyond the preset's slots
+      let t = currentMosaic();
+      for (const k of keys) if (!mosaicHasKey(t, k)) t = mosaicAddKey(t, k);
+      setMosaic(t);
+      renderTermGrid();
     }
     // The "+" dropdown by the Workbench tab.
     function toggleWbAddMenu() {
@@ -3075,11 +3915,14 @@ export function getWebappHtml(botUsername) {
       menu.style.left = Math.max(6, Math.min(r.left, window.innerWidth - 166)) + 'px';
       menu.style.display = 'flex';
       menu.classList.add('visible');
+      if (typeof brzSync === 'function') brzSync(); // hide the browser view behind the dropdown
       setTimeout(() => document.addEventListener('click', wbAddMenuOutside, true), 0);
     }
     function hideWbAddMenu() {
       const menu = $('#wb-add-menu'); if (!menu) return;
+      const wasVisible = menu.classList.contains('visible');
       menu.classList.remove('visible'); menu.style.display = 'none';
+      if (wasVisible && typeof brzSync === 'function') setTimeout(brzSync, 0); // restore the browser view
       document.removeEventListener('click', wbAddMenuOutside, true);
     }
     function wbAddMenuOutside(e) {
@@ -3093,7 +3936,9 @@ export function getWebappHtml(botUsername) {
     }
     function updateFocusStyles() {
       const grid = $('#term-grid'); if (!grid) return;
-      [...grid.children].forEach(ch => ch.classList && ch.classList.toggle('focused', !!ch.dataset.tid && ch.dataset.tid === focusedTermId));
+      // Cells may be nested inside mosaic leaves, so query deep (not just direct
+      // children) for the terminal cells.
+      grid.querySelectorAll('.term-cell[data-tid]').forEach(ch => ch.classList.toggle('focused', ch.dataset.tid === focusedTermId));
     }
 
     function fitTerm(id) {
@@ -3122,7 +3967,7 @@ export function getWebappHtml(botUsername) {
 
     function renameTerminal(id) {
       const grid = $('#term-grid'); if (!grid) return;
-      const el = grid.querySelector(':scope > [data-tid="' + id + '"]');
+      const el = grid.querySelector('.term-cell[data-tid="' + id + '"]');
       if (!el) return;
       const titleEl = el.querySelector('.term-title');
       if (!titleEl || titleEl.tagName === 'INPUT') return;
@@ -3168,8 +4013,24 @@ export function getWebappHtml(botUsername) {
     }
     function termDragHandlers(key) {
       let target = null;
+      let leafEl = null; // mosaic drop-target leaf
+      const mosaicMode = () => currentMosaic() && mosaicDesktop();
+      // On mobile mosaic, header-drag does nothing (drag-to-place is desktop-only,
+      // and the flat reorder must not run against the mosaic skeleton).
+      const mobileMosaicOn = () => mosaicActive() && isMobileTerm();
+      const clearLeaf = () => { if (leafEl) { leafEl.classList.remove('drop-hover'); leafEl = null; } };
       return {
+        onStart: () => { if (mosaicMode()) { document.body.classList.add('mosaic-cell-drag'); if (typeof brzSync === 'function') brzSync(); } },
         onMove: (x, y) => {
+          if (mobileMosaicOn()) return;
+          // Mosaic: highlight the leaf under the pointer (drop = place cell there).
+          if (mosaicMode()) {
+            clearLeaf();
+            const under = document.elementFromPoint(x, y);
+            const lf = under && under.closest('.mosaic-leaf');
+            if (lf && lf.dataset.leafId) { leafEl = lf; lf.classList.add('drop-hover'); }
+            return;
+          }
           const grid = $('#term-grid'); if (!grid) return;
           if (!_termDropLine) { _termDropLine = document.createElement('div'); _termDropLine.className = 'term-drop-line'; }
           target = termReorderTarget(x, y, key);
@@ -3178,6 +4039,16 @@ export function getWebappHtml(botUsername) {
           else grid.appendChild(_termDropLine);
         },
         onEnd: async (commit) => {
+          if (mobileMosaicOn()) return;
+          if (mosaicMode()) {
+            document.body.classList.remove('mosaic-cell-drag');
+            if (typeof brzSync === 'function') setTimeout(brzSync, 0);
+            const lid = leafEl && leafEl.dataset.leafId;
+            clearLeaf();
+            if (commit && lid) { setMosaic(mosaicAssignToLeaf(currentMosaic(), lid, key)); renderTermGrid(); }
+            target = null;
+            return;
+          }
           if (_termDropLine && _termDropLine.parentNode) _termDropLine.remove();
           if (commit && target) {
             // Reorder the unified key list, then persist terminal-relative order.
@@ -3202,7 +4073,61 @@ export function getWebappHtml(botUsername) {
 
     // One-time wiring for the terminal area: unified-input paste (images), file
     // drag-drop onto the grid, and a debounced refit on window resize.
+    // Drag a mosaic gutter to resize the two adjacent panes. Uses pointer events
+    // so it works with both mouse and touch (touch-action:none on the gutter
+    // stops the page from scrolling while dragging a row divider on mobile).
+    function setupMosaicResize() {
+      const grid = document.getElementById('term-grid');
+      if (!grid || grid._mosResize) return; grid._mosResize = true;
+      // Double-click: a gutter → even split; a pane header / empty pane → expand
+      // that pane to fill its split (toggle).
+      grid.addEventListener('dblclick', (e) => {
+        if (!currentMosaic() || !mosaicActive()) return;
+        const g = e.target.closest('.mosaic-gutter');
+        if (g) { setMosaic(mosaicEvenSplit(currentMosaic(), g.dataset.splitId)); renderTermGrid(); return; }
+        const leaf = e.target.closest('.mosaic-leaf'); if (!leaf) return;
+        // Only via the header or an empty pane — never from inside a terminal
+        // (where double-click selects a word).
+        if (!e.target.closest('.term-head') && !e.target.closest('.mosaic-empty')) return;
+        setMosaic(mosaicMaximizeLeaf(currentMosaic(), leaf.dataset.leafId)); renderTermGrid();
+      });
+      grid.addEventListener('pointerdown', (e) => {
+        const g = e.target.closest('.mosaic-gutter'); if (!g) return;
+        const split = g.parentNode; const node = mosaicFind(currentMosaic(), g.dataset.splitId);
+        if (!node) return;
+        e.preventDefault();
+        const gi = parseInt(g.dataset.gutter, 10);
+        const kids = [...split.children].filter(c => !c.classList.contains('mosaic-gutter'));
+        const a = kids[gi - 1], b = kids[gi];
+        const horiz = node.node.dir === 'row';
+        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+        const totalPx = horiz ? (ra.width + rb.width) : (ra.height + rb.height);
+        const sizes = node.node.sizes;
+        const sA0 = sizes[gi - 1], sB0 = sizes[gi], totalS = sA0 + sB0;
+        const start = horiz ? e.clientX : e.clientY;
+        document.body.classList.add('mosaic-resizing');
+        if (typeof brzSync === 'function') brzSync();
+        const mv = (ev) => {
+          const cur = horiz ? ev.clientX : ev.clientY;
+          const frac = totalPx ? (cur - start) / totalPx : 0;
+          let nA = sA0 + frac * totalS;
+          nA = Math.max(totalS * 0.1, Math.min(totalS * 0.9, nA));
+          const nB = totalS - nA;
+          sizes[gi - 1] = nA; sizes[gi] = nB;
+          a.style.flex = nA + ' 1 0'; b.style.flex = nB + ' 1 0';
+        };
+        const up = () => {
+          document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up);
+          document.body.classList.remove('mosaic-resizing');
+          if (typeof brzSync === 'function') setTimeout(brzSync, 0);
+          saveMosaic(); fitAllTerms();
+        };
+        document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up);
+      });
+    }
+
     function setupTerminalArea() {
+      setupMosaicResize();
       const ta = document.getElementById('term-input');
       if (ta) {
         ta.addEventListener('paste', async (e) => {
@@ -3250,7 +4175,17 @@ export function getWebappHtml(botUsername) {
         });
       }
 
-      window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(fitAllTerms, 100); });
+      // Refit on resize; if we cross the desktop/mobile breakpoint, re-render the
+      // grid so it switches between the mosaic layout and the mobile flat stack.
+      let _wasMobile = isMobileTerm();
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          const m = isMobileTerm();
+          if (m !== _wasMobile) { _wasMobile = m; if (currentProject && currentTab === 'workbench') renderTermGrid(); }
+          fitAllTerms();
+        }, 100);
+      });
 
       // Mobile: when the on-screen keyboard opens it shrinks the visual viewport.
       // Bind #app to that height so the input bar + focused terminal stay visible
@@ -3376,7 +4311,15 @@ export function getWebappHtml(botUsername) {
       if (!ta || !ws || ws.readyState !== 1 || !focusedTermId) return;
       const text = ta.value;
       if (!text) return;
-      ws.send(JSON.stringify({ type: 'input', id: focusedTermId, data: text + '\\r' }));
+      const tid = focusedTermId;
+      // Send the text first, then the Enter as a SEPARATE write. For a large or
+      // multi-line chunk the agent TUI treats the burst as a paste and would
+      // otherwise swallow a trailing CR into the pasted buffer instead of
+      // submitting — so the carriage return must arrive on its own.
+      ws.send(JSON.stringify({ type: 'input', id: tid, data: text }));
+      setTimeout(() => {
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', id: tid, data: '\\r' }));
+      }, 60);
       ta.value = '';
       ta.style.height = 'auto';
       const v = termViews.get(focusedTermId);
@@ -3460,7 +4403,7 @@ export function getWebappHtml(botUsername) {
     const DRAG_LABELS = {
       file: 'File Path', folder: 'Folder Path',
       'kanban-task': 'Kanban Task ID', 'kanban-subtask': 'Kanban Subtask ID',
-      mindmap: 'Mindmap Idea ID',
+      mindmap: 'Mindmap Idea ID', media: 'Media Path',
     };
     function formatDragRef(kind, value) {
       const label = DRAG_LABELS[kind];
@@ -3512,6 +4455,10 @@ export function getWebappHtml(botUsername) {
     document.addEventListener('DOMContentLoaded', () => {
       const ta = document.getElementById('term-input');
       if (!ta) return;
+      // Shorter placeholder on phone-width screens (no Ctrl+Enter there).
+      const setInputPh = () => { ta.placeholder = window.innerWidth <= 768 ? 'Type here... (Press Send)' : 'Type here... (Ctrl+Enter or Send button)'; };
+      setInputPh();
+      window.addEventListener('resize', setInputPh);
       ta.addEventListener('input', () => {
         ta.style.height = 'auto';
         ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
@@ -3648,6 +4595,10 @@ export function getWebappHtml(botUsername) {
       es.addEventListener('schedule', () => { if (currentTab === 'schedule') loadSchedules(); });
       es.addEventListener('mindmap', () => {
         if (currentTab === 'mindmap') loadMindmap();
+      });
+      es.addEventListener('media', () => {
+        // Refresh any open media browser (tab/panel or modal) and embedded views.
+        refreshAllMediaViews();
       });
       es.addEventListener('usage', (e) => {
         try { renderUsage(JSON.parse(e.data)); } catch { /* ignore */ }
@@ -3877,6 +4828,7 @@ export function getWebappHtml(botUsername) {
       if (tab === 'kanban') loadKanban();
       if (tab === 'secrets') loadSecrets();
       if (tab === 'mindmap') loadMindmap();
+      if (tab === 'media') loadMedia();
       if (tab === 'schedule') loadSchedules();
       if (tab === 'info') renderInfo();
       if (tab === 'settings') renderSettings();
@@ -4047,20 +4999,14 @@ export function getWebappHtml(botUsername) {
       feOpenDiff(file, d.old || '', d.new || '', d.diff || '');
     }
 
-    let diffCurrentFile = '';
     let diffCached = false;
 
     function feOpenDiff(file, oldContent, newContent, rawDiff) {
-      feCurrentProject = '';
-      feCurrentFile = '';
-      feReadOnly = true;
-      diffCurrentFile = file;
-      const btn = $('#fe-save-btn');
-      if (btn) btn.style.display = 'none';
-      feShow();
-
-      const container = $('#fe-container');
-      if (feEditorView) { feEditorView.destroy(); feEditorView = null; }
+      const w = feNewWindow({ kind: 'diff' });
+      Object.assign(w._fe, { project: currentProject, file: '', readOnly: true, kind: 'diff' });
+      const sb = w.querySelector('.fe-save'); if (sb) sb.style.display = 'none';
+      w.querySelector('.fe-path').textContent = file;
+      const container = w.querySelector('.fe-content');
 
       // Split on any line ending so CRLF (working tree) vs LF (git's normalized
       // index/HEAD blob) doesn't make every line compare unequal — otherwise the
@@ -4089,9 +5035,9 @@ export function getWebappHtml(botUsername) {
       // Build header
       const hdr = '<div style="display:flex;align-items:center;padding:6px 12px;background:var(--bg-secondary);border-bottom:1px solid var(--border);gap:8px;">'
         + '<span style="font-family:var(--mono);font-size:12px;color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(file) + '</span>'
-        + '<button id="diff-prev" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;" title="Previous chunk">\\u2191</button>'
-        + '<span id="diff-counter" style="font-size:11px;color:var(--text-muted);font-family:var(--mono);">\\u2014/' + chunks.length + '</span>'
-        + '<button id="diff-next" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;" title="Next chunk">\\u2193</button>'
+        + '<button class="diff-prev" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;" title="Previous chunk">\\u2191</button>'
+        + '<span class="diff-counter" style="font-size:11px;color:var(--text-muted);font-family:var(--mono);">\\u2014/' + chunks.length + '</span>'
+        + '<button class="diff-next" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;" title="Next chunk">\\u2193</button>'
         + '</div>';
 
       const isMobile = window.innerWidth <= 768;
@@ -4168,31 +5114,29 @@ export function getWebappHtml(botUsername) {
 
       if (isMobile) {
         container.innerHTML = hdr
-          + '<div id="diff-unified" style="flex:1;overflow:auto;min-height:0;-webkit-overflow-scrolling:touch;background:var(--bg-primary);">'
+          + '<div class="diff-unified" style="flex:1;overflow:auto;min-height:0;-webkit-overflow-scrolling:touch;background:var(--bg-primary);">'
           + unifiedHtml + '</div>';
       } else {
         container.innerHTML = hdr
           + '<div style="display:flex;flex:1;min-height:0;overflow:hidden;">'
-          + '<div id="diff-left" style="flex:1;overflow:auto;border-right:1px solid var(--border);background:var(--bg-primary);">'
+          + '<div class="diff-left" style="flex:1;overflow:auto;border-right:1px solid var(--border);background:var(--bg-primary);">'
           + '<div style="padding:4px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);background:var(--bg-tertiary);border-bottom:1px solid var(--border-subtle);position:sticky;top:0;z-index:1;">Original</div>'
           + oldHtml + '</div>'
-          + '<div id="diff-right" style="flex:1;overflow:auto;background:var(--bg-primary);">'
+          + '<div class="diff-right" style="flex:1;overflow:auto;background:var(--bg-primary);">'
           + '<div style="padding:4px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);background:var(--bg-tertiary);border-bottom:1px solid var(--border-subtle);position:sticky;top:0;z-index:1;">Modified</div>'
           + newHtml + '</div>'
           + '</div>';
       }
 
-      $('#fe-path').textContent = file;
-
-      // Scroll container for chunk navigation
+      // Scroll container for chunk navigation (scoped to this window)
       const scrollEl = isMobile
-        ? document.getElementById('diff-unified')
-        : document.getElementById('diff-left');
+        ? container.querySelector('.diff-unified')
+        : container.querySelector('.diff-left');
 
       // Sync scroll (desktop only)
       if (!isMobile) {
-        const left = document.getElementById('diff-left');
-        const right = document.getElementById('diff-right');
+        const left = container.querySelector('.diff-left');
+        const right = container.querySelector('.diff-right');
         let syncing = false;
         left.addEventListener('scroll', () => { if (!syncing) { syncing = true; right.scrollTop = left.scrollTop; syncing = false; } });
         right.addEventListener('scroll', () => { if (!syncing) { syncing = true; left.scrollTop = right.scrollTop; syncing = false; } });
@@ -4204,16 +5148,16 @@ export function getWebappHtml(botUsername) {
         const pos = chunkLinePositions[idx] * lineH + idx * 22 + (isMobile ? 0 : 28);
         scrollEl.scrollTop = pos;
       }
-      document.getElementById('diff-prev').onclick = () => {
+      container.querySelector('.diff-prev').onclick = () => {
         if (!chunks.length) return;
         currentChunkIdx = Math.max(0, currentChunkIdx - 1);
-        document.getElementById('diff-counter').textContent = (currentChunkIdx + 1) + '/' + chunks.length;
+        container.querySelector('.diff-counter').textContent = (currentChunkIdx + 1) + '/' + chunks.length;
         scrollToChunk(currentChunkIdx);
       };
-      document.getElementById('diff-next').onclick = () => {
+      container.querySelector('.diff-next').onclick = () => {
         if (!chunks.length) return;
         currentChunkIdx = Math.min(chunks.length - 1, currentChunkIdx + 1);
-        document.getElementById('diff-counter').textContent = (currentChunkIdx + 1) + '/' + chunks.length;
+        container.querySelector('.diff-counter').textContent = (currentChunkIdx + 1) + '/' + chunks.length;
         scrollToChunk(currentChunkIdx);
       };
 
@@ -4221,9 +5165,9 @@ export function getWebappHtml(botUsername) {
       container._diffData = { oldLines, newLines, diff, chunks, file };
     }
 
-    async function stageChunk(chunkIdx) {
-      const container = $('#fe-container');
-      const data = container._diffData;
+    async function stageChunk(win, chunkIdx) {
+      const container = win && win.querySelector ? win.querySelector('.fe-content') : null;
+      const data = container && container._diffData;
       if (!data) { toast('No diff data', 'error'); return; }
       const { oldLines, diff, chunks, file } = data;
       const chunk = chunks[chunkIdx];
@@ -4659,105 +5603,136 @@ export function getWebappHtml(botUsername) {
       return icons[ext] || ic('file');
     }
 
-    // ─── File Editor ───
-    let feCurrentProject = '';
-    let feCurrentFile = '';
-    let feOriginal = '';
-    let feReadOnly = false;
-    let feEditorView = null;
+    // ─── File Editor (multi-window manager) ───
+    // Desktop: multiple floating, draggable, resizable windows with edge-snap and
+    // tile/grid/cascade. Mobile: a single full-screen window (opening replaces).
+    // Per-window state lives on el._fe = { project, file, original, readOnly, view, kind }.
+    const FE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'];
+    function feMobile() { return window.innerWidth <= 768; }
+    let feZ = 2100, feFront = null, feCascade = 0;
+    function feOverlay() { return document.getElementById('file-editor'); }
+    function feWins() { return [...document.querySelectorAll('.fe-window')]; }
+    function feSyncOverlay() {
+      const o = feOverlay(); if (!o) return;
+      const has = feWins().length > 0;
+      o.classList.toggle('visible', has);
+      o.classList.toggle('has-windows', has);
+      if (!has) feFront = null;
+    }
+    function feBringFront(win) { if (win) { win.style.zIndex = String(++feZ); feFront = win; } }
+    function feFocusedWin() { return (feFront && feFront.isConnected) ? feFront : (feWins().slice(-1)[0] || null); }
 
-    function feCreateEditor(content, filePath, readOnly) {
-      const container = $('#fe-container');
+    function feNewWindow(opts = {}) {
+      if (feMobile()) {
+        let w = feWins()[0];
+        if (!w) w = feBuildWindow(opts); else feResetWinContent(w);
+        feSyncOverlay();
+        return w;
+      }
+      const w = feBuildWindow(opts);
+      feSyncOverlay();
+      return w;
+    }
+    function feBuildWindow(opts) {
+      const o = feOverlay();
+      const w = document.createElement('div');
+      w.className = 'fe-window'; w.dataset.fewin = genLocalId();
+      w._fe = { project: '', file: '', original: '', readOnly: false, view: null, kind: opts.kind || 'edit' };
+      w.innerHTML = '<div class="fe-header">'
+        + '<span class="fe-path"></span>'
+        + '<button class="fe-expand" title="Expand / restore">' + ic('maximize') + '</button>'
+        + '<button class="save fe-save" style="display:none">Save</button>'
+        + '<button class="fe-close">Close</button>'
+        + '</div><div class="fe-content"></div>'
+        + '<div class="fe-resize fe-resize-e"></div>'
+        + '<div class="fe-resize fe-resize-s"></div>'
+        + '<div class="fe-resize fe-resize-se"></div>';
+      o.appendChild(w);
+      if (!feMobile()) {
+        const step = 28, n = (feCascade++ % 6);
+        w.style.top = (54 + n * step) + 'px';
+        w.style.left = (Math.max(40, window.innerWidth * 0.18) + n * step) + 'px';
+        // Pin starting size as explicit px so resize math has a baseline.
+        const r = w.getBoundingClientRect();
+        w.style.width = r.width + 'px'; w.style.height = r.height + 'px';
+      }
+      w.querySelector('.fe-close').addEventListener('click', () => feCloseWin(w));
+      w.querySelector('.fe-save').addEventListener('click', () => feSaveWin(w));
+      w.querySelector('.fe-expand').addEventListener('click', () => feExpandWin(w));
+      w.addEventListener('mousedown', () => feBringFront(w), true);
+      feWireDrag(w);
+      feWireResize(w);
+      feWireArrangeBar();
+      feBringFront(w);
+      return w;
+    }
+    function feResetWinContent(w) {
+      if (w._fe && w._fe.view) { try { w._fe.view.destroy(); } catch { /* ignore */ } w._fe.view = null; }
+      const c = w.querySelector('.fe-content'); if (c) { c._diffData = null; c.innerHTML = ''; }
+    }
+    function feCloseWin(w) {
+      if (!w) return;
+      if (w._fe && w._fe.view) { try { w._fe.view.destroy(); } catch { /* ignore */ } }
+      w.remove();
+      feSyncOverlay();
+    }
+    function feExpandWin(w) { if (w) { w.classList.toggle('maximized'); feBringFront(w); } }
+
+    function feMountEditor(w, content, filePath, readOnly) {
+      const container = w.querySelector('.fe-content');
       container.innerHTML = '';
-      if (feEditorView) { feEditorView.destroy(); feEditorView = null; }
-
+      if (w._fe.view) { try { w._fe.view.destroy(); } catch { /* ignore */ } w._fe.view = null; }
       if (window.CM) {
-        const langExt = window.CM.getLangExtension(filePath || '');
-        const extensions = [
-          ...window.CM.basicSetup,
-          ...langExt,
-          ...window.CM.oneDark,
-        ];
+        const extensions = [...window.CM.basicSetup, ...window.CM.getLangExtension(filePath || ''), ...window.CM.oneDark];
         if (readOnly) {
           extensions.push(window.CM.EditorState.readOnly.of(true));
         } else {
           extensions.push(window.CM.EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              const btn = $('#fe-save-btn');
-              if (btn) btn.disabled = (feEditorView.state.doc.toString() === feOriginal);
-            }
+            if (update.docChanged) { const b = w.querySelector('.fe-save'); if (b) b.disabled = (w._fe.view.state.doc.toString() === w._fe.original); }
           }));
-          extensions.push(window.CM.EditorView.domEventHandlers({
-            keydown(e) {
-              if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault(); feSave();
-              }
-            }
-          }));
+          extensions.push(window.CM.EditorView.domEventHandlers({ keydown(e) { if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); feSaveWin(w); } } }));
         }
-        feEditorView = new window.CM.EditorView({
-          doc: content,
-          extensions,
-          parent: container,
-        });
-        if (!readOnly) feEditorView.focus();
+        w._fe.view = new window.CM.EditorView({ doc: content, extensions, parent: container });
+        if (!readOnly) w._fe.view.focus();
       } else {
-        // Fallback to textarea
         const ta = document.createElement('textarea');
-        ta.value = content;
-        ta.readOnly = !!readOnly;
-        ta.spellcheck = false;
+        ta.value = content; ta.readOnly = !!readOnly; ta.spellcheck = false;
         ta.style.cssText = 'width:100%;height:100%;resize:none;border:none;background:var(--bg-primary);color:var(--text-primary);font-family:var(--mono);font-size:13px;padding:12px;line-height:1.5;outline:none;';
         container.appendChild(ta);
       }
     }
-
-    function feGetContent() {
-      if (feEditorView) return feEditorView.state.doc.toString();
-      const ta = $('#fe-container textarea');
-      return ta ? ta.value : '';
+    function feWinContent(w) {
+      if (w._fe.view) return w._fe.view.state.doc.toString();
+      const ta = w.querySelector('.fe-content textarea'); return ta ? ta.value : '';
     }
-
-    const FE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'];
-    function feShow() {
-      resetFeWindow();
-      $('#file-editor').classList.add('visible');
-      feMakeDraggable();
-    }
-    // Center the floating window (clears any drag offset from a previous open).
-    function resetFeWindow() { const w = $('#fe-window'); if (w) w.style.transform = ''; }
 
     async function feOpen(project, file) {
       const ext = (file.includes('.') ? file.slice(file.lastIndexOf('.') + 1) : '').toLowerCase();
-      // Compiled / binary types get a viewer instead of the text editor.
       if (FE_IMAGE_EXTS.includes(ext) || ext === 'pdf') return feOpenViewer(project, file, ext);
+      // Already open on desktop → focus it instead of duplicating.
+      if (!feMobile()) {
+        const ex = feWins().find(w => w._fe && w._fe.kind === 'edit' && w._fe.project === project && w._fe.file === file);
+        if (ex) { feBringFront(ex); return; }
+      }
       try {
         const res = await apiFetch('/api/files/read?project=' + encodeURIComponent(project) + '&file=' + encodeURIComponent(file));
         const data = await res.json();
         if (!data.ok) { toast(data.error || 'Cannot open file', 'error'); return; }
-        feCurrentProject = project;
-        feCurrentFile = file;
-        feOriginal = data.content;
-        feReadOnly = false;
-        $('#fe-path').textContent = file;
-        const btn = $('#fe-save-btn');
-        if (btn) { btn.disabled = true; btn.style.display = ''; }
-        feShow();
-        feCreateEditor(data.content, file, false);
-      } catch (err) {
-        toast('Error: ' + err.message, 'error');
-      }
+        const w = feNewWindow({ kind: 'edit' });
+        Object.assign(w._fe, { project, file, original: data.content, readOnly: false, kind: 'edit' });
+        w.querySelector('.fe-path').textContent = file;
+        const b = w.querySelector('.fe-save'); if (b) { b.disabled = true; b.style.display = ''; }
+        feMountEditor(w, data.content, file, false);
+      } catch (err) { toast('Error: ' + err.message, 'error'); }
     }
 
-    // Read-only viewer for images / PDFs. Uses a short-lived /dl token served
-    // inline so the <img>/<iframe> renders rather than downloads.
+    // Read-only viewer for images / PDFs (served inline via a short-lived token).
     async function feOpenViewer(project, file, ext) {
-      feCurrentProject = ''; feCurrentFile = ''; feReadOnly = true;
-      if (feEditorView) { feEditorView.destroy(); feEditorView = null; }
-      $('#fe-path').textContent = file;
-      const btn = $('#fe-save-btn'); if (btn) btn.style.display = 'none';
-      feShow();
-      const c = $('#fe-container');
+      const w = feNewWindow({ kind: 'view' });
+      Object.assign(w._fe, { project: '', file: '', readOnly: true, kind: 'view' });
+      w.querySelector('.fe-path').textContent = file;
+      const b = w.querySelector('.fe-save'); if (b) b.style.display = 'none';
+      const c = w.querySelector('.fe-content');
       c.innerHTML = '<div class="fe-loading">Loading\\u2026</div>';
       try {
         const r = await apiFetch('/api/files/download-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, file }) });
@@ -4767,71 +5742,161 @@ export function getWebappHtml(botUsername) {
         c.innerHTML = ext === 'pdf'
           ? '<iframe class="fe-viewer-frame" src="' + u + '"></iframe>'
           : '<div class="fe-viewer-img"><img src="' + u + '" alt="' + escHtml(file) + '"></div>';
-      } catch (err) {
-        c.innerHTML = '<div class="fe-loading">Error: ' + escHtml(err.message) + '</div>';
-      }
-    }
-
-    // Drag the editor window by its header (desktop only).
-    function feMakeDraggable() {
-      const win = $('#fe-window'); const head = $('#fe-header');
-      if (!win || !head || head._dragWired) return;
-      head._dragWired = true;
-      let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false;
-      const parseXY = () => { const m = /translate\\((-?\\d+(?:\\.\\d+)?)px,\\s*(-?\\d+(?:\\.\\d+)?)px\\)/.exec(win.style.transform || ''); return m ? [parseFloat(m[1]), parseFloat(m[2])] : [0, 0]; };
-      head.addEventListener('mousedown', (e) => {
-        if (e.target.closest('button')) return;
-        if (!window.matchMedia('(min-width: 769px)').matches) return;
-        dragging = true; sx = e.clientX; sy = e.clientY; [ox, oy] = parseXY();
-        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
-        e.preventDefault();
-      });
-      function mv(e) { if (dragging) win.style.transform = 'translate(' + (ox + e.clientX - sx) + 'px, ' + (oy + e.clientY - sy) + 'px)'; }
-      function up() { dragging = false; document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); }
+      } catch (err) { c.innerHTML = '<div class="fe-loading">Error: ' + escHtml(err.message) + '</div>'; }
     }
 
     function feOpenContent(title, content, readOnly) {
-      feCurrentProject = '';
-      feCurrentFile = '';
-      feOriginal = content;
-      feReadOnly = readOnly || false;
-      $('#fe-path').textContent = title;
-      const btn = $('#fe-save-btn');
-      if (btn) btn.style.display = readOnly ? 'none' : '';
-      feShow();
-      feCreateEditor(content, title, !!readOnly);
+      const w = feNewWindow({ kind: 'content' });
+      Object.assign(w._fe, { project: '', file: '', original: content, readOnly: !!readOnly, kind: 'content' });
+      w.querySelector('.fe-path').textContent = title;
+      const b = w.querySelector('.fe-save'); if (b) b.style.display = readOnly ? 'none' : '';
+      feMountEditor(w, content, title, !!readOnly);
     }
 
-    function feClose() {
-      $('#file-editor').classList.remove('visible');
-      if (feEditorView) { feEditorView.destroy(); feEditorView = null; }
-    }
-
-    async function feSave() {
-      if (feReadOnly || !feCurrentProject || !feCurrentFile) return;
-      const content = feGetContent();
-      const btn = $('#fe-save-btn');
+    async function feSaveWin(w) {
+      if (!w || !w._fe || w._fe.readOnly || !w._fe.project || !w._fe.file) return;
+      const content = feWinContent(w);
+      const b = w.querySelector('.fe-save');
       try {
-        if (btn) { btn.disabled = true; btn.textContent = 'Saving\\u2026'; }
-        const res = await apiFetch('/api/files/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: feCurrentProject, file: feCurrentFile, content }) });
+        if (b) { b.disabled = true; b.textContent = 'Saving\\u2026'; }
+        const res = await apiFetch('/api/files/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: w._fe.project, file: w._fe.file, content }) });
         const data = await res.json();
-        if (data.ok) {
-          feOriginal = content;
-          toast('Saved', 'success');
-          if (btn) { btn.textContent = 'Saved \\u2713'; setTimeout(() => { btn.textContent = 'Save'; btn.disabled = true; }, 1500); }
-        } else {
-          toast('Save failed: ' + (data.error || 'unknown'), 'error');
-          if (btn) { btn.textContent = 'Save'; btn.disabled = false; }
-        }
-      } catch (err) {
-        toast('Error: ' + err.message, 'error');
-        if (btn) { btn.textContent = 'Save'; btn.disabled = false; }
+        if (data.ok) { w._fe.original = content; toast('Saved', 'success'); if (b) { b.textContent = 'Saved \\u2713'; setTimeout(() => { b.textContent = 'Save'; b.disabled = true; }, 1500); } }
+        else { toast('Save failed: ' + (data.error || 'unknown'), 'error'); if (b) { b.textContent = 'Save'; b.disabled = false; } }
+      } catch (err) { toast('Error: ' + err.message, 'error'); if (b) { b.textContent = 'Save'; b.disabled = false; } }
+    }
+
+    // Legacy/global helpers act on the focused window (Escape, Ctrl+S).
+    function feClose() { const w = feFocusedWin(); if (w) feCloseWin(w); }
+    function feSave() { const w = feFocusedWin(); if (w) feSaveWin(w); }
+    function feAnyOpen() { return feWins().length > 0; }
+    window.feClose = feClose; window.feSave = feSave;
+
+    // ── Drag + edge-snap (desktop) ──
+    // Editor windows stay below this Y (px). The web UI runs in an iframe under a
+    // 32px OS title bar (an app-region drag region); keeping windows — and their
+    // header, hence the drag pointer — clear of the top avoids Windows hijacking
+    // the gesture into a full-app move. Matches --topbar-height (48px).
+    const FE_TOP = 48;
+    function feSnapRect(zone) {
+      const vw = window.innerWidth, vh = window.innerHeight, top = FE_TOP, h = vh - FE_TOP - 4, w2 = vw / 2, hh = (h / 2) - 2;
+      const R = { left: { left: 4, top, width: w2 - 6, height: h }, right: { left: w2 + 2, top, width: w2 - 6, height: h },
+        max: { left: 4, top, width: vw - 8, height: h },
+        tl: { left: 4, top, width: w2 - 6, height: hh }, tr: { left: w2 + 2, top, width: w2 - 6, height: hh },
+        bl: { left: 4, top: top + h / 2 + 2, width: w2 - 6, height: hh }, br: { left: w2 + 2, top: top + h / 2 + 2, width: w2 - 6, height: hh } };
+      return R[zone] || null;
+    }
+    function feZoneAt(x, y) {
+      const vw = window.innerWidth, vh = window.innerHeight, E = 36;
+      const l = x < E, r = x > vw - E, t = y < E, b = y > vh - E;
+      if (t && l) return 'tl'; if (t && r) return 'tr'; if (b && l) return 'bl'; if (b && r) return 'br';
+      if (l) return 'left'; if (r) return 'right'; if (t) return 'max';
+      return null;
+    }
+    function feApplyRect(w, rect) {
+      w.classList.remove('maximized');
+      w.style.left = rect.left + 'px'; w.style.top = rect.top + 'px';
+      w.style.width = rect.width + 'px'; w.style.height = rect.height + 'px';
+    }
+    // NOTE: drag/resize use Pointer Events + setPointerCapture (not mouse events
+    // on document). In the desktop app the webapp runs in an iframe sitting below
+    // a 32px OS title bar that is an app-region drag region. With plain mouse
+    // listeners, dragging a window's header up past the iframe's top edge
+    // leaks the gesture to that title bar and Windows starts moving the WHOLE app.
+    // Capturing the pointer on the header keeps every move/up bound to our element
+    // for the entire gesture, so it never reaches the OS drag region.
+    function feWireDrag(w) {
+      const head = w.querySelector('.fe-header');
+      let sx = 0, sy = 0, ol = 0, ot = 0, dragging = false, zone = null, pid = null;
+      head.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button') || feMobile() || e.button !== 0) return;
+        feBringFront(w);
+        feShowArrange(); // reveal the Tile/Grid/Cascade bar while moving windows
+        const r = w.getBoundingClientRect();
+        ol = r.left; ot = r.top; sx = e.clientX; sy = e.clientY; dragging = true; pid = e.pointerId;
+        w.classList.remove('maximized');
+        try { head.setPointerCapture(pid); } catch { /* ignore */ }
+        head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
+        e.preventDefault();
+      });
+      function mv(e) {
+        if (!dragging) return;
+        w.style.left = (ol + e.clientX - sx) + 'px';
+        w.style.top = Math.max(FE_TOP, ot + e.clientY - sy) + 'px';
+        zone = feZoneAt(e.clientX, e.clientY);
+        const o = feOverlay(), hint = document.getElementById('fe-snap-hint');
+        if (zone) { const rc = feSnapRect(zone); o.classList.add('snapping'); Object.assign(hint.style, { left: rc.left + 'px', top: rc.top + 'px', width: rc.width + 'px', height: rc.height + 'px' }); }
+        else o.classList.remove('snapping');
+      }
+      function up() {
+        dragging = false;
+        try { head.releasePointerCapture(pid); } catch { /* ignore */ }
+        head.removeEventListener('pointermove', mv); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up);
+        feOverlay().classList.remove('snapping');
+        if (zone) { feApplyRect(w, feSnapRect(zone)); zone = null; }
+        feHideArrangeSoon(); // keep the bar briefly so it stays clickable after a drag
       }
     }
 
-    // Make feClose/feSave available globally for onclick handlers
-    window.feClose = feClose;
-    window.feSave = feSave;
+    // Custom resize handles (right edge, bottom edge, SE corner). Native CSS
+    // resize is covered by the editor content, so we drive it ourselves. Same
+    // pointer-capture rationale as feWireDrag (avoid leaking to the OS title bar).
+    function feWireResize(w) {
+      w.querySelectorAll('.fe-resize').forEach(handle => {
+        const dir = handle.classList.contains('fe-resize-e') ? 'e' : handle.classList.contains('fe-resize-s') ? 's' : 'se';
+        handle.addEventListener('pointerdown', (e) => {
+          if (feMobile() || e.button !== 0) return;
+          e.preventDefault(); e.stopPropagation();
+          feBringFront(w); w.classList.remove('maximized');
+          const r = w.getBoundingClientRect();
+          const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height, pid = e.pointerId;
+          w.style.left = r.left + 'px'; w.style.top = r.top + 'px'; // pin origin
+          const MINW = 360, MINH = 200;
+          try { handle.setPointerCapture(pid); } catch { /* ignore */ }
+          const mv = (ev) => {
+            if (dir === 'e' || dir === 'se') w.style.width = Math.max(MINW, sw + ev.clientX - sx) + 'px';
+            if (dir === 's' || dir === 'se') w.style.height = Math.max(MINH, sh + ev.clientY - sy) + 'px';
+          };
+          const up = () => {
+            try { handle.releasePointerCapture(pid); } catch { /* ignore */ }
+            handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up);
+          };
+          handle.addEventListener('pointermove', mv); handle.addEventListener('pointerup', up); handle.addEventListener('pointercancel', up);
+        });
+      });
+    }
+
+    // Arrange bar visibility — shown only while dragging a window, with a short
+    // linger afterwards so its buttons stay clickable.
+    let feArrangeTimer = null;
+    function feShowArrange() { const o = feOverlay(); if (o) o.classList.add('show-arrange'); clearTimeout(feArrangeTimer); }
+    function feHideArrangeSoon(ms = 3500) { clearTimeout(feArrangeTimer); feArrangeTimer = setTimeout(() => { const o = feOverlay(); if (o) o.classList.remove('show-arrange'); }, ms); }
+    let feArrangeBarWired = false;
+    function feWireArrangeBar() {
+      if (feArrangeBarWired) return; const bar = document.getElementById('fe-arrange'); if (!bar) return;
+      feArrangeBarWired = true;
+      bar.addEventListener('mouseenter', feShowArrange);
+      bar.addEventListener('mouseleave', () => feHideArrangeSoon(1200));
+    }
+
+    // ── Arrange: tile / grid / cascade ──
+    function feArrange(mode) {
+      const wins = feWins(); if (!wins.length || feMobile()) return;
+      feShowArrange(); feHideArrangeSoon(); // keep the bar up briefly after a click
+      const vw = window.innerWidth, vh = window.innerHeight, top = FE_TOP, gap = 6, h = vh - FE_TOP - 4;
+      wins.forEach(w => w.classList.remove('maximized'));
+      if (mode === 'cascade') {
+        const dw = Math.min(900, vw * 0.7), dh = Math.min(vh * 0.7, 760);
+        wins.forEach((w, i) => { const off = 28 * (i % 8); feApplyRect(w, { left: 40 + off, top: FE_TOP + off, width: dw, height: dh }); });
+      } else if (mode === 'tile') {
+        const n = wins.length, cw = (vw - gap) / n;
+        wins.forEach((w, i) => feApplyRect(w, { left: gap / 2 + i * cw, top, width: cw - gap, height: h }));
+      } else if (mode === 'grid') {
+        const n = wins.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
+        const cw = (vw - gap) / cols, ch = (h - gap * (rows - 1)) / rows;
+        wins.forEach((w, i) => { const c = i % cols, r = Math.floor(i / cols); feApplyRect(w, { left: gap / 2 + c * cw, top: top + r * (ch + gap), width: cw - gap, height: ch }); });
+      }
+    }
 
     // ─── Services ───
     async function loadServices() {
@@ -4852,43 +5917,63 @@ export function getWebappHtml(botUsername) {
         ? services.filter(s => s.alias === currentProject)
         : services;
 
-      const addBtn = '<div style="padding:0 0 8px;text-align:right;">'
-        + '<button class="svc-action-btn" data-action="svc-register" style="background:var(--accent);border-color:var(--accent);color:#fff;">+ Register Service</button>'
+      const toolbar = '<div class="svc-toolbar">'
+        + '<span class="svc-title">Services' + (currentProject ? '' : ' \\u00b7 all projects') + '</span>'
+        + '<div class="spacer"></div>'
+        + '<button class="svc-add-btn" data-action="svc-register">' + ic('plus') + 'Register service</button>'
         + '</div>';
 
       if (projectServices.length === 0) {
-        panel.innerHTML = addBtn + '<div class="services-empty">'
-          + '<div class="icon">' + ic('settings') + '</div>'
+        panel.innerHTML = toolbar + '<div class="services-empty">'
+          + '<div class="icon">' + ic('server') + '</div>'
           + '<p>No services registered' + (currentProject ? ' for this project' : '') + '</p>'
           + '</div>';
         return;
       }
 
-      panel.innerHTML = addBtn + projectServices.map(s => {
-        const statusClass = s.status === 'running' ? 'running' : (s.status === 'error' ? 'error' : 'stopped');
-        const tunnelOn = (s.tunnelPort || 0) > 0;
-        const tunnelHtml = tunnelOn
-          ? '<br><span style="color:var(--text-muted)">tunnel :' + s.tunnelPort + '</span>'
-            + (s.tunnelUrl ? ' <a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>' : ' <span style="color:var(--yellow)">(starting…)</span>')
-          : '';
-        return '<div class="svc-card" data-svc-key="' + escHtml(s.key) + '">'
+      panel.innerHTML = toolbar + projectServices.map(s => {
+        const k = escHtml(s.key);
+        const running = s.status === 'running';
+        const statusClass = running ? 'running' : (s.status === 'error' ? 'error' : 'stopped');
+        // Tunnel port and on/off are independent. The runtime badge reflects the
+        // actual tunnel status — a stopped service shows "(idle)", not "(starting…)".
+        const tPort = s.tunnelPort || 0;
+        const tEnabled = !!s.tunnelEnabled;
+        const tStatus = s.tunnelStatus;
+        let tunnelRow = '';
+        if (tPort > 0 || tEnabled) {
+          let badge;
+          if (tEnabled && s.tunnelUrl && tStatus === 'active') badge = '<a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>';
+          else if (tEnabled && tStatus === 'connecting') badge = '<span class="svc-tunnel-badge" style="color:var(--yellow)">starting…</span>';
+          else if (tEnabled && tStatus === 'error') badge = '<span class="svc-tunnel-badge" style="color:var(--red)">error</span>';
+          else if (tEnabled) badge = '<span class="svc-tunnel-badge">idle</span>';
+          else badge = '<span class="svc-tunnel-badge">off</span>';
+          tunnelRow = '<div class="svc-tunnel">'
+            + '<span class="svc-tunnel-ic">' + ic('globe') + '</span>'
+            + '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '">' + (tPort > 0 ? 'Port ' + tPort : 'Set port') + '</button>'
+            + '<button class="svc-btn' + (tEnabled ? ' on' : '') + '" data-action="svc-tunnel-toggle" data-key="' + k + '" data-port="' + tPort + '" data-enabled="' + (tEnabled ? '1' : '0') + '"' + (tPort > 0 ? '' : ' title="Set a tunnel port first"') + '>' + ic('globe') + (tEnabled ? 'On' : 'Off') + '</button>'
+            + badge
+            + '</div>';
+        }
+        return '<div class="svc-card" data-svc-key="' + k + '">'
           + '<div class="svc-header">'
-          + '  <span class="svc-name">' + escHtml(s.name || s.key) + '</span>'
-          + '  <span class="svc-status ' + statusClass + '">' + escHtml(s.status) + '</span>'
+          + '<span class="svc-dot ' + statusClass + '"></span>'
+          + '<span class="svc-name">' + escHtml(s.name || s.key) + '</span>'
+          + '<span class="svc-status ' + statusClass + '">' + escHtml(s.status) + '</span>'
           + '</div>'
           + '<div class="svc-meta">' + escHtml(s.command || '')
-          + (s.uptime ? ' &mdash; up ' + escHtml(s.uptime) : '')
-          + tunnelHtml + '</div>'
+          + (s.uptime ? ' <span class="svc-up">&middot; up ' + escHtml(s.uptime) + '</span>' : '') + '</div>'
           + '<div class="svc-actions">'
-          + (s.status === 'running'
-            ? '<button data-action="svc-stop" data-key="' + escHtml(s.key) + '">Stop</button>'
-              + '<button data-action="svc-restart" data-key="' + escHtml(s.key) + '">Restart</button>'
-            : '<button data-action="svc-start" data-key="' + escHtml(s.key) + '">Start</button>')
-          + '<button data-action="svc-logs" data-key="' + escHtml(s.key) + '">Logs</button>'
-          + '<button data-action="svc-tunnel" data-key="' + escHtml(s.key) + '" data-port="' + (s.tunnelPort || 0) + '">' + (tunnelOn ? 'Tunnel: on' : 'Tunnel: off') + '</button>'
-          + '<button class="danger" data-action="svc-delete" data-key="' + escHtml(s.key) + '">Delete</button>'
+          + (running
+            ? '<button class="svc-btn" data-action="svc-stop" data-key="' + k + '">' + ic('stop') + 'Stop</button>'
+              + '<button class="svc-btn" data-action="svc-restart" data-key="' + k + '">' + ic('refresh') + 'Restart</button>'
+            : '<button class="svc-btn primary" data-action="svc-start" data-key="' + k + '">' + ic('play') + 'Start</button>')
+          + '<button class="svc-btn" data-action="svc-logs" data-key="' + k + '">' + ic('file-text') + 'Logs</button>'
+          + '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '"' + (tPort > 0 || tEnabled ? ' style="display:none"' : '') + '>' + ic('globe') + 'Tunnel</button>'
+          + '<button class="svc-btn danger" data-action="svc-delete" data-key="' + k + '">' + ic('trash') + 'Delete</button>'
           + '</div>'
-          + '<div class="svc-logs" id="svc-logs-' + escHtml(s.key) + '"></div>'
+          + tunnelRow
+          + '<div class="svc-logs" id="svc-logs-' + k + '"></div>'
           + '</div>';
       }).join('');
     }
@@ -4921,24 +6006,34 @@ export function getWebappHtml(botUsername) {
       }
     }
 
-    async function svcTunnel(key, currentPort) {
-      const cur = parseInt(currentPort, 10) || 0;
-      const val = await askText({
-        title: cur > 0 ? 'Tunnel (currently :' + cur + ')' : 'Enable tunnel',
-        label: 'Port to expose via Cloudflare tunnel. Enter 0 (or leave blank) to disable.',
-        value: cur > 0 ? String(cur) : '',
-      });
-      if (val === null) return; // cancelled
-      const port = parseInt(val, 10) || 0;
+    async function svcTunnelPost(key, body, okMsg) {
       try {
         const res = await apiFetch('/api/services/' + encodeURIComponent(key) + '/tunnel', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
         const d = await res.json();
         if (!d.ok) toast(d.error || 'Failed', 'error');
-        else toast(port > 0 ? 'Tunnel enabled on :' + port : 'Tunnel disabled', 'success');
+        else toast(okMsg || 'Tunnel updated', 'success');
         setTimeout(loadServices, 600);
       } catch (err) { toast('Error: ' + err.message, 'error'); }
+    }
+    // Set/change the tunnel port (separate from on/off). 0 clears it (and turns off).
+    async function svcTunnelSetPort(key, currentPort) {
+      const cur = parseInt(currentPort, 10) || 0;
+      const val = await askText({
+        title: 'Tunnel port',
+        label: 'Local port to expose via Cloudflare. Enter 0 (or blank) to clear.',
+        value: cur > 0 ? String(cur) : '',
+      });
+      if (val === null) return;
+      const port = parseInt(val, 10) || 0;
+      svcTunnelPost(key, { port }, port > 0 ? 'Tunnel port set to :' + port : 'Tunnel port cleared');
+    }
+    // Toggle the tunnel on/off. Blocked when no port is set.
+    async function svcTunnelToggle(key, enabled, port) {
+      const p = parseInt(port, 10) || 0;
+      if (!enabled && p <= 0) { toast('Set a tunnel port first', 'error'); return; }
+      svcTunnelPost(key, { enabled: !enabled }, !enabled ? 'Tunnel on' : 'Tunnel off');
     }
 
     async function svcDelete(key) {
@@ -4960,16 +6055,15 @@ export function getWebappHtml(botUsername) {
       if (panel.querySelector('.svc-register-form')) return;
       const form = document.createElement('div');
       form.className = 'svc-register-form';
-      form.style.cssText = 'padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius-sm);margin:8px 0;display:flex;flex-direction:column;gap:8px;';
-      form.innerHTML = '<div style="font-size:12px;font-weight:600;color:var(--text-primary);">Register Service</div>'
-        + '<input type="text" id="svc-reg-name" placeholder="Service name" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;" />'
-        + '<input type="text" id="svc-reg-cmd" placeholder="Command (e.g. npm run dev)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<input type="text" id="svc-reg-cwd" placeholder="Working directory (optional)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<input type="text" id="svc-reg-stop" placeholder="Stop command (optional, e.g. docker compose down)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<input type="number" id="svc-reg-tunnel" placeholder="Tunnel port (optional, e.g. 3000) — exposes it via Cloudflare" min="0" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<div style="display:flex;gap:6px;">'
-        + '<button data-action="svc-reg-submit" style="padding:6px 14px;border-radius:4px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:12px;">Register</button>'
-        + '<button data-action="svc-reg-cancel" style="padding:6px 14px;border-radius:4px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12px;">Cancel</button>'
+      form.innerHTML = '<div class="srf-title">Register a service</div>'
+        + '<input type="text" id="svc-reg-name" class="svc-reg-input" placeholder="Service name" />'
+        + '<input type="text" id="svc-reg-cmd" class="svc-reg-input" placeholder="Command (e.g. npm run dev)" />'
+        + '<input type="text" id="svc-reg-cwd" class="svc-reg-input" placeholder="Working directory (optional)" />'
+        + '<input type="text" id="svc-reg-stop" class="svc-reg-input" placeholder="Stop command (optional, e.g. docker compose down)" />'
+        + '<input type="number" id="svc-reg-tunnel" class="svc-reg-input" placeholder="Tunnel port (optional) — expose via Cloudflare" min="0" />'
+        + '<div class="srf-actions">'
+        + '<button class="svc-btn primary" data-action="svc-reg-submit">' + ic('check') + 'Register</button>'
+        + '<button class="svc-btn" data-action="svc-reg-cancel">Cancel</button>'
         + '</div>';
       // Insert after first element (the toolbar/button area)
       const firstChild = panel.firstElementChild;
@@ -5201,8 +6295,8 @@ export function getWebappHtml(botUsername) {
           + '  <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:11px;">Click to take screenshot</div>'
           + '</div>'
           + '<div class="svc-actions">'
-          + '<button data-action="browser-screenshot" data-key="' + ek + '">Screenshot</button>'
-          + '<button data-action="browser-close" data-key="' + ek + '">Close</button>'
+          + '<button class="svc-btn" data-action="browser-screenshot" data-key="' + ek + '">' + ic('image') + 'Screenshot</button>'
+          + '<button class="svc-btn danger" data-action="browser-close" data-key="' + ek + '">' + ic('x') + 'Close</button>'
           + '</div>'
           + '</div>';
       }).join('');
@@ -5352,8 +6446,10 @@ export function getWebappHtml(botUsername) {
       }
 
       // Server logs
-      let logsHtml = '<div class="info-section"><h4>Server Logs</h4>'
-        + '<div id="server-logs-area" style="max-height:300px;overflow-y:auto;background:var(--bg-primary);'
+      let logsHtml = '<div class="info-section">'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><h4 style="margin:0;flex:1;">Server Logs</h4>'
+        + '<button class="svc-btn" data-action="copy-logs" onmousedown="event.preventDefault()" title="Copy selection, or all logs">' + ic('copy') + 'Copy</button></div>'
+        + '<div id="server-logs-area" style="user-select:text;-webkit-user-select:text;max-height:300px;overflow-y:auto;background:var(--bg-primary);'
         + 'border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;'
         + 'font-family:var(--mono);font-size:0.75rem;line-height:1.5;color:var(--text-muted);">'
         + '(loading...)</div></div>';
@@ -5371,6 +6467,17 @@ export function getWebappHtml(botUsername) {
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'subscribe-logs' }));
       }
+    }
+
+    // Copy the current selection if it's within the logs box, otherwise all logs.
+    // (Ctrl+C is dead in the frameless Electron window; this uses the clipboard API.)
+    function copyServerLogs() {
+      const area = document.getElementById('server-logs-area');
+      if (!area) return;
+      const sel = window.getSelection && window.getSelection();
+      const text = (sel && !sel.isCollapsed && sel.toString().trim() && area.contains(sel.anchorNode))
+        ? sel.toString() : area.innerText;
+      navigator.clipboard.writeText(text).then(() => toast('Logs copied'), () => toast('Copy failed', 'error'));
     }
 
     function renderServerLogs(logs) {
@@ -5442,6 +6549,10 @@ export function getWebappHtml(botUsername) {
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Data Directory</label>'
           + '<input type="text" id="set-data-dir" style="' + monoStyle + '" value="' + escHtml(s.DATA_DIR || '') + '" placeholder="(default: platform app dir)" />'
           + '<p style="' + hintStyle + '">Override data storage location. Leave empty for default.</p></div>'
+          + '<div style="' + fieldStyle + '"><label style="display:flex;align-items:center;gap:9px;cursor:pointer;color:var(--text-secondary);font-size:0.82rem;">'
+          + '<input type="checkbox" id="set-notify-agent"' + (data.notifyAgentStatus !== false ? ' checked' : '') + ' style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;" />'
+          + 'Notify me when an agent finishes or needs input</label>'
+          + '<p style="' + hintStyle + '">Telegram ping on a terminal\\u2019s Claude reaching done or waiting for input.</p></div>'
           + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
           + '<button data-action="settings-save" style="padding:8px 20px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">Save</button>'
           + '<span id="settings-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
@@ -5468,13 +6579,14 @@ export function getWebappHtml(botUsername) {
         return;
       }
       const chatId = ($('#set-chat-id') || {}).value || '';
+      const notifyAgentStatus = !($('#set-notify-agent') && $('#set-notify-agent').checked === false);
       const status = $('#settings-status');
       if (status) status.textContent = 'Saving...';
       try {
         const r = await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ settings, chatId }),
+          body: JSON.stringify({ settings, chatId, notifyAgentStatus }),
         });
         const data = await r.json();
         if (data.ok) {
@@ -5493,8 +6605,12 @@ export function getWebappHtml(botUsername) {
 
     // ─── Event Delegation ───
     document.addEventListener('click', (e) => {
-      // Tab clicks
-      if (e.target.dataset.tab) { switchTab(e.target.dataset.tab); return; }
+      // File-editor window arrange controls (tile / grid / cascade)
+      const arrEl = e.target.closest('[data-fe-arrange]');
+      if (arrEl) { feArrange(arrEl.dataset.feArrange); return; }
+      // Tab clicks (tolerate clicks on the icon/label inside the button)
+      const tabEl = e.target.closest('[data-tab]');
+      if (tabEl) { switchTab(tabEl.dataset.tab); return; }
       const actionEl = e.target.closest('[data-action]');
       const action = e.target.dataset.action || actionEl?.dataset.action;
       if (!action) return;
@@ -5517,12 +6633,14 @@ export function getWebappHtml(botUsername) {
         case 'svc-stop': svcAction('stop', d.key); break;
         case 'svc-restart': svcAction('restart', d.key); break;
         case 'svc-logs': svcLogs(d.key); break;
-        case 'svc-tunnel': svcTunnel(d.key, d.port); break;
+        case 'svc-tunnel-port': svcTunnelSetPort(d.key, d.port); break;
+        case 'svc-tunnel-toggle': svcTunnelToggle(d.key, d.enabled === '1', d.port); break;
         case 'svc-delete': svcDelete(d.key); break;
         case 'svc-register': showRegisterServiceForm(); break;
         case 'svc-reg-submit': submitRegisterService(); break;
         case 'svc-reg-cancel': cancelRegisterService(); break;
         case 'settings-save': saveSettings(); break;
+        case 'copy-logs': copyServerLogs(); break;
         case 'term-spawn': termSpawnUser(); break;
         case 'term-view-output': termViewOutput(d.name); break;
         case 'term-close-user': termCloseUser(d.name); break;
@@ -5531,7 +6649,7 @@ export function getWebappHtml(botUsername) {
         case 'browser-navigate': browserNavigate(d.key); break;
         case 'browser-screenshot': browserScreenshot(d.key); break;
         // Git actions
-        case 'diff-stage-chunk': stageChunk(parseInt(d.cidx)); break;
+        case 'diff-stage-chunk': stageChunk(e.target.closest('.fe-window'), parseInt(d.cidx)); break;
         case 'git-stage': gitStage(d.file); break;
         case 'git-unstage': gitUnstage(d.file); break;
         case 'git-stage-all': gitStageAll(); break;
@@ -5553,10 +6671,14 @@ export function getWebappHtml(botUsername) {
         case 'term-send': termSendInput(); break;
         case 'term-attach': termAttachFile(); break;
         case 'term-tool-toggle': termToggleTools(); break;
+        case 'toggle-mobile-layout': toggleMobileMosaic(); break;
         case 'term-key': termSendKey(d.key); break;
         case 'term-add': addTerminalCell(); break;
         case 'wb-add-menu': e.stopPropagation(); toggleWbAddMenu(); break;
         case 'wb-add': { hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
+        case 'wb-layout': { hideWbAddMenu(); mosaicApplyPreset(d.mlayout); break; }
+        case 'leaf-split': { e.stopPropagation(); const [id, dir] = (d.leaf || '').split('|'); setMosaic(mosaicSplitLeaf(currentMosaic(), id, dir)); renderTermGrid(); break; }
+        case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
         case 'wb-close': if (d.wbid) { e.stopPropagation(); closeWbCell(d.wbid); } break;
         case 'wb-refresh': if (d.wbid) { e.stopPropagation(); refreshWbCell(d.wbid); } break;
         case 'term-close': if (d.tid) { e.stopPropagation(); closeTerminal(d.tid); } break;
@@ -5603,10 +6725,29 @@ export function getWebappHtml(botUsername) {
         const data = await res.json();
         if (!data.ok) { panel.innerHTML = '<div class="kanban-empty">' + escHtml(data.error || 'Failed to load') + '</div>'; return; }
         kanbanBoard = data.board;
+        await loadKanbanMedia();
         renderKanban();
       } catch (err) {
         panel.innerHTML = '<div class="kanban-empty">Failed to load board: ' + escHtml(err.message) + '</div>';
       }
+    }
+
+    // Attached media for the current board, grouped by task id and todo id, so
+    // cards can show a thumbnail strip without a per-card request.
+    let kanbanMediaByTask = {}, kanbanMediaByTodo = {};
+    async function loadKanbanMedia() {
+      kanbanMediaByTask = {}; kanbanMediaByTodo = {};
+      if (!currentProject) return;
+      const items = await fetchMedia({ scope: 'project', kind: 'kanban' });
+      for (const it of items) {
+        if (!it.link) continue;
+        if (it.link.type === 'task') (kanbanMediaByTask[it.link.taskId] = kanbanMediaByTask[it.link.taskId] || []).push(it);
+        else if (it.link.type === 'todo') (kanbanMediaByTodo[it.link.todoId] = kanbanMediaByTodo[it.link.todoId] || []).push(it);
+      }
+    }
+    function mediaMiniThumb(it) {
+      const inner = it.kind === 'image' ? '<img loading="lazy" src="' + mediaRawUrl(it.id) + '">' : ic(MEDIA_KIND_ICON[it.kind] || 'file');
+      return '<span class="media-mini" data-media-open="' + it.id + '" title="' + escHtml(it.originalName) + '">' + inner + '</span>';
     }
 
     function renderKanban() {
@@ -5619,6 +6760,7 @@ export function getWebappHtml(botUsername) {
         + '<button class="kanban-btn ' + (kanbanView === 'board' ? 'toggled' : '') + '" data-kact="view-board">Board</button>'
         + '<button class="kanban-btn ' + (kanbanView === 'trash' ? 'toggled' : '') + '" data-kact="view-trash">Trash (' + b.deletedTasks.length + ')</button>'
         + '<button class="kanban-btn ' + (kanbanView === 'history' ? 'toggled' : '') + '" data-kact="view-history">History</button>'
+        + '<button class="kanban-btn" data-kact="media">' + ic('images') + ' Media</button>'
         + '</div>';
       if (kanbanView === 'history') h += renderKanbanHistory();
       else if (kanbanView === 'trash') h += renderKanbanTrash();
@@ -5659,12 +6801,20 @@ export function getWebappHtml(botUsername) {
         + (mmCount ? ' <span class="card-mm" data-kact="goto-mindmap" title="' + mmCount + ' linked mindmap idea(s)">🧠 ' + mmCount + '</span>' : '')
         + '</div>';
       if (t.description) h += '<div class="card-desc">' + escHtml(t.description) + '</div>';
+      // Task-level media strip: thumbnails + attach.
+      const tmedia = kanbanMediaByTask[t.id] || [];
+      h += '<div class="card-media">'
+        + tmedia.slice(0, 6).map(mediaMiniThumb).join('')
+        + '<button class="card-media-add" data-kmedia-task="' + t.id + '" title="Attach / view media">' + ic('paperclip') + '</button>'
+        + '</div>';
       if (todos.length) {
         h += '<div class="kanban-todos">';
         for (const td of todos) {
+          const tdm = (kanbanMediaByTodo[td.id] || []).length;
           h += '<div class="kanban-todo" data-drag-ref="' + td.id + '" data-drag-kind="kanban-subtask" title="Drag onto a terminal to insert this subtask id">'
             + '<input type="checkbox" data-ktodo-toggle="' + t.id + '|' + td.id + '"' + (td.done ? ' checked' : '') + '>'
             + '<span class="todo-text' + (td.done ? ' done' : '') + '">' + escHtml(td.text) + '</span>'
+            + '<button class="todo-media" data-kmedia-todo="' + t.id + '|' + td.id + '" title="Subtask media">' + ic('paperclip') + (tdm ? '<span class="cnt">' + tdm + '</span>' : '') + '</button>'
             + '<button class="todo-edit" data-ktodo-edit="' + t.id + '|' + td.id + '" title="Edit subtask">' + ic('pencil') + '</button>'
             + '<button class="todo-del" data-ktodo-del="' + t.id + '|' + td.id + '" title="Delete subtask">&times;</button>'
             + '</div>';
@@ -5909,10 +7059,24 @@ export function getWebappHtml(botUsername) {
           if (text && text.trim()) { await kanbanPost({ action: 'updateTodo', taskId, todoId, text: text.trim() }); loadKanban(); }
           return;
         }
+        // Attach / view media for a task or subtask.
+        const kmt = e.target.closest('[data-kmedia-task]');
+        if (kmt) {
+          const id = kmt.dataset.kmediaTask;
+          openMediaModal('Task media', { scope: 'project', kind: 'all', linkFilter: { type: 'task', taskId: id }, uploadLink: { type: 'task', taskId: id }, uploadProject: currentProject });
+          return;
+        }
+        const kmd = e.target.closest('[data-kmedia-todo]');
+        if (kmd) {
+          const [taskId2, todoId2] = kmd.dataset.kmediaTodo.split('|');
+          openMediaModal('Subtask media', { scope: 'project', kind: 'all', linkFilter: { type: 'todo', taskId: taskId2, todoId: todoId2 }, uploadLink: { type: 'todo', taskId: taskId2, todoId: todoId2 }, uploadProject: currentProject });
+          return;
+        }
         const btn = e.target.closest('[data-kact]');
         if (!btn) return;
         const act = btn.dataset.kact;
         const taskId = btn.dataset.task;
+        if (act === 'media') { openMediaModal('Media \\u00b7 Kanban', { scope: 'project', kind: 'kanban' }); return; }
         if (act === 'view-board') { kanbanView = 'board'; loadKanban(); }
         else if (act === 'view-trash') { kanbanView = 'trash'; loadKanban(); }
         else if (act === 'view-history') { kanbanView = 'history'; loadKanban(); }
@@ -6135,6 +7299,7 @@ export function getWebappHtml(botUsername) {
       const panel = $('#mindmap-panel');
       let h = '<div class="kanban-toolbar">'
         + '<button class="kanban-btn primary" data-mact="add-root">+ Add idea</button>'
+        + '<button class="kanban-btn" data-mact="media">' + ic('images') + ' Media</button>'
         + '<input type="text" class="mm-search" id="mm-search" placeholder="Filter ideas…" autocomplete="off" value="' + escHtml(mindmapSearch) + '">'
         + '<div class="spacer"></div>'
         + '<span style="font-size:0.74rem;color:var(--text-muted)">Tap a node for details · Ctrl+scroll / pinch to zoom · green = linked</span>'
@@ -6523,7 +7688,9 @@ export function getWebappHtml(botUsername) {
         if (btn) {
           const act = btn.dataset.mact;
           const id = btn.dataset.node;
-          if (act === 'add-root') {
+          if (act === 'media') {
+            openMediaModal('Media \\u00b7 Mindmap', { scope: 'project', kind: 'mindmap' });
+          } else if (act === 'add-root') {
             const text = await askText({ title: 'Add idea', label: 'New idea' });
             if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim() }); loadMindmap(); }
           } else if (act === 'toggle') {
@@ -6538,6 +7705,7 @@ export function getWebappHtml(botUsername) {
         if (nodeEl && Date.now() - lastMmDrag > 300) openMmDetail(nodeEl.dataset.node);
       });
       setupMmDetailModal();
+      setupMediaHandlers();
     }
 
     // Action helpers shared by the detail modal.
@@ -6583,7 +7751,16 @@ export function getWebappHtml(botUsername) {
       $('#mmd-notes').innerHTML = (n.notes || []).map(t => '<li>' + escHtml(t) + '</li>').join('');
       $('#mmd-link-btn').textContent = (n.linkedTask || n.project) ? 'Unlink' : 'Link / scope';
       mmDetailSetEditing(false);
+      loadMmDetailMedia(id);
       $('#mm-detail-modal').classList.add('visible');
+    }
+    // Thumbnail strip of media attached to a node, shown in its detail modal.
+    async function loadMmDetailMedia(nodeId) {
+      const host = $('#mmd-media'); if (!host) return;
+      host.innerHTML = '';
+      const items = await fetchMedia({ scope: 'project', linkFilter: { type: 'node', nodeId } });
+      host.innerHTML = items.slice(0, 10).map(mediaMiniThumb).join('')
+        + '<button class="card-media-add" data-kmedia-node="' + nodeId + '" title="Attach / view media">' + ic('paperclip') + '</button>';
     }
     function closeMmDetail() { $('#mm-detail-modal').classList.remove('visible'); mmDetailId = null; }
     function addMmNoteRow(value) {
@@ -6631,7 +7808,315 @@ export function getWebappHtml(botUsername) {
       });
       $('#mmd-addchild-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmAddChild(id); });
       $('#mmd-link-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmToggleLink(id); });
+      $('#mmd-media-btn').addEventListener('click', () => { const id = mmDetailId; if (id) openNodeMediaModal(id); });
       $('#mmd-del-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmDelete(id); });
+    }
+
+    // ─── Media library ───
+    // One reusable browser renders into a host element driven by a state object
+    // ({ scope:'project'|'all', kind:'all'|'kanban'|'mindmap'|'unlinked' }). Used
+    // by the Media tab/panel (#media-panel) and the Media modal (kanban/mindmap).
+    const mediaTabState = { scope: 'project', kind: 'all' };
+    const _mediaCache = new Map(); // id -> last-seen enriched item (for click handlers)
+    function findLoadedMedia(id) { return _mediaCache.get(id) || null; }
+    const MEDIA_KIND_ICON = { image: 'image', pdf: 'file-text', video: 'film', audio: 'music', other: 'file' };
+    function mtrunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '\\u2026' : s; }
+
+    function mediaRawUrl(id, download) {
+      return '/api/media/raw/' + encodeURIComponent(id) + '?token=' + encodeURIComponent(token || '') + (download ? '&download=1' : '');
+    }
+    function mediaListUrl(state) {
+      const p = new URLSearchParams();
+      if (state.scope === 'project' && currentProject) { p.set('project', currentProject); p.set('includeGeneral', '1'); }
+      if (state.linkFilter) {
+        const f = state.linkFilter;
+        p.set('linkType', f.type);
+        if (f.taskId) p.set('taskId', f.taskId);
+        if (f.todoId) p.set('todoId', f.todoId);
+        if (f.nodeId) p.set('nodeId', f.nodeId);
+      } else if (state.kind && state.kind !== 'all') {
+        p.set('kind', state.kind);
+      }
+      return '/api/media/list?' + p.toString();
+    }
+    async function fetchMedia(state) {
+      try {
+        const res = await apiFetch(mediaListUrl(state));
+        const d = await res.json();
+        return d.ok ? d.items : [];
+      } catch { return []; }
+    }
+
+    function mediaThumbHtml(it) {
+      if (it.kind === 'image') return '<img loading="lazy" src="' + mediaRawUrl(it.id) + '" alt="">';
+      const glyph = MEDIA_KIND_ICON[it.kind] || 'file';
+      const ext = (it.ext || '').replace('.', '') || it.kind;
+      return '<div class="media-glyph">' + ic(glyph) + '<span class="ext">' + escHtml(ext) + '</span></div>';
+    }
+    function mediaLinkSubHtml(it) {
+      if (!it.link) return '<span>Unlinked</span>';
+      const word = it.link.type === 'node' ? 'Idea' : it.link.type === 'todo' ? 'Subtask' : 'Task';
+      if (it.linkStatus === 'deleted') return '<span class="media-link-tag deleted">' + ic('external-link') + word + ' (deleted)</span>';
+      return '<span class="media-link-tag">' + ic('external-link') + escHtml(mtrunc(it.linkLabel || word, 22)) + '</span>';
+    }
+    function mediaCardHtml(it) {
+      const previewable = it.kind !== 'other';
+      // Whole card is draggable onto a terminal / input (inserts the file path),
+      // just like the Files panel.
+      const drag = it.path ? ' data-drag-ref="' + escHtml(it.path) + '" data-drag-kind="media" title="Drag onto a terminal to insert this path"' : '';
+      let h = '<div class="media-card" data-media="' + it.id + '"' + drag + '>';
+      h += '<div class="media-thumb" data-media-open="' + it.id + '">'
+        + '<span class="media-kindbadge">' + ic(MEDIA_KIND_ICON[it.kind] || 'file') + '</span>'
+        + mediaThumbHtml(it) + '</div>';
+      h += '<div class="media-info"><div class="media-name" title="' + escHtml(it.originalName) + '">' + escHtml(it.originalName) + '</div>'
+        + '<div class="media-sub">' + (it.projectName ? '<span>' + escHtml(mtrunc(it.projectName, 16)) + '</span>' : '') + mediaLinkSubHtml(it) + '</div></div>';
+      h += '<div class="media-actions">';
+      if (previewable) h += '<button data-media-open="' + it.id + '" title="Preview">' + ic('image') + 'View</button>';
+      else h += '<button data-media-dl="' + it.id + '" title="Download">' + ic('download') + 'Get</button>';
+      if (it.path) h += '<button data-media-copy="' + it.id + '" title="Copy file path">' + ic('copy') + '</button>';
+      if (it.link) h += '<button data-media-jump="' + it.id + '" title="Jump to source"' + (it.linkStatus === 'deleted' ? ' disabled' : '') + '>' + ic('external-link') + '</button>';
+      h += '<button class="danger" data-media-del="' + it.id + '" title="Delete">' + ic('trash') + '</button>';
+      h += '</div></div>';
+      return h;
+    }
+    // Filter loaded items by the search query (name, link label, project, type).
+    function mediaFilter(items, q) {
+      q = (q || '').trim().toLowerCase();
+      if (!q) return items;
+      return items.filter(it => (
+        (it.originalName || '').toLowerCase().includes(q)
+        || (it.linkLabel || '').toLowerCase().includes(q)
+        || (it.projectName || '').toLowerCase().includes(q)
+        || (it.ext || '').toLowerCase().includes(q)
+        || (it.kind || '').toLowerCase().includes(q)
+      ));
+    }
+    // Re-render just the grid for the current search query (keeps the search box
+    // focused while typing — no refetch).
+    function mediaApplyFilter(host) {
+      const body = host.querySelector('.media-body'); if (!body) return;
+      const items = host._mediaItems || [];
+      const filtered = mediaFilter(items, host._mediaState.q);
+      if (!items.length) body.innerHTML = '<div class="media-empty">No media here yet. Upload files, or attach them to a Kanban task/subtask or a Mindmap idea.</div>';
+      else if (!filtered.length) body.innerHTML = '<div class="media-empty">No media matches “' + escHtml(host._mediaState.q) + '”.</div>';
+      else body.innerHTML = '<div class="media-grid">' + filtered.map(mediaCardHtml).join('') + '</div>';
+      wireDragRefs(host);
+    }
+    function renderMediaBrowser(host, state, items) {
+      let h = '<div class="media-toolbar">';
+      h += '<button class="media-upload-btn" data-media-upload="1">' + ic('upload') + 'Upload</button>';
+      h += '<input type="text" class="media-search" placeholder="Search media…" autocomplete="off" value="' + escHtml(state.q || '') + '">';
+      if (state.linkFilter) {
+        // Target-specific view (one task / subtask / idea): no filter chips.
+        h += '<span class="spacer"></span><span style="font-size:0.74rem;color:var(--text-muted)">Attached here</span>';
+      } else {
+        const chip = (k, label, icon) => '<button class="media-chip' + (state.kind === k ? ' on' : '') + '" data-media-kind="' + k + '">' + (icon ? ic(icon) : '') + label + '</button>';
+        h += chip('all', 'All') + chip('kanban', 'Kanban', 'kanban') + chip('mindmap', 'Mindmap', 'mindmap') + chip('unlinked', 'Unlinked');
+        h += '<div class="spacer"></div>';
+        h += '<button class="media-chip' + (state.scope === 'project' ? ' on' : '') + '" data-media-scope="project">This project</button>';
+        h += '<button class="media-chip' + (state.scope === 'all' ? ' on' : '') + '" data-media-scope="all">All projects</button>';
+      }
+      h += '</div><div class="media-body"></div>';
+      host.innerHTML = h;
+      host._mediaState = state;
+      host._mediaItems = items;
+      for (const it of items) _mediaCache.set(it.id, it);
+      if (!state.linkFilter && state.scope === 'project' && !currentProject) {
+        host.querySelector('.media-body').innerHTML = '<div class="media-empty">Select a project, or switch to <b>All projects</b>.</div>';
+      } else {
+        mediaApplyFilter(host);
+      }
+      const search = host.querySelector('.media-search');
+      if (search) search.addEventListener('input', () => { host._mediaState.q = search.value; mediaApplyFilter(host); });
+    }
+    // Mount/refresh a media browser into a host element; remembers how to reload.
+    async function mountMediaBrowser(host, state) {
+      const reload = async () => {
+        const items = (state.scope === 'project' && !currentProject) ? [] : await fetchMedia(state);
+        renderMediaBrowser(host, state, items);
+        host._mediaReload = reload;
+      };
+      host._mediaReload = reload;
+      await reload();
+      return reload;
+    }
+    // The Media tab / workbench panel (single #media-panel node, moved like the
+    // other workbench panels).
+    function loadMedia() {
+      const host = $('#media-panel'); if (!host) return;
+      mountMediaBrowser(host, mediaTabState);
+    }
+    // Refresh every mounted media browser (tab/panel + open modal) after a change.
+    function refreshAllMediaViews() {
+      document.querySelectorAll('.media-panel, .media-modal-body').forEach(h => { if (h._mediaReload) h._mediaReload(); });
+      // Refresh the mindmap node-detail thumbnail strip if it's open.
+      if (mmDetailId && $('#mm-detail-modal').classList.contains('visible')) loadMmDetailMedia(mmDetailId);
+    }
+
+    // ── Upload ──
+    let mediaUploadCtx = null; // { project?, link?, reload? }
+    function mediaTriggerUpload(ctx) {
+      mediaUploadCtx = ctx || {};
+      const inp = $('#media-file-input'); if (!inp) return;
+      inp.value = ''; inp.click();
+    }
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(',')[1] || '');
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+    }
+    async function mediaUploadFiles(files) {
+      const ctx = mediaUploadCtx || {};
+      let ok = 0;
+      for (const f of files) {
+        try {
+          const data = await fileToBase64(f);
+          const body = { name: f.name, data };
+          if (ctx.link) body.link = ctx.link;
+          // Scope: explicit ctx.project wins; else current project (so it shows
+          // under the project) unless this is a link (server derives it then).
+          if (ctx.project) body.project = ctx.project;
+          else if (!ctx.link && currentProject) body.project = currentProject;
+          const res = await apiFetch('/api/media/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const d = await res.json();
+          if (d.ok) ok++; else toast(d.error || 'Upload failed', 'error');
+        } catch (err) { toast('Upload error: ' + err.message, 'error'); }
+      }
+      if (ok) toast('Uploaded ' + ok + ' file' + (ok === 1 ? '' : 's'), 'success');
+      if (ctx.reload) ctx.reload();
+      refreshAllMediaViews();
+      // refresh attachment strips on cards/nodes if shown
+      if (currentTab === 'kanban') loadKanban();
+    }
+
+    // ── Delete ──
+    async function mediaDelete(id) {
+      if (!confirm('Delete this media file? This permanently removes it and cannot be undone.')) return;
+      try {
+        const res = await apiFetch('/api/media/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+        const d = await res.json();
+        if (!d.ok) { toast(d.error || 'Delete failed', 'error'); return; }
+        toast('Deleted', 'success');
+        refreshAllMediaViews();
+        if (currentTab === 'kanban') loadKanban();
+      } catch (err) { toast('Error: ' + err.message, 'error'); }
+    }
+    function mediaDownload(id) {
+      const a = document.createElement('a');
+      a.href = mediaRawUrl(id, true); a.download = '';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    // ── Lightbox ──
+    function openMediaLightbox(it) {
+      if (!it) return;
+      if (it.kind === 'other') { mediaDownload(it.id); return; }
+      const stage = $('#ml-stage'); const u = mediaRawUrl(it.id);
+      $('#ml-title').textContent = it.originalName || '';
+      if (it.kind === 'image') stage.innerHTML = '<img src="' + u + '" alt="">';
+      else if (it.kind === 'pdf') stage.innerHTML = '<iframe src="' + u + '"></iframe>';
+      else if (it.kind === 'video') stage.innerHTML = '<video src="' + u + '" controls autoplay></video>';
+      else if (it.kind === 'audio') stage.innerHTML = '<audio src="' + u + '" controls autoplay></audio>';
+      $('#ml-download').onclick = () => mediaDownload(it.id);
+      $('#media-lightbox').classList.add('visible');
+    }
+    function closeMediaLightbox() {
+      $('#media-lightbox').classList.remove('visible');
+      $('#ml-stage').innerHTML = ''; // stop any playing media
+    }
+
+    // ── Media modal (kanban / mindmap "Media" buttons) ──
+    function openMediaModal(title, state) {
+      $('#media-modal-title').textContent = title || 'Media';
+      $('#media-modal').classList.add('visible');
+      mountMediaBrowser($('#media-modal-body'), state);
+    }
+    function closeMediaModal() {
+      $('#media-modal').classList.remove('visible');
+      const b = $('#media-modal-body'); if (b) { b.innerHTML = ''; b._mediaReload = null; }
+    }
+    function openNodeMediaModal(nodeId) {
+      openMediaModal('Idea media', { scope: 'project', kind: 'all', linkFilter: { type: 'node', nodeId }, uploadLink: { type: 'node', nodeId } });
+    }
+
+    // ── Jump to source (switch project + tab, scroll & flash the target) ──
+    async function mediaJump(it) {
+      if (!it || !it.link) return;
+      if (it.linkStatus === 'deleted') { toast('The original was deleted', 'error'); return; }
+      closeMediaModal(); closeMediaLightbox();
+      if (it.project && it.project !== currentProject) {
+        if (projects.find(p => p.alias === it.project)) await selectProject(it.project);
+        else { toast('Source project not available', 'error'); return; }
+      }
+      if (it.link.type === 'node') {
+        switchTab('mindmap');
+        await loadMindmap();
+        setTimeout(() => flashMindmapNode(it.link.nodeId), 250);
+      } else {
+        switchTab('kanban');
+        await loadKanban();
+        setTimeout(() => flashKanbanTarget(it.link), 250);
+      }
+    }
+    function flashEl(el) {
+      if (!el) return;
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' }); } catch { el.scrollIntoView(); }
+      el.classList.remove('jump-flash'); void el.offsetWidth; el.classList.add('jump-flash');
+      setTimeout(() => el.classList.remove('jump-flash'), 2400);
+    }
+    function flashKanbanTarget(link) {
+      const panel = $('#kanban-panel'); if (!panel) return;
+      if (link.type === 'todo') {
+        const row = panel.querySelector('[data-drag-ref="' + link.todoId + '"]');
+        if (row) { flashEl(row); return; }
+      }
+      const card = panel.querySelector('.kanban-card[data-task="' + link.taskId + '"]');
+      flashEl(card);
+    }
+    function flashMindmapNode(nodeId) {
+      const el = $('#mindmap-panel') && $('#mindmap-panel').querySelector('.mm-node[data-node="' + nodeId + '"]');
+      if (el) { flashEl(el); openMmDetail(nodeId); }
+      else { openMmDetail(nodeId); }
+    }
+
+    // ── One delegated handler for all media UI (tab, panel, modal, cards) ──
+    let _mediaBound = false;
+    function setupMediaHandlers() {
+      if (_mediaBound) return; _mediaBound = true;
+      document.addEventListener('click', (e) => {
+        const t = e.target;
+        const hostOf = (el) => el.closest('.media-panel, .media-modal-body');
+        let m;
+        if ((m = t.closest('[data-media-kind]'))) {
+          const host = hostOf(m); if (host && host._mediaState) { host._mediaState.kind = m.dataset.mediaKind; host._mediaReload(); }
+          return;
+        }
+        if ((m = t.closest('[data-media-scope]'))) {
+          const host = hostOf(m); if (host && host._mediaState) { host._mediaState.scope = m.dataset.mediaScope; host._mediaReload(); }
+          return;
+        }
+        if ((m = t.closest('[data-media-upload]'))) {
+          const host = hostOf(m);
+          const st = (host && host._mediaState) || {};
+          mediaTriggerUpload({ link: st.uploadLink || null, project: st.uploadProject || null, reload: host && host._mediaReload });
+          return;
+        }
+        if ((m = t.closest('[data-kmedia-node]'))) { openNodeMediaModal(m.dataset.kmediaNode); return; }
+        if ((m = t.closest('[data-media-copy]'))) { const it = findLoadedMedia(m.dataset.mediaCopy); if (it && it.path) navigator.clipboard.writeText(it.path).then(() => toast('Path copied'), () => toast('Copy failed', 'error')); return; }
+        if ((m = t.closest('[data-media-open]'))) { openMediaLightbox(findLoadedMedia(m.dataset.mediaOpen)); return; }
+        if ((m = t.closest('[data-media-dl]'))) { mediaDownload(m.dataset.mediaDl); return; }
+        if ((m = t.closest('[data-media-jump]'))) { mediaJump(findLoadedMedia(m.dataset.mediaJump)); return; }
+        if ((m = t.closest('[data-media-del]'))) { mediaDelete(m.dataset.mediaDel); return; }
+      });
+      const inp = $('#media-file-input');
+      if (inp) inp.addEventListener('change', () => { if (inp.files && inp.files.length) mediaUploadFiles([...inp.files]); });
+      $('#ml-close').addEventListener('click', closeMediaLightbox);
+      $('#media-lightbox').addEventListener('click', (e) => { if (e.target.id === 'media-lightbox') closeMediaLightbox(); });
+      $('#media-modal-close').addEventListener('click', closeMediaModal);
+      $('#media-modal').addEventListener('click', (e) => { if (e.target.id === 'media-modal') closeMediaModal(); });
     }
 
     // ─── Text input modal (window.prompt replacement; Electron has no prompt) ───

@@ -81,6 +81,44 @@ function writeMcpConfig(projectPath, apiUrl, apiKey, projectAlias) {
 }
 
 /**
+ * Ensure .claude/settings.local.json carries Crundi's lifecycle hooks so the
+ * server can track each terminal's agent state. The hook command is shared by
+ * every Claude in this folder; it identifies its terminal via the per-terminal
+ * CRUNDI_TERMINAL_ID env var (injected at spawn). Existing user hooks are kept;
+ * any stale Crundi hook entries are refreshed (path may change across updates).
+ */
+function writeHooksConfig(projectPath) {
+  const dir = join(projectPath, '.claude');
+  const file = join(dir, 'settings.local.json');
+  // Forward slashes work on Windows node and avoid backslash escaping in JSON.
+  const hookPath = resolvePath(join(__dirname, 'claude-hook.js')).replace(/\\/g, '/');
+  const cmd = (state) => 'node "' + hookPath + '" ' + state;
+
+  let cfg = {};
+  if (existsSync(file)) { try { cfg = JSON.parse(readFileSync(file, 'utf-8')) || {}; } catch { cfg = {}; } }
+  const hooks = cfg.hooks || {};
+  const ensure = (event, state, matcher) => {
+    // Drop any prior Crundi hook for this event, keep the user's others.
+    let groups = (hooks[event] || []).map(g => ({
+      ...g, hooks: (g.hooks || []).filter(h => !(h && typeof h.command === 'string' && h.command.includes('claude-hook.js'))),
+    })).filter(g => (g.hooks || []).length);
+    const entry = { hooks: [{ type: 'command', command: cmd(state) }] };
+    if (matcher != null) entry.matcher = matcher;
+    hooks[event] = [...groups, entry];
+  };
+  ensure('UserPromptSubmit', 'working');
+  ensure('PreToolUse', 'working', '*');
+  ensure('Notification', 'needs-input');
+  ensure('Stop', 'idle');
+  cfg.hooks = hooks;
+
+  try {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(file, JSON.stringify(cfg, null, 2));
+  } catch { /* non-fatal */ }
+}
+
+/**
  * Add Crundi's local artifacts (.mcp.json and the crundi_attachments folder) to
  * .gitignore if a .gitignore exists and doesn't already list them.
  */
@@ -90,7 +128,7 @@ export function ensureGitignore(projectPath) {
   try {
     const content = readFileSync(gitignoreFile, 'utf-8');
     const lines = content.split('\n').map(l => l.trim());
-    const wanted = ['.mcp.json', 'crundi_attachments/'];
+    const wanted = ['.mcp.json', 'crundi_attachments/', '.claude/settings.local.json'];
     const missing = wanted.filter(w => !lines.includes(w) && !lines.includes(w.replace(/\/$/, '')));
     if (!missing.length) return;
     const nl = content.endsWith('\n') ? '' : '\n';
@@ -190,10 +228,16 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     if (!project) return { ok: false, error: `Project "${alias}" not found` };
     if (!existsSync(project.path)) return { ok: false, error: `Project path does not exist: ${project.path}` };
 
-    // Write .mcp.json so Claude Code picks up the Crundi MCP server
+    // Write .mcp.json so Claude Code picks up the Crundi MCP server, and the
+    // lifecycle hooks so the server can track this terminal's agent state.
     if (apiUrl && apiKey) {
       try { writeMcpConfig(project.path, apiUrl, apiKey, key); } catch { /* non-fatal */ }
+      try { writeHooksConfig(project.path); } catch { /* non-fatal */ }
     }
+
+    // Terminal id is generated up-front so it can be injected into the PTY env —
+    // the hooks read CRUNDI_TERMINAL_ID to attribute events to THIS terminal.
+    const id = genTermId();
 
     const siblings = entriesForAlias(key);
     const aliasHasLive = siblings.some(t => t.proc);
@@ -243,7 +287,14 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
         cols,
         rows,
         cwd: project.path,
-        env: { ...process.env, FORCE_COLOR: '1' },
+        // Inject the API + this terminal's id so the lifecycle hooks can report
+        // state back to Crundi, attributed to this exact terminal.
+        env: {
+          ...process.env, FORCE_COLOR: '1',
+          CRUNDI_TERMINAL_ID: id,
+          ...(apiUrl ? { CRUNDI_API_URL: apiUrl } : {}),
+          ...(apiKey ? { CRUNDI_API_KEY: apiKey } : {}),
+        },
       });
     } catch (err) {
       return { ok: false, error: `Failed to spawn ${shellOnly ? 'shell' : 'terminal'}: ${err.message}` };
@@ -252,7 +303,6 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     const emitter = new EventEmitter();
     emitter.setMaxListeners(50);
 
-    const id = genTermId();
     const nextOrder = siblings.length ? Math.max(...siblings.map(t => t.order)) + 1 : 0;
     const entry = {
       id,

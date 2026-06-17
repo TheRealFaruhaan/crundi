@@ -8,7 +8,7 @@
  *   4. Setup wizard for first-time .env configuration
  */
 
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, dialog, clipboard } from 'electron';
+import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard } from 'electron';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
@@ -128,6 +128,7 @@ function createWindow() {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true, // interactive browser panel embeds <webview> overlays
     },
     show: false,
   });
@@ -296,6 +297,10 @@ function startBot() {
     DOTENV_PATH: envPath,
     DATA_DIR: dataDir,
   };
+  // Dev mode (npm run dev → electron . --dev): use a separate port and skip
+  // Cloudflare so it never collides with a production instance on 8888.
+  const isDev = !app.isPackaged && process.argv.includes('--dev');
+  if (isDev) { spawnEnv.CRUNDI_DEV = '1'; appendLog('[electron] DEV mode: port 8889, Cloudflare disabled'); }
   delete spawnEnv.NODE_OPTIONS;
 
   try {
@@ -505,6 +510,133 @@ ipcMain.handle('window:maximize', () => {
 });
 ipcMain.handle('window:close', () => mainWindow?.close());
 ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() || false);
+
+// ─── Interactive browser panel — real pages via WebContentsView ───
+// A WebContentsView is parented to the main window and overlaid on the panel.
+// The shell renderer (index.html) forwards rect / navigation / device-emulation
+// from the webapp iframe to these handlers; page state is sent back to the
+// renderer, which relays it to the iframe. Steps are logged to crundi.log.
+const BROWSER_MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
+const wbViews = new Map(); // id → WebContentsView
+function _attachDbg(wc) { try { wc.debugger.attach('1.3'); } catch (e) { if (!/already attached/i.test(e.message)) throw e; } }
+function wbCanGo(wc, dir) { try { const h = wc.navigationHistory; if (h) return dir === 'back' ? h.canGoBack() : h.canGoForward(); return dir === 'back' ? wc.canGoBack() : wc.canGoForward(); } catch { return false; } }
+function wbEmitState(id, extra) {
+  const view = wbViews.get(id); if (!view || !mainWindow || mainWindow.isDestroyed()) return;
+  const wc = view.webContents;
+  let url = '', title = '', loading = false;
+  try { url = wc.getURL(); title = wc.getTitle(); loading = wc.isLoading(); } catch { /* ignore */ }
+  const s = Object.assign({ id, url, title, loading, canGoBack: wbCanGo(wc, 'back'), canGoForward: wbCanGo(wc, 'forward') }, extra || {});
+  try { mainWindow.webContents.send('wbrowser:state', s); } catch { /* ignore */ }
+}
+
+ipcMain.on('shell:log', (_e, m) => { try { appendLog('[shell] ' + m); } catch { /* ignore */ } });
+
+ipcMain.handle('wbrowser:open', (_e, id, url) => {
+  try {
+    if (wbViews.has(id)) { wbEmitState(id); return { ok: true }; }
+    if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'no window' };
+    const view = new WebContentsView({ webPreferences: { partition: 'persist:crundi-browser' } });
+    wbViews.set(id, view);
+    mainWindow.contentView.addChildView(view);
+    view.setVisible(false);
+    view.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+    const wc = view.webContents;
+    appendLog(`[wbrowser] open id=${id} url=${url}`);
+    wc.setWindowOpenHandler(({ url: u }) => { try { wc.loadURL(u); } catch { /* ignore */ } return { action: 'deny' }; });
+    ['did-navigate', 'did-navigate-in-page', 'page-title-updated', 'did-stop-loading', 'did-start-loading'].forEach(ev => wc.on(ev, () => wbEmitState(id)));
+    wc.on('did-finish-load', () => { appendLog(`[wbrowser] finished id=${id} ${wc.getURL()}`); wbEmitState(id); });
+    wc.on('did-fail-load', (_ev, code, desc, validatedURL, isMainFrame) => {
+      if (isMainFrame && code !== -3) { appendLog(`[wbrowser] fail id=${id} code=${code} ${desc} ${validatedURL}`); wbEmitState(id, { diag: `Load failed (${code}): ${desc}` }); }
+    });
+    wc.on('render-process-gone', (_ev, det) => appendLog(`[wbrowser] gone id=${id} ${det && det.reason}`));
+    wc.loadURL(url || 'about:blank').catch(err => appendLog(`[wbrowser] loadURL err id=${id} ${err.message}`));
+    return { ok: true };
+  } catch (err) { appendLog(`[wbrowser] open ERROR ${err.message}`); return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('wbrowser:sync', (_e, id, rect, visible) => {
+  const view = wbViews.get(id); if (!view) return { ok: false };
+  try {
+    if (!visible || !rect) { view.setVisible(false); return { ok: true }; }
+    view.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) });
+    view.setVisible(true);
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('wbrowser:navigate', (_e, id, url) => {
+  const v = wbViews.get(id); if (!v) return { ok: false };
+  try { appendLog(`[wbrowser] navigate id=${id} ${url}`); v.webContents.loadURL(url); return { ok: true }; } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('wbrowser:nav', (_e, id, dir) => {
+  const v = wbViews.get(id); if (!v) return { ok: false };
+  const wc = v.webContents;
+  try {
+    const h = wc.navigationHistory;
+    if (dir === 'reload') wc.reload();
+    else if (dir === 'back' && wbCanGo(wc, 'back')) { h ? h.goBack() : wc.goBack(); }
+    else if (dir === 'forward' && wbCanGo(wc, 'forward')) { h ? h.goForward() : wc.goForward(); }
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
+// Device emulation via CDP. setDeviceMetricsOverride renders the page at the true
+// device width/height (correct screen.width + media queries) and its `scale` param
+// shrinks the resulting image to fit the view (sized to dev*scale) — no overflow
+// scrollbars, no setZoomFactor conflict. `scale` updates on resize (cheap image
+// rescale); the page is only reloaded when the device itself changes (so the site
+// re-serves mobile/desktop markup).
+const wbCfg = new Map(); // id → last applied config
+ipcMain.handle('wbrowser:emulate', async (_e, id, config, scale) => {
+  const v = wbViews.get(id); if (!v) return { ok: false }; const wc = v.webContents;
+  const prev = wbCfg.get(id) || null;
+  wbCfg.set(id, config || null);
+  const deviceChanged = (!!config !== !!prev)
+    || (config && prev && (config.width !== prev.width || config.height !== prev.height || config.mobile !== prev.mobile || config.ua !== prev.ua));
+  try {
+    if (config) {
+      _attachDbg(wc);
+      await wc.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+        width: config.width, height: config.height,
+        deviceScaleFactor: config.deviceScaleFactor || 0, mobile: !!config.mobile,
+        scale: scale || 1, screenWidth: config.width, screenHeight: config.height,
+      });
+      await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: !!config.mobile, maxTouchPoints: config.mobile ? 5 : 0 });
+      await wc.debugger.sendCommand('Emulation.setEmitTouchEventsForMouse', { enabled: !!config.mobile, configuration: 'mobile' });
+      if (deviceChanged) {
+        await wc.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent: config.ua || (config.mobile ? BROWSER_MOBILE_UA : '') });
+        appendLog(`[wbrowser] device id=${id} ${config.width}x${config.height} mobile=${config.mobile} scale=${(scale || 1).toFixed(3)} reload`);
+        wc.reload();
+      }
+    } else {
+      try { wc.setZoomFactor(1); } catch { /* ignore */ }
+      if (wc.debugger.isAttached()) {
+        try { await wc.debugger.sendCommand('Emulation.setEmitTouchEventsForMouse', { enabled: false }); } catch { /* ignore */ }
+        try { await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: false, maxTouchPoints: 0 }); } catch { /* ignore */ }
+        try { await wc.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent: '' }); } catch { /* ignore */ }
+        try { await wc.debugger.sendCommand('Emulation.clearDeviceMetricsOverride'); } catch { /* ignore */ }
+        try { wc.debugger.detach(); } catch { /* ignore */ }
+      }
+      if (deviceChanged) { appendLog(`[wbrowser] device id=${id} responsive reload`); wc.reload(); }
+    }
+    return { ok: true };
+  } catch (err) { appendLog(`[wbrowser] emulate ERROR ${err.message}`); return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('wbrowser:devtools', (_e, id) => {
+  const v = wbViews.get(id); if (!v) return { ok: false }; const wc = v.webContents;
+  try { wc.isDevToolsOpened() ? wc.closeDevTools() : wc.openDevTools({ mode: 'detach' }); return { ok: true }; } catch (err) { return { ok: false, error: err.message }; }
+});
+
+ipcMain.handle('wbrowser:close', (_e, id) => {
+  const v = wbViews.get(id); if (!v) return { ok: true };
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(v); } catch { /* ignore */ }
+  try { v.webContents.close(); } catch { /* ignore */ }
+  wbViews.delete(id); wbCfg.delete(id);
+  appendLog(`[wbrowser] close id=${id}`);
+  return { ok: true };
+});
 
 // ─── Clipboard ───
 ipcMain.handle('clipboard:getImage', () => {

@@ -128,8 +128,10 @@ export function startService(key) {
   startMemorySampler();
   emitServiceUpdate();
 
-  // Auto-start tunnel if configured
-  if (reg.tunnelPort > 0) {
+  // Auto-start tunnel only if it's enabled AND a port is set. tunnelEnabled is
+  // separate from the port; legacy registrations (no flag) default to on.
+  const tunnelOn = reg.tunnelEnabled !== undefined ? reg.tunnelEnabled : (reg.tunnelPort > 0);
+  if (tunnelOn && reg.tunnelPort > 0) {
     startTunnel(key, reg.tunnelPort);
   }
 
@@ -279,8 +281,9 @@ export function getAllServiceStatus() {
     seen.add(reg.key);
     const entry = running.get(reg.key);
     const tunnel = tunnelMap[reg.key] || null;
+    const tunnelEnabled = reg.tunnelEnabled !== undefined ? reg.tunnelEnabled : (reg.tunnelPort > 0);
     if (entry) {
-      out.push({ ...toStatus(entry, true), tunnelPort: reg.tunnelPort || 0, tunnel });
+      out.push({ ...toStatus(entry, true), tunnelPort: reg.tunnelPort || 0, tunnelEnabled, tunnel });
     } else {
       out.push({
         key: reg.key,
@@ -297,6 +300,7 @@ export function getAllServiceStatus() {
         memoryBytes: null,
         registered: true,
         tunnelPort: reg.tunnelPort || 0,
+        tunnelEnabled,
         tunnel,
       });
     }
@@ -307,7 +311,7 @@ export function getAllServiceStatus() {
   for (const [key, entry] of running) {
     if (!seen.has(key)) {
       const tunnel = tunnelMap[key] || null;
-      out.push({ ...toStatus(entry, false), tunnelPort: 0, tunnel });
+      out.push({ ...toStatus(entry, false), tunnelPort: 0, tunnelEnabled: false, tunnel });
     }
   }
   return out;

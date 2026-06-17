@@ -264,6 +264,18 @@ export function getNodesForTask(project, taskId) {
     .map(n => ({ id: n.id, text: n.text, note: n.note, parentId: n.parentId }));
 }
 
+/**
+ * Lightweight existence/scope lookup for a single node by id — used to resolve
+ * whether a media item's linked node still exists (and its project), without
+ * pulling the whole map. Returns null if the node is gone.
+ */
+export function getNode(id) {
+  const store = load();
+  const node = findNode(store, id);
+  if (!node) return null;
+  return { id: node.id, text: node.text, effectiveProject: effectiveProject(store, node) };
+}
+
 // ─── Writes ───
 
 function normalizeLink(linkedTask, project, taskId, todoId) {

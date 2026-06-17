@@ -29,6 +29,21 @@ contextBridge.exposeInMainWorld('api', {
   getRdpStatus: () => ipcRenderer.invoke('rdp:status'),
   setupRdp: () => ipcRenderer.invoke('rdp:setup'),
 
+  // Diagnostic: let the shell renderer append to crundi.log.
+  shellLog: (m) => ipcRenderer.send('shell:log', String(m)),
+
+  // Interactive browser panel — WebContentsView managed in the main process.
+  wbrowser: {
+    open: (id, url) => ipcRenderer.invoke('wbrowser:open', id, url),
+    sync: (id, rect, visible) => ipcRenderer.invoke('wbrowser:sync', id, rect, visible),
+    navigate: (id, url) => ipcRenderer.invoke('wbrowser:navigate', id, url),
+    nav: (id, dir) => ipcRenderer.invoke('wbrowser:nav', id, dir),
+    emulate: (id, config, scale) => ipcRenderer.invoke('wbrowser:emulate', id, config, scale),
+    devtools: (id) => ipcRenderer.invoke('wbrowser:devtools', id),
+    close: (id) => ipcRenderer.invoke('wbrowser:close', id),
+    onState: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('wbrowser:state', h); return () => ipcRenderer.removeListener('wbrowser:state', h); },
+  },
+
   onBotStatus: (cb) => {
     ipcRenderer.on('bot:status', (_, status) => cb(status));
     return () => ipcRenderer.removeAllListeners('bot:status');

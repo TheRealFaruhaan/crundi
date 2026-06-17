@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Crundi</title>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; connect-src *; frame-src http://localhost:*;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; connect-src *; frame-src *; child-src *;">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -689,6 +689,40 @@
       e.preventDefault();
       dragCounter = 0;
       hideDragOverlay();
+    });
+
+    // ─── Interactive browser panel ───
+    // The real browser is a WebContentsView managed in the main process (see
+    // app/main.js), overlaid on the panel. The web UI runs in the (sandboxed,
+    // http) iframe, so it can't host it directly: the iframe posts rect /
+    // navigation / device-emulation here, we forward to main over IPC, and relay
+    // page state back to the iframe.
+    function bvFrameOffset() { const r = webappFrame.getBoundingClientRect(); return { x: r.left, y: r.top }; }
+    function bvForwardState(s) {
+      if (!s) return;
+      const msg = s.diag
+        ? { ns: 'crundi-browser-evt', type: 'diag', id: s.id, text: s.diag }
+        : { ns: 'crundi-browser-evt', type: 'state', id: s.id, url: s.url, title: s.title, loading: s.loading, canGoBack: s.canGoBack, canGoForward: s.canGoForward };
+      try { webappFrame.contentWindow && webappFrame.contentWindow.postMessage(msg, '*'); } catch { /* ignore */ }
+    }
+    if (api.wbrowser && api.wbrowser.onState) api.wbrowser.onState(bvForwardState);
+    try { api.shellLog && api.shellLog('browser forwarder ready; api.wbrowser=' + (api.wbrowser ? 'yes' : 'NO')); } catch (e) { /* ignore */ }
+    window.addEventListener('message', (ev) => {
+      const d = ev.data; if (!d || d.ns !== 'crundi-browser') return;
+      try { api.shellLog && api.shellLog('recv action=' + d.action + ' id=' + d.id + ' url=' + (d.url || '')); } catch (e) { /* ignore */ }
+      if (!api.wbrowser) return;
+      if (d.action === 'open') { api.wbrowser.open(d.id, d.url); return; }
+      if (d.action === 'sync') {
+        let rect = null;
+        if (d.visible && d.rect) { const off = bvFrameOffset(); rect = { x: off.x + d.rect.left, y: off.y + d.rect.top, width: d.rect.width, height: d.rect.height }; }
+        api.wbrowser.sync(d.id, rect, !!d.visible);
+        return;
+      }
+      if (d.action === 'navigate') { api.wbrowser.navigate(d.id, d.url); return; }
+      if (d.action === 'nav') { api.wbrowser.nav(d.id, d.dir); return; }
+      if (d.action === 'emulate') { api.wbrowser.emulate(d.id, d.config, d.scale); return; }
+      if (d.action === 'devtools') { api.wbrowser.devtools(d.id); return; }
+      if (d.action === 'close') { api.wbrowser.close(d.id); return; }
     });
 
     // Bridge clipboard IPC to iframe via postMessage

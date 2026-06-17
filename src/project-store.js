@@ -10,9 +10,26 @@ import { join } from 'path';
 import { config } from './config.js';
 
 const FILE = () => join(config.dataDir, 'projects.json');
+// Custom sidebar order (array of aliases). Kept separate from the registry so it
+// also works for auto-discovered projects and doesn't pollute projects.json.
+const ORDER_FILE = () => join(config.dataDir, 'project-order.json');
 
 function ensureDataDir() {
   if (!existsSync(config.dataDir)) mkdirSync(config.dataDir, { recursive: true });
+}
+
+function loadOrder() {
+  const file = ORDER_FILE();
+  if (!existsSync(file)) return [];
+  try { const a = JSON.parse(readFileSync(file, 'utf-8')); return Array.isArray(a) ? a.map(s => String(s).toLowerCase()) : []; } catch { return []; }
+}
+
+/** Persist the preferred sidebar order (array of aliases). */
+export function setProjectOrder(aliases) {
+  if (!Array.isArray(aliases)) return { ok: false, error: 'order must be an array' };
+  ensureDataDir();
+  writeFileSync(ORDER_FILE(), JSON.stringify(aliases.map(s => String(s).toLowerCase()), null, 2));
+  return { ok: true };
 }
 
 function load() {
@@ -58,7 +75,14 @@ export function listProjects() {
     result[alias] = normalize(alias, entry);
   }
 
-  return Object.values(result);
+  // Apply the user's custom sidebar order; anything not in the order list falls
+  // to the end, alphabetically by name.
+  const order = loadOrder();
+  const rank = (a) => { const i = order.indexOf(a.alias); return i === -1 ? Infinity : i; };
+  return Object.values(result).sort((a, b) => {
+    const d = rank(a) - rank(b);
+    return d !== 0 ? d : String(a.name).localeCompare(String(b.name));
+  });
 }
 
 /** Get a single project by alias. Returns { alias, path, name } or null. */
