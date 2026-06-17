@@ -2249,6 +2249,30 @@ export function getWebappHtml(botUsername) {
     let wbCells = [];              // client-only workbench panel cells: { id, kind:'files'|'git', dir }
     let wbStateProject = null;     // which project wbCells/wbOrder belong to
     let wbOrder = [];             // unified display order of cell keys (live:/pend:/panel:) for the current project
+    // Per-project workbench cell state (open panels, ordering, un-launched
+    // placeholders), persisted so switching projects — or reloading — no longer
+    // wipes the layout. The mosaic *tree* (splits/sizes) is stored separately in
+    // crundi_wb_mosaic and references these cells by key, so both must survive.
+    let wbByProject = {};
+    try { wbByProject = JSON.parse(localStorage.getItem('crundi_wb_cells') || '{}') || {}; } catch { wbByProject = {}; }
+    function persistWbState() {
+      if (wbStateProject != null) wbByProject[wbStateProject] = { cells: wbCells, order: wbOrder, pending: pendingCells };
+      try { localStorage.setItem('crundi_wb_cells', JSON.stringify(wbByProject)); } catch { /* ignore */ }
+    }
+    // Save the outgoing project's workbench state and restore the incoming one.
+    // Replaces the old "reset to empty on project change" behaviour.
+    function syncWbStateProject() {
+      if (wbStateProject === currentProject && pendingProject === currentProject) return;
+      if (wbStateProject != null && wbStateProject !== currentProject) {
+        wbByProject[wbStateProject] = { cells: wbCells, order: wbOrder, pending: pendingCells };
+      }
+      const s = wbByProject[currentProject] || {};
+      wbCells = Array.isArray(s.cells) ? s.cells.slice() : [];
+      wbOrder = Array.isArray(s.order) ? s.order.slice() : [];
+      pendingCells = Array.isArray(s.pending) ? s.pending.slice() : [];
+      wbStateProject = currentProject; pendingProject = currentProject;
+      persistWbState();
+    }
     const termFont = JSON.parse(localStorage.getItem('crundi_term_font') || '{}'); // termId → px
     let currentProject = null;
     let currentTab = 'workbench';
@@ -2997,9 +3021,9 @@ export function getWebappHtml(botUsername) {
       gitRefreshTimer = null;
       const p = projects.find(x => x.alias === alias);
       $('#current-project').textContent = p ? (p.name || p.alias) : alias;
-      // Switching project: the un-launched placeholder cells belong to the
-      // project they were created under, so reset them for the new project.
-      if (pendingProject !== alias) { pendingCells = []; pendingProject = alias; }
+      // Switching project: save the outgoing workbench state and restore this
+      // project's (open panels, ordering, placeholders) instead of wiping it.
+      syncWbStateProject();
       focusedTermId = null;
       renderProjects();
       closeSidebar();
@@ -3051,6 +3075,7 @@ export function getWebappHtml(botUsername) {
     // Discard an un-launched placeholder cell.
     function closePendingCell(localId) {
       pendingCells = pendingCells.filter(x => x !== localId);
+      persistWbState();
       renderTermGrid();
     }
 
@@ -3058,8 +3083,9 @@ export function getWebappHtml(botUsername) {
     function addTerminalCell() {
       if (!currentProject) { toast('Select a project first', 'error'); return; }
       if (currentTab !== 'workbench') { switchTab('workbench'); }
-      if (pendingProject !== currentProject) { pendingCells = []; pendingProject = currentProject; }
+      syncWbStateProject();
       pendingCells.push(genLocalId());
+      persistWbState();
       renderTermGrid();
     }
 
@@ -3125,8 +3151,7 @@ export function getWebappHtml(botUsername) {
       if (addBtn) addBtn.style.display = '';
       if (bar) bar.style.display = '';
 
-      if (pendingProject !== currentProject) { pendingCells = []; pendingProject = currentProject; }
-      if (wbStateProject !== currentProject) { wbCells = []; wbOrder = []; wbStateProject = currentProject; }
+      syncWbStateProject();
       const live = liveTermsForProject();
       // "Terminal by default opens in one column": seed a single placeholder when
       // a project has no cells of any kind yet.
@@ -3146,6 +3171,7 @@ export function getWebappHtml(botUsername) {
       wbOrder = ordered.map(d => d.key);
       const desired = ordered;
       wbLastKeys = desired.map(d => d.key);
+      persistWbState(); // capture latest panels/order/placeholders for this project
 
       // Reconcile the set of cell elements (search the WHOLE grid, since in mosaic
       // mode cells live nested inside leaves — not just top-level children).
@@ -3509,10 +3535,11 @@ export function getWebappHtml(botUsername) {
       if (!currentProject) { toast('Select a project first', 'error'); return; }
       if (!WB_KIND_META[kind]) return;
       if (currentTab !== 'workbench') switchTab('workbench');
-      if (wbStateProject !== currentProject) { wbCells = []; wbOrder = []; wbStateProject = currentProject; }
+      syncWbStateProject();
       const existing = wbCells.find(c => c.kind === kind);
       if (existing) { toast(WB_KIND_META[kind].label + ' is already in the workbench', ''); return; }
       wbCells.push({ id: genLocalId(), kind });
+      persistWbState();
       renderTermGrid();
     }
     function closeWbCell(wbid) {
@@ -3524,6 +3551,7 @@ export function getWebappHtml(botUsername) {
       }
       wbCells = wbCells.filter(c => c.id !== wbid);
       wbOrder = wbOrder.filter(k => k !== 'panel:' + wbid);
+      persistWbState();
       renderTermGrid();
     }
     function refreshWbCell(wbid) {
@@ -5558,17 +5586,25 @@ export function getWebappHtml(botUsername) {
       w.style.left = rect.left + 'px'; w.style.top = rect.top + 'px';
       w.style.width = rect.width + 'px'; w.style.height = rect.height + 'px';
     }
+    // NOTE: drag/resize use Pointer Events + setPointerCapture (not mouse events
+    // on document). In the desktop app the webapp runs in an iframe sitting below
+    // a 32px OS title bar that is an app-region drag region. With plain mouse
+    // listeners, dragging a window's header up past the iframe's top edge
+    // leaks the gesture to that title bar and Windows starts moving the WHOLE app.
+    // Capturing the pointer on the header keeps every move/up bound to our element
+    // for the entire gesture, so it never reaches the OS drag region.
     function feWireDrag(w) {
       const head = w.querySelector('.fe-header');
-      let sx = 0, sy = 0, ol = 0, ot = 0, dragging = false, zone = null;
-      head.addEventListener('mousedown', (e) => {
-        if (e.target.closest('button') || feMobile()) return;
+      let sx = 0, sy = 0, ol = 0, ot = 0, dragging = false, zone = null, pid = null;
+      head.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button') || feMobile() || e.button !== 0) return;
         feBringFront(w);
         feShowArrange(); // reveal the Tile/Grid/Cascade bar while moving windows
         const r = w.getBoundingClientRect();
-        ol = r.left; ot = r.top; sx = e.clientX; sy = e.clientY; dragging = true;
+        ol = r.left; ot = r.top; sx = e.clientX; sy = e.clientY; dragging = true; pid = e.pointerId;
         w.classList.remove('maximized');
-        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+        try { head.setPointerCapture(pid); } catch { /* ignore */ }
+        head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
         e.preventDefault();
       });
       function mv(e) {
@@ -5582,7 +5618,8 @@ export function getWebappHtml(botUsername) {
       }
       function up() {
         dragging = false;
-        document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+        try { head.releasePointerCapture(pid); } catch { /* ignore */ }
+        head.removeEventListener('pointermove', mv); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up);
         feOverlay().classList.remove('snapping');
         if (zone) { feApplyRect(w, feSnapRect(zone)); zone = null; }
         feHideArrangeSoon(); // keep the bar briefly so it stays clickable after a drag
@@ -5590,24 +5627,29 @@ export function getWebappHtml(botUsername) {
     }
 
     // Custom resize handles (right edge, bottom edge, SE corner). Native CSS
-    // resize is covered by the editor content, so we drive it ourselves.
+    // resize is covered by the editor content, so we drive it ourselves. Same
+    // pointer-capture rationale as feWireDrag (avoid leaking to the OS title bar).
     function feWireResize(w) {
       w.querySelectorAll('.fe-resize').forEach(handle => {
         const dir = handle.classList.contains('fe-resize-e') ? 'e' : handle.classList.contains('fe-resize-s') ? 's' : 'se';
-        handle.addEventListener('mousedown', (e) => {
-          if (feMobile()) return;
+        handle.addEventListener('pointerdown', (e) => {
+          if (feMobile() || e.button !== 0) return;
           e.preventDefault(); e.stopPropagation();
           feBringFront(w); w.classList.remove('maximized');
           const r = w.getBoundingClientRect();
-          const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height;
+          const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height, pid = e.pointerId;
           w.style.left = r.left + 'px'; w.style.top = r.top + 'px'; // pin origin
           const MINW = 360, MINH = 200;
+          try { handle.setPointerCapture(pid); } catch { /* ignore */ }
           const mv = (ev) => {
             if (dir === 'e' || dir === 'se') w.style.width = Math.max(MINW, sw + ev.clientX - sx) + 'px';
             if (dir === 's' || dir === 'se') w.style.height = Math.max(MINH, sh + ev.clientY - sy) + 'px';
           };
-          const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
-          document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+          const up = () => {
+            try { handle.releasePointerCapture(pid); } catch { /* ignore */ }
+            handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up);
+          };
+          handle.addEventListener('pointermove', mv); handle.addEventListener('pointerup', up); handle.addEventListener('pointercancel', up);
         });
       });
     }
