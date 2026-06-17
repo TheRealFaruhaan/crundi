@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
 import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService } from './services.js';
-import { registerService, listRegisteredForProject, updateRegistered } from './service-registry.js';
+import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
@@ -281,6 +281,9 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       projectPath: s.projectPath, status: s.status, pid: s.pid,
       memory: s.memoryBytes,
       uptime: s.startedAt ? formatUptime(Date.now() - new Date(s.startedAt).getTime()) : null,
+      tunnelPort: s.tunnelPort || 0,
+      tunnelEnabled: !!s.tunnelEnabled,
+      tunnelStatus: s.tunnel?.status || null,
       tunnelUrl: s.tunnel?.url || null,
     }));
     const terminals = claudeTerminals ? claudeTerminals.list() : [];
@@ -345,6 +348,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       size: item.size, kind: item.kind, project: item.project,
       projectName: proj ? proj.name : (item.project || null),
       link: l || null, linkStatus, linkLabel, createdAt: item.createdAt,
+      path: media.mediaFilePath(item), // absolute on-disk path (for drag-insert + copy-path)
     };
   }
 
@@ -990,6 +994,8 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         memory: s.memoryBytes,
         uptime: s.startedAt ? formatUptime(Date.now() - new Date(s.startedAt).getTime()) : null,
         tunnelPort: s.tunnelPort || 0,
+        tunnelEnabled: !!s.tunnelEnabled,
+        tunnelStatus: s.tunnel?.status || null,
         tunnelUrl: s.tunnel?.url || null,
       }));
       return json(res, { services: all });
@@ -1025,15 +1031,38 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         else if (action === 'stop') result = stopService(key);
         else if (action === 'restart') result = restartService(key);
         else if (action === 'tunnel') {
-          // Enable/disable (or change the port of) a service's Cloudflare tunnel.
-          // port 0 = disable. Persists to the registry so it also auto-starts
-          // with the service next time.
+          // Tunnel PORT and ON/OFF are two separate states. Body may carry
+          // { port } (set the port) and/or { enabled } (toggle). Enabling is
+          // blocked unless a port is set. The tunnel only actually runs while the
+          // service is running; the enabled flag persists and auto-applies on start.
           const body = JSON.parse(await readBody(req));
-          const port = parseInt(body.port, 10) || 0;
-          const upd = updateRegistered(key, { tunnelPort: port });
-          if (!upd.ok) result = upd;
-          else if (port > 0) { startTunnel(key, port); result = { ok: true, enabled: true, port }; }
-          else { stopTunnel(key); result = { ok: true, enabled: false }; }
+          const reg = getRegistered(key);
+          if (!reg) { result = { ok: false, error: 'Not registered' }; }
+          else {
+            const updates = {};
+            if (body.port !== undefined) updates.tunnelPort = parseInt(body.port, 10) || 0;
+            const newPort = updates.tunnelPort !== undefined ? updates.tunnelPort : (reg.tunnelPort || 0);
+            let newEnabled = reg.tunnelEnabled !== undefined ? reg.tunnelEnabled : (reg.tunnelPort > 0);
+            if (body.enabled !== undefined) {
+              if (body.enabled && newPort <= 0) {
+                result = { ok: false, error: 'Set a tunnel port before turning the tunnel on' };
+              } else {
+                newEnabled = !!body.enabled; updates.tunnelEnabled = newEnabled;
+              }
+            }
+            // Clearing the port also turns the tunnel off.
+            if (updates.tunnelPort === 0) { updates.tunnelEnabled = false; newEnabled = false; }
+            if (!result) {
+              const upd = updateRegistered(key, updates);
+              if (!upd.ok) result = upd;
+              else {
+                const isRunning = getAllServiceStatus().some(s => s.key === key && s.status === 'running');
+                stopTunnel(key); // also restarts cleanly on a port change
+                if (newEnabled && newPort > 0 && isRunning) startTunnel(key, newPort);
+                result = { ok: true, enabled: newEnabled, port: newPort };
+              }
+            }
+          }
         }
         else if (action === 'delete') {
           // Always stop the service before removing it so we never orphan a

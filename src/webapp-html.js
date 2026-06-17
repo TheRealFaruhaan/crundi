@@ -531,7 +531,7 @@ export function getWebappHtml(botUsername) {
     }
     .term-cell.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
     .term-cell.term-drop-hover { outline: 2px dashed var(--accent); outline-offset: -2px; }
-    .file-item[data-drag-ref], .git-file[data-drag-ref], .kanban-todo[data-drag-ref] { cursor: grab; }
+    .file-item[data-drag-ref], .git-file[data-drag-ref], .kanban-todo[data-drag-ref], .media-card[data-drag-ref] { cursor: grab; }
     body.wb-drag-armed .term-cell[data-tid] { outline: 2px dashed var(--accent); outline-offset: -2px; }
     .term-head {
       display: flex; align-items: center; gap: 4px;
@@ -784,63 +784,74 @@ export function getWebappHtml(botUsername) {
       color: var(--text-muted);
       gap: 12px;
     }
-    .services-empty .icon { font-size: 2.5rem; opacity: 0.3; }
+    .services-empty .icon { display: inline-flex; opacity: 0.4; }
+    .services-empty .icon .ic { width: 40px; height: 40px; }
+    /* Toolbar: title + primary register button (matches the kanban/mindmap toolbars). */
+    .svc-toolbar { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; }
+    .svc-toolbar .svc-title { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); }
+    .svc-toolbar .spacer { flex: 1; }
+    .svc-add-btn {
+      display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+      padding: 7px 13px; border-radius: var(--radius-sm);
+      border: 1px solid var(--accent); background: var(--accent); color: #fff; font-size: 0.8rem; font-weight: 500;
+    }
+    .svc-add-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .svc-add-btn .ic { width: 15px; height: 15px; }
     .svc-card {
-      background: var(--bg-secondary);
+      background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
+      border-radius: var(--radius);
       padding: 14px 16px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-    }
-    .svc-card .svc-header {
-      display: flex;
-      align-items: center;
       gap: 10px;
     }
-    .svc-card .svc-name {
-      font-weight: 600;
-      font-size: 0.9rem;
-      flex: 1;
-    }
+    .svc-card .svc-header { display: flex; align-items: center; gap: 9px; }
+    .svc-card .svc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+    .svc-card .svc-dot.running { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
+    .svc-card .svc-dot.error { background: var(--red); box-shadow: 0 0 0 3px var(--red-dim); }
+    .svc-card .svc-name { font-weight: 600; font-size: 0.9rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .svc-card .svc-status {
-      font-size: 0.75rem;
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-family: var(--mono);
+      font-size: 0.68rem; padding: 2px 9px; border-radius: 999px; font-family: var(--mono);
+      text-transform: uppercase; letter-spacing: 0.04em;
     }
     .svc-card .svc-status.running { background: var(--green-dim); color: var(--green); }
     .svc-card .svc-status.stopped { background: var(--bg-tertiary); color: var(--text-muted); }
     .svc-card .svc-status.error { background: var(--red-dim); color: var(--red); }
     .svc-card .svc-meta {
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      font-family: var(--mono);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      font-size: 0.76rem; color: var(--text-muted); font-family: var(--mono);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .svc-card .svc-meta .tunnel-link {
-      color: var(--accent);
-      text-decoration: none;
+    .svc-card .svc-meta .svc-up { color: var(--text-secondary); }
+    /* Action buttons — one consistent button style across the card. */
+    .svc-card .svc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .svc-btn {
+      display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+      padding: 5px 10px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+      font-size: 0.76rem; white-space: nowrap;
     }
-    .svc-card .svc-meta .tunnel-link:hover { text-decoration: underline; }
-    .svc-card .svc-actions {
-      display: flex;
-      gap: 6px;
-    }
-    .svc-card .svc-actions button {
-      padding: 4px 12px;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-      background: var(--bg-tertiary);
-      color: var(--text-secondary);
-      cursor: pointer;
-      font-size: 0.78rem;
-    }
-    .svc-card .svc-actions button:hover { background: var(--bg-hover); color: var(--text-primary); }
-    .svc-card .svc-actions button.danger:hover { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+    .svc-btn .ic { width: 13px; height: 13px; }
+    .svc-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+    .svc-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .svc-btn.primary:hover { background: var(--accent-hover); }
+    .svc-btn.danger:hover { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    .svc-btn.on { border-color: var(--green); color: var(--green); }
+    .svc-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+    /* Tunnel controls grouped on their own row. */
+    .svc-tunnel { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding-top: 9px; border-top: 1px dashed var(--border-subtle); }
+    .svc-tunnel .svc-tunnel-ic { display: inline-flex; color: var(--text-muted); }
+    .svc-tunnel .svc-tunnel-ic .ic { width: 14px; height: 14px; }
+    .svc-tunnel .svc-tunnel-badge { font-size: 0.72rem; font-family: var(--mono); color: var(--text-muted); }
+    .svc-tunnel .tunnel-link { color: var(--accent); text-decoration: none; }
+    .svc-tunnel .tunnel-link:hover { text-decoration: underline; }
+    /* Register-service form — matches the card + input system. */
+    .svc-register-form { padding: 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin: 0 0 12px; display: flex; flex-direction: column; gap: 9px; }
+    .svc-register-form .srf-title { font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
+    .svc-reg-input { padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 0.82rem; font-family: var(--mono); }
+    .svc-reg-input::placeholder { color: var(--text-muted); }
+    .svc-reg-input:focus { border-color: var(--accent); outline: none; }
+    .svc-register-form .srf-actions { display: flex; gap: 6px; margin-top: 2px; }
 
     /* ─── Service Logs ─── */
     .svc-logs {
@@ -1042,25 +1053,44 @@ export function getWebappHtml(botUsername) {
     .fe-editor { position: fixed; inset: 0; z-index: 2000; display: none; }
     .fe-editor.visible { display: block; }
     .fe-window { display: flex; flex-direction: column; background: var(--bg-primary); overflow: hidden; }
-    /* Mobile: full-screen modal (dimmed) as before. */
+    .fe-arrange, .fe-snap-hint { display: none; }
+    /* Mobile: full-screen modal (dimmed); only one window at a time. */
     @media (max-width: 768px) {
       .fe-editor.visible { background: rgba(0,0,0,0.6); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
       .fe-window { position: absolute; inset: 0; width: 100%; height: 100%; }
+      .fe-expand { display: none; } /* expand/snap are desktop-only */
     }
-    /* Desktop: a NON-modal floating, draggable window — no backdrop, and clicks
-       in the empty area pass through so you can keep working behind it. */
+    /* Desktop: NON-modal floating, draggable + resizable windows — no backdrop,
+       clicks in the empty area pass through so you can keep working behind them. */
     @media (min-width: 769px) {
       .fe-editor { pointer-events: none; }
       .fe-window {
-        pointer-events: auto;
-        position: fixed; top: 60px; left: 50%; margin-left: calc(min(1100px, 90vw) * -0.5);
-        width: min(1100px, 90vw); height: min(78vh, 860px);
+        pointer-events: auto; position: fixed;
+        width: min(900px, 80vw); height: min(72vh, 820px);
+        min-width: 360px; min-height: 200px;
         border: 1px solid var(--border); border-radius: var(--radius);
         box-shadow: 0 24px 70px -12px rgba(0,0,0,0.75);
+        resize: both; /* native drag-to-resize handle (bottom-right) */
       }
+      .fe-window.maximized { top: 6px !important; left: 6px !important; width: calc(100vw - 12px) !important; height: calc(100vh - 12px) !important; resize: none; }
       .fe-header { cursor: move; }
+      /* Arrange toolbar (top-center) — shown when ≥1 window is open. */
+      .fe-arrange {
+        pointer-events: auto; position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+        z-index: 2400; align-items: center; gap: 6px; padding: 5px 8px;
+        background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 999px;
+        box-shadow: 0 6px 22px rgba(0,0,0,0.5);
+      }
+      .fe-editor.has-windows .fe-arrange { display: flex; }
+      .fe-arrange-label { font-size: 0.72rem; color: var(--text-muted); padding: 0 4px; }
+      .fe-arrange button { border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: 999px; padding: 4px 11px; font-size: 0.74rem; cursor: pointer; }
+      .fe-arrange button:hover { border-color: var(--accent); color: #fff; background: var(--accent); }
+      /* Snap target preview while dragging to an edge. */
+      .fe-snap-hint { position: fixed; z-index: 2390; background: var(--accent-dim); border: 2px solid var(--accent); border-radius: var(--radius); pointer-events: none; transition: all 0.08s ease; }
+      .fe-editor.snapping .fe-snap-hint { display: block; }
     }
     .fe-header { padding: 8px 12px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; flex-shrink: 0; user-select: none; }
+    .fe-header .fe-expand { padding: 4px 9px; }
     .fe-header .fe-path { flex: 1; font-size: 12px; font-family: var(--mono); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fe-header button { padding: 4px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; font-size: 12px; }
     .fe-header button:hover { background: var(--accent); border-color: var(--accent); }
@@ -1494,6 +1524,14 @@ export function getWebappHtml(botUsername) {
     .media-body { flex: 1; overflow: auto; padding: 12px; }
     .media-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border); }
     .media-toolbar .spacer { flex: 1; }
+    /* Search field — cohesive with the mono/dark system + accent focus ring. */
+    .media-search {
+      flex: 1 1 150px; max-width: 280px; min-width: 130px;
+      background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary);
+      border-radius: var(--radius-sm); padding: 6px 10px; font-size: 0.8rem; font-family: var(--mono);
+    }
+    .media-search::placeholder { color: var(--text-muted); }
+    .media-search:focus { border-color: var(--accent); outline: none; }
     .media-chip {
       display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; cursor: pointer;
       padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
@@ -2006,15 +2044,17 @@ export function getWebappHtml(botUsername) {
   <div id="sched-modal"><div class="sched-modal-card" id="sched-modal-card"></div></div>
 
   <!-- ─── File Editor Modal ─── -->
+  <!-- Floating editor/diff windows are created dynamically inside this overlay.
+       Desktop: multiple draggable / resizable windows with snap + tile. Mobile:
+       a single full-screen window. -->
   <div class="fe-editor" id="file-editor">
-    <div class="fe-window" id="fe-window">
-      <div class="fe-header" id="fe-header">
-        <span class="fe-path" id="fe-path"></span>
-        <button onclick="feClose()">Close</button>
-        <button class="save" id="fe-save-btn" onclick="feSave()">Save</button>
-      </div>
-      <div class="fe-content" id="fe-container"></div>
+    <div class="fe-arrange" id="fe-arrange">
+      <span class="fe-arrange-label">Arrange</span>
+      <button data-fe-arrange="tile" title="Tile windows side by side">Tile</button>
+      <button data-fe-arrange="grid" title="Tile windows in a grid">Grid</button>
+      <button data-fe-arrange="cascade" title="Cascade windows">Cascade</button>
     </div>
+    <div class="fe-snap-hint" id="fe-snap-hint"></div>
   </div>
 
   <!-- ─── Add Project Modal ─── -->
@@ -2271,6 +2311,9 @@ export function getWebappHtml(botUsername) {
       info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
       server: '<rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/>',
       send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+      maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/>',
+      play: '<polygon points="6 4 20 12 6 20 6 4"/>',
+      stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
     };
     function ic(name) {
       const p = ICON_PATHS[name]; if (!p) return '';
@@ -4076,7 +4119,7 @@ export function getWebappHtml(botUsername) {
     const DRAG_LABELS = {
       file: 'File Path', folder: 'Folder Path',
       'kanban-task': 'Kanban Task ID', 'kanban-subtask': 'Kanban Subtask ID',
-      mindmap: 'Mindmap Idea ID',
+      mindmap: 'Mindmap Idea ID', media: 'Media Path',
     };
     function formatDragRef(kind, value) {
       const label = DRAG_LABELS[kind];
@@ -4668,20 +4711,14 @@ export function getWebappHtml(botUsername) {
       feOpenDiff(file, d.old || '', d.new || '', d.diff || '');
     }
 
-    let diffCurrentFile = '';
     let diffCached = false;
 
     function feOpenDiff(file, oldContent, newContent, rawDiff) {
-      feCurrentProject = '';
-      feCurrentFile = '';
-      feReadOnly = true;
-      diffCurrentFile = file;
-      const btn = $('#fe-save-btn');
-      if (btn) btn.style.display = 'none';
-      feShow();
-
-      const container = $('#fe-container');
-      if (feEditorView) { feEditorView.destroy(); feEditorView = null; }
+      const w = feNewWindow({ kind: 'diff' });
+      Object.assign(w._fe, { project: currentProject, file: '', readOnly: true, kind: 'diff' });
+      const sb = w.querySelector('.fe-save'); if (sb) sb.style.display = 'none';
+      w.querySelector('.fe-path').textContent = file;
+      const container = w.querySelector('.fe-content');
 
       // Split on any line ending so CRLF (working tree) vs LF (git's normalized
       // index/HEAD blob) doesn't make every line compare unequal — otherwise the
@@ -4710,9 +4747,9 @@ export function getWebappHtml(botUsername) {
       // Build header
       const hdr = '<div style="display:flex;align-items:center;padding:6px 12px;background:var(--bg-secondary);border-bottom:1px solid var(--border);gap:8px;">'
         + '<span style="font-family:var(--mono);font-size:12px;color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(file) + '</span>'
-        + '<button id="diff-prev" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;" title="Previous chunk">\\u2191</button>'
-        + '<span id="diff-counter" style="font-size:11px;color:var(--text-muted);font-family:var(--mono);">\\u2014/' + chunks.length + '</span>'
-        + '<button id="diff-next" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;" title="Next chunk">\\u2193</button>'
+        + '<button class="diff-prev" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;" title="Previous chunk">\\u2191</button>'
+        + '<span class="diff-counter" style="font-size:11px;color:var(--text-muted);font-family:var(--mono);">\\u2014/' + chunks.length + '</span>'
+        + '<button class="diff-next" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:14px;" title="Next chunk">\\u2193</button>'
         + '</div>';
 
       const isMobile = window.innerWidth <= 768;
@@ -4789,31 +4826,29 @@ export function getWebappHtml(botUsername) {
 
       if (isMobile) {
         container.innerHTML = hdr
-          + '<div id="diff-unified" style="flex:1;overflow:auto;min-height:0;-webkit-overflow-scrolling:touch;background:var(--bg-primary);">'
+          + '<div class="diff-unified" style="flex:1;overflow:auto;min-height:0;-webkit-overflow-scrolling:touch;background:var(--bg-primary);">'
           + unifiedHtml + '</div>';
       } else {
         container.innerHTML = hdr
           + '<div style="display:flex;flex:1;min-height:0;overflow:hidden;">'
-          + '<div id="diff-left" style="flex:1;overflow:auto;border-right:1px solid var(--border);background:var(--bg-primary);">'
+          + '<div class="diff-left" style="flex:1;overflow:auto;border-right:1px solid var(--border);background:var(--bg-primary);">'
           + '<div style="padding:4px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);background:var(--bg-tertiary);border-bottom:1px solid var(--border-subtle);position:sticky;top:0;z-index:1;">Original</div>'
           + oldHtml + '</div>'
-          + '<div id="diff-right" style="flex:1;overflow:auto;background:var(--bg-primary);">'
+          + '<div class="diff-right" style="flex:1;overflow:auto;background:var(--bg-primary);">'
           + '<div style="padding:4px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);background:var(--bg-tertiary);border-bottom:1px solid var(--border-subtle);position:sticky;top:0;z-index:1;">Modified</div>'
           + newHtml + '</div>'
           + '</div>';
       }
 
-      $('#fe-path').textContent = file;
-
-      // Scroll container for chunk navigation
+      // Scroll container for chunk navigation (scoped to this window)
       const scrollEl = isMobile
-        ? document.getElementById('diff-unified')
-        : document.getElementById('diff-left');
+        ? container.querySelector('.diff-unified')
+        : container.querySelector('.diff-left');
 
       // Sync scroll (desktop only)
       if (!isMobile) {
-        const left = document.getElementById('diff-left');
-        const right = document.getElementById('diff-right');
+        const left = container.querySelector('.diff-left');
+        const right = container.querySelector('.diff-right');
         let syncing = false;
         left.addEventListener('scroll', () => { if (!syncing) { syncing = true; right.scrollTop = left.scrollTop; syncing = false; } });
         right.addEventListener('scroll', () => { if (!syncing) { syncing = true; left.scrollTop = right.scrollTop; syncing = false; } });
@@ -4825,16 +4860,16 @@ export function getWebappHtml(botUsername) {
         const pos = chunkLinePositions[idx] * lineH + idx * 22 + (isMobile ? 0 : 28);
         scrollEl.scrollTop = pos;
       }
-      document.getElementById('diff-prev').onclick = () => {
+      container.querySelector('.diff-prev').onclick = () => {
         if (!chunks.length) return;
         currentChunkIdx = Math.max(0, currentChunkIdx - 1);
-        document.getElementById('diff-counter').textContent = (currentChunkIdx + 1) + '/' + chunks.length;
+        container.querySelector('.diff-counter').textContent = (currentChunkIdx + 1) + '/' + chunks.length;
         scrollToChunk(currentChunkIdx);
       };
-      document.getElementById('diff-next').onclick = () => {
+      container.querySelector('.diff-next').onclick = () => {
         if (!chunks.length) return;
         currentChunkIdx = Math.min(chunks.length - 1, currentChunkIdx + 1);
-        document.getElementById('diff-counter').textContent = (currentChunkIdx + 1) + '/' + chunks.length;
+        container.querySelector('.diff-counter').textContent = (currentChunkIdx + 1) + '/' + chunks.length;
         scrollToChunk(currentChunkIdx);
       };
 
@@ -4842,9 +4877,9 @@ export function getWebappHtml(botUsername) {
       container._diffData = { oldLines, newLines, diff, chunks, file };
     }
 
-    async function stageChunk(chunkIdx) {
-      const container = $('#fe-container');
-      const data = container._diffData;
+    async function stageChunk(win, chunkIdx) {
+      const container = win && win.querySelector ? win.querySelector('.fe-content') : null;
+      const data = container && container._diffData;
       if (!data) { toast('No diff data', 'error'); return; }
       const { oldLines, diff, chunks, file } = data;
       const chunk = chunks[chunkIdx];
@@ -5280,105 +5315,128 @@ export function getWebappHtml(botUsername) {
       return icons[ext] || ic('file');
     }
 
-    // ─── File Editor ───
-    let feCurrentProject = '';
-    let feCurrentFile = '';
-    let feOriginal = '';
-    let feReadOnly = false;
-    let feEditorView = null;
+    // ─── File Editor (multi-window manager) ───
+    // Desktop: multiple floating, draggable, resizable windows with edge-snap and
+    // tile/grid/cascade. Mobile: a single full-screen window (opening replaces).
+    // Per-window state lives on el._fe = { project, file, original, readOnly, view, kind }.
+    const FE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'];
+    function feMobile() { return window.innerWidth <= 768; }
+    let feZ = 2100, feFront = null, feCascade = 0;
+    function feOverlay() { return document.getElementById('file-editor'); }
+    function feWins() { return [...document.querySelectorAll('.fe-window')]; }
+    function feSyncOverlay() {
+      const o = feOverlay(); if (!o) return;
+      const has = feWins().length > 0;
+      o.classList.toggle('visible', has);
+      o.classList.toggle('has-windows', has);
+      if (!has) feFront = null;
+    }
+    function feBringFront(win) { if (win) { win.style.zIndex = String(++feZ); feFront = win; } }
+    function feFocusedWin() { return (feFront && feFront.isConnected) ? feFront : (feWins().slice(-1)[0] || null); }
 
-    function feCreateEditor(content, filePath, readOnly) {
-      const container = $('#fe-container');
+    function feNewWindow(opts = {}) {
+      if (feMobile()) {
+        let w = feWins()[0];
+        if (!w) w = feBuildWindow(opts); else feResetWinContent(w);
+        feSyncOverlay();
+        return w;
+      }
+      const w = feBuildWindow(opts);
+      feSyncOverlay();
+      return w;
+    }
+    function feBuildWindow(opts) {
+      const o = feOverlay();
+      const w = document.createElement('div');
+      w.className = 'fe-window'; w.dataset.fewin = genLocalId();
+      w._fe = { project: '', file: '', original: '', readOnly: false, view: null, kind: opts.kind || 'edit' };
+      w.innerHTML = '<div class="fe-header">'
+        + '<span class="fe-path"></span>'
+        + '<button class="fe-expand" title="Expand / restore">' + ic('maximize') + '</button>'
+        + '<button class="save fe-save" style="display:none">Save</button>'
+        + '<button class="fe-close">Close</button>'
+        + '</div><div class="fe-content"></div>';
+      o.appendChild(w);
+      if (!feMobile()) {
+        const step = 28, n = (feCascade++ % 6);
+        w.style.top = (54 + n * step) + 'px';
+        w.style.left = (Math.max(40, window.innerWidth * 0.18) + n * step) + 'px';
+      }
+      w.querySelector('.fe-close').addEventListener('click', () => feCloseWin(w));
+      w.querySelector('.fe-save').addEventListener('click', () => feSaveWin(w));
+      w.querySelector('.fe-expand').addEventListener('click', () => feExpandWin(w));
+      w.addEventListener('mousedown', () => feBringFront(w), true);
+      feWireDrag(w);
+      feBringFront(w);
+      return w;
+    }
+    function feResetWinContent(w) {
+      if (w._fe && w._fe.view) { try { w._fe.view.destroy(); } catch { /* ignore */ } w._fe.view = null; }
+      const c = w.querySelector('.fe-content'); if (c) { c._diffData = null; c.innerHTML = ''; }
+    }
+    function feCloseWin(w) {
+      if (!w) return;
+      if (w._fe && w._fe.view) { try { w._fe.view.destroy(); } catch { /* ignore */ } }
+      w.remove();
+      feSyncOverlay();
+    }
+    function feExpandWin(w) { if (w) { w.classList.toggle('maximized'); feBringFront(w); } }
+
+    function feMountEditor(w, content, filePath, readOnly) {
+      const container = w.querySelector('.fe-content');
       container.innerHTML = '';
-      if (feEditorView) { feEditorView.destroy(); feEditorView = null; }
-
+      if (w._fe.view) { try { w._fe.view.destroy(); } catch { /* ignore */ } w._fe.view = null; }
       if (window.CM) {
-        const langExt = window.CM.getLangExtension(filePath || '');
-        const extensions = [
-          ...window.CM.basicSetup,
-          ...langExt,
-          ...window.CM.oneDark,
-        ];
+        const extensions = [...window.CM.basicSetup, ...window.CM.getLangExtension(filePath || ''), ...window.CM.oneDark];
         if (readOnly) {
           extensions.push(window.CM.EditorState.readOnly.of(true));
         } else {
           extensions.push(window.CM.EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              const btn = $('#fe-save-btn');
-              if (btn) btn.disabled = (feEditorView.state.doc.toString() === feOriginal);
-            }
+            if (update.docChanged) { const b = w.querySelector('.fe-save'); if (b) b.disabled = (w._fe.view.state.doc.toString() === w._fe.original); }
           }));
-          extensions.push(window.CM.EditorView.domEventHandlers({
-            keydown(e) {
-              if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault(); feSave();
-              }
-            }
-          }));
+          extensions.push(window.CM.EditorView.domEventHandlers({ keydown(e) { if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); feSaveWin(w); } } }));
         }
-        feEditorView = new window.CM.EditorView({
-          doc: content,
-          extensions,
-          parent: container,
-        });
-        if (!readOnly) feEditorView.focus();
+        w._fe.view = new window.CM.EditorView({ doc: content, extensions, parent: container });
+        if (!readOnly) w._fe.view.focus();
       } else {
-        // Fallback to textarea
         const ta = document.createElement('textarea');
-        ta.value = content;
-        ta.readOnly = !!readOnly;
-        ta.spellcheck = false;
+        ta.value = content; ta.readOnly = !!readOnly; ta.spellcheck = false;
         ta.style.cssText = 'width:100%;height:100%;resize:none;border:none;background:var(--bg-primary);color:var(--text-primary);font-family:var(--mono);font-size:13px;padding:12px;line-height:1.5;outline:none;';
         container.appendChild(ta);
       }
     }
-
-    function feGetContent() {
-      if (feEditorView) return feEditorView.state.doc.toString();
-      const ta = $('#fe-container textarea');
-      return ta ? ta.value : '';
+    function feWinContent(w) {
+      if (w._fe.view) return w._fe.view.state.doc.toString();
+      const ta = w.querySelector('.fe-content textarea'); return ta ? ta.value : '';
     }
-
-    const FE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'];
-    function feShow() {
-      resetFeWindow();
-      $('#file-editor').classList.add('visible');
-      feMakeDraggable();
-    }
-    // Center the floating window (clears any drag offset from a previous open).
-    function resetFeWindow() { const w = $('#fe-window'); if (w) w.style.transform = ''; }
 
     async function feOpen(project, file) {
       const ext = (file.includes('.') ? file.slice(file.lastIndexOf('.') + 1) : '').toLowerCase();
-      // Compiled / binary types get a viewer instead of the text editor.
       if (FE_IMAGE_EXTS.includes(ext) || ext === 'pdf') return feOpenViewer(project, file, ext);
+      // Already open on desktop → focus it instead of duplicating.
+      if (!feMobile()) {
+        const ex = feWins().find(w => w._fe && w._fe.kind === 'edit' && w._fe.project === project && w._fe.file === file);
+        if (ex) { feBringFront(ex); return; }
+      }
       try {
         const res = await apiFetch('/api/files/read?project=' + encodeURIComponent(project) + '&file=' + encodeURIComponent(file));
         const data = await res.json();
         if (!data.ok) { toast(data.error || 'Cannot open file', 'error'); return; }
-        feCurrentProject = project;
-        feCurrentFile = file;
-        feOriginal = data.content;
-        feReadOnly = false;
-        $('#fe-path').textContent = file;
-        const btn = $('#fe-save-btn');
-        if (btn) { btn.disabled = true; btn.style.display = ''; }
-        feShow();
-        feCreateEditor(data.content, file, false);
-      } catch (err) {
-        toast('Error: ' + err.message, 'error');
-      }
+        const w = feNewWindow({ kind: 'edit' });
+        Object.assign(w._fe, { project, file, original: data.content, readOnly: false, kind: 'edit' });
+        w.querySelector('.fe-path').textContent = file;
+        const b = w.querySelector('.fe-save'); if (b) { b.disabled = true; b.style.display = ''; }
+        feMountEditor(w, data.content, file, false);
+      } catch (err) { toast('Error: ' + err.message, 'error'); }
     }
 
-    // Read-only viewer for images / PDFs. Uses a short-lived /dl token served
-    // inline so the <img>/<iframe> renders rather than downloads.
+    // Read-only viewer for images / PDFs (served inline via a short-lived token).
     async function feOpenViewer(project, file, ext) {
-      feCurrentProject = ''; feCurrentFile = ''; feReadOnly = true;
-      if (feEditorView) { feEditorView.destroy(); feEditorView = null; }
-      $('#fe-path').textContent = file;
-      const btn = $('#fe-save-btn'); if (btn) btn.style.display = 'none';
-      feShow();
-      const c = $('#fe-container');
+      const w = feNewWindow({ kind: 'view' });
+      Object.assign(w._fe, { project: '', file: '', readOnly: true, kind: 'view' });
+      w.querySelector('.fe-path').textContent = file;
+      const b = w.querySelector('.fe-save'); if (b) b.style.display = 'none';
+      const c = w.querySelector('.fe-content');
       c.innerHTML = '<div class="fe-loading">Loading\\u2026</div>';
       try {
         const r = await apiFetch('/api/files/download-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, file }) });
@@ -5388,71 +5446,103 @@ export function getWebappHtml(botUsername) {
         c.innerHTML = ext === 'pdf'
           ? '<iframe class="fe-viewer-frame" src="' + u + '"></iframe>'
           : '<div class="fe-viewer-img"><img src="' + u + '" alt="' + escHtml(file) + '"></div>';
-      } catch (err) {
-        c.innerHTML = '<div class="fe-loading">Error: ' + escHtml(err.message) + '</div>';
-      }
-    }
-
-    // Drag the editor window by its header (desktop only).
-    function feMakeDraggable() {
-      const win = $('#fe-window'); const head = $('#fe-header');
-      if (!win || !head || head._dragWired) return;
-      head._dragWired = true;
-      let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false;
-      const parseXY = () => { const m = /translate\\((-?\\d+(?:\\.\\d+)?)px,\\s*(-?\\d+(?:\\.\\d+)?)px\\)/.exec(win.style.transform || ''); return m ? [parseFloat(m[1]), parseFloat(m[2])] : [0, 0]; };
-      head.addEventListener('mousedown', (e) => {
-        if (e.target.closest('button')) return;
-        if (!window.matchMedia('(min-width: 769px)').matches) return;
-        dragging = true; sx = e.clientX; sy = e.clientY; [ox, oy] = parseXY();
-        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
-        e.preventDefault();
-      });
-      function mv(e) { if (dragging) win.style.transform = 'translate(' + (ox + e.clientX - sx) + 'px, ' + (oy + e.clientY - sy) + 'px)'; }
-      function up() { dragging = false; document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); }
+      } catch (err) { c.innerHTML = '<div class="fe-loading">Error: ' + escHtml(err.message) + '</div>'; }
     }
 
     function feOpenContent(title, content, readOnly) {
-      feCurrentProject = '';
-      feCurrentFile = '';
-      feOriginal = content;
-      feReadOnly = readOnly || false;
-      $('#fe-path').textContent = title;
-      const btn = $('#fe-save-btn');
-      if (btn) btn.style.display = readOnly ? 'none' : '';
-      feShow();
-      feCreateEditor(content, title, !!readOnly);
+      const w = feNewWindow({ kind: 'content' });
+      Object.assign(w._fe, { project: '', file: '', original: content, readOnly: !!readOnly, kind: 'content' });
+      w.querySelector('.fe-path').textContent = title;
+      const b = w.querySelector('.fe-save'); if (b) b.style.display = readOnly ? 'none' : '';
+      feMountEditor(w, content, title, !!readOnly);
     }
 
-    function feClose() {
-      $('#file-editor').classList.remove('visible');
-      if (feEditorView) { feEditorView.destroy(); feEditorView = null; }
-    }
-
-    async function feSave() {
-      if (feReadOnly || !feCurrentProject || !feCurrentFile) return;
-      const content = feGetContent();
-      const btn = $('#fe-save-btn');
+    async function feSaveWin(w) {
+      if (!w || !w._fe || w._fe.readOnly || !w._fe.project || !w._fe.file) return;
+      const content = feWinContent(w);
+      const b = w.querySelector('.fe-save');
       try {
-        if (btn) { btn.disabled = true; btn.textContent = 'Saving\\u2026'; }
-        const res = await apiFetch('/api/files/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: feCurrentProject, file: feCurrentFile, content }) });
+        if (b) { b.disabled = true; b.textContent = 'Saving\\u2026'; }
+        const res = await apiFetch('/api/files/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: w._fe.project, file: w._fe.file, content }) });
         const data = await res.json();
-        if (data.ok) {
-          feOriginal = content;
-          toast('Saved', 'success');
-          if (btn) { btn.textContent = 'Saved \\u2713'; setTimeout(() => { btn.textContent = 'Save'; btn.disabled = true; }, 1500); }
-        } else {
-          toast('Save failed: ' + (data.error || 'unknown'), 'error');
-          if (btn) { btn.textContent = 'Save'; btn.disabled = false; }
-        }
-      } catch (err) {
-        toast('Error: ' + err.message, 'error');
-        if (btn) { btn.textContent = 'Save'; btn.disabled = false; }
+        if (data.ok) { w._fe.original = content; toast('Saved', 'success'); if (b) { b.textContent = 'Saved \\u2713'; setTimeout(() => { b.textContent = 'Save'; b.disabled = true; }, 1500); } }
+        else { toast('Save failed: ' + (data.error || 'unknown'), 'error'); if (b) { b.textContent = 'Save'; b.disabled = false; } }
+      } catch (err) { toast('Error: ' + err.message, 'error'); if (b) { b.textContent = 'Save'; b.disabled = false; } }
+    }
+
+    // Legacy/global helpers act on the focused window (Escape, Ctrl+S).
+    function feClose() { const w = feFocusedWin(); if (w) feCloseWin(w); }
+    function feSave() { const w = feFocusedWin(); if (w) feSaveWin(w); }
+    function feAnyOpen() { return feWins().length > 0; }
+    window.feClose = feClose; window.feSave = feSave;
+
+    // ── Drag + edge-snap (desktop) ──
+    function feSnapRect(zone) {
+      const vw = window.innerWidth, vh = window.innerHeight, top = 4, h = vh - 8, w2 = vw / 2, hh = (h / 2) - 2;
+      const R = { left: { left: 4, top, width: w2 - 6, height: h }, right: { left: w2 + 2, top, width: w2 - 6, height: h },
+        max: { left: 4, top, width: vw - 8, height: h },
+        tl: { left: 4, top, width: w2 - 6, height: hh }, tr: { left: w2 + 2, top, width: w2 - 6, height: hh },
+        bl: { left: 4, top: top + h / 2 + 2, width: w2 - 6, height: hh }, br: { left: w2 + 2, top: top + h / 2 + 2, width: w2 - 6, height: hh } };
+      return R[zone] || null;
+    }
+    function feZoneAt(x, y) {
+      const vw = window.innerWidth, vh = window.innerHeight, E = 36;
+      const l = x < E, r = x > vw - E, t = y < E, b = y > vh - E;
+      if (t && l) return 'tl'; if (t && r) return 'tr'; if (b && l) return 'bl'; if (b && r) return 'br';
+      if (l) return 'left'; if (r) return 'right'; if (t) return 'max';
+      return null;
+    }
+    function feApplyRect(w, rect) {
+      w.classList.remove('maximized');
+      w.style.left = rect.left + 'px'; w.style.top = rect.top + 'px';
+      w.style.width = rect.width + 'px'; w.style.height = rect.height + 'px';
+    }
+    function feWireDrag(w) {
+      const head = w.querySelector('.fe-header');
+      let sx = 0, sy = 0, ol = 0, ot = 0, dragging = false, zone = null;
+      head.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button') || feMobile()) return;
+        feBringFront(w);
+        const r = w.getBoundingClientRect();
+        ol = r.left; ot = r.top; sx = e.clientX; sy = e.clientY; dragging = true;
+        w.classList.remove('maximized');
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+        e.preventDefault();
+      });
+      function mv(e) {
+        if (!dragging) return;
+        w.style.left = (ol + e.clientX - sx) + 'px';
+        w.style.top = Math.max(2, ot + e.clientY - sy) + 'px';
+        zone = feZoneAt(e.clientX, e.clientY);
+        const o = feOverlay(), hint = document.getElementById('fe-snap-hint');
+        if (zone) { const rc = feSnapRect(zone); o.classList.add('snapping'); Object.assign(hint.style, { left: rc.left + 'px', top: rc.top + 'px', width: rc.width + 'px', height: rc.height + 'px' }); }
+        else o.classList.remove('snapping');
+      }
+      function up() {
+        dragging = false;
+        document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+        feOverlay().classList.remove('snapping');
+        if (zone) { feApplyRect(w, feSnapRect(zone)); zone = null; }
       }
     }
 
-    // Make feClose/feSave available globally for onclick handlers
-    window.feClose = feClose;
-    window.feSave = feSave;
+    // ── Arrange: tile / grid / cascade ──
+    function feArrange(mode) {
+      const wins = feWins(); if (!wins.length || feMobile()) return;
+      const vw = window.innerWidth, vh = window.innerHeight, top = 4, gap = 6, h = vh - 8;
+      wins.forEach(w => w.classList.remove('maximized'));
+      if (mode === 'cascade') {
+        const dw = Math.min(900, vw * 0.7), dh = Math.min(vh * 0.7, 760);
+        wins.forEach((w, i) => { const off = 28 * (i % 8); feApplyRect(w, { left: 40 + off, top: 40 + off, width: dw, height: dh }); });
+      } else if (mode === 'tile') {
+        const n = wins.length, cw = (vw - gap) / n;
+        wins.forEach((w, i) => feApplyRect(w, { left: gap / 2 + i * cw, top, width: cw - gap, height: h }));
+      } else if (mode === 'grid') {
+        const n = wins.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
+        const cw = (vw - gap) / cols, ch = (h - gap * (rows - 1)) / rows;
+        wins.forEach((w, i) => { const c = i % cols, r = Math.floor(i / cols); feApplyRect(w, { left: gap / 2 + c * cw, top: top + r * (ch + gap), width: cw - gap, height: ch }); });
+      }
+    }
 
     // ─── Services ───
     async function loadServices() {
@@ -5473,43 +5563,63 @@ export function getWebappHtml(botUsername) {
         ? services.filter(s => s.alias === currentProject)
         : services;
 
-      const addBtn = '<div style="padding:0 0 8px;text-align:right;">'
-        + '<button class="svc-action-btn" data-action="svc-register" style="background:var(--accent);border-color:var(--accent);color:#fff;">+ Register Service</button>'
+      const toolbar = '<div class="svc-toolbar">'
+        + '<span class="svc-title">Services' + (currentProject ? '' : ' \\u00b7 all projects') + '</span>'
+        + '<div class="spacer"></div>'
+        + '<button class="svc-add-btn" data-action="svc-register">' + ic('plus') + 'Register service</button>'
         + '</div>';
 
       if (projectServices.length === 0) {
-        panel.innerHTML = addBtn + '<div class="services-empty">'
-          + '<div class="icon">' + ic('settings') + '</div>'
+        panel.innerHTML = toolbar + '<div class="services-empty">'
+          + '<div class="icon">' + ic('server') + '</div>'
           + '<p>No services registered' + (currentProject ? ' for this project' : '') + '</p>'
           + '</div>';
         return;
       }
 
-      panel.innerHTML = addBtn + projectServices.map(s => {
-        const statusClass = s.status === 'running' ? 'running' : (s.status === 'error' ? 'error' : 'stopped');
-        const tunnelOn = (s.tunnelPort || 0) > 0;
-        const tunnelHtml = tunnelOn
-          ? '<br><span style="color:var(--text-muted)">tunnel :' + s.tunnelPort + '</span>'
-            + (s.tunnelUrl ? ' <a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>' : ' <span style="color:var(--yellow)">(starting…)</span>')
-          : '';
-        return '<div class="svc-card" data-svc-key="' + escHtml(s.key) + '">'
+      panel.innerHTML = toolbar + projectServices.map(s => {
+        const k = escHtml(s.key);
+        const running = s.status === 'running';
+        const statusClass = running ? 'running' : (s.status === 'error' ? 'error' : 'stopped');
+        // Tunnel port and on/off are independent. The runtime badge reflects the
+        // actual tunnel status — a stopped service shows "(idle)", not "(starting…)".
+        const tPort = s.tunnelPort || 0;
+        const tEnabled = !!s.tunnelEnabled;
+        const tStatus = s.tunnelStatus;
+        let tunnelRow = '';
+        if (tPort > 0 || tEnabled) {
+          let badge;
+          if (tEnabled && s.tunnelUrl && tStatus === 'active') badge = '<a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>';
+          else if (tEnabled && tStatus === 'connecting') badge = '<span class="svc-tunnel-badge" style="color:var(--yellow)">starting…</span>';
+          else if (tEnabled && tStatus === 'error') badge = '<span class="svc-tunnel-badge" style="color:var(--red)">error</span>';
+          else if (tEnabled) badge = '<span class="svc-tunnel-badge">idle</span>';
+          else badge = '<span class="svc-tunnel-badge">off</span>';
+          tunnelRow = '<div class="svc-tunnel">'
+            + '<span class="svc-tunnel-ic">' + ic('globe') + '</span>'
+            + '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '">' + (tPort > 0 ? 'Port ' + tPort : 'Set port') + '</button>'
+            + '<button class="svc-btn' + (tEnabled ? ' on' : '') + '" data-action="svc-tunnel-toggle" data-key="' + k + '" data-port="' + tPort + '" data-enabled="' + (tEnabled ? '1' : '0') + '"' + (tPort > 0 ? '' : ' title="Set a tunnel port first"') + '>' + ic('globe') + (tEnabled ? 'On' : 'Off') + '</button>'
+            + badge
+            + '</div>';
+        }
+        return '<div class="svc-card" data-svc-key="' + k + '">'
           + '<div class="svc-header">'
-          + '  <span class="svc-name">' + escHtml(s.name || s.key) + '</span>'
-          + '  <span class="svc-status ' + statusClass + '">' + escHtml(s.status) + '</span>'
+          + '<span class="svc-dot ' + statusClass + '"></span>'
+          + '<span class="svc-name">' + escHtml(s.name || s.key) + '</span>'
+          + '<span class="svc-status ' + statusClass + '">' + escHtml(s.status) + '</span>'
           + '</div>'
           + '<div class="svc-meta">' + escHtml(s.command || '')
-          + (s.uptime ? ' &mdash; up ' + escHtml(s.uptime) : '')
-          + tunnelHtml + '</div>'
+          + (s.uptime ? ' <span class="svc-up">&middot; up ' + escHtml(s.uptime) + '</span>' : '') + '</div>'
           + '<div class="svc-actions">'
-          + (s.status === 'running'
-            ? '<button data-action="svc-stop" data-key="' + escHtml(s.key) + '">Stop</button>'
-              + '<button data-action="svc-restart" data-key="' + escHtml(s.key) + '">Restart</button>'
-            : '<button data-action="svc-start" data-key="' + escHtml(s.key) + '">Start</button>')
-          + '<button data-action="svc-logs" data-key="' + escHtml(s.key) + '">Logs</button>'
-          + '<button data-action="svc-tunnel" data-key="' + escHtml(s.key) + '" data-port="' + (s.tunnelPort || 0) + '">' + (tunnelOn ? 'Tunnel: on' : 'Tunnel: off') + '</button>'
-          + '<button class="danger" data-action="svc-delete" data-key="' + escHtml(s.key) + '">Delete</button>'
+          + (running
+            ? '<button class="svc-btn" data-action="svc-stop" data-key="' + k + '">' + ic('stop') + 'Stop</button>'
+              + '<button class="svc-btn" data-action="svc-restart" data-key="' + k + '">' + ic('refresh') + 'Restart</button>'
+            : '<button class="svc-btn primary" data-action="svc-start" data-key="' + k + '">' + ic('play') + 'Start</button>')
+          + '<button class="svc-btn" data-action="svc-logs" data-key="' + k + '">' + ic('file-text') + 'Logs</button>'
+          + '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '"' + (tPort > 0 || tEnabled ? ' style="display:none"' : '') + '>' + ic('globe') + 'Tunnel</button>'
+          + '<button class="svc-btn danger" data-action="svc-delete" data-key="' + k + '">' + ic('trash') + 'Delete</button>'
           + '</div>'
-          + '<div class="svc-logs" id="svc-logs-' + escHtml(s.key) + '"></div>'
+          + tunnelRow
+          + '<div class="svc-logs" id="svc-logs-' + k + '"></div>'
           + '</div>';
       }).join('');
     }
@@ -5542,24 +5652,34 @@ export function getWebappHtml(botUsername) {
       }
     }
 
-    async function svcTunnel(key, currentPort) {
-      const cur = parseInt(currentPort, 10) || 0;
-      const val = await askText({
-        title: cur > 0 ? 'Tunnel (currently :' + cur + ')' : 'Enable tunnel',
-        label: 'Port to expose via Cloudflare tunnel. Enter 0 (or leave blank) to disable.',
-        value: cur > 0 ? String(cur) : '',
-      });
-      if (val === null) return; // cancelled
-      const port = parseInt(val, 10) || 0;
+    async function svcTunnelPost(key, body, okMsg) {
       try {
         const res = await apiFetch('/api/services/' + encodeURIComponent(key) + '/tunnel', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port }),
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
         const d = await res.json();
         if (!d.ok) toast(d.error || 'Failed', 'error');
-        else toast(port > 0 ? 'Tunnel enabled on :' + port : 'Tunnel disabled', 'success');
+        else toast(okMsg || 'Tunnel updated', 'success');
         setTimeout(loadServices, 600);
       } catch (err) { toast('Error: ' + err.message, 'error'); }
+    }
+    // Set/change the tunnel port (separate from on/off). 0 clears it (and turns off).
+    async function svcTunnelSetPort(key, currentPort) {
+      const cur = parseInt(currentPort, 10) || 0;
+      const val = await askText({
+        title: 'Tunnel port',
+        label: 'Local port to expose via Cloudflare. Enter 0 (or blank) to clear.',
+        value: cur > 0 ? String(cur) : '',
+      });
+      if (val === null) return;
+      const port = parseInt(val, 10) || 0;
+      svcTunnelPost(key, { port }, port > 0 ? 'Tunnel port set to :' + port : 'Tunnel port cleared');
+    }
+    // Toggle the tunnel on/off. Blocked when no port is set.
+    async function svcTunnelToggle(key, enabled, port) {
+      const p = parseInt(port, 10) || 0;
+      if (!enabled && p <= 0) { toast('Set a tunnel port first', 'error'); return; }
+      svcTunnelPost(key, { enabled: !enabled }, !enabled ? 'Tunnel on' : 'Tunnel off');
     }
 
     async function svcDelete(key) {
@@ -5581,16 +5701,15 @@ export function getWebappHtml(botUsername) {
       if (panel.querySelector('.svc-register-form')) return;
       const form = document.createElement('div');
       form.className = 'svc-register-form';
-      form.style.cssText = 'padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius-sm);margin:8px 0;display:flex;flex-direction:column;gap:8px;';
-      form.innerHTML = '<div style="font-size:12px;font-weight:600;color:var(--text-primary);">Register Service</div>'
-        + '<input type="text" id="svc-reg-name" placeholder="Service name" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;" />'
-        + '<input type="text" id="svc-reg-cmd" placeholder="Command (e.g. npm run dev)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<input type="text" id="svc-reg-cwd" placeholder="Working directory (optional)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<input type="text" id="svc-reg-stop" placeholder="Stop command (optional, e.g. docker compose down)" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<input type="number" id="svc-reg-tunnel" placeholder="Tunnel port (optional, e.g. 3000) — exposes it via Cloudflare" min="0" style="padding:6px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<div style="display:flex;gap:6px;">'
-        + '<button data-action="svc-reg-submit" style="padding:6px 14px;border-radius:4px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:12px;">Register</button>'
-        + '<button data-action="svc-reg-cancel" style="padding:6px 14px;border-radius:4px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12px;">Cancel</button>'
+      form.innerHTML = '<div class="srf-title">Register a service</div>'
+        + '<input type="text" id="svc-reg-name" class="svc-reg-input" placeholder="Service name" />'
+        + '<input type="text" id="svc-reg-cmd" class="svc-reg-input" placeholder="Command (e.g. npm run dev)" />'
+        + '<input type="text" id="svc-reg-cwd" class="svc-reg-input" placeholder="Working directory (optional)" />'
+        + '<input type="text" id="svc-reg-stop" class="svc-reg-input" placeholder="Stop command (optional, e.g. docker compose down)" />'
+        + '<input type="number" id="svc-reg-tunnel" class="svc-reg-input" placeholder="Tunnel port (optional) — expose via Cloudflare" min="0" />'
+        + '<div class="srf-actions">'
+        + '<button class="svc-btn primary" data-action="svc-reg-submit">' + ic('check') + 'Register</button>'
+        + '<button class="svc-btn" data-action="svc-reg-cancel">Cancel</button>'
         + '</div>';
       // Insert after first element (the toolbar/button area)
       const firstChild = panel.firstElementChild;
@@ -6114,6 +6233,9 @@ export function getWebappHtml(botUsername) {
 
     // ─── Event Delegation ───
     document.addEventListener('click', (e) => {
+      // File-editor window arrange controls (tile / grid / cascade)
+      const arrEl = e.target.closest('[data-fe-arrange]');
+      if (arrEl) { feArrange(arrEl.dataset.feArrange); return; }
       // Tab clicks (tolerate clicks on the icon/label inside the button)
       const tabEl = e.target.closest('[data-tab]');
       if (tabEl) { switchTab(tabEl.dataset.tab); return; }
@@ -6139,7 +6261,8 @@ export function getWebappHtml(botUsername) {
         case 'svc-stop': svcAction('stop', d.key); break;
         case 'svc-restart': svcAction('restart', d.key); break;
         case 'svc-logs': svcLogs(d.key); break;
-        case 'svc-tunnel': svcTunnel(d.key, d.port); break;
+        case 'svc-tunnel-port': svcTunnelSetPort(d.key, d.port); break;
+        case 'svc-tunnel-toggle': svcTunnelToggle(d.key, d.enabled === '1', d.port); break;
         case 'svc-delete': svcDelete(d.key); break;
         case 'svc-register': showRegisterServiceForm(); break;
         case 'svc-reg-submit': submitRegisterService(); break;
@@ -6153,7 +6276,7 @@ export function getWebappHtml(botUsername) {
         case 'browser-navigate': browserNavigate(d.key); break;
         case 'browser-screenshot': browserScreenshot(d.key); break;
         // Git actions
-        case 'diff-stage-chunk': stageChunk(parseInt(d.cidx)); break;
+        case 'diff-stage-chunk': stageChunk(e.target.closest('.fe-window'), parseInt(d.cidx)); break;
         case 'git-stage': gitStage(d.file); break;
         case 'git-unstage': gitUnstage(d.file); break;
         case 'git-stage-all': gitStageAll(); break;
@@ -7365,7 +7488,10 @@ export function getWebappHtml(botUsername) {
     }
     function mediaCardHtml(it) {
       const previewable = it.kind !== 'other';
-      let h = '<div class="media-card" data-media="' + it.id + '">';
+      // Whole card is draggable onto a terminal / input (inserts the file path),
+      // just like the Files panel.
+      const drag = it.path ? ' data-drag-ref="' + escHtml(it.path) + '" data-drag-kind="media" title="Drag onto a terminal to insert this path"' : '';
+      let h = '<div class="media-card" data-media="' + it.id + '"' + drag + '>';
       h += '<div class="media-thumb" data-media-open="' + it.id + '">'
         + '<span class="media-kindbadge">' + ic(MEDIA_KIND_ICON[it.kind] || 'file') + '</span>'
         + mediaThumbHtml(it) + '</div>';
@@ -7374,14 +7500,39 @@ export function getWebappHtml(botUsername) {
       h += '<div class="media-actions">';
       if (previewable) h += '<button data-media-open="' + it.id + '" title="Preview">' + ic('image') + 'View</button>';
       else h += '<button data-media-dl="' + it.id + '" title="Download">' + ic('download') + 'Get</button>';
+      if (it.path) h += '<button data-media-copy="' + it.id + '" title="Copy file path">' + ic('copy') + '</button>';
       if (it.link) h += '<button data-media-jump="' + it.id + '" title="Jump to source"' + (it.linkStatus === 'deleted' ? ' disabled' : '') + '>' + ic('external-link') + '</button>';
       h += '<button class="danger" data-media-del="' + it.id + '" title="Delete">' + ic('trash') + '</button>';
       h += '</div></div>';
       return h;
     }
+    // Filter loaded items by the search query (name, link label, project, type).
+    function mediaFilter(items, q) {
+      q = (q || '').trim().toLowerCase();
+      if (!q) return items;
+      return items.filter(it => (
+        (it.originalName || '').toLowerCase().includes(q)
+        || (it.linkLabel || '').toLowerCase().includes(q)
+        || (it.projectName || '').toLowerCase().includes(q)
+        || (it.ext || '').toLowerCase().includes(q)
+        || (it.kind || '').toLowerCase().includes(q)
+      ));
+    }
+    // Re-render just the grid for the current search query (keeps the search box
+    // focused while typing — no refetch).
+    function mediaApplyFilter(host) {
+      const body = host.querySelector('.media-body'); if (!body) return;
+      const items = host._mediaItems || [];
+      const filtered = mediaFilter(items, host._mediaState.q);
+      if (!items.length) body.innerHTML = '<div class="media-empty">No media here yet. Upload files, or attach them to a Kanban task/subtask or a Mindmap idea.</div>';
+      else if (!filtered.length) body.innerHTML = '<div class="media-empty">No media matches “' + escHtml(host._mediaState.q) + '”.</div>';
+      else body.innerHTML = '<div class="media-grid">' + filtered.map(mediaCardHtml).join('') + '</div>';
+      wireDragRefs(host);
+    }
     function renderMediaBrowser(host, state, items) {
       let h = '<div class="media-toolbar">';
       h += '<button class="media-upload-btn" data-media-upload="1">' + ic('upload') + 'Upload</button>';
+      h += '<input type="text" class="media-search" placeholder="Search media…" autocomplete="off" value="' + escHtml(state.q || '') + '">';
       if (state.linkFilter) {
         // Target-specific view (one task / subtask / idea): no filter chips.
         h += '<span class="spacer"></span><span style="font-size:0.74rem;color:var(--text-muted)">Attached here</span>';
@@ -7392,18 +7543,18 @@ export function getWebappHtml(botUsername) {
         h += '<button class="media-chip' + (state.scope === 'project' ? ' on' : '') + '" data-media-scope="project">This project</button>';
         h += '<button class="media-chip' + (state.scope === 'all' ? ' on' : '') + '" data-media-scope="all">All projects</button>';
       }
-      h += '</div><div class="media-body">';
-      if (!state.linkFilter && state.scope === 'project' && !currentProject) {
-        h += '<div class="media-empty">Select a project, or switch to <b>All projects</b>.</div>';
-      } else if (!items.length) {
-        h += '<div class="media-empty">No media here yet. Upload files, or attach them to a Kanban task/subtask or a Mindmap idea.</div>';
-      } else {
-        h += '<div class="media-grid">' + items.map(mediaCardHtml).join('') + '</div>';
-      }
-      h += '</div>';
+      h += '</div><div class="media-body"></div>';
       host.innerHTML = h;
       host._mediaState = state;
+      host._mediaItems = items;
       for (const it of items) _mediaCache.set(it.id, it);
+      if (!state.linkFilter && state.scope === 'project' && !currentProject) {
+        host.querySelector('.media-body').innerHTML = '<div class="media-empty">Select a project, or switch to <b>All projects</b>.</div>';
+      } else {
+        mediaApplyFilter(host);
+      }
+      const search = host.querySelector('.media-search');
+      if (search) search.addEventListener('input', () => { host._mediaState.q = search.value; mediaApplyFilter(host); });
     }
     // Mount/refresh a media browser into a host element; remembers how to reload.
     async function mountMediaBrowser(host, state) {
@@ -7581,6 +7732,7 @@ export function getWebappHtml(botUsername) {
           return;
         }
         if ((m = t.closest('[data-kmedia-node]'))) { openNodeMediaModal(m.dataset.kmediaNode); return; }
+        if ((m = t.closest('[data-media-copy]'))) { const it = findLoadedMedia(m.dataset.mediaCopy); if (it && it.path) navigator.clipboard.writeText(it.path).then(() => toast('Path copied'), () => toast('Copy failed', 'error')); return; }
         if ((m = t.closest('[data-media-open]'))) { openMediaLightbox(findLoadedMedia(m.dataset.mediaOpen)); return; }
         if ((m = t.closest('[data-media-dl]'))) { mediaDownload(m.dataset.mediaDl); return; }
         if ((m = t.closest('[data-media-jump]'))) { mediaJump(findLoadedMedia(m.dataset.mediaJump)); return; }

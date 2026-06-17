@@ -57,7 +57,7 @@ export function getRegistered(key) {
  * @param {{ alias: string, name: string, cwd: string, command: string, stopCommand?: string, tunnelPort?: number }} entry
  * @returns {{ ok: boolean, key?: string, error?: string }}
  */
-export function registerService({ alias, name, cwd, command, stopCommand = '', tunnelPort = 0 }) {
+export function registerService({ alias, name, cwd, command, stopCommand = '', tunnelPort = 0, tunnelEnabled }) {
   const a = String(alias || '').toLowerCase().trim();
   const n = String(name || '').trim();
   const c = String(cwd || '').trim();
@@ -80,6 +80,8 @@ export function registerService({ alias, name, cwd, command, stopCommand = '', t
     command: cmd,
     stopCommand: stopCommand ? String(stopCommand).trim() : '',
     tunnelPort: Number(tunnelPort) || 0,
+    // Tunnel on/off is separate from the port. Default: on when a port was given.
+    tunnelEnabled: tunnelEnabled !== undefined ? !!tunnelEnabled : (Number(tunnelPort) || 0) > 0,
     createdAt: new Date().toISOString(),
   };
   saveAll(map);
@@ -96,6 +98,7 @@ export function updateRegistered(key, updates) {
   const map = loadAll();
   if (!map[key]) return { ok: false, error: 'Not registered' };
   if (updates.tunnelPort !== undefined) map[key].tunnelPort = Number(updates.tunnelPort) || 0;
+  if (updates.tunnelEnabled !== undefined) map[key].tunnelEnabled = !!updates.tunnelEnabled;
   if (updates.command !== undefined) map[key].command = String(updates.command).trim();
   if (updates.stopCommand !== undefined) map[key].stopCommand = String(updates.stopCommand).trim();
   if (updates.cwd !== undefined) map[key].cwd = String(updates.cwd).trim();
