@@ -217,6 +217,17 @@ const webapp = createWebApp({
   setChatId,
 });
 
+// ─── Dev mode ───
+// In dev (npm run dev / dev:headless, or CRUNDI_DEV=1) run on a separate port
+// and never start Cloudflare, so a dev instance can't collide with a production
+// instance (default port 8888 + tunnel).
+const isDev = process.env.CRUNDI_DEV === '1' || process.argv.includes('--dev');
+if (isDev) {
+  config.webPort = parseInt(process.env.DEV_WEB_PORT || '8889', 10);
+  process.env.DISABLE_TUNNEL = '1';
+  console.log(`[crundi] DEV mode: port ${config.webPort}, Cloudflare disabled`);
+}
+
 // ─── Start everything ───
 console.log('[crundi] Starting...');
 

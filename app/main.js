@@ -296,6 +296,10 @@ function startBot() {
     DOTENV_PATH: envPath,
     DATA_DIR: dataDir,
   };
+  // Dev mode (npm run dev → electron . --dev): use a separate port and skip
+  // Cloudflare so it never collides with a production instance on 8888.
+  const isDev = !app.isPackaged && process.argv.includes('--dev');
+  if (isDev) { spawnEnv.CRUNDI_DEV = '1'; appendLog('[electron] DEV mode: port 8889, Cloudflare disabled'); }
   delete spawnEnv.NODE_OPTIONS;
 
   try {

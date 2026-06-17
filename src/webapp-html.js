@@ -613,6 +613,61 @@ export function getWebappHtml(botUsername) {
     .wb-add-menu button:hover { background: var(--accent); color: #fff; }
     .wb-add-menu button .ic { font-size: 1rem; color: var(--accent-hover); }
     .wb-add-menu button:hover .ic { color: #fff; }
+    /* "Layout" submenu flyout (desktop only) */
+    .wb-sub { position: relative; }
+    .wb-sub-caret { margin-left: auto; opacity: 0.55; }
+    .wb-subitems {
+      display: none; position: absolute; left: 100%; top: -5px; margin-left: 4px; min-width: 178px;
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 5px; box-shadow: 0 6px 22px rgba(0,0,0,0.55); flex-direction: column; gap: 2px;
+    }
+    .wb-sub:hover .wb-subitems, .wb-subitems:hover { display: flex; }
+    @media (max-width: 768px) { .wb-sub { display: none; } }
+    .wb-subitems button .lay-ic { width: 22px; height: 16px; flex-shrink: 0; color: var(--accent-hover); }
+    .wb-subitems button:hover .lay-ic { color: #fff; }
+
+    /* ─── Mosaic layout (desktop) ─── */
+    .term-grid.mosaic { display: flex; overflow: hidden; padding: 6px; }
+    /* Root skeleton (only child of the grid) grows to fill; nested splits get an
+       inline flex from their proportion. align-items:stretch fills the cross axis. */
+    .mosaic-split { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
+    .mosaic-split.row { flex-direction: row; }
+    .mosaic-split.col { flex-direction: column; }
+    .mosaic-leaf { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+    .mosaic-leaf > .term-cell { flex: 1 1 0; min-width: 0; min-height: 0; }
+    .mosaic-gutter { flex: 0 0 7px; position: relative; z-index: 3; }
+    .mosaic-split.row > .mosaic-gutter { cursor: col-resize; }
+    .mosaic-split.col > .mosaic-gutter { cursor: row-resize; }
+    .mosaic-gutter::after { content: ''; position: absolute; background: var(--border); transition: background 0.12s; }
+    .mosaic-split.row > .mosaic-gutter::after { top: 0; bottom: 0; left: 3px; width: 1px; }
+    .mosaic-split.col > .mosaic-gutter::after { left: 0; right: 0; top: 3px; height: 1px; }
+    .mosaic-gutter:hover::after, body.mosaic-resizing .mosaic-gutter::after { background: var(--accent); }
+    .mosaic-empty {
+      flex: 1 1 0; position: relative; margin: 3px; display: flex; flex-direction: column; gap: 10px;
+      align-items: center; justify-content: center; border: 2px dashed var(--border);
+      border-radius: var(--radius); color: var(--text-muted); font-size: 0.82rem;
+    }
+    .mosaic-empty.drop-hover { border-color: var(--accent); color: var(--accent-hover); background: var(--accent-dim); }
+    .mosaic-empty .me-acts { display: flex; gap: 6px; }
+    .mosaic-empty .me-acts button {
+      display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+      border-radius: var(--radius-sm); font-size: 0.72rem;
+    }
+    .mosaic-empty .me-acts button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .mosaic-empty .me-acts button .ic { width: 13px; height: 13px; }
+    /* per-leaf split controls (hover) */
+    .leaf-ctrls { position: absolute; top: 3px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; gap: 3px; opacity: 0; transition: opacity 0.12s; }
+    .mosaic-leaf:hover .leaf-ctrls { opacity: 1; }
+    .leaf-ctrls button {
+      display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 18px;
+      padding: 0; cursor: pointer; border: 1px solid var(--border); background: var(--bg-secondary);
+      color: var(--text-secondary); border-radius: 5px;
+    }
+    .leaf-ctrls button:hover { border-color: var(--accent); color: var(--accent-hover); }
+    .leaf-ctrls button .lay-ic { width: 14px; height: 11px; }
+    body.mosaic-cell-drag .mosaic-leaf { outline: 1px dashed var(--border); outline-offset: -2px; }
+    body.mosaic-cell-drag .mosaic-leaf.drop-hover { outline: 2px solid var(--accent); }
 
     /* Workbench panel cells (Files / Git / Kanban / Mindmap embedded in the grid).
        The real tab-panel node is relocated into .wb-cell-body while the Workbench
@@ -1384,6 +1439,108 @@ export function getWebappHtml(botUsername) {
     .pin-modal .pin-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 
     /* ─── Mindmap ─── */
+    /* ─── Media library ─── */
+    /* Visibility/flex come from .tab-panel / .tab-panel.visible — do NOT force
+       display here or the panel stays in the layout while hidden and steals
+       height from the workbench. */
+    .media-panel { padding: 0; }
+    .media-body { flex: 1; overflow: auto; padding: 12px; }
+    .media-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .media-toolbar .spacer { flex: 1; }
+    .media-chip {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; cursor: pointer;
+      padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--bg-tertiary); color: var(--text-secondary);
+    }
+    .media-chip:hover { border-color: var(--accent); color: var(--text-primary); }
+    .media-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .media-chip .ic { width: 14px; height: 14px; }
+    .media-upload-btn {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; cursor: pointer;
+      padding: 7px 13px; border-radius: var(--radius-sm); border: 1px solid var(--accent);
+      background: var(--accent); color: #fff;
+    }
+    .media-upload-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+    .media-empty { color: var(--text-muted); text-align: center; padding: 40px 12px; font-size: 0.88rem; }
+    .media-card {
+      position: relative; border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--bg-card); overflow: hidden; display: flex; flex-direction: column;
+    }
+    .media-card.dropping { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+    .media-thumb {
+      position: relative; height: 110px; cursor: pointer; background:
+        repeating-conic-gradient(var(--bg-secondary) 0% 25%, var(--bg-primary) 0% 50%) 50% / 18px 18px;
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
+    }
+    .media-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .media-thumb .media-glyph { color: var(--text-muted); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .media-thumb .media-glyph .ic { width: 34px; height: 34px; }
+    .media-thumb .media-glyph .ext { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .media-kindbadge {
+      position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.55); color: #fff;
+      border-radius: 6px; padding: 2px 5px; display: inline-flex; align-items: center;
+    }
+    .media-kindbadge .ic { width: 13px; height: 13px; }
+    .media-info { padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; }
+    .media-name { font-size: 0.76rem; font-weight: 600; word-break: break-word; line-height: 1.25;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .media-sub { font-size: 0.66rem; color: var(--text-muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .media-link-tag { display: inline-flex; align-items: center; gap: 3px; color: var(--green); }
+    .media-link-tag.deleted { color: var(--text-muted); text-decoration: line-through; }
+    .media-actions { display: flex; gap: 4px; padding: 0 9px 9px; }
+    .media-actions button {
+      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+      font-size: 0.68rem; padding: 5px; border-radius: var(--radius-sm); cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+    }
+    .media-actions button:hover { border-color: var(--accent); color: var(--text-primary); }
+    .media-actions button.danger:hover { border-color: var(--red); color: var(--red); }
+    .media-actions button .ic { width: 13px; height: 13px; }
+    /* Lightbox */
+    .media-lightbox {
+      display: none; position: fixed; inset: 0; z-index: 2200; background: rgba(0,0,0,0.86);
+      align-items: center; justify-content: center; flex-direction: column; padding: 24px;
+    }
+    .media-lightbox.visible { display: flex; }
+    .media-lightbox .ml-head { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 12px 16px; color: #fff; }
+    .media-lightbox .ml-title { font-size: 0.86rem; font-weight: 600; word-break: break-word; }
+    .media-lightbox .ml-head .spacer { flex: 1; }
+    .media-lightbox .ml-btn { background: rgba(255,255,255,0.12); color: #fff; border: none; border-radius: var(--radius-sm); padding: 7px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; }
+    .media-lightbox .ml-btn:hover { background: rgba(255,255,255,0.25); }
+    .media-lightbox .ml-stage { max-width: 100%; max-height: 100%; display: flex; align-items: center; justify-content: center; }
+    .media-lightbox .ml-stage img { max-width: 90vw; max-height: 82vh; object-fit: contain; box-shadow: 0 8px 30px rgba(0,0,0,0.6); }
+    .media-lightbox .ml-stage iframe { width: 90vw; height: 82vh; border: none; background: #fff; border-radius: 6px; }
+    .media-lightbox .ml-stage video, .media-lightbox .ml-stage audio { max-width: 90vw; max-height: 82vh; }
+    /* Inline media strip on kanban cards / mindmap detail */
+    .card-media { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin: 6px 0 2px; }
+    .media-mini {
+      width: 38px; height: 38px; border-radius: 7px; overflow: hidden; cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg-tertiary);
+      display: flex; align-items: center; justify-content: center; color: var(--text-muted); flex-shrink: 0;
+    }
+    .media-mini:hover { border-color: var(--accent); }
+    .media-mini img { width: 100%; height: 100%; object-fit: cover; }
+    .media-mini .ic { width: 18px; height: 18px; }
+    .card-media-add, .todo-media {
+      display: inline-flex; align-items: center; gap: 2px; cursor: pointer;
+      border: 1px dashed var(--border); background: transparent; color: var(--text-muted);
+      border-radius: 7px; padding: 0 6px; height: 24px; font-size: 0.66rem;
+    }
+    .card-media-add { width: 38px; height: 38px; justify-content: center; border-radius: 7px; }
+    .card-media-add:hover, .todo-media:hover { border-color: var(--accent); color: var(--accent-hover); }
+    .card-media-add .ic, .todo-media .ic { width: 14px; height: 14px; }
+    .todo-media .cnt { font-weight: 700; color: var(--accent-hover); }
+    /* Media browser inside the modal */
+    #media-modal .media-modal-body { display: flex; flex-direction: column; min-height: 0; flex: 1; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    #media-modal .media-toolbar { border-bottom: 1px solid var(--border); }
+    #media-modal .media-body { max-height: 58vh; }
+    /* highlight pulse used by jump-to-source */
+    .jump-flash { animation: jumpFlash 2.2s ease-out; }
+    @keyframes jumpFlash {
+      0%, 60% { box-shadow: 0 0 0 3px var(--accent), 0 0 18px 4px var(--accent-dim); }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
     .mindmap-panel { padding: 0; }
     .mindmap-canvas { position: relative; flex: 1; overflow: auto; background:
       radial-gradient(circle, var(--border-subtle) 1px, transparent 1px) 0 0 / 22px 22px; }
@@ -1712,6 +1869,7 @@ export function getWebappHtml(botUsername) {
           <button class="tab-btn" data-tab="files">Files</button>
           <button class="tab-btn" data-tab="kanban">Kanban</button>
           <button class="tab-btn" data-tab="mindmap">Mindmap</button>
+          <button class="tab-btn" data-tab="media">Media</button>
           <button class="tab-btn" data-tab="schedule">Schedule</button>
           <button class="tab-btn" data-tab="services">Services</button>
           <button class="tab-btn" data-tab="terminals">Terminals</button>
@@ -1726,6 +1884,17 @@ export function getWebappHtml(botUsername) {
           <button data-action="wb-add" data-kind="git"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> Git</button>
           <button data-action="wb-add" data-kind="kanban"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Kanban</button>
           <button data-action="wb-add" data-kind="mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Mindmap</button>
+          <button data-action="wb-add" data-kind="media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg> Media</button>
+          <div class="wb-sub" id="wb-layout-sub">
+            <button type="button"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg> Layout <span class="wb-sub-caret">&#9656;</span></button>
+            <div class="wb-subitems">
+              <button data-action="wb-layout" data-mlayout="cols2"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="10" height="16" rx="1.5"/><rect x="13" y="1" width="10" height="16" rx="1.5"/></svg> 2 columns</button>
+              <button data-action="wb-layout" data-mlayout="cols3"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="6.3" height="16" rx="1.2"/><rect x="8.85" y="1" width="6.3" height="16" rx="1.2"/><rect x="16.7" y="1" width="6.3" height="16" rx="1.2"/></svg> 3 columns</button>
+              <button data-action="wb-layout" data-mlayout="cross4"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/></svg> 2&#215;2 cross</button>
+              <button data-action="wb-layout" data-mlayout="left-right2"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="10" height="16" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/></svg> Left + right split</button>
+              <button data-action="wb-layout" data-mlayout="top-bottom2"><svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="22" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/></svg> Top + bottom split</button>
+            </div>
+          </div>
         </div>
         <div class="terminal-wrap tab-panel visible" data-panel="workbench">
           <div class="terminal-placeholder" id="terminal-placeholder">
@@ -1772,6 +1941,7 @@ export function getWebappHtml(botUsername) {
         <div class="kanban-panel tab-panel" id="kanban-panel" data-panel="kanban"></div>
         <div class="secrets-panel tab-panel" id="secrets-panel" data-panel="secrets"></div>
         <div class="mindmap-panel tab-panel" id="mindmap-panel" data-panel="mindmap"></div>
+        <div class="media-panel tab-panel" id="media-panel" data-panel="media"></div>
         <div class="schedule-panel tab-panel" id="schedule-panel" data-panel="schedule"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="services-panel tab-panel" id="terminals-panel" data-panel="terminals"></div>
@@ -1874,6 +2044,7 @@ export function getWebappHtml(botUsername) {
       <div id="mmd-view">
         <div class="mmd-link" id="mmd-link"></div>
         <ul class="mmd-notes" id="mmd-notes"></ul>
+        <div class="card-media" id="mmd-media"></div>
       </div>
       <div id="mmd-edit" style="display:none">
         <label class="im-label">Idea</label>
@@ -1887,9 +2058,32 @@ export function getWebappHtml(botUsername) {
         <button id="mmd-save-btn" class="primary" style="display:none">Save</button>
         <button id="mmd-addchild-btn">+ Child</button>
         <button id="mmd-link-btn">Link</button>
+        <button id="mmd-media-btn">Media</button>
         <button id="mmd-del-btn" class="danger">Delete</button>
         <button id="mmd-close-btn">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ─── Media lightbox (large preview) ─── -->
+  <div class="media-lightbox" id="media-lightbox">
+    <div class="ml-head">
+      <span class="ml-title" id="ml-title"></span>
+      <div class="spacer"></div>
+      <button class="ml-btn" id="ml-download">Download</button>
+      <button class="ml-btn" id="ml-close">Close</button>
+    </div>
+    <div class="ml-stage" id="ml-stage"></div>
+  </div>
+  <!-- hidden input used for media uploads -->
+  <input type="file" id="media-file-input" multiple style="display:none">
+
+  <!-- ─── Media library modal (used by Kanban / Mindmap "Media" buttons) ─── -->
+  <div class="input-modal" id="media-modal">
+    <div class="im-box" style="max-width:780px;width:96%;display:flex;flex-direction:column;max-height:88vh">
+      <h3 id="media-modal-title" style="margin-bottom:10px">Media</h3>
+      <div class="media-modal-body" id="media-modal-body"></div>
+      <div class="mmd-actions" style="margin-top:12px"><button id="media-modal-close">Close</button></div>
     </div>
   </div>
 
@@ -2019,6 +2213,11 @@ export function getWebappHtml(botUsername) {
       'bar-chart': '<line x1="6" y1="20" x2="6" y2="14"/><line x1="12" y1="20" x2="12" y2="9"/><line x1="18" y1="20" x2="18" y2="4"/>',
       clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>',
       mindmap: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
+      film: '<rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>',
+      music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+      'external-link': '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+      x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+      images: '<rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/>',
     };
     function ic(name) {
       const p = ICON_PATHS[name]; if (!p) return '';
@@ -2777,26 +2976,98 @@ export function getWebappHtml(botUsername) {
       for (const d of items) if (byKey.has(d.key)) ordered.push(d);
       wbOrder = ordered.map(d => d.key);
       const desired = ordered;
+      wbLastKeys = desired.map(d => d.key);
 
+      // Reconcile the set of cell elements (search the WHOLE grid, since in mosaic
+      // mode cells live nested inside leaves — not just top-level children).
       const wanted = new Set(desired.map(d => d.key));
-      [...grid.children].forEach(ch => { const k = ch.dataset && ch.dataset.cellkey; if (k && !wanted.has(k)) destroyCell(ch); });
-
+      grid.querySelectorAll('[data-cellkey]').forEach(ch => { const k = ch.dataset.cellkey; if (k && !wanted.has(k)) destroyCell(ch); });
+      const elByKey = {};
+      const newLive = [];
       for (const d of desired) {
-        let el = grid.querySelector(':scope > [data-cellkey="' + d.key + '"]');
-        if (!el) {
-          el = buildCellEl(d);
-          grid.appendChild(el);
-          if (d.type === 'live') mountXterm(d.t, el);
-        } else if (d.type === 'live') {
-          updateCellHead(el, d.t);
-        }
-        grid.appendChild(el); // enforce display order
+        let el = grid.querySelector('[data-cellkey="' + d.key + '"]');
+        if (!el) { el = buildCellEl(d); if (d.type === 'live') newLive.push([d, el]); }
+        else if (d.type === 'live') updateCellHead(el, d.t);
+        elByKey[d.key] = el;
       }
+
+      // Arrange: mosaic on desktop (always), flat stack on mobile.
+      if (mosaicDesktop()) {
+        grid.classList.add('mosaic');
+        arrangeMosaic(grid, desired, elByKey);
+      } else {
+        grid.classList.remove('mosaic');
+        // replaceChildren moves the cells in order and drops any leftover mosaic
+        // skeleton from a previous desktop render.
+        grid.replaceChildren(...desired.map(d => elByKey[d.key]));
+      }
+
+      // Mount xterm for newly built live cells AFTER they're attached to the DOM.
+      for (const [d, el] of newLive) mountXterm(d.t, el);
 
       if (!focusedTermId || !live.some(t => t.id === focusedTermId)) focusedTermId = live[0] ? live[0].id : null;
       updateFocusStyles();
       embedWbPanels();
       setTimeout(fitAllTerms, 30);
+    }
+    let wbLastKeys = [];
+    function currentDesiredKeys() { return wbLastKeys.slice(); }
+
+    // Build the mosaic DOM from the (synced) tree and relocate each cell element
+    // into its leaf. Empty leaves render as drop targets. Cells are MOVED (not
+    // rebuilt), so running terminals survive.
+    function arrangeMosaic(grid, desired, elByKey) {
+      const tree = mosaicSync(desired.map(d => d.key));
+      const leafMap = [];
+      const skeleton = buildMosaicDom(tree, leafMap);
+      for (const { node, dom } of leafMap) {
+        if (node.key && elByKey[node.key]) {
+          dom.appendChild(elByKey[node.key]);
+          dom.insertAdjacentHTML('beforeend', leafCtrlsHtml(node._id));
+        } else {
+          dom.innerHTML = emptyLeafHtml(node._id);
+        }
+      }
+      grid.replaceChildren(skeleton); // old skeleton dropped; cells already moved into new one
+    }
+    function buildMosaicDom(node, leafMap) {
+      if (node.t === 'leaf') {
+        const d = document.createElement('div');
+        d.className = 'mosaic-leaf'; d.dataset.leafId = node._id;
+        leafMap.push({ node, dom: d });
+        return d;
+      }
+      const s = document.createElement('div');
+      s.className = 'mosaic-split ' + node.dir; s.dataset.splitId = node._id;
+      node.kids.forEach((kid, i) => {
+        if (i > 0) {
+          const g = document.createElement('div');
+          g.className = 'mosaic-gutter'; g.dataset.splitId = node._id; g.dataset.gutter = i;
+          s.appendChild(g);
+        }
+        const kEl = buildMosaicDom(kid, leafMap);
+        const size = (node.sizes && node.sizes[i] != null) ? node.sizes[i] : (100 / node.kids.length);
+        kEl.style.flex = size + ' 1 0';
+        s.appendChild(kEl);
+      });
+      return s;
+    }
+    function leafCtrlsHtml(id) {
+      const sr = '<svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="12" y1="1" x2="12" y2="17"/></svg>';
+      const sd = '<svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="1" y1="9" x2="23" y2="9"/></svg>';
+      return '<div class="leaf-ctrls">'
+        + '<button data-action="leaf-split" data-leaf="' + id + '|row" title="Split right">' + sr + '</button>'
+        + '<button data-action="leaf-split" data-leaf="' + id + '|col" title="Split down">' + sd + '</button>'
+        + '</div>';
+    }
+    function emptyLeafHtml(id) {
+      return '<div class="mosaic-empty" data-leaf-drop="' + id + '">'
+        + '<div class="me-msg">Drop a panel here</div>'
+        + '<div class="me-acts">'
+        + '<button data-action="leaf-split" data-leaf="' + id + '|row" title="Split right">' + ic('plus') + 'Split &#9656;</button>'
+        + '<button data-action="leaf-split" data-leaf="' + id + '|col" title="Split down">' + ic('plus') + 'Split &#9662;</button>'
+        + '<button data-action="leaf-remove" data-leaf="' + id + '" title="Remove pane">' + ic('x') + '</button>'
+        + '</div></div>';
     }
 
     function buildCellEl(d) {
@@ -2863,6 +3134,7 @@ export function getWebappHtml(botUsername) {
       git: { icon: 'git-branch', label: 'Git' },
       kanban: { icon: 'kanban', label: 'Kanban' },
       mindmap: { icon: 'mindmap', label: 'Mindmap' },
+      media: { icon: 'images', label: 'Media' },
     };
     function headHtmlPanel(cell) {
       const m = WB_KIND_META[cell.kind] || { icon: 'file', label: cell.kind };
@@ -3022,6 +3294,7 @@ export function getWebappHtml(botUsername) {
       else if (kind === 'git') loadGitInfo();
       else if (kind === 'kanban') loadKanban();
       else if (kind === 'mindmap') loadMindmap();
+      else if (kind === 'media') loadMedia();
     }
     // Move each workbench cell's panel node into its body (if not already there)
     // and refresh it. Only loads when it actually (re)mounts to avoid churn.
@@ -3065,6 +3338,123 @@ export function getWebappHtml(botUsername) {
       const cell = wbCells.find(c => c.id === wbid);
       if (cell) wbLoad(cell.kind);
     }
+
+    // ─── Mosaic workbench layout (desktop only; always-on; persisted per project) ─
+    // Tree node: { t:'split', dir:'row'|'col', sizes:[%..], kids:[node..] }
+    //          | { t:'leaf', key:<cellKey>|null }
+    let wbMosaicByProject = {};
+    try { wbMosaicByProject = JSON.parse(localStorage.getItem('crundi_wb_mosaic') || '{}') || {}; } catch { wbMosaicByProject = {}; }
+    function saveMosaic() { try { localStorage.setItem('crundi_wb_mosaic', JSON.stringify(wbMosaicByProject)); } catch { /* ignore */ } }
+    let _mosSeq = 0;
+    function genMosId() { return 'm' + Date.now().toString(36) + (_mosSeq++).toString(36); }
+    function mosaicDesktop() { return !isMobileTerm(); }
+    function currentMosaic() { return currentProject ? (wbMosaicByProject[currentProject] || null) : null; }
+    function setMosaic(tree) { if (currentProject) { wbMosaicByProject[currentProject] = tree; saveMosaic(); } }
+    function mosLeaf(key) { return { t: 'leaf', _id: genMosId(), key: key || null }; }
+    function mosSplit(dir, kids) { return { t: 'split', _id: genMosId(), dir, kids, sizes: kids.map(() => 100 / kids.length) }; }
+    function mosaicLeaves(node, out = []) {
+      if (!node) return out;
+      if (node.t === 'leaf') out.push(node); else node.kids.forEach(k => mosaicLeaves(k, out));
+      return out;
+    }
+    function mosaicKeySet(node) { return new Set(mosaicLeaves(node).filter(l => l.key).map(l => l.key)); }
+    function mosaicHasKey(node, key) { return mosaicLeaves(node).some(l => l.key === key); }
+    function mosaicLeafById(node, id) { return mosaicLeaves(node).find(l => l._id === id) || null; }
+    function mosaicFind(root, id, parent = null, index = -1) {
+      if (!root) return null;
+      if (root._id === id) return { node: root, parent, index };
+      if (root.t === 'split') for (let i = 0; i < root.kids.length; i++) { const r = mosaicFind(root.kids[i], id, root, i); if (r) return r; }
+      return null;
+    }
+    function mosaicDefault(keys) {
+      if (!keys.length) return mosLeaf(null);
+      if (keys.length === 1) return mosLeaf(keys[0]);
+      return mosSplit('row', keys.map(k => mosLeaf(k)));
+    }
+    // Keep the tree in sync with the live cell-key set: drop gone cells (collapse),
+    // add new cells into an empty leaf or append a column.
+    function mosaicSync(keys) {
+      let tree = currentMosaic();
+      if (!tree) { tree = mosaicDefault(keys); setMosaic(tree); return tree; }
+      for (const k of [...mosaicKeySet(tree)]) if (!keys.includes(k)) tree = mosaicRemoveKey(tree, k);
+      for (const k of keys) if (!mosaicHasKey(tree, k)) tree = mosaicAddKey(tree, k);
+      setMosaic(tree);
+      return tree;
+    }
+    function mosaicAddKey(tree, key) {
+      const empty = mosaicLeaves(tree).find(l => !l.key);
+      if (empty) { empty.key = key; return tree; }
+      if (tree.t === 'leaf') return mosSplit('row', [tree, mosLeaf(key)]);
+      tree.kids.push(mosLeaf(key));
+      tree.sizes = tree.kids.map(() => 100 / tree.kids.length);
+      return tree;
+    }
+    function mosaicRemoveKey(tree, key) {
+      const leaf = mosaicLeaves(tree).find(l => l.key === key);
+      return leaf ? mosaicCollapseLeaf(tree, leaf._id) : tree;
+    }
+    // Remove a leaf, collapsing its parent if it drops to a single child.
+    function mosaicCollapseLeaf(tree, leafId) {
+      const f = mosaicFind(tree, leafId);
+      if (!f) return tree;
+      if (!f.parent) return mosLeaf(null); // root leaf -> empty
+      const parent = f.parent;
+      parent.kids.splice(f.index, 1);
+      parent.sizes = parent.kids.map(() => 100 / parent.kids.length);
+      if (parent.kids.length === 1) {
+        const only = parent.kids[0];
+        const pf = mosaicFind(tree, parent._id);
+        if (!pf.parent) return only;            // parent was root
+        pf.parent.kids[pf.index] = only;        // hoist the single child
+      }
+      return tree;
+    }
+    // Split a leaf: keep its cell, add an empty leaf beside it (drop target).
+    function mosaicSplitLeaf(tree, leafId, dir) {
+      const f = mosaicFind(tree, leafId);
+      if (!f || f.node.t !== 'leaf') return tree;
+      const leaf = f.node, parent = f.parent, newLeaf = mosLeaf(null);
+      if (parent && parent.dir === dir) {
+        parent.kids.splice(f.index + 1, 0, newLeaf);
+        parent.sizes = parent.kids.map(() => 100 / parent.kids.length);
+        return tree;
+      }
+      const split = mosSplit(dir, [leaf, newLeaf]);
+      if (!parent) return split;
+      parent.kids[f.index] = split;
+      return tree;
+    }
+    // Drag a cell onto a leaf: swap if occupied, else move (collapse source slot).
+    function mosaicAssignToLeaf(tree, leafId, key) {
+      const target = mosaicLeafById(tree, leafId);
+      if (!target) return tree;
+      const source = mosaicLeaves(tree).find(l => l.key === key);
+      if (source && source._id === target._id) return tree;
+      if (!source) { target.key = key; return tree; }
+      if (target.key) { const tmp = target.key; target.key = source.key; source.key = tmp; return tree; }
+      target.key = key; source.key = null;
+      return mosaicCollapseLeaf(tree, source._id);
+    }
+    function mosaicApplyPreset(preset) {
+      if (!mosaicDesktop()) { toast('Layouts are available on desktop only', ''); return; }
+      const keys = currentDesiredKeys();
+      const L = (i) => mosLeaf(keys[i] || null);
+      let tree;
+      switch (preset) {
+        case 'cols2': tree = mosSplit('row', [L(0), L(1)]); break;
+        case 'cols3': tree = mosSplit('row', [L(0), L(1), L(2)]); break;
+        case 'cross4': tree = mosSplit('row', [mosSplit('col', [L(0), L(2)]), mosSplit('col', [L(1), L(3)])]); break;
+        case 'left-right2': tree = mosSplit('row', [L(0), mosSplit('col', [L(1), L(2)])]); break;
+        case 'top-bottom2': tree = mosSplit('col', [L(0), mosSplit('row', [L(1), L(2)])]); break;
+        default: return;
+      }
+      setMosaic(tree);
+      // place any cells beyond the preset's slots
+      let t = currentMosaic();
+      for (const k of keys) if (!mosaicHasKey(t, k)) t = mosaicAddKey(t, k);
+      setMosaic(t);
+      renderTermGrid();
+    }
     // The "+" dropdown by the Workbench tab.
     function toggleWbAddMenu() {
       const menu = $('#wb-add-menu'); const btn = $('#tab-add-term');
@@ -3093,7 +3483,9 @@ export function getWebappHtml(botUsername) {
     }
     function updateFocusStyles() {
       const grid = $('#term-grid'); if (!grid) return;
-      [...grid.children].forEach(ch => ch.classList && ch.classList.toggle('focused', !!ch.dataset.tid && ch.dataset.tid === focusedTermId));
+      // Cells may be nested inside mosaic leaves, so query deep (not just direct
+      // children) for the terminal cells.
+      grid.querySelectorAll('.term-cell[data-tid]').forEach(ch => ch.classList.toggle('focused', ch.dataset.tid === focusedTermId));
     }
 
     function fitTerm(id) {
@@ -3122,7 +3514,7 @@ export function getWebappHtml(botUsername) {
 
     function renameTerminal(id) {
       const grid = $('#term-grid'); if (!grid) return;
-      const el = grid.querySelector(':scope > [data-tid="' + id + '"]');
+      const el = grid.querySelector('.term-cell[data-tid="' + id + '"]');
       if (!el) return;
       const titleEl = el.querySelector('.term-title');
       if (!titleEl || titleEl.tagName === 'INPUT') return;
@@ -3168,8 +3560,20 @@ export function getWebappHtml(botUsername) {
     }
     function termDragHandlers(key) {
       let target = null;
+      let leafEl = null; // mosaic drop-target leaf
+      const mosaicMode = () => currentMosaic() && mosaicDesktop();
+      const clearLeaf = () => { if (leafEl) { leafEl.classList.remove('drop-hover'); leafEl = null; } };
       return {
+        onStart: () => { if (mosaicMode()) document.body.classList.add('mosaic-cell-drag'); },
         onMove: (x, y) => {
+          // Mosaic: highlight the leaf under the pointer (drop = place cell there).
+          if (mosaicMode()) {
+            clearLeaf();
+            const under = document.elementFromPoint(x, y);
+            const lf = under && under.closest('.mosaic-leaf');
+            if (lf && lf.dataset.leafId) { leafEl = lf; lf.classList.add('drop-hover'); }
+            return;
+          }
           const grid = $('#term-grid'); if (!grid) return;
           if (!_termDropLine) { _termDropLine = document.createElement('div'); _termDropLine.className = 'term-drop-line'; }
           target = termReorderTarget(x, y, key);
@@ -3178,6 +3582,14 @@ export function getWebappHtml(botUsername) {
           else grid.appendChild(_termDropLine);
         },
         onEnd: async (commit) => {
+          if (mosaicMode()) {
+            document.body.classList.remove('mosaic-cell-drag');
+            const lid = leafEl && leafEl.dataset.leafId;
+            clearLeaf();
+            if (commit && lid) { setMosaic(mosaicAssignToLeaf(currentMosaic(), lid, key)); renderTermGrid(); }
+            target = null;
+            return;
+          }
           if (_termDropLine && _termDropLine.parentNode) _termDropLine.remove();
           if (commit && target) {
             // Reorder the unified key list, then persist terminal-relative order.
@@ -3202,7 +3614,45 @@ export function getWebappHtml(botUsername) {
 
     // One-time wiring for the terminal area: unified-input paste (images), file
     // drag-drop onto the grid, and a debounced refit on window resize.
+    // Drag a mosaic gutter to resize the two adjacent panes (desktop only).
+    function setupMosaicResize() {
+      const grid = document.getElementById('term-grid');
+      if (!grid || grid._mosResize) return; grid._mosResize = true;
+      grid.addEventListener('mousedown', (e) => {
+        const g = e.target.closest('.mosaic-gutter'); if (!g) return;
+        const split = g.parentNode; const node = mosaicFind(currentMosaic(), g.dataset.splitId);
+        if (!node) return;
+        e.preventDefault();
+        const gi = parseInt(g.dataset.gutter, 10);
+        const kids = [...split.children].filter(c => !c.classList.contains('mosaic-gutter'));
+        const a = kids[gi - 1], b = kids[gi];
+        const horiz = node.node.dir === 'row';
+        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+        const totalPx = horiz ? (ra.width + rb.width) : (ra.height + rb.height);
+        const sizes = node.node.sizes;
+        const sA0 = sizes[gi - 1], sB0 = sizes[gi], totalS = sA0 + sB0;
+        const start = horiz ? e.clientX : e.clientY;
+        document.body.classList.add('mosaic-resizing');
+        const mv = (ev) => {
+          const cur = horiz ? ev.clientX : ev.clientY;
+          const frac = totalPx ? (cur - start) / totalPx : 0;
+          let nA = sA0 + frac * totalS;
+          nA = Math.max(totalS * 0.1, Math.min(totalS * 0.9, nA));
+          const nB = totalS - nA;
+          sizes[gi - 1] = nA; sizes[gi] = nB;
+          a.style.flex = nA + ' 1 0'; b.style.flex = nB + ' 1 0';
+        };
+        const up = () => {
+          document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+          document.body.classList.remove('mosaic-resizing');
+          saveMosaic(); fitAllTerms();
+        };
+        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+      });
+    }
+
     function setupTerminalArea() {
+      setupMosaicResize();
       const ta = document.getElementById('term-input');
       if (ta) {
         ta.addEventListener('paste', async (e) => {
@@ -3250,7 +3700,17 @@ export function getWebappHtml(botUsername) {
         });
       }
 
-      window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(fitAllTerms, 100); });
+      // Refit on resize; if we cross the desktop/mobile breakpoint, re-render the
+      // grid so it switches between the mosaic layout and the mobile flat stack.
+      let _wasMobile = isMobileTerm();
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          const m = isMobileTerm();
+          if (m !== _wasMobile) { _wasMobile = m; if (currentProject && currentTab === 'workbench') renderTermGrid(); }
+          fitAllTerms();
+        }, 100);
+      });
 
       // Mobile: when the on-screen keyboard opens it shrinks the visual viewport.
       // Bind #app to that height so the input bar + focused terminal stay visible
@@ -3379,7 +3839,7 @@ export function getWebappHtml(botUsername) {
       const tid = focusedTermId;
       // Send the text first, then the Enter as a SEPARATE write. For a large or
       // multi-line chunk the agent TUI treats the burst as a paste and would
-      // otherwise swallow a trailing \r into the pasted buffer instead of
+      // otherwise swallow a trailing CR into the pasted buffer instead of
       // submitting — so the carriage return must arrive on its own.
       ws.send(JSON.stringify({ type: 'input', id: tid, data: text }));
       setTimeout(() => {
@@ -3657,6 +4117,10 @@ export function getWebappHtml(botUsername) {
       es.addEventListener('mindmap', () => {
         if (currentTab === 'mindmap') loadMindmap();
       });
+      es.addEventListener('media', () => {
+        // Refresh any open media browser (tab/panel or modal) and embedded views.
+        refreshAllMediaViews();
+      });
       es.addEventListener('usage', (e) => {
         try { renderUsage(JSON.parse(e.data)); } catch { /* ignore */ }
       });
@@ -3885,6 +4349,7 @@ export function getWebappHtml(botUsername) {
       if (tab === 'kanban') loadKanban();
       if (tab === 'secrets') loadSecrets();
       if (tab === 'mindmap') loadMindmap();
+      if (tab === 'media') loadMedia();
       if (tab === 'schedule') loadSchedules();
       if (tab === 'info') renderInfo();
       if (tab === 'settings') renderSettings();
@@ -5565,6 +6030,9 @@ export function getWebappHtml(botUsername) {
         case 'term-add': addTerminalCell(); break;
         case 'wb-add-menu': e.stopPropagation(); toggleWbAddMenu(); break;
         case 'wb-add': { hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
+        case 'wb-layout': { hideWbAddMenu(); mosaicApplyPreset(d.mlayout); break; }
+        case 'leaf-split': { e.stopPropagation(); const [id, dir] = (d.leaf || '').split('|'); setMosaic(mosaicSplitLeaf(currentMosaic(), id, dir)); renderTermGrid(); break; }
+        case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
         case 'wb-close': if (d.wbid) { e.stopPropagation(); closeWbCell(d.wbid); } break;
         case 'wb-refresh': if (d.wbid) { e.stopPropagation(); refreshWbCell(d.wbid); } break;
         case 'term-close': if (d.tid) { e.stopPropagation(); closeTerminal(d.tid); } break;
@@ -5611,10 +6079,29 @@ export function getWebappHtml(botUsername) {
         const data = await res.json();
         if (!data.ok) { panel.innerHTML = '<div class="kanban-empty">' + escHtml(data.error || 'Failed to load') + '</div>'; return; }
         kanbanBoard = data.board;
+        await loadKanbanMedia();
         renderKanban();
       } catch (err) {
         panel.innerHTML = '<div class="kanban-empty">Failed to load board: ' + escHtml(err.message) + '</div>';
       }
+    }
+
+    // Attached media for the current board, grouped by task id and todo id, so
+    // cards can show a thumbnail strip without a per-card request.
+    let kanbanMediaByTask = {}, kanbanMediaByTodo = {};
+    async function loadKanbanMedia() {
+      kanbanMediaByTask = {}; kanbanMediaByTodo = {};
+      if (!currentProject) return;
+      const items = await fetchMedia({ scope: 'project', kind: 'kanban' });
+      for (const it of items) {
+        if (!it.link) continue;
+        if (it.link.type === 'task') (kanbanMediaByTask[it.link.taskId] = kanbanMediaByTask[it.link.taskId] || []).push(it);
+        else if (it.link.type === 'todo') (kanbanMediaByTodo[it.link.todoId] = kanbanMediaByTodo[it.link.todoId] || []).push(it);
+      }
+    }
+    function mediaMiniThumb(it) {
+      const inner = it.kind === 'image' ? '<img loading="lazy" src="' + mediaRawUrl(it.id) + '">' : ic(MEDIA_KIND_ICON[it.kind] || 'file');
+      return '<span class="media-mini" data-media-open="' + it.id + '" title="' + escHtml(it.originalName) + '">' + inner + '</span>';
     }
 
     function renderKanban() {
@@ -5627,6 +6114,7 @@ export function getWebappHtml(botUsername) {
         + '<button class="kanban-btn ' + (kanbanView === 'board' ? 'toggled' : '') + '" data-kact="view-board">Board</button>'
         + '<button class="kanban-btn ' + (kanbanView === 'trash' ? 'toggled' : '') + '" data-kact="view-trash">Trash (' + b.deletedTasks.length + ')</button>'
         + '<button class="kanban-btn ' + (kanbanView === 'history' ? 'toggled' : '') + '" data-kact="view-history">History</button>'
+        + '<button class="kanban-btn" data-kact="media">' + ic('images') + ' Media</button>'
         + '</div>';
       if (kanbanView === 'history') h += renderKanbanHistory();
       else if (kanbanView === 'trash') h += renderKanbanTrash();
@@ -5667,12 +6155,20 @@ export function getWebappHtml(botUsername) {
         + (mmCount ? ' <span class="card-mm" data-kact="goto-mindmap" title="' + mmCount + ' linked mindmap idea(s)">🧠 ' + mmCount + '</span>' : '')
         + '</div>';
       if (t.description) h += '<div class="card-desc">' + escHtml(t.description) + '</div>';
+      // Task-level media strip: thumbnails + attach.
+      const tmedia = kanbanMediaByTask[t.id] || [];
+      h += '<div class="card-media">'
+        + tmedia.slice(0, 6).map(mediaMiniThumb).join('')
+        + '<button class="card-media-add" data-kmedia-task="' + t.id + '" title="Attach / view media">' + ic('paperclip') + '</button>'
+        + '</div>';
       if (todos.length) {
         h += '<div class="kanban-todos">';
         for (const td of todos) {
+          const tdm = (kanbanMediaByTodo[td.id] || []).length;
           h += '<div class="kanban-todo" data-drag-ref="' + td.id + '" data-drag-kind="kanban-subtask" title="Drag onto a terminal to insert this subtask id">'
             + '<input type="checkbox" data-ktodo-toggle="' + t.id + '|' + td.id + '"' + (td.done ? ' checked' : '') + '>'
             + '<span class="todo-text' + (td.done ? ' done' : '') + '">' + escHtml(td.text) + '</span>'
+            + '<button class="todo-media" data-kmedia-todo="' + t.id + '|' + td.id + '" title="Subtask media">' + ic('paperclip') + (tdm ? '<span class="cnt">' + tdm + '</span>' : '') + '</button>'
             + '<button class="todo-edit" data-ktodo-edit="' + t.id + '|' + td.id + '" title="Edit subtask">' + ic('pencil') + '</button>'
             + '<button class="todo-del" data-ktodo-del="' + t.id + '|' + td.id + '" title="Delete subtask">&times;</button>'
             + '</div>';
@@ -5917,10 +6413,24 @@ export function getWebappHtml(botUsername) {
           if (text && text.trim()) { await kanbanPost({ action: 'updateTodo', taskId, todoId, text: text.trim() }); loadKanban(); }
           return;
         }
+        // Attach / view media for a task or subtask.
+        const kmt = e.target.closest('[data-kmedia-task]');
+        if (kmt) {
+          const id = kmt.dataset.kmediaTask;
+          openMediaModal('Task media', { scope: 'project', kind: 'all', linkFilter: { type: 'task', taskId: id }, uploadLink: { type: 'task', taskId: id }, uploadProject: currentProject });
+          return;
+        }
+        const kmd = e.target.closest('[data-kmedia-todo]');
+        if (kmd) {
+          const [taskId2, todoId2] = kmd.dataset.kmediaTodo.split('|');
+          openMediaModal('Subtask media', { scope: 'project', kind: 'all', linkFilter: { type: 'todo', taskId: taskId2, todoId: todoId2 }, uploadLink: { type: 'todo', taskId: taskId2, todoId: todoId2 }, uploadProject: currentProject });
+          return;
+        }
         const btn = e.target.closest('[data-kact]');
         if (!btn) return;
         const act = btn.dataset.kact;
         const taskId = btn.dataset.task;
+        if (act === 'media') { openMediaModal('Media \\u00b7 Kanban', { scope: 'project', kind: 'kanban' }); return; }
         if (act === 'view-board') { kanbanView = 'board'; loadKanban(); }
         else if (act === 'view-trash') { kanbanView = 'trash'; loadKanban(); }
         else if (act === 'view-history') { kanbanView = 'history'; loadKanban(); }
@@ -6143,6 +6653,7 @@ export function getWebappHtml(botUsername) {
       const panel = $('#mindmap-panel');
       let h = '<div class="kanban-toolbar">'
         + '<button class="kanban-btn primary" data-mact="add-root">+ Add idea</button>'
+        + '<button class="kanban-btn" data-mact="media">' + ic('images') + ' Media</button>'
         + '<input type="text" class="mm-search" id="mm-search" placeholder="Filter ideas…" autocomplete="off" value="' + escHtml(mindmapSearch) + '">'
         + '<div class="spacer"></div>'
         + '<span style="font-size:0.74rem;color:var(--text-muted)">Tap a node for details · Ctrl+scroll / pinch to zoom · green = linked</span>'
@@ -6531,7 +7042,9 @@ export function getWebappHtml(botUsername) {
         if (btn) {
           const act = btn.dataset.mact;
           const id = btn.dataset.node;
-          if (act === 'add-root') {
+          if (act === 'media') {
+            openMediaModal('Media \\u00b7 Mindmap', { scope: 'project', kind: 'mindmap' });
+          } else if (act === 'add-root') {
             const text = await askText({ title: 'Add idea', label: 'New idea' });
             if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim() }); loadMindmap(); }
           } else if (act === 'toggle') {
@@ -6546,6 +7059,7 @@ export function getWebappHtml(botUsername) {
         if (nodeEl && Date.now() - lastMmDrag > 300) openMmDetail(nodeEl.dataset.node);
       });
       setupMmDetailModal();
+      setupMediaHandlers();
     }
 
     // Action helpers shared by the detail modal.
@@ -6591,7 +7105,16 @@ export function getWebappHtml(botUsername) {
       $('#mmd-notes').innerHTML = (n.notes || []).map(t => '<li>' + escHtml(t) + '</li>').join('');
       $('#mmd-link-btn').textContent = (n.linkedTask || n.project) ? 'Unlink' : 'Link / scope';
       mmDetailSetEditing(false);
+      loadMmDetailMedia(id);
       $('#mm-detail-modal').classList.add('visible');
+    }
+    // Thumbnail strip of media attached to a node, shown in its detail modal.
+    async function loadMmDetailMedia(nodeId) {
+      const host = $('#mmd-media'); if (!host) return;
+      host.innerHTML = '';
+      const items = await fetchMedia({ scope: 'project', linkFilter: { type: 'node', nodeId } });
+      host.innerHTML = items.slice(0, 10).map(mediaMiniThumb).join('')
+        + '<button class="card-media-add" data-kmedia-node="' + nodeId + '" title="Attach / view media">' + ic('paperclip') + '</button>';
     }
     function closeMmDetail() { $('#mm-detail-modal').classList.remove('visible'); mmDetailId = null; }
     function addMmNoteRow(value) {
@@ -6639,7 +7162,286 @@ export function getWebappHtml(botUsername) {
       });
       $('#mmd-addchild-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmAddChild(id); });
       $('#mmd-link-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmToggleLink(id); });
+      $('#mmd-media-btn').addEventListener('click', () => { const id = mmDetailId; if (id) openNodeMediaModal(id); });
       $('#mmd-del-btn').addEventListener('click', () => { const id = mmDetailId; closeMmDetail(); mmDelete(id); });
+    }
+
+    // ─── Media library ───
+    // One reusable browser renders into a host element driven by a state object
+    // ({ scope:'project'|'all', kind:'all'|'kanban'|'mindmap'|'unlinked' }). Used
+    // by the Media tab/panel (#media-panel) and the Media modal (kanban/mindmap).
+    const mediaTabState = { scope: 'project', kind: 'all' };
+    const _mediaCache = new Map(); // id -> last-seen enriched item (for click handlers)
+    function findLoadedMedia(id) { return _mediaCache.get(id) || null; }
+    const MEDIA_KIND_ICON = { image: 'image', pdf: 'file-text', video: 'film', audio: 'music', other: 'file' };
+    function mtrunc(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1) + '\\u2026' : s; }
+
+    function mediaRawUrl(id, download) {
+      return '/api/media/raw/' + encodeURIComponent(id) + '?token=' + encodeURIComponent(token || '') + (download ? '&download=1' : '');
+    }
+    function mediaListUrl(state) {
+      const p = new URLSearchParams();
+      if (state.scope === 'project' && currentProject) { p.set('project', currentProject); p.set('includeGeneral', '1'); }
+      if (state.linkFilter) {
+        const f = state.linkFilter;
+        p.set('linkType', f.type);
+        if (f.taskId) p.set('taskId', f.taskId);
+        if (f.todoId) p.set('todoId', f.todoId);
+        if (f.nodeId) p.set('nodeId', f.nodeId);
+      } else if (state.kind && state.kind !== 'all') {
+        p.set('kind', state.kind);
+      }
+      return '/api/media/list?' + p.toString();
+    }
+    async function fetchMedia(state) {
+      try {
+        const res = await apiFetch(mediaListUrl(state));
+        const d = await res.json();
+        return d.ok ? d.items : [];
+      } catch { return []; }
+    }
+
+    function mediaThumbHtml(it) {
+      if (it.kind === 'image') return '<img loading="lazy" src="' + mediaRawUrl(it.id) + '" alt="">';
+      const glyph = MEDIA_KIND_ICON[it.kind] || 'file';
+      const ext = (it.ext || '').replace('.', '') || it.kind;
+      return '<div class="media-glyph">' + ic(glyph) + '<span class="ext">' + escHtml(ext) + '</span></div>';
+    }
+    function mediaLinkSubHtml(it) {
+      if (!it.link) return '<span>Unlinked</span>';
+      const word = it.link.type === 'node' ? 'Idea' : it.link.type === 'todo' ? 'Subtask' : 'Task';
+      if (it.linkStatus === 'deleted') return '<span class="media-link-tag deleted">' + ic('external-link') + word + ' (deleted)</span>';
+      return '<span class="media-link-tag">' + ic('external-link') + escHtml(mtrunc(it.linkLabel || word, 22)) + '</span>';
+    }
+    function mediaCardHtml(it) {
+      const previewable = it.kind !== 'other';
+      let h = '<div class="media-card" data-media="' + it.id + '">';
+      h += '<div class="media-thumb" data-media-open="' + it.id + '">'
+        + '<span class="media-kindbadge">' + ic(MEDIA_KIND_ICON[it.kind] || 'file') + '</span>'
+        + mediaThumbHtml(it) + '</div>';
+      h += '<div class="media-info"><div class="media-name" title="' + escHtml(it.originalName) + '">' + escHtml(it.originalName) + '</div>'
+        + '<div class="media-sub">' + (it.projectName ? '<span>' + escHtml(mtrunc(it.projectName, 16)) + '</span>' : '') + mediaLinkSubHtml(it) + '</div></div>';
+      h += '<div class="media-actions">';
+      if (previewable) h += '<button data-media-open="' + it.id + '" title="Preview">' + ic('image') + 'View</button>';
+      else h += '<button data-media-dl="' + it.id + '" title="Download">' + ic('download') + 'Get</button>';
+      if (it.link) h += '<button data-media-jump="' + it.id + '" title="Jump to source"' + (it.linkStatus === 'deleted' ? ' disabled' : '') + '>' + ic('external-link') + '</button>';
+      h += '<button class="danger" data-media-del="' + it.id + '" title="Delete">' + ic('trash') + '</button>';
+      h += '</div></div>';
+      return h;
+    }
+    function renderMediaBrowser(host, state, items) {
+      let h = '<div class="media-toolbar">';
+      h += '<button class="media-upload-btn" data-media-upload="1">' + ic('upload') + 'Upload</button>';
+      if (state.linkFilter) {
+        // Target-specific view (one task / subtask / idea): no filter chips.
+        h += '<span class="spacer"></span><span style="font-size:0.74rem;color:var(--text-muted)">Attached here</span>';
+      } else {
+        const chip = (k, label, icon) => '<button class="media-chip' + (state.kind === k ? ' on' : '') + '" data-media-kind="' + k + '">' + (icon ? ic(icon) : '') + label + '</button>';
+        h += chip('all', 'All') + chip('kanban', 'Kanban', 'kanban') + chip('mindmap', 'Mindmap', 'mindmap') + chip('unlinked', 'Unlinked');
+        h += '<div class="spacer"></div>';
+        h += '<button class="media-chip' + (state.scope === 'project' ? ' on' : '') + '" data-media-scope="project">This project</button>';
+        h += '<button class="media-chip' + (state.scope === 'all' ? ' on' : '') + '" data-media-scope="all">All projects</button>';
+      }
+      h += '</div><div class="media-body">';
+      if (!state.linkFilter && state.scope === 'project' && !currentProject) {
+        h += '<div class="media-empty">Select a project, or switch to <b>All projects</b>.</div>';
+      } else if (!items.length) {
+        h += '<div class="media-empty">No media here yet. Upload files, or attach them to a Kanban task/subtask or a Mindmap idea.</div>';
+      } else {
+        h += '<div class="media-grid">' + items.map(mediaCardHtml).join('') + '</div>';
+      }
+      h += '</div>';
+      host.innerHTML = h;
+      host._mediaState = state;
+      for (const it of items) _mediaCache.set(it.id, it);
+    }
+    // Mount/refresh a media browser into a host element; remembers how to reload.
+    async function mountMediaBrowser(host, state) {
+      const reload = async () => {
+        const items = (state.scope === 'project' && !currentProject) ? [] : await fetchMedia(state);
+        renderMediaBrowser(host, state, items);
+        host._mediaReload = reload;
+      };
+      host._mediaReload = reload;
+      await reload();
+      return reload;
+    }
+    // The Media tab / workbench panel (single #media-panel node, moved like the
+    // other workbench panels).
+    function loadMedia() {
+      const host = $('#media-panel'); if (!host) return;
+      mountMediaBrowser(host, mediaTabState);
+    }
+    // Refresh every mounted media browser (tab/panel + open modal) after a change.
+    function refreshAllMediaViews() {
+      document.querySelectorAll('.media-panel, .media-modal-body').forEach(h => { if (h._mediaReload) h._mediaReload(); });
+      // Refresh the mindmap node-detail thumbnail strip if it's open.
+      if (mmDetailId && $('#mm-detail-modal').classList.contains('visible')) loadMmDetailMedia(mmDetailId);
+    }
+
+    // ── Upload ──
+    let mediaUploadCtx = null; // { project?, link?, reload? }
+    function mediaTriggerUpload(ctx) {
+      mediaUploadCtx = ctx || {};
+      const inp = $('#media-file-input'); if (!inp) return;
+      inp.value = ''; inp.click();
+    }
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(',')[1] || '');
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+    }
+    async function mediaUploadFiles(files) {
+      const ctx = mediaUploadCtx || {};
+      let ok = 0;
+      for (const f of files) {
+        try {
+          const data = await fileToBase64(f);
+          const body = { name: f.name, data };
+          if (ctx.link) body.link = ctx.link;
+          // Scope: explicit ctx.project wins; else current project (so it shows
+          // under the project) unless this is a link (server derives it then).
+          if (ctx.project) body.project = ctx.project;
+          else if (!ctx.link && currentProject) body.project = currentProject;
+          const res = await apiFetch('/api/media/upload', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          const d = await res.json();
+          if (d.ok) ok++; else toast(d.error || 'Upload failed', 'error');
+        } catch (err) { toast('Upload error: ' + err.message, 'error'); }
+      }
+      if (ok) toast('Uploaded ' + ok + ' file' + (ok === 1 ? '' : 's'), 'success');
+      if (ctx.reload) ctx.reload();
+      refreshAllMediaViews();
+      // refresh attachment strips on cards/nodes if shown
+      if (currentTab === 'kanban') loadKanban();
+    }
+
+    // ── Delete ──
+    async function mediaDelete(id) {
+      if (!confirm('Delete this media file? This permanently removes it and cannot be undone.')) return;
+      try {
+        const res = await apiFetch('/api/media/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+        const d = await res.json();
+        if (!d.ok) { toast(d.error || 'Delete failed', 'error'); return; }
+        toast('Deleted', 'success');
+        refreshAllMediaViews();
+        if (currentTab === 'kanban') loadKanban();
+      } catch (err) { toast('Error: ' + err.message, 'error'); }
+    }
+    function mediaDownload(id) {
+      const a = document.createElement('a');
+      a.href = mediaRawUrl(id, true); a.download = '';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    // ── Lightbox ──
+    function openMediaLightbox(it) {
+      if (!it) return;
+      if (it.kind === 'other') { mediaDownload(it.id); return; }
+      const stage = $('#ml-stage'); const u = mediaRawUrl(it.id);
+      $('#ml-title').textContent = it.originalName || '';
+      if (it.kind === 'image') stage.innerHTML = '<img src="' + u + '" alt="">';
+      else if (it.kind === 'pdf') stage.innerHTML = '<iframe src="' + u + '"></iframe>';
+      else if (it.kind === 'video') stage.innerHTML = '<video src="' + u + '" controls autoplay></video>';
+      else if (it.kind === 'audio') stage.innerHTML = '<audio src="' + u + '" controls autoplay></audio>';
+      $('#ml-download').onclick = () => mediaDownload(it.id);
+      $('#media-lightbox').classList.add('visible');
+    }
+    function closeMediaLightbox() {
+      $('#media-lightbox').classList.remove('visible');
+      $('#ml-stage').innerHTML = ''; // stop any playing media
+    }
+
+    // ── Media modal (kanban / mindmap "Media" buttons) ──
+    function openMediaModal(title, state) {
+      $('#media-modal-title').textContent = title || 'Media';
+      $('#media-modal').classList.add('visible');
+      mountMediaBrowser($('#media-modal-body'), state);
+    }
+    function closeMediaModal() {
+      $('#media-modal').classList.remove('visible');
+      const b = $('#media-modal-body'); if (b) { b.innerHTML = ''; b._mediaReload = null; }
+    }
+    function openNodeMediaModal(nodeId) {
+      openMediaModal('Idea media', { scope: 'project', kind: 'all', linkFilter: { type: 'node', nodeId }, uploadLink: { type: 'node', nodeId } });
+    }
+
+    // ── Jump to source (switch project + tab, scroll & flash the target) ──
+    async function mediaJump(it) {
+      if (!it || !it.link) return;
+      if (it.linkStatus === 'deleted') { toast('The original was deleted', 'error'); return; }
+      closeMediaModal(); closeMediaLightbox();
+      if (it.project && it.project !== currentProject) {
+        if (projects.find(p => p.alias === it.project)) await selectProject(it.project);
+        else { toast('Source project not available', 'error'); return; }
+      }
+      if (it.link.type === 'node') {
+        switchTab('mindmap');
+        await loadMindmap();
+        setTimeout(() => flashMindmapNode(it.link.nodeId), 250);
+      } else {
+        switchTab('kanban');
+        await loadKanban();
+        setTimeout(() => flashKanbanTarget(it.link), 250);
+      }
+    }
+    function flashEl(el) {
+      if (!el) return;
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' }); } catch { el.scrollIntoView(); }
+      el.classList.remove('jump-flash'); void el.offsetWidth; el.classList.add('jump-flash');
+      setTimeout(() => el.classList.remove('jump-flash'), 2400);
+    }
+    function flashKanbanTarget(link) {
+      const panel = $('#kanban-panel'); if (!panel) return;
+      if (link.type === 'todo') {
+        const row = panel.querySelector('[data-drag-ref="' + link.todoId + '"]');
+        if (row) { flashEl(row); return; }
+      }
+      const card = panel.querySelector('.kanban-card[data-task="' + link.taskId + '"]');
+      flashEl(card);
+    }
+    function flashMindmapNode(nodeId) {
+      const el = $('#mindmap-panel') && $('#mindmap-panel').querySelector('.mm-node[data-node="' + nodeId + '"]');
+      if (el) { flashEl(el); openMmDetail(nodeId); }
+      else { openMmDetail(nodeId); }
+    }
+
+    // ── One delegated handler for all media UI (tab, panel, modal, cards) ──
+    let _mediaBound = false;
+    function setupMediaHandlers() {
+      if (_mediaBound) return; _mediaBound = true;
+      document.addEventListener('click', (e) => {
+        const t = e.target;
+        const hostOf = (el) => el.closest('.media-panel, .media-modal-body');
+        let m;
+        if ((m = t.closest('[data-media-kind]'))) {
+          const host = hostOf(m); if (host && host._mediaState) { host._mediaState.kind = m.dataset.mediaKind; host._mediaReload(); }
+          return;
+        }
+        if ((m = t.closest('[data-media-scope]'))) {
+          const host = hostOf(m); if (host && host._mediaState) { host._mediaState.scope = m.dataset.mediaScope; host._mediaReload(); }
+          return;
+        }
+        if ((m = t.closest('[data-media-upload]'))) {
+          const host = hostOf(m);
+          const st = (host && host._mediaState) || {};
+          mediaTriggerUpload({ link: st.uploadLink || null, project: st.uploadProject || null, reload: host && host._mediaReload });
+          return;
+        }
+        if ((m = t.closest('[data-kmedia-node]'))) { openNodeMediaModal(m.dataset.kmediaNode); return; }
+        if ((m = t.closest('[data-media-open]'))) { openMediaLightbox(findLoadedMedia(m.dataset.mediaOpen)); return; }
+        if ((m = t.closest('[data-media-dl]'))) { mediaDownload(m.dataset.mediaDl); return; }
+        if ((m = t.closest('[data-media-jump]'))) { mediaJump(findLoadedMedia(m.dataset.mediaJump)); return; }
+        if ((m = t.closest('[data-media-del]'))) { mediaDelete(m.dataset.mediaDel); return; }
+      });
+      const inp = $('#media-file-input');
+      if (inp) inp.addEventListener('change', () => { if (inp.files && inp.files.length) mediaUploadFiles([...inp.files]); });
+      $('#ml-close').addEventListener('click', closeMediaLightbox);
+      $('#media-lightbox').addEventListener('click', (e) => { if (e.target.id === 'media-lightbox') closeMediaLightbox(); });
+      $('#media-modal-close').addEventListener('click', closeMediaModal);
+      $('#media-modal').addEventListener('click', (e) => { if (e.target.id === 'media-modal') closeMediaModal(); });
     }
 
     // ─── Text input modal (window.prompt replacement; Electron has no prompt) ───

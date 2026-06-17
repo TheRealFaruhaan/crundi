@@ -27,6 +27,7 @@ import { listProjects, getProject, registerProject, removeProject, getProjectMod
 import * as kanban from './kanban-store.js';
 import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
+import * as media from './media-store.js';
 import * as schedule from './schedule-store.js';
 import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
@@ -305,6 +306,46 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // ─── Mindmap live updates ───
   function broadcastMindmap() {
     broadcastSSE('mindmap', {});
+  }
+
+  // ─── Media live updates ───
+  function broadcastMedia() {
+    broadcastSSE('media', {});
+  }
+
+  /**
+   * Public view of a media item, enriched with its link's live status so the UI
+   * can render a "jump to source" button (and a "deleted" badge when the linked
+   * task / subtask / node is gone). projectName is added for display.
+   */
+  function enrichMedia(item) {
+    const proj = item.project ? getProject(item.project) : null;
+    let linkStatus = 'none', linkLabel = null;
+    const l = item.link;
+    if (l) {
+      linkStatus = 'deleted'; // assume gone until proven alive
+      try {
+        if (l.type === 'task' || l.type === 'todo') {
+          const r = kanban.getTask(item.project, l.taskId, { includeDeleted: true });
+          if (r.ok && !r.task.deleted) {
+            if (l.type === 'task') { linkStatus = 'alive'; linkLabel = r.task.title; }
+            else {
+              const td = (r.task.todos || []).find(t => t.id === l.todoId);
+              if (td && !td.deleted) { linkStatus = 'alive'; linkLabel = td.text; }
+            }
+          }
+        } else if (l.type === 'node') {
+          const n = mindmap.getNode(l.nodeId);
+          if (n) { linkStatus = 'alive'; linkLabel = n.text; }
+        }
+      } catch { /* treat as deleted */ }
+    }
+    return {
+      id: item.id, originalName: item.originalName, mime: item.mime, ext: item.ext,
+      size: item.size, kind: item.kind, project: item.project,
+      projectName: proj ? proj.name : (item.project || null),
+      link: l || null, linkStatus, linkLabel, createdAt: item.createdAt,
+    };
   }
 
   // ─── Claude usage (real account-wide limits) ───
@@ -1369,6 +1410,87 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
+    // ─── Media library ───
+
+    // List media, enriched with link liveness. Filters: project, kind
+    // (kanban/mindmap/unlinked) or an exact target (type + ids), and
+    // includeGeneral (also show unlinked general items when scoped to a project).
+    if (path === '/api/media/list' && req.method === 'GET') {
+      const sp = url.searchParams;
+      const project = sp.get('project') || null;
+      let linkFilter = null;
+      const kind = sp.get('kind');
+      if (kind) linkFilter = { kind };
+      else if (sp.get('linkType')) {
+        const type = sp.get('linkType');
+        if (type === 'task') linkFilter = { type: 'task', taskId: sp.get('taskId') };
+        else if (type === 'todo') linkFilter = { type: 'todo', taskId: sp.get('taskId'), todoId: sp.get('todoId') };
+        else if (type === 'node') linkFilter = { type: 'node', nodeId: sp.get('nodeId') };
+      }
+      const items = media.listMedia({
+        project,
+        includeGeneral: sp.get('includeGeneral') === '1',
+        linkFilter,
+      }).map(enrichMedia);
+      return json(res, { ok: true, items });
+    }
+
+    // Upload media (base64). Optional project + link { type, ... }.
+    if (path === '/api/media/upload' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      if (!body.name || !body.data) return json(res, { ok: false, error: 'Missing name or data' }, 400);
+      let project = body.project || null;
+      // A link to a kanban task/todo forces the item's project to that task's
+      // project; a node link forces it to the node's effective project.
+      const link = body.link || null;
+      try {
+        if (link && (link.type === 'task' || link.type === 'todo') && project) {
+          const r = kanban.getTask(project, link.taskId, { includeDeleted: true });
+          if (!r.ok) return json(res, { ok: false, error: 'Linked task not found' }, 404);
+        } else if (link && link.type === 'node') {
+          const n = mindmap.getNode(link.nodeId);
+          if (!n) return json(res, { ok: false, error: 'Linked idea not found' }, 404);
+          project = n.effectiveProject || null;
+        }
+        const buf = Buffer.from(body.data, 'base64');
+        const r = media.addMediaFromBuffer({ name: body.name, buffer: buf, project, link });
+        if (!r.ok) return json(res, r);
+        broadcastMedia();
+        return json(res, { ok: true, item: enrichMedia(r.item) });
+      } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    if (path === '/api/media/delete' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const r = media.deleteMedia(body.id);
+      if (r.ok) broadcastMedia();
+      return json(res, r);
+    }
+
+    // Serve a media file's bytes. Auth is the normal session token (header or
+    // ?token= query — so <img>/<video>/<iframe> tags work). ?download=1 forces a
+    // download; otherwise it's served inline for in-app preview.
+    if (path.startsWith('/api/media/raw/') && req.method === 'GET') {
+      const id = path.slice('/api/media/raw/'.length);
+      const item = media.getMedia(id);
+      const fp = item && media.mediaFilePath(item);
+      if (!item || !fp || !existsSync(fp)) { res.writeHead(404); res.end('Not found'); return; }
+      try {
+        const st = statSync(fp);
+        const download = url.searchParams.get('download') === '1';
+        const fname = item.originalName.replace(/"/g, '\\"');
+        res.writeHead(200, {
+          'Content-Type': download ? 'application/octet-stream' : item.mime,
+          'Content-Length': st.size,
+          'Content-Disposition': (download ? 'attachment' : 'inline') + '; filename="' + fname + '"',
+          'Cache-Control': 'private, max-age=3600',
+          'Access-Control-Allow-Origin': '*',
+        });
+        createReadStream(fp).pipe(res);
+      } catch (err) { res.writeHead(500); res.end(err.message); }
+      return;
+    }
+
     // ─── User Terminals (API for Terminals tab) ───
 
     if (path === '/api/terminals/spawn' && req.method === 'POST') {
@@ -1644,6 +1766,53 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         }
         const schedReadOnly = ['schedule_list', 'schedule_get'].includes(body.tool);
         if (r.ok && !schedReadOnly) broadcastSSE('schedule', {});
+        return json(res, r);
+      }
+
+      // ─── Media tools (strictly project-scoped via args.alias) ───
+      if (body.tool.startsWith('media_')) {
+        const alias = String(a.alias || '').toLowerCase();
+        if (!alias) return json(res, { ok: false, error: 'No project context for media tool' });
+        // MCP view: include the local on-disk path so an agent can open the file.
+        const mcpView = (item) => {
+          const e = enrichMedia(item);
+          return { ...e, path: media.mediaFilePath(item) };
+        };
+        const ownsId = (id) => { const it = media.getMedia(id); return it && it.project === alias ? it : null; };
+        let r;
+        switch (body.tool) {
+          case 'media_list':
+            r = { ok: true, items: media.listMedia({ project: alias }).map(mcpView) };
+            break;
+          case 'media_get': {
+            const it = ownsId(a.id);
+            r = it ? { ok: true, item: mcpView(it) } : { ok: false, error: 'Media not found in this project' };
+            break;
+          }
+          case 'media_add_path': {
+            // Optional link to a task/todo/node in THIS project.
+            let link = null;
+            if (a.taskId && a.todoId) link = { type: 'todo', taskId: a.taskId, todoId: a.todoId };
+            else if (a.taskId) link = { type: 'task', taskId: a.taskId };
+            else if (a.nodeId) link = { type: 'node', nodeId: a.nodeId };
+            if (link && (link.type === 'task' || link.type === 'todo')) {
+              const t = kanban.getTask(alias, link.taskId, { includeDeleted: true });
+              if (!t.ok) { r = { ok: false, error: 'Linked task not found in this project' }; break; }
+            } else if (link && link.type === 'node') {
+              const n = mindmap.getNode(link.nodeId);
+              if (!n || (n.effectiveProject || null) !== alias) { r = { ok: false, error: 'Linked idea not found in this project' }; break; }
+            }
+            const add = media.addMediaFromPath({ path: a.path, name: a.name, project: alias, link });
+            r = add.ok ? { ok: true, item: mcpView(add.item) } : add;
+            break;
+          }
+          case 'media_delete':
+            r = ownsId(a.id) ? media.deleteMedia(a.id) : { ok: false, error: 'Media not found in this project' };
+            break;
+          default: return json(res, { ok: false, error: `Unknown media tool: ${body.tool}` }, 404);
+        }
+        const mediaReadOnly = ['media_list', 'media_get'].includes(body.tool);
+        if (r.ok && !mediaReadOnly) broadcastMedia();
         return json(res, r);
       }
 
