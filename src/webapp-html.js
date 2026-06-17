@@ -388,6 +388,9 @@ export function getWebappHtml(botUsername) {
       user-select: none;
     }
     .sidebar-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .sidebar-item.dragging { opacity: 0.4; }
+    /* drop indicator while reordering projects */
+    .proj-drop-line { height: 3px; margin: 1px 6px; border-radius: 2px; background: var(--accent); pointer-events: none; }
     .sidebar-item.active { background: var(--accent-dim); color: var(--accent-hover); }
     .sidebar-item.active::before {
       content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px;
@@ -627,15 +630,26 @@ export function getWebappHtml(botUsername) {
     .wb-subitems button:hover .lay-ic { color: #fff; }
 
     /* ─── Mosaic layout (desktop) ─── */
-    .term-grid.mosaic { display: flex; overflow: hidden; padding: 6px; }
-    /* Root skeleton (only child of the grid) grows to fill; nested splits get an
-       inline flex from their proportion. align-items:stretch fills the cross axis. */
+    /* Overflow-x:auto so that once panes hit their min-width the row scrolls
+       horizontally instead of squashing further. */
+    .term-grid.mosaic { display: flex; overflow-x: auto; overflow-y: hidden; padding: 6px; }
+    /* The root node (leaf OR split) always grows to fill the grid — so a single
+       panel takes the full width + height, never compact. */
+    .term-grid.mosaic > .mosaic-leaf,
+    .term-grid.mosaic > .mosaic-split { flex: 1 1 0; }
+    /* Nested splits get an inline flex from their proportion; align-items:stretch
+       fills the cross axis. */
     .mosaic-split { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
     .mosaic-split.row { flex-direction: row; }
     .mosaic-split.col { flex-direction: column; }
     .mosaic-leaf { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; }
     .mosaic-leaf > .term-cell { flex: 1 1 0; min-width: 0; min-height: 0; }
-    .mosaic-gutter { flex: 0 0 7px; position: relative; z-index: 3; }
+    /* Desktop: every pane has a min-width floor; splits size to their content so
+       the grid scrolls when the floors exceed the viewport. (Mobile overrides
+       these with full-width snap columns.) */
+    .term-grid.mosaic:not(.mobile) .mosaic-leaf { min-width: 340px; }
+    .term-grid.mosaic:not(.mobile) .mosaic-split { min-width: min-content; }
+    .mosaic-gutter { flex: 0 0 7px; position: relative; z-index: 3; touch-action: none; }
     .mosaic-split.row > .mosaic-gutter { cursor: col-resize; }
     .mosaic-split.col > .mosaic-gutter { cursor: row-resize; }
     .mosaic-gutter::after { content: ''; position: absolute; background: var(--border); transition: background 0.12s; }
@@ -668,6 +682,25 @@ export function getWebappHtml(botUsername) {
     .leaf-ctrls button .lay-ic { width: 14px; height: 11px; }
     body.mosaic-cell-drag .mosaic-leaf { outline: 1px dashed var(--border); outline-offset: -2px; }
     body.mosaic-cell-drag .mosaic-leaf.drop-hover { outline: 2px solid var(--accent); }
+    /* ── Mobile mosaic: horizontal scroll of fixed full-width columns that snap;
+       only the rows (vertical splits) inside a column are resizable. ── */
+    /* Force horizontal layout — override the flat-stack flex-direction:column the
+       mobile media query sets on .term-grid (else a column grid collapses panes). */
+    .term-grid.mosaic.mobile { flex-direction: row; overflow: hidden; }
+    /* The single root node (leaf OR split) always fills the grid — so a
+       non-split column takes the full width AND height. */
+    .term-grid.mosaic.mobile > .mosaic-leaf,
+    .term-grid.mosaic.mobile > .mosaic-split { flex: 1 1 auto !important; min-width: 0; min-height: 0; }
+    /* A top-level ROW split is the horizontal snap-scroller of full-width columns. */
+    .term-grid.mosaic.mobile > .mosaic-split.row { overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+    .term-grid.mosaic.mobile > .mosaic-split.row > .mosaic-leaf,
+    .term-grid.mosaic.mobile > .mosaic-split.row > .mosaic-split {
+      flex: 0 0 100% !important; min-width: 100%; scroll-snap-align: start;
+    }
+    /* No horizontal (between-column) resizing anywhere on mobile — only rows. */
+    .term-grid.mosaic.mobile .mosaic-split.row > .mosaic-gutter { display: none; }
+    /* Pane split controls have no hover on touch — always show them. */
+    .term-grid.mosaic.mobile .leaf-ctrls { opacity: 1; }
 
     /* Workbench panel cells (Files / Git / Kanban / Mindmap embedded in the grid).
        The real tab-panel node is relocated into .wb-cell-body while the Workbench
@@ -709,6 +742,7 @@ export function getWebappHtml(botUsername) {
     .tab-bar.visible { display: flex; }
     .tab-btn {
       position: relative;
+      display: inline-flex; align-items: center; gap: 6px;
       padding: 10px 14px;
       white-space: nowrap;
       border: none;
@@ -718,6 +752,13 @@ export function getWebappHtml(botUsername) {
       font-weight: 500;
       cursor: pointer;
       transition: color 0.15s;
+    }
+    .tab-btn .ic { width: 15px; height: 15px; flex-shrink: 0; }
+    /* Mobile: icon-only tabs to fit the bar; labels hidden. */
+    @media (max-width: 768px) {
+      .tab-btn { padding: 10px 12px; gap: 0; }
+      .tab-btn .tab-label { display: none; }
+      .tab-btn .ic { width: 17px; height: 17px; }
     }
     .tab-btn::after {
       content: ''; position: absolute; left: 50%; right: 50%; bottom: 0; height: 2px;
@@ -1159,25 +1200,26 @@ export function getWebappHtml(botUsername) {
       align-items: flex-end;
     }
     .term-input {
-      flex: 1; resize: none; padding: 6px 10px;
+      flex: 1; resize: none; padding: 7px 10px; box-sizing: border-box;
+      min-height: 34px; max-height: 120px; overflow-y: auto;
       border-radius: var(--radius-sm); border: 1px solid var(--border);
       background: var(--bg-primary); color: var(--text-primary);
       font-family: var(--mono); font-size: 13px; line-height: 1.4;
-      max-height: 120px; overflow-y: auto;
       outline: none;
     }
     .term-input:focus { border-color: var(--accent); }
-    .term-send-btn {
-      padding: 6px 14px; border-radius: var(--radius-sm);
-      border: 1px solid var(--accent); background: var(--accent);
-      color: #fff; cursor: pointer; font-size: 12px; font-weight: 600;
-      white-space: nowrap; align-self: flex-end;
+    /* All bottom controls share one square footprint, bottom-aligned with the
+       input (which grows upward as you type). */
+    .term-send-btn, .term-attach-btn {
+      align-self: flex-end; width: 34px; height: 34px; padding: 0; flex-shrink: 0;
+      border-radius: var(--radius-sm); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
     }
+    .term-send-btn .ic, .term-attach-btn .ic { width: 16px; height: 16px; }
+    .term-send-btn { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
     .term-send-btn:hover { background: var(--accent-hover); }
     .term-attach-btn {
-      align-self: flex-end; padding: 6px 9px; border-radius: var(--radius-sm);
-      border: 1px solid var(--border); background: var(--bg-tertiary);
-      color: var(--text-secondary); cursor: pointer; font-size: 14px; line-height: 1;
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
     }
     .term-attach-btn:hover { color: var(--accent-hover); border-color: var(--accent); }
     .term-attach-btn.busy { opacity: 0.6; pointer-events: none; }
@@ -1224,14 +1266,19 @@ export function getWebappHtml(botUsername) {
       padding: 0 10px; white-space: nowrap;
     }
     .term-tool-btn:active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    #mobile-layout-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    /* The horizontal-layout toggle lives in the bottom tools menu, mobile only. */
+    .ttg-mobile-only { display: none; }
     /* Mobile: compact the three groups (keys / ctrl grid / nav d-pad) so they
        stay on one row instead of the nav cluster wrapping to a second line. */
     @media (max-width: 768px) {
-      .term-tool-panel { gap: 8px; padding: 8px; flex-wrap: nowrap; }
+      .term-tool-panel { gap: 8px; padding: 8px; flex-wrap: wrap; }
       .ttg { gap: 4px; }
       .ttg-mid { gap: 4px; }
       .ttg-nav { grid-template-columns: repeat(3, minmax(32px, 1fr)); grid-auto-rows: 32px; gap: 4px; }
       .term-tool-btn { min-width: 32px; height: 32px; padding: 0 5px; font-size: 11px; }
+      .ttg-mobile-only { display: flex; width: 100%; }
+      .ttg-mobile-only .term-tool-btn { width: 100%; }
     }
 
     /* ─── Kanban ─── */
@@ -1863,20 +1910,20 @@ export function getWebappHtml(botUsername) {
       <div class="sidebar-overlay" id="sidebar-overlay" data-action="close-sidebar"></div>
       <div class="terminal-area">
         <div class="tab-bar" id="tab-bar">
-          <button class="tab-btn active" data-tab="workbench">Workbench</button>
+          <button class="tab-btn active" data-tab="workbench" title="Workbench"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="tab-label">Workbench</span></button>
           <button class="tab-add-term" id="tab-add-term" data-action="wb-add-menu" title="Add to workbench" style="display:none;">+</button>
-          <button class="tab-btn" data-tab="git">Git</button>
-          <button class="tab-btn" data-tab="files">Files</button>
-          <button class="tab-btn" data-tab="kanban">Kanban</button>
-          <button class="tab-btn" data-tab="mindmap">Mindmap</button>
-          <button class="tab-btn" data-tab="media">Media</button>
-          <button class="tab-btn" data-tab="schedule">Schedule</button>
-          <button class="tab-btn" data-tab="services">Services</button>
-          <button class="tab-btn" data-tab="terminals">Terminals</button>
-          <button class="tab-btn" data-tab="browsers">Browsers</button>
-          <button class="tab-btn" data-tab="info">Info</button>
-          <button class="tab-btn" data-tab="secrets">Secrets <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
-          <button class="tab-btn" data-tab="settings">Settings</button>
+          <button class="tab-btn" data-tab="git" title="Git"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span class="tab-label">Git</span></button>
+          <button class="tab-btn" data-tab="files" title="Files"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="tab-label">Files</span></button>
+          <button class="tab-btn" data-tab="kanban" title="Kanban"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg><span class="tab-label">Kanban</span></button>
+          <button class="tab-btn" data-tab="mindmap" title="Mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span class="tab-label">Mindmap</span></button>
+          <button class="tab-btn" data-tab="media" title="Media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg><span class="tab-label">Media</span></button>
+          <button class="tab-btn" data-tab="schedule" title="Schedule"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg><span class="tab-label">Schedule</span></button>
+          <button class="tab-btn" data-tab="services" title="Services"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg><span class="tab-label">Services</span></button>
+          <button class="tab-btn" data-tab="terminals" title="Terminals"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><span class="tab-label">Terminals</span></button>
+          <button class="tab-btn" data-tab="browsers" title="Browsers"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browsers</span></button>
+          <button class="tab-btn" data-tab="info" title="Info"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span class="tab-label">Info</span></button>
+          <button class="tab-btn" data-tab="secrets" title="Secrets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tab-label">Secrets</span> <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
+          <button class="tab-btn" data-tab="settings" title="Settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="tab-label">Settings</span></button>
         </div>
         <div class="wb-add-menu" id="wb-add-menu" style="display:none;">
           <button data-action="wb-add" data-kind="terminal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal</button>
@@ -1927,13 +1974,16 @@ export function getWebappHtml(botUsername) {
               <button class="term-tool-btn" data-action="term-key" data-key="ArrowRight">&#9654;</button>
               <button class="term-tool-btn" data-action="term-key" data-key="ArrowDown">&#9660;</button>
             </div>
+            <div class="ttg ttg-mobile-only">
+              <button class="term-tool-btn span2" id="mobile-layout-toggle" data-action="toggle-mobile-layout" title="Toggle horizontal column layout"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:14px;height:14px;vertical-align:-2px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Layout</button>
+            </div>
           </div>
           <div class="term-input-bar" id="term-input-bar">
             <button class="term-tool-toggle" id="term-tool-toggle" data-action="term-tool-toggle" title="Keyboard tools"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
             <textarea id="term-input" class="term-input" rows="1" placeholder="Type here... (Ctrl+Enter or Send button)"></textarea>
             <button class="term-attach-btn" data-action="term-attach" title="Attach a file (uploads to crundi_attachments)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
             <input type="file" id="term-attach-input" style="display:none">
-            <button class="term-send-btn" data-action="term-send" title="Send to terminal">Send</button>
+            <button class="term-send-btn" data-action="term-send" title="Send to terminal" aria-label="Send"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
           </div>
         </div>
         <div class="git-panel tab-panel" id="git-panel" data-panel="git"></div>
@@ -2218,6 +2268,9 @@ export function getWebappHtml(botUsername) {
       'external-link': '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
       x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
       images: '<rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/>',
+      info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+      server: '<rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/>',
+      send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
     };
     function ic(name) {
       const p = ICON_PATHS[name]; if (!p) return '';
@@ -2706,6 +2759,7 @@ export function getWebappHtml(botUsername) {
       loadProjectConfig();
       loadProjects();
       setupTerminalArea();
+      updateMobileLayoutBtn();
       loadUsage();
       // Electron: enable drag region and window controls
       if (window.api) {
@@ -2814,10 +2868,50 @@ export function getWebappHtml(botUsername) {
         item.addEventListener('click', (e) => {
           const act = e.target.dataset.action;
           if (act === 'remove-project') return;
+          // Ignore the click that trails a drag-reorder.
+          if (Date.now() - _projDragEndAt < 300) return;
           selectProject(p.alias);
         });
+        makeDraggable(item, projectDragHandlers(p.alias));
         list.appendChild(item);
       }
+    }
+
+    // ─── Sidebar project reordering (drag to rearrange; persisted server-side) ──
+    let _projDropLine = null, _projDragEndAt = 0;
+    function projectReorderTarget(y, draggedAlias) {
+      const list = $('#project-list'); if (!list) return null;
+      const items = [...list.children].filter(c => c.dataset && c.dataset.project && c.dataset.project !== draggedAlias && c !== _projDropLine);
+      for (let i = 0; i < items.length; i++) {
+        const r = items[i].getBoundingClientRect();
+        if (y < r.top + r.height / 2) return { index: i, before: items[i] };
+      }
+      return { index: items.length, before: null };
+    }
+    function projectDragHandlers(alias) {
+      let target = null;
+      return {
+        onMove: (x, y) => {
+          const list = $('#project-list'); if (!list) return;
+          if (!_projDropLine) { _projDropLine = document.createElement('div'); _projDropLine.className = 'proj-drop-line'; }
+          target = projectReorderTarget(y, alias);
+          if (!target) { if (_projDropLine.parentNode) _projDropLine.remove(); return; }
+          if (target.before) list.insertBefore(_projDropLine, target.before);
+          else list.appendChild(_projDropLine);
+        },
+        onEnd: async (commit) => {
+          if (_projDropLine && _projDropLine.parentNode) _projDropLine.remove();
+          _projDragEndAt = Date.now();
+          if (commit && target) {
+            const order = projects.map(p => p.alias).filter(a => a !== alias);
+            order.splice(Math.min(target.index, order.length), 0, alias);
+            projects.sort((a, b) => order.indexOf(a.alias) - order.indexOf(b.alias));
+            renderProjects();
+            try { await apiFetch('/api/projects/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) }); } catch { /* ignore */ }
+          }
+          target = null;
+        },
+      };
     }
 
     async function selectProject(alias) {
@@ -2991,12 +3085,14 @@ export function getWebappHtml(botUsername) {
         elByKey[d.key] = el;
       }
 
-      // Arrange: mosaic on desktop (always), flat stack on mobile.
-      if (mosaicDesktop()) {
+      // Arrange: mosaic on desktop (always); on mobile only when the user opts in
+      // via the bottom-tools toggle (otherwise the classic flat vertical stack).
+      if (mosaicActive()) {
         grid.classList.add('mosaic');
+        grid.classList.toggle('mobile', isMobileTerm()); // mobile = fixed full-width snap columns, only rows resize
         arrangeMosaic(grid, desired, elByKey);
       } else {
-        grid.classList.remove('mosaic');
+        grid.classList.remove('mosaic', 'mobile');
         // replaceChildren moves the cells in order and drops any leftover mosaic
         // skeleton from a previous desktop render.
         grid.replaceChildren(...desired.map(d => elByKey[d.key]));
@@ -3348,6 +3444,22 @@ export function getWebappHtml(botUsername) {
     let _mosSeq = 0;
     function genMosId() { return 'm' + Date.now().toString(36) + (_mosSeq++).toString(36); }
     function mosaicDesktop() { return !isMobileTerm(); }
+    // Global mobile preference: opt into the mosaic on phone-width screens (fixed
+    // full-width snap columns, only rows resizable). Off by default → flat stack.
+    let mobileMosaic = false;
+    try { mobileMosaic = localStorage.getItem('crundi_mobile_mosaic') === '1'; } catch { mobileMosaic = false; }
+    // Mosaic is used on desktop always, and on mobile only when opted in.
+    function mosaicActive() { return !isMobileTerm() || mobileMosaic; }
+    function toggleMobileMosaic() {
+      mobileMosaic = !mobileMosaic;
+      try { localStorage.setItem('crundi_mobile_mosaic', mobileMosaic ? '1' : '0'); } catch { /* ignore */ }
+      updateMobileLayoutBtn();
+      renderTermGrid();
+    }
+    function updateMobileLayoutBtn() {
+      const b = document.getElementById('mobile-layout-toggle');
+      if (b) b.classList.toggle('active', mobileMosaic);
+    }
     function currentMosaic() { return currentProject ? (wbMosaicByProject[currentProject] || null) : null; }
     function setMosaic(tree) { if (currentProject) { wbMosaicByProject[currentProject] = tree; saveMosaic(); } }
     function mosLeaf(key) { return { t: 'leaf', _id: genMosId(), key: key || null }; }
@@ -3434,6 +3546,23 @@ export function getWebappHtml(botUsername) {
       if (target.key) { const tmp = target.key; target.key = source.key; source.key = tmp; return tree; }
       target.key = key; source.key = null;
       return mosaicCollapseLeaf(tree, source._id);
+    }
+    // Double-click a pane → expand it to fill its parent split (siblings drop to
+    // their min-width floor); double-click again → even split.
+    function mosaicMaximizeLeaf(tree, leafId) {
+      const f = mosaicFind(tree, leafId);
+      if (!f || !f.parent) return tree; // a lone root pane is already full
+      const parent = f.parent, n = parent.kids.length;
+      const big = 100 - (n - 1) * 8;
+      const alreadyMax = parent.sizes[f.index] >= big - 0.5;
+      parent.sizes = parent.kids.map((_, i) => alreadyMax ? 100 / n : (i === f.index ? big : 8));
+      return tree;
+    }
+    // Double-click a gutter → reset that split to an even distribution.
+    function mosaicEvenSplit(tree, splitId) {
+      const f = mosaicFind(tree, splitId);
+      if (f && f.node.t === 'split') f.node.sizes = f.node.kids.map(() => 100 / f.node.kids.length);
+      return tree;
     }
     function mosaicApplyPreset(preset) {
       if (!mosaicDesktop()) { toast('Layouts are available on desktop only', ''); return; }
@@ -3562,10 +3691,14 @@ export function getWebappHtml(botUsername) {
       let target = null;
       let leafEl = null; // mosaic drop-target leaf
       const mosaicMode = () => currentMosaic() && mosaicDesktop();
+      // On mobile mosaic, header-drag does nothing (drag-to-place is desktop-only,
+      // and the flat reorder must not run against the mosaic skeleton).
+      const mobileMosaicOn = () => mosaicActive() && isMobileTerm();
       const clearLeaf = () => { if (leafEl) { leafEl.classList.remove('drop-hover'); leafEl = null; } };
       return {
         onStart: () => { if (mosaicMode()) document.body.classList.add('mosaic-cell-drag'); },
         onMove: (x, y) => {
+          if (mobileMosaicOn()) return;
           // Mosaic: highlight the leaf under the pointer (drop = place cell there).
           if (mosaicMode()) {
             clearLeaf();
@@ -3582,6 +3715,7 @@ export function getWebappHtml(botUsername) {
           else grid.appendChild(_termDropLine);
         },
         onEnd: async (commit) => {
+          if (mobileMosaicOn()) return;
           if (mosaicMode()) {
             document.body.classList.remove('mosaic-cell-drag');
             const lid = leafEl && leafEl.dataset.leafId;
@@ -3614,11 +3748,25 @@ export function getWebappHtml(botUsername) {
 
     // One-time wiring for the terminal area: unified-input paste (images), file
     // drag-drop onto the grid, and a debounced refit on window resize.
-    // Drag a mosaic gutter to resize the two adjacent panes (desktop only).
+    // Drag a mosaic gutter to resize the two adjacent panes. Uses pointer events
+    // so it works with both mouse and touch (touch-action:none on the gutter
+    // stops the page from scrolling while dragging a row divider on mobile).
     function setupMosaicResize() {
       const grid = document.getElementById('term-grid');
       if (!grid || grid._mosResize) return; grid._mosResize = true;
-      grid.addEventListener('mousedown', (e) => {
+      // Double-click: a gutter → even split; a pane header / empty pane → expand
+      // that pane to fill its split (toggle).
+      grid.addEventListener('dblclick', (e) => {
+        if (!currentMosaic() || !mosaicActive()) return;
+        const g = e.target.closest('.mosaic-gutter');
+        if (g) { setMosaic(mosaicEvenSplit(currentMosaic(), g.dataset.splitId)); renderTermGrid(); return; }
+        const leaf = e.target.closest('.mosaic-leaf'); if (!leaf) return;
+        // Only via the header or an empty pane — never from inside a terminal
+        // (where double-click selects a word).
+        if (!e.target.closest('.term-head') && !e.target.closest('.mosaic-empty')) return;
+        setMosaic(mosaicMaximizeLeaf(currentMosaic(), leaf.dataset.leafId)); renderTermGrid();
+      });
+      grid.addEventListener('pointerdown', (e) => {
         const g = e.target.closest('.mosaic-gutter'); if (!g) return;
         const split = g.parentNode; const node = mosaicFind(currentMosaic(), g.dataset.splitId);
         if (!node) return;
@@ -3643,11 +3791,11 @@ export function getWebappHtml(botUsername) {
           a.style.flex = nA + ' 1 0'; b.style.flex = nB + ' 1 0';
         };
         const up = () => {
-          document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+          document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up);
           document.body.classList.remove('mosaic-resizing');
           saveMosaic(); fitAllTerms();
         };
-        document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+        document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up);
       });
     }
 
@@ -5966,8 +6114,9 @@ export function getWebappHtml(botUsername) {
 
     // ─── Event Delegation ───
     document.addEventListener('click', (e) => {
-      // Tab clicks
-      if (e.target.dataset.tab) { switchTab(e.target.dataset.tab); return; }
+      // Tab clicks (tolerate clicks on the icon/label inside the button)
+      const tabEl = e.target.closest('[data-tab]');
+      if (tabEl) { switchTab(tabEl.dataset.tab); return; }
       const actionEl = e.target.closest('[data-action]');
       const action = e.target.dataset.action || actionEl?.dataset.action;
       if (!action) return;
@@ -6026,6 +6175,7 @@ export function getWebappHtml(botUsername) {
         case 'term-send': termSendInput(); break;
         case 'term-attach': termAttachFile(); break;
         case 'term-tool-toggle': termToggleTools(); break;
+        case 'toggle-mobile-layout': toggleMobileMosaic(); break;
         case 'term-key': termSendKey(d.key); break;
         case 'term-add': addTerminalCell(); break;
         case 'wb-add-menu': e.stopPropagation(); toggleWbAddMenu(); break;

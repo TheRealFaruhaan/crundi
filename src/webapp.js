@@ -23,7 +23,7 @@ import { registerService, listRegisteredForProject, updateRegistered } from './s
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
-import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData } from './project-store.js';
+import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder } from './project-store.js';
 import * as kanban from './kanban-store.js';
 import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
@@ -740,6 +740,14 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
 
     if (path === '/api/projects' && req.method === 'GET') {
       return json(res, { projects: listProjects() });
+    }
+
+    // Persist the sidebar order (array of aliases).
+    if (path === '/api/projects/reorder' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = setProjectOrder(body.order || []);
+      if (result.ok) broadcastState();
+      return json(res, result);
     }
 
     if (path === '/api/projects' && req.method === 'POST') {
