@@ -30,8 +30,19 @@ function finish() {
   if (done) return; done = true;
   // Not a Crundi-managed terminal → do nothing.
   if (!id || !apiUrl || !apiKey) { process.exit(0); return; }
-  let sessionId = '';
-  try { sessionId = JSON.parse(input || '{}').session_id || ''; } catch { /* ignore */ }
+  let payload = {};
+  try { payload = JSON.parse(input || '{}'); } catch { /* ignore */ }
+  const sessionId = payload.session_id || '';
+  // Claude Code's Notification event (which we map to 'needs-input') fires for
+  // BOTH a genuine permission/decision prompt AND when the input prompt simply
+  // sits idle ~60s ("Claude is waiting for your input"). The latter is just an
+  // idle agent between turns — not an actual request — and the Stop hook has
+  // already reported 'idle' for it. Suppress that case so a waiting agent
+  // doesn't keep pinging "needs your input".
+  if (state === 'needs-input') {
+    const m = String(payload.message || '').toLowerCase();
+    if (m.includes('waiting for your input') || m.includes('waiting for input')) { process.exit(0); return; }
+  }
   const body = JSON.stringify({ terminal: id, state, sessionId });
   try {
     const u = new URL('/api/terminal-status', apiUrl);
