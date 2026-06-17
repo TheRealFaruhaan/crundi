@@ -9,7 +9,7 @@
     "start:headless": "node src/index.js",
     "dev": "electron . --dev",
     "dev:headless": "node --watch src/index.js --dev",
-    "build": "electron-builder --win",
+    "build": "electron-builder --win --publish never",
     "service:start": "pm2 start ecosystem.config.cjs",
     "service:stop": "pm2 stop crundi",
     "service:restart": "pm2 restart crundi",
