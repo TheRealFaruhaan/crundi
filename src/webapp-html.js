@@ -629,6 +629,24 @@ export function getWebappHtml(botUsername) {
     .wb-add-menu button:hover { background: var(--accent); color: #fff; }
     .wb-add-menu button .ic { font-size: 1rem; color: var(--accent-hover); }
     .wb-add-menu button:hover .ic { color: #fff; }
+    /* ─── Interactive browser panel ─── */
+    .browser-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
+    .brz-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); flex: 0 0 auto; }
+    .brz-nav { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: var(--radius-sm); cursor: pointer; padding: 0; }
+    .brz-nav:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+    .brz-nav:disabled { opacity: 0.35; cursor: default; }
+    .brz-nav .ic { width: 15px; height: 15px; }
+    .brz-url { flex: 1 1 auto; min-width: 0; height: 30px; padding: 0 12px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 999px; font-size: 0.8rem; font-family: var(--mono); outline: none; }
+    .brz-url:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+    .brz-device { height: 30px; max-width: 168px; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: 0.74rem; cursor: pointer; padding: 0 6px; flex: 0 0 auto; }
+    .brz-device:hover { border-color: var(--accent); }
+    .brz-stage { flex: 1 1 auto; min-height: 0; position: relative; background-color: var(--bg-primary); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 16px 16px; overflow: hidden; }
+    .brz-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.8rem; pointer-events: none; }
+    .browser-panel.brz-loading .brz-nav[data-brz="reload"] .ic { animation: brz-spin 0.8s linear infinite; }
+    @keyframes brz-spin { to { transform: rotate(360deg); } }
+    .brz-unavail { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--text-muted); text-align: center; padding: 24px; line-height: 1.5; }
+    .brz-unavail .ic { width: 38px; height: 38px; opacity: 0.45; }
+    .brz-unavail b { color: var(--text-secondary); }
     /* "Layout" submenu flyout (desktop only) */
     .wb-sub { position: relative; }
     .wb-sub-caret { margin-left: auto; opacity: 0.55; }
@@ -1996,6 +2014,7 @@ export function getWebappHtml(botUsername) {
           <button data-action="wb-add" data-kind="kanban"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Kanban</button>
           <button data-action="wb-add" data-kind="mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Mindmap</button>
           <button data-action="wb-add" data-kind="media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg> Media</button>
+          <button data-action="wb-add" data-kind="browser"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Browser</button>
           <div class="wb-sub" id="wb-layout-sub">
             <button type="button"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg> Layout <span class="wb-sub-caret">&#9656;</span></button>
             <div class="wb-subitems">
@@ -2056,6 +2075,7 @@ export function getWebappHtml(botUsername) {
         <div class="secrets-panel tab-panel" id="secrets-panel" data-panel="secrets"></div>
         <div class="mindmap-panel tab-panel" id="mindmap-panel" data-panel="mindmap"></div>
         <div class="media-panel tab-panel" id="media-panel" data-panel="media"></div>
+        <div class="browser-panel tab-panel" id="browser-panel" data-panel="browser"></div>
         <div class="schedule-panel tab-panel" id="schedule-panel" data-panel="schedule"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="services-panel tab-panel" id="terminals-panel" data-panel="terminals"></div>
@@ -2350,6 +2370,8 @@ export function getWebappHtml(botUsername) {
       plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
       kanban: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>',
       'chevrons-left': '<polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/>',
+      'chevron-left': '<polyline points="15 18 9 12 15 6"/>',
+      'chevron-right': '<polyline points="9 18 15 12 9 6"/>',
       'bar-chart': '<line x1="6" y1="20" x2="6" y2="14"/><line x1="12" y1="20" x2="12" y2="9"/><line x1="18" y1="20" x2="18" y2="4"/>',
       clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>',
       mindmap: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
@@ -3332,6 +3354,7 @@ export function getWebappHtml(botUsername) {
       kanban: { icon: 'kanban', label: 'Kanban' },
       mindmap: { icon: 'mindmap', label: 'Mindmap' },
       media: { icon: 'images', label: 'Media' },
+      browser: { icon: 'globe', label: 'Browser' },
     };
     function headHtmlPanel(cell) {
       const m = WB_KIND_META[cell.kind] || { icon: 'file', label: cell.kind };
@@ -3513,6 +3536,7 @@ export function getWebappHtml(botUsername) {
       else if (kind === 'kanban') loadKanban();
       else if (kind === 'mindmap') loadMindmap();
       else if (kind === 'media') loadMedia();
+      else if (kind === 'browser') initBrowserPanel();
     }
     // Move each workbench cell's panel node into its body (if not already there)
     // and refresh it. Only loads when it actually (re)mounts to avoid churn.
@@ -3545,6 +3569,7 @@ export function getWebappHtml(botUsername) {
     function closeWbCell(wbid) {
       const cell = wbCells.find(c => c.id === wbid);
       if (cell) {
+        if (cell.kind === 'browser') brzPost('close');
         const node = document.getElementById(cell.kind + '-panel');
         const body = document.querySelector('.wb-cell-body[data-wb="' + wbid + '"]');
         if (node && body && node.parentNode === body) parkPanelNode(node);
@@ -3558,6 +3583,178 @@ export function getWebappHtml(botUsername) {
       const cell = wbCells.find(c => c.id === wbid);
       if (cell) wbLoad(cell.kind);
     }
+
+    // ─── Interactive browser panel (desktop app only) ───────────────────────────
+    // A real Chromium WebContentsView is managed in the Electron main process and
+    // overlaid on this panel's stage (see app/main.js). In the desktop app the web
+    // UI is the top-level page, so the preload's window.api.wbrowser is available
+    // and we call it directly (rect / navigation / device-emulation), and receive
+    // page state via api.wbrowser.onState. Picking a device constrains the view
+    // (scaled + centered + touch); "Responsive" fills the panel.
+    const BRZ_API = () => (window.api && window.api.wbrowser) || null;
+    const BRZ_DESKTOP = !!BRZ_API();
+    const BRZ_ID = 'wb';
+    const BRZ_START = 'https://www.google.com';
+    const BRZ_DEVICES = [
+      { name: 'Responsive', responsive: true },
+      { name: 'iPhone SE', w: 375, h: 667, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPhone 12 Pro', w: 390, h: 844, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPhone 15 Pro', w: 393, h: 852, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPhone 16 Pro', w: 393, h: 852, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPhone 16 Pro Max', w: 430, h: 932, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPad Mini', w: 768, h: 1024, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPad Air', w: 820, h: 1180, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+      { name: 'iPad Pro', w: 1024, h: 1366, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
+      { name: 'Pixel 5', w: 393, h: 851, dpr: 2.75, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36' },
+      { name: 'Pixel 7', w: 412, h: 915, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+      { name: 'Pixel 8 Pro', w: 430, h: 932, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+      { name: 'Galaxy S22', w: 360, h: 800, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+      { name: 'Galaxy S24 Ultra', w: 412, h: 915, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
+      { name: 'Galaxy Z Fold 5', w: 344, h: 882, dpr: 2.8, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-F946B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36' },
+      { name: 'Galaxy Z Flip 5', w: 264, h: 844, dpr: 2.8, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-F731B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36' },
+      { name: 'Surface Pro 9', w: 1200, h: 1800, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+      { name: 'Desktop 1280', w: 1280, h: 800, dpr: 1, mobile: false, ua: '' },
+      { name: 'Full HD 1920', w: 1920, h: 1080, dpr: 1, mobile: false, ua: '' },
+    ];
+    let brzUrl = BRZ_START, brzDevice = 0, brzLastEmu = '', brzSyncTimer = null;
+
+    function brzPost(action, extra) {
+      const w = BRZ_API(); extra = extra || {};
+      if (w) {
+        if (action === 'open') w.open(BRZ_ID, extra.url);
+        else if (action === 'sync') w.sync(BRZ_ID, extra.rect, extra.visible);
+        else if (action === 'navigate') w.navigate(BRZ_ID, extra.url);
+        else if (action === 'nav') w.nav(BRZ_ID, extra.dir);
+        else if (action === 'emulate') w.emulate(BRZ_ID, extra.config, extra.scale);
+        else if (action === 'devtools') w.devtools(BRZ_ID);
+        else if (action === 'close') w.close(BRZ_ID);
+        return;
+      }
+      // Fallback: if ever embedded in a shell parent, post to it instead.
+      try { if (window.parent && window.parent !== window) window.parent.postMessage(Object.assign({ ns: 'crundi-browser', id: BRZ_ID, action }, extra), '*'); } catch { /* ignore */ }
+    }
+    function brzStage() { return document.getElementById('brz-stage'); }
+    function brzModalOpen() { return !!document.querySelector('.input-modal.visible, .lightbox.visible, #image-lightbox.visible, .modal.visible'); }
+    // A native WebContentsView floats above the DOM, so it must hide whenever
+    // something should appear over the panel: an open dropdown, a drag, a resize.
+    function brzOverlayActive() {
+      const menu = document.getElementById('wb-add-menu');
+      if (menu && menu.classList.contains('visible')) return true;
+      if (document.body.classList.contains('mosaic-cell-drag') || document.body.classList.contains('mosaic-resizing')) return true;
+      return false;
+    }
+    function brzVisibleNow() {
+      if (!BRZ_DESKTOP || currentTab !== 'workbench' || brzModalOpen() || brzOverlayActive()) return false;
+      const st = brzStage(); if (!st || !st.closest('.wb-cell-body')) return false;
+      const r = st.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return false;
+      // A native webview floats above the page, so hide it if a floating editor
+      // window overlaps the stage (otherwise it would cover the editor).
+      for (const w of document.querySelectorAll('.fe-window')) {
+        const wr = w.getBoundingClientRect();
+        if (wr.left < r.right && wr.right > r.left && wr.top < r.bottom && wr.bottom > r.top) return false;
+      }
+      return true;
+    }
+    function brzComputeRect() {
+      const st = brzStage(); if (!st) return null;
+      const r = st.getBoundingClientRect();
+      const dev = BRZ_DEVICES[brzDevice];
+      if (!dev || dev.responsive) {
+        return { left: r.left, top: r.top, width: Math.round(r.width), height: Math.round(r.height), scale: 1, config: null };
+      }
+      const pad = 10;
+      const availW = Math.max(40, r.width - pad * 2), availH = Math.max(40, r.height - pad * 2);
+      const scale = Math.min(availW / dev.w, availH / dev.h); // fit both dims (may zoom in for small devices)
+      const bw = Math.round(dev.w * scale), bh = Math.round(dev.h * scale);
+      return {
+        left: r.left + (r.width - bw) / 2, top: r.top + (r.height - bh) / 2, width: bw, height: bh, scale,
+        config: { width: dev.w, height: dev.h, deviceScaleFactor: dev.dpr || 0, mobile: !!dev.mobile, ua: dev.ua || '' },
+      };
+    }
+    function brzSync() {
+      if (!BRZ_DESKTOP) return;
+      if (!brzVisibleNow()) { brzPost('sync', { rect: null, visible: false }); return; }
+      const c = brzComputeRect(); if (!c) { brzPost('sync', { rect: null, visible: false }); return; }
+      // The web UI is the top-level page, so getBoundingClientRect coords map
+      // directly to the window content (WebContentsView setBounds) — no offset.
+      // scale rides along so the view zooms to fit on resize (no reload needed).
+      brzPost('sync', { rect: { x: c.left, y: c.top, width: c.width, height: c.height }, visible: true });
+      // Re-apply emulation when the device OR the fit-scale changes. Main rescales
+      // the image for a scale-only change and reloads only when the device itself
+      // changes (so the site re-serves the right mobile/desktop markup).
+      const key = JSON.stringify(c.config) + '|' + (c.scale ? c.scale.toFixed(3) : '');
+      if (key !== brzLastEmu) { brzLastEmu = key; brzPost('emulate', { config: c.config, scale: c.scale }); }
+    }
+    function brzGo(v) {
+      v = (v || '').trim(); if (!v) return;
+      let url = v;
+      const hasScheme = /^https?:\\/\\//i.test(v) || v.indexOf('about:') === 0;
+      const looksDomain = v.indexOf(' ') < 0 && v.indexOf('.') > 0;
+      if (!hasScheme && !looksDomain) url = 'https://www.google.com/search?q=' + encodeURIComponent(v);
+      else if (!hasScheme) url = 'https://' + v;
+      brzUrl = url;
+      brzPost('navigate', { url });
+      const inp = document.querySelector('#browser-panel .brz-url'); if (inp) inp.blur();
+    }
+    function brzDeviceOptions() {
+      return BRZ_DEVICES.map((d, i) => '<option value="' + i + '">' + escHtml(d.responsive ? 'Responsive (fill)' : (d.name + '  ' + d.w + '×' + d.h)) + '</option>').join('');
+    }
+    function initBrowserPanel() {
+      const node = document.getElementById('browser-panel');
+      if (!node) return;
+      if (!BRZ_DESKTOP) {
+        node.innerHTML = '<div class="brz-unavail">' + ic('globe') + '<div>The interactive browser runs a real Chromium view on the host, so it is available in the <b>Crundi desktop app</b> only \\u2014 not over the web.</div></div>';
+        return;
+      }
+      if (!node.querySelector('.brz-bar')) {
+        node.innerHTML = ''
+          + '<div class="brz-bar">'
+          + '<button class="brz-nav" data-brz="back" title="Back" disabled>' + ic('chevron-left') + '</button>'
+          + '<button class="brz-nav" data-brz="forward" title="Forward" disabled>' + ic('chevron-right') + '</button>'
+          + '<button class="brz-nav" data-brz="reload" title="Reload">' + ic('refresh') + '</button>'
+          + '<input class="brz-url" type="text" spellcheck="false" autocomplete="off" placeholder="Enter URL or search\\u2026">'
+          + '<select class="brz-device" title="Emulate device">' + brzDeviceOptions() + '</select>'
+          + '<button class="brz-nav" data-brz="devtools" title="Toggle DevTools">' + ic('terminal') + '</button>'
+          + '</div>'
+          + '<div class="brz-stage" id="brz-stage"><div class="brz-hint">Loading\\u2026</div></div>';
+        const inp = node.querySelector('.brz-url');
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') brzGo(inp.value); });
+        node.querySelector('.brz-device').addEventListener('change', (e) => { brzDevice = Number(e.target.value) || 0; brzLastEmu = '__force__'; brzSync(); });
+        node.addEventListener('click', (e) => {
+          const b = e.target.closest('[data-brz]'); if (!b) return;
+          const a = b.dataset.brz;
+          if (a === 'reload') brzPost('nav', { dir: 'reload' });
+          else if (a === 'back') brzPost('nav', { dir: 'back' });
+          else if (a === 'forward') brzPost('nav', { dir: 'forward' });
+          else if (a === 'devtools') brzPost('devtools');
+        });
+        const sel = node.querySelector('.brz-device'); if (sel) sel.value = String(brzDevice);
+      }
+      brzPost('open', { url: brzUrl || BRZ_START });
+      brzLastEmu = '__force__';
+      if (!brzSyncTimer) brzSyncTimer = setInterval(brzSync, 200);
+      brzSync();
+    }
+    // Reflect page state (url/title/loading/history or a diagnostic) in the toolbar.
+    function brzApplyState(d) {
+      if (!d || (d.id && d.id !== BRZ_ID)) return;
+      const node = document.getElementById('browser-panel'); if (!node) return;
+      if (d.diag) { const hint = node.querySelector('.brz-hint'); if (hint) { hint.style.display = 'flex'; hint.textContent = d.diag; } return; }
+      const inp = node.querySelector('.brz-url');
+      if (inp && document.activeElement !== inp && d.url) { inp.value = d.url; brzUrl = d.url; }
+      const back = node.querySelector('[data-brz="back"]'); if (back) back.disabled = !d.canGoBack;
+      const fwd = node.querySelector('[data-brz="forward"]'); if (fwd) fwd.disabled = !d.canGoForward;
+      node.classList.toggle('brz-loading', !!d.loading);
+      const hint = node.querySelector('.brz-hint'); if (hint && d.url && d.url !== 'about:blank') hint.style.display = 'none';
+    }
+    // Desktop: receive state directly from the main process via the preload.
+    if (BRZ_API() && BRZ_API().onState) { try { BRZ_API().onState(brzApplyState); } catch { /* ignore */ } }
+    // Fallback: state relayed from a shell parent (if ever embedded in an iframe).
+    window.addEventListener('message', (ev) => {
+      const d = ev.data; if (!d || d.ns !== 'crundi-browser-evt') return;
+      brzApplyState(d.type === 'diag' ? { id: d.id, diag: d.text } : d);
+    });
 
     // ─── Mosaic workbench layout (desktop only; always-on; persisted per project) ─
     // Tree node: { t:'split', dir:'row'|'col', sizes:[%..], kids:[node..] }
@@ -3718,11 +3915,14 @@ export function getWebappHtml(botUsername) {
       menu.style.left = Math.max(6, Math.min(r.left, window.innerWidth - 166)) + 'px';
       menu.style.display = 'flex';
       menu.classList.add('visible');
+      if (typeof brzSync === 'function') brzSync(); // hide the browser view behind the dropdown
       setTimeout(() => document.addEventListener('click', wbAddMenuOutside, true), 0);
     }
     function hideWbAddMenu() {
       const menu = $('#wb-add-menu'); if (!menu) return;
+      const wasVisible = menu.classList.contains('visible');
       menu.classList.remove('visible'); menu.style.display = 'none';
+      if (wasVisible && typeof brzSync === 'function') setTimeout(brzSync, 0); // restore the browser view
       document.removeEventListener('click', wbAddMenuOutside, true);
     }
     function wbAddMenuOutside(e) {
@@ -3820,7 +4020,7 @@ export function getWebappHtml(botUsername) {
       const mobileMosaicOn = () => mosaicActive() && isMobileTerm();
       const clearLeaf = () => { if (leafEl) { leafEl.classList.remove('drop-hover'); leafEl = null; } };
       return {
-        onStart: () => { if (mosaicMode()) document.body.classList.add('mosaic-cell-drag'); },
+        onStart: () => { if (mosaicMode()) { document.body.classList.add('mosaic-cell-drag'); if (typeof brzSync === 'function') brzSync(); } },
         onMove: (x, y) => {
           if (mobileMosaicOn()) return;
           // Mosaic: highlight the leaf under the pointer (drop = place cell there).
@@ -3842,6 +4042,7 @@ export function getWebappHtml(botUsername) {
           if (mobileMosaicOn()) return;
           if (mosaicMode()) {
             document.body.classList.remove('mosaic-cell-drag');
+            if (typeof brzSync === 'function') setTimeout(brzSync, 0);
             const lid = leafEl && leafEl.dataset.leafId;
             clearLeaf();
             if (commit && lid) { setMosaic(mosaicAssignToLeaf(currentMosaic(), lid, key)); renderTermGrid(); }
@@ -3905,6 +4106,7 @@ export function getWebappHtml(botUsername) {
         const sA0 = sizes[gi - 1], sB0 = sizes[gi], totalS = sA0 + sB0;
         const start = horiz ? e.clientX : e.clientY;
         document.body.classList.add('mosaic-resizing');
+        if (typeof brzSync === 'function') brzSync();
         const mv = (ev) => {
           const cur = horiz ? ev.clientX : ev.clientY;
           const frac = totalPx ? (cur - start) / totalPx : 0;
@@ -3917,6 +4119,7 @@ export function getWebappHtml(botUsername) {
         const up = () => {
           document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up);
           document.body.classList.remove('mosaic-resizing');
+          if (typeof brzSync === 'function') setTimeout(brzSync, 0);
           saveMosaic(); fitAllTerms();
         };
         document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up);
@@ -4252,6 +4455,10 @@ export function getWebappHtml(botUsername) {
     document.addEventListener('DOMContentLoaded', () => {
       const ta = document.getElementById('term-input');
       if (!ta) return;
+      // Shorter placeholder on phone-width screens (no Ctrl+Enter there).
+      const setInputPh = () => { ta.placeholder = window.innerWidth <= 768 ? 'Type here... (Press Send)' : 'Type here... (Ctrl+Enter or Send button)'; };
+      setInputPh();
+      window.addEventListener('resize', setInputPh);
       ta.addEventListener('input', () => {
         ta.style.height = 'auto';
         ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
