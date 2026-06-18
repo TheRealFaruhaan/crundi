@@ -1,8 +1,11 @@
 name: Release
 
-# Push a version tag (e.g. v7.2.0) to cut a release. CI creates a DRAFT release
-# with auto-generated notes and a clean source archive attached. Upload the
-# signed Windows installer to the draft, then publish it.
+# Cut a release by tagging main's top commit and pushing the tag:
+#   git tag v1.2.0 && git push origin v1.2.0
+# electron-builder builds the Windows installer and publishes it to the matching
+# GitHub Release together with the .blockmap and latest.yml — the full set the
+# in-app auto-updater needs. Building on a clean runner also avoids the flaky
+# large-asset uploads we hit from a local machine.
 on:
   push:
     tags:
@@ -13,24 +16,22 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
-      - name: Check out the tag
+      - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: 22
+          cache: npm
 
-      - name: Build source archive
-        run: |
-          mkdir -p out
-          git archive --format=zip --prefix=crundi/ -o "out/crundi-${{ github.ref_name }}-source.zip" HEAD
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Create draft release with source zip
+      - name: Build & publish (unsigned — no cert on the runner)
+        run: npx electron-builder --win --publish always
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" \
-            "out/crundi-${{ github.ref_name }}-source.zip" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes \
-            --draft
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'

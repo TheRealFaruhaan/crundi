@@ -30,19 +30,15 @@
       {
         "provider": "github",
         "owner": "TheRealFaruhaan",
-        "repo": "crundi"
+        "repo": "crundi",
+        "releaseType": "release"
       }
     ],
     "win": {
       "target": [
         "nsis"
       ],
-      "icon": "assets/icon.ico",
-      "signtoolOptions": {
-        "publisherName": [
-          "TheRealFaruhaan"
-        ]
-      }
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": true,
