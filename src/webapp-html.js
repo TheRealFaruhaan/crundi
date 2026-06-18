@@ -2377,21 +2377,34 @@ export function getWebappHtml(botUsername) {
     let notifyPrefs = { ...NOTIFY_DEFAULTS_CLIENT };
 
     // ─── Auto-update (desktop app only; driven by Electron main via window.api) ───
-    let updateState = { enabled: true, available: false, downloaded: false, version: '', current: '', launch: false };
+    let updateState = { enabled: true, available: false, downloading: false, downloaded: false, percent: 0, version: '', current: '', launch: false };
+    // Apply state IN PLACE (never re-render the whole Settings panel — that would
+    // reset the user's scroll position on every status push / toggle).
     function applyUpdateState(s) {
       if (s) updateState = Object.assign(updateState, s);
       const b = document.getElementById('update-badge');
       if (b) b.style.display = updateState.available ? '' : 'none';
-      if (currentTab === 'settings') renderSettings();
+      const swU = document.querySelector('#settings-panel .sw[data-action="update-toggle"]');
+      if (swU) { swU.classList.toggle('on', !!updateState.enabled); swU.setAttribute('aria-checked', updateState.enabled ? 'true' : 'false'); }
+      const swS = document.querySelector('#settings-panel .sw[data-action="startup-toggle"]');
+      if (swS) { swS.classList.toggle('on', !!updateState.launch); swS.setAttribute('aria-checked', updateState.launch ? 'true' : 'false'); }
+      const row = document.getElementById('upd-statusrow');
+      if (row) row.innerHTML = updStatusRowHtml();
+    }
+    function updStatusRowHtml() {
+      const us = updateState;
+      const status = us.downloading
+        ? '<div class="upd-status avail"><span class="upd-dot"></span>Downloading\\u2026 ' + (us.percent || 0) + '%</div>'
+        : us.available
+          ? '<div class="upd-status avail"><span class="upd-dot"></span>Update available \\u2014 v' + escHtml(us.version || '') + (us.downloaded ? ' (ready)' : '') + '</div>'
+          : '<div class="upd-status"><span class="upd-dot"></span>Up to date' + (us.current ? ' \\u2014 v' + escHtml(us.current) : '') + '</div>';
+      const action = us.available
+        ? '<button class="kanban-btn primary"' + (us.downloading ? ' disabled' : '') + ' data-action="update-install">' + (us.downloaded ? 'Restart \\u0026 install' : us.downloading ? 'Downloading\\u2026' : 'Download \\u0026 install') + '</button>'
+        : '<button class="kanban-btn" data-action="update-check">Check now</button>';
+      return status + action;
     }
     function buildUpdatesSection() {
       const us = updateState;
-      const status = us.available
-        ? '<div class="upd-status avail"><span class="upd-dot"></span>Update available \\u2014 v' + escHtml(us.version || '') + (us.downloaded ? ' (downloaded)' : '') + '</div>'
-        : '<div class="upd-status"><span class="upd-dot"></span>Up to date' + (us.current ? ' \\u2014 v' + escHtml(us.current) : '') + '</div>';
-      const action = us.available
-        ? '<button class="kanban-btn primary" data-action="update-install">' + (us.downloaded ? 'Restart \\u0026 install' : 'Download \\u0026 install') + '</button>'
-        : '<button class="kanban-btn" data-action="update-check">Check now</button>';
       const sw = (on, act, title) => '<button type="button" class="sw' + (on ? ' on' : '') + '" data-action="' + act + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '" title="' + title + '"><span class="sw-knob"></span></button>';
       const row = (title, sub, control) => '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">'
         + '<div><div style="font-size:0.86rem;color:var(--text-primary);">' + title + '</div>'
@@ -2399,7 +2412,7 @@ export function getWebappHtml(botUsername) {
       return '<div class="info-section"><h4>Desktop App</h4>'
         + row('Launch at startup', 'Start Crundi in the tray when Windows starts.', sw(us.launch, 'startup-toggle', 'Launch at startup'))
         + row('Automatic updates', 'Check on launch and once a day. Always asks before installing.', sw(us.enabled, 'update-toggle', 'Automatic updates'))
-        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">' + status + action + '</div></div>';
+        + '<div id="upd-statusrow" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">' + updStatusRowHtml() + '</div></div>';
     }
     async function initUpdateUi() {
       if (!window.api || !window.api.getUpdateState) return;
