@@ -445,7 +445,7 @@ async function gracefulShutdownAndExit() {
 // settings-save can never clobber it.
 const updateConfigPath = join(userDataDir, 'update-config.json');
 let updateInstalling = false;
-const updateState = { enabled: true, available: false, downloaded: false, version: '', current: app.getVersion() };
+const updateState = { enabled: true, available: false, downloading: false, downloaded: false, percent: 0, version: '', current: app.getVersion() };
 
 function readAutoUpdate() {
   try {
@@ -467,10 +467,16 @@ function sendUpdateStatus() {
   updateTrayMenu();
 }
 
+let downloadPrompted = ''; // version we've already shown the "download?" modal for
+
 function setupAutoUpdate() {
   updateState.enabled = readAutoUpdate();
-  autoUpdater.autoDownload = true;
+  autoUpdater.autoDownload = false;             // ask first (modal on detection)
   autoUpdater.autoInstallOnAppQuit = true;
+  // Full downloads only. Differential (blockmap) reconstruction of a code-signed
+  // NSIS installer yields a different hash → "sha512 checksum mismatch". A full
+  // download verifies cleanly.
+  autoUpdater.disableDifferentialDownload = true;
   autoUpdater.logger = {
     info: (m) => appendLog('[update] ' + m),
     warn: (m) => appendLog('[update] ' + m),
@@ -480,19 +486,60 @@ function setupAutoUpdate() {
   autoUpdater.on('checking-for-update', () => appendLog('[update] Checking for updates…'));
   autoUpdater.on('update-available', (info) => {
     appendLog('[update] Available: ' + info.version);
-    updateState.available = true; updateState.version = info.version; sendUpdateStatus();
+    updateState.available = true; updateState.version = info.version;
+    updateState.downloading = false; updateState.downloaded = false; updateState.percent = 0;
+    sendUpdateStatus();
+    promptDownload(info); // modal on detection (e.g. shortly after launch)
   });
   autoUpdater.on('update-not-available', () => {
     appendLog('[update] Up to date');
-    updateState.available = false; updateState.downloaded = false; sendUpdateStatus();
+    updateState.available = false; updateState.downloading = false; updateState.downloaded = false; updateState.percent = 0;
+    sendUpdateStatus();
   });
-  autoUpdater.on('download-progress', (p) => appendLog(`[update] Downloading ${Math.round(p.percent || 0)}%`));
-  autoUpdater.on('error', (err) => appendLog('[update] Error: ' + ((err && err.message) || String(err))));
+  autoUpdater.on('download-progress', (p) => {
+    updateState.downloading = true; updateState.percent = Math.round(p.percent || 0);
+    appendLog(`[update] Downloading ${updateState.percent}%`);
+    sendUpdateStatus();
+  });
+  autoUpdater.on('error', (err) => {
+    updateState.downloading = false;
+    appendLog('[update] Error: ' + ((err && err.message) || String(err)));
+    sendUpdateStatus();
+  });
   autoUpdater.on('update-downloaded', (info) => {
     appendLog('[update] Downloaded ' + info.version);
-    updateState.available = true; updateState.downloaded = true; updateState.version = info.version;
+    updateState.available = true; updateState.downloaded = true; updateState.downloading = false; updateState.percent = 100; updateState.version = info.version;
     sendUpdateStatus();
-    confirmAndInstall(); // prompt right away; user can defer
+    confirmAndInstall(); // restart-to-install prompt (save your work)
+  });
+}
+
+// Modal shown when an update is first detected (once per version per session).
+async function promptDownload(info) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (downloadPrompted === info.version) return;
+  downloadPrompted = info.version;
+  try {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      buttons: ['Download & Install', 'Later'],
+      defaultId: 0, cancelId: 1,
+      title: 'Update available',
+      message: `Crundi ${info.version} is available.`,
+      detail: 'Download it now? You can watch progress in Settings, and Crundi will ask you to save your work before it restarts to install.',
+    });
+    if (response === 0) startDownload();
+  } catch { /* ignore */ }
+}
+
+function startDownload() {
+  if (updateState.downloaded) { confirmAndInstall(); return; }
+  if (updateState.downloading) return; // already in progress
+  appendLog('[update] Downloading update…');
+  updateState.downloading = true; sendUpdateStatus();
+  autoUpdater.downloadUpdate().catch((err) => {
+    updateState.downloading = false; sendUpdateStatus();
+    appendLog('[update] download error: ' + (err.message || err));
   });
 }
 
@@ -528,7 +575,7 @@ function setLaunchAtStartup(enabled) {
 // Always confirm before restarting to install — give the user a chance to save
 // work and confirm running services are safe to stop.
 async function confirmAndInstall() {
-  if (!updateState.downloaded) { checkForUpdates(true); return; }
+  if (!updateState.downloaded) { startDownload(); return; }
   if (!mainWindow || mainWindow.isDestroyed()) { installUpdateNow(); return; }
   try {
     const { response } = await dialog.showMessageBox(mainWindow, {
