@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Crundi — your machine, reachable from anywhere</title>
+<meta name="description" content="Crundi is a self-hosted remote workbench for your projects — agent terminals, files, git, kanban, mindmap, scheduling and more. Reach it from a browser, the desktop app, or a Telegram bot." />
+<meta name="theme-color" content="#0a0a0f" />
+<link rel="icon" href="assets/favicon.ico" />
+<link rel="apple-touch-icon" href="assets/logo.png" />
+
+<!-- Open Graph -->
+<meta property="og:title" content="Crundi — your machine, reachable from anywhere" />
+<meta property="og:description" content="A self-hosted remote workbench: agent terminals, files, git, kanban, mindmap, scheduling. Reach it from your browser, desktop, or Telegram." />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="assets/shot-workbench.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+<style>
+:root{
+  /* pulled straight from the app's palette */
+  --bg-primary:#0a0a0f;
+  --bg-secondary:#12121a;
+  --bg-tertiary:#1a1a28;
+  --bg-card:#14141f;
+  --bg-hover:#22223a;
+  --border:#2a2a3d;
+  --border-subtle:#1e1e30;
+  --text-primary:#e8e8f0;
+  --text-secondary:#8888a8;
+  --text-muted:#5a5a78;
+  --accent:#6366f1;
+  --accent-hover:#818cf8;
+  --accent-dim:rgba(99,102,241,.15);
+  --accent-grad:linear-gradient(135deg,#6366f1 0%,#818cf8 100%);
+  --pink:#ec4899;
+  --green:#34d399;
+  --amber:#f59e0b;
+  --font-display:'Bricolage Grotesque',sans-serif;
+  --font-body:'Outfit',sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  --maxw:1180px;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--font-body);
+  background:var(--bg-primary);
+  color:var(--text-primary);
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+a{color:inherit;text-decoration:none}
+img{max-width:100%;display:block}
+
+/* ---------- atmospheric background ---------- */
+.bg-fx{position:fixed;inset:0;z-index:-2;pointer-events:none}
+.bg-fx::before{ /* dot grid */
+  content:"";position:absolute;inset:0;
+  background-image:radial-gradient(circle at 1px 1px,rgba(255,255,255,.035) 1px,transparent 0);
+  background-size:34px 34px;
+  mask-image:linear-gradient(to bottom,#000 0%,transparent 70%);
+}
+.aurora{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+.aurora span{position:absolute;border-radius:50%;filter:blur(110px);opacity:.5}
+.aurora .a1{width:620px;height:620px;background:#4f46e5;top:-220px;left:-120px;opacity:.40}
+.aurora .a2{width:520px;height:520px;background:#7c3aed;top:-120px;right:-140px;opacity:.30}
+.aurora .a3{width:480px;height:480px;background:#1e3a8a;top:560px;left:40%;opacity:.22}
+.grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.04;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+/* ---------- shared ---------- */
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+.eyebrow{font-family:var(--font-mono);font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-hover);display:inline-flex;align-items:center;gap:8px}
+.eyebrow::before{content:"";width:18px;height:1px;background:var(--accent)}
+h1,h2,h3{font-family:var(--font-display);font-weight:700;line-height:1.04;letter-spacing:-.02em}
+.grad{background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.section{padding:120px 0;position:relative}
+.section-head{max-width:680px;margin-bottom:56px}
+.section-head h2{font-size:clamp(30px,4.4vw,50px);margin:18px 0 16px}
+.section-head p{color:var(--text-secondary);font-size:18px;font-weight:300}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;gap:9px;font-family:var(--font-body);font-weight:500;font-size:15px;
+  padding:12px 20px;border-radius:11px;border:1px solid transparent;cursor:pointer;transition:.22s ease;white-space:nowrap}
+.btn svg{width:17px;height:17px}
+.btn-primary{background:var(--accent-grad);color:#fff;box-shadow:0 8px 30px -8px rgba(99,102,241,.7)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 14px 40px -8px rgba(99,102,241,.85)}
+.btn-ghost{background:rgba(255,255,255,.03);border-color:var(--border);color:var(--text-primary)}
+.btn-ghost:hover{background:var(--bg-hover);border-color:var(--accent)}
+.btn-donate{background:linear-gradient(135deg,#ec4899,#f43f5e);color:#fff;box-shadow:0 8px 26px -10px rgba(236,72,153,.8)}
+.btn-donate:hover{transform:translateY(-2px);box-shadow:0 14px 34px -8px rgba(236,72,153,.9)}
+
+/* ---------- nav ---------- */
+nav{position:fixed;top:0;left:0;right:0;z-index:50;transition:.3s ease}
+nav.scrolled{background:rgba(10,10,15,.72);backdrop-filter:blur(16px);border-bottom:1px solid var(--border-subtle)}
+.nav-inner{max-width:var(--maxw);margin:0 auto;padding:16px 24px;display:flex;align-items:center;gap:28px}
+.brand{display:flex;align-items:center;gap:11px;font-family:var(--font-display);font-weight:800;font-size:20px;letter-spacing:-.01em}
+.brand img{width:32px;height:32px;border-radius:8px;box-shadow:0 4px 16px -4px rgba(99,102,241,.5)}
+.nav-links{display:flex;gap:26px;margin-left:14px}
+.nav-links a{font-size:14.5px;color:var(--text-secondary);transition:.18s;position:relative}
+.nav-links a:hover{color:var(--text-primary)}
+.nav-spacer{flex:1}
+.nav-cta{display:flex;align-items:center;gap:12px}
+.icon-link{display:inline-flex;align-items:center;gap:7px;font-size:14px;color:var(--text-secondary);padding:9px 14px;border:1px solid var(--border);border-radius:10px;transition:.2s}
+.icon-link:hover{color:var(--text-primary);border-color:var(--accent);background:rgba(255,255,255,.02)}
+.icon-link svg{width:16px;height:16px}
+@media(max-width:880px){.nav-links{display:none}.icon-link.gh-label span{display:none}}
+
+/* ---------- hero ---------- */
+.hero{padding:170px 0 90px;position:relative;text-align:center}
+.hero h1{font-size:clamp(42px,7.4vw,86px);font-weight:800;margin:26px auto 0;max-width:14ch}
+.hero .sub{max-width:600px;margin:26px auto 0;font-size:19px;color:var(--text-secondary);font-weight:300}
+.hero-cta{display:flex;gap:14px;justify-content:center;margin-top:38px;flex-wrap:wrap}
+.reach{display:flex;gap:10px;justify-content:center;margin-top:30px;flex-wrap:wrap;font-family:var(--font-mono);font-size:12.5px;color:var(--text-muted)}
+.reach b{color:var(--text-secondary);font-weight:500}
+.reach .dot{width:5px;height:5px;border-radius:50%;background:var(--accent);align-self:center}
+
+/* hero window */
+.hero-window{margin:70px auto 0;max-width:1040px;position:relative}
+.hero-window::after{ /* glow */
+  content:"";position:absolute;inset:-2% 8% 14%;z-index:-1;border-radius:30px;
+  background:var(--accent);filter:blur(90px);opacity:.28}
+.window{border-radius:16px;border:1px solid var(--border);overflow:hidden;background:var(--bg-secondary);
+  box-shadow:0 50px 120px -40px rgba(0,0,0,.9),0 0 0 1px rgba(255,255,255,.02) inset}
+.win-bar{display:flex;align-items:center;gap:8px;padding:13px 16px;background:var(--bg-tertiary);border-bottom:1px solid var(--border-subtle)}
+.win-dots{display:flex;gap:7px}
+.win-dots i{width:11px;height:11px;border-radius:50%;display:block}
+.win-dots i:nth-child(1){background:#ff5f57}.win-dots i:nth-child(2){background:#febc2e}.win-dots i:nth-child(3){background:#28c840}
+.win-url{margin-left:14px;font-family:var(--font-mono);font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:8px}
+.win-live{margin-left:auto;font-family:var(--font-mono);font-size:11.5px;color:var(--green);display:flex;align-items:center;gap:6px}
+.win-live i{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite}
+@keyframes pulse{50%{opacity:.4}}
+.win-body{position:relative}
+.win-body img{width:100%}
+/* typed terminal strip under bar */
+.term-strip{font-family:var(--font-mono);font-size:13px;background:#07070b;color:#cfcfe6;padding:11px 18px;border-bottom:1px solid var(--border-subtle);display:flex;gap:10px;align-items:center}
+.term-strip .pr{color:var(--accent-hover)}
+.term-strip .cur{display:inline-block;width:8px;height:15px;background:var(--accent);margin-left:1px;animation:blink 1.1s steps(1) infinite;vertical-align:-2px}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- access modes ---------- */
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.mode{background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:16px;padding:30px;transition:.25s;position:relative;overflow:hidden}
+.mode:hover{border-color:var(--accent);transform:translateY(-4px)}
+.mode .mi{width:46px;height:46px;border-radius:12px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;color:var(--accent-hover);margin-bottom:18px}
+.mode .mi svg{width:23px;height:23px}
+.mode h3{font-size:20px;margin-bottom:8px}
+.mode p{color:var(--text-secondary);font-size:14.5px;font-weight:300}
+@media(max-width:760px){.modes{grid-template-columns:1fr}}
+
+/* ---------- feature grid ---------- */
+.fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.feat{background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:14px;padding:24px;transition:.22s}
+.feat:hover{border-color:var(--border);background:var(--bg-secondary);transform:translateY(-3px)}
+.feat .fi{width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;color:var(--accent-hover);margin-bottom:16px}
+.feat .fi svg{width:20px;height:20px}
+.feat h3{font-size:17px;margin-bottom:7px}
+.feat p{font-size:14px;color:var(--text-secondary);font-weight:300}
+@media(max-width:880px){.fgrid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.fgrid{grid-template-columns:1fr}}
+
+/* ---------- showcase ---------- */
+.showcase{display:flex;flex-direction:column;gap:110px}
+.show-row{display:grid;grid-template-columns:1fr 1.25fr;gap:54px;align-items:center}
+.show-row.rev{grid-template-columns:1.25fr 1fr}
+.show-row.rev .show-text{order:2}
+.show-text .eyebrow{margin-bottom:14px}
+.show-text h3{font-size:clamp(26px,3.2vw,36px);margin-bottom:14px}
+.show-text p{color:var(--text-secondary);font-size:16px;font-weight:300;margin-bottom:20px}
+.show-text ul{list-style:none;display:flex;flex-direction:column;gap:10px}
+.show-text li{display:flex;gap:10px;font-size:14.5px;color:var(--text-primary)}
+.show-text li svg{width:18px;height:18px;color:var(--green);flex-shrink:0;margin-top:3px}
+.show-frame{border-radius:14px;border:1px solid var(--border);overflow:hidden;box-shadow:0 40px 90px -40px rgba(0,0,0,.85);background:var(--bg-secondary);position:relative}
+.show-frame::after{content:"";position:absolute;inset:0;border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.05);pointer-events:none}
+.show-frame .cap{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);padding:9px 14px;background:var(--bg-tertiary);border-bottom:1px solid var(--border-subtle)}
+@media(max-width:840px){.show-row,.show-row.rev{grid-template-columns:1fr;gap:28px}.show-row.rev .show-text{order:0}}
+
+/* ---------- mobile ---------- */
+.mobile-sec{position:relative}
+.phones{display:flex;gap:26px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+.phone{width:230px;border-radius:30px;border:8px solid #15151f;background:#15151f;box-shadow:0 40px 80px -30px rgba(0,0,0,.9),0 0 0 2px var(--border-subtle);overflow:hidden;position:relative;transition:.3s}
+.phone:hover{transform:translateY(-8px)}
+.phone::before{content:"";position:absolute;top:8px;left:50%;transform:translateX(-50%);width:70px;height:5px;border-radius:4px;background:#000;z-index:2}
+.phone img{border-radius:22px}
+.phone-cap{text-align:center;font-family:var(--font-mono);font-size:11.5px;color:var(--text-muted);margin-top:14px}
+@media(max-width:560px){.phone{width:200px}}
+
+/* ---------- telegram callout ---------- */
+.tg{display:grid;grid-template-columns:1.1fr 1fr;gap:48px;align-items:center;
+  background:linear-gradient(135deg,rgba(99,102,241,.10),rgba(124,58,237,.05));
+  border:1px solid var(--border);border-radius:24px;padding:54px}
+.tg h2{font-size:clamp(28px,3.6vw,42px);margin:16px 0}
+.tg p{color:var(--text-secondary);font-size:17px;font-weight:300;margin-bottom:26px}
+.tg-chat{background:#0d0d14;border:1px solid var(--border-subtle);border-radius:18px;padding:20px;font-family:var(--font-body);display:flex;flex-direction:column;gap:12px}
+.bubble{max-width:85%;padding:11px 15px;border-radius:14px;font-size:14px;line-height:1.45}
+.bubble.in{background:var(--bg-tertiary);border-bottom-left-radius:4px;color:var(--text-primary);align-self:flex-start}
+.bubble.out{background:var(--accent-grad);border-bottom-right-radius:4px;color:#fff;align-self:flex-end}
+.bubble .meta{font-family:var(--font-mono);font-size:10.5px;opacity:.7;display:block;margin-bottom:3px}
+@media(max-width:840px){.tg{grid-template-columns:1fr;padding:34px}}
+
+/* ---------- download CTA ---------- */
+.cta{text-align:center;background:radial-gradient(circle at 50% 0%,rgba(99,102,241,.16),transparent 60%);
+  border:1px solid var(--border-subtle);border-radius:28px;padding:74px 30px;position:relative;overflow:hidden}
+.cta h2{font-size:clamp(32px,5vw,56px);margin-bottom:18px}
+.cta p{color:var(--text-secondary);font-size:18px;font-weight:300;max-width:520px;margin:0 auto 34px}
+.cta-btns{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.cta .note{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:20px}
+
+/* ---------- footer ---------- */
+footer{border-top:1px solid var(--border-subtle);padding:56px 0 40px;margin-top:120px}
+.foot-inner{display:flex;justify-content:space-between;align-items:flex-start;gap:40px;flex-wrap:wrap}
+.foot-brand{max-width:300px}
+.foot-brand .brand{margin-bottom:14px}
+.foot-brand p{color:var(--text-secondary);font-size:14px;font-weight:300}
+.foot-cols{display:flex;gap:64px;flex-wrap:wrap}
+.foot-col h4{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:14px}
+.foot-col a{display:block;color:var(--text-secondary);font-size:14px;margin-bottom:9px;transition:.18s}
+.foot-col a:hover{color:var(--accent-hover)}
+.foot-bottom{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-top:46px;padding-top:24px;border-top:1px solid var(--border-subtle);flex-wrap:wrap}
+.foot-bottom p{font-size:13px;color:var(--text-muted)}
+.foot-bottom .heart{color:var(--pink)}
+
+/* ---------- reveal animation ---------- */
+.reveal{opacity:0;transform:translateY(26px);transition:.7s cubic-bezier(.2,.7,.2,1)}
+.reveal.in{opacity:1;transform:none}
+.stagger>*{opacity:0;transform:translateY(22px);transition:.6s cubic-bezier(.2,.7,.2,1)}
+.stagger.in>*{opacity:1;transform:none}
+.stagger.in>*:nth-child(2){transition-delay:.07s}
+.stagger.in>*:nth-child(3){transition-delay:.14s}
+.stagger.in>*:nth-child(4){transition-delay:.21s}
+.stagger.in>*:nth-child(5){transition-delay:.28s}
+.stagger.in>*:nth-child(6){transition-delay:.35s}
+.stagger.in>*:nth-child(7){transition-delay:.42s}
+.stagger.in>*:nth-child(8){transition-delay:.49s}
+.stagger.in>*:nth-child(9){transition-delay:.56s}
+.stagger.in>*:nth-child(10){transition-delay:.63s}
+@media(prefers-reduced-motion:reduce){.reveal,.stagger>*{opacity:1!important;transform:none!important}.win-live i,.term-strip .cur{animation:none}}
+
+/* hero load-in */
+.hero .eyebrow,.hero h1,.hero .sub,.hero-cta,.reach,.hero-window{opacity:0;animation:rise .9s cubic-bezier(.2,.7,.2,1) forwards}
+.hero h1{animation-delay:.08s}.hero .sub{animation-delay:.18s}.hero-cta{animation-delay:.28s}
+.reach{animation-delay:.36s}.hero-window{animation-delay:.46s}
+@keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<div class="bg-fx"></div>
+<div class="aurora"><span class="a1"></span><span class="a2"></span><span class="a3"></span></div>
+<div class="grain"></div>
+
+<!-- NAV -->
+<nav id="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top"><img src="assets/logo.png" alt="Crundi logo" />Crundi</a>
+    <div class="nav-links">
+      <a href="#access">Access</a>
+      <a href="#features">Features</a>
+      <a href="#showcase">Tour</a>
+      <a href="#mobile">Mobile</a>
+      <a href="#telegram">Telegram</a>
+    </div>
+    <div class="nav-spacer"></div>
+    <div class="nav-cta">
+      <a class="icon-link gh-label" href="https://github.com/TheRealFaruhaan/crundi" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 4.7 18 5 18 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <a class="btn btn-donate" href="https://www.paypal.com/donate/?business=3Z85MF9DRBRXJ&no_recurring=0&item_name=Just+a+solo+dev+%3B%29&currency_code=USD" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-7.5-4.6-10-9C.4 8.6 1.6 4.5 5.3 4.5c2 0 3.4 1.2 4.2 2.4l.5.8.5-.8c.8-1.2 2.2-2.4 4.2-2.4 3.7 0 4.9 4.1 3.3 7.5-2.5 4.4-10 9-10 9z"/></svg>
+        Sponsor
+      </a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+
+<!-- HERO -->
+<section class="hero">
+  <div class="wrap">
+    <span class="eyebrow">Self-hosted remote workbench</span>
+    <h1>Your machine. <span class="grad">Anywhere</span> you are.</h1>
+    <p class="sub">Crundi turns your PC into a remote workbench — agent terminals, files, git, kanban, mindmap, scheduling and more — reachable from a browser, the desktop app, or a Telegram chat.</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="https://github.com/TheRealFaruhaan/crundi/releases/latest" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download for Windows
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/TheRealFaruhaan/crundi" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 4.7 18 5 18 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+        View source
+      </a>
+    </div>
+    <div class="reach">
+      <span class="dot"></span><b>Web</b><span>browser</span>
+      <span class="dot"></span><b>Desktop</b><span>app</span>
+      <span class="dot"></span><b>Telegram</b><span>bot</span>
+    </div>
+
+    <div class="hero-window">
+      <div class="window">
+        <div class="win-bar">
+          <div class="win-dots"><i></i><i></i><i></i></div>
+          <div class="win-url">crundi.local <span style="color:var(--text-muted)">— Workbench</span></div>
+          <div class="win-live"><i></i> connected</div>
+        </div>
+        <div class="term-strip"><span class="pr">~/playground &gt;</span> <span id="typed"></span><span class="cur"></span></div>
+        <div class="win-body"><img src="assets/shot-workbench.png" alt="Crundi workbench with agent terminal, files and live browser preview" /></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ACCESS MODES -->
+<section class="section" id="access">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Three ways in</span>
+      <h2>Reach it however you're working</h2>
+      <p>One self-hosted server, three front doors. Pick up exactly where you left off from any of them.</p>
+    </div>
+    <div class="modes stagger">
+      <div class="mode">
+        <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></div>
+        <h3>Any browser</h3>
+        <p>Open the full workbench from any device on your network or over a Cloudflare tunnel. Nothing to install.</p>
+      </div>
+      <div class="mode">
+        <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+        <h3>Desktop app</h3>
+        <p>A native Windows app with tray controls, launch-at-startup and seamless one-click auto-updates.</p>
+      </div>
+      <div class="mode">
+        <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.5 4 2.5 11.5l6 2 2.5 6.5 3-4.5 5 3.5z"/><path d="M8.5 13.5 21.5 4"/></svg></div>
+        <h3>Telegram bot</h3>
+        <p>Drive agents, get notified, and send files straight from a chat — with smart, presence-aware alerts.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="section" id="features" style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Everything in one place</span>
+      <h2>A whole workbench, not a single tool</h2>
+      <p>Crundi gathers the things you actually do during a project into one dark, fast, panel-based surface.</p>
+    </div>
+    <div class="fgrid stagger">
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 3 3-3 3M13 15h5"/></svg></div><h3>Agent terminals</h3><p>Spawn multiple AI-agent terminals per project. Resize, rename and reorder — full xterm with newline-key control.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div><h3>File browser</h3><p>Navigate, search, upload, copy and download files with drag-and-drop and auto-scroll across panels.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="9" r="3"/><path d="M6 9v6M9 9a9 9 0 0 0 9 3"/></svg></div><h3>Git</h3><p>See status, stage, diff and commit right inside the workbench, project by project.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="4" height="9" rx="1"/></svg></div><h3>Kanban</h3><p>Backlog → done with tasks, sub-todos, history and restore. Agents can move cards too.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="5" cy="12" r="2.5"/><circle cx="17" cy="6" r="2.5"/><circle cx="17" cy="18" r="2.5"/><path d="M7.3 11 14.7 7M7.3 13l7.4 4"/></svg></div><h3>Mindmap</h3><p>Branching idea maps with notes, links and pixel-aligned edges. Plan visually, then act.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div><h3>Media</h3><p>Collect images and clips, with clickable links that jump you straight to the related task or node.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><h3>Schedule</h3><p>Run agents and jobs on a timer. Get a Telegram ping when a scheduled task fires.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>Services</h3><p>Register start/stop commands, stream logs, and expose any port through a Cloudflare tunnel.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M2 8h20M5 6h.01"/></svg></div><h3>Browsers</h3><p>An embedded browser with device emulation — iPhone, iPad, Pixel, Galaxy, desktop and more.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><h3>Secrets</h3><p>Store secrets safely and gate every access request behind an explicit, notified approval.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- SHOWCASE -->
+<section class="section" id="showcase" style="padding-top:0">
+  <div class="wrap showcase">
+
+    <div class="show-row reveal">
+      <div class="show-text">
+        <span class="eyebrow">Kanban</span>
+        <h3>Plan the work, watch it move</h3>
+        <p>Columns from backlog to done, each card with sub-todos, full history and one-tap restore. Your agents can move and update cards too — so the board reflects reality.</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Tasks, sub-todos and per-card history</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Optional notifications on status change</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Collapsible project rail on the left</li>
+        </ul>
+      </div>
+      <div class="show-frame">
+        <div class="cap">crundi — Kanban</div>
+        <img src="assets/shot-kanban.png" alt="Crundi kanban board" loading="lazy" />
+      </div>
+    </div>
+
+    <div class="show-row rev reveal">
+      <div class="show-frame">
+        <div class="cap">crundi — Mindmap</div>
+        <img src="assets/shot-mindmap.png" alt="Crundi mindmap of an architecture" loading="lazy" />
+      </div>
+      <div class="show-text">
+        <span class="eyebrow">Mindmap</span>
+        <h3>Think in branches</h3>
+        <p>Map out architecture and ideas as a living tree — add notes, link nodes, and let the panel compact itself when space is tight so the canvas stays front and centre.</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Notes and cross-links per node</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Crisp, pixel-aligned edges</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Searchable subtree navigation</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="show-row reveal">
+      <div class="show-text">
+        <span class="eyebrow">Services &amp; tunnels</span>
+        <h3>Run it, expose it, watch it</h3>
+        <p>Register a service with its start and stop commands, hit go, and stream the logs. Need it reachable from outside? Open a Cloudflare tunnel on any port in a click.</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Start / stop / restart with live logs</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>One-click Cloudflare tunnels</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Crash &amp; start notifications</li>
+        </ul>
+      </div>
+      <div class="show-frame">
+        <div class="cap">crundi — Services</div>
+        <img src="assets/shot-services.png" alt="Crundi services panel" loading="lazy" />
+      </div>
+    </div>
+
+    <div class="show-row rev reveal">
+      <div class="show-frame">
+        <div class="cap">crundi — Browser · device emulation</div>
+        <img src="assets/shot-browser.png" alt="Crundi embedded browser with device emulation dropdown" loading="lazy" />
+      </div>
+      <div class="show-text">
+        <span class="eyebrow">Embedded browser</span>
+        <h3>Preview on every screen</h3>
+        <p>Pull up any URL inside the workbench and flip between device profiles — iPhone, iPad, Pixel, Galaxy fold, Surface, Full HD — to check your work without leaving Crundi.</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>20+ device viewport presets</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Sits beside your terminal and files</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>Drive it from agents over MCP</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- MOBILE -->
+<section class="section mobile-sec" id="mobile" style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head reveal" style="margin-left:auto;margin-right:auto;text-align:center">
+      <span class="eyebrow">Built for the phone too</span>
+      <h2>The whole workbench, in your pocket</h2>
+      <p style="margin-left:auto;margin-right:auto">Stack panels vertically or swipe through a snap layout. Drag a file toward an off-screen panel and the view scrolls to meet it.</p>
+    </div>
+    <div class="phones stagger">
+      <div>
+        <div class="phone"><img src="assets/shot-mobile-terminal.jpg" alt="Crundi terminal on mobile" loading="lazy" /></div>
+        <div class="phone-cap">Terminal, focused</div>
+      </div>
+      <div>
+        <div class="phone"><img src="assets/shot-mobile-vertical.jpg" alt="Crundi vertical stacked panels on mobile" loading="lazy" /></div>
+        <div class="phone-cap">Vertical stack</div>
+      </div>
+      <div>
+        <div class="phone"><img src="assets/shot-mobile-drag.jpg" alt="Dragging a file between panels on mobile" loading="lazy" /></div>
+        <div class="phone-cap">Drag &amp; auto-scroll</div>
+      </div>
+      <div>
+        <div class="phone"><img src="assets/shot-mobile-swipe.jpg" alt="Horizontal snap layout mid-swipe on mobile" loading="lazy" /></div>
+        <div class="phone-cap">Horizontal snap</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TELEGRAM -->
+<section class="section" id="telegram" style="padding-top:0">
+  <div class="wrap">
+    <div class="tg reveal">
+      <div>
+        <span class="eyebrow">Telegram bot</span>
+        <h2>Your agents, in your chats</h2>
+        <p>Get pinged when an agent finishes or needs input — but only when you're away. Crundi knows when you're actively focused and stays quiet, with per-event Always / When&nbsp;Away / Never controls.</p>
+        <a class="btn btn-primary" href="https://github.com/TheRealFaruhaan/crundi#telegram" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21.5 4 2.5 11.5l6 2 2.5 6.5 3-4.5 5 3.5z"/></svg>
+          See bot setup
+        </a>
+      </div>
+      <div class="tg-chat">
+        <div class="bubble in"><span class="meta">Crundi · agent finished</span>✦ Worked for 5s — your build is green. Want the logs?</div>
+        <div class="bubble out"><span class="meta">you</span>send the logs 📄</div>
+        <div class="bubble in"><span class="meta">Crundi · secret access</span>🔐 Agent requested <b>OPENAI_KEY</b>. Approve?</div>
+        <div class="bubble out"><span class="meta">you</span>Approve ✅</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DOWNLOAD CTA -->
+<section class="section" style="padding-top:0">
+  <div class="wrap">
+    <div class="cta reveal">
+      <span class="eyebrow" style="justify-content:center">Free &amp; open source</span>
+      <h2>Take your desk with you.</h2>
+      <p>Install Crundi on your Windows machine and reach it from anywhere. Auto-updates keep it fresh.</p>
+      <div class="cta-btns">
+        <a class="btn btn-primary" href="https://github.com/TheRealFaruhaan/crundi/releases/latest" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download latest release
+        </a>
+        <a class="btn btn-donate" href="https://www.paypal.com/donate/?business=3Z85MF9DRBRXJ&no_recurring=0&item_name=Just+a+solo+dev+%3B%29&currency_code=USD" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-7.5-4.6-10-9C.4 8.6 1.6 4.5 5.3 4.5c2 0 3.4 1.2 4.2 2.4l.5.8.5-.8c.8-1.2 2.2-2.4 4.2-2.4 3.7 0 4.9 4.1 3.3 7.5-2.5 4.4-10 9-10 9z"/></svg>
+          Buy the dev a coffee
+        </a>
+      </div>
+      <p class="note">Windows · unsigned build — SmartScreen may warn on first install</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="foot-inner">
+      <div class="foot-brand">
+        <a class="brand" href="#top"><img src="assets/logo.png" alt="Crundi logo" />Crundi</a>
+        <p>A self-hosted remote workbench, built by one solo dev who wanted their machine in their pocket.</p>
+      </div>
+      <div class="foot-cols">
+        <div class="foot-col">
+          <h4>Product</h4>
+          <a href="#access">Access</a>
+          <a href="#features">Features</a>
+          <a href="#showcase">Tour</a>
+          <a href="#mobile">Mobile</a>
+        </div>
+        <div class="foot-col">
+          <h4>Project</h4>
+          <a href="https://github.com/TheRealFaruhaan/crundi" target="_blank" rel="noopener">GitHub repo</a>
+          <a href="https://github.com/TheRealFaruhaan/crundi/releases/latest" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/TheRealFaruhaan/crundi/issues" target="_blank" rel="noopener">Report an issue</a>
+        </div>
+        <div class="foot-col">
+          <h4>Support</h4>
+          <a href="https://www.paypal.com/donate/?business=3Z85MF9DRBRXJ&no_recurring=0&item_name=Just+a+solo+dev+%3B%29&currency_code=USD" target="_blank" rel="noopener">Sponsor ♥</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <p>© <span id="yr"></span> Crundi — made with <span class="heart">♥</span> by a solo dev.</p>
+      <a class="btn btn-donate" href="https://www.paypal.com/donate/?business=3Z85MF9DRBRXJ&no_recurring=0&item_name=Just+a+solo+dev+%3B%29&currency_code=USD" target="_blank" rel="noopener" style="padding:9px 16px;font-size:14px">
+        <svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px"><path d="M12 21s-7.5-4.6-10-9C.4 8.6 1.6 4.5 5.3 4.5c2 0 3.4 1.2 4.2 2.4l.5.8.5-.8c.8-1.2 2.2-2.4 4.2-2.4 3.7 0 4.9 4.1 3.3 7.5-2.5 4.4-10 9-10 9z"/></svg>
+        Donate
+      </a>
+    </div>
+  </div>
+</footer>
+
+<script>
+// year
+document.getElementById('yr').textContent = new Date().getFullYear();
+
+// nav background on scroll
+const nav = document.getElementById('nav');
+const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 24);
+onScroll(); window.addEventListener('scroll', onScroll, {passive:true});
+
+// scroll reveals
+const io = new IntersectionObserver((entries)=>{
+  entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+},{threshold:.12, rootMargin:'0px 0px -8% 0px'});
+document.querySelectorAll('.reveal,.stagger').forEach(el=>io.observe(el));
+
+// hero typing line
+(function(){
+  const el = document.getElementById('typed');
+  if(!el) return;
+  if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){ el.textContent='claude --resume  # picked up from anywhere'; return; }
+  const lines = ['claude --resume', 'git status && npm run dev', 'crundi serve --tunnel', 'open the browser, the app, or telegram'];
+  let li=0, ci=0, del=false;
+  function tick(){
+    const cur = lines[li];
+    el.textContent = cur.slice(0, ci);
+    if(!del){ ci++; if(ci>cur.length){ del=true; setTimeout(tick, 1500); return; } }
+    else { ci--; if(ci<0){ del=false; ci=0; li=(li+1)%lines.length; } }
+    setTimeout(tick, del?34:70);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>
