@@ -1,6 +1,6 @@
 {
   "name": "crundi",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "description": "Self-hosted remote workbench for your projects — agent terminals, files, git, kanban, mindmap and scheduling, reachable from anywhere.",
   "type": "module",
   "main": "app/main.js",
@@ -25,6 +25,14 @@
     "directories": {
       "output": "dist"
     },
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "TheRealFaruhaan",
+        "repo": "crundi"
+      }
+    ],
     "win": {
       "target": [
         "nsis"
@@ -37,8 +45,8 @@
       }
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "include": "build/installer.nsh"
@@ -72,6 +80,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cloudflared": "^0.7.1",
     "dotenv": "^16.4.7",
+    "electron-updater": "^6.8.9",
     "grammy": "^1.35.0",
     "node-pty": "^1.1.0",
     "node-screenshots": "^0.2.8",

@@ -15,6 +15,8 @@ import { dirname, join } from 'path';
 import { spawn, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs';
 import { tmpdir, homedir } from 'os';
+import electronUpdater from 'electron-updater';
+const { autoUpdater } = electronUpdater;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -208,6 +210,10 @@ function updateTrayMenu() {
       enabled: botStatus === 'running' || botStatus === 'starting',
       click: () => stopBot(),
     },
+    { type: 'separator' },
+    updateState.downloaded
+      ? { label: 'Restart to Install Update', click: () => confirmAndInstall() }
+      : { label: 'Check for Updates…', click: () => checkForUpdates(true) },
     { type: 'separator' },
     {
       label: 'Quit',
@@ -428,6 +434,128 @@ async function gracefulShutdownAndExit() {
   app.exit(0);
 }
 
+// ─── Auto-update (electron-updater via GitHub Releases) ───
+// The official electron-builder updater: reads latest.yml from this repo's
+// GitHub Releases, verifies the installer's Authenticode signature (publisherName),
+// downloads in the background and installs on restart. Checks shortly after
+// launch and once every 24h — but only if the user opted in (first-run consent,
+// toggleable in Settings). Public repo → no token needed.
+//
+// The opt-in lives in its own file (NOT .env), so the server rewriting .env on a
+// settings-save can never clobber it.
+const updateConfigPath = join(userDataDir, 'update-config.json');
+let updateInstalling = false;
+const updateState = { enabled: true, available: false, downloaded: false, version: '', current: app.getVersion() };
+
+function readAutoUpdate() {
+  try {
+    if (existsSync(updateConfigPath)) {
+      const c = JSON.parse(readFileSync(updateConfigPath, 'utf8'));
+      if (c && typeof c.autoUpdate === 'boolean') return c.autoUpdate;
+    }
+  } catch { /* default */ }
+  return true; // default ON
+}
+function writeAutoUpdate(enabled) {
+  try { writeFileSync(updateConfigPath, JSON.stringify({ autoUpdate: !!enabled }), 'utf8'); } catch { /* non-fatal */ }
+}
+
+function sendUpdateStatus() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.webContents.send('update:status', { ...updateState }); } catch { /* ignore */ }
+  }
+  updateTrayMenu();
+}
+
+function setupAutoUpdate() {
+  updateState.enabled = readAutoUpdate();
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = {
+    info: (m) => appendLog('[update] ' + m),
+    warn: (m) => appendLog('[update] ' + m),
+    error: (m) => appendLog('[update] ' + m),
+    debug: () => {},
+  };
+  autoUpdater.on('checking-for-update', () => appendLog('[update] Checking for updates…'));
+  autoUpdater.on('update-available', (info) => {
+    appendLog('[update] Available: ' + info.version);
+    updateState.available = true; updateState.version = info.version; sendUpdateStatus();
+  });
+  autoUpdater.on('update-not-available', () => {
+    appendLog('[update] Up to date');
+    updateState.available = false; updateState.downloaded = false; sendUpdateStatus();
+  });
+  autoUpdater.on('download-progress', (p) => appendLog(`[update] Downloading ${Math.round(p.percent || 0)}%`));
+  autoUpdater.on('error', (err) => appendLog('[update] Error: ' + ((err && err.message) || String(err))));
+  autoUpdater.on('update-downloaded', (info) => {
+    appendLog('[update] Downloaded ' + info.version);
+    updateState.available = true; updateState.downloaded = true; updateState.version = info.version;
+    sendUpdateStatus();
+    confirmAndInstall(); // prompt right away; user can defer
+  });
+}
+
+function checkForUpdates(manual = false) {
+  if (!app.isPackaged) {
+    appendLog('[update] Skipped (dev build — packaged app only)');
+    if (manual && mainWindow) dialog.showMessageBox(mainWindow, { type: 'info', message: 'Update checks run in the installed app only.' });
+    return;
+  }
+  if (!updateState.enabled && !manual) return; // respect the opt-out for automatic checks
+  autoUpdater.checkForUpdates().catch((err) => appendLog('[update] check failed: ' + err.message));
+}
+
+function setAutoUpdate(enabled) {
+  updateState.enabled = !!enabled;
+  writeAutoUpdate(updateState.enabled);
+  appendLog('[update] Auto-update ' + (updateState.enabled ? 'enabled' : 'disabled'));
+  sendUpdateStatus();
+  if (updateState.enabled) checkForUpdates(); // re-check immediately on enable
+}
+
+// ─── Launch at Windows startup (OS login-item; OS is the source of truth) ───
+function getLaunchAtStartup() {
+  try { return !!app.getLoginItemSettings().openAtLogin; } catch { return false; }
+}
+function setLaunchAtStartup(enabled) {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!enabled });
+    appendLog('[startup] Launch at login ' + (enabled ? 'enabled' : 'disabled'));
+  } catch (e) { appendLog('[startup] error: ' + (e.message || e)); }
+}
+
+// Always confirm before restarting to install — give the user a chance to save
+// work and confirm running services are safe to stop.
+async function confirmAndInstall() {
+  if (!updateState.downloaded) { checkForUpdates(true); return; }
+  if (!mainWindow || mainWindow.isDestroyed()) { installUpdateNow(); return; }
+  try {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Restart & Install', 'Not now'],
+      defaultId: 1, cancelId: 1,
+      title: 'Install Crundi ' + updateState.version,
+      message: `Crundi ${updateState.version} is ready to install.`,
+      detail: 'Crundi will close and restart to apply the update. Before continuing:\n\n'
+        + '•  Save any unsaved work in your terminals and editors.\n'
+        + '•  Make sure any running services are safe to stop — they will be shut down.\n\n'
+        + 'It will also install automatically the next time you quit Crundi.',
+    });
+    if (response === 0) installUpdateNow();
+  } catch { /* ignore */ }
+}
+
+async function installUpdateNow() {
+  if (updateInstalling) return;
+  updateInstalling = true;
+  appendLog('[update] Installing — stopping server first…');
+  app.isQuitting = true;
+  quitting = true; // bypass the graceful before-quit handler; we stop the server here
+  try { await stopServerProcess(); } catch { /* ignore */ }
+  autoUpdater.quitAndInstall(true, true); // silent install, relaunch after
+}
+
 // ─── Setup Wizard ───
 
 function showSetupWizard(oldConfig) {
@@ -456,6 +584,10 @@ ipcMain.handle('setup:save', (_e, config) => {
   ];
   try { mkdirSync(dirname(envPath), { recursive: true }); } catch { /* ignore */ }
   writeFileSync(envPath, lines.join('\n'), 'utf8');
+  // First-run consent: update checks + launch-at-startup (both default on).
+  writeAutoUpdate(config.autoUpdate !== false);
+  updateState.enabled = config.autoUpdate !== false;
+  setLaunchAtStartup(config.autoLaunch !== false);
   appendLog('.env saved — starting Crundi...');
   startBot();
   return true;
@@ -510,6 +642,13 @@ ipcMain.handle('window:maximize', () => {
 });
 ipcMain.handle('window:close', () => mainWindow?.close());
 ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() || false);
+
+// ─── Auto-update + startup IPC (renderer ↔ main) ───
+ipcMain.handle('update:getState', () => ({ ...updateState, launch: getLaunchAtStartup() }));
+ipcMain.handle('update:setEnabled', (_e, enabled) => { setAutoUpdate(enabled); return { ...updateState, launch: getLaunchAtStartup() }; });
+ipcMain.handle('update:check', () => { checkForUpdates(true); return { ...updateState, launch: getLaunchAtStartup() }; });
+ipcMain.handle('update:install', () => { confirmAndInstall(); return { ...updateState, launch: getLaunchAtStartup() }; });
+ipcMain.handle('startup:set', (_e, enabled) => { setLaunchAtStartup(enabled); return { ...updateState, launch: getLaunchAtStartup() }; });
 
 // ─── Interactive browser panel — real pages via WebContentsView ───
 // A WebContentsView is parented to the main window and overlaid on the panel.
@@ -1177,6 +1316,14 @@ app.whenReady().then(() => {
     appendLog('[lifecycle] startBot() called');
   } catch (err) {
     appendLog(`[lifecycle] startBot error: ${err.message}`);
+  }
+  try {
+    setupAutoUpdate();
+    setTimeout(() => checkForUpdates(), 8000);                  // shortly after launch
+    setInterval(() => checkForUpdates(), 24 * 60 * 60 * 1000);  // once every day
+    appendLog('[lifecycle] Auto-update scheduled (launch + daily)');
+  } catch (err) {
+    appendLog(`[lifecycle] Auto-update setup error: ${err.message}`);
   }
 });
 

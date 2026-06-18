@@ -1178,7 +1178,7 @@ export function getWebappHtml(botUsername) {
          stays) and collapse the connection badge to just its status dot. */
       .topbar .logo .logo-text { display: none; }
       .topbar .status-badge.connected, .topbar .status-badge.disconnected {
-        font-size: 0; padding: 6px; gap: 0; border-radius: 50%;
+        font-size: 0; padding: 6px; gap: 0 !important; border-radius: 50%;
       }
       .tab-btn { padding: 8px 12px; font-size: 0.76rem; }
       .svc-card { padding: 12px; }
@@ -1228,6 +1228,45 @@ export function getWebappHtml(botUsername) {
     }
     .term-select-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     @media (max-width: 768px) { .term-select-toggle { display: block; } }
+    /* Segmented preference control (settings) — refined pill toggle. */
+    .seg-pref { display: inline-flex; gap: 3px; padding: 3px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; }
+    .seg-pref button {
+      appearance: none; border: none; background: transparent; cursor: pointer;
+      font: inherit; font-size: 0.76rem; font-weight: 500; letter-spacing: 0.01em;
+      color: var(--text-secondary); padding: 6px 14px; border-radius: 6px;
+      transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+    }
+    .seg-pref button:hover:not(.active) { color: var(--text-primary); background: var(--accent-dim); }
+    .seg-pref button.active { background: var(--accent); color: #fff; box-shadow: 0 1px 7px rgba(99, 102, 241, 0.4); }
+    .seg-pref button kbd {
+      font-family: var(--mono); font-size: 0.92em; font-weight: 600;
+      padding: 1px 5px; border-radius: 4px; background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border); color: inherit;
+    }
+    .seg-pref button.active kbd { background: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.25); }
+    /* Notification matrix — a control-panel grid of tri-state "lamps". Each event
+       is a row; the active mode lights up in its column colour (green=Always,
+       indigo=When Away, dim=Never) so the whole board reads at a glance. */
+    .ntf-matrix { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-secondary); }
+    .ntf-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 62px); align-items: stretch; border-top: 1px solid var(--border); }
+    .ntf-matrix > .ntf-row:first-child { border-top: none; }
+    .ntf-row.head { background: var(--bg-tertiary); }
+    .ntf-row.event { animation: ntfRise 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+    .ntf-row.event:hover { background: rgba(255, 255, 255, 0.025); }
+    @keyframes ntfRise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .ntf-h { font-family: var(--mono); font-size: 0.56rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-muted); text-align: center; padding: 11px 2px 9px; align-self: center; }
+    .ntf-h.lbl { text-align: left; padding-left: 14px; letter-spacing: 0.12em; }
+    .ntf-h:not(.lbl), .ntf-cell { border-left: 1px solid var(--border); }
+    .ntf-cat { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.13em; text-transform: uppercase; color: var(--accent); background: var(--bg-tertiary); padding: 6px 14px; border-top: 1px solid var(--border); }
+    .ntf-lbl { padding: 11px 14px; font-size: 0.82rem; color: var(--text-primary); line-height: 1.3; display: flex; align-items: center; }
+    .ntf-cell { display: flex; align-items: center; justify-content: center; padding: 9px 0; cursor: pointer; }
+    .ntf-lamp { width: 15px; height: 15px; border-radius: 50%; border: 2px solid var(--border); background: transparent; transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease; }
+    .ntf-cell:hover .ntf-lamp { border-color: var(--text-secondary); transform: scale(1.14); }
+    .ntf-cell.on .ntf-lamp { border-color: transparent; }
+    .ntf-cell.on[data-val="always"] .ntf-lamp { background: var(--green); box-shadow: 0 0 9px rgba(16, 185, 129, 0.55); }
+    .ntf-cell.on[data-val="away"] .ntf-lamp { background: var(--accent); box-shadow: 0 0 9px rgba(99, 102, 241, 0.6); }
+    .ntf-cell.on[data-val="never"] .ntf-lamp { background: var(--text-muted); }
+    @media (max-width: 768px) { .ntf-row { grid-template-columns: minmax(0, 1fr) repeat(3, 50px); } }
     .term-scroll-bottom {
       display: none;
       position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 11;
@@ -1382,6 +1421,25 @@ export function getWebappHtml(botUsername) {
       .kanban-col { max-width: 100%; min-width: 0; max-height: none; }
       .kanban-col-body { max-height: none; }
     }
+    /* When the panel is narrow, condense the toolbar to one tight row so the
+       board / mindmap canvas keeps the vertical space: smaller buttons, the
+       Media label folds to icon-only, the usage hint drops, and the mindmap
+       filter input + project bar tighten. Container-scoped to the panel width. */
+    @container (max-width: 480px) {
+      .kanban-panel .kanban-toolbar,
+      .mindmap-panel .kanban-toolbar { padding: 6px 8px; gap: 5px; }
+      .kanban-panel .kanban-toolbar .spacer,
+      .mindmap-panel .kanban-toolbar .spacer { display: none; }
+      .kanban-panel .kanban-btn,
+      .mindmap-panel .kanban-btn { padding: 5px 8px; font-size: 0.74rem; border-radius: 6px; gap: 0; }
+      .kanban-panel .kanban-btn .tb-lbl,
+      .mindmap-panel .kanban-btn .tb-lbl { display: none; }
+      .mindmap-panel .mm-hint { display: none; }
+      .mindmap-panel .mm-search { flex: 1 1 80px; min-width: 0; padding: 5px 8px; font-size: 0.76rem; }
+      .mindmap-panel .mm-proj-bar { padding: 5px 8px; gap: 5px; }
+      .mindmap-panel .mm-proj-label { display: none; }
+      .mindmap-panel .mm-proj-chip { font-size: 0.72rem; padding: 2px 8px; }
+    }
     .kanban-col.drag-over { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
     .kanban-col-head {
       display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
@@ -1499,6 +1557,16 @@ export function getWebappHtml(botUsername) {
       background: var(--red); color: #fff; font-size: 0.65rem; font-weight: 700;
       align-items: center; justify-content: center; margin-left: 2px;
     }
+    /* Update-available dot on the Settings tab + the Updates settings section. */
+    .update-badge { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(16,185,129,0.18); }
+    .sw { position: relative; width: 42px; height: 24px; flex-shrink: 0; padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-tertiary); cursor: pointer; transition: background 0.16s, border-color 0.16s; }
+    .sw .sw-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-muted); transition: transform 0.18s cubic-bezier(0.2,0.7,0.2,1), background 0.18s; }
+    .sw.on { background: var(--accent); border-color: var(--accent); }
+    .sw.on .sw-knob { transform: translateX(18px); background: #fff; }
+    .upd-status { display: inline-flex; align-items: center; gap: 7px; font-size: 0.82rem; color: var(--text-secondary); }
+    .upd-status .upd-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+    .upd-status.avail { color: var(--accent-hover); }
+    .upd-status.avail .upd-dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
     .secrets-section-title { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); margin-bottom: 8px; }
     .secrets-requests { background: var(--yellow-dim); border: 1px solid var(--yellow); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; }
     .secret-request { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(245,158,11,0.25); flex-wrap: wrap; }
@@ -1613,8 +1681,9 @@ export function getWebappHtml(botUsername) {
     .media-name { font-size: 0.76rem; font-weight: 600; word-break: break-word; line-height: 1.25;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .media-sub { font-size: 0.66rem; color: var(--text-muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-    .media-link-tag { display: inline-flex; align-items: center; gap: 3px; color: var(--green); }
-    .media-link-tag.deleted { color: var(--text-muted); text-decoration: line-through; }
+    .media-link-tag { display: inline-flex; align-items: center; gap: 3px; color: var(--green); cursor: pointer; }
+    .media-link-tag:hover:not(.deleted) { text-decoration: underline; }
+    .media-link-tag.deleted { color: var(--text-muted); text-decoration: line-through; cursor: default; }
     .media-actions { display: flex; gap: 4px; padding: 0 9px 9px; }
     .media-actions button {
       flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
@@ -1668,7 +1737,7 @@ export function getWebappHtml(botUsername) {
       0%, 60% { box-shadow: 0 0 0 3px var(--accent), 0 0 18px 4px var(--accent-dim); }
       100% { box-shadow: 0 0 0 0 transparent; }
     }
-    .mindmap-panel { padding: 0; }
+    .mindmap-panel { padding: 0; container-type: inline-size; }
     .mindmap-canvas { position: relative; flex: 1; overflow: auto; background:
       radial-gradient(circle, var(--border-subtle) 1px, transparent 1px) 0 0 / 22px 22px; }
     .mindmap-inner { position: relative; min-width: 100%; min-height: 100%; }
@@ -2005,7 +2074,7 @@ export function getWebappHtml(botUsername) {
           <button class="tab-btn" data-tab="browsers" title="Browsers"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browsers</span></button>
           <button class="tab-btn" data-tab="info" title="Info"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span class="tab-label">Info</span></button>
           <button class="tab-btn" data-tab="secrets" title="Secrets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tab-label">Secrets</span> <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
-          <button class="tab-btn" data-tab="settings" title="Settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="tab-label">Settings</span></button>
+          <button class="tab-btn" data-tab="settings" title="Settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="tab-label">Settings</span> <span class="update-badge" id="update-badge" style="display:none" title="Update available"></span></button>
         </div>
         <div class="wb-add-menu" id="wb-add-menu" style="display:none;">
           <button data-action="wb-add" data-kind="terminal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal</button>
@@ -2294,6 +2363,55 @@ export function getWebappHtml(botUsername) {
       persistWbState();
     }
     const termFont = JSON.parse(localStorage.getItem('crundi_term_font') || '{}'); // termId → px
+    // Per-event Telegram notification policy ('always' | 'away' | 'never'),
+    // mirrored from the server in renderSettings and applied instantly on change.
+    const NOTIFY_DEFAULTS_CLIENT = {
+      finished: 'away', needsInput: 'away',
+      kanbanTask: 'never', kanbanSubtask: 'never',
+      scheduleRun: 'away',
+      serviceDown: 'always', serviceUp: 'away',
+      mindmapAdd: 'never', mindmapDelete: 'never',
+      browserLaunch: 'never', browserStop: 'never',
+      secretRequest: 'always',
+    };
+    let notifyPrefs = { ...NOTIFY_DEFAULTS_CLIENT };
+
+    // ─── Auto-update (desktop app only; driven by Electron main via window.api) ───
+    let updateState = { enabled: true, available: false, downloaded: false, version: '', current: '', launch: false };
+    function applyUpdateState(s) {
+      if (s) updateState = Object.assign(updateState, s);
+      const b = document.getElementById('update-badge');
+      if (b) b.style.display = updateState.available ? '' : 'none';
+      if (currentTab === 'settings') renderSettings();
+    }
+    function buildUpdatesSection() {
+      const us = updateState;
+      const status = us.available
+        ? '<div class="upd-status avail"><span class="upd-dot"></span>Update available \\u2014 v' + escHtml(us.version || '') + (us.downloaded ? ' (downloaded)' : '') + '</div>'
+        : '<div class="upd-status"><span class="upd-dot"></span>Up to date' + (us.current ? ' \\u2014 v' + escHtml(us.current) : '') + '</div>';
+      const action = us.available
+        ? '<button class="kanban-btn primary" data-action="update-install">' + (us.downloaded ? 'Restart \\u0026 install' : 'Download \\u0026 install') + '</button>'
+        : '<button class="kanban-btn" data-action="update-check">Check now</button>';
+      const sw = (on, act, title) => '<button type="button" class="sw' + (on ? ' on' : '') + '" data-action="' + act + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '" title="' + title + '"><span class="sw-knob"></span></button>';
+      const row = (title, sub, control) => '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">'
+        + '<div><div style="font-size:0.86rem;color:var(--text-primary);">' + title + '</div>'
+        + '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">' + sub + '</div></div>' + control + '</div>';
+      return '<div class="info-section"><h4>Desktop App</h4>'
+        + row('Launch at startup', 'Start Crundi in the tray when Windows starts.', sw(us.launch, 'startup-toggle', 'Launch at startup'))
+        + row('Automatic updates', 'Check on launch and once a day. Always asks before installing.', sw(us.enabled, 'update-toggle', 'Automatic updates'))
+        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">' + status + action + '</div></div>';
+    }
+    async function initUpdateUi() {
+      if (!window.api || !window.api.getUpdateState) return;
+      try { applyUpdateState(await window.api.getUpdateState()); } catch { /* ignore */ }
+      if (window.api.onUpdateStatus) { try { window.api.onUpdateStatus(applyUpdateState); } catch { /* ignore */ } }
+    }
+    // Which key inserts a newline (vs. submitting) in the terminal: 'shift' or 'ctrl'.
+    let termNewlineKey = localStorage.getItem('crundi_term_newline_key') === 'ctrl' ? 'ctrl' : 'shift';
+    function setTermNewlineKey(v) {
+      termNewlineKey = v === 'ctrl' ? 'ctrl' : 'shift';
+      try { localStorage.setItem('crundi_term_newline_key', termNewlineKey); } catch { /* ignore */ }
+    }
     let currentProject = null;
     let currentTab = 'workbench';
     let projects = [];
@@ -3406,6 +3524,19 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // Refresh just the status dot / badge of each live grid cell in place. Used on
+    // every state push so an agent status change (working → done) never triggers a
+    // full renderTermGrid() — a rebuild re-parents the cells and would blur the
+    // terminal you're currently typing in.
+    function updateLiveCellHeads() {
+      const grid = document.getElementById('term-grid');
+      if (!grid) return;
+      for (const t of terminals) {
+        const el = grid.querySelector('[data-cellkey="live:' + t.id + '"]');
+        if (el) updateCellHead(el, t);
+      }
+    }
+
     function mountXterm(t, cellEl) {
       if (termViews.has(t.id)) return;
       const mount = cellEl.querySelector('.term-mount');
@@ -3428,6 +3559,22 @@ export function getWebappHtml(botUsername) {
 
       // Ctrl/Cmd+V image paste → upload + paste path; text left to xterm (paste once).
       xterm.attachCustomKeyEventHandler((e) => {
+        // Configurable newline key (Settings -> Terminal): Shift+Enter (default)
+        // or Ctrl/Cmd+Enter inserts a newline instead of submitting. Terminals
+        // send the SAME byte (CR, 0x0d) for Enter and Shift+Enter, so xterm would
+        // just submit. We instead send ESC+CR (0x1b 0x0d) -- the sequence Claude
+        // Code (and terminal Shift+Enter keybindings) treat as "insert newline".
+        // Read live so the toggle applies to already-open terminals.
+        if (e.type === 'keydown' && e.key === 'Enter' && !e.altKey) {
+          const wantNewline = termNewlineKey === 'ctrl'
+            ? ((e.ctrlKey || e.metaKey) && !e.shiftKey)
+            : (e.shiftKey && !e.ctrlKey && !e.metaKey);
+          if (wantNewline) {
+            e.preventDefault();
+            if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', id: t.id, data: '\\x1b\\r' }));
+            return false;
+          }
+        }
         if (e.type === 'keydown' && e.key === 'v' && (e.ctrlKey || e.metaKey) && currentProject) {
           (async () => {
             try {
@@ -4529,6 +4676,7 @@ export function getWebappHtml(botUsername) {
           ws.send(JSON.stringify({ type: 'subscribe', id }));
         }
         fitAllTerms();
+        reportPresence(true); // re-assert presence on a fresh socket
       };
 
       ws.onmessage = (e) => {
@@ -4552,6 +4700,27 @@ export function getWebappHtml(botUsername) {
       ws.onerror = () => { /* onclose will fire */ };
     }
 
+    // ─── Presence ───
+    // Tell the server whether the user is actively focused on this window (the
+    // browser tab or the Electron app). When present, the server skips the
+    // agent-done / needs-input Telegram ping — the user is already here.
+    // hasFocus() is true only while THIS tab/window holds OS focus, so a tab in
+    // the background, or a window left open on a LOCKED PC (lock drops focus),
+    // both report not-present and still get the Telegram alert.
+    let _present = null;
+    function reportPresence(force) {
+      const active = document.hasFocus() && document.visibilityState === 'visible';
+      if (!force && active === _present) return;
+      _present = active;
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'presence', active }));
+    }
+    window.addEventListener('focus', () => reportPresence());
+    window.addEventListener('blur', () => reportPresence());
+    document.addEventListener('visibilitychange', () => reportPresence());
+    // Heartbeat refreshes the server's presence TTL while focused, so a silently
+    // dropped socket's presence lapses (server stops muting) instead of sticking.
+    setInterval(() => { if (_present) reportPresence(true); }, 30000);
+
     // ─── SSE for state updates ───
     function connectSSE() {
       clearTimeout(sseReconnectTimer);
@@ -4569,10 +4738,12 @@ export function getWebappHtml(botUsername) {
           }
           renderProjects();
           renderTerminals();
-          // The server re-broadcasts state every 5s; only rebuild the terminal
-          // grid when the terminal set actually changed, otherwise the periodic
-          // re-append + refit makes the live terminals flicker.
-          const termSig = JSON.stringify(terminals);
+          // Status dots/badges update in place every push (cheap, no focus loss).
+          updateLiveCellHeads();
+          // Only rebuild the grid when the terminal SET/layout actually changes —
+          // NOT for agent-status changes (working↔done), which are excluded from
+          // the signature so a rebuild can't re-parent cells and steal typing focus.
+          const termSig = JSON.stringify(terminals.map(t => [t.id, t.project, t.title, t.order, t.status]));
           if (termSig !== lastTermSig) { lastTermSig = termSig; renderTermGrid(); }
         } catch { /* ignore */ }
       });
@@ -6523,6 +6694,36 @@ export function getWebappHtml(botUsername) {
         const hintStyle = 'color:var(--text-muted);font-size:0.7rem;margin-top:2px;';
         const fieldStyle = 'margin-bottom:14px;';
 
+        // Notification policy matrix, reflecting server state. Each event row gets
+        // three lamps (Always / When Away / Never); the active one lights up.
+        notifyPrefs = Object.assign({}, NOTIFY_DEFAULTS_CLIENT, data.notifyPrefs || {});
+        const NOTIFY_MODES_UI = [['always', 'Always'], ['away', 'When Away'], ['never', 'Never']];
+        const NOTIFY_GROUPS = [
+          ['Agent', [['finished', 'When agent finishes'], ['needsInput', 'When agent needs input']]],
+          ['Kanban', [['kanbanTask', 'Main task status change'], ['kanbanSubtask', 'Sub task status change']]],
+          ['Schedule', [['scheduleRun', 'When a schedule executes']]],
+          ['Services', [['serviceDown', 'When a service crashes / stops'], ['serviceUp', 'When a service starts']]],
+          ['Mindmap', [['mindmapAdd', 'When a node is added'], ['mindmapDelete', 'When a node is deleted']]],
+          ['MCP Browser', [['browserLaunch', 'When a browser launches'], ['browserStop', 'When a browser stops']]],
+          ['Security', [['secretRequest', 'Secret access requested']]],
+        ];
+        const buildNotifyMatrix = () => {
+          let m = '<div class="ntf-matrix"><div class="ntf-row head"><div class="ntf-h lbl">Event</div>'
+            + NOTIFY_MODES_UI.map(([, l]) => '<div class="ntf-h">' + l + '</div>').join('') + '</div>';
+          let di = 0;
+          for (const [cat, evs] of NOTIFY_GROUPS) {
+            m += '<div class="ntf-cat">' + cat + '</div>';
+            for (const [key, label] of evs) {
+              const cur = notifyPrefs[key] || 'never';
+              m += '<div class="ntf-row event" data-notify-field="' + key + '" role="radiogroup" aria-label="' + escHtml(label) + '" style="animation-delay:' + (di++ * 22) + 'ms">'
+                + '<div class="ntf-lbl">' + label + '</div>'
+                + NOTIFY_MODES_UI.map(([v, l]) => '<div class="ntf-cell' + (cur === v ? ' on' : '') + '" role="radio" aria-checked="' + (cur === v) + '" title="' + l + '" data-action="notify-pref" data-field="' + key + '" data-val="' + v + '"><span class="ntf-lamp"></span></div>').join('')
+                + '</div>';
+            }
+          }
+          return m + '</div>';
+        };
+
         let html = '<div class="info-section"><h4>Settings</h4>'
           + '<p style="color:var(--text-muted);font-size:0.78rem;margin-bottom:16px;">Changes are saved to <code style="font-family:var(--mono);font-size:0.72rem;background:var(--bg-tertiary);padding:2px 5px;border-radius:3px;">' + escHtml(data.envPath) + '</code></p>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Bot Token <span style="color:var(--red);">*</span></label>'
@@ -6549,14 +6750,27 @@ export function getWebappHtml(botUsername) {
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Data Directory</label>'
           + '<input type="text" id="set-data-dir" style="' + monoStyle + '" value="' + escHtml(s.DATA_DIR || '') + '" placeholder="(default: platform app dir)" />'
           + '<p style="' + hintStyle + '">Override data storage location. Leave empty for default.</p></div>'
-          + '<div style="' + fieldStyle + '"><label style="display:flex;align-items:center;gap:9px;cursor:pointer;color:var(--text-secondary);font-size:0.82rem;">'
-          + '<input type="checkbox" id="set-notify-agent"' + (data.notifyAgentStatus !== false ? ' checked' : '') + ' style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;" />'
-          + 'Notify me when an agent finishes or needs input</label>'
-          + '<p style="' + hintStyle + '">Telegram ping on a terminal\\u2019s Claude reaching done or waiting for input.</p></div>'
           + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
           + '<button data-action="settings-save" style="padding:8px 20px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">Save</button>'
           + '<span id="settings-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
-          + '</div></div>';
+          + '</div></div>'
+          // Notification policy — applied instantly, no restart. "When Away" only
+          // pings when you are NOT focused on Crundi (browser tab / Electron app).
+          + '<div class="info-section"><h4>Notification Settings</h4>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Telegram pings per event. \\u201cAlways\\u201d sends every time; \\u201cWhen Away\\u201d only while you\\u2019re not focused on Crundi (browser tab / Electron app); \\u201cNever\\u201d is off.</p>'
+          + buildNotifyMatrix()
+          + '</div>'
+          // Client-side terminal preferences — applied instantly, no restart.
+          + '<div class="info-section"><h4>Terminal</h4>'
+          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">New Line Key</label>'
+          + '<div class="seg-pref" id="set-newline-key">'
+          + '<button type="button" data-action="term-newline-key" data-val="shift"' + (termNewlineKey === 'shift' ? ' class="active"' : '') + '><kbd>Shift</kbd> + <kbd>Enter</kbd></button>'
+          + '<button type="button" data-action="term-newline-key" data-val="ctrl"' + (termNewlineKey === 'ctrl' ? ' class="active"' : '') + '><kbd>Ctrl</kbd> + <kbd>Enter</kbd></button>'
+          + '</div>'
+          + '<p style="' + hintStyle + '">Inserts a newline in the terminal instead of submitting \\u2014 the other key still submits. Applies instantly to all terminals.</p></div></div>';
+
+        // Updates section — desktop app only (driven by Electron's auto-updater).
+        if (window.api && window.api.getUpdateState) html += buildUpdatesSection();
 
         panel.innerHTML = html;
       } catch (err) {
@@ -6579,14 +6793,13 @@ export function getWebappHtml(botUsername) {
         return;
       }
       const chatId = ($('#set-chat-id') || {}).value || '';
-      const notifyAgentStatus = !($('#set-notify-agent') && $('#set-notify-agent').checked === false);
       const status = $('#settings-status');
       if (status) status.textContent = 'Saving...';
       try {
         const r = await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ settings, chatId, notifyAgentStatus }),
+          body: JSON.stringify({ settings, chatId }),
         });
         const data = await r.json();
         if (data.ok) {
@@ -6601,6 +6814,16 @@ export function getWebappHtml(botUsername) {
         toast('Failed to save: ' + err.message, 'error');
         if (status) status.textContent = 'Error';
       }
+    }
+
+    // Persist the notification policy on its own (applies live, no env rewrite).
+    async function saveNotifyPrefs() {
+      try {
+        await apiFetch('/api/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notifyPrefs }),
+        });
+      } catch (err) { toast('Failed to save notification setting: ' + err.message, 'error'); }
     }
 
     // ─── Event Delegation ───
@@ -6640,6 +6863,34 @@ export function getWebappHtml(botUsername) {
         case 'svc-reg-submit': submitRegisterService(); break;
         case 'svc-reg-cancel': cancelRegisterService(); break;
         case 'settings-save': saveSettings(); break;
+        case 'term-newline-key':
+          setTermNewlineKey(d.val);
+          $$('#set-newline-key button').forEach(b => b.classList.toggle('active', b.dataset.val === termNewlineKey));
+          break;
+        case 'update-toggle':
+          if (window.api && window.api.setAutoUpdate) window.api.setAutoUpdate(!updateState.enabled).then(applyUpdateState).catch(() => {});
+          break;
+        case 'startup-toggle':
+          if (window.api && window.api.setStartup) window.api.setStartup(!updateState.launch).then(applyUpdateState).catch(() => {});
+          break;
+        case 'update-check':
+          if (window.api && window.api.checkForUpdates) { toast('Checking for updates\\u2026'); window.api.checkForUpdates().then(applyUpdateState).catch(() => {}); }
+          break;
+        case 'update-install':
+          if (window.api && window.api.installUpdate) window.api.installUpdate().catch(() => {});
+          break;
+        case 'notify-pref': {
+          const field = d.field, val = d.val;
+          if (!field || !['always', 'away', 'never'].includes(val)) break;
+          notifyPrefs[field] = val;
+          $$('.ntf-row[data-notify-field="' + field + '"] .ntf-cell').forEach(c => {
+            const on = c.dataset.val === val;
+            c.classList.toggle('on', on);
+            c.setAttribute('aria-checked', on ? 'true' : 'false');
+          });
+          saveNotifyPrefs();
+          break;
+        }
         case 'copy-logs': copyServerLogs(); break;
         case 'term-spawn': termSpawnUser(); break;
         case 'term-view-output': termViewOutput(d.name); break;
@@ -6760,7 +7011,7 @@ export function getWebappHtml(botUsername) {
         + '<button class="kanban-btn ' + (kanbanView === 'board' ? 'toggled' : '') + '" data-kact="view-board">Board</button>'
         + '<button class="kanban-btn ' + (kanbanView === 'trash' ? 'toggled' : '') + '" data-kact="view-trash">Trash (' + b.deletedTasks.length + ')</button>'
         + '<button class="kanban-btn ' + (kanbanView === 'history' ? 'toggled' : '') + '" data-kact="view-history">History</button>'
-        + '<button class="kanban-btn" data-kact="media">' + ic('images') + ' Media</button>'
+        + '<button class="kanban-btn" data-kact="media">' + ic('images') + '<span class="tb-lbl"> Media</span></button>'
         + '</div>';
       if (kanbanView === 'history') h += renderKanbanHistory();
       else if (kanbanView === 'trash') h += renderKanbanTrash();
@@ -6884,6 +7135,65 @@ export function getWebappHtml(botUsername) {
       } catch (err) { toast('Action failed: ' + err.message, 'error'); return { ok: false }; }
     }
 
+    // ─── Auto-scroll the workbench while dragging near its edges ───
+    // Lets a drag reach panels that are currently off-screen. Targets only the
+    // workbench scrollers: #term-grid (desktop horizontal / mobile column) and
+    // the mobile snap rows (.mosaic-split.row). Snap rows jump exactly one screen
+    // then sit out a 1s cooldown so the scroll-snap can settle before the next jump.
+    const WB_EDGE = 60;        // px hot-zone from each edge
+    const WB_SPEED = 22;       // px/frame max continuous scroll
+    const WB_SNAP_COOLDOWN = 1000; // ms between one-screen snap jumps
+    let _wbScrollRAF = null, _wbSnapUntil = 0;
+    const _wbPtr = { x: 0, y: 0, active: false };
+    function wbDragScroller(x, y) {
+      let el = document.elementFromPoint(x, y);
+      while (el && el !== document.body) {
+        if (el.id === 'term-grid' || (el.classList && el.classList.contains('mosaic-split'))) {
+          const cs = getComputedStyle(el);
+          const canX = el.scrollWidth > el.clientWidth + 2 && /(auto|scroll)/.test(cs.overflowX);
+          const canY = el.scrollHeight > el.clientHeight + 2 && /(auto|scroll)/.test(cs.overflowY);
+          if (canX || canY) return { el, canX, canY, snap: !!cs.scrollSnapType && cs.scrollSnapType !== 'none' };
+        }
+        el = el.parentElement;
+      }
+      return null;
+    }
+    function wbScrollTick() {
+      _wbScrollRAF = _wbPtr.active ? requestAnimationFrame(wbScrollTick) : null;
+      if (!_wbPtr.active) return;
+      const s = wbDragScroller(_wbPtr.x, _wbPtr.y);
+      if (!s) return;
+      const r = s.el.getBoundingClientRect(), x = _wbPtr.x, y = _wbPtr.y;
+      if (s.snap) {
+        // Snap container (mobile horizontal): one screen per jump, then cooldown.
+        if (performance.now() < _wbSnapUntil) return;
+        let dx = 0, dy = 0;
+        if (s.canX && x > r.right - WB_EDGE) dx = r.width;
+        else if (s.canX && x < r.left + WB_EDGE) dx = -r.width;
+        else if (s.canY && y > r.bottom - WB_EDGE) dy = r.height;
+        else if (s.canY && y < r.top + WB_EDGE) dy = -r.height;
+        if (dx || dy) { s.el.scrollBy({ left: dx, top: dy, behavior: 'smooth' }); _wbSnapUntil = performance.now() + WB_SNAP_COOLDOWN; }
+      } else {
+        // Normal container (desktop): continuous, ramps up nearer the edge.
+        if (s.canX) {
+          if (x > r.right - WB_EDGE) s.el.scrollLeft += WB_SPEED * Math.min(1, (x - (r.right - WB_EDGE)) / WB_EDGE);
+          else if (x < r.left + WB_EDGE) s.el.scrollLeft -= WB_SPEED * Math.min(1, ((r.left + WB_EDGE) - x) / WB_EDGE);
+        }
+        if (s.canY) {
+          if (y > r.bottom - WB_EDGE) s.el.scrollTop += WB_SPEED * Math.min(1, (y - (r.bottom - WB_EDGE)) / WB_EDGE);
+          else if (y < r.top + WB_EDGE) s.el.scrollTop -= WB_SPEED * Math.min(1, ((r.top + WB_EDGE) - y) / WB_EDGE);
+        }
+      }
+    }
+    function wbAutoScroll(x, y) {
+      _wbPtr.x = x; _wbPtr.y = y; _wbPtr.active = true;
+      if (_wbScrollRAF == null) _wbScrollRAF = requestAnimationFrame(wbScrollTick);
+    }
+    function wbAutoScrollStop() {
+      _wbPtr.active = false; _wbSnapUntil = 0;
+      if (_wbScrollRAF != null) { cancelAnimationFrame(_wbScrollRAF); _wbScrollRAF = null; }
+    }
+
     // ─── Unified drag controller (mouse drag + mobile long-press) ───
     // h: { onStart?(), onMove(x,y), onEnd(commit), handle? }. Ignores drags that
     // begin on interactive controls (buttons/inputs/etc.) so those keep working.
@@ -6911,8 +7221,9 @@ export function getWebappHtml(botUsername) {
         h.onStart && h.onStart();
         move(x, y);
       }
-      function move(x, y) { if (clone) { clone.style.left = (x + cdx) + 'px'; clone.style.top = (y + cdy) + 'px'; } h.onMove && h.onMove(x, y); }
+      function move(x, y) { if (clone) { clone.style.left = (x + cdx) + 'px'; clone.style.top = (y + cdy) + 'px'; } wbAutoScroll(x, y); h.onMove && h.onMove(x, y); }
       function finish(commit) {
+        wbAutoScrollStop();
         if (clone) { clone.remove(); clone = null; }
         el.classList.remove('dragging');
         document.body.classList.remove('dragging-active');
@@ -7299,10 +7610,10 @@ export function getWebappHtml(botUsername) {
       const panel = $('#mindmap-panel');
       let h = '<div class="kanban-toolbar">'
         + '<button class="kanban-btn primary" data-mact="add-root">+ Add idea</button>'
-        + '<button class="kanban-btn" data-mact="media">' + ic('images') + ' Media</button>'
+        + '<button class="kanban-btn" data-mact="media">' + ic('images') + '<span class="tb-lbl"> Media</span></button>'
         + '<input type="text" class="mm-search" id="mm-search" placeholder="Filter ideas…" autocomplete="off" value="' + escHtml(mindmapSearch) + '">'
         + '<div class="spacer"></div>'
-        + '<span style="font-size:0.74rem;color:var(--text-muted)">Tap a node for details · Ctrl+scroll / pinch to zoom · green = linked</span>'
+        + '<span class="mm-hint" style="font-size:0.74rem;color:var(--text-muted)">Tap a node for details · Ctrl+scroll / pinch to zoom · green = linked</span>'
         + '</div>';
       if (!mindmapNodes.length) {
         h += '<div class="kanban-empty">No ideas yet. Add one, or hit “Brainstorm” on a Kanban card to extend a task here.</div>';
@@ -7454,7 +7765,13 @@ export function getWebappHtml(botUsername) {
         const kids = kidsOf(node);
         if (kids.length) {
           const cs = kids.map(placeY);
-          pos[node.id].y = (cs[0] + cs[cs.length - 1]) / 2;
+          // Center the parent over its REAL children only. The trailing "add
+          // idea" ghost still gets packed into its own row (so nothing overlaps),
+          // but it must NOT drag the parent — and thus its edge endpoints — below
+          // the children's true vertical middle.
+          const realCs = cs.filter((_, i) => !kids[i].ghost);
+          const span = realCs.length ? realCs : cs;
+          pos[node.id].y = (span[0] + span[span.length - 1]) / 2;
         } else {
           pos[node.id].y = cursor + heights[node.id] / 2;
           cursor += heights[node.id] + GAP;
@@ -7857,7 +8174,7 @@ export function getWebappHtml(botUsername) {
       if (!it.link) return '<span>Unlinked</span>';
       const word = it.link.type === 'node' ? 'Idea' : it.link.type === 'todo' ? 'Subtask' : 'Task';
       if (it.linkStatus === 'deleted') return '<span class="media-link-tag deleted">' + ic('external-link') + word + ' (deleted)</span>';
-      return '<span class="media-link-tag">' + ic('external-link') + escHtml(mtrunc(it.linkLabel || word, 22)) + '</span>';
+      return '<span class="media-link-tag" data-media-jump="' + it.id + '" title="Jump to ' + word.toLowerCase() + '">' + ic('external-link') + escHtml(mtrunc(it.linkLabel || word, 22)) + '</span>';
     }
     function mediaCardHtml(it) {
       const previewable = it.kind !== 'other';
@@ -8638,6 +8955,7 @@ export function getWebappHtml(botUsername) {
     }
 
     init();
+    initUpdateUi();
 
     // ─── PWA service worker ───
     // Skip under Electron (window.api present) — only useful for the browser PWA.

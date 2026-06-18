@@ -272,33 +272,104 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // broadcastState), so a crash/force-close that never fires a Stop hook can't
   // leave a stale state.
   const agentStates = new Map();
-  let notifyAgentStatus = true;
+  // Per-event Telegram notification policy: 'always' | 'away' | 'never'.
+  //   always → notify on every occurrence
+  //   away   → notify only when no client is focused (see anyClientPresent)
+  //   never  → don't notify
+  // Persisted in .crundi-state.json under `notifyPrefs`; migrated from the old
+  // boolean notifyAgentStatus and the interim notifyFinished/notifyNeedsInput.
+  const NOTIFY_MODES = ['always', 'away', 'never'];
+  const NOTIFY_DEFAULTS = {
+    finished: 'away', needsInput: 'away',
+    kanbanTask: 'never', kanbanSubtask: 'never',
+    scheduleRun: 'away',
+    serviceDown: 'always', serviceUp: 'away',
+    mindmapAdd: 'never', mindmapDelete: 'never',
+    browserLaunch: 'never', browserStop: 'never',
+    secretRequest: 'always',
+  };
+  const notifyPrefs = { ...NOTIFY_DEFAULTS };
   try {
     const sf = join(config.dataDir, '.crundi-state.json');
-    if (existsSync(sf)) { const st = JSON.parse(readFileSync(sf, 'utf-8')); if (st && st.notifyAgentStatus === false) notifyAgentStatus = false; }
-  } catch { /* default on */ }
+    if (existsSync(sf)) {
+      const st = JSON.parse(readFileSync(sf, 'utf-8')) || {};
+      const saved = (st.notifyPrefs && typeof st.notifyPrefs === 'object') ? st.notifyPrefs : {};
+      for (const k of Object.keys(NOTIFY_DEFAULTS)) {
+        if (NOTIFY_MODES.includes(saved[k])) notifyPrefs[k] = saved[k];
+      }
+      // Migrate interim flat keys, then the original boolean (off → never).
+      if (NOTIFY_MODES.includes(st.notifyFinished)) notifyPrefs.finished = st.notifyFinished;
+      if (NOTIFY_MODES.includes(st.notifyNeedsInput)) notifyPrefs.needsInput = st.notifyNeedsInput;
+      if (st.notifyAgentStatus === false && !st.notifyPrefs && !('notifyFinished' in st)) {
+        notifyPrefs.finished = 'never'; notifyPrefs.needsInput = 'never';
+      }
+    }
+  } catch { /* defaults */ }
 
-  function persistNotifyToggle() {
+  function persistNotifyPrefs() {
     try {
       const sf = join(config.dataDir, '.crundi-state.json');
       let st = {};
       try { if (existsSync(sf)) st = JSON.parse(readFileSync(sf, 'utf-8')) || {}; } catch { st = {}; }
-      st.notifyAgentStatus = notifyAgentStatus;
+      st.notifyPrefs = { ...notifyPrefs };
+      delete st.notifyAgentStatus; delete st.notifyFinished; delete st.notifyNeedsInput; // superseded
       writeFileSync(sf, JSON.stringify(st));
     } catch { /* non-fatal */ }
   }
 
-  async function notifyAgentState(term, state) {
+  // WebSocket connections that have reported the user is actively at the window
+  // (window focused AND page visible). Used to skip the agent-status Telegram
+  // ping when the user is already looking — they don't need a phone alert. Each
+  // entry carries an expiry: the client refreshes it on a heartbeat, so a
+  // silently-dropped socket's presence lapses instead of muting alerts forever.
+  // A window left open on a LOCKED PC reports not-present (the OS lock drops
+  // window focus → document.hasFocus() is false), so those still get the ping.
+  const presentClients = new Map(); // ws → expiry epoch ms
+  const PRESENCE_TTL = 75_000;
+  function anyClientPresent() {
+    const now = Date.now();
+    for (const [ws, exp] of presentClients) {
+      if (ws.readyState === 1 && exp > now) return true;
+      if (ws.readyState !== 1) presentClients.delete(ws); // tidy dead sockets
+    }
+    return false;
+  }
+
+  // Single entry point for every Telegram notification. Honors the per-event
+  // policy ('always' | 'away' | 'never') and the presence gate for 'away'.
+  function notifyEvent(key, message) {
+    const mode = notifyPrefs[key];
+    if (mode !== 'always' && mode !== 'away') return;   // 'never' / unknown
+    if (mode === 'away' && anyClientPresent()) return;  // user is already here
     try {
       const chatId = getChatId ? getChatId() : null;
       if (!chatId || !bot) return;
-      const name = term.title || 'Claude';
-      const proj = term.project ? ` (${term.project})` : '';
-      const msg = state === 'needs-input'
-        ? `⏳ ${name} needs your input${proj}.`
-        : `✅ ${name} finished${proj}.`;
-      bot.api.sendMessage(chatId, msg).catch(() => { /* non-fatal */ });
+      bot.api.sendMessage(chatId, message).catch(() => { /* non-fatal */ });
     } catch { /* non-fatal */ }
+  }
+
+  // Detect service start / crash-stop transitions, independent of any connected
+  // UI (broadcastState early-returns when no SSE clients, but alerts matter most
+  // when the user is away). Polled on an interval from start().
+  const prevServiceStatus = new Map(); // key → last seen status
+  function checkServiceTransitions() {
+    let list;
+    try { list = getAllServiceStatus(); } catch { return; }
+    const seen = new Set();
+    for (const s of list) {
+      seen.add(s.key);
+      const prev = prevServiceStatus.get(s.key);
+      prevServiceStatus.set(s.key, s.status);
+      if (prev === undefined || prev === s.status) continue; // baseline / no change
+      const name = s.name || s.key;
+      const proj = s.alias ? ` (${s.alias})` : '';
+      if (s.status === 'running' && prev !== 'running') {
+        notifyEvent('serviceUp', `▶️ Service "${name}"${proj} started.`);
+      } else if (prev === 'running' && s.status !== 'running') {
+        notifyEvent('serviceDown', `⏹️ Service "${name}"${proj} ${s.status === 'error' ? 'crashed' : 'stopped'}.`);
+      }
+    }
+    for (const k of [...prevServiceStatus.keys()]) if (!seen.has(k)) prevServiceStatus.delete(k);
   }
 
   // Apply a hook-reported state for a terminal; notify on transitions to
@@ -308,8 +379,11 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
     if (!term) return;
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
-    if (state !== prev && (state === 'idle' || state === 'needs-input') && notifyAgentStatus) {
-      notifyAgentState(term, state);
+    if (state !== prev && (state === 'idle' || state === 'needs-input')) {
+      const name = term.title || 'Claude';
+      const proj = term.project ? ` (${term.project})` : '';
+      if (state === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
+      else notifyEvent('finished', `✅ ${name} finished${proj}.`);
     }
     broadcastState();
   }
@@ -485,16 +559,9 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       broadcastSecretRequests();
 
       // Ping the user over Telegram so they know to come approve.
-      try {
-        const chatId = getChatId ? getChatId() : null;
-        if (chatId && bot) {
-          const from = projectAlias ? ` (project: ${projectAlias})` : '';
-          const why = reason ? `\nReason: ${reason}` : '';
-          bot.api.sendMessage(chatId,
-            `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}\n\nOpen Crundi → Secrets to review and approve.`
-          ).catch(() => { /* non-fatal */ });
-        }
-      } catch { /* non-fatal */ }
+      const from = projectAlias ? ` (project: ${projectAlias})` : '';
+      const why = reason ? `\nReason: ${reason}` : '';
+      notifyEvent('secretRequest', `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}\n\nOpen Crundi → Secrets to review and approve.`);
     });
   }
 
@@ -1213,23 +1280,30 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           settings[key] = m ? m[1].trim() : '';
         }
         const chatId = getChatId ? getChatId() : '';
-        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyAgentStatus });
+        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
     if (path === '/api/settings' && req.method === 'POST') {
       try {
         const body = JSON.parse(await readBody(req));
-        const settings = body.settings || {};
-        const KEYS = ['TELEGRAM_BOT_TOKEN', 'ALLOWED_USERNAME', 'PROJECTS_DIR', 'WEB_PORT', 'CLOUDFLARE_TUNNEL_TOKEN', 'CLOUDFLARE_TUNNEL_URL', 'DATA_DIR'];
-        let content = '';
-        for (const key of KEYS) {
-          const val = settings[key] !== undefined ? settings[key] : '';
-          content += `${key}=${val}\n`;
+        // Only rewrite .env when env settings are actually supplied — this lets
+        // lightweight callers (e.g. live notification-pref changes) POST without
+        // wiping the env file with blanks.
+        let restartRequired = false;
+        if (body.settings) {
+          const settings = body.settings;
+          const KEYS = ['TELEGRAM_BOT_TOKEN', 'ALLOWED_USERNAME', 'PROJECTS_DIR', 'WEB_PORT', 'CLOUDFLARE_TUNNEL_TOKEN', 'CLOUDFLARE_TUNNEL_URL', 'DATA_DIR'];
+          let content = '';
+          for (const key of KEYS) {
+            const val = settings[key] !== undefined ? settings[key] : '';
+            content += `${key}=${val}\n`;
+          }
+          const dir = dirname(envPath);
+          if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+          writeFileSync(envPath, content, 'utf-8');
+          restartRequired = true;
         }
-        const dir = dirname(envPath);
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-        writeFileSync(envPath, content, 'utf-8');
         // Save chat ID to state file and update live
         if (body.chatId !== undefined) {
           const stateFile = join(config.dataDir, '.crundi-state.json');
@@ -1240,12 +1314,14 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           writeFileSync(stateFile, JSON.stringify(state));
           if (setChatId) setChatId(newId);
         }
-        // Live toggle (no restart): notify on agent done / needs-input.
-        if (body.notifyAgentStatus !== undefined) {
-          notifyAgentStatus = !!body.notifyAgentStatus;
-          persistNotifyToggle();
+        // Live update (no restart): per-event notification policy.
+        if (body.notifyPrefs && typeof body.notifyPrefs === 'object') {
+          for (const k of Object.keys(NOTIFY_DEFAULTS)) {
+            if (NOTIFY_MODES.includes(body.notifyPrefs[k])) notifyPrefs[k] = body.notifyPrefs[k];
+          }
+          persistNotifyPrefs();
         }
-        return json(res, { ok: true, restartRequired: true });
+        return json(res, { ok: true, restartRequired });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
@@ -1809,11 +1885,17 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           }
           case 'kanban_add_task': r = kanban.addTask(alias, { title: a.title, description: a.description, status: a.status, todos: a.todos }); break;
           case 'kanban_update_task': r = kanban.updateTask(alias, a.taskId, { title: a.title, description: a.description, status: a.status }); break;
-          case 'kanban_move_task': r = kanban.moveTask(alias, a.taskId, a.status, a.index); break;
+          case 'kanban_move_task':
+            r = kanban.moveTask(alias, a.taskId, a.status, a.index);
+            if (r.ok) { const gt = kanban.getTask(alias, a.taskId); notifyEvent('kanbanTask', `📋 Task "${gt.ok ? gt.task.title : a.taskId}" → ${a.status}${alias ? ` (${alias})` : ''}.`); }
+            break;
           case 'kanban_delete_task': r = kanban.deleteTask(alias, a.taskId); break;
           case 'kanban_restore_task': r = kanban.restoreTask(alias, a.taskId); break;
           case 'kanban_add_todo': r = kanban.addTodo(alias, a.taskId, a.text); break;
-          case 'kanban_update_todo': r = kanban.updateTodo(alias, a.taskId, a.todoId, { text: a.text, done: a.done }); break;
+          case 'kanban_update_todo':
+            r = kanban.updateTodo(alias, a.taskId, a.todoId, { text: a.text, done: a.done });
+            if (r.ok && typeof a.done === 'boolean') notifyEvent('kanbanSubtask', `☑️ Subtask ${a.done ? 'completed' : 'reopened'}${alias ? ` (${alias})` : ''}.`);
+            break;
           case 'kanban_delete_todo': r = kanban.deleteTodo(alias, a.taskId, a.todoId); break;
           case 'kanban_restore_todo': r = kanban.restoreTodo(alias, a.taskId, a.todoId); break;
           case 'kanban_history': r = { ok: true, history: kanban.getHistory(alias) }; break;
@@ -1833,14 +1915,22 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           case 'mindmap_get_subtree': r = mindmap.getSubtree(a.id, a.alias || null); break;
           case 'mindmap_get_children': r = mindmap.getChildren(a.id || null, a.alias || null); break;
           case 'mindmap_get_ancestors': r = mindmap.getAncestors(a.id, a.alias || null); break;
-          case 'mindmap_add_node': r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, notes: a.notes, project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId, scope: a.alias }); break;
+          case 'mindmap_add_node':
+            r = mindmap.addNode({ text: a.text, parentId: a.parentId, note: a.note, notes: a.notes, project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId, scope: a.alias });
+            if (r.ok) notifyEvent('mindmapAdd', `🧠 Idea added: "${String(a.text || '').slice(0, 60)}"${a.alias ? ` (${a.alias})` : ''}.`);
+            break;
           case 'mindmap_update_node': r = mindmap.updateNode(a.id, { text: a.text, note: a.note, notes: a.notes }); break;
           case 'mindmap_add_note': r = mindmap.addNote(a.id, a.text); break;
           case 'mindmap_remove_note': r = mindmap.removeNote(a.id, a.index); break;
           case 'mindmap_move_node': r = mindmap.moveNode(a.id, a.parentId, a.index); break;
           case 'mindmap_link_node': r = mindmap.linkNode(a.id, { project: a.project || a.alias, taskId: a.taskId, todoId: a.todoId }); break;
           case 'mindmap_unlink_node': r = mindmap.unlinkNode(a.id); break;
-          case 'mindmap_delete_node': r = mindmap.deleteNode(a.id); break;
+          case 'mindmap_delete_node': {
+            const gn = mindmap.getNode ? mindmap.getNode(a.id) : null;
+            r = mindmap.deleteNode(a.id);
+            if (r.ok) notifyEvent('mindmapDelete', `🧠 Idea deleted${gn && gn.text ? `: "${String(gn.text).slice(0, 60)}"` : ''}${a.alias ? ` (${a.alias})` : ''}.`);
+            break;
+          }
           default: return json(res, { ok: false, error: `Unknown mindmap tool: ${body.tool}` }, 404);
         }
         const mindmapReadOnly = ['mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors'].includes(body.tool);
@@ -2092,6 +2182,14 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
           return;
         }
 
+        // Presence: is the user actively at this window right now? Gates the
+        // agent-status Telegram ping (see anyClientPresent / handleAgentState).
+        if (msg.type === 'presence') {
+          if (msg.active) presentClients.set(ws, Date.now() + PRESENCE_TTL);
+          else presentClients.delete(ws);
+          return;
+        }
+
         if (!claudeTerminals) return;
         const id = msg.id;
 
@@ -2134,6 +2232,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         for (const [id, handler] of subs) claudeTerminals.off(id, handler);
         subs.clear();
         logSubscribers.delete(ws);
+        presentClients.delete(ws);
       });
     });
   }
@@ -2203,6 +2302,10 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       // backoff = 5 min, and a 15s anti-burst floor on forced fetches)
       setInterval(() => { broadcastUsage(); }, 60_000);
 
+      // Service start / crash-stop notifications (independent of SSE clients).
+      checkServiceTransitions(); // baseline current statuses (no alerts on first pass)
+      setInterval(checkServiceTransitions, 7000);
+
       return { port, tunnelUrl };
     },
 
@@ -2236,6 +2339,9 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
 
     /** Broadcast state update to all connected SSE clients. */
     broadcastState,
+
+    /** Fire a Telegram notification for an event key, honoring its policy + presence. */
+    notifyEvent,
   };
 }
 

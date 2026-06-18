@@ -113,8 +113,16 @@ async function mcpDispatch(tool, args) {
   if (tool.startsWith('browser_') || tool === 'list_browsers') {
     const b = await import('./browser.js');
     switch (tool) {
-      case 'browser_open': return b.openBrowser(args);
-      case 'browser_close': return b.closeBrowser(args.key);
+      case 'browser_open': {
+        const r = await b.openBrowser(args);
+        if (r && r.ok !== false) webapp.notifyEvent('browserLaunch', `🌐 Browser launched${args.key ? ` "${args.key}"` : ''}${args.url ? `: ${args.url}` : ''}.`);
+        return r;
+      }
+      case 'browser_close': {
+        const r = await b.closeBrowser(args.key);
+        if (r && r.ok !== false) webapp.notifyEvent('browserStop', `🌐 Browser closed${args.key ? ` "${args.key}"` : ''}.`);
+        return r;
+      }
       case 'browser_navigate': return b.navigateBrowser(args.key, args.url);
       case 'browser_screenshot': {
         const r = await b.screenshotBrowser(args.key);
@@ -250,7 +258,15 @@ console.log(`[crundi] API_KEY=${apiKey}`);
 // Start the task scheduler (fires scheduled agents / commands / service actions).
 try {
   const { startScheduler } = await import('./scheduler.js');
-  startScheduler({ claudeTerminals });
+  startScheduler({
+    claudeTerminals,
+    onFire: (sch) => {
+      try {
+        const proj = sch.project ? ` (${sch.project})` : '';
+        webapp.notifyEvent('scheduleRun', `⏰ Schedule "${sch.name || 'task'}" ran${proj}.`);
+      } catch { /* non-fatal */ }
+    },
+  });
   console.log('[crundi] Scheduler started.');
 } catch (err) {
   console.warn('[crundi] Scheduler failed to start:', err?.message || err);
