@@ -335,13 +335,13 @@
     <div id="setup-screen">
       <div class="setup-card">
         <div class="setup-progress" id="setup-progress">
-          <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
+          <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
         </div>
         <p id="setup-import-hint" style="display:none;font-size:0.82rem;color:var(--green);margin-bottom:14px;">Found a previous config — values are pre-filled. Step through and Save to continue.</p>
 
         <!-- Step 1: Bot token -->
         <div class="setup-step" data-step="1">
-          <div class="setup-stepnum">Step 1 of 6</div>
+          <div class="setup-stepnum">Step 1 of 7</div>
           <h2>Create your Telegram bot</h2>
           <ol class="setup-howto">
             <li>Open <b>Telegram</b> and search for <b>@BotFather</b> (the account with the blue checkmark).</li>
@@ -355,7 +355,7 @@
 
         <!-- Step 2: Username -->
         <div class="setup-step" data-step="2" hidden>
-          <div class="setup-stepnum">Step 2 of 6</div>
+          <div class="setup-stepnum">Step 2 of 7</div>
           <h2>Your Telegram username</h2>
           <ol class="setup-howto">
             <li>In Telegram, open <b>Settings</b> (desktop: <b>&#9776; menu &rarr; Settings</b>; phone: <b>Settings</b> tab, bottom-right).</li>
@@ -368,7 +368,7 @@
 
         <!-- Step 3: Projects -->
         <div class="setup-step" data-step="3" hidden>
-          <div class="setup-stepnum">Step 3 of 6</div>
+          <div class="setup-stepnum">Step 3 of 7</div>
           <h2>Where are your projects?</h2>
           <ol class="setup-howto">
             <li><b>Single folder</b>: point Crundi at one parent folder — every subfolder becomes a project.</li>
@@ -398,7 +398,7 @@
 
         <!-- Step 4: Remote access (optional, skippable) -->
         <div class="setup-step" data-step="4" hidden>
-          <div class="setup-stepnum">Step 4 of 6 &middot; optional</div>
+          <div class="setup-stepnum">Step 4 of 7 &middot; optional</div>
           <h2>Remote access (optional)</h2>
           <ol class="setup-howto">
             <li>Skip this to use a <b>free random quick tunnel</b> — Crundi generates a URL each start.</li>
@@ -418,7 +418,7 @@
 
         <!-- Step 5: Telegram login domain (required for web login) -->
         <div class="setup-step" data-step="5" hidden>
-          <div class="setup-stepnum">Step 5 of 6</div>
+          <div class="setup-stepnum">Step 5 of 7</div>
           <h2>Enable Telegram login</h2>
           <p class="setup-hint" style="margin-top:0;">The web UI logs in with the "Log in with Telegram" button. Telegram only shows it on a domain you've registered for your bot.</p>
           <ol class="setup-howto">
@@ -433,9 +433,24 @@
 
         <!-- Step 6: Locked-screen capture (DisconnectRDP task) -->
         <div class="setup-step" data-step="6" hidden>
-          <div class="setup-stepnum">Step 6 of 6 &middot; optional</div>
+          <div class="setup-stepnum">Step 6 of 7 &middot; optional</div>
           <h2>Locked-screen capture</h2>
           <div id="rdp-wizard-body" class="rdp-body"><p class="rdp-desc">Checking&hellip;</p></div>
+        </div>
+
+        <!-- Step 7: Automatic updates -->
+        <div class="setup-step" data-step="7" hidden>
+          <div class="setup-stepnum">Step 7 of 7</div>
+          <h2>Updates &amp; startup</h2>
+          <p class="setup-hint" style="margin-top:0;">A couple of conveniences for the desktop app. You can change both any time in Settings.</p>
+          <label style="display:flex;align-items:flex-start;gap:11px;cursor:pointer;padding:13px 15px;border:1px solid var(--border);border-radius:10px;background:var(--bg-tertiary);margin:10px 0;">
+            <input type="checkbox" id="setup-auto-update" checked style="width:18px;height:18px;accent-color:var(--accent);margin-top:1px;cursor:pointer;flex-shrink:0;">
+            <span style="font-size:0.92rem;color:var(--text-primary);line-height:1.45;">Automatically check for updates<br><span style="font-size:0.78rem;color:var(--text-muted);">Checks GitHub on launch and once a day. Code&#8209;signed; nothing installs without your confirmation.</span></span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:11px;cursor:pointer;padding:13px 15px;border:1px solid var(--border);border-radius:10px;background:var(--bg-tertiary);margin:10px 0;">
+            <input type="checkbox" id="setup-auto-launch" checked style="width:18px;height:18px;accent-color:var(--accent);margin-top:1px;cursor:pointer;flex-shrink:0;">
+            <span style="font-size:0.92rem;color:var(--text-primary);line-height:1.45;">Launch Crundi when Windows starts<br><span style="font-size:0.78rem;color:var(--text-muted);">Starts in the tray so your terminals and services are always reachable.</span></span>
+          </label>
         </div>
 
         <div class="setup-nav">
@@ -523,7 +538,7 @@
 
     // ─── Step-by-step setup wizard ───
     let setupStep = 1;
-    const SETUP_TOTAL = 6;
+    const SETUP_TOTAL = 7;
     const SETUP_SKIPPABLE = 4; // the optional Cloudflare tunnel step
     function showSetupStep(n) {
       setupStep = Math.max(1, Math.min(SETUP_TOTAL, n));
@@ -635,6 +650,8 @@
         projectsDir: mode === 'single' ? document.getElementById('setup-projects').value.trim() : '',
         tunnelToken: document.getElementById('setup-tunnel-token').value.trim(),
         tunnelUrl: document.getElementById('setup-tunnel-url').value.trim(),
+        autoUpdate: document.getElementById('setup-auto-update').checked,
+        autoLaunch: document.getElementById('setup-auto-launch').checked,
       };
       if (!config.botToken || !config.username) {
         alert('Bot token and username are required.');

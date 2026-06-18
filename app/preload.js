@@ -32,6 +32,14 @@ contextBridge.exposeInMainWorld('api', {
   // Diagnostic: let the shell renderer append to crundi.log.
   shellLog: (m) => ipcRenderer.send('shell:log', String(m)),
 
+  // Auto-update (electron-updater) — only meaningful in the installed desktop app.
+  getUpdateState: () => ipcRenderer.invoke('update:getState'),
+  setAutoUpdate: (enabled) => ipcRenderer.invoke('update:setEnabled', !!enabled),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  setStartup: (enabled) => ipcRenderer.invoke('startup:set', !!enabled),
+  onUpdateStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('update:status', h); return () => ipcRenderer.removeListener('update:status', h); },
+
   // Interactive browser panel — WebContentsView managed in the main process.
   wbrowser: {
     open: (id, url) => ipcRenderer.invoke('wbrowser:open', id, url),

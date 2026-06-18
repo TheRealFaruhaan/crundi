@@ -146,8 +146,10 @@ export function startScheduler(deps = {}) {
         }
         const cool = sch.lastRun && (Date.now() - new Date(sch.lastRun).getTime() < COOLDOWN_MS);
         if (cool) continue;                                 // guard rapid double-fire
-        try { await runAction(sch, deps); } catch (err) { console.warn(`[scheduler] "${sch.name}" failed:`, err?.message || err); }
+        let fired = true;
+        try { await runAction(sch, deps); } catch (err) { fired = false; console.warn(`[scheduler] "${sch.name}" failed:`, err?.message || err); }
         setRuntime(sch.id, { lastRun: new Date().toISOString() }); // isDue() blocks re-fire for this occurrence
+        if (fired) { try { deps.onFire && deps.onFire(sch); } catch { /* non-fatal */ } }
         console.log(`[scheduler] fired "${sch.name}" (${sch.action?.kind}) for "${sch.project}"`);
       }
     } finally { busy = false; }
