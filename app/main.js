@@ -985,6 +985,55 @@ const terminalIpcHandlers = {
 
 const browserWindows = new Map(); // key → BrowserWindow
 
+// A single hung renderer call (blocked dialog, heavy JS, stalled navigation)
+// must never wedge the whole tool. Race every handler against a timeout that is
+// shorter than the MCP-side IPC backstop, so we always reply with a clean error.
+function withTimeout(promise, ms, label) {
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms (page may be stalled or showing a dialog)`)), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
+// Load a URL without hanging on pages that never fire did-finish-load (websockets,
+// long-polling, slow third-party resources). Resolve as soon as the page stops
+// loading, or after a grace period (treat a slow page as "open, just slow"), and
+// only hard-fail on a real main-frame error.
+function loadUrlWithGrace(wc, url, graceMs = 15000) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (fn) => { if (done) return; done = true; cleanup(); fn(); };
+    const onStop = () => finish(resolve);
+    const onFinish = () => finish(resolve);
+    const onFail = (_e, code, desc, _vurl, isMainFrame) => {
+      if (isMainFrame && code !== -3 /* ERR_ABORTED, fired on redirects/SPAs */) {
+        finish(() => reject(new Error(`Load failed (${code}): ${desc}`)));
+      }
+    };
+    const timer = setTimeout(() => finish(resolve), graceMs);
+    function cleanup() {
+      clearTimeout(timer);
+      wc.off('did-stop-loading', onStop);
+      wc.off('did-finish-load', onFinish);
+      wc.off('did-fail-load', onFail);
+    }
+    wc.on('did-stop-loading', onStop);
+    wc.on('did-finish-load', onFinish);
+    wc.on('did-fail-load', onFail);
+    // Events drive resolution; ignore the promise (it rejects with ERR_ABORTED on redirects).
+    wc.loadURL(url).catch(() => {});
+  });
+}
+
+function browserActionTimeout(msg) {
+  // browser_wait runs up to msg.timeout in-page; give it that plus a small buffer.
+  if (msg.type === 'browserWait') return (msg.timeout || 30000) + 3000;
+  // Navigation can legitimately take a while to finish loading.
+  if (msg.type === 'browserOpen' || msg.type === 'browserNavigate') return 30000;
+  return 25000;
+}
+
 function handleBotMessage(msg) {
   if (!msg || !msg.type) return;
 
@@ -1003,7 +1052,7 @@ function handleBotMessage(msg) {
   if (!msg.requestId) return;
   const handler = browserIpcHandlers[msg.type];
   if (handler) {
-    handler(msg).then(result => {
+    withTimeout(handler(msg), browserActionTimeout(msg), msg.type).then(result => {
       botProcess?.send({ type: 'browserResult', requestId: msg.requestId, ...result });
     }).catch(err => {
       botProcess?.send({ type: 'browserResult', requestId: msg.requestId, ok: false, error: err.message });
@@ -1019,17 +1068,34 @@ const browserIpcHandlers = {
     const win = new BrowserWindow({
       width: width || 1280, height: height || 720,
       show: false,
-      webPreferences: { contextIsolation: true, nodeIntegration: false },
+      // Isolated, in-memory session per instance so network capture (and cookies)
+      // don't bleed between browsers or into the main app's default session.
+      webPreferences: { contextIsolation: true, nodeIntegration: false, partition: `mcp-browser-${key}` },
     });
     win.webContents.on('console-message', (_e, _level, message) => {
       const inst = browserWindows.get(key);
       if (inst) inst.consoleLogs.push({ time: Date.now(), text: message });
     });
-    const entry = { win, consoleLogs: [], networkEntries: [], recording: false };
+
+    // Neutralize JS dialogs. On a hidden window, alert()/confirm()/prompt() and
+    // beforeunload would block the renderer forever with no way to dismiss them,
+    // wedging every subsequent call. Cancel unload prompts (a real main-process
+    // event) and override the dialog functions in the page's main world on load.
+    win.webContents.on('will-prevent-unload', (e) => e.preventDefault());
+    const suppressDialogs = () => {
+      win.webContents.executeJavaScript(`(function(){try{
+        window.alert=function(){};window.confirm=function(){return true;};
+        window.prompt=function(){return null;};window.onbeforeunload=null;
+      }catch(_){}})();`, true).catch(() => {});
+    };
+    win.webContents.on('did-start-loading', suppressDialogs);
+    win.webContents.on('dom-ready', suppressDialogs);
+
+    const ses = win.webContents.session;
+    const entry = { win, ses, consoleLogs: [], networkEntries: [], recording: false };
     browserWindows.set(key, entry);
 
-    // Network request capture via webRequest
-    const ses = win.webContents.session;
+    // Network request capture via webRequest (on this instance's own session)
     ses.webRequest.onBeforeSendHeaders((details, cb) => {
       if (entry.recording) {
         entry.networkEntries.push({
@@ -1066,11 +1132,12 @@ const browserIpcHandlers = {
     });
 
     try {
-      await win.loadURL(url);
+      await loadUrlWithGrace(win.webContents, url);
       return { ok: true };
     } catch (err) {
       browserWindows.delete(key);
-      win.destroy();
+      try { ses.webRequest.onBeforeSendHeaders(null); ses.webRequest.onCompleted(null); ses.webRequest.onErrorOccurred(null); } catch { /* ignore */ }
+      try { win.destroy(); } catch { /* ignore */ }
       return { ok: false, error: err.message };
     }
   },
@@ -1078,7 +1145,10 @@ const browserIpcHandlers = {
   async browserClose(msg) {
     const entry = browserWindows.get(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
-    entry.win.destroy();
+    // Release the per-instance webRequest listeners so closures don't pin the
+    // destroyed window's session.
+    try { entry.ses.webRequest.onBeforeSendHeaders(null); entry.ses.webRequest.onCompleted(null); entry.ses.webRequest.onErrorOccurred(null); } catch { /* ignore */ }
+    try { entry.win.destroy(); } catch { /* ignore */ }
     browserWindows.delete(msg.key);
     return { ok: true };
   },
@@ -1086,7 +1156,7 @@ const browserIpcHandlers = {
   async browserNavigate(msg) {
     const entry = browserWindows.get(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
-    await entry.win.loadURL(msg.url);
+    await loadUrlWithGrace(entry.win.webContents, msg.url);
     return { ok: true, url: entry.win.webContents.getURL() };
   },
 
