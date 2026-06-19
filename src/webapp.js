@@ -66,6 +66,12 @@ const ASSET_MIME = {
   '.svg': 'image/svg+xml',
 };
 
+// App version (drives the SW cache name so each release is detected as an update).
+const APP_VERSION = (() => {
+  try { return JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')).version || '0'; }
+  catch { return '0'; }
+})();
+
 // Web app manifest — makes Crundi installable as a PWA.
 const WEB_MANIFEST = JSON.stringify({
   name: 'Crundi',
@@ -74,7 +80,9 @@ const WEB_MANIFEST = JSON.stringify({
   start_url: '/',
   scope: '/',
   display: 'standalone',
-  orientation: 'any',
+  // No `orientation` key: a standalone PWA that declares an orientation (even
+  // 'any') overrides the device's auto-rotate lock. Omitting it makes Crundi
+  // follow the OS rotation setting like every other app.
   background_color: '#0a0a0f',
   theme_color: '#0a0a0f',
   icons: [
@@ -90,11 +98,14 @@ const WEB_MANIFEST = JSON.stringify({
 // WebSocket, SSE, and download routes are always passed straight to the
 // network so live data is never stale.
 const SERVICE_WORKER = `
-const CACHE = 'crundi-shell-v5';
+const VERSION = '${APP_VERSION}';
+const CACHE = 'crundi-shell-' + VERSION;
 const SHELL = ['/', '/manifest.webmanifest', '/assets/icon_128x128.png', '/assets/icon_256x256.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // Precache the shell but do NOT skipWaiting: let the new worker wait so the
+  // page can prompt the user, then apply on demand (or auto on next launch).
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
 });
 
 self.addEventListener('activate', (e) => {
@@ -102,6 +113,12 @@ self.addEventListener('activate', (e) => {
     caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+// The page tells a waiting worker to take over (user clicked Update, or a fresh
+// launch with a pending update).
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('fetch', (e) => {
@@ -272,6 +289,9 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // broadcastState), so a crash/force-close that never fires a Stop hook can't
   // leave a stale state.
   const agentStates = new Map();
+  // Last event timestamp applied per terminal, so out-of-order hook deliveries
+  // (independent short-lived processes under load) can't let a stale state win.
+  const agentStateTs = new Map();
   // Per-event Telegram notification policy: 'always' | 'away' | 'never'.
   //   always → notify on every occurrence
   //   away   → notify only when no client is focused (see anyClientPresent)
@@ -325,7 +345,11 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // A window left open on a LOCKED PC reports not-present (the OS lock drops
   // window focus → document.hasFocus() is false), so those still get the ping.
   const presentClients = new Map(); // ws → expiry epoch ms
-  const PRESENCE_TTL = 75_000;
+  // Generous TTL vs the client's heartbeat (~25s): during a busy session the
+  // client main thread janks (timers slip) and the WS flaps, so heartbeats get
+  // delayed/dropped. A tight TTL would expire presence and leak "away" pings
+  // while the user is actually here. ~6 missed beats of slack avoids that.
+  const PRESENCE_TTL = 150_000;
   function anyClientPresent() {
     const now = Date.now();
     for (const [ws, exp] of presentClients) {
@@ -374,9 +398,16 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
 
   // Apply a hook-reported state for a terminal; notify on transitions to
   // done(idle)/needs-input. Unknown terminals are ignored.
-  function handleAgentState(tid, state) {
+  function handleAgentState(tid, state, ts = 0) {
     const term = claudeTerminals ? claudeTerminals.list().find(t => t.id === tid) : null;
     if (!term) return;
+    // Hook events come from independent, short-lived processes with no delivery
+    // ordering. Under load (busy session + running services), Node startup jitter
+    // can make a stale 'idle' arrive after a fresh 'working' and wrongly pin the
+    // dot to idle. Ignore any report older than the last one applied here.
+    const lastTs = agentStateTs.get(tid) || 0;
+    if (ts && ts < lastTs) return;
+    if (ts) agentStateTs.set(tid, ts);
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
     if (state !== prev && (state === 'idle' || state === 'needs-input')) {
@@ -412,8 +443,8 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
     // Reconcile agent states against the live terminals: drop states for
     // terminals that are gone or no longer running (crash/force-close safety).
     const liveIds = new Set(liveTerms.map(t => t.id));
-    for (const k of [...agentStates.keys()]) if (!liveIds.has(k)) agentStates.delete(k);
-    for (const t of liveTerms) if (t.status !== 'running') agentStates.delete(t.id);
+    for (const k of [...agentStates.keys()]) if (!liveIds.has(k)) { agentStates.delete(k); agentStateTs.delete(k); }
+    for (const t of liveTerms) if (t.status !== 'running') { agentStates.delete(t.id); agentStateTs.delete(t.id); }
     // A running terminal with no hook state yet is "idle" (alive → green).
     const terminals = liveTerms.map(t => ({
       ...t, agentState: t.status === 'running' ? (agentStates.get(t.id) || 'idle') : null,
@@ -828,7 +859,7 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       const tid = String(body.terminal || '');
       const state = ['working', 'needs-input', 'idle'].includes(body.state) ? body.state : null;
       if (!tid || !state) return json(res, { ok: false, error: 'terminal and valid state required' }, 400);
-      handleAgentState(tid, state);
+      handleAgentState(tid, state, Number(body.ts) || 0);
       return json(res, { ok: true });
     }
 

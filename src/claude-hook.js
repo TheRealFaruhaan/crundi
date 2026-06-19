@@ -19,6 +19,9 @@
 import http from 'node:http';
 
 const state = process.argv[2] || 'idle';
+// Captured at process start ≈ when the event fired. The server uses this to
+// order reports, since these independent processes can deliver out of order.
+const ts = Date.now();
 const id = process.env.CRUNDI_TERMINAL_ID;
 const apiUrl = process.env.CRUNDI_API_URL;
 const apiKey = process.env.CRUNDI_API_KEY;
@@ -43,7 +46,7 @@ function finish() {
     const m = String(payload.message || '').toLowerCase();
     if (m.includes('waiting for your input') || m.includes('waiting for input')) { process.exit(0); return; }
   }
-  const body = JSON.stringify({ terminal: id, state, sessionId });
+  const body = JSON.stringify({ terminal: id, state, sessionId, ts });
   try {
     const u = new URL('/api/terminal-status', apiUrl);
     const req = http.request(u, {

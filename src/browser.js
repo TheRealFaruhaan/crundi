@@ -16,7 +16,9 @@ const MAX_PER_PROJECT = 5;
 const MAX_TOTAL = 20;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_CONSOLE_LOGS = 200;
-const IPC_TIMEOUT_MS = 30_000; // 30s timeout for IPC requests
+const IPC_TIMEOUT_MS = 40_000; // backstop for a dead IPC channel; the main
+                               // process applies its own (shorter) per-action
+                               // timeout and normally replies well before this.
 
 // ─── State ───
 
@@ -48,7 +50,7 @@ function isElectron() {
   return process.env.ELECTRON_RUN === '1';
 }
 
-function sendIpc(type, payload) {
+function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     if (!isElectron() || typeof process.send !== 'function') {
       return reject(new Error('Browser tools require the Electron desktop app.'));
@@ -58,7 +60,7 @@ function sendIpc(type, payload) {
     const timer = setTimeout(() => {
       pendingRequests.delete(requestId);
       reject(new Error('Browser IPC request timed out'));
-    }, IPC_TIMEOUT_MS);
+    }, timeoutMs);
 
     pendingRequests.set(requestId, { resolve, reject, timer });
     try {
@@ -436,7 +438,10 @@ export async function waitBrowser(key, { selector, timeout } = {}) {
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
-    const result = await sendIpc('browserWait', { key, selector, timeout });
+    // The page-side wait runs up to `timeout` ms; give the IPC channel extra
+    // headroom so the main process returns a clean result before we time out.
+    const waitMs = timeout || 30000;
+    const result = await sendIpc('browserWait', { key, selector, timeout: waitMs }, waitMs + 10000);
     if (!result.ok) return { ok: false, error: result.error };
     resetIdleTimer(key);
     return { ok: true, found: result.found };

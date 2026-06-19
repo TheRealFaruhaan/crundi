@@ -31,7 +31,7 @@ export function getWebappHtml(botUsername) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Crundi</title>
   <!-- PWA -->
   <link rel="manifest" href="/manifest.webmanifest">
@@ -1008,6 +1008,71 @@ export function getWebappHtml(botUsername) {
     .toast.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
     .toast.error { border-color: var(--red); }
     .toast.success { border-color: var(--green); }
+
+    /* ─── PWA update banner (on-device sync prompt) ─── */
+    .pwa-upd {
+      position: fixed;
+      left: 50%;
+      bottom: max(20px, env(safe-area-inset-bottom));
+      z-index: 99999;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      width: min(440px, calc(100vw - 24px));
+      padding: 12px 13px 12px 12px;
+      /* console-card surface with a faint accent glow pooling under the icon */
+      background:
+        radial-gradient(130px 90px at 30px 50%, rgba(99,102,241,0.18), transparent 72%),
+        var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg), var(--surface-hi);
+      color: var(--text-primary);
+      animation: pwaUpdIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    .pwa-upd.pwa-upd--out { animation: pwaUpdOut 0.2s ease forwards; }
+    .pwa-upd__icon {
+      flex: 0 0 auto;
+      width: 34px; height: 34px;
+      display: grid; place-items: center;
+      border-radius: 9px;
+      background: var(--accent-dim);
+      color: var(--accent-hover);
+      box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.4), var(--glow);
+    }
+    .pwa-upd__icon .ic { width: 18px; height: 18px; animation: pwaSync 0.9s cubic-bezier(0.4, 0, 0.2, 1) 0.16s both; }
+    .pwa-upd__text { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.3; }
+    .pwa-upd__title { font-size: 0.84rem; font-weight: 650; letter-spacing: -0.01em; }
+    .pwa-upd__sub { font-size: 0.72rem; color: var(--text-secondary); }
+    .pwa-upd__actions { display: flex; align-items: center; gap: 4px; margin-left: 2px; }
+    .pwa-upd__btn {
+      padding: 7px 15px;
+      border: none; border-radius: 8px;
+      background: var(--accent-grad);
+      color: #fff; font-weight: 600; font-size: 0.8rem;
+      white-space: nowrap; cursor: pointer;
+      box-shadow: 0 2px 10px rgba(99, 102, 241, 0.4);
+      transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+    }
+    .pwa-upd__btn:hover { transform: translateY(-1px); filter: brightness(1.07); box-shadow: 0 6px 18px rgba(99, 102, 241, 0.5); }
+    .pwa-upd__btn:active { transform: translateY(0); }
+    .pwa-upd__x {
+      flex: 0 0 auto;
+      width: 30px; height: 30px;
+      display: grid; place-items: center;
+      border: none; border-radius: 8px;
+      background: transparent; color: var(--text-muted);
+      cursor: pointer; transition: background 0.15s, color 0.15s;
+    }
+    .pwa-upd__x:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .pwa-upd__x .ic { width: 15px; height: 15px; }
+    @keyframes pwaUpdIn { from { opacity: 0; transform: translateX(-50%) translateY(16px) scale(0.97); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
+    @keyframes pwaUpdOut { from { opacity: 1; transform: translateX(-50%) translateY(0); } to { opacity: 0; transform: translateX(-50%) translateY(8px); } }
+    @keyframes pwaSync { from { transform: rotate(0); } to { transform: rotate(-360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .pwa-upd, .pwa-upd.pwa-upd--out { animation: none; transform: translateX(-50%); }
+      .pwa-upd__icon .ic { animation: none; }
+    }
 
     /* ─── Git Panel & Files Panel layout ─── */
     .git-panel, .files-panel { flex-direction: column; height: 100%; overflow: hidden; }
@@ -2132,7 +2197,7 @@ export function getWebappHtml(botUsername) {
           </div>
           <div class="term-input-bar" id="term-input-bar">
             <button class="term-tool-toggle" id="term-tool-toggle" data-action="term-tool-toggle" title="Keyboard tools"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-            <textarea id="term-input" class="term-input" rows="1" placeholder="Type here... (Ctrl+Enter or Send button)"></textarea>
+            <textarea id="term-input" class="term-input" rows="1" autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Type here... (Ctrl+Enter or Send button)"></textarea>
             <button class="term-attach-btn" data-action="term-attach" title="Attach a file (uploads to crundi_attachments)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
             <input type="file" id="term-attach-input" style="display:none">
             <button class="term-send-btn" data-action="term-send" title="Send to terminal" aria-label="Send"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
@@ -3305,6 +3370,13 @@ export function getWebappHtml(botUsername) {
       if (bar) bar.style.display = '';
 
       syncWbStateProject();
+      // Re-parenting cells below (replaceChildren / arrangeMosaic) blurs whatever
+      // descendant had focus — so a state push that rebuilds the grid would steal
+      // the cursor out of the terminal you're typing in. Remember the focused
+      // terminal now and restore it after the cells are re-attached.
+      const _ae = document.activeElement;
+      const _focusedCell = _ae && _ae.closest ? _ae.closest('.term-cell[data-tid]') : null;
+      const refocusTid = _focusedCell ? _focusedCell.dataset.tid : null;
       const live = liveTermsForProject();
       // "Terminal by default opens in one column": seed a single placeholder when
       // a project has no cells of any kind yet.
@@ -3354,6 +3426,13 @@ export function getWebappHtml(botUsername) {
 
       // Mount xterm for newly built live cells AFTER they're attached to the DOM.
       for (const [d, el] of newLive) mountXterm(d.t, el);
+
+      // Restore the cursor to the terminal the user was typing in, if it survived
+      // the rebuild — the re-parent above blurred it.
+      if (refocusTid && live.some(t => t.id === refocusTid)) {
+        const v = termViews.get(refocusTid);
+        if (v && v.term) { try { v.term.focus(); } catch { /* ignore */ } }
+      }
 
       if (!focusedTermId || !live.some(t => t.id === focusedTermId)) focusedTermId = live[0] ? live[0].id : null;
       updateFocusStyles();
@@ -4348,17 +4427,29 @@ export function getWebappHtml(botUsername) {
       });
 
       // Mobile: when the on-screen keyboard opens it shrinks the visual viewport.
-      // Bind #app to that height so the input bar + focused terminal stay visible
-      // above the keyboard (no manual scrolling). Desktop keeps the CSS 100dvh.
+      // On Chromium the viewport meta's interactive-widget=resizes-content already
+      // collapses the whole layout. iOS Safari ignores that, so bind html/body/#app
+      // to the visual-viewport height ourselves — not just #app, or the full-height
+      // body left behind it creates an empty, scrollable dead zone below the input.
       const vv = window.visualViewport;
       if (vv) {
+        const root = document.documentElement;
         const syncViewport = () => {
           const app = document.getElementById('app');
           if (!app) return;
           if (window.matchMedia('(max-width: 768px)').matches) {
-            app.style.height = vv.height + 'px';
+            const h = vv.height + 'px';
+            root.style.height = h;
+            document.body.style.height = h;
+            app.style.height = h;
+            // If the browser already scrolled the layout viewport to reveal the
+            // focused field, undo it — we've resized to fit, so there's nothing
+            // below to scroll to, and pinning avoids the empty gap.
+            if (window.scrollY !== 0 || vv.offsetTop !== 0) window.scrollTo(0, 0);
             clearTimeout(resizeTimer); resizeTimer = setTimeout(fitAllTerms, 80);
           } else if (app.style.height) {
+            root.style.height = '';
+            document.body.style.height = '';
             app.style.height = '';
           }
         };
@@ -4732,7 +4823,9 @@ export function getWebappHtml(botUsername) {
     document.addEventListener('visibilitychange', () => reportPresence());
     // Heartbeat refreshes the server's presence TTL while focused, so a silently
     // dropped socket's presence lapses (server stops muting) instead of sticking.
-    setInterval(() => { if (_present) reportPresence(true); }, 30000);
+    // Kept well under the server TTL (150s) so a few slipped/dropped beats during
+    // a busy session don't expire presence and leak "away" notifications.
+    setInterval(() => { if (_present) reportPresence(true); }, 25000);
 
     // ─── SSE for state updates ───
     function connectSSE() {
@@ -4811,6 +4904,7 @@ export function getWebappHtml(botUsername) {
     let resumeTimer = null;
     function onResume() {
       if (document.visibilityState === 'hidden') return;
+      reportPresence(true); // re-assert in case a heartbeat lapsed while the thread was busy/backgrounded
       if (token) loadUsage(); // always refresh usage on resume (cheap, server-cached, no force)
       if (!ensureConnections()) return; // connections already alive → don't touch them
       clearTimeout(resumeTimer);
@@ -8970,12 +9064,79 @@ export function getWebappHtml(botUsername) {
     init();
     initUpdateUi();
 
-    // ─── PWA service worker ───
-    // Skip under Electron (window.api present) — only useful for the browser PWA.
+    // ─── PWA service worker + update watcher ───
+    // Skip under Electron (window.api present) — the desktop app has its own
+    // updater. This is PWA-scoped: prompt while running, force on next launch.
     if ('serviceWorker' in navigator && !window.api) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch(() => { /* non-fatal */ });
+      window.addEventListener('load', initPwaUpdates);
+    }
+
+    function initPwaUpdates() {
+      let updating = false;   // true only once we ask a waiting worker to take over
+      let reloaded = false;   // guard against a reload loop
+      let prompted = false;
+
+      // The new worker took control → load the fresh shell. Gated on the
+      // updating flag so first-install control (or claims) never reloads.
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!updating || reloaded) return;
+        reloaded = true;
+        location.reload();
       });
+
+      const applyUpdate = (reg) => {
+        const w = reg.waiting;
+        if (!w) { location.reload(); return; }
+        updating = true;
+        w.postMessage({ type: 'SKIP_WAITING' }); // → activate → controllerchange → reload
+      };
+
+      const showBanner = (onUpdate) => {
+        if (document.getElementById('pwa-update-banner')) return;
+        const bar = document.createElement('div');
+        bar.id = 'pwa-update-banner';
+        bar.className = 'pwa-upd';
+        bar.setAttribute('role', 'status');
+        bar.innerHTML =
+          '<span class="pwa-upd__icon">' + ic('refresh') + '</span>'
+          + '<span class="pwa-upd__text">'
+          +   '<span class="pwa-upd__title">Sync this device</span>'
+          +   '<span class="pwa-upd__sub">Refreshes this device to match the server. The server itself isn\\u2019t changed.</span>'
+          + '</span>'
+          + '<span class="pwa-upd__actions">'
+          +   '<button class="pwa-upd__btn" type="button">Update</button>'
+          +   '<button class="pwa-upd__x" type="button" title="Dismiss \\u2014 updates automatically on next launch" aria-label="Dismiss">' + ic('x') + '</button>'
+          + '</span>';
+        const close = () => { bar.classList.add('pwa-upd--out'); setTimeout(() => bar.remove(), 220); };
+        bar.querySelector('.pwa-upd__btn').onclick = () => { close(); onUpdate(); };
+        bar.querySelector('.pwa-upd__x').onclick = close;
+        document.body.appendChild(bar);
+      };
+
+      navigator.serviceWorker.register('/sw.js').then((reg) => {
+        // A worker left waiting from a previous session → apply it now, silently.
+        // This is the "forcefully update on next launch" path.
+        if (reg.waiting && navigator.serviceWorker.controller) { applyUpdate(reg); return; }
+
+        // A new worker appearing while the app is open → prompt (don't yank them).
+        reg.addEventListener('updatefound', () => {
+          const sw = reg.installing;
+          if (!sw) return;
+          sw.addEventListener('statechange', () => {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller && !prompted) {
+              prompted = true;
+              showBanner(() => applyUpdate(reg));
+            }
+          });
+        });
+
+        // Poll for a new worker: on load, whenever the app is brought forward,
+        // and hourly while it stays open.
+        const poll = () => { reg.update().catch(() => { /* offline / non-fatal */ }); };
+        poll();
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
+        setInterval(poll, 60 * 60 * 1000);
+      }).catch(() => { /* non-fatal */ });
     }
   })();
   <\/script>
