@@ -12,6 +12,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { config, getOldAppDataDir, isFreshInstall } from './config.js';
+import { CAPS, unsupported } from './platform.js';
 import { createBot } from './bot.js';
 import { createWebApp } from './webapp.js';
 import { createClaudeTerminals } from './claude-terminals.js';
@@ -204,8 +205,9 @@ async function mcpDispatch(tool, args) {
     }
   }
 
-  // RDP tools
+  // RDP tools (Windows-only — tscon.exe + schtasks have no macOS/Linux equivalent)
   if (tool === 'disconnect_rdp') {
+    if (!CAPS.rdpDisconnect) return unsupported('disconnect_rdp');
     const rpa = await import('./rpa.js');
     return rpa.disconnectRdp();
   }

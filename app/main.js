@@ -8,7 +8,7 @@
  *   4. Setup wizard for first-time .env configuration
  */
 
-import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard } from 'electron';
+import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, systemPreferences } from 'electron';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
@@ -561,7 +561,9 @@ function setAutoUpdate(enabled) {
   if (updateState.enabled) checkForUpdates(); // re-check immediately on enable
 }
 
-// ─── Launch at Windows startup (OS login-item; OS is the source of truth) ───
+// ─── Launch at login (cross-platform; OS is the source of truth) ───
+// Electron maps openAtLogin to a Registry Run key on Windows and a Login Item on
+// macOS, so the same toggle drives autostart on both platforms.
 function getLaunchAtStartup() {
   try { return !!app.getLoginItemSettings().openAtLogin; } catch { return false; }
 }
@@ -842,6 +844,15 @@ ipcMain.handle('clipboard:getFilePaths', () => {
       const str = raw.toString('utf16le').replace(/\0+$/, '');
       return str.split('\0').filter(Boolean);
     }
+    return [];
+  }
+  if (process.platform === 'darwin') {
+    // macOS Finder puts copied files on the pasteboard as a file URL.
+    try {
+      const url = clipboard.read('public.file-url');
+      if (url && url.startsWith('file://')) return [fileURLToPath(url)];
+    } catch { /* not a file on the pasteboard */ }
+    return [];
   }
   return [];
 });
@@ -1416,6 +1427,16 @@ const browserIpcHandlers = {
 
 app.whenReady().then(() => {
   appendLog('[lifecycle] app.whenReady fired');
+  // macOS gates display/window capture behind Screen Recording permission; without
+  // it, captures come back black. Log a heads-up so the cause is obvious in setup.
+  if (process.platform === 'darwin') {
+    try {
+      const status = systemPreferences.getMediaAccessStatus('screen');
+      if (status !== 'granted') {
+        appendLog(`[lifecycle] Screen Recording permission is "${status}" — grant Crundi access in System Settings › Privacy & Security › Screen Recording to enable screenshots.`);
+      }
+    } catch { /* non-darwin builds / older Electron — ignore */ }
+  }
   try {
     createTray();
     appendLog('[lifecycle] Tray created');

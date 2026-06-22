@@ -27,6 +27,12 @@ const LOGO_SM = assetDataUri('icon_64x64.png');   // topbar
 const LOGO_LG = assetDataUri('icon_128x128.png'); // login screen
 
 export function getWebappHtml(botUsername) {
+  const onWindows = process.platform === 'win32';
+  // Example paths shown as input placeholders. Two escaping contexts below:
+  // raw HTML attributes need single backslashes; strings assembled in client-side
+  // JS need the backslashes doubled so they survive the browser's string parse.
+  const exampleProjectPath = onWindows ? 'C:\\Projects\\my-project' : '~/Projects/my-project';   // raw HTML attr
+  const exampleProjectsDir = onWindows ? 'C:\\\\Projects' : '~/Projects';                         // client-JS string
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2252,7 +2258,7 @@ export function getWebappHtml(botUsername) {
         <label for="proj-alias">Alias</label>
         <input type="text" id="proj-alias" placeholder="my-project" autocomplete="off">
         <label for="proj-path">Path</label>
-        <input type="text" id="proj-path" placeholder="C:\\\\Projects\\\\my-project" autocomplete="off">
+        <input type="text" id="proj-path" placeholder="${exampleProjectPath}" autocomplete="off">
         <label for="proj-name">Display Name (optional)</label>
         <input type="text" id="proj-name" placeholder="My Project" autocomplete="off">
       </div>
@@ -6843,7 +6849,7 @@ export function getWebappHtml(botUsername) {
           + '<input type="text" id="set-chat-id" style="' + monoStyle + '" value="' + escHtml(data.chatId || '') + '" placeholder="(auto-set when you send /start to the bot)" />'
           + '<p style="' + hintStyle + '">Required for notifications. Auto-discovered when you send /start, or enter manually.</p></div>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Projects Directory</label>'
-          + '<input type="text" id="set-projects-dir" style="' + monoStyle + '" value="' + escHtml(s.PROJECTS_DIR || '') + '" placeholder="C:\\\\Projects" />'
+          + '<input type="text" id="set-projects-dir" style="' + monoStyle + '" value="' + escHtml(s.PROJECTS_DIR || '') + '" placeholder="${exampleProjectsDir}" />'
           + '<p style="' + hintStyle + '">Single mode: subfolders auto-discovered. Leave empty for multi mode (add projects individually).</p></div>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Web Port</label>'
           + '<input type="text" id="set-web-port" style="' + monoStyle + '" value="' + escHtml(s.WEB_PORT || '') + '" placeholder="0 (auto)" />'

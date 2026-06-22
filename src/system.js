@@ -7,6 +7,7 @@
 
 import { execFile, execSync, execFileSync } from 'child_process';
 import { Window, Monitor as Screen } from 'node-screenshots';
+import { IS_WIN } from './platform.js';
 
 // ─── List all open windows (across all virtual desktops) ───
 
@@ -96,9 +97,11 @@ export function listWindows() {
   }
   const nsMap = new Map(nsWindows.map(w => [w.hwnd, w]));
 
-  // Get COM-based enumeration (all desktops)
+  // Get COM-based enumeration (all virtual desktops) — Windows-only.
+  // On other platforms node-screenshots already returns current-Space windows,
+  // so comWindows stays empty and we fall back to nsWindows below.
   let comWindows = [];
-  try {
+  if (IS_WIN) try {
     const raw = execFileSync(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', PS_ENUM_ALL_WINDOWS],
@@ -187,6 +190,9 @@ export function listWindows() {
 }
 
 function isScreenLocked() {
+  // Locked-screen detection relies on the Windows LogonUI process; on other
+  // platforms we don't keep a locked-screen cache, so report "not locked".
+  if (!IS_WIN) return false;
   try {
     const result = execSync(
       'powershell -NoProfile -NonInteractive -WindowStyle Hidden -Command "Get-Process -Name LogonUI -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { echo locked }"',
@@ -286,6 +292,13 @@ export async function screenshotWindow(windowId) {
   if (win) {
     const image = await win.captureImage();
     return image.toPng();
+  }
+
+  // The PrintWindow fallback below is Windows-only and exists to reach windows on
+  // other virtual desktops. On macOS/Linux node-screenshots only sees the current
+  // Space, so if we got here the window isn't capturable — fail with a clear message.
+  if (!IS_WIN) {
+    throw new Error('Window not found on the current Space (cross-desktop capture is Windows-only)');
   }
 
   // Fallback: PrintWindow via PowerShell (works cross-desktop)

@@ -8,6 +8,7 @@
 
 import { spawn, exec } from 'child_process';
 import { promisify } from 'util';
+import { IS_WIN } from './platform.js';
 import {
   listAllRegistered,
   getRegistered,
@@ -81,6 +82,9 @@ export function startService(key) {
       env: scrubbedEnv(),
       windowsHide: true,
       shell: true,
+      // On POSIX, detach so the shell leads its own process group; that lets us
+      // reap the whole tree with a negative-PID signal (the taskkill /T equivalent).
+      detached: !IS_WIN,
     });
   } catch (err) {
     return { ok: false, error: `Failed to spawn: ${err.message}` };
@@ -139,7 +143,22 @@ export function startService(key) {
 }
 
 /**
- * Stop a running service. Uses stopCommand if set, otherwise taskkill on Windows.
+ * Force-kill a process and its children. On Windows this is `taskkill /T`; on
+ * POSIX the service shell was spawned detached (its own group), so a negative-PID
+ * SIGKILL reaps the whole tree. Falls back to a plain kill if the group send fails.
+ */
+function killTree(pid) {
+  if (pid == null) return;
+  if (IS_WIN) {
+    spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { shell: true, windowsHide: true });
+  } else {
+    try { process.kill(-pid, 'SIGKILL'); }
+    catch { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+  }
+}
+
+/**
+ * Stop a running service. Uses stopCommand if set, otherwise kills the process tree.
  */
 export function stopService(key) {
   const entry = running.get(key);
@@ -157,7 +176,7 @@ export function stopService(key) {
         windowsHide: true,
       });
     } else {
-      spawn('taskkill', ['/F', '/T', '/PID', String(entry.proc.pid)], { shell: true, windowsHide: true });
+      killTree(entry.proc?.pid);
     }
     entry.status = 'stopped';
     entry.exitCode = null;
@@ -234,6 +253,10 @@ export async function killAllServices() {
   const jobs = [];
   for (const [, entry] of running) {
     if (entry.status !== 'running') continue;
+
+    // Default stop (no custom command) on POSIX: a negative-PID SIGKILL is
+    // synchronous, so reap the tree inline rather than awaiting a child process.
+    if (!entry.stopCommand && !IS_WIN) { killTree(entry.proc?.pid); continue; }
 
     const spec = entry.stopCommand
       ? { cmd: entry.stopCommand, args: [], cwd: entry.projectPath, timeoutMs: 20000 }
@@ -345,19 +368,29 @@ async function sampleAllMemory() {
   if (pids.length === 0) { pidMemoryBytes.clear(); return; }
 
   let procs;
-  try {
-    const { stdout } = await execP(
-      'wmic process get ProcessId,ParentProcessId,WorkingSetSize /format:csv',
-      { windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-    );
-    procs = parseWmicCsv(stdout);
-  } catch {
+  if (IS_WIN) {
     try {
       const { stdout } = await execP(
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize | ConvertTo-Csv -NoTypeInformation"',
+        'wmic process get ProcessId,ParentProcessId,WorkingSetSize /format:csv',
         { windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
       );
-      procs = parsePsCsv(stdout);
+      procs = parseWmicCsv(stdout);
+    } catch {
+      try {
+        const { stdout } = await execP(
+          'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize | ConvertTo-Csv -NoTypeInformation"',
+          { windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+        );
+        procs = parsePsCsv(stdout);
+      } catch {
+        return;
+      }
+    }
+  } else {
+    // POSIX: `ps` reports RSS in kilobytes; convert to bytes for parity with wmic.
+    try {
+      const { stdout } = await execP('ps -Ao pid=,ppid=,rss=', { maxBuffer: 8 * 1024 * 1024 });
+      procs = parsePsUnix(stdout);
     } catch {
       return;
     }
@@ -402,6 +435,22 @@ function parseWmicCsv(stdout) {
     const mem = parseInt(parts[3], 10);
     if (!Number.isFinite(pid)) continue;
     out.push({ pid, ppid: Number.isFinite(ppid) ? ppid : 0, mem: Number.isFinite(mem) ? mem : 0 });
+  }
+  return out;
+}
+
+// POSIX `ps -Ao pid=,ppid=,rss=` → whitespace-separated pid/ppid/rss(KB).
+function parsePsUnix(stdout) {
+  const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    const parts = line.split(/\s+/);
+    if (parts.length < 3) continue;
+    const pid = parseInt(parts[0], 10);
+    const ppid = parseInt(parts[1], 10);
+    const rssKb = parseInt(parts[2], 10);
+    if (!Number.isFinite(pid)) continue;
+    out.push({ pid, ppid: Number.isFinite(ppid) ? ppid : 0, mem: Number.isFinite(rssKb) ? rssKb * 1024 : 0 });
   }
   return out;
 }

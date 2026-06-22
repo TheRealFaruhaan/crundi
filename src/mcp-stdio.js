@@ -237,6 +237,14 @@ const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service',
   'secret_get']);
 const IMAGE_TOOLS = new Set(['browser_screenshot', 'capture_window', 'capture_display']);
 
+// Tools backed by Windows-only mechanisms — don't advertise them off Windows so
+// the agent never attempts a call that can only return "unsupported". The server
+// runs on the same host as Crundi, so process.platform is the host platform.
+const WINDOWS_ONLY_TOOLS = new Set(['disconnect_rdp']);
+const ADVERTISED_TOOLS = process.platform === 'win32'
+  ? TOOLS
+  : TOOLS.filter(t => !WINDOWS_ONLY_TOOLS.has(t.name));
+
 async function handleToolCall(name, args) {
   if (name === 'syntax_check') return runSyntaxCheck(args.files || []);
 
@@ -294,7 +302,7 @@ const server = new Server(
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools: TOOLS };
+  return { tools: ADVERTISED_TOOLS };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {

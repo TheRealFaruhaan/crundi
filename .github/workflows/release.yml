@@ -2,10 +2,15 @@ name: Release
 
 # Cut a release by tagging main's top commit and pushing the tag:
 #   git tag v1.2.0 && git push origin v1.2.0
-# electron-builder builds the Windows installer and publishes it to the matching
-# GitHub Release together with the .blockmap and latest.yml — the full set the
-# in-app auto-updater needs. Building on a clean runner also avoids the flaky
-# large-asset uploads we hit from a local machine.
+# electron-builder builds the Windows installer (on windows-latest) and the macOS
+# DMG (on macos-latest), publishing both to the matching GitHub Release together
+# with the .blockmap and latest*.yml metadata. Building on clean runners also
+# avoids the flaky large-asset uploads we hit from a local machine.
+#
+# Both builds are unsigned (no cert/notarization). The macOS DMG therefore opens
+# with a Gatekeeper warning, and macOS auto-update won't work until the app is
+# signed — distribution-only for now. The macos-latest runner is Apple Silicon,
+# so the DMG is arm64; Intel/universal is a later enhancement.
 on:
   push:
     tags:
@@ -16,7 +21,15 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: '--win'
+          - os: macos-latest
+            target: '--mac'
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,7 +44,7 @@ jobs:
         run: npm ci
 
       - name: Build & publish (unsigned — no cert on the runner)
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder ${{ matrix.target }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
