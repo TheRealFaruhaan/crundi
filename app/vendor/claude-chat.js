@@ -375,6 +375,7 @@
     var claudeSessionId = '';
     var queued = [];           // lines typed while busy; flushed as one message
     var queueNode = null;      // the single "Queued" bubble above the composer
+    var queueTimer = null;     // debounce so a burst of lines goes as one message
     var activityNode = null;   // in-log "working" row for turns that stream nothing
 
     // Enter behaviour: 'send' = Enter sends / Shift+Enter newline;
@@ -721,14 +722,29 @@
     }
 
     // ─── Queued input ───
-    // Typing while Claude is busy queues instead of sending. Everything queued
-    // is flushed as ONE message when the turn ends, so a burst of thoughts
-    // arrives as a single prompt rather than several competing turns. Holding it
-    // here (rather than writing to the CLI mid-turn) also means we never depend
-    // on how the CLI treats input that arrives while it is working.
+    // Typing while Claude is busy batches into ONE message, then goes out
+    // mid-turn: the CLI picks stdin up at the next tool boundary and acts on it
+    // without waiting for the turn to finish (verified — an injection after the
+    // first Bash call was obeyed two seconds later, in the same turn). So the
+    // queue only exists to group a fast burst of lines and give a moment to take
+    // them back; it is flushed shortly after typing stops, not at turn end.
+    var QUEUE_DEBOUNCE_MS = 1200;
+
     function enqueue(text) {
       queued.push(text);
       renderQueue();
+      scheduleFlush();
+    }
+
+    function scheduleFlush() {
+      clearTimeout(queueTimer);
+      queueTimer = setTimeout(function () {
+        // Never inject while a permission prompt is outstanding: the CLI is
+        // blocked waiting for a control_response, and answering that has to come
+        // first. Re-arm and flush once it clears.
+        if (state === 'needs-input') { scheduleFlush(); return; }
+        flushQueue();
+      }, QUEUE_DEBOUNCE_MS);
     }
 
     function queuedText() { return queued.join('\n'); }
@@ -736,6 +752,7 @@
     // Pull every queued line back into the composer for editing, newest last.
     function unqueue() {
       if (!queued.length) return;
+      clearTimeout(queueTimer);
       var restored = queuedText();
       queued = [];
       renderQueue();
@@ -759,13 +776,14 @@
       }
       var n = queued.length;
       queueNode.innerHTML = '<div class="cc-queue-head">'
-        + '<span>Queued</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
-        + (n === 1 ? '1 line' : n + ' lines') + ' · sends as one message</span></div>'
+        + '<span>Sending</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
+        + (n === 1 ? '1 line' : n + ' lines') + ' · as one message, at the next tool call</span></div>'
         + '<div class="cc-queue-body">' + esc(queuedText()) + '</div>'
-        + '<div class="cc-queue-hint">Click to edit</div>';
+        + '<div class="cc-queue-hint">Click to take it back</div>';
     }
 
     function flushQueue() {
+      clearTimeout(queueTimer);
       if (!queued.length || destroyed) return;
       var text = queuedText();
       queued = [];
