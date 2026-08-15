@@ -32,7 +32,7 @@ import * as schedule from './schedule-store.js';
 import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
-import { listResumable } from './claude-ui.js';
+import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1186,6 +1186,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const project = alias ? getProject(alias) : null;
       if (!project) return json(res, { ok: false, error: 'Unknown project' }, 400);
       return json(res, { ok: true, sessions: listResumable(project.path) });
+    }
+
+    // What would auto-continue pick up, and is loading it expensive? Answered
+    // BEFORE spawning, because a stream-json resume always loads the whole
+    // transcript and the CLI never offers its interactive "resume from summary"
+    // choice over this protocol.
+    if (path === '/api/ui-sessions/preflight' && req.method === 'GET') {
+      const alias = String(url.searchParams.get('project') || '').toLowerCase();
+      const project = alias ? getProject(alias) : null;
+      if (!project) return json(res, { ok: false, error: 'Unknown project' }, 400);
+      const latest = latestTranscript(project.path);
+      return json(res, {
+        ok: true,
+        latest,
+        heavy: isHeavyResume(latest),
+        thresholds: { tokens: HEAVY_TOKENS, ageHours: HEAVY_AGE_HOURS },
+      });
     }
 
     if (path === '/api/ui-sessions/create' && req.method === 'POST') {

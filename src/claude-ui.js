@@ -73,6 +73,86 @@ export function resolveClaudeBin() {
   return null;
 }
 
+/** Directory Claude Code stores a project's transcripts in. */
+function transcriptDir(projectPath) {
+  const encoded = resolvePath(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
+  return join(homedir(), '.claude', 'projects', encoded);
+}
+
+/**
+ * Approximate a transcript's context size in tokens.
+ *
+ * Assistant messages record their own `usage`, and input + cache_read +
+ * cache_creation on a late message is exactly the context the model was carrying
+ * — the same number Claude Code quotes ("this session is … 180.6k tokens").
+ * Only the file's tail is scanned, so this stays cheap on multi-MB transcripts.
+ */
+function estimateTranscriptTokens(file, size) {
+  try {
+    const fd = openSync(file, 'r');
+    let text;
+    try {
+      const len = Math.min(1024 * 1024, size);
+      const buf = Buffer.alloc(len);
+      const n = readSync(fd, buf, 0, len, Math.max(0, size - len));
+      text = buf.toString('utf8', 0, n);
+    } finally { closeSync(fd); }
+    const lines = text.split('\n');
+    lines.shift(); // first line is probably truncated mid-JSON
+    let best = 0;
+    for (const line of lines) {
+      if (!line.includes('cache_read_input_tokens')) continue;
+      let o; try { o = JSON.parse(line); } catch { continue; }
+      const u = o.message && o.message.usage;
+      if (!u) continue;
+      const ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+      if (ctx > best) best = ctx;
+    }
+    return best;
+  } catch { return 0; }
+}
+
+/**
+ * The conversation `--continue` would pick up, with the numbers needed to decide
+ * whether that is an expensive thing to do.
+ *
+ * Claude Code's interactive "this session is old and large — resume from a
+ * summary?" prompt is NOT available over the stream-json protocol (verified: no
+ * request_user_dialog is emitted at spawn or on the first turn, even with
+ * supportedDialogKinds declared). A stream-json resume is therefore always a
+ * FULL resume, so the host has to surface the cost itself — before spawning,
+ * while it is still free to choose.
+ */
+export function latestTranscript(projectPath) {
+  try {
+    const dir = transcriptDir(projectPath);
+    if (!existsSync(dir)) return null;
+    let newest = null;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith('.jsonl')) continue;
+      const full = join(dir, f);
+      let st; try { st = statSync(full); } catch { continue; }
+      if (!newest || st.mtimeMs > newest.mtime) newest = { id: f.slice(0, -6), full, mtime: st.mtimeMs, size: st.size };
+    }
+    if (!newest) return null;
+    return {
+      id: newest.id,
+      title: readTranscriptTitle(newest.full) || '(untitled session)',
+      tokens: estimateTranscriptTokens(newest.full, newest.size),
+      ageHours: (Date.now() - newest.mtime) / 3600000,
+      sizeBytes: newest.size,
+      updatedAt: new Date(newest.mtime).toISOString(),
+    };
+  } catch { return null; }
+}
+
+/** Mirrors Claude Code's own "old and large" heuristic for its summary prompt. */
+export const HEAVY_TOKENS = 100_000;
+export const HEAVY_AGE_HOURS = 24;
+export function isHeavyResume(t) {
+  return !!t && (t.tokens >= HEAVY_TOKENS || t.ageHours >= HEAVY_AGE_HOURS);
+}
+
 /**
  * List resumable Claude Code conversations for a project directory.
  *
@@ -109,6 +189,8 @@ export function listResumable(projectPath, limit = 30) {
       title: readTranscriptTitle(f.full) || '(untitled session)',
       updatedAt: new Date(f.mtime).toISOString(),
       sizeBytes: f.size,
+      tokens: estimateTranscriptTokens(f.full, f.size),
+      ageHours: (Date.now() - f.mtime) / 3600000,
     }));
   } catch {
     return [];
@@ -271,9 +353,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // chat for a project continues — extra chats start fresh rather than two
     // processes clobbering the same transcript. `sessionMode: 'new'` opts out.
     const aliasHasLive = entriesForAlias(key).some(x => x.proc);
-    if (sessionMode === 'resume' && resumeId) args.push('--resume', String(resumeId));
+    // 'compact' resumes and then immediately runs /compact, so the heavy context
+    // is summarised once instead of riding along on every later turn.
+    const compacting = sessionMode === 'compact';
+    if ((sessionMode === 'resume' || compacting) && resumeId) args.push('--resume', String(resumeId));
     else if (sessionMode === 'new') { /* explicit fresh session */ }
-    else if ((sessionMode === 'continue' || !aliasHasLive) && hasExistingConversation(project.path)) args.push('--continue');
+    else if ((sessionMode === 'continue' || compacting || !aliasHasLive) && hasExistingConversation(project.path)) args.push('--continue');
 
     let proc;
     try {
@@ -373,6 +458,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // never read as an operation still in progress, because the CLI does no
     // work at all until the first message is sent.
     s.startupNotice = emitEntry(s, { id: genId(), kind: 'notice', text: 'Starting Claude…' });
+
+    // Fired as the first turn once the CLI reports ready (see handleControlResponse).
+    if (compacting) s.pendingFirstMessage = '/compact';
 
     console.log(`[claude-ui] Started chat "${s.title}" for "${key}" (${id}) in ${project.path}`);
     return { ok: true, id, project: key, title: s.title, order: s.order, kind: 'ui' };
@@ -577,6 +665,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       permissionMode: s.permissionMode,
       account: resp.account || null,
     });
+
+    // Auto-run the queued opener (currently only /compact) now that the CLI is
+    // accepting input.
+    if (s.pendingFirstMessage) {
+      const text = s.pendingFirstMessage;
+      s.pendingFirstMessage = null;
+      sendMessage(s.id, text);
+    }
   }
 
   // ─── Outbound actions ───

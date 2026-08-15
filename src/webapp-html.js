@@ -663,6 +663,12 @@ export function getWebappHtml(botUsername) {
     .cr-title { font-size: 0.86rem; font-weight: 600; }
     .cr-meta { font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono); }
     .cr-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 2px; }
+    /* Resume-cost choice shown in the placeholder cell before any process spawns. */
+    .cr-choice { gap: 7px !important; padding: 0 18px; text-align: center; }
+    .cr-choice-title { font-size: 0.95rem; font-weight: 650; color: var(--text-primary); }
+    .cr-choice-sub { font-size: 0.85rem; color: var(--text-secondary); max-width: 420px; }
+    .cr-choice-meta { font-family: var(--mono); font-size: 0.76rem; color: var(--yellow); }
+    .cr-choice-note { font-size: 0.76rem; color: var(--text-muted); max-width: 430px; margin-bottom: 4px; line-height: 1.5; }
     #chat-resume-modal {
       display: none; position: fixed; inset: 0;
       background: rgba(0,0,0,0.7); z-index: 900;
@@ -3364,7 +3370,42 @@ export function getWebappHtml(botUsername) {
     // the placeholder for the live terminal (SSE state will reconcile shortly).
     // mode: 'shell' (plain shell), 'normal' / 'skip' (Claude in a PTY),
     // 'chat' (Claude driven over stream-json, rendered as a UI chat).
-    async function launchTerminal(mode, localId, resumeId) {
+    // Claude's interactive "this session is old and large — resume from a
+    // summary?" prompt does not exist over the stream-json protocol UI mode
+    // uses, so a resume there always loads the whole transcript. Ask before
+    // spawning, which is the last moment the choice is still free.
+    async function launchChatWithPreflight(localId) {
+      let info = null;
+      try {
+        const r = await apiFetch('/api/ui-sessions/preflight?project=' + encodeURIComponent(currentProject));
+        info = await r.json();
+      } catch { /* fall through to a plain launch */ }
+      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal('chat', localId); return; }
+      showResumeChoice(localId, info.latest);
+    }
+
+    function showResumeChoice(localId, t) {
+      const cell = document.querySelector('.term-cell[data-lid="' + localId + '"]');
+      const body = cell && cell.querySelector('.term-body');
+      if (!body) { launchTerminal('chat', localId); return; }
+      const tok = t.tokens ? (t.tokens / 1000).toFixed(1) + 'k tokens' : 'a large transcript';
+      const age = t.ageHours < 1 ? 'under an hour old'
+        : t.ageHours < 24 ? Math.round(t.ageHours) + 'h old'
+        : Math.round(t.ageHours / 24) + 'd old';
+      body.innerHTML = '<div class="term-launch cr-choice">'
+        + '<div class="cr-choice-title">Continuing will load your whole last conversation</div>'
+        + '<div class="cr-choice-sub">' + escHtml(t.title) + '</div>'
+        + '<div class="cr-choice-meta">' + escHtml(tok) + ' \\u00b7 ' + escHtml(age) + '</div>'
+        + '<div class="cr-choice-note">Claude\\u2019s \\u201cresume from summary\\u201d option isn\\u2019t offered over this protocol. '
+        + 'Compacting still loads the transcript once, then summarises it so later turns stay small. '
+        + 'Continuing keeps the full context on every turn. Starting fresh loads nothing.</div>'
+        + '<button class="btn-chat" data-action="chat-launch-mode" data-cmode="compact" data-sid="' + escHtml(t.id) + '" data-lid="' + localId + '">Compact first (recommended)</button>'
+        + '<button class="btn-normal" data-action="chat-launch-mode" data-cmode="continue" data-lid="' + localId + '">Continue anyway</button>'
+        + '<button class="btn-chat-resume" data-action="chat-launch-mode" data-cmode="new" data-lid="' + localId + '">Start a fresh conversation</button>'
+        + '</div>';
+    }
+
+    async function launchTerminal(mode, localId, resumeId, sessionMode) {
       if (!currentProject) return;
       const isChat = mode === 'chat';
       const skipPerms = mode === 'skip';
@@ -3373,7 +3414,14 @@ export function getWebappHtml(botUsername) {
         const chatBody = { project: currentProject, permissionMode: 'default' };
         // Resuming replays a prior transcript into a fresh CLI process
         // (claude --resume <id>), so it must be decided at spawn time.
-        if (isChat && resumeId) { chatBody.sessionMode = 'resume'; chatBody.resumeId = resumeId; chatBody.title = 'Chat (resumed)'; }
+        if (isChat && sessionMode) {
+          chatBody.sessionMode = sessionMode;
+          if (resumeId) chatBody.resumeId = resumeId;
+          if (sessionMode === 'compact') chatBody.title = 'Chat (compacted)';
+          else if (sessionMode === 'new') chatBody.title = 'Chat (new)';
+        } else if (isChat && resumeId) {
+          chatBody.sessionMode = 'resume'; chatBody.resumeId = resumeId; chatBody.title = 'Chat (resumed)';
+        }
         const r = await apiFetch(isChat ? '/api/ui-sessions/create' : '/api/terminals/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3418,7 +3466,8 @@ export function getWebappHtml(botUsername) {
           '<button class="cr-item" data-action="chat-resume-pick" data-sid="' + escHtml(s.id) + '">'
           + '<span class="cr-title">' + escHtml(s.title) + '</span>'
           + '<span class="cr-meta">' + escHtml(s.id.slice(0, 8)) + ' \\u00b7 ' + escHtml(relTime(s.updatedAt))
-          + ' \\u00b7 ' + Math.max(1, Math.round(s.sizeBytes / 1024)) + ' KB</span>'
+          + ' \\u00b7 ' + (s.tokens ? (s.tokens / 1000).toFixed(1) + 'k tokens' : Math.max(1, Math.round(s.sizeBytes / 1024)) + ' KB')
+          + (s.tokens >= 100000 ? ' \\u00b7 <b style="color:var(--yellow)">heavy</b>' : '') + '</span>'
           + '</button>').join('');
       } catch (err) {
         body.innerHTML = '<div class="cr-empty">Failed to load: ' + escHtml(err.message) + '</div>';
@@ -7294,7 +7343,12 @@ export function getWebappHtml(botUsername) {
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
         case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
-        case 'launch-terminal': launchTerminal(d.mode, d.lid); break;
+        case 'launch-terminal':
+          // Chat launches check the resume cost first; other modes go straight through.
+          if (d.mode === 'chat') launchChatWithPreflight(d.lid);
+          else launchTerminal(d.mode, d.lid);
+          break;
+        case 'chat-launch-mode': launchTerminal('chat', d.lid, d.sid, d.cmode); break;
         case 'chat-resume': openChatResume(d.lid); break;
         case 'chat-resume-cancel': closeChatResume(); break;
         case 'chat-resume-pick': {
