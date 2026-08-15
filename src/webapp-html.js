@@ -590,6 +590,17 @@ export function getWebappHtml(botUsername) {
     .term-launch .btn-skip { border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
     .term-launch .btn-shell { border: 1px solid var(--border); background: transparent; color: var(--text-secondary); }
     .term-launch .btn-shell:hover { color: var(--text-primary); border-color: var(--accent); }
+    /* UI (chat) mode: same weight as Normal Mode, distinguished by the gradient. */
+    .term-launch .btn-chat { border: 1px solid var(--accent); background: var(--accent-grad); color: #fff; }
+    .term-launch .btn-chat:hover { filter: brightness(1.12); }
+    /* Chat cells fill their body edge-to-edge (the renderer owns its own padding). */
+    .term-cell[data-chat] .term-body { padding: 0; }
+    .chat-mount { height: 100%; min-height: 0; }
+    .term-kind-tag {
+      font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--accent-hover); border: 1px solid var(--border);
+      border-radius: 99px; padding: 1px 7px; font-weight: 700;
+    }
     /* Agent button group (Claude today; more agents can be added the same way). */
     .term-launch .term-agent-group {
       display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -2385,6 +2396,7 @@ export function getWebappHtml(botUsername) {
   <script src="/vendor/xterm.js"><\/script>
   <script src="/vendor/addon-fit.js"><\/script>
   <script src="/vendor/codemirror.js"><\/script>
+  <script src="/vendor/claude-chat.js"><\/script>
   <script>
   (function() {
     'use strict';
@@ -2396,6 +2408,7 @@ export function getWebappHtml(botUsername) {
     // input box / tool buttons act on whichever terminal is focused. Pending
     // cells are client-only placeholders that show the launch buttons.
     const termViews = new Map();   // termId → { term, fit, mount, cellEl, scrollBtn }
+    const chatViews = new Map();   // ui session id → CrundiChat view
     let focusedTermId = null;
     let pendingCells = [];         // local ids of un-launched cells for the current project
     let pendingProject = null;     // which project pendingCells belong to
@@ -3252,22 +3265,26 @@ export function getWebappHtml(botUsername) {
 
     // Launch a terminal into a pending cell: create a server terminal, then swap
     // the placeholder for the live terminal (SSE state will reconcile shortly).
-    // mode: 'shell' (plain shell), 'normal' / 'skip' (Claude). Other agents later.
+    // mode: 'shell' (plain shell), 'normal' / 'skip' (Claude in a PTY),
+    // 'chat' (Claude driven over stream-json, rendered as a UI chat).
     async function launchTerminal(mode, localId) {
       if (!currentProject) return;
+      const isChat = mode === 'chat';
       const skipPerms = mode === 'skip';
       const shellOnly = mode === 'shell';
       try {
-        const r = await apiFetch('/api/terminals/create', {
+        const r = await apiFetch(isChat ? '/api/ui-sessions/create' : '/api/terminals/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: currentProject, skipPermissions: skipPerms, shell: shellOnly }),
+          body: JSON.stringify(isChat
+            ? { project: currentProject, permissionMode: 'default' }
+            : { project: currentProject, skipPermissions: skipPerms, shell: shellOnly }),
         });
         const data = await r.json();
         if (!data.ok) { toast(data.error || 'Failed to launch', 'error'); return; }
         if (localId) pendingCells = pendingCells.filter(x => x !== localId);
         if (!terminals.some(t => t.id === data.id)) {
-          terminals.push({ id: data.id, project: currentProject, title: data.title || 'Terminal', order: data.order || 0, status: 'running' });
+          terminals.push({ id: data.id, project: currentProject, title: data.title || (isChat ? 'Chat' : 'Terminal'), order: data.order || 0, status: 'running', kind: isChat ? 'ui' : 'terminal' });
         }
         focusedTermId = data.id;
         renderTermGrid();
@@ -3277,9 +3294,16 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // Base path for a live cell's REST actions — chat cells and PTY terminals
+    // are managed by different server-side collections.
+    function cellApiBase(id) {
+      const t = terminals.find(x => x.id === id);
+      return (t && t.kind === 'ui' ? '/api/ui-sessions/' : '/api/terminals/') + encodeURIComponent(id);
+    }
+
     async function closeTerminal(id) {
       try {
-        await apiFetch('/api/terminals/' + encodeURIComponent(id) + '/close', { method: 'POST' });
+        await apiFetch(cellApiBase(id) + '/close', { method: 'POST' });
         terminals = terminals.filter(t => t.id !== id);
         if (focusedTermId === id) focusedTermId = null;
         delete termFont[id];
@@ -3382,9 +3406,11 @@ export function getWebappHtml(botUsername) {
       // a project has no cells of any kind yet.
       if (!live.length && !pendingCells.length && !wbCells.length) pendingCells = [genLocalId()];
 
-      // Unordered set of every cell the grid should contain.
+      // Unordered set of every cell the grid should contain. A live cell is
+      // either a PTY terminal or a Claude chat session — same key namespace, so
+      // stored ordering/mosaic layouts survive either kind.
       const items = [
-        ...live.map(t => ({ key: 'live:' + t.id, type: 'live', t })),
+        ...live.map(t => ({ key: 'live:' + t.id, type: t.kind === 'ui' ? 'chat' : 'live', t })),
         ...pendingCells.map(lid => ({ key: 'pend:' + lid, type: 'pending', localId: lid })),
         ...wbCells.map(c => ({ key: 'panel:' + c.id, type: 'panel', cell: c })),
       ];
@@ -3406,8 +3432,8 @@ export function getWebappHtml(botUsername) {
       const newLive = [];
       for (const d of desired) {
         let el = grid.querySelector('[data-cellkey="' + d.key + '"]');
-        if (!el) { el = buildCellEl(d); if (d.type === 'live') newLive.push([d, el]); }
-        else if (d.type === 'live') updateCellHead(el, d.t);
+        if (!el) { el = buildCellEl(d); if (d.type === 'live' || d.type === 'chat') newLive.push([d, el]); }
+        else if (d.type === 'live' || d.type === 'chat') updateCellHead(el, d.t);
         elByKey[d.key] = el;
       }
 
@@ -3424,8 +3450,12 @@ export function getWebappHtml(botUsername) {
         grid.replaceChildren(...desired.map(d => elByKey[d.key]));
       }
 
-      // Mount xterm for newly built live cells AFTER they're attached to the DOM.
-      for (const [d, el] of newLive) mountXterm(d.t, el);
+      // Mount xterm / the chat view for newly built live cells AFTER they're
+      // attached to the DOM (both measure their container on mount).
+      for (const [d, el] of newLive) {
+        if (d.type === 'chat') mountChat(d.t, el);
+        else mountXterm(d.t, el);
+      }
 
       // Restore the cursor to the terminal the user was typing in, if it survived
       // the rebuild — the re-parent above blurred it.
@@ -3515,11 +3545,20 @@ export function getWebappHtml(botUsername) {
           + '<div class="icon">&gt;_</div>'
           + '<button class="btn-shell" data-action="launch-terminal" data-mode="shell" data-lid="' + d.localId + '">Empty Shell</button>'
           + '<div class="term-agent-group">'
-          + '<div class="term-agent-label">Claude</div>'
+          + '<div class="term-agent-label">Claude \\u2014 Terminal</div>'
           + '<button class="btn-normal" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">Normal Mode</button>'
           + '<button class="btn-skip" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '">Skip Permissions Mode</button>'
           + '</div>'
+          + '<div class="term-agent-group">'
+          + '<div class="term-agent-label">Claude \\u2014 Chat</div>'
+          + '<button class="btn-chat" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '">UI Mode</button>'
+          + '</div>'
           + '</div>';
+      } else if (d.type === 'chat') {
+        el.dataset.tid = d.t.id;
+        el.dataset.chat = '1';
+        head.innerHTML = headHtmlLive(d.t);
+        body.innerHTML = '<div class="chat-mount"></div>';
       } else if (d.type === 'panel') {
         el.classList.add('wb-cell');
         el.dataset.wbid = d.cell.id;
@@ -3537,6 +3576,12 @@ export function getWebappHtml(botUsername) {
       }
       el.appendChild(head);
       el.appendChild(body);
+      if (d.type === 'chat') {
+        // Clicking a chat cell focuses it, same as a terminal, so the shared
+        // header controls and close button act on the right cell.
+        el.addEventListener('mousedown', () => focusTerm(d.t.id), true);
+        el.addEventListener('touchstart', () => focusTerm(d.t.id), { passive: true, capture: true });
+      }
       if (d.type === 'live') {
         // Clicking a cell focuses it (so the unified input targets it).
         el.addEventListener('mousedown', () => focusTerm(d.t.id), true);
@@ -3551,11 +3596,26 @@ export function getWebappHtml(botUsername) {
           if (txt) { e.preventDefault(); e.stopPropagation(); insertRefToTarget({ kind: 'term', id: d.t.id }, txt); }
         });
       }
-      if (d.type === 'live' || d.type === 'panel') {
+      if (d.type === 'live' || d.type === 'chat' || d.type === 'panel') {
         // Drag the header to reorder (reuses the kanban drag controller).
         makeDraggable(el, Object.assign({ handle: head }, termDragHandlers(d.key)));
       }
       return el;
+    }
+
+    // Mount the Claude chat renderer (served from /vendor/claude-chat.js) into a
+    // freshly built cell. The view owns everything below the header; we only
+    // hand it the auth-aware fetch and the shared WebSocket.
+    function mountChat(t, cellEl) {
+      if (chatViews.has(t.id)) return;
+      const mountEl = cellEl.querySelector('.chat-mount');
+      if (!mountEl || !window.CrundiChat) return;
+      const view = window.CrundiChat.mount(mountEl, {
+        sessionId: t.id,
+        apiFetch,
+        wsSend: (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
+      });
+      chatViews.set(t.id, view);
     }
 
     const WB_KIND_META = {
@@ -3578,19 +3638,25 @@ export function getWebappHtml(botUsername) {
 
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
+      const isChat = t.kind === 'ui';
       const as = exited ? '' : (t.agentState || 'idle');
       const dotCls = exited ? ' exited' : (as === 'working' ? ' working' : as === 'needs-input' ? ' input' : '');
       const badge = (!exited && as === 'working') ? '<span class="term-agent-badge working">working</span>'
         : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>' : '';
+      // Font-size controls only make sense for an xterm cell; a chat cell gets a
+      // "chat" tag instead so the two kinds are distinguishable at a glance.
+      const controls = isChat
+        ? '<span class="term-kind-tag">chat</span>'
+        : '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
+          + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
+          + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
-        + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || 'Terminal') + '</span>'
+        + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
         + badge
         + '<span class="term-head-spacer"></span>'
-        + '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
-        + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
-        + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>'
-        + '<button class="term-head-btn term-close" data-action="term-close" data-tid="' + t.id + '" title="Close terminal">\\u00d7</button>';
+        + controls
+        + '<button class="term-head-btn term-close" data-action="term-close" data-tid="' + t.id + '" title="' + (isChat ? 'Close chat' : 'Close terminal') + '">\\u00d7</button>';
     }
 
     function updateCellHead(el, t) {
@@ -3751,6 +3817,10 @@ export function getWebappHtml(botUsername) {
         try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'unsubscribe', id: tid })); } catch { /* ignore */ }
         try { v.term.dispose(); } catch { /* ignore */ }
         termViews.delete(tid);
+      }
+      if (tid && chatViews.has(tid)) {
+        try { chatViews.get(tid).destroy(); } catch { /* ignore */ }
+        chatViews.delete(tid);
       }
       // Panel cell: park any relocated tab-panel back to its tab slot first so we
       // don't delete the real panel node along with the cell.
@@ -4229,7 +4299,7 @@ export function getWebappHtml(botUsername) {
         input.replaceWith(span);
         if (save && val !== cur) {
           const tt = terminals.find(t => t.id === id); if (tt) tt.title = val;
-          try { await apiFetch('/api/terminals/' + encodeURIComponent(id) + '/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: val }) }); } catch { /* ignore */ }
+          try { await apiFetch(cellApiBase(id) + '/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: val }) }); } catch { /* ignore */ }
         }
       };
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(true); } else if (e.key === 'Escape') { e.preventDefault(); commit(false); } });
@@ -4300,8 +4370,16 @@ export function getWebappHtml(botUsername) {
               const termOrder = keys.filter(k => k.startsWith('live:')).map(k => k.slice(5));
               termOrder.forEach((tid, i) => { const tt = terminals.find(t => t.id === tid); if (tt) tt.order = i; });
               renderTermGrid();
+              // The unified list mixes PTY terminals and chat sessions, which
+              // live in separate server-side collections. Each side ignores ids
+              // it does not own, so the same sequence can go to both.
               if (termOrder.length) {
-                try { await apiFetch('/api/terminals/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: currentProject, order: termOrder }) }); } catch { /* ignore */ }
+                const body = JSON.stringify({ project: currentProject, order: termOrder });
+                const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
+                try { await apiFetch('/api/terminals/reorder', opts); } catch { /* ignore */ }
+                if (terminals.some(t => t.kind === 'ui')) {
+                  try { await apiFetch('/api/ui-sessions/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }); } catch { /* ignore */ }
+                }
               }
             }
           }
@@ -4779,6 +4857,9 @@ export function getWebappHtml(botUsername) {
           try { v.term.reset(); } catch { /* ignore */ }
           ws.send(JSON.stringify({ type: 'subscribe', id }));
         }
+        // Chat cells re-subscribe too; the server replays the conversation, so
+        // applyHistory() rebuilds the log and re-arms any parked prompt.
+        for (const [, c] of chatViews) { try { c.resubscribe(); } catch { /* ignore */ } }
         fitAllTerms();
         reportPresence(true); // re-assert presence on a fresh socket
       };
@@ -4789,6 +4870,14 @@ export function getWebappHtml(botUsername) {
         if (msg.type === 'output' && msg.id) {
           const v = termViews.get(msg.id);
           if (v) v.term.write(msg.data);
+        }
+        if (msg.type === 'ui-history' && msg.id) {
+          const c = chatViews.get(msg.id);
+          if (c) c.applyHistory(msg.session);
+        }
+        if (msg.type === 'ui-event' && msg.id) {
+          const c = chatViews.get(msg.id);
+          if (c) c.applyEvent(msg.event);
         }
         if (msg.type === 'server-log') {
           appendServerLog(msg);

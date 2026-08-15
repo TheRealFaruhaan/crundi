@@ -152,11 +152,12 @@ const startedAt = Date.now();
 /**
  * Create the Crundi web app server.
  *
- * @param {{ config: object, claudeTerminals: object, bot?: object, mcpDispatch?: function }} deps
+ * @param {{ config: object, claudeTerminals: object, claudeUi?: object, bot?: object, mcpDispatch?: function }} deps
+ *   claudeUi — Claude chat-session manager (UI mode); optional
  *   bot — grammy Bot instance (for Telegram notifications from MCP tools)
  *   mcpDispatch — optional handler for MCP tool calls from stdio servers
  */
-export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, serverLogs, onServerLog, getChatId, setChatId }) {
+export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispatch, serverLogs, onServerLog, getChatId, setChatId }) {
   let server = null;
   let wss = null;
   let port = null;
@@ -399,7 +400,11 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
   // Apply a hook-reported state for a terminal; notify on transitions to
   // done(idle)/needs-input. Unknown terminals are ignored.
   function handleAgentState(tid, state, ts = 0) {
-    const term = claudeTerminals ? claudeTerminals.list().find(t => t.id === tid) : null;
+    // Terminal cells report via the lifecycle hook; UI (chat) cells report
+    // straight off the stream-json message flow. Both land here so the status
+    // dots and Telegram pings behave identically for either kind.
+    const term = (claudeTerminals ? claudeTerminals.list().find(t => t.id === tid) : null)
+      || (claudeUi ? claudeUi.list().find(s => s.id === tid) : null);
     if (!term) return;
     // Hook events come from independent, short-lived processes with no delivery
     // ordering. Under load (busy session + running services), Node startup jitter
@@ -418,6 +423,10 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
     }
     broadcastState();
   }
+
+  // Chat sessions push their agent state as it changes. These arrive in-order
+  // from a single process, so no timestamp reordering guard is needed.
+  if (claudeUi) claudeUi.onAnyStateChange((id, state) => handleAgentState(id, state, Date.now()));
 
   function broadcastSSE(event, data) {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -440,15 +449,22 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       tunnelUrl: s.tunnel?.url || null,
     }));
     const liveTerms = claudeTerminals ? claudeTerminals.list() : [];
-    // Reconcile agent states against the live terminals: drop states for
-    // terminals that are gone or no longer running (crash/force-close safety).
-    const liveIds = new Set(liveTerms.map(t => t.id));
+    // Chat sessions carry their own kind/agentState (derived from the message
+    // stream), so they need no hook-state bookkeeping — only inclusion.
+    const uiSessions = claudeUi ? claudeUi.list() : [];
+    // Reconcile agent states against the live cells: drop states for cells that
+    // are gone or no longer running (crash/force-close safety).
+    const liveIds = new Set([...liveTerms.map(t => t.id), ...uiSessions.map(s => s.id)]);
     for (const k of [...agentStates.keys()]) if (!liveIds.has(k)) { agentStates.delete(k); agentStateTs.delete(k); }
     for (const t of liveTerms) if (t.status !== 'running') { agentStates.delete(t.id); agentStateTs.delete(t.id); }
     // A running terminal with no hook state yet is "idle" (alive → green).
-    const terminals = liveTerms.map(t => ({
-      ...t, agentState: t.status === 'running' ? (agentStates.get(t.id) || 'idle') : null,
-    }));
+    const terminals = [
+      ...liveTerms.map(t => ({
+        ...t, kind: 'terminal',
+        agentState: t.status === 'running' ? (agentStates.get(t.id) || 'idle') : null,
+      })),
+      ...uiSessions,
+    ];
     const userTerminals = terminalsMod.listTerminals();
     // Project aliases that have at least one enabled schedule (for the sidebar
     // "upcoming schedule" clock indicator).
@@ -947,7 +963,10 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       const removal = removeProject(alias);
       if (!removal.ok) return json(res, removal, 400);
 
-      // Close any running Claude terminals for this project.
+      // Close any running Claude terminals / chat sessions for this project.
+      if (claudeUi) {
+        try { claudeUi.closeProject(alias); } catch { /* ignore */ }
+      }
       if (claudeTerminals) {
         try { claudeTerminals.closeProject(alias); } catch { /* ignore */ }
       }
@@ -1147,6 +1166,69 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       if (action === 'rename') {
         const body = JSON.parse(await readBody(req));
         const result = claudeTerminals.rename(termId, body.title);
+        broadcastState();
+        return json(res, result);
+      }
+    }
+
+    // ─── Claude UI (chat) sessions ───
+    // The chat counterpart to /api/terminals. Same {project,title,order} shape,
+    // but the conversation itself streams over the WebSocket rather than bytes.
+    if (path === '/api/ui-sessions' && req.method === 'GET') {
+      return json(res, { sessions: claudeUi ? claudeUi.list() : [] });
+    }
+
+    if (path === '/api/ui-sessions/create' && req.method === 'POST') {
+      if (!claudeUi) return json(res, { ok: false, error: 'Chat manager not available' });
+      const body = JSON.parse(await readBody(req));
+      if (!body.project) return json(res, { ok: false, error: 'project is required' }, 400);
+      const result = await claudeUi.create(body.project, body);
+      broadcastState();
+      return json(res, result);
+    }
+
+    if (path === '/api/ui-sessions/reorder' && req.method === 'POST') {
+      if (!claudeUi) return json(res, { ok: false, error: 'Chat manager not available' });
+      const body = JSON.parse(await readBody(req));
+      const result = claudeUi.setOrder(body.project, body.order);
+      broadcastState();
+      return json(res, result);
+    }
+
+    const uiMatch = path.match(/^\/api\/ui-sessions\/([^/]+)\/(send|respond|interrupt|close|rename|permission-mode|model|history)$/);
+    if (uiMatch) {
+      const sid = decodeURIComponent(uiMatch[1]);
+      const action = uiMatch[2];
+      if (!claudeUi) return json(res, { ok: false, error: 'Chat manager not available' });
+
+      if (action === 'history' && req.method === 'GET') {
+        const h = claudeUi.history(sid);
+        return h ? json(res, { ok: true, session: h }) : json(res, { ok: false, error: 'No such session' }, 404);
+      }
+      if (req.method !== 'POST') return json(res, { ok: false, error: 'Method not allowed' }, 405);
+
+      if (action === 'interrupt') return json(res, claudeUi.interrupt(sid));
+      if (action === 'close') {
+        const result = claudeUi.close(sid);
+        broadcastState();
+        return json(res, result);
+      }
+
+      const body = JSON.parse(await readBody(req) || '{}');
+      if (action === 'send') return json(res, claudeUi.sendMessage(sid, body.text));
+      if (action === 'respond') return json(res, claudeUi.respond(sid, body));
+      if (action === 'rename') {
+        const result = claudeUi.rename(sid, body.title);
+        broadcastState();
+        return json(res, result);
+      }
+      if (action === 'permission-mode') {
+        const result = claudeUi.setPermissionMode(sid, body.mode);
+        broadcastState();
+        return json(res, result);
+      }
+      if (action === 'model') {
+        const result = claudeUi.setModel(sid, body.model);
         broadcastState();
         return json(res, result);
       }
@@ -2202,6 +2284,8 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
     wss.on('connection', (ws) => {
       // One socket can watch several terminals at once: id → output handler.
       const subs = new Map();
+      // …and several chat sessions: id → event handler.
+      const uiSubs = new Map();
 
       ws.on('message', (raw) => {
         let msg;
@@ -2218,6 +2302,26 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
         if (msg.type === 'presence') {
           if (msg.active) presentClients.set(ws, Date.now() + PRESENCE_TTL);
           else presentClients.delete(ws);
+          return;
+        }
+
+        // Chat-session stream: one socket can watch several chats at once, the
+        // same way it can watch several terminals.
+        if (msg.type === 'subscribe-ui' || msg.type === 'unsubscribe-ui') {
+          if (!claudeUi) return;
+          const sid = msg.id;
+          if (!sid) return;
+          if (uiSubs.has(sid)) { claudeUi.off(sid, uiSubs.get(sid)); uiSubs.delete(sid); }
+          if (msg.type === 'unsubscribe-ui') return;
+          // Replay the conversation so a reconnecting client re-renders it, and
+          // so any prompt parked while the client was away is re-armed.
+          const h = claudeUi.history(sid);
+          if (h) ws.send(JSON.stringify({ type: 'ui-history', id: sid, session: h }));
+          const handler = (ev) => {
+            if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ui-event', id: sid, event: ev }));
+          };
+          uiSubs.set(sid, handler);
+          claudeUi.on(sid, handler);
           return;
         }
 
@@ -2262,6 +2366,8 @@ export function createWebApp({ config, claudeTerminals, bot, mcpDispatch, server
       ws.on('close', () => {
         for (const [id, handler] of subs) claudeTerminals.off(id, handler);
         subs.clear();
+        if (claudeUi) for (const [id, handler] of uiSubs) claudeUi.off(id, handler);
+        uiSubs.clear();
         logSubscribers.delete(ws);
         presentClients.delete(ws);
       });
