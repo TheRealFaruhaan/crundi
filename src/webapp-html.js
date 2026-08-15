@@ -6,7 +6,7 @@
  * Telegram Login Widget is used for authentication.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -27,15 +27,22 @@ const LOGO_SM = assetDataUri('icon_64x64.png');   // topbar
 const LOGO_LG = assetDataUri('icon_128x128.png'); // login screen
 
 // /vendor/ files are served with a 24h Cache-Control, so a shipped update to
-// one would otherwise be ignored until the cache expired. Version the URLs so
-// each release fetches fresh copies.
-const APP_VERSION = (() => {
-  for (const dir of [join(__dirname, '..'), join(__dirname, '..', '..')]) {
-    try { return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version || '0'; }
-    catch { /* try next */ }
+// one is ignored until the cache expires unless its URL changes.
+//
+// Keying that on the app version is NOT enough: several builds can ship under
+// the same version during development, leaving the URL identical while the file
+// changes underneath — the browser then runs stale JS against a new server,
+// which is invisible and extremely confusing to debug. Fingerprint each file by
+// its own size + mtime so ANY change busts the cache, version bump or not.
+function vendorTag(file) {
+  for (const dir of [join(__dirname, '..', 'app', 'vendor'), join(__dirname, '..', '..', 'app', 'vendor')]) {
+    try {
+      const st = statSync(join(dir, file));
+      return Math.floor(st.mtimeMs).toString(36) + '-' + st.size.toString(36);
+    } catch { /* try next */ }
   }
-  return '0';
-})();
+  return String(Date.now()); // unknown file: never cache it wrongly
+}
 
 export function getWebappHtml(botUsername) {
   return `<!DOCTYPE html>
@@ -55,7 +62,7 @@ export function getWebappHtml(botUsername) {
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon_32x32.png">
   <link rel="apple-touch-icon" href="/assets/icon_256x256.png">
   <script src="https://telegram.org/js/telegram-web-app.js"><\/script>
-  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/vendor/xterm.css?v=${vendorTag('xterm.css')}">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -2496,10 +2503,10 @@ export function getWebappHtml(botUsername) {
   <!-- ─── Toast ─── -->
   <div class="toast" id="toast"></div>
 
-  <script src="/vendor/xterm.js?v=${APP_VERSION}"><\/script>
-  <script src="/vendor/addon-fit.js?v=${APP_VERSION}"><\/script>
-  <script src="/vendor/codemirror.js?v=${APP_VERSION}"><\/script>
-  <script src="/vendor/claude-chat.js?v=${APP_VERSION}"><\/script>
+  <script src="/vendor/xterm.js?v=${vendorTag('xterm.js')}"><\/script>
+  <script src="/vendor/addon-fit.js?v=${vendorTag('addon-fit.js')}"><\/script>
+  <script src="/vendor/codemirror.js?v=${vendorTag('codemirror.js')}"><\/script>
+  <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
   <script>
   (function() {
     'use strict';
