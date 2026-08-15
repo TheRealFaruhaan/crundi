@@ -375,7 +375,8 @@
     var claudeSessionId = '';
     var queued = [];           // lines typed while busy; flushed as one message
     var queueNode = null;      // the single "Queued" bubble above the composer
-    var queueTimer = null;     // debounce so a burst of lines goes as one message
+    var queueTimer = null;     // ticker that decides when the batch goes out
+    var lastTypeAt = 0;        // last keystroke, so we never send mid-thought
     var activityNode = null;   // in-log "working" row for turns that stream nothing
 
     // Enter behaviour: 'send' = Enter sends / Shift+Enter newline;
@@ -728,23 +729,38 @@
     // first Bash call was obeyed two seconds later, in the same turn). So the
     // queue only exists to group a fast burst of lines and give a moment to take
     // them back; it is flushed shortly after typing stops, not at turn end.
-    var QUEUE_DEBOUNCE_MS = 1200;
+    // The CLI accepts injected input at any pause in the turn — between thinking
+    // steps as well as tool calls — and places it itself. So the host has no
+    // reason to wait for a particular boundary; the only reason to hold at all is
+    // to batch what is still being typed.
+    //
+    // The first attempt debounced from the last Enter, which fired while the user
+    // was still typing the NEXT line and split a batch into separate messages.
+    // The quiet period is measured from the last KEYSTROKE instead, so a pending
+    // batch keeps waiting for as long as typing continues.
+    var QUIET_MS = 1500;
+    var TICK_MS = 300;
 
     function enqueue(text) {
       queued.push(text);
+      lastTypeAt = Date.now();
       renderQueue();
-      scheduleFlush();
+      startTicker();
     }
 
-    function scheduleFlush() {
-      clearTimeout(queueTimer);
-      queueTimer = setTimeout(function () {
+    function startTicker() {
+      if (queueTimer) return;
+      queueTimer = setInterval(function () {
+        if (!queued.length || destroyed) { stopTicker(); return; }
         // Never inject while a permission prompt is outstanding: the CLI is
-        // blocked waiting for a control_response, and answering that has to come
-        // first. Re-arm and flush once it clears.
-        if (state === 'needs-input') { scheduleFlush(); return; }
-        flushQueue();
-      }, QUEUE_DEBOUNCE_MS);
+        // blocked waiting for a control_response, so that must be answered first.
+        if (state === 'needs-input') return;
+        if (Date.now() - lastTypeAt >= QUIET_MS) flushQueue();
+      }, TICK_MS);
+    }
+
+    function stopTicker() {
+      if (queueTimer) { clearInterval(queueTimer); queueTimer = null; }
     }
 
     function queuedText() { return queued.join('\n'); }
@@ -752,7 +768,7 @@
     // Pull every queued line back into the composer for editing, newest last.
     function unqueue() {
       if (!queued.length) return;
-      clearTimeout(queueTimer);
+      stopTicker();
       var restored = queuedText();
       queued = [];
       renderQueue();
@@ -783,7 +799,8 @@
     }
 
     function flushQueue() {
-      clearTimeout(queueTimer);
+      stopTicker();
+
       if (!queued.length || destroyed) return;
       var text = queuedText();
       queued = [];
@@ -959,7 +976,10 @@
     }
 
     input.addEventListener('keydown', onKeyDown);
-    input.addEventListener('input', function () { slashIdx = 0; autoGrow(); showSlash(); });
+    input.addEventListener('input', function () {
+      lastTypeAt = Date.now(); // keeps a pending batch waiting while you type
+      slashIdx = 0; autoGrow(); showSlash();
+    });
     input.addEventListener('blur', function () { setTimeout(hideSlash, 120); });
     sendBtn.addEventListener('click', doSend);
     stopBtn.addEventListener('click', doStop);
@@ -1063,6 +1083,7 @@
       resubscribe: function () { wsSend({ type: 'subscribe-ui', id: sessionId }); },
       destroy: function () {
         destroyed = true;
+        stopTicker(); // closing a cell must not leave an interval running
         try { wsSend({ type: 'unsubscribe-ui', id: sessionId }); } catch (e) {}
         input.removeEventListener('keydown', onKeyDown);
         hideSlash();
