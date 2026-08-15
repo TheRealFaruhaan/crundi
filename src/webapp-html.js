@@ -26,6 +26,17 @@ function assetDataUri(file) {
 const LOGO_SM = assetDataUri('icon_64x64.png');   // topbar
 const LOGO_LG = assetDataUri('icon_128x128.png'); // login screen
 
+// /vendor/ files are served with a 24h Cache-Control, so a shipped update to
+// one would otherwise be ignored until the cache expired. Version the URLs so
+// each release fetches fresh copies.
+const APP_VERSION = (() => {
+  for (const dir of [join(__dirname, '..'), join(__dirname, '..', '..')]) {
+    try { return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version || '0'; }
+    catch { /* try next */ }
+  }
+  return '0';
+})();
+
 export function getWebappHtml(botUsername) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -586,13 +597,88 @@ export function getWebappHtml(botUsername) {
     }
     .term-launch .icon { font-size: 2.4rem; opacity: 0.3; }
     .term-launch button { min-width: 190px; padding: 9px 24px; border-radius: var(--radius-sm); cursor: pointer; font-size: 14px; }
-    .term-launch .btn-normal { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+    /* Outlined, not filled: keeps Terminal clearly available while letting the
+       UI Mode button above it own the visual hierarchy. */
+    .term-launch .btn-normal {
+      border: 1px solid rgba(99,102,241,0.55); background: rgba(99,102,241,0.10); color: var(--text-primary);
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .term-launch .btn-normal:hover { border-color: var(--accent); background: var(--accent-dim); }
     .term-launch .btn-skip { border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
     .term-launch .btn-shell { border: 1px solid var(--border); background: transparent; color: var(--text-secondary); }
     .term-launch .btn-shell:hover { color: var(--text-primary); border-color: var(--accent); }
     /* UI (chat) mode: same weight as Normal Mode, distinguished by the gradient. */
-    .term-launch .btn-chat { border: 1px solid var(--accent); background: var(--accent-grad); color: #fff; }
-    .term-launch .btn-chat:hover { filter: brightness(1.12); }
+    /* UI Mode — the hero action. A live indigo gradient that drifts, a specular
+       sheen on hover, and a blinking block caret to keep it terminal-native
+       rather than generic. Its two siblings stay deliberately flat so this one
+       carries all the visual weight. */
+    .term-launch .btn-chat {
+      position: relative; overflow: hidden; isolation: isolate;
+      border: 1px solid rgba(129,140,248,0.85);
+      color: #fff; font-weight: 650; letter-spacing: 0.015em;
+      display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+      background: linear-gradient(110deg, #4338ca 0%, #6366f1 26%, #a5b4fc 50%, #6366f1 74%, #4338ca 100%);
+      background-size: 260% 100%;
+      animation: chatDrift 9s linear infinite;
+      box-shadow: 0 6px 20px -6px rgba(99,102,241,0.75), inset 0 1px 0 rgba(255,255,255,0.28);
+      transition: transform 0.16s ease, box-shadow 0.22s ease;
+    }
+    @keyframes chatDrift { to { background-position: -260% 0; } }
+    /* Specular sweep: parked off-canvas, fires across on hover. */
+    .term-launch .btn-chat::before {
+      content: ''; position: absolute; top: -60%; bottom: -60%; width: 45%; left: -70%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.42), transparent);
+      transform: skewX(-22deg); pointer-events: none; z-index: 1;
+    }
+    .term-launch .btn-chat:hover::before { animation: chatSheen 0.75s ease-out; }
+    @keyframes chatSheen { from { left: -70%; } to { left: 125%; } }
+    .term-launch .btn-chat:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 28px -6px rgba(99,102,241,0.95), 0 0 22px rgba(129,140,248,0.5), inset 0 1px 0 rgba(255,255,255,0.35);
+    }
+    .term-launch .btn-chat:active { transform: translateY(0); }
+    .term-launch .btn-chat .chat-caret {
+      font-family: var(--mono); font-size: 0.95em; line-height: 1;
+      opacity: 0.9; animation: chatBlink 1.15s steps(2, start) infinite;
+    }
+    @keyframes chatBlink { 0%, 55% { opacity: 0.95; } 56%, 100% { opacity: 0.15; } }
+    @media (prefers-reduced-motion: reduce) {
+      .term-launch .btn-chat { animation: none; background-position: 35% 0; }
+      .term-launch .btn-chat::before { display: none; }
+      .term-launch .btn-chat .chat-caret { animation: none; }
+    }
+    .term-launch .btn-chat-resume {
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-secondary); font-size: 12px; padding: 6px 14px; min-width: 0;
+    }
+    .term-launch .btn-chat-resume:hover { color: var(--text-primary); border-color: var(--accent); }
+    /* Resume picker: prior Claude Code transcripts for this project. */
+    .cr-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+    .cr-item {
+      display: flex; flex-direction: column; gap: 2px; text-align: left; width: 100%;
+      padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-primary); color: var(--text-primary); cursor: pointer;
+    }
+    .cr-item:hover { border-color: var(--accent); background: var(--accent-dim); }
+    .cr-title { font-size: 0.86rem; font-weight: 600; }
+    .cr-meta { font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono); }
+    .cr-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 2px; }
+    #chat-resume-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7); z-index: 900;
+      align-items: center; justify-content: center;
+    }
+    #chat-resume-modal.visible { display: flex; }
+    #chat-resume-modal .modal {
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 22px; width: 92%; max-width: 560px;
+    }
+    #chat-resume-modal h3 { margin-bottom: 14px; font-size: 1.05rem; }
+    #chat-resume-modal .modal-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    #chat-resume-modal .modal-buttons button {
+      padding: 8px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+      background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; font-size: 0.86rem;
+    }
     /* Chat cells fill their body edge-to-edge (the renderer owns its own padding). */
     .term-cell[data-chat] .term-body { padding: 0; }
     .chat-mount { height: 100%; min-height: 0; }
@@ -2274,6 +2360,17 @@ export function getWebappHtml(botUsername) {
     </div>
   </div>
 
+  <!-- ─── Resume Claude conversation Modal ─── -->
+  <div id="chat-resume-modal">
+    <div class="modal">
+      <h3>Resume a conversation</h3>
+      <div id="cr-body" class="cr-list"></div>
+      <div class="modal-buttons">
+        <button data-action="chat-resume-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ─── PIN Modal ─── -->
   <div class="pin-modal" id="pin-modal">
     <div class="pin-box">
@@ -2393,10 +2490,10 @@ export function getWebappHtml(botUsername) {
   <!-- ─── Toast ─── -->
   <div class="toast" id="toast"></div>
 
-  <script src="/vendor/xterm.js"><\/script>
-  <script src="/vendor/addon-fit.js"><\/script>
-  <script src="/vendor/codemirror.js"><\/script>
-  <script src="/vendor/claude-chat.js"><\/script>
+  <script src="/vendor/xterm.js?v=${APP_VERSION}"><\/script>
+  <script src="/vendor/addon-fit.js?v=${APP_VERSION}"><\/script>
+  <script src="/vendor/codemirror.js?v=${APP_VERSION}"><\/script>
+  <script src="/vendor/claude-chat.js?v=${APP_VERSION}"><\/script>
   <script>
   (function() {
     'use strict';
@@ -3267,17 +3364,21 @@ export function getWebappHtml(botUsername) {
     // the placeholder for the live terminal (SSE state will reconcile shortly).
     // mode: 'shell' (plain shell), 'normal' / 'skip' (Claude in a PTY),
     // 'chat' (Claude driven over stream-json, rendered as a UI chat).
-    async function launchTerminal(mode, localId) {
+    async function launchTerminal(mode, localId, resumeId) {
       if (!currentProject) return;
       const isChat = mode === 'chat';
       const skipPerms = mode === 'skip';
       const shellOnly = mode === 'shell';
       try {
+        const chatBody = { project: currentProject, permissionMode: 'default' };
+        // Resuming replays a prior transcript into a fresh CLI process
+        // (claude --resume <id>), so it must be decided at spawn time.
+        if (isChat && resumeId) { chatBody.sessionMode = 'resume'; chatBody.resumeId = resumeId; chatBody.title = 'Chat (resumed)'; }
         const r = await apiFetch(isChat ? '/api/ui-sessions/create' : '/api/terminals/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(isChat
-            ? { project: currentProject, permissionMode: 'default' }
+            ? chatBody
             : { project: currentProject, skipPermissions: skipPerms, shell: shellOnly }),
         });
         const data = await r.json();
@@ -3292,6 +3393,50 @@ export function getWebappHtml(botUsername) {
       } catch (err) {
         toast('Failed to launch terminal: ' + err.message, 'error');
       }
+    }
+
+    // Resume picker: lists this project's prior Claude Code transcripts (read
+    // from ~/.claude/projects) so a new chat cell can attach to one. /continue
+    // and /resume are CLI START-UP flags, not runtime slash commands — they can
+    // only be applied when the session is spawned, which is what this does.
+    let crPendingLid = null;
+    async function openChatResume(localId) {
+      if (!currentProject) { toast('Select a project first', 'error'); return; }
+      crPendingLid = localId || null;
+      const modal = $('#chat-resume-modal'); const body = $('#cr-body');
+      body.innerHTML = '<div class="cr-empty">Loading\\u2026</div>';
+      modal.classList.add('visible');
+      try {
+        const r = await apiFetch('/api/ui-sessions/resumable?project=' + encodeURIComponent(currentProject));
+        const d = await r.json();
+        const list = (d && d.sessions) || [];
+        if (!list.length) {
+          body.innerHTML = '<div class="cr-empty">No previous conversations found for this project.</div>';
+          return;
+        }
+        body.innerHTML = list.map(s =>
+          '<button class="cr-item" data-action="chat-resume-pick" data-sid="' + escHtml(s.id) + '">'
+          + '<span class="cr-title">' + escHtml(s.title) + '</span>'
+          + '<span class="cr-meta">' + escHtml(s.id.slice(0, 8)) + ' \\u00b7 ' + escHtml(relTime(s.updatedAt))
+          + ' \\u00b7 ' + Math.max(1, Math.round(s.sizeBytes / 1024)) + ' KB</span>'
+          + '</button>').join('');
+      } catch (err) {
+        body.innerHTML = '<div class="cr-empty">Failed to load: ' + escHtml(err.message) + '</div>';
+      }
+    }
+    function closeChatResume() {
+      $('#chat-resume-modal').classList.remove('visible');
+      crPendingLid = null;
+    }
+    function relTime(iso) {
+      const t = new Date(iso).getTime();
+      if (!t) return '';
+      const s = Math.max(0, (Date.now() - t) / 1000);
+      if (s < 60) return 'just now';
+      if (s < 3600) return Math.floor(s / 60) + 'm ago';
+      if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+      if (s < 2592000) return Math.floor(s / 86400) + 'd ago';
+      return new Date(t).toLocaleDateString();
     }
 
     // Base path for a live cell's REST actions — chat cells and PTY terminals
@@ -3391,7 +3536,7 @@ export function getWebappHtml(botUsername) {
       if (ph) ph.style.display = 'none';
       grid.style.display = '';
       if (addBtn) addBtn.style.display = '';
-      if (bar) bar.style.display = '';
+      syncInputBar(); // hidden while a chat cell holds focus
 
       syncWbStateProject();
       // Re-parenting cells below (replaceChildren / arrangeMosaic) blurs whatever
@@ -3545,13 +3690,11 @@ export function getWebappHtml(botUsername) {
           + '<div class="icon">&gt;_</div>'
           + '<button class="btn-shell" data-action="launch-terminal" data-mode="shell" data-lid="' + d.localId + '">Empty Shell</button>'
           + '<div class="term-agent-group">'
-          + '<div class="term-agent-label">Claude \\u2014 Terminal</div>'
-          + '<button class="btn-normal" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">Normal Mode</button>'
-          + '<button class="btn-skip" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '">Skip Permissions Mode</button>'
-          + '</div>'
-          + '<div class="term-agent-group">'
-          + '<div class="term-agent-label">Claude \\u2014 Chat</div>'
-          + '<button class="btn-chat" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '">UI Mode</button>'
+          + '<div class="term-agent-label">Claude</div>'
+          + '<button class="btn-chat" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '"><span class="chat-caret">\\u258d</span>UI Mode</button>'
+          + '<button class="btn-normal" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">Terminal</button>'
+          + '<button class="btn-skip" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '">Terminal \\u2014 Skip Permissions</button>'
+          + '<button class="btn-chat-resume" data-action="chat-resume" data-lid="' + d.localId + '">Resume a conversation\\u2026</button>'
           + '</div>'
           + '</div>';
       } else if (d.type === 'chat') {
@@ -3612,7 +3755,9 @@ export function getWebappHtml(botUsername) {
       if (!mountEl || !window.CrundiChat) return;
       const view = window.CrundiChat.mount(mountEl, {
         sessionId: t.id,
+        project: t.project || currentProject,
         apiFetch,
+        toast,
         wsSend: (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
       });
       chatViews.set(t.id, view);
@@ -4248,6 +4393,22 @@ export function getWebappHtml(botUsername) {
       // Cells may be nested inside mosaic leaves, so query deep (not just direct
       // children) for the terminal cells.
       grid.querySelectorAll('.term-cell[data-tid]').forEach(ch => ch.classList.toggle('focused', ch.dataset.tid === focusedTermId));
+      syncInputBar();
+    }
+
+    // The shared bottom input bar types into the FOCUSED PTY terminal, so it is
+    // meaningless while a chat cell is focused — that cell has its own composer.
+    // Hide it then, so UI mode reads as a self-contained chat.
+    function syncInputBar() {
+      const bar = $('#term-input-bar');
+      if (!bar) return;
+      if (!currentProject || currentTab !== 'workbench') { bar.style.display = 'none'; return; }
+      const live = liveTermsForProject();
+      const focused = live.find(t => t.id === focusedTermId);
+      // No live cells at all → the launcher is showing; keep the bar available.
+      // Otherwise show it only when the focused cell is a real terminal.
+      const show = !live.length || (focused ? focused.kind !== 'ui' : live.some(t => t.kind !== 'ui'));
+      bar.style.display = show ? '' : 'none';
     }
 
     function fitTerm(id) {
@@ -7134,6 +7295,14 @@ export function getWebappHtml(botUsername) {
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
         case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
         case 'launch-terminal': launchTerminal(d.mode, d.lid); break;
+        case 'chat-resume': openChatResume(d.lid); break;
+        case 'chat-resume-cancel': closeChatResume(); break;
+        case 'chat-resume-pick': {
+          const lid = crPendingLid;
+          closeChatResume();
+          launchTerminal('chat', lid, d.sid);
+          break;
+        }
       }
     });
 

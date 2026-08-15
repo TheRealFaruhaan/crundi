@@ -114,6 +114,18 @@
     '.cc-sel:focus{outline:none;border-color:var(--accent)}',
     '.cc-meta-sp{flex:1}',
     '.cc-busy{color:var(--accent-hover)}',
+    // Enter-key behaviour toggle, sitting beside the permission-mode dropdown.
+    '.cc-toggle{background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:2px 7px;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:4px}',
+    '.cc-toggle:hover{border-color:var(--accent);color:var(--text-primary)}',
+    '.cc-toggle b{font-family:var(--mono);color:var(--accent-hover);font-weight:600}',
+    // Attach button matches the main input bar's paperclip.
+    '.cc-attach{flex:none;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0}',
+    '.cc-attach:hover{color:var(--accent-hover);border-color:var(--accent)}',
+    '.cc-attach.busy{opacity:.55;pointer-events:none}',
+    '.cc-attach svg{width:16px;height:16px}',
+    '.cc-sid{font-family:var(--mono);font-size:10.5px;cursor:pointer;border-bottom:1px dotted var(--border)}',
+    '.cc-sid:hover{color:var(--text-secondary)}',
+    '.cc-drop{position:absolute;inset:0;border:2px dashed var(--accent);border-radius:var(--radius);background:var(--accent-dim);display:flex;align-items:center;justify-content:center;color:var(--accent-hover);font-weight:600;pointer-events:none;z-index:30}',
     '.cc-slash{position:absolute;bottom:100%;left:0;right:0;margin-bottom:4px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);max-height:190px;overflow-y:auto;z-index:20}',
     '.cc-slash-item{padding:5px 10px;cursor:pointer;font-size:12px;display:flex;gap:8px}',
     '.cc-slash-item.on{background:var(--accent-dim)}',
@@ -299,20 +311,36 @@
     var sendBtn = el('button', 'cc-btn primary', 'Send');
     var stopBtn = el('button', 'cc-btn danger', 'Stop');
     stopBtn.style.display = 'none';
+    // Paperclip, mirroring the main input bar: uploads to crundi_attachments
+    // and inserts the returned path into the message.
+    var attachBtn = el('button', 'cc-attach',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+      + '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>');
+    attachBtn.title = 'Attach a file (uploads to crundi_attachments)';
+    var fileInput = el('input');
+    fileInput.type = 'file';
+    fileInput.style.display = 'none';
     inrow.appendChild(input);
+    inrow.appendChild(attachBtn);
     inrow.appendChild(sendBtn);
     inrow.appendChild(stopBtn);
+    inrow.appendChild(fileInput);
 
     var meta = el('div', 'cc-meta');
     var stateLbl = el('span', '', 'idle');
     var modeSel = el('select', 'cc-sel');
     [['default', 'ask permissions'], ['acceptEdits', 'accept edits'], ['plan', 'plan mode'], ['dontAsk', "don't ask"], ['bypassPermissions', 'bypass all']]
       .forEach(function (m) { var o = el('option'); o.value = m[0]; o.textContent = m[1]; modeSel.appendChild(o); });
+    var enterBtn = el('button', 'cc-toggle');
+    var sidLbl = el('span', 'cc-sid', '');
+    sidLbl.style.display = 'none';
     var modelLbl = el('span', '', '');
     var costLbl = el('span', '', '');
     meta.appendChild(stateLbl);
     meta.appendChild(modeSel);
+    meta.appendChild(enterBtn);
     meta.appendChild(el('span', 'cc-meta-sp'));
+    meta.appendChild(sidLbl);
     meta.appendChild(modelLbl);
     meta.appendChild(costLbl);
 
@@ -329,6 +357,60 @@
     var slashBox = null;
     var slashIdx = 0;
     var destroyed = false;
+    var project = opts.project || '';
+    var toast = opts.toast || function () {};
+    // Claude Code's OWN session uuid (what --resume takes). Deliberately not
+    // named sessionId — that is the Crundi cell id used for API/WS routing, and
+    // conflating the two silently breaks every subscription.
+    var claudeSessionId = '';
+
+    // Enter behaviour: 'send' = Enter sends / Shift+Enter newline;
+    // 'newline' = Enter newline / Ctrl+Enter sends. Shared by every chat cell.
+    var ENTER_KEY = 'crundi_chat_enter';
+    var enterMode = 'send';
+    try { if (localStorage.getItem(ENTER_KEY) === 'newline') enterMode = 'newline'; } catch (e) {}
+
+    function syncEnterMode() {
+      var sends = enterMode === 'send';
+      enterBtn.innerHTML = sends
+        ? '<b>⏎</b> sends'
+        : '<b>⌃⏎</b> sends';
+      enterBtn.title = sends
+        ? 'Enter sends, Shift+Enter makes a newline — click to swap'
+        : 'Enter makes a newline, Ctrl+Enter sends — click to swap';
+      input.placeholder = sends
+        ? 'Message Claude…  (Enter to send, Shift+Enter for newline)'
+        : 'Message Claude…  (Ctrl+Enter to send, Enter for newline)';
+    }
+    syncEnterMode();
+    enterBtn.addEventListener('click', function () {
+      enterMode = enterMode === 'send' ? 'newline' : 'send';
+      try { localStorage.setItem(ENTER_KEY, enterMode); } catch (e) {}
+      syncEnterMode();
+      input.focus();
+    });
+
+    function setSessionId(id) {
+      if (!id || id === claudeSessionId) return;
+      claudeSessionId = id;
+      sidLbl.style.display = '';
+      sidLbl.textContent = id.slice(0, 8);
+      sidLbl.title = 'Claude session ' + id + '  — click to copy (use it to resume this conversation)';
+    }
+    sidLbl.addEventListener('click', function () {
+      if (!claudeSessionId) return;
+      var done = function () { toast('Session id copied: ' + claudeSessionId); };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(claudeSessionId).then(done, done); return; }
+      } catch (e) { /* fall through */ }
+      // Clipboard API needs a secure context; fall back to a temp selection.
+      var t = document.createElement('textarea');
+      t.value = claudeSessionId;
+      document.body.appendChild(t); t.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(t);
+      done();
+    });
 
     function atBottom() {
       return log.scrollHeight - log.scrollTop - log.clientHeight < 60;
@@ -387,6 +469,8 @@
         }
         case 'notice': node.appendChild(el('div', 'cc-notice', esc(e.text))); break;
         case 'error':  node.appendChild(el('div', 'cc-error', esc(e.text))); break;
+        // A transient entry the server retired (e.g. the startup placeholder).
+        case 'gone':   node.style.display = 'none'; break;
       }
     }
 
@@ -602,6 +686,86 @@
       addEntry(data);
     }
 
+    // ─── Attachments ───
+    // Same contract as the main input bar: base64 the file to
+    // /api/attachments/upload, then drop the returned repo-relative path into
+    // the message so Claude can read it as a normal file.
+
+    function b64(buf) {
+      var bytes = new Uint8Array(buf), bin = '', CH = 0x8000;
+      for (var i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+      return btoa(bin);
+    }
+
+    function insertPath(p) {
+      var v = input.value;
+      var pad = (!v || /\s$/.test(v)) ? '' : ' ';
+      input.value = v + pad + p + ' ';
+      autoGrow();
+      input.focus();
+    }
+
+    function uploadFile(file) {
+      if (!file) return;
+      if (!project) { toast('No project for this chat', 'error'); return; }
+      attachBtn.classList.add('busy');
+      var name = file.name || ('image.' + ((file.type || 'image/png').split('/')[1] || 'png'));
+      file.arrayBuffer().then(function (buf) {
+        return apiFetch('/api/attachments/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: project, name: name, data: b64(buf) }),
+        });
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.ok && d.path) { insertPath(d.path); toast('Attached: ' + (d.name || name)); }
+        else toast('Upload failed: ' + ((d && d.error) || '?'), 'error');
+      }).catch(function (err) {
+        toast('Upload failed: ' + (err.message || err), 'error');
+      }).then(function () { attachBtn.classList.remove('busy'); });
+    }
+
+    attachBtn.addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function (e) {
+      var f = e.target.files && e.target.files[0];
+      fileInput.value = '';
+      if (f) uploadFile(f);
+    });
+
+    // Paste an image straight into the composer.
+    input.addEventListener('paste', function (e) {
+      var items = (e.clipboardData && e.clipboardData.items) || [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') {
+          var f = items[i].getAsFile();
+          if (f) { e.preventDefault(); uploadFile(f); return; }
+        }
+      }
+    });
+
+    // Drag a file anywhere onto the chat to attach it.
+    var dropHint = null;
+    function showDrop(on) {
+      if (on && !dropHint) {
+        dropHint = el('div', 'cc-drop', 'Drop to attach');
+        root.style.position = 'relative';
+        root.appendChild(dropHint);
+      } else if (!on && dropHint) { dropHint.remove(); dropHint = null; }
+    }
+    root.addEventListener('dragover', function (e) {
+      if (!e.dataTransfer || !Array.prototype.includes.call(e.dataTransfer.types || [], 'Files')) return;
+      e.preventDefault(); e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      showDrop(true);
+    });
+    root.addEventListener('dragleave', function (e) { if (!root.contains(e.relatedTarget)) showDrop(false); });
+    root.addEventListener('drop', function (e) {
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) { showDrop(false); return; }
+      e.preventDefault(); e.stopPropagation();
+      showDrop(false);
+      uploadFile(f);
+    });
+
     // ─── Composer behaviour ───
 
     function autoGrow() {
@@ -656,7 +820,13 @@
         }
         if (ev.key === 'Escape') { hideSlash(); return; }
       }
-      if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); doSend(); }
+      if (ev.key !== 'Enter') return;
+      if (enterMode === 'send') {
+        // Enter sends; Shift+Enter (and Ctrl+Enter) fall through to a newline.
+        if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) { ev.preventDefault(); doSend(); }
+      } else if (ev.ctrlKey || ev.metaKey) {
+        ev.preventDefault(); doSend();
+      }
     }
 
     input.addEventListener('keydown', onKeyDown);
@@ -690,6 +860,7 @@
       slashCommands = session.slashCommands || [];
       modeSel.value = session.permissionMode || 'default';
       modelLbl.textContent = session.model || '';
+      setSessionId(session.sessionId);
       if (session.totalCostUsd) costLbl.textContent = '$' + session.totalCostUsd.toFixed(4);
       setState(session.state || 'idle');
       input.disabled = session.status !== 'running';
@@ -728,6 +899,8 @@
         case 'init':
           slashCommands = ev.slashCommands || [];
           if (ev.model) modelLbl.textContent = ev.model;
+          // The CLI only emits its session id once the first turn starts.
+          setSessionId(ev.sessionId);
           break;
         case 'meta':
           if (ev.permissionMode) modeSel.value = ev.permissionMode;

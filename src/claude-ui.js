@@ -39,8 +39,9 @@
 
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
-import { existsSync } from 'fs';
-import { join, delimiter } from 'path';
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync } from 'fs';
+import { join, delimiter, resolve as resolvePath } from 'path';
+import { homedir } from 'os';
 import { getProject } from './project-store.js';
 import { hasExistingConversation } from './claude-terminals.js';
 
@@ -70,6 +71,83 @@ export function resolveClaudeBin() {
     }
   }
   return null;
+}
+
+/**
+ * List resumable Claude Code conversations for a project directory.
+ *
+ * Claude Code stores one transcript per session at
+ * ~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl, where the path is
+ * encoded by replacing every non-alphanumeric character with a dash. The file
+ * name IS the session id that `--resume` takes.
+ *
+ * We read only the tail-relevant record types (`ai-title` for the generated
+ * title, `last-prompt` as a fallback label) rather than parsing whole
+ * transcripts, which can be tens of MB.
+ *
+ * @returns {{ id, title, updatedAt, sizeBytes }[]} newest first
+ */
+export function listResumable(projectPath, limit = 30) {
+  try {
+    const encoded = resolvePath(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
+    const dir = join(homedir(), '.claude', 'projects', encoded);
+    if (!existsSync(dir)) return [];
+    const files = readdirSync(dir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => {
+        const full = join(dir, f);
+        let st;
+        try { st = statSync(full); } catch { return null; }
+        return { id: f.slice(0, -6), full, mtime: st.mtimeMs, size: st.size };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit);
+
+    return files.map(f => ({
+      id: f.id,
+      title: readTranscriptTitle(f.full) || '(untitled session)',
+      updatedAt: new Date(f.mtime).toISOString(),
+      sizeBytes: f.size,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Best-effort title for a transcript. Reads at most the first ~256 KB — the
+ * `ai-title` record is written early and rewritten as the session evolves, so
+ * the head is enough for a picker label without paying for a huge file.
+ */
+function readTranscriptTitle(file) {
+  let head = '';
+  try {
+    const fd = openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(262144);
+      const n = readSync(fd, buf, 0, buf.length, 0);
+      head = buf.toString('utf8', 0, n);
+    } finally { closeSync(fd); }
+  } catch { return ''; }
+
+  let fallback = '';
+  // Drop the last (possibly truncated) line before parsing.
+  const lines = head.split('\n');
+  lines.pop();
+  for (const line of lines) {
+    if (!line || (!line.includes('ai-title') && !line.includes('last-prompt') && !line.includes('"user"'))) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    if (o.type === 'ai-title' && o.aiTitle) return String(o.aiTitle).slice(0, 120);
+    if (!fallback && o.type === 'last-prompt' && o.lastPrompt) fallback = String(o.lastPrompt);
+    if (!fallback && o.type === 'user' && o.message) {
+      const c = o.message.content;
+      const t = typeof c === 'string' ? c : (Array.isArray(c) ? (c.find(b => b?.type === 'text') || {}).text : '');
+      if (t) fallback = String(t);
+    }
+  }
+  return fallback.replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
 /** 16-char hex id, matching claude-terminals.js's scheme. */
@@ -188,8 +266,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (effort) args.push('--effort', String(effort));
     // Same resume policy as terminal mode: only pass --continue when a prior
     // transcript exists, or the CLI exits immediately with "No conversation found".
+    // Session continuity, mirroring claude-terminals.js: resume an explicit id,
+    // or pick up the most recent conversation by default. Only the FIRST live
+    // chat for a project continues — extra chats start fresh rather than two
+    // processes clobbering the same transcript. `sessionMode: 'new'` opts out.
+    const aliasHasLive = entriesForAlias(key).some(x => x.proc);
     if (sessionMode === 'resume' && resumeId) args.push('--resume', String(resumeId));
-    else if (sessionMode === 'continue' && hasExistingConversation(project.path)) args.push('--continue');
+    else if (sessionMode === 'new') { /* explicit fresh session */ }
+    else if ((sessionMode === 'continue' || !aliasHasLive) && hasExistingConversation(project.path)) args.push('--continue');
 
     let proc;
     try {
@@ -280,6 +364,17 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       request: { subtype: 'initialize', systemPrompt: [''] },
     });
 
+    // Startup is not instant, and resuming replays the whole transcript first —
+    // which for a long conversation can take many seconds. Without this the cell
+    // just sits blank and reads as broken, so say what is happening.
+    const resuming = args.includes('--resume') || args.includes('--continue');
+    s.startupNotice = emitEntry(s, {
+      id: genId(), kind: 'notice',
+      text: resuming
+        ? 'Resuming the previous conversation… (long transcripts can take a while to replay)'
+        : 'Starting Claude…',
+    });
+
     console.log(`[claude-ui] Started chat "${s.title}" for "${key}" (${id}) in ${project.path}`);
     return { ok: true, id, project: key, title: s.title, order: s.order, kind: 'ui' };
   }
@@ -300,6 +395,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   function handleSystem(s, msg) {
     if (msg.subtype === 'init') {
+      // The CLI is live — retire the "starting/resuming" placeholder.
+      if (s.startupNotice) {
+        patchEntry(s, s.startupNotice, { kind: 'gone', text: '' });
+        s.startupNotice = null;
+      }
       s.sessionId = msg.session_id || s.sessionId;
       if (msg.model) s.model = msg.model;
       s.slashCommands = msg.slash_commands || [];

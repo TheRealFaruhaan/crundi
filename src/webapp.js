@@ -32,6 +32,7 @@ import * as schedule from './schedule-store.js';
 import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
+import { listResumable } from './claude-ui.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1176,6 +1177,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // but the conversation itself streams over the WebSocket rather than bytes.
     if (path === '/api/ui-sessions' && req.method === 'GET') {
       return json(res, { sessions: claudeUi ? claudeUi.list() : [] });
+    }
+
+    // Prior Claude Code conversations for a project, newest first, so the UI can
+    // offer a "resume" picker. These are on-disk transcripts, not live sessions.
+    if (path === '/api/ui-sessions/resumable' && req.method === 'GET') {
+      const alias = String(url.searchParams.get('project') || '').toLowerCase();
+      const project = alias ? getProject(alias) : null;
+      if (!project) return json(res, { ok: false, error: 'Unknown project' }, 400);
+      return json(res, { ok: true, sessions: listResumable(project.path) });
     }
 
     if (path === '/api/ui-sessions/create' && req.method === 'POST') {
