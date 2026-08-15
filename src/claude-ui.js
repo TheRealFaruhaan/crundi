@@ -357,23 +357,22 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     });
 
     // Handshake. systemPrompt:[""] mirrors what the SDK sends for the default
-    // preset; supportedDialogKinds opts us into blocking dialogs we can render.
+    // preset. The response carries the slash commands, model list and effective
+    // permission mode, and lands a couple of seconds after spawn — well before
+    // the first turn — so we use it to mark the session ready.
+    s.initRequestId = 'init-' + genId();
+    s.resuming = args.includes('--resume') || args.includes('--continue');
     send(s, {
       type: 'control_request',
-      request_id: 'init-' + genId(),
+      request_id: s.initRequestId,
       request: { subtype: 'initialize', systemPrompt: [''] },
     });
 
-    // Startup is not instant, and resuming replays the whole transcript first —
-    // which for a long conversation can take many seconds. Without this the cell
-    // just sits blank and reads as broken, so say what is happening.
-    const resuming = args.includes('--resume') || args.includes('--continue');
-    s.startupNotice = emitEntry(s, {
-      id: genId(), kind: 'notice',
-      text: resuming
-        ? 'Resuming the previous conversation… (long transcripts can take a while to replay)'
-        : 'Starting Claude…',
-    });
+    // Spawning takes a moment, so say so rather than showing an empty cell.
+    // This is retired the instant the initialize response arrives — it must
+    // never read as an operation still in progress, because the CLI does no
+    // work at all until the first message is sent.
+    s.startupNotice = emitEntry(s, { id: genId(), kind: 'notice', text: 'Starting Claude…' });
 
     console.log(`[claude-ui] Started chat "${s.title}" for "${key}" (${id}) in ${project.path}`);
     return { ok: true, id, project: key, title: s.title, order: s.order, kind: 'ui' };
@@ -544,7 +543,40 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   function handleControlResponse(s, msg) {
     const r = msg.response;
-    if (r?.subtype === 'error') console.warn(`[claude-ui] (${s.id}) control error: ${r.error}`);
+    if (r?.subtype === 'error') {
+      console.warn(`[claude-ui] (${s.id}) control error: ${r.error}`);
+      if (r.request_id === s.initRequestId) {
+        s.initRequestId = null;
+        if (s.startupNotice) { patchEntry(s, s.startupNotice, { text: 'Claude failed to start: ' + r.error, kind: 'error' }); s.startupNotice = null; }
+      }
+      return;
+    }
+    if (r?.subtype !== 'success' || r.request_id !== s.initRequestId) return;
+
+    // The session is up. The CLI stays completely idle until the first user
+    // message (system/init, and therefore the session id, only arrive with that
+    // first turn), so retire the "starting" line now instead of leaving a
+    // placeholder that looks like a stalled operation.
+    s.initRequestId = null;
+    const resp = r.response || {};
+    s.slashCommands = resp.commands || s.slashCommands;
+    if (resp.current_permission_mode) s.permissionMode = resp.current_permission_mode;
+    if (s.startupNotice) {
+      // Worth stating plainly: --continue/--resume restores Claude's context but
+      // does NOT replay the old messages into this log, so the empty cell is
+      // expected rather than a sign the resume failed.
+      if (s.resuming) patchEntry(s, s.startupNotice, { text: 'Continuing your previous conversation. Earlier messages are not shown here, but Claude still has them.' });
+      else patchEntry(s, s.startupNotice, { kind: 'gone', text: '' });
+      s.startupNotice = null;
+    }
+    s.emitter.emit('event', {
+      type: 'init',
+      sessionId: s.sessionId,          // still empty until the first turn
+      model: s.model,
+      slashCommands: s.slashCommands,
+      permissionMode: s.permissionMode,
+      account: resp.account || null,
+    });
   }
 
   // ─── Outbound actions ───

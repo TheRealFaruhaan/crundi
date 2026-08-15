@@ -899,7 +899,9 @@
         case 'init':
           slashCommands = ev.slashCommands || [];
           if (ev.model) modelLbl.textContent = ev.model;
-          // The CLI only emits its session id once the first turn starts.
+          if (ev.permissionMode) modeSel.value = ev.permissionMode;
+          // Fires twice: once when the process is ready (no session id yet) and
+          // again on the first turn, which is when the CLI reveals its id.
           setSessionId(ev.sessionId);
           break;
         case 'meta':
