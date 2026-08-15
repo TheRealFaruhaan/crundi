@@ -123,6 +123,16 @@
     '.cc-attach:hover{color:var(--accent-hover);border-color:var(--accent)}',
     '.cc-attach.busy{opacity:.55;pointer-events:none}',
     '.cc-attach svg{width:16px;height:16px}',
+    // Queued input: one bubble however many lines were added, click to reclaim.
+    '.cc-queue{margin-bottom:7px;border:1px dashed rgba(99,102,241,.55);background:rgba(99,102,241,.08);border-radius:10px;padding:7px 11px;cursor:pointer;transition:.14s}',
+    '.cc-queue:hover{border-color:var(--accent);background:var(--accent-dim)}',
+    '.cc-queue-head{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent-hover);font-weight:700;margin-bottom:3px}',
+    '.cc-queue-body{white-space:pre-wrap;word-break:break-word;color:var(--text-primary);font-size:12.5px}',
+    '.cc-queue-hint{font-size:10.5px;color:var(--text-muted);margin-top:4px}',
+    // In-log activity row: some turns (notably /compact) stream nothing at all,
+    // so without this the log looks frozen while the header says "working".
+    '.cc-activity{display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:12px;font-style:italic;padding:2px 0}',
+    '.cc-activity .cc-spin{width:11px;height:11px}',
     '.cc-sid{font-family:var(--mono);font-size:10.5px;cursor:pointer;border-bottom:1px dotted var(--border)}',
     '.cc-sid:hover{color:var(--text-secondary)}',
     '.cc-drop{position:absolute;inset:0;border:2px dashed var(--accent);border-radius:var(--radius);background:var(--accent-dim);display:flex;align-items:center;justify-content:center;color:var(--accent-hover);font-weight:600;pointer-events:none;z-index:30}',
@@ -363,6 +373,9 @@
     // named sessionId — that is the Crundi cell id used for API/WS routing, and
     // conflating the two silently breaks every subscription.
     var claudeSessionId = '';
+    var queued = [];           // lines typed while busy; flushed as one message
+    var queueNode = null;      // the single "Queued" bubble above the composer
+    var activityNode = null;   // in-log "working" row for turns that stream nothing
 
     // Enter behaviour: 'send' = Enter sends / Shift+Enter newline;
     // 'newline' = Enter newline / Ctrl+Enter sends. Shared by every chat cell.
@@ -420,12 +433,47 @@
     }
 
     function setState(s) {
+      var was = state;
       state = s;
       var busy = s === 'working';
-      stateLbl.textContent = s === 'working' ? 'working…' : s === 'needs-input' ? 'needs your input' : 'idle';
+      stateLbl.textContent = busy ? 'working…' : s === 'needs-input' ? 'needs your input' : 'idle';
       stateLbl.className = busy || s === 'needs-input' ? 'cc-busy' : '';
       stopBtn.style.display = busy ? '' : 'none';
-      sendBtn.style.display = busy ? 'none' : '';
+      // Send stays available while busy — it queues rather than sending, so the
+      // label says so instead of the button vanishing.
+      sendBtn.style.display = '';
+      sendBtn.textContent = s === 'idle' ? 'Send' : 'Queue';
+      syncActivity();
+      // Turn finished: send everything typed in the meantime as one message.
+      if (s === 'idle' && was !== 'idle') flushQueue();
+    }
+
+    // Some turns produce no visible output for a long time — /compact is the
+    // clearest case, since the CLI does the summarising internally and streams
+    // nothing until it is done. Without a row in the log the conversation looks
+    // frozen even though the header badge says working.
+    function syncActivity() {
+      if (state !== 'working') {
+        if (activityNode) { activityNode.remove(); activityNode = null; }
+        return;
+      }
+      var last = null;
+      for (var i = log.children.length - 1; i >= 0; i--) {
+        var rec = entries.get(log.children[i].dataset.id);
+        if (rec && rec.data.kind === 'user') { last = rec.data; break; }
+        if (rec && (rec.data.kind === 'assistant-text' || rec.data.kind === 'tool')) break;
+      }
+      var label = (last && String(last.text || '').trim().indexOf('/compact') === 0)
+        ? 'Compacting the conversation… this can take a while on a long session'
+        : 'Working…';
+      if (!activityNode) {
+        activityNode = el('div', 'cc-activity', '<span class="cc-spin"></span><span></span>');
+        log.appendChild(activityNode);
+      } else if (activityNode.parentNode !== log || activityNode.nextSibling) {
+        log.appendChild(activityNode); // keep it pinned to the bottom
+      }
+      activityNode.lastChild.textContent = label;
+      scrollDown(false);
     }
 
     // ─── Entry rendering ───
@@ -662,12 +710,7 @@
       }).catch(function () { /* the socket will resync */ });
     }
 
-    function doSend() {
-      var text = input.value;
-      if (!text.trim() || state === 'working') return;
-      input.value = '';
-      autoGrow();
-      hideSlash();
+    function postMessage(text) {
       apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -675,6 +718,74 @@
       }).then(function (r) { return r.json(); }).then(function (d) {
         if (d && d.ok === false) appendLocal({ kind: 'error', text: d.error || 'Failed to send' });
       }).catch(function (err) { appendLocal({ kind: 'error', text: String(err.message || err) }); });
+    }
+
+    // ─── Queued input ───
+    // Typing while Claude is busy queues instead of sending. Everything queued
+    // is flushed as ONE message when the turn ends, so a burst of thoughts
+    // arrives as a single prompt rather than several competing turns. Holding it
+    // here (rather than writing to the CLI mid-turn) also means we never depend
+    // on how the CLI treats input that arrives while it is working.
+    function enqueue(text) {
+      queued.push(text);
+      renderQueue();
+    }
+
+    function queuedText() { return queued.join('\n'); }
+
+    // Pull every queued line back into the composer for editing, newest last.
+    function unqueue() {
+      if (!queued.length) return;
+      var restored = queuedText();
+      queued = [];
+      renderQueue();
+      var cur = input.value.trim();
+      input.value = cur ? restored + '\n' + cur : restored;
+      autoGrow();
+      input.focus();
+      try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
+    }
+
+    function renderQueue() {
+      if (!queued.length) {
+        if (queueNode) { queueNode.remove(); queueNode = null; }
+        return;
+      }
+      if (!queueNode) {
+        queueNode = el('div', 'cc-queue');
+        queueNode.title = 'Click to edit — brings every queued line back to the message box';
+        queueNode.addEventListener('click', unqueue);
+        wrap.insertBefore(queueNode, inrow);
+      }
+      var n = queued.length;
+      queueNode.innerHTML = '<div class="cc-queue-head">'
+        + '<span>Queued</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
+        + (n === 1 ? '1 line' : n + ' lines') + ' · sends as one message</span></div>'
+        + '<div class="cc-queue-body">' + esc(queuedText()) + '</div>'
+        + '<div class="cc-queue-hint">Click to edit</div>';
+    }
+
+    function flushQueue() {
+      if (!queued.length || destroyed) return;
+      var text = queuedText();
+      queued = [];
+      renderQueue();
+      postMessage(text);
+    }
+
+    function doSend() {
+      var text = input.value.replace(/\s+$/, '');
+      if (!text.trim()) return;
+      input.value = '';
+      autoGrow();
+      hideSlash();
+      // Busy (working, or blocked on a prompt) → queue it for the next turn.
+      if (state !== 'idle') { enqueue(text); return; }
+      postMessage(text);
+      // Go busy immediately rather than waiting for the server's state event —
+      // otherwise a fast second Enter still sees 'idle' and fires a competing
+      // message instead of queueing behind this one.
+      setState('working');
     }
 
     function doStop() {
@@ -849,6 +960,8 @@
       entries.set(data.id, { data: data, node: node });
       var stick = atBottom();
       log.appendChild(node);
+      // The activity row is not a conversation entry; keep it last.
+      if (activityNode && activityNode.parentNode === log) log.appendChild(activityNode);
       scrollDown(stick);
     }
 
@@ -856,6 +969,7 @@
       if (destroyed || !session) return;
       log.innerHTML = '';
       entries.clear();
+      activityNode = null; // detached by the wipe above; setState re-creates it
       (session.messages || []).forEach(addEntry);
       slashCommands = session.slashCommands || [];
       modeSel.value = session.permissionMode || 'default';
@@ -909,7 +1023,11 @@
           if (ev.model) modelLbl.textContent = ev.model;
           break;
         case 'exit':
+          // Nothing will flush the queue now, so hand the text back rather than
+          // silently dropping what the user typed.
+          if (queued.length) unqueue();
           setState('idle');
+          if (activityNode) { activityNode.remove(); activityNode = null; }
           input.disabled = true;
           input.placeholder = 'Session ended.';
           stateLbl.textContent = 'exited';
