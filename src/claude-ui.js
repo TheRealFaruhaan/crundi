@@ -86,6 +86,14 @@ function transcriptDir(projectPath) {
  * cache_creation on a late message is exactly the context the model was carrying
  * — the same number Claude Code quotes ("this session is … 180.6k tokens").
  * Only the file's tail is scanned, so this stays cheap on multi-MB transcripts.
+ *
+ * Take the LAST such record, never the largest. `/compact` keeps writing to the
+ * same transcript, so the peak is a historical high-water mark that survives the
+ * compaction that was supposed to clear it — a compacted session would stay
+ * flagged as heavy forever. The final record is the context a resume inherits.
+ *
+ * Sidechain records are subagent turns carrying their own small contexts; they
+ * would understate the main thread, so prefer the last main-thread record.
  */
 function estimateTranscriptTokens(file, size) {
   try {
@@ -99,16 +107,18 @@ function estimateTranscriptTokens(file, size) {
     } finally { closeSync(fd); }
     const lines = text.split('\n');
     lines.shift(); // first line is probably truncated mid-JSON
-    let best = 0;
+    let last = 0;
+    let lastMain = 0;
     for (const line of lines) {
       if (!line.includes('cache_read_input_tokens')) continue;
       let o; try { o = JSON.parse(line); } catch { continue; }
       const u = o.message && o.message.usage;
       if (!u) continue;
       const ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-      if (ctx > best) best = ctx;
+      last = ctx;
+      if (!o.isSidechain) lastMain = ctx;
     }
-    return best;
+    return lastMain || last;
   } catch { return 0; }
 }
 

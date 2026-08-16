@@ -487,6 +487,40 @@
       if (force || atBottom()) log.scrollTop = log.scrollHeight;
     }
 
+    // ─── Scroll retention across re-parenting ───
+    //
+    // The workbench re-parents cell elements whenever it re-renders the grid
+    // (mosaic arrange / replaceChildren), and moving a node resets scrollTop on
+    // every scrollable descendant — so returning to a chat would land at the
+    // top. The same happens when a hidden cell (display:none, clientHeight 0)
+    // is shown again. Remember where the reader was and put them back.
+    var stickBottom = true;   // fresh chats start pinned to the newest message
+    var lastTop = 0;
+    var lastH = 0;
+    log.addEventListener('scroll', function () {
+      if (!log.clientHeight) return; // a reset while hidden is not a user scroll
+      stickBottom = atBottom();
+      lastTop = log.scrollTop;
+    });
+    function restoreScroll() {
+      if (!log.clientHeight) return;
+      // scroll-behavior:smooth would animate the restore (and lose a race with
+      // the next render); a restore must be instant.
+      var prev = log.style.scrollBehavior;
+      log.style.scrollBehavior = 'auto';
+      log.scrollTop = stickBottom ? log.scrollHeight : lastTop;
+      log.style.scrollBehavior = prev;
+    }
+    // Self-heal for visibility toggles the host does not tell us about.
+    if (window.ResizeObserver) {
+      var logObserver = new ResizeObserver(function () {
+        var h = log.clientHeight;
+        if (h && !lastH) restoreScroll(); // 0 → visible: the position was wiped
+        lastH = h;
+      });
+      try { logObserver.observe(log); } catch (e) { logObserver = null; }
+    }
+
     function setState(s) {
       var was = state;
       state = s;
@@ -1074,6 +1108,7 @@
         input.placeholder = 'Session ended.';
         stateLbl.textContent = 'exited';
       }
+      stickBottom = true; // a full replay always lands on the newest message
       scrollDown(true);
     }
 
@@ -1135,9 +1170,11 @@
       applyEvent: applyEvent,
       focus: function () { try { input.focus(); } catch (e) {} },
       resubscribe: function () { wsSend({ type: 'subscribe-ui', id: sessionId }); },
+      restoreScroll: restoreScroll,
       destroy: function () {
         destroyed = true;
         stopTicker(); // closing a cell must not leave an interval running
+        if (logObserver) { try { logObserver.disconnect(); } catch (e) {} }
         if (widthObserver) { try { widthObserver.disconnect(); } catch (e) {} }
         else window.removeEventListener('resize', syncWidth);
         try { wsSend({ type: 'unsubscribe-ui', id: sessionId }); } catch (e) {}

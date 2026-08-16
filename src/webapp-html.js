@@ -3674,6 +3674,10 @@ export function getWebappHtml(botUsername) {
         else mountXterm(d.t, el);
       }
 
+      // The re-parent above also reset scrollTop on every scrollable descendant,
+      // which would drop each chat back to the top of its transcript.
+      for (const [, c] of chatViews) { try { c.restoreScroll(); } catch { /* ignore */ } }
+
       // Restore the cursor to the terminal the user was typing in, if it survived
       // the rebuild — the re-parent above blurred it.
       if (refocusTid && live.some(t => t.id === refocusTid)) {
