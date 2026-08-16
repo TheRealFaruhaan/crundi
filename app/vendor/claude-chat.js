@@ -1285,6 +1285,10 @@
           scrollDown(stick2);
           break;
         }
+        // Server spliced older messages in front of the live ones (a resumed
+        // conversation whose stored transcript was replayed) — take the whole
+        // snapshot rather than trying to merge.
+        case 'history': applyHistory(ev.session); break;
         case 'state': setState(ev.state); break;
         case 'init':
           slashCommands = ev.slashCommands || [];
