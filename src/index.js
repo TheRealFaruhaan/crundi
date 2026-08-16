@@ -15,6 +15,7 @@ import { config, getOldAppDataDir, isFreshInstall } from './config.js';
 import { createBot } from './bot.js';
 import { createWebApp } from './webapp.js';
 import { createClaudeTerminals } from './claude-terminals.js';
+import { createClaudeUiSessions } from './claude-ui.js';
 import { killAllServices } from './services.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -106,6 +107,12 @@ onChatId((id) => {
 // ─── Claude terminal manager ───
 // apiUrl and apiKey will be set after webapp starts
 const claudeTerminals = createClaudeTerminals();
+
+// ─── Claude UI (chat) session manager ───
+// Same `claude` binary as terminal mode, driven over stream-json instead of a
+// PTY so the web UI can render structured messages, permission prompts and
+// multiple-choice questions.
+const claudeUi = createClaudeUiSessions();
 
 // ─── MCP dispatch handler (for browser, screenshots, terminals, RDP) ───
 async function mcpDispatch(tool, args) {
@@ -217,6 +224,7 @@ async function mcpDispatch(tool, args) {
 const webapp = createWebApp({
   config,
   claudeTerminals,
+  claudeUi,
   bot: bot,
   mcpDispatch,
   serverLogs,
@@ -252,6 +260,8 @@ try {
 const apiKey = webapp.getInternalApiKey();
 claudeTerminals.apiUrl = `http://localhost:${port}`;
 claudeTerminals.apiKey = apiKey;
+claudeUi.apiUrl = `http://localhost:${port}`;
+claudeUi.apiKey = apiKey;
 // Log API key for Electron to pick up (local auth for iframe)
 console.log(`[crundi] API_KEY=${apiKey}`);
 
@@ -369,8 +379,9 @@ async function shutdown(signal) {
   // `docker compose down` / taskkill actually finish before we exit).
   try { await killAllServices(); } catch { /* ignore */ }
 
-  // Close Claude terminals (node-pty sessions)
+  // Close Claude terminals (node-pty sessions) and chat sessions
   claudeTerminals.closeAll();
+  claudeUi.closeAll();
 
   // Stop webapp
   webapp.stop();

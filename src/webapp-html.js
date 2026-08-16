@@ -6,7 +6,7 @@
  * Telegram Login Widget is used for authentication.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -26,6 +26,24 @@ function assetDataUri(file) {
 const LOGO_SM = assetDataUri('icon_64x64.png');   // topbar
 const LOGO_LG = assetDataUri('icon_128x128.png'); // login screen
 
+// /vendor/ files are served with a 24h Cache-Control, so a shipped update to
+// one is ignored until the cache expires unless its URL changes.
+//
+// Keying that on the app version is NOT enough: several builds can ship under
+// the same version during development, leaving the URL identical while the file
+// changes underneath — the browser then runs stale JS against a new server,
+// which is invisible and extremely confusing to debug. Fingerprint each file by
+// its own size + mtime so ANY change busts the cache, version bump or not.
+function vendorTag(file) {
+  for (const dir of [join(__dirname, '..', 'app', 'vendor'), join(__dirname, '..', '..', 'app', 'vendor')]) {
+    try {
+      const st = statSync(join(dir, file));
+      return Math.floor(st.mtimeMs).toString(36) + '-' + st.size.toString(36);
+    } catch { /* try next */ }
+  }
+  return String(Date.now()); // unknown file: never cache it wrongly
+}
+
 export function getWebappHtml(botUsername) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -44,7 +62,7 @@ export function getWebappHtml(botUsername) {
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon_32x32.png">
   <link rel="apple-touch-icon" href="/assets/icon_256x256.png">
   <script src="https://telegram.org/js/telegram-web-app.js"><\/script>
-  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/vendor/xterm.css?v=${vendorTag('xterm.css')}">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -586,10 +604,102 @@ export function getWebappHtml(botUsername) {
     }
     .term-launch .icon { font-size: 2.4rem; opacity: 0.3; }
     .term-launch button { min-width: 190px; padding: 9px 24px; border-radius: var(--radius-sm); cursor: pointer; font-size: 14px; }
-    .term-launch .btn-normal { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+    /* Outlined, not filled: keeps Terminal clearly available while letting the
+       UI Mode button above it own the visual hierarchy. */
+    .term-launch .btn-normal {
+      border: 1px solid rgba(99,102,241,0.55); background: rgba(99,102,241,0.10); color: var(--text-primary);
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .term-launch .btn-normal:hover { border-color: var(--accent); background: var(--accent-dim); }
     .term-launch .btn-skip { border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
     .term-launch .btn-shell { border: 1px solid var(--border); background: transparent; color: var(--text-secondary); }
     .term-launch .btn-shell:hover { color: var(--text-primary); border-color: var(--accent); }
+    /* UI (chat) mode: same weight as Normal Mode, distinguished by the gradient. */
+    /* UI Mode — the hero action. A live indigo gradient that drifts, a specular
+       sheen on hover, and a blinking block caret to keep it terminal-native
+       rather than generic. Its two siblings stay deliberately flat so this one
+       carries all the visual weight. */
+    .term-launch .btn-chat {
+      position: relative; overflow: hidden; isolation: isolate;
+      border: 1px solid rgba(129,140,248,0.85);
+      color: #fff; font-weight: 650; letter-spacing: 0.015em;
+      display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+      background: linear-gradient(110deg, #4338ca 0%, #6366f1 26%, #a5b4fc 50%, #6366f1 74%, #4338ca 100%);
+      background-size: 260% 100%;
+      animation: chatDrift 9s linear infinite;
+      box-shadow: 0 6px 20px -6px rgba(99,102,241,0.75), inset 0 1px 0 rgba(255,255,255,0.28);
+      transition: transform 0.16s ease, box-shadow 0.22s ease;
+    }
+    @keyframes chatDrift { to { background-position: -260% 0; } }
+    /* Specular sweep: parked off-canvas, fires across on hover. */
+    .term-launch .btn-chat::before {
+      content: ''; position: absolute; top: -60%; bottom: -60%; width: 45%; left: -70%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.42), transparent);
+      transform: skewX(-22deg); pointer-events: none; z-index: 1;
+    }
+    .term-launch .btn-chat:hover::before { animation: chatSheen 0.75s ease-out; }
+    @keyframes chatSheen { from { left: -70%; } to { left: 125%; } }
+    .term-launch .btn-chat:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 28px -6px rgba(99,102,241,0.95), 0 0 22px rgba(129,140,248,0.5), inset 0 1px 0 rgba(255,255,255,0.35);
+    }
+    .term-launch .btn-chat:active { transform: translateY(0); }
+    .term-launch .btn-chat .chat-caret {
+      font-family: var(--mono); font-size: 0.95em; line-height: 1;
+      opacity: 0.9; animation: chatBlink 1.15s steps(2, start) infinite;
+    }
+    @keyframes chatBlink { 0%, 55% { opacity: 0.95; } 56%, 100% { opacity: 0.15; } }
+    @media (prefers-reduced-motion: reduce) {
+      .term-launch .btn-chat { animation: none; background-position: 35% 0; }
+      .term-launch .btn-chat::before { display: none; }
+      .term-launch .btn-chat .chat-caret { animation: none; }
+    }
+    .term-launch .btn-chat-resume {
+      border: 1px solid var(--border); background: transparent;
+      color: var(--text-secondary); font-size: 12px; padding: 6px 14px; min-width: 0;
+    }
+    .term-launch .btn-chat-resume:hover { color: var(--text-primary); border-color: var(--accent); }
+    /* Resume picker: prior Claude Code transcripts for this project. */
+    .cr-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+    .cr-item {
+      display: flex; flex-direction: column; gap: 2px; text-align: left; width: 100%;
+      padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg-primary); color: var(--text-primary); cursor: pointer;
+    }
+    .cr-item:hover { border-color: var(--accent); background: var(--accent-dim); }
+    .cr-title { font-size: 0.86rem; font-weight: 600; }
+    .cr-meta { font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono); }
+    .cr-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 2px; }
+    /* Resume-cost choice shown in the placeholder cell before any process spawns. */
+    .cr-choice { gap: 7px !important; padding: 0 18px; text-align: center; }
+    .cr-choice-title { font-size: 0.95rem; font-weight: 650; color: var(--text-primary); }
+    .cr-choice-sub { font-size: 0.85rem; color: var(--text-secondary); max-width: 420px; }
+    .cr-choice-meta { font-family: var(--mono); font-size: 0.76rem; color: var(--yellow); }
+    .cr-choice-note { font-size: 0.76rem; color: var(--text-muted); max-width: 430px; margin-bottom: 4px; line-height: 1.5; }
+    #chat-resume-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7); z-index: 900;
+      align-items: center; justify-content: center;
+    }
+    #chat-resume-modal.visible { display: flex; }
+    #chat-resume-modal .modal {
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 22px; width: 92%; max-width: 560px;
+    }
+    #chat-resume-modal h3 { margin-bottom: 14px; font-size: 1.05rem; }
+    #chat-resume-modal .modal-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    #chat-resume-modal .modal-buttons button {
+      padding: 8px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+      background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; font-size: 0.86rem;
+    }
+    /* Chat cells fill their body edge-to-edge (the renderer owns its own padding). */
+    .term-cell[data-chat] .term-body { padding: 0; }
+    .chat-mount { height: 100%; min-height: 0; }
+    .term-kind-tag {
+      font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--accent-hover); border: 1px solid var(--border);
+      border-radius: 99px; padding: 1px 7px; font-weight: 700;
+    }
     /* Agent button group (Claude today; more agents can be added the same way). */
     .term-launch .term-agent-group {
       display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -2263,6 +2373,17 @@ export function getWebappHtml(botUsername) {
     </div>
   </div>
 
+  <!-- ─── Resume Claude conversation Modal ─── -->
+  <div id="chat-resume-modal">
+    <div class="modal">
+      <h3>Resume a conversation</h3>
+      <div id="cr-body" class="cr-list"></div>
+      <div class="modal-buttons">
+        <button data-action="chat-resume-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ─── PIN Modal ─── -->
   <div class="pin-modal" id="pin-modal">
     <div class="pin-box">
@@ -2382,9 +2503,10 @@ export function getWebappHtml(botUsername) {
   <!-- ─── Toast ─── -->
   <div class="toast" id="toast"></div>
 
-  <script src="/vendor/xterm.js"><\/script>
-  <script src="/vendor/addon-fit.js"><\/script>
-  <script src="/vendor/codemirror.js"><\/script>
+  <script src="/vendor/xterm.js?v=${vendorTag('xterm.js')}"><\/script>
+  <script src="/vendor/addon-fit.js?v=${vendorTag('addon-fit.js')}"><\/script>
+  <script src="/vendor/codemirror.js?v=${vendorTag('codemirror.js')}"><\/script>
+  <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
   <script>
   (function() {
     'use strict';
@@ -2396,6 +2518,7 @@ export function getWebappHtml(botUsername) {
     // input box / tool buttons act on whichever terminal is focused. Pending
     // cells are client-only placeholders that show the launch buttons.
     const termViews = new Map();   // termId → { term, fit, mount, cellEl, scrollBtn }
+    const chatViews = new Map();   // ui session id → CrundiChat view
     let focusedTermId = null;
     let pendingCells = [];         // local ids of un-launched cells for the current project
     let pendingProject = null;     // which project pendingCells belong to
@@ -3252,22 +3375,72 @@ export function getWebappHtml(botUsername) {
 
     // Launch a terminal into a pending cell: create a server terminal, then swap
     // the placeholder for the live terminal (SSE state will reconcile shortly).
-    // mode: 'shell' (plain shell), 'normal' / 'skip' (Claude). Other agents later.
-    async function launchTerminal(mode, localId) {
+    // mode: 'shell' (plain shell), 'normal' / 'skip' (Claude in a PTY),
+    // 'chat' (Claude driven over stream-json, rendered as a UI chat).
+    // Claude's interactive "this session is old and large — resume from a
+    // summary?" prompt does not exist over the stream-json protocol UI mode
+    // uses, so a resume there always loads the whole transcript. Ask before
+    // spawning, which is the last moment the choice is still free.
+    async function launchChatWithPreflight(localId) {
+      let info = null;
+      try {
+        const r = await apiFetch('/api/ui-sessions/preflight?project=' + encodeURIComponent(currentProject));
+        info = await r.json();
+      } catch { /* fall through to a plain launch */ }
+      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal('chat', localId); return; }
+      showResumeChoice(localId, info.latest);
+    }
+
+    function showResumeChoice(localId, t) {
+      const cell = document.querySelector('.term-cell[data-lid="' + localId + '"]');
+      const body = cell && cell.querySelector('.term-body');
+      if (!body) { launchTerminal('chat', localId); return; }
+      const tok = t.tokens ? (t.tokens / 1000).toFixed(1) + 'k tokens' : 'a large transcript';
+      const age = t.ageHours < 1 ? 'under an hour old'
+        : t.ageHours < 24 ? Math.round(t.ageHours) + 'h old'
+        : Math.round(t.ageHours / 24) + 'd old';
+      body.innerHTML = '<div class="term-launch cr-choice">'
+        + '<div class="cr-choice-title">Continuing will load your whole last conversation</div>'
+        + '<div class="cr-choice-sub">' + escHtml(t.title) + '</div>'
+        + '<div class="cr-choice-meta">' + escHtml(tok) + ' \\u00b7 ' + escHtml(age) + '</div>'
+        + '<div class="cr-choice-note">Claude\\u2019s \\u201cresume from summary\\u201d option isn\\u2019t offered over this protocol. '
+        + 'Compacting still loads the transcript once, then summarises it so later turns stay small. '
+        + 'Continuing keeps the full context on every turn. Starting fresh loads nothing.</div>'
+        + '<button class="btn-chat" data-action="chat-launch-mode" data-cmode="compact" data-sid="' + escHtml(t.id) + '" data-lid="' + localId + '">Compact first (recommended)</button>'
+        + '<button class="btn-normal" data-action="chat-launch-mode" data-cmode="continue" data-lid="' + localId + '">Continue anyway</button>'
+        + '<button class="btn-chat-resume" data-action="chat-launch-mode" data-cmode="new" data-lid="' + localId + '">Start a fresh conversation</button>'
+        + '</div>';
+    }
+
+    async function launchTerminal(mode, localId, resumeId, sessionMode) {
       if (!currentProject) return;
+      const isChat = mode === 'chat';
       const skipPerms = mode === 'skip';
       const shellOnly = mode === 'shell';
       try {
-        const r = await apiFetch('/api/terminals/create', {
+        const chatBody = { project: currentProject, permissionMode: 'default' };
+        // Resuming replays a prior transcript into a fresh CLI process
+        // (claude --resume <id>), so it must be decided at spawn time.
+        if (isChat && sessionMode) {
+          chatBody.sessionMode = sessionMode;
+          if (resumeId) chatBody.resumeId = resumeId;
+          if (sessionMode === 'compact') chatBody.title = 'Chat (compacted)';
+          else if (sessionMode === 'new') chatBody.title = 'Chat (new)';
+        } else if (isChat && resumeId) {
+          chatBody.sessionMode = 'resume'; chatBody.resumeId = resumeId; chatBody.title = 'Chat (resumed)';
+        }
+        const r = await apiFetch(isChat ? '/api/ui-sessions/create' : '/api/terminals/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: currentProject, skipPermissions: skipPerms, shell: shellOnly }),
+          body: JSON.stringify(isChat
+            ? chatBody
+            : { project: currentProject, skipPermissions: skipPerms, shell: shellOnly }),
         });
         const data = await r.json();
         if (!data.ok) { toast(data.error || 'Failed to launch', 'error'); return; }
         if (localId) pendingCells = pendingCells.filter(x => x !== localId);
         if (!terminals.some(t => t.id === data.id)) {
-          terminals.push({ id: data.id, project: currentProject, title: data.title || 'Terminal', order: data.order || 0, status: 'running' });
+          terminals.push({ id: data.id, project: currentProject, title: data.title || (isChat ? 'Chat' : 'Terminal'), order: data.order || 0, status: 'running', kind: isChat ? 'ui' : 'terminal' });
         }
         focusedTermId = data.id;
         renderTermGrid();
@@ -3277,9 +3450,61 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // Resume picker: lists this project's prior Claude Code transcripts (read
+    // from ~/.claude/projects) so a new chat cell can attach to one. /continue
+    // and /resume are CLI START-UP flags, not runtime slash commands — they can
+    // only be applied when the session is spawned, which is what this does.
+    let crPendingLid = null;
+    async function openChatResume(localId) {
+      if (!currentProject) { toast('Select a project first', 'error'); return; }
+      crPendingLid = localId || null;
+      const modal = $('#chat-resume-modal'); const body = $('#cr-body');
+      body.innerHTML = '<div class="cr-empty">Loading\\u2026</div>';
+      modal.classList.add('visible');
+      try {
+        const r = await apiFetch('/api/ui-sessions/resumable?project=' + encodeURIComponent(currentProject));
+        const d = await r.json();
+        const list = (d && d.sessions) || [];
+        if (!list.length) {
+          body.innerHTML = '<div class="cr-empty">No previous conversations found for this project.</div>';
+          return;
+        }
+        body.innerHTML = list.map(s =>
+          '<button class="cr-item" data-action="chat-resume-pick" data-sid="' + escHtml(s.id) + '">'
+          + '<span class="cr-title">' + escHtml(s.title) + '</span>'
+          + '<span class="cr-meta">' + escHtml(s.id.slice(0, 8)) + ' \\u00b7 ' + escHtml(relTime(s.updatedAt))
+          + ' \\u00b7 ' + (s.tokens ? (s.tokens / 1000).toFixed(1) + 'k tokens' : Math.max(1, Math.round(s.sizeBytes / 1024)) + ' KB')
+          + (s.tokens >= 100000 ? ' \\u00b7 <b style="color:var(--yellow)">heavy</b>' : '') + '</span>'
+          + '</button>').join('');
+      } catch (err) {
+        body.innerHTML = '<div class="cr-empty">Failed to load: ' + escHtml(err.message) + '</div>';
+      }
+    }
+    function closeChatResume() {
+      $('#chat-resume-modal').classList.remove('visible');
+      crPendingLid = null;
+    }
+    function relTime(iso) {
+      const t = new Date(iso).getTime();
+      if (!t) return '';
+      const s = Math.max(0, (Date.now() - t) / 1000);
+      if (s < 60) return 'just now';
+      if (s < 3600) return Math.floor(s / 60) + 'm ago';
+      if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+      if (s < 2592000) return Math.floor(s / 86400) + 'd ago';
+      return new Date(t).toLocaleDateString();
+    }
+
+    // Base path for a live cell's REST actions — chat cells and PTY terminals
+    // are managed by different server-side collections.
+    function cellApiBase(id) {
+      const t = terminals.find(x => x.id === id);
+      return (t && t.kind === 'ui' ? '/api/ui-sessions/' : '/api/terminals/') + encodeURIComponent(id);
+    }
+
     async function closeTerminal(id) {
       try {
-        await apiFetch('/api/terminals/' + encodeURIComponent(id) + '/close', { method: 'POST' });
+        await apiFetch(cellApiBase(id) + '/close', { method: 'POST' });
         terminals = terminals.filter(t => t.id !== id);
         if (focusedTermId === id) focusedTermId = null;
         delete termFont[id];
@@ -3367,7 +3592,7 @@ export function getWebappHtml(botUsername) {
       if (ph) ph.style.display = 'none';
       grid.style.display = '';
       if (addBtn) addBtn.style.display = '';
-      if (bar) bar.style.display = '';
+      syncInputBar(); // hidden while a chat cell holds focus
 
       syncWbStateProject();
       // Re-parenting cells below (replaceChildren / arrangeMosaic) blurs whatever
@@ -3382,9 +3607,11 @@ export function getWebappHtml(botUsername) {
       // a project has no cells of any kind yet.
       if (!live.length && !pendingCells.length && !wbCells.length) pendingCells = [genLocalId()];
 
-      // Unordered set of every cell the grid should contain.
+      // Unordered set of every cell the grid should contain. A live cell is
+      // either a PTY terminal or a Claude chat session — same key namespace, so
+      // stored ordering/mosaic layouts survive either kind.
       const items = [
-        ...live.map(t => ({ key: 'live:' + t.id, type: 'live', t })),
+        ...live.map(t => ({ key: 'live:' + t.id, type: t.kind === 'ui' ? 'chat' : 'live', t })),
         ...pendingCells.map(lid => ({ key: 'pend:' + lid, type: 'pending', localId: lid })),
         ...wbCells.map(c => ({ key: 'panel:' + c.id, type: 'panel', cell: c })),
       ];
@@ -3406,8 +3633,8 @@ export function getWebappHtml(botUsername) {
       const newLive = [];
       for (const d of desired) {
         let el = grid.querySelector('[data-cellkey="' + d.key + '"]');
-        if (!el) { el = buildCellEl(d); if (d.type === 'live') newLive.push([d, el]); }
-        else if (d.type === 'live') updateCellHead(el, d.t);
+        if (!el) { el = buildCellEl(d); if (d.type === 'live' || d.type === 'chat') newLive.push([d, el]); }
+        else if (d.type === 'live' || d.type === 'chat') updateCellHead(el, d.t);
         elByKey[d.key] = el;
       }
 
@@ -3424,8 +3651,12 @@ export function getWebappHtml(botUsername) {
         grid.replaceChildren(...desired.map(d => elByKey[d.key]));
       }
 
-      // Mount xterm for newly built live cells AFTER they're attached to the DOM.
-      for (const [d, el] of newLive) mountXterm(d.t, el);
+      // Mount xterm / the chat view for newly built live cells AFTER they're
+      // attached to the DOM (both measure their container on mount).
+      for (const [d, el] of newLive) {
+        if (d.type === 'chat') mountChat(d.t, el);
+        else mountXterm(d.t, el);
+      }
 
       // Restore the cursor to the terminal the user was typing in, if it survived
       // the rebuild — the re-parent above blurred it.
@@ -3516,10 +3747,17 @@ export function getWebappHtml(botUsername) {
           + '<button class="btn-shell" data-action="launch-terminal" data-mode="shell" data-lid="' + d.localId + '">Empty Shell</button>'
           + '<div class="term-agent-group">'
           + '<div class="term-agent-label">Claude</div>'
-          + '<button class="btn-normal" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">Normal Mode</button>'
-          + '<button class="btn-skip" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '">Skip Permissions Mode</button>'
+          + '<button class="btn-chat" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '"><span class="chat-caret">\\u258d</span>UI Mode</button>'
+          + '<button class="btn-normal" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">Terminal</button>'
+          + '<button class="btn-skip" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '">Terminal \\u2014 Skip Permissions</button>'
+          + '<button class="btn-chat-resume" data-action="chat-resume" data-lid="' + d.localId + '">Resume a conversation\\u2026</button>'
           + '</div>'
           + '</div>';
+      } else if (d.type === 'chat') {
+        el.dataset.tid = d.t.id;
+        el.dataset.chat = '1';
+        head.innerHTML = headHtmlLive(d.t);
+        body.innerHTML = '<div class="chat-mount"></div>';
       } else if (d.type === 'panel') {
         el.classList.add('wb-cell');
         el.dataset.wbid = d.cell.id;
@@ -3537,6 +3775,12 @@ export function getWebappHtml(botUsername) {
       }
       el.appendChild(head);
       el.appendChild(body);
+      if (d.type === 'chat') {
+        // Clicking a chat cell focuses it, same as a terminal, so the shared
+        // header controls and close button act on the right cell.
+        el.addEventListener('mousedown', () => focusTerm(d.t.id), true);
+        el.addEventListener('touchstart', () => focusTerm(d.t.id), { passive: true, capture: true });
+      }
       if (d.type === 'live') {
         // Clicking a cell focuses it (so the unified input targets it).
         el.addEventListener('mousedown', () => focusTerm(d.t.id), true);
@@ -3551,11 +3795,28 @@ export function getWebappHtml(botUsername) {
           if (txt) { e.preventDefault(); e.stopPropagation(); insertRefToTarget({ kind: 'term', id: d.t.id }, txt); }
         });
       }
-      if (d.type === 'live' || d.type === 'panel') {
+      if (d.type === 'live' || d.type === 'chat' || d.type === 'panel') {
         // Drag the header to reorder (reuses the kanban drag controller).
         makeDraggable(el, Object.assign({ handle: head }, termDragHandlers(d.key)));
       }
       return el;
+    }
+
+    // Mount the Claude chat renderer (served from /vendor/claude-chat.js) into a
+    // freshly built cell. The view owns everything below the header; we only
+    // hand it the auth-aware fetch and the shared WebSocket.
+    function mountChat(t, cellEl) {
+      if (chatViews.has(t.id)) return;
+      const mountEl = cellEl.querySelector('.chat-mount');
+      if (!mountEl || !window.CrundiChat) return;
+      const view = window.CrundiChat.mount(mountEl, {
+        sessionId: t.id,
+        project: t.project || currentProject,
+        apiFetch,
+        toast,
+        wsSend: (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
+      });
+      chatViews.set(t.id, view);
     }
 
     const WB_KIND_META = {
@@ -3578,19 +3839,25 @@ export function getWebappHtml(botUsername) {
 
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
+      const isChat = t.kind === 'ui';
       const as = exited ? '' : (t.agentState || 'idle');
       const dotCls = exited ? ' exited' : (as === 'working' ? ' working' : as === 'needs-input' ? ' input' : '');
       const badge = (!exited && as === 'working') ? '<span class="term-agent-badge working">working</span>'
         : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>' : '';
+      // Font-size controls only make sense for an xterm cell; a chat cell gets a
+      // "chat" tag instead so the two kinds are distinguishable at a glance.
+      const controls = isChat
+        ? '<span class="term-kind-tag">chat</span>'
+        : '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
+          + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
+          + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
-        + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || 'Terminal') + '</span>'
+        + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
         + badge
         + '<span class="term-head-spacer"></span>'
-        + '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
-        + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
-        + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>'
-        + '<button class="term-head-btn term-close" data-action="term-close" data-tid="' + t.id + '" title="Close terminal">\\u00d7</button>';
+        + controls
+        + '<button class="term-head-btn term-close" data-action="term-close" data-tid="' + t.id + '" title="' + (isChat ? 'Close chat' : 'Close terminal') + '">\\u00d7</button>';
     }
 
     function updateCellHead(el, t) {
@@ -3751,6 +4018,10 @@ export function getWebappHtml(botUsername) {
         try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'unsubscribe', id: tid })); } catch { /* ignore */ }
         try { v.term.dispose(); } catch { /* ignore */ }
         termViews.delete(tid);
+      }
+      if (tid && chatViews.has(tid)) {
+        try { chatViews.get(tid).destroy(); } catch { /* ignore */ }
+        chatViews.delete(tid);
       }
       // Panel cell: park any relocated tab-panel back to its tab slot first so we
       // don't delete the real panel node along with the cell.
@@ -4178,6 +4449,22 @@ export function getWebappHtml(botUsername) {
       // Cells may be nested inside mosaic leaves, so query deep (not just direct
       // children) for the terminal cells.
       grid.querySelectorAll('.term-cell[data-tid]').forEach(ch => ch.classList.toggle('focused', ch.dataset.tid === focusedTermId));
+      syncInputBar();
+    }
+
+    // The shared bottom input bar types into the FOCUSED PTY terminal, so it is
+    // meaningless while a chat cell is focused — that cell has its own composer.
+    // Hide it then, so UI mode reads as a self-contained chat.
+    function syncInputBar() {
+      const bar = $('#term-input-bar');
+      if (!bar) return;
+      if (!currentProject || currentTab !== 'workbench') { bar.style.display = 'none'; return; }
+      const live = liveTermsForProject();
+      const focused = live.find(t => t.id === focusedTermId);
+      // No live cells at all → the launcher is showing; keep the bar available.
+      // Otherwise show it only when the focused cell is a real terminal.
+      const show = !live.length || (focused ? focused.kind !== 'ui' : live.some(t => t.kind !== 'ui'));
+      bar.style.display = show ? '' : 'none';
     }
 
     function fitTerm(id) {
@@ -4229,7 +4516,7 @@ export function getWebappHtml(botUsername) {
         input.replaceWith(span);
         if (save && val !== cur) {
           const tt = terminals.find(t => t.id === id); if (tt) tt.title = val;
-          try { await apiFetch('/api/terminals/' + encodeURIComponent(id) + '/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: val }) }); } catch { /* ignore */ }
+          try { await apiFetch(cellApiBase(id) + '/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: val }) }); } catch { /* ignore */ }
         }
       };
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(true); } else if (e.key === 'Escape') { e.preventDefault(); commit(false); } });
@@ -4300,8 +4587,16 @@ export function getWebappHtml(botUsername) {
               const termOrder = keys.filter(k => k.startsWith('live:')).map(k => k.slice(5));
               termOrder.forEach((tid, i) => { const tt = terminals.find(t => t.id === tid); if (tt) tt.order = i; });
               renderTermGrid();
+              // The unified list mixes PTY terminals and chat sessions, which
+              // live in separate server-side collections. Each side ignores ids
+              // it does not own, so the same sequence can go to both.
               if (termOrder.length) {
-                try { await apiFetch('/api/terminals/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: currentProject, order: termOrder }) }); } catch { /* ignore */ }
+                const body = JSON.stringify({ project: currentProject, order: termOrder });
+                const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
+                try { await apiFetch('/api/terminals/reorder', opts); } catch { /* ignore */ }
+                if (terminals.some(t => t.kind === 'ui')) {
+                  try { await apiFetch('/api/ui-sessions/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }); } catch { /* ignore */ }
+                }
               }
             }
           }
@@ -4779,6 +5074,9 @@ export function getWebappHtml(botUsername) {
           try { v.term.reset(); } catch { /* ignore */ }
           ws.send(JSON.stringify({ type: 'subscribe', id }));
         }
+        // Chat cells re-subscribe too; the server replays the conversation, so
+        // applyHistory() rebuilds the log and re-arms any parked prompt.
+        for (const [, c] of chatViews) { try { c.resubscribe(); } catch { /* ignore */ } }
         fitAllTerms();
         reportPresence(true); // re-assert presence on a fresh socket
       };
@@ -4789,6 +5087,14 @@ export function getWebappHtml(botUsername) {
         if (msg.type === 'output' && msg.id) {
           const v = termViews.get(msg.id);
           if (v) v.term.write(msg.data);
+        }
+        if (msg.type === 'ui-history' && msg.id) {
+          const c = chatViews.get(msg.id);
+          if (c) c.applyHistory(msg.session);
+        }
+        if (msg.type === 'ui-event' && msg.id) {
+          const c = chatViews.get(msg.id);
+          if (c) c.applyEvent(msg.event);
         }
         if (msg.type === 'server-log') {
           appendServerLog(msg);
@@ -7044,7 +7350,20 @@ export function getWebappHtml(botUsername) {
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
         case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
-        case 'launch-terminal': launchTerminal(d.mode, d.lid); break;
+        case 'launch-terminal':
+          // Chat launches check the resume cost first; other modes go straight through.
+          if (d.mode === 'chat') launchChatWithPreflight(d.lid);
+          else launchTerminal(d.mode, d.lid);
+          break;
+        case 'chat-launch-mode': launchTerminal('chat', d.lid, d.sid, d.cmode); break;
+        case 'chat-resume': openChatResume(d.lid); break;
+        case 'chat-resume-cancel': closeChatResume(); break;
+        case 'chat-resume-pick': {
+          const lid = crPendingLid;
+          closeChatResume();
+          launchTerminal('chat', lid, d.sid);
+          break;
+        }
       }
     });
 
