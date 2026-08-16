@@ -116,7 +116,7 @@
     '.cc-narrow .cc-input{flex:1 1 100%;order:1}',
     '.cc-narrow .cc-actions{order:2;display:flex;gap:7px;width:100%;align-items:center}',
     '.cc-narrow .cc-actions .cc-btn{flex:1;padding:8px 10px}',
-    '.cc-narrow .cc-attach{flex:none}',
+    '.cc-narrow .cc-attach,.cc-narrow .cc-stop{flex:none}',
     '.cc-narrow .cc-meta{gap:6px;font-size:10.5px}',
     '.cc-narrow .cc-sid{display:none}',          // duplicated by the cell header
     '.cc-actions{display:contents}',              // wide: behaves as if unwrapped
@@ -131,7 +131,21 @@
     // Enter-key behaviour toggle, sitting beside the permission-mode dropdown.
     '.cc-toggle{background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:2px 7px;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:4px}',
     '.cc-toggle:hover{border-color:var(--accent);color:var(--text-primary)}',
-    '.cc-toggle b{font-family:var(--mono);color:var(--accent-hover);font-weight:600}',
+    '.cc-toggle b{font-family:var(--mono);font-weight:600}',
+    // Enter-key switch: both options always visible, thumb marks the live one.
+    '.cc-sw{position:relative;display:inline-flex;align-items:center;background:var(--bg-tertiary,rgba(255,255,255,.06));border-radius:999px;padding:2px;line-height:1}',
+    '.cc-sw-thumb{position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:999px;background:var(--accent-dim);border:1px solid var(--accent);transition:transform .18s cubic-bezier(.4,0,.2,1)}',
+    '.cc-sw.alt .cc-sw-thumb{transform:translateX(100%)}',
+    '.cc-sw-opt{position:relative;z-index:1;padding:2px 8px;font-size:11px;opacity:.45;transition:opacity .18s ease}',
+    '.cc-sw:not(.alt) .cc-sw-opt:nth-child(2),.cc-sw.alt .cc-sw-opt:nth-child(3){opacity:1}',
+    '.cc-sw:not(.alt) .cc-sw-opt:nth-child(2) b,.cc-sw.alt .cc-sw-opt:nth-child(3) b{color:var(--accent-hover)}',
+    // Stop: icon by default, widens to reveal "Sure?" once armed.
+    '.cc-stop{flex:none;height:34px;min-width:34px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0 8px;transition:.15s}',
+    '.cc-stop:hover{color:var(--red);border-color:var(--red)}',
+    '.cc-stop svg{width:15px;height:15px;flex:none}',
+    '.cc-stop .cc-stop-label{max-width:0;overflow:hidden;white-space:nowrap;font-size:11px;font-family:inherit;opacity:0;transition:max-width .18s ease,opacity .18s ease}',
+    '.cc-stop.cc-armed{color:var(--red);border-color:var(--red);background:var(--red-dim)}',
+    '.cc-stop.cc-armed .cc-stop-label{max-width:44px;opacity:1}',
     // Attach button matches the main input bar's paperclip.
     '.cc-attach{flex:none;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0}',
     '.cc-attach:hover{color:var(--accent-hover);border-color:var(--accent)}',
@@ -333,7 +347,13 @@
     input.rows = 1;
     input.placeholder = 'Message Claude…  (Enter to send, Shift+Enter for newline)';
     var sendBtn = el('button', 'cc-btn primary', 'Send');
-    var stopBtn = el('button', 'cc-btn danger', 'Stop');
+    // Icon button between attach and send. Interrupting mid-turn is
+    // destructive and easy to hit by accident on a phone, so it arms on the
+    // first tap and only fires on the second.
+    var stopBtn = el('button', 'cc-stop',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+      + ' stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+      + '<span class="cc-stop-label">Sure?</span>');
     stopBtn.style.display = 'none';
     // Paperclip, mirroring the main input bar: uploads to crundi_attachments
     // and inserts the returned path into the message.
@@ -348,8 +368,8 @@
     // at full width the wrapper is display:contents and changes nothing.
     var actions = el('div', 'cc-actions');
     actions.appendChild(attachBtn);
-    actions.appendChild(sendBtn);
     actions.appendChild(stopBtn);
+    actions.appendChild(sendBtn);
     inrow.appendChild(input);
     inrow.appendChild(actions);
     inrow.appendChild(fileInput);
@@ -420,9 +440,14 @@
 
     function syncEnterMode() {
       var sends = enterMode === 'send';
-      enterBtn.innerHTML = sends
-        ? '<b>⏎</b> sends'
-        : '<b>⌃⏎</b> sends';
+      // Both options stay on screen inside a switch track, with the thumb over
+      // the active one — the state is readable without clicking to find out.
+      enterBtn.innerHTML =
+        '<span class="cc-sw' + (sends ? '' : ' alt') + '">'
+        + '<span class="cc-sw-thumb"></span>'
+        + '<span class="cc-sw-opt"><b>⏎</b></span>'
+        + '<span class="cc-sw-opt"><b>⌃⏎</b></span>'
+        + '</span>';
       enterBtn.title = sends
         ? 'Enter sends, Shift+Enter makes a newline — click to swap'
         : 'Enter makes a newline, Ctrl+Enter sends — click to swap';
@@ -531,6 +556,7 @@
       stateLbl.textContent = busy ? 'working…' : s === 'needs-input' ? 'needs your input' : 'idle';
       stateLbl.className = busy || s === 'needs-input' ? 'cc-busy' : '';
       stopBtn.style.display = busy ? '' : 'none';
+      if (!busy) disarmStop(); // never leave it primed across turns
       // Send stays available while busy — it queues rather than sending, so the
       // label says so instead of the button vanishing.
       sendBtn.style.display = '';
@@ -913,6 +939,7 @@
       var text = input.value.replace(/\s+$/, '');
       if (!text.trim()) return;
       input.value = '';
+      saveDraft();
       autoGrow();
       hideSlash();
       // Busy (working, or blocked on a prompt) → queue it for the next turn.
@@ -924,9 +951,30 @@
       setState('working');
     }
 
+    // Two-step stop. The first click arms and reveals "Sure?"; a second within
+    // the window interrupts. Auto-disarms so a stray tap can't leave it primed.
+    var STOP_ARM_MS = 3000;
+    var stopArmedAt = 0;
+    var stopTimer = null;
+    function disarmStop() {
+      stopArmedAt = 0;
+      clearTimeout(stopTimer);
+      stopBtn.classList.remove('cc-armed');
+      stopBtn.title = 'Stop this turn (click twice)';
+    }
     function doStop() {
+      if (!stopArmedAt || Date.now() - stopArmedAt > STOP_ARM_MS) {
+        stopArmedAt = Date.now();
+        stopBtn.classList.add('cc-armed');
+        stopBtn.title = 'Click again to interrupt';
+        clearTimeout(stopTimer);
+        stopTimer = setTimeout(disarmStop, STOP_ARM_MS);
+        return;
+      }
+      disarmStop();
       apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/interrupt', { method: 'POST' }).catch(function () {});
     }
+    disarmStop();
 
     function appendLocal(data) {
       data.id = 'local-' + Math.random().toString(16).slice(2);
@@ -948,6 +996,7 @@
       var v = input.value;
       var pad = (!v || /\s$/.test(v)) ? '' : ' ';
       input.value = v + pad + p + ' ';
+      saveDraft();
       autoGrow();
       input.focus();
     }
@@ -1125,10 +1174,26 @@
       }
     }
 
+    // ─── Draft persistence ───
+    // Switching project or tab tears the cell down and rebuilds it, so an
+    // unsent message would be lost. Keyed per session, and deliberately NOT
+    // cleared on destroy() — destroy is exactly the case we're protecting.
+    var DRAFT_KEY = 'crundi_chat_draft_' + sessionId;
+    function saveDraft() {
+      try {
+        if (input.value) localStorage.setItem(DRAFT_KEY, input.value);
+        else localStorage.removeItem(DRAFT_KEY);
+      } catch (e) {}
+    }
+    try {
+      var draft = localStorage.getItem(DRAFT_KEY);
+      if (draft) { input.value = draft; setTimeout(autoGrow, 0); }
+    } catch (e) {}
+
     input.addEventListener('keydown', onKeyDown);
     input.addEventListener('input', function () {
       lastTypeAt = Date.now(); // keeps a pending batch waiting while you type
-      slashIdx = 0; autoGrow(); showSlash();
+      slashIdx = 0; autoGrow(); showSlash(); saveDraft();
     });
     input.addEventListener('blur', function () { setTimeout(hideSlash, 120); });
     sendBtn.addEventListener('click', doSend);

@@ -661,6 +661,48 @@ export function getWebappHtml(botUsername) {
       color: var(--text-primary);
     }
     .term-launch .btn-chat-skip:hover { border-color: var(--accent); background: var(--accent-dim); }
+    /* ── Launch grid: [mode | skip-permissions] × 2 ──
+       The shield is icon-only at rest and widens to name itself; its row-mate
+       drops its label at the same time, so the row's total width is constant
+       and the two buttons trade space rather than reflowing the column. */
+    /* Explicit width, not 100%: the row's parent (.term-agent-group) is
+       shrink-to-fit, so a percentage would resolve against content and the row
+       would grow as the shield opens — the one thing this layout must not do. */
+    .term-launch .tl-row { display: flex; gap: 8px; width: 300px; max-width: 100%; }
+    .term-launch .tl-row button { min-width: 0; }
+    .term-launch .tl-main {
+      flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      overflow: hidden; padding-inline: 12px;
+    }
+    .term-launch .tl-shield {
+      flex: 0 0 auto; width: 44px; padding: 9px 0;
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      overflow: hidden; white-space: nowrap;
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.15s ease, background 0.15s ease;
+    }
+    .term-launch .tl-shield .ic { flex: none; }
+    .term-launch .tl-txt {
+      display: inline-block; overflow: hidden; white-space: nowrap; max-width: 200px;
+      transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+    }
+    .term-launch .tl-shield .tl-txt { max-width: 0; opacity: 0; }
+    /* Open state — driven by hover on the shield, or by .tl-peek on first paint. */
+    .term-launch .tl-row.tl-peek .tl-shield,
+    .term-launch .tl-shield:hover { width: 172px; }
+    .term-launch .tl-row.tl-peek .tl-shield .tl-txt,
+    .term-launch .tl-shield:hover .tl-txt { max-width: 140px; opacity: 1; }
+    .term-launch .tl-row.tl-peek .tl-main .tl-txt,
+    .term-launch .tl-row:has(.tl-shield:hover) .tl-main .tl-txt { max-width: 0; opacity: 0; }
+    /* Marks the mode this project launched last (tooltip explains the dot). */
+    .term-launch .tl-last { position: relative; }
+    .term-launch .tl-last::after {
+      content: ''; position: absolute; top: 5px; right: 6px; width: 5px; height: 5px;
+      border-radius: 50%; background: var(--accent-hover);
+      box-shadow: 0 0 0 2px var(--bg-secondary); pointer-events: none; z-index: 2;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .term-launch .tl-shield, .term-launch .tl-txt { transition: none; }
+    }
     .term-launch .btn-chat-resume {
       border: 1px solid var(--border); background: transparent;
       color: var(--text-secondary); font-size: 12px; padding: 6px 14px; min-width: 0;
@@ -810,6 +852,19 @@ export function getWebappHtml(botUsername) {
       border-radius: var(--radius); color: var(--text-muted); font-size: 0.82rem;
     }
     .mosaic-empty.drop-hover { border-color: var(--accent); color: var(--accent-hover); background: var(--accent-dim); }
+    /* Inline panel launcher inside an empty leaf. */
+    .mosaic-empty .me-chips {
+      display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+      max-width: 300px; margin-bottom: 2px;
+    }
+    .mosaic-empty .me-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 10px; border-radius: 999px; cursor: pointer; font-size: 11.5px;
+      border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-secondary);
+      transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+    }
+    .mosaic-empty .me-chip:hover { border-color: var(--accent); color: var(--text-primary); background: var(--accent-dim); }
+    .mosaic-empty .me-chip .ic { width: 13px; height: 13px; color: var(--accent-hover); }
     .mosaic-empty .me-acts { display: flex; gap: 6px; }
     .mosaic-empty .me-acts button {
       display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; cursor: pointer;
@@ -2724,6 +2779,7 @@ export function getWebappHtml(botUsername) {
       folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
       file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
       'arrow-up': '<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>',
+      'shield-alert': '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12.5"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
       upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
       download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
       copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
@@ -3486,8 +3542,24 @@ export function getWebappHtml(botUsername) {
         + '</div>';
     }
 
+    // Which launcher button this project used last, so the next visit can lead
+    // with it. 'shell' is deliberately not recorded — it is not a Claude mode.
+    const LAUNCH_MODES = ['chat', 'chat-skip', 'normal', 'skip'];
+    function lastLaunchKey() { return 'crundi_last_mode_' + (currentProject || ''); }
+    function lastLaunchMode() {
+      try {
+        const m = localStorage.getItem(lastLaunchKey());
+        return LAUNCH_MODES.indexOf(m) >= 0 ? m : '';
+      } catch { return ''; }
+    }
+    function rememberLaunchMode(mode) {
+      if (LAUNCH_MODES.indexOf(mode) < 0) return;
+      try { localStorage.setItem(lastLaunchKey(), mode); } catch { /* ignore */ }
+    }
+
     async function launchTerminal(mode, localId, resumeId, sessionMode) {
       if (!currentProject) return;
+      rememberLaunchMode(mode);
       // bypassPermissions cannot be switched on after launch (the CLI rejects it
       // unless started with --dangerously-skip-permissions), so chat gets the
       // same normal/skip split as terminal mode.
@@ -3806,8 +3878,19 @@ export function getWebappHtml(botUsername) {
         + '</div>';
     }
     function emptyLeafHtml(id) {
+      // Dragging an existing panel in was the only way to fill a leaf, which
+      // meant you had to already have one open. Offer the launchable kinds
+      // here too; a new panel lands in the empty leaf on its own. Kinds already
+      // in the workbench are omitted, since addWbPanel refuses duplicates.
+      const open = new Set(wbCells.map(c => c.kind));
+      const chip = (kind, icon, label) =>
+        '<button class="me-chip" data-action="wb-add" data-kind="' + kind + '" title="Add ' + label + '">'
+        + ic(icon) + '<span>' + label + '</span></button>';
+      const chips = Object.keys(WB_KIND_META).filter(k => !open.has(k))
+        .map(k => chip(k, WB_KIND_META[k].icon, WB_KIND_META[k].label)).join('');
       return '<div class="mosaic-empty" data-leaf-drop="' + id + '">'
-        + '<div class="me-msg">Drop a panel here</div>'
+        + '<div class="me-msg">Drop a panel here or launch a new one</div>'
+        + '<div class="me-chips">' + chip('terminal', 'terminal', 'Terminal') + chips + '</div>'
         + '<div class="me-acts">'
         + '<button data-action="leaf-split" data-leaf="' + id + '|row" title="Split right">' + ic('plus') + 'Split &#9656;</button>'
         + '<button data-action="leaf-split" data-leaf="' + id + '|col" title="Split down">' + ic('plus') + 'Split &#9662;</button>'
@@ -3832,13 +3915,27 @@ export function getWebappHtml(botUsername) {
           + '<button class="btn-shell" data-action="launch-terminal" data-mode="shell" data-lid="' + d.localId + '">Empty Shell</button>'
           + '<div class="term-agent-group">'
           + '<div class="term-agent-label">Claude</div>'
-          + '<button class="btn-chat" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '"><span class="chat-caret">\\u258d</span>UI Mode</button>'
-          + '<button class="btn-chat-skip" data-action="launch-terminal" data-mode="chat-skip" data-lid="' + d.localId + '">UI Mode \\u2014 Skip Permissions</button>'
-          + '<button class="btn-normal" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">Terminal</button>'
-          + '<button class="btn-skip" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '">Terminal \\u2014 Skip Permissions</button>'
+          // Two rows of [mode | skip-permissions]. The shield peeks open to name
+          // itself on first paint and on hover; its row-mate gives up its label
+          // for the duration so the row's width never changes. See .tl-row CSS.
+          + '<div class="tl-row" data-tl-row="1">'
+          + '<button class="btn-chat tl-main' + lastCls('chat') + '" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '">'
+          + '<span class="chat-caret">\\u258d</span><span class="tl-txt">UI Mode</span></button>'
+          + '<button class="btn-chat-skip tl-shield' + lastCls('chat-skip') + '" data-action="launch-terminal" data-mode="chat-skip" data-lid="' + d.localId + '"'
+          + ' title="UI Mode \\u2014 Skip Permissions" aria-label="UI Mode \\u2014 Skip Permissions">'
+          + ic('shield-alert') + '<span class="tl-txt">Skip Permissions</span></button>'
+          + '</div>'
+          + '<div class="tl-row" data-tl-row="2">'
+          + '<button class="btn-normal tl-main' + lastCls('normal') + '" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">'
+          + ic('terminal') + '<span class="tl-txt">Terminal</span></button>'
+          + '<button class="btn-skip tl-shield' + lastCls('skip') + '" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '"'
+          + ' title="Terminal \\u2014 Skip Permissions" aria-label="Terminal \\u2014 Skip Permissions">'
+          + ic('shield-alert') + '<span class="tl-txt">Skip Permissions</span></button>'
+          + '</div>'
           + '<button class="btn-chat-resume" data-action="chat-resume" data-lid="' + d.localId + '">Resume a conversation\\u2026</button>'
           + '</div>'
           + '</div>';
+        peekShields(body);
       } else if (d.type === 'chat') {
         el.dataset.tid = d.t.id;
         el.dataset.chat = '1';
@@ -3886,6 +3983,23 @@ export function getWebappHtml(botUsername) {
         makeDraggable(el, Object.assign({ handle: head }, termDragHandlers(d.key)));
       }
       return el;
+    }
+
+    // One-shot reveal: each shield opens far enough to name itself, then closes,
+    // so the icon is legible on first sight without a hover. Rows fire in order
+    // rather than together, so the eye follows one thing at a time.
+    function lastCls(mode) { return lastLaunchMode() === mode ? ' tl-last' : ''; }
+
+    function peekShields(scope) {
+      scope.querySelectorAll('.tl-last').forEach(b => {
+        b.title = (b.title ? b.title + ' — ' : '') + 'Last used for this project';
+      });
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      scope.querySelectorAll('.tl-row').forEach((row, i) => {
+        const open = 300 + i * 1150;
+        setTimeout(() => row.classList.add('tl-peek'), open);
+        setTimeout(() => row.classList.remove('tl-peek'), open + 900);
+      });
     }
 
     // Mount the Claude chat renderer (served from /vendor/claude-chat.js) into a
@@ -7441,7 +7555,9 @@ export function getWebappHtml(botUsername) {
         case 'term-key': termSendKey(d.key); break;
         case 'term-add': addTerminalCell(); break;
         case 'wb-add-menu': e.stopPropagation(); toggleWbAddMenu(); break;
-        case 'wb-add': { hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
+        // stopPropagation: these buttons now also live inside an empty mosaic
+        // leaf, which is itself a click/drop target.
+        case 'wb-add': { e.stopPropagation(); hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
         case 'wb-layout': { hideWbAddMenu(); mosaicApplyPreset(d.mlayout); break; }
         case 'leaf-split': { e.stopPropagation(); const [id, dir] = (d.leaf || '').split('|'); setMosaic(mosaicSplitLeaf(currentMosaic(), id, dir)); renderTermGrid(); break; }
         case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
@@ -7463,7 +7579,11 @@ export function getWebappHtml(botUsername) {
         case 'chat-resume-pick': {
           const lid = crPendingLid;
           closeChatResume();
-          launchTerminal('chat', lid, d.sid);
+          // Resume in whichever chat variant this project used last. Terminal
+          // modes can't be resumed — /api/terminals/create takes no resumeId,
+          // so a transcript can only be replayed into a UI-mode session.
+          const last = lastLaunchMode();
+          launchTerminal(last === 'chat-skip' ? 'chat-skip' : 'chat', lid, d.sid);
           break;
         }
       }
