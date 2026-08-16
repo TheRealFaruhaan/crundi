@@ -129,8 +129,8 @@
     '.cc-meta-sp{flex:1}',
     '.cc-busy{color:var(--accent-hover)}',
     // Enter-key behaviour toggle, sitting beside the permission-mode dropdown.
-    '.cc-toggle{background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:2px 7px;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:4px}',
-    '.cc-toggle:hover{border-color:var(--accent);color:var(--text-primary)}',
+    '.cc-toggle{background:none;border:0;color:var(--text-secondary);font-size:11px;padding:0;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:5px}',
+    '.cc-toggle:hover{color:var(--text-primary)}',
     '.cc-toggle b{font-family:var(--mono);font-weight:600}',
     // Enter-key switch: both options always visible, thumb marks the live one.
     '.cc-sw{position:relative;display:inline-flex;align-items:center;background:var(--bg-tertiary,rgba(255,255,255,.06));border-radius:999px;padding:2px;line-height:1}',
