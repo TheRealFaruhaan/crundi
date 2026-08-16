@@ -142,12 +142,12 @@
     // The switch shows WHICH key; this says what it does.
     '.cc-sw-lbl{font-size:11px;color:inherit}',
     // Stop: icon by default, widens to reveal "Sure?" once armed.
-    '.cc-stop{flex:none;height:34px;min-width:34px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0 8px;transition:.15s}',
+    '.cc-stop{flex:none;height:34px;min-width:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--red);border-radius:var(--radius-sm);cursor:pointer;padding:0 8px;transition:.15s}',
     '.cc-stop:hover{color:var(--red);border-color:var(--red)}',
     '.cc-stop svg{width:15px;height:15px;flex:none}',
-    '.cc-stop .cc-stop-label{max-width:0;overflow:hidden;white-space:nowrap;font-size:11px;font-family:inherit;opacity:0;transition:max-width .18s ease,opacity .18s ease}',
+    '.cc-stop .cc-stop-label{max-width:0;margin-left:0;overflow:hidden;white-space:nowrap;font-size:11px;font-family:inherit;opacity:0;transition:max-width .18s ease,margin-left .18s ease,opacity .18s ease}',
     '.cc-stop.cc-armed{color:var(--red);border-color:var(--red);background:var(--red-dim)}',
-    '.cc-stop.cc-armed .cc-stop-label{max-width:44px;opacity:1}',
+    '.cc-stop.cc-armed .cc-stop-label{max-width:44px;margin-left:5px;opacity:1}',
     // Attach button matches the main input bar's paperclip.
     '.cc-attach{flex:none;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0}',
     '.cc-attach:hover{color:var(--accent-hover);border-color:var(--accent)}',

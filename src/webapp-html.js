@@ -671,28 +671,29 @@ export function getWebappHtml(botUsername) {
     .term-launch .tl-row { display: flex; gap: 8px; width: 300px; max-width: 100%; }
     .term-launch .tl-row button { min-width: 0; }
     .term-launch .tl-main {
-      flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center;
       overflow: hidden; padding-inline: 12px;
     }
     .term-launch .tl-shield {
       flex: 0 0 auto; width: 44px; padding: 9px 0;
-      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      display: inline-flex; align-items: center; justify-content: center;
       overflow: hidden; white-space: nowrap;
       transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.15s ease, background 0.15s ease;
     }
     .term-launch .tl-shield .ic { flex: none; }
     .term-launch .tl-txt {
       display: inline-block; overflow: hidden; white-space: nowrap; max-width: 200px;
-      transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+      margin-left: 8px;
+      transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
     }
-    .term-launch .tl-shield .tl-txt { max-width: 0; opacity: 0; }
+    .term-launch .tl-shield .tl-txt { max-width: 0; margin-left: 0; opacity: 0; }
     /* Open state — driven by hover on the shield, or by .tl-peek on first paint. */
     .term-launch .tl-row.tl-peek .tl-shield,
     .term-launch .tl-shield:hover { width: 172px; }
     .term-launch .tl-row.tl-peek .tl-shield .tl-txt,
-    .term-launch .tl-shield:hover .tl-txt { max-width: 140px; opacity: 1; }
+    .term-launch .tl-shield:hover .tl-txt { max-width: 140px; margin-left: 7px; opacity: 1; }
     .term-launch .tl-row.tl-peek .tl-main .tl-txt,
-    .term-launch .tl-row:has(.tl-shield:hover) .tl-main .tl-txt { max-width: 0; opacity: 0; }
+    .term-launch .tl-row:has(.tl-shield:hover) .tl-main .tl-txt { max-width: 0; margin-left: 0; opacity: 0; }
     /* Marks the mode this project launched last (tooltip explains the dot). */
     .term-launch .tl-last { position: relative; }
     .term-launch .tl-last::after {
