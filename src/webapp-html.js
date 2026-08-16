@@ -4924,6 +4924,16 @@ export function getWebappHtml(botUsername) {
     }
     function insertRefToTarget(target, ref) {
       if (!ref || !target) return;
+      // A chat cell shares the .term-cell[data-tid] shape that wbDropTargetAt
+      // matches, but it has no PTY — sending 'input' would silently go nowhere.
+      // Drop it into that chat's composer instead.
+      if (target.kind === 'term' && chatViews.has(target.id)) {
+        chatViews.get(target.id).insertText(ref);
+        focusedTermId = target.id;
+        updateFocusStyles();
+        toast('Added to chat');
+        return;
+      }
       if (target.kind === 'term' && ws && ws.readyState === 1) {
         // Trailing space so the next token doesn't fuse onto the ref, then focus
         // the terminal so the user can keep typing right away.

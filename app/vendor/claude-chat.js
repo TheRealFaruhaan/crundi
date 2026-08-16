@@ -26,6 +26,7 @@
   var STYLE_ID = 'cc-styles';
   var CSS = [
     '.cc-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg-primary);font-size:13px;line-height:1.55}',
+    '.cc-root.cc-drop{outline:2px dashed var(--accent);outline-offset:-2px}',
     '.cc-log{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 12px 4px;scroll-behavior:smooth}',
     '.cc-entry{margin-bottom:10px;animation:cc-in .18s ease}',
     '@keyframes cc-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}',
@@ -977,6 +978,55 @@
       if (f) uploadFile(f);
     });
 
+    // ─── Drop target ───
+    //
+    // Two sources, same as a terminal cell:
+    //   • Workbench panel rows (Files / Git / Kanban / Mindmap / Media) drag a
+    //     text/plain ref like "[File Path: C:\p\x.js]".
+    //   • The OS drags real files, which arrive on dataTransfer.files.
+    // Images upload to crundi_attachments and insert the returned path; other
+    // files insert their path directly. stopPropagation keeps the workbench's
+    // .terminal-wrap handler from also routing the drop to the bottom input bar.
+
+    function onDragOver(e) {
+      if (!e.dataTransfer) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      root.classList.add('cc-drop');
+    }
+    function onDragLeave(e) {
+      if (!root.contains(e.relatedTarget)) root.classList.remove('cc-drop');
+    }
+    function onDrop(e) {
+      if (!e.dataTransfer) return;
+      e.preventDefault();
+      e.stopPropagation();
+      root.classList.remove('cc-drop');
+      var files = e.dataTransfer.files;
+      if (files && files.length) {
+        var paths = [];
+        for (var i = 0; i < files.length; i++) {
+          var f = files[i];
+          if (f.type && f.type.indexOf('image/') === 0) { uploadFile(f); continue; }
+          // Electron exposes the real path via the preload bridge; a plain
+          // browser gives us only the name, same limitation as the input bar.
+          var p = (window.api && window.api.getPathForFile && window.api.getPathForFile(f)) || f.path || f.name;
+          if (p) paths.push(p);
+        }
+        if (paths.length) {
+          insertPath(paths.join(' '));
+          toast(paths.length === 1 ? 'File added' : paths.length + ' files added');
+        }
+        return;
+      }
+      var text = e.dataTransfer.getData('text/plain');
+      if (text) insertPath(text);
+    }
+    root.addEventListener('dragover', onDragOver);
+    root.addEventListener('dragleave', onDragLeave);
+    root.addEventListener('drop', onDrop);
+
     // Paste an image straight into the composer.
     input.addEventListener('paste', function (e) {
       var items = (e.clipboardData && e.clipboardData.items) || [];
@@ -1184,9 +1234,15 @@
       focus: function () { try { input.focus(); } catch (e) {} },
       resubscribe: function () { wsSend({ type: 'subscribe-ui', id: sessionId }); },
       restoreScroll: restoreScroll,
+      // Used by the workbench's pointer-drag (touch) path, which can't rely on
+      // HTML5 drag events — see insertRefToTarget in webapp-html.js.
+      insertText: function (text) { if (text) insertPath(text); },
       destroy: function () {
         destroyed = true;
         stopTicker(); // closing a cell must not leave an interval running
+        root.removeEventListener('dragover', onDragOver);
+        root.removeEventListener('dragleave', onDragLeave);
+        root.removeEventListener('drop', onDrop);
         if (logObserver) { try { logObserver.disconnect(); } catch (e) {} }
         if (widthObserver) { try { widthObserver.disconnect(); } catch (e) {} }
         else window.removeEventListener('resize', syncWidth);
