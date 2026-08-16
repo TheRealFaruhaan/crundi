@@ -270,6 +270,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         agentState: s.proc ? s.state : null,
         model: s.model || '',
         permissionMode: s.permissionMode,
+        skipPermissions: !!s.skipPermissions,
         sessionId: s.sessionId || '',
         pending: [...s.pending.values()].map(p => p.entry),
       });
@@ -319,13 +320,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * @param {string} opts.title           display title
    * @param {string} opts.model           --model (e.g. 'opus'); '' omits
    * @param {string} opts.effort          --effort (low|medium|high|xhigh|max)
-   * @param {string} opts.permissionMode  default|acceptEdits|plan|bypassPermissions|dontAsk
+   * @param {string} opts.permissionMode  default|acceptEdits|plan|auto|dontAsk ('' = respect the user's configured defaultMode)
+   * @param {boolean} opts.skipPermissions  launch with --dangerously-skip-permissions
    * @param {string} opts.sessionMode     'continue' | 'new' | 'resume'
    * @param {string} opts.resumeId        session id when sessionMode==='resume'
    */
   async function create(alias, {
-    title = '', model = '', effort = '', permissionMode = 'default',
-    sessionMode = null, resumeId = '',
+    title = '', model = '', effort = '', permissionMode = '',
+    skipPermissions = false, sessionMode = null, resumeId = '',
   } = {}) {
     const key = String(alias || '').toLowerCase();
     const project = getProject(key);
@@ -342,8 +344,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       '--permission-prompt-tool', 'stdio',
       '--include-partial-messages',
       '--setting-sources=user,project,local',
-      '--permission-mode', permissionMode || 'default',
     ];
+    // bypassPermissions cannot be switched on later — the CLI rejects
+    // set_permission_mode for it unless the session was LAUNCHED this way
+    // ("Cannot set permission mode to bypassPermissions because the session was
+    // not launched with --dangerously-skip-permissions"). So it is a launch
+    // choice, mirroring terminal mode's Skip Permissions option.
+    if (skipPermissions) args.push('--dangerously-skip-permissions');
+    // Only pin a mode when one was actually chosen; otherwise let the CLI apply
+    // the user's own permissions.defaultMode from settings.
+    else if (permissionMode) args.push('--permission-mode', permissionMode);
     if (model) args.push('--model', String(model));
     if (effort) args.push('--effort', String(effort));
     // Same resume policy as terminal mode: only pass --continue when a prior
@@ -394,7 +404,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       sessionId: '',
       model,
       effort,
-      permissionMode: permissionMode || 'default',
+      // Provisional: the initialize response reports the mode actually in
+      // effect (including one that came from the user's settings).
+      permissionMode: skipPermissions ? 'bypassPermissions' : (permissionMode || 'default'),
+      skipPermissions: !!skipPermissions,
       slashCommands: [],
       cwd: project.path,
       stdoutBuf: '',
@@ -633,13 +646,26 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     const r = msg.response;
     if (r?.subtype === 'error') {
       console.warn(`[claude-ui] (${s.id}) control error: ${r.error}`);
+      // A rejected mode change used to fail silently server-side while the
+      // dropdown kept showing the new mode — the UI then lied about what was
+      // actually in effect. Roll back and say so.
+      const pend = s.pendingModeChange;
+      if (pend && pend.requestId === r.request_id) {
+        s.pendingModeChange = null;
+        s.permissionMode = pend.previous;
+        emitEntry(s, { id: genId(), kind: 'error', text: 'Could not switch permission mode: ' + r.error });
+        s.emitter.emit('event', { type: 'meta', permissionMode: s.permissionMode });
+        return;
+      }
       if (r.request_id === s.initRequestId) {
         s.initRequestId = null;
         if (s.startupNotice) { patchEntry(s, s.startupNotice, { text: 'Claude failed to start: ' + r.error, kind: 'error' }); s.startupNotice = null; }
       }
       return;
     }
-    if (r?.subtype !== 'success' || r.request_id !== s.initRequestId) return;
+    if (r?.subtype !== 'success') return;
+    if (s.pendingModeChange && s.pendingModeChange.requestId === r.request_id) { s.pendingModeChange = null; return; }
+    if (r.request_id !== s.initRequestId) return;
 
     // The session is up. The CLI stays completely idle until the first user
     // message (system/init, and therefore the session id, only arrive with that
@@ -756,9 +782,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function setPermissionMode(id, mode) {
     const s = sessions.get(id);
     if (!s?.proc) return { ok: false, error: `No session "${id}"` };
-    const valid = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk'];
-    if (!valid.includes(mode)) return { ok: false, error: `Invalid permission mode "${mode}"` };
-    send(s, { type: 'control_request', request_id: 'pm-' + genId(), request: { subtype: 'set_permission_mode', mode } });
+    // Verified at runtime: acceptEdits / plan / dontAsk / auto all switch fine;
+    // bypassPermissions is rejected unless the session was launched for it.
+    const valid = ['default', 'acceptEdits', 'plan', 'dontAsk', 'auto'];
+    if (mode === 'bypassPermissions' && !s.skipPermissions) {
+      return { ok: false, error: 'Bypass permissions can only be chosen when the chat is launched — start a new "UI Mode — Skip Permissions" chat.' };
+    }
+    if (!valid.includes(mode) && mode !== 'bypassPermissions') return { ok: false, error: `Invalid permission mode "${mode}"` };
+    const reqId = 'pm-' + genId();
+    s.pendingModeChange = { requestId: reqId, mode, previous: s.permissionMode };
+    send(s, { type: 'control_request', request_id: reqId, request: { subtype: 'set_permission_mode', mode } });
     s.permissionMode = mode;
     s.emitter.emit('event', { type: 'meta', permissionMode: mode });
     return { ok: true, permissionMode: mode };
@@ -827,7 +860,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       id: s.id, project: s.alias, title: s.title, kind: 'ui',
       status: s.proc ? 'running' : 'exited',
       state: s.state, sessionId: s.sessionId, model: s.model,
-      permissionMode: s.permissionMode, slashCommands: s.slashCommands,
+      permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
+      slashCommands: s.slashCommands,
       totalCostUsd: s.totalCostUsd, cwd: s.cwd,
       messages: s.messages,
     };

@@ -654,6 +654,13 @@ export function getWebappHtml(botUsername) {
       .term-launch .btn-chat::before { display: none; }
       .term-launch .btn-chat .chat-caret { animation: none; }
     }
+    /* UI Mode's skip-permissions sibling: same relationship to UI Mode as
+       Terminal — Skip Permissions has to Terminal. */
+    .term-launch .btn-chat-skip {
+      border: 1px solid var(--border); background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+    .term-launch .btn-chat-skip:hover { border-color: var(--accent); background: var(--accent-dim); }
     .term-launch .btn-chat-resume {
       border: 1px solid var(--border); background: transparent;
       color: var(--text-secondary); font-size: 12px; padding: 6px 14px; min-width: 0;
@@ -3381,20 +3388,22 @@ export function getWebappHtml(botUsername) {
     // summary?" prompt does not exist over the stream-json protocol UI mode
     // uses, so a resume there always loads the whole transcript. Ask before
     // spawning, which is the last moment the choice is still free.
-    async function launchChatWithPreflight(localId) {
+    async function launchChatWithPreflight(localId, mode) {
+      const m = mode || 'chat';
       let info = null;
       try {
         const r = await apiFetch('/api/ui-sessions/preflight?project=' + encodeURIComponent(currentProject));
         info = await r.json();
       } catch { /* fall through to a plain launch */ }
-      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal('chat', localId); return; }
-      showResumeChoice(localId, info.latest);
+      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal(m, localId); return; }
+      showResumeChoice(localId, info.latest, m);
     }
 
-    function showResumeChoice(localId, t) {
+    function showResumeChoice(localId, t, mode) {
       const cell = document.querySelector('.term-cell[data-lid="' + localId + '"]');
       const body = cell && cell.querySelector('.term-body');
-      if (!body) { launchTerminal('chat', localId); return; }
+      const m = mode || 'chat';
+      if (!body) { launchTerminal(m, localId); return; }
       const tok = t.tokens ? (t.tokens / 1000).toFixed(1) + 'k tokens' : 'a large transcript';
       const age = t.ageHours < 1 ? 'under an hour old'
         : t.ageHours < 24 ? Math.round(t.ageHours) + 'h old'
@@ -3406,19 +3415,26 @@ export function getWebappHtml(botUsername) {
         + '<div class="cr-choice-note">Claude\\u2019s \\u201cresume from summary\\u201d option isn\\u2019t offered over this protocol. '
         + 'Compacting still loads the transcript once, then summarises it so later turns stay small. '
         + 'Continuing keeps the full context on every turn. Starting fresh loads nothing.</div>'
-        + '<button class="btn-chat" data-action="chat-launch-mode" data-cmode="compact" data-sid="' + escHtml(t.id) + '" data-lid="' + localId + '">Compact first (recommended)</button>'
-        + '<button class="btn-normal" data-action="chat-launch-mode" data-cmode="continue" data-lid="' + localId + '">Continue anyway</button>'
-        + '<button class="btn-chat-resume" data-action="chat-launch-mode" data-cmode="new" data-lid="' + localId + '">Start a fresh conversation</button>'
+        + '<button class="btn-chat" data-action="chat-launch-mode" data-cmode="compact" data-lmode="' + m + '" data-sid="' + escHtml(t.id) + '" data-lid="' + localId + '">Compact first (recommended)</button>'
+        + '<button class="btn-normal" data-action="chat-launch-mode" data-cmode="continue" data-lmode="' + m + '" data-lid="' + localId + '">Continue anyway</button>'
+        + '<button class="btn-chat-resume" data-action="chat-launch-mode" data-cmode="new" data-lmode="' + m + '" data-lid="' + localId + '">Start a fresh conversation</button>'
         + '</div>';
     }
 
     async function launchTerminal(mode, localId, resumeId, sessionMode) {
       if (!currentProject) return;
-      const isChat = mode === 'chat';
+      // bypassPermissions cannot be switched on after launch (the CLI rejects it
+      // unless started with --dangerously-skip-permissions), so chat gets the
+      // same normal/skip split as terminal mode.
+      const isChat = mode === 'chat' || mode === 'chat-skip';
+      const chatSkip = mode === 'chat-skip';
       const skipPerms = mode === 'skip';
       const shellOnly = mode === 'shell';
       try {
-        const chatBody = { project: currentProject, permissionMode: 'default' };
+        // No permissionMode: let the CLI apply the user's own
+        // permissions.defaultMode rather than forcing 'default' over it.
+        const chatBody = { project: currentProject };
+        if (chatSkip) { chatBody.skipPermissions = true; chatBody.title = 'Chat (skip perms)'; }
         // Resuming replays a prior transcript into a fresh CLI process
         // (claude --resume <id>), so it must be decided at spawn time.
         if (isChat && sessionMode) {
@@ -3748,6 +3764,7 @@ export function getWebappHtml(botUsername) {
           + '<div class="term-agent-group">'
           + '<div class="term-agent-label">Claude</div>'
           + '<button class="btn-chat" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '"><span class="chat-caret">\\u258d</span>UI Mode</button>'
+          + '<button class="btn-chat-skip" data-action="launch-terminal" data-mode="chat-skip" data-lid="' + d.localId + '">UI Mode \\u2014 Skip Permissions</button>'
           + '<button class="btn-normal" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">Terminal</button>'
           + '<button class="btn-skip" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '">Terminal \\u2014 Skip Permissions</button>'
           + '<button class="btn-chat-resume" data-action="chat-resume" data-lid="' + d.localId + '">Resume a conversation\\u2026</button>'
@@ -7352,10 +7369,10 @@ export function getWebappHtml(botUsername) {
         case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
         case 'launch-terminal':
           // Chat launches check the resume cost first; other modes go straight through.
-          if (d.mode === 'chat') launchChatWithPreflight(d.lid);
+          if (d.mode === 'chat' || d.mode === 'chat-skip') launchChatWithPreflight(d.lid, d.mode);
           else launchTerminal(d.mode, d.lid);
           break;
-        case 'chat-launch-mode': launchTerminal('chat', d.lid, d.sid, d.cmode); break;
+        case 'chat-launch-mode': launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode); break;
         case 'chat-resume': openChatResume(d.lid); break;
         case 'chat-resume-cancel': closeChatResume(); break;
         case 'chat-resume-pick': {
