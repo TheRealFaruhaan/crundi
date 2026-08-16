@@ -50,6 +50,8 @@
     '.cc-think-head{cursor:pointer;user-select:none;color:var(--text-secondary);font-style:normal;display:flex;align-items:center;gap:5px}',
     '.cc-think-body{margin-top:4px;white-space:pre-wrap;max-height:260px;overflow-y:auto}',
     '.cc-collapsed .cc-think-body,.cc-collapsed .cc-tool-body{display:none}',
+    '.cc-thought{display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12px;font-style:italic;user-select:none}',
+    '.cc-thought-dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);opacity:.55;flex:0 0 auto}',
     '.cc-caret{transition:transform .15s}.cc-collapsed .cc-caret{transform:rotate(-90deg)}',
 
     '.cc-tool{border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--bg-secondary,rgba(255,255,255,.02));overflow:hidden}',
@@ -612,6 +614,17 @@
     }
 
     function thinkingNode(e) {
+      // Models from Opus 4.7 on return thinking blocks with no text (see
+      // handleStreamEvent in claude-ui.js). An expander over an empty body
+      // reads as broken, so show a flat chip instead — same signal that
+      // reasoning happened, no affordance promising content that isn't there.
+      if (!e.text) {
+        var n = e.tokens;
+        return el('div', 'cc-thought',
+          '<span class="cc-thought-dot"></span><span>Thought'
+          + (n ? ' for ~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + ' tokens' : '')
+          + '</span>');
+      }
       var box = el('div', 'cc-think cc-collapsed');
       var head = el('div', 'cc-think-head', '<span class="cc-caret">▾</span><span>Thinking</span>');
       var body = el('div', 'cc-think-body', esc(e.text));

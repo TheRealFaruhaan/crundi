@@ -583,6 +583,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       const entry = s.blocks.get(ev.index);
       if (!entry) return;
       const d = ev.delta || {};
+      // Opus 4.7+ withholds reasoning text — `thinking.display` defaults to
+      // "omitted", and on Opus 5 the raw chain of thought is never returned at
+      // all. Those blocks arrive with `thinking: ""` but a populated
+      // `estimated_tokens`, which is the only progress signal they carry.
+      if (d.type === 'thinking_delta' && typeof d.estimated_tokens === 'number'
+          && d.estimated_tokens > (entry.tokens || 0)) {
+        patchEntry(s, entry, { tokens: d.estimated_tokens });
+      }
       const add = d.type === 'text_delta' ? d.text : d.type === 'thinking_delta' ? d.thinking : '';
       if (!add) return;
       entry.text = (entry.text + add).slice(-MAX_TEXT);
