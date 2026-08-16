@@ -1205,6 +1205,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       if (!body.project) return json(res, { ok: false, error: 'project is required' }, 400);
       const result = await claudeTerminals.create(body.project, body);
+      // A terminal continues the same conversation somewhere we can't observe,
+      // so the transcript we stored for UI replay is about to become a stale
+      // prefix. Drop it — a later UI message rewrites it. Shell-only terminals
+      // don't run Claude, so they leave it alone.
+      if (result?.ok && !body.shell && claudeUi?.clearHistory) claudeUi.clearHistory(body.project);
       broadcastState();
       return json(res, result);
     }

@@ -39,7 +39,7 @@
 
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
-import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, readFileSync, renameSync } from 'fs';
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, readFileSync, renameSync, unlinkSync } from 'fs';
 import { join, delimiter, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { config } from './config.js';
@@ -294,41 +294,40 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   // ─── Transcript persistence ───
   //
-  // Sessions live in memory, so a server restart used to lose the conversation
-  // even though it plainly happened. Mirror each one to disk so history can be
-  // read back afterwards. Writes are debounced and atomic (tmp + rename) so a
-  // crash mid-write can't leave a truncated file that fails to parse.
+  // One transcript per project — the last UI conversation, nothing more. It
+  // exists for a single job: when a chat reattaches to that conversation with
+  // --continue, show what was already said before the user types.
+  //
+  // Writes are debounced and atomic (tmp + rename) so a crash mid-write can't
+  // leave a truncated file that fails to parse.
   const HISTORY_DIR = join(config.dataDir, 'chat-history');
   const PERSIST_MS = 1500;
   // Interactive entries are dropped: replaying a permission prompt whose
   // decision the CLI already consumed would render buttons that do nothing.
   const PERSIST_KINDS = new Set(['user', 'assistant-text', 'thinking', 'tool', 'result', 'error']);
-
-  // Keyed by Claude's OWN session uuid, not our cell id. The cell id is new on
-  // every launch; the uuid is the conversation's identity and is what
-  // --continue and --resume reattach to, so it's the only key under which a
-  // transcript can be found again later.
-  function historyFile(uuid) { return join(HISTORY_DIR, encodeURIComponent(uuid) + '.json'); }
-
-  // Only a tail is kept. A long agentic session can run to thousands of
-  // entries with large tool payloads; writing all of it on every patch would
-  // cost real I/O, and replaying it would stall the renderer. Bounded by count
-  // AND serialized bytes, since a handful of big tool results can blow the
-  // budget well before the count does.
+  // Only a tail is kept. A long agentic session runs to thousands of entries
+  // with large tool payloads; writing all of it on every patch would cost real
+  // I/O and replaying it would stall the renderer. Bounded by count AND
+  // serialized bytes, since a few big tool results blow the byte budget well
+  // before the count fills.
   const PERSIST_MAX_MESSAGES = 200;
   const PERSIST_MAX_BYTES = 256 * 1024;
+
+  function historyFile(alias) { return join(HISTORY_DIR, encodeURIComponent(alias) + '.json'); }
 
   function persistNow(s) {
     clearTimeout(s.persistTimer);
     s.persistTimer = null;
-    if (!s.sessionId) return; // no conversation identity yet — nothing to key on
+    if (!s.sessionId) return; // no conversation identity yet — nothing to pin it to
+    // A freshly spawned session holds nothing but a startup notice. With one
+    // file per project, writing that would wipe the transcript we are about to
+    // replay, so hold off until there is something real to record.
+    if (!s.messages.some(m => PERSIST_KINDS.has(m.kind))) return;
     try {
       mkdirSync(HISTORY_DIR, { recursive: true });
       const head = {
-        id: s.id, project: s.alias, title: s.title, cwd: s.cwd,
-        sessionId: s.sessionId, model: s.model,
-        permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
-        totalCostUsd: s.totalCostUsd, savedAt: new Date().toISOString(),
+        uuid: s.sessionId, project: s.alias, title: s.title, cwd: s.cwd,
+        model: s.model, savedAt: Date.now(),
       };
       let msgs = s.messages.filter(m => PERSIST_KINDS.has(m.kind)).slice(-PERSIST_MAX_MESSAGES);
       let json = JSON.stringify({ ...head, messages: msgs });
@@ -337,9 +336,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         msgs = msgs.slice(Math.max(1, Math.floor(msgs.length * 0.25)));
         json = JSON.stringify({ ...head, messages: msgs });
       }
-      const tmp = historyFile(s.sessionId) + '.tmp';
+      const tmp = historyFile(s.alias) + '.tmp';
       writeFileSync(tmp, json);
-      renameSync(tmp, historyFile(s.sessionId));
+      renameSync(tmp, historyFile(s.alias));
     } catch { /* disk full / permissions — history is best-effort, never fatal */ }
   }
 
@@ -349,44 +348,56 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (s.persistTimer.unref) s.persistTimer.unref();
   }
 
+  function loadPersisted(alias) {
+    try {
+      const f = historyFile(alias);
+      if (!existsSync(f)) return null;
+      const d = JSON.parse(readFileSync(f, 'utf8'));
+      return (d && d.uuid && Array.isArray(d.messages)) ? d : null;
+    } catch { return null; }
+  }
+
   /**
-   * When a session reattaches to a conversation (--continue, or --resume with a
-   * uuid the user picked), Claude has the context but our log starts empty —
-   * the cell is brand new. If we stored a transcript under that uuid, replay it
-   * so the earlier messages are simply there.
+   * Forget a project's stored transcript.
    *
-   * Runs once, and only while the log still holds nothing but the startup
-   * placeholder, so it can never interleave with live output.
+   * Called when a TERMINAL session starts on that project: the user is about to
+   * continue the conversation somewhere we can't observe, so anything we replay
+   * afterwards would be a stale prefix presented as the whole story. Better to
+   * show nothing. The next UI message rewrites the file, so it self-heals.
    */
-  function maybeReplay(s) {
-    if (s.replayed || !s.sessionId) return;
+  function clearHistory(alias) { clearPersisted(alias); }
+
+  function clearPersisted(alias) {
+    try { const f = historyFile(alias); if (existsSync(f)) unlinkSync(f); } catch { /* ignore */ }
+  }
+
+  /**
+   * Render the stored conversation into a chat that is continuing it, before
+   * the user types anything.
+   *
+   * The stored copy is only trustworthy while nothing else has touched that
+   * conversation. If the user has since worked in a TERMINAL session, Claude's
+   * own transcript has moved on and ours is a stale prefix — so the check is
+   * simply whether that transcript still matches what we recorded. That needs
+   * no hook into terminal input, and it self-corrects: the next UI message
+   * rewrites the file and it works again.
+   *
+   * @param {object} s      session
+   * @param {string} uuid   conversation the process is attaching to
+   */
+  function replayForContinue(s, uuid) {
+    if (s.replayed) return;
     s.replayed = true;
-    const d = loadPersisted(s.sessionId);
+    const d = loadPersisted(s.alias);
     if (!d || !d.messages.length) return;
-    // The uuid only arrives with system/init, which the CLI emits lazily on the
-    // FIRST TURN — by then the user's opening message is already in the log. So
-    // the history is spliced in front and the client resyncs, rather than being
-    // appended after a message that logically came later.
-    const seen = new Set(s.messages.map(m => m.id));
-    const older = d.messages.filter(m => !seen.has(m.id));
-    if (!older.length) return;
+    if (d.uuid !== uuid) { clearPersisted(s.alias); return; }  // different conversation
     s.messages = [
-      ...older,
+      ...d.messages,
       { id: genId(), kind: 'notice', text: '— earlier messages in this conversation —', seq: nextSeq() },
       ...s.messages,
     ];
     s.emitter.emit('event', { type: 'history', session: snapshot(s) });
-    console.log(`[claude-ui] Replayed ${older.length} stored entries for ${s.sessionId.slice(0, 8)}`);
-  }
-
-  /** Read a stored transcript back. Returns null when there isn't one. */
-  function loadPersisted(id) {
-    try {
-      const f = historyFile(id);
-      if (!existsSync(f)) return null;
-      const d = JSON.parse(readFileSync(f, 'utf8'));
-      return (d && Array.isArray(d.messages)) ? d : null;
-    } catch { return null; }
+    console.log(`[claude-ui] Replayed ${d.messages.length} stored entries for "${s.alias}"`);
   }
 
   /** Append a conversation entry and notify subscribers. */
@@ -481,15 +492,17 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // lazily on the first turn — far too late to show the user what was already
     // said. --resume names the uuid outright, and --continue attaches to the
     // newest transcript, which is exactly what latestTranscript() reports.
-    let attachTo = '';
+    let continueUuid = '';
     if ((sessionMode === 'resume' || compacting) && resumeId) {
+      // Explicitly picking a session from the resume list is a deliberate jump
+      // to a named conversation — deliberately NOT replayed, so it behaves the
+      // way it always has.
       args.push('--resume', String(resumeId));
-      attachTo = String(resumeId);
     } else if (sessionMode === 'new') { /* explicit fresh session */ }
     else if ((sessionMode === 'continue' || compacting || !aliasHasLive) && hasExistingConversation(project.path)) {
       args.push('--continue');
       const t = latestTranscript(project.path);
-      if (t) attachTo = t.id;
+      if (t) continueUuid = t.id;
     }
 
     let proc;
@@ -598,7 +611,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // point is to walk into a resumed conversation already knowing where it
     // left off. handleSystem re-runs this with the CLI's authoritative uuid in
     // case --continue landed somewhere other than the newest transcript.
-    if (attachTo) { s.sessionId = attachTo; maybeReplay(s); }
+    if (continueUuid) { s.continueUuid = continueUuid; s.sessionId = continueUuid; replayForContinue(s, continueUuid); }
 
     // Fired as the first turn once the CLI reports ready (see handleControlResponse).
     if (compacting) s.pendingFirstMessage = '/compact';
@@ -630,10 +643,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       }
       const guessed = s.sessionId;
       s.sessionId = msg.session_id || s.sessionId;
-      // If the pre-spawn guess was wrong we replayed the wrong conversation;
-      // let it run again against the real uuid rather than leaving it stale.
-      if (guessed && s.sessionId !== guessed) s.replayed = false;
-      maybeReplay(s);
+      // Pre-spawn we can only infer which conversation --continue lands on. If
+      // it went elsewhere, redo the replay against the real uuid.
+      if (s.continueUuid && guessed && s.sessionId !== guessed) {
+        s.replayed = false;
+        replayForContinue(s, s.sessionId);
+      }
       if (msg.model) s.model = msg.model;
       s.slashCommands = msg.slash_commands || [];
       s.emitter.emit('event', {
@@ -820,7 +835,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // Worth stating plainly: --continue/--resume restores Claude's context but
       // does NOT replay the old messages into this log, so the empty cell is
       // expected rather than a sign the resume failed.
-      // maybeReplay() shows whatever we stored for this conversation; anything
+      // replayForContinue() shows whatever we stored for this conversation; anything
       // older than that (or from before transcripts were kept) is still in
       // Claude's context even though it isn't rendered here.
       if (s.resuming) patchEntry(s, s.startupNotice, { text: 'Continuing your previous conversation. Claude has the full context; only recent messages are shown here.' });
@@ -1027,7 +1042,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   return {
-    list, create, close, closeProject, closeAll, rename, setOrder,
+    list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, respond, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange,
     set apiUrl(v) { apiUrl = v; },
