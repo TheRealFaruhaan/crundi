@@ -39,9 +39,10 @@
 
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
-import { existsSync, readdirSync, statSync, openSync, readSync, closeSync } from 'fs';
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, readFileSync, renameSync, unlinkSync } from 'fs';
 import { join, delimiter, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
+import { config } from './config.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation } from './claude-terminals.js';
 
@@ -291,12 +292,116 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   const entriesForAlias = (key) => [...sessions.values()].filter(s => s.alias === key);
 
+  // ─── Transcript persistence ───
+  //
+  // Sessions live in memory, so a server restart used to lose the conversation
+  // even though it plainly happened. Mirror each one to disk so history can be
+  // read back afterwards. Writes are debounced and atomic (tmp + rename) so a
+  // crash mid-write can't leave a truncated file that fails to parse.
+  const HISTORY_DIR = join(config.dataDir, 'chat-history');
+  const PERSIST_MS = 1500;
+  // Interactive entries are dropped: replaying a permission prompt whose
+  // decision the CLI already consumed would render buttons that do nothing.
+  const PERSIST_KINDS = new Set(['user', 'assistant-text', 'thinking', 'tool', 'result', 'error']);
+
+  function historyFile(id) { return join(HISTORY_DIR, encodeURIComponent(id) + '.json'); }
+
+  // Only a tail is kept. A long agentic session can run to thousands of
+  // entries with large tool payloads; writing all of it on every patch would
+  // cost real I/O, and replaying it would stall the renderer. Bounded by count
+  // AND serialized bytes, since a handful of big tool results can blow the
+  // budget well before the count does.
+  const PERSIST_MAX_MESSAGES = 200;
+  const PERSIST_MAX_BYTES = 256 * 1024;
+
+  function persistNow(s) {
+    clearTimeout(s.persistTimer);
+    s.persistTimer = null;
+    try {
+      mkdirSync(HISTORY_DIR, { recursive: true });
+      const head = {
+        id: s.id, project: s.alias, title: s.title, cwd: s.cwd,
+        sessionId: s.sessionId, model: s.model,
+        permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
+        totalCostUsd: s.totalCostUsd, savedAt: new Date().toISOString(),
+      };
+      let msgs = s.messages.filter(m => PERSIST_KINDS.has(m.kind)).slice(-PERSIST_MAX_MESSAGES);
+      let json = JSON.stringify({ ...head, messages: msgs });
+      // Drop from the front until it fits — oldest is the cheapest to lose.
+      while (json.length > PERSIST_MAX_BYTES && msgs.length > 1) {
+        msgs = msgs.slice(Math.max(1, Math.floor(msgs.length * 0.25)));
+        json = JSON.stringify({ ...head, messages: msgs });
+      }
+      const tmp = historyFile(s.id) + '.tmp';
+      writeFileSync(tmp, json);
+      renameSync(tmp, historyFile(s.id));
+    } catch { /* disk full / permissions — history is best-effort, never fatal */ }
+  }
+
+  function schedulePersist(s) {
+    if (s.persistTimer) return;
+    s.persistTimer = setTimeout(() => persistNow(s), PERSIST_MS);
+    if (s.persistTimer.unref) s.persistTimer.unref();
+  }
+
+  /** Read a stored transcript back. Returns null when there isn't one. */
+  function loadPersisted(id) {
+    try {
+      const f = historyFile(id);
+      if (!existsSync(f)) return null;
+      const d = JSON.parse(readFileSync(f, 'utf8'));
+      return (d && Array.isArray(d.messages)) ? d : null;
+    } catch { return null; }
+  }
+
+  function dropPersisted(id) {
+    try { if (existsSync(historyFile(id))) unlinkSync(historyFile(id)); } catch { /* ignore */ }
+  }
+
+  /**
+   * Bring stored transcripts back as exited sessions on boot, so a restart
+   * leaves the conversation readable in place instead of blanking the cell.
+   * They own no process and can't be sent to — the UI shows them as ended.
+   * Bounded by age and count so the workbench isn't repopulated with months
+   * of dead chats.
+   */
+  const RESTORE_MAX = 20;
+  const RESTORE_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+  function restorePersisted() {
+    try {
+      if (!existsSync(HISTORY_DIR)) return;
+      const files = readdirSync(HISTORY_DIR)
+        .filter(f => f.endsWith('.json'))
+        .map(f => { const p = join(HISTORY_DIR, f); try { return { p, m: statSync(p).mtimeMs }; } catch { return null; } })
+        .filter(Boolean)
+        .filter(x => Date.now() - x.m < RESTORE_AGE_MS)
+        .sort((a, b) => b.m - a.m)
+        .slice(0, RESTORE_MAX);
+      for (const { p } of files) {
+        let d; try { d = JSON.parse(readFileSync(p, 'utf8')); } catch { continue; }
+        if (!d || !d.id || !Array.isArray(d.messages) || sessions.has(d.id)) continue;
+        sessions.set(d.id, {
+          id: d.id, alias: d.project, title: d.title, cwd: d.cwd,
+          proc: null, messages: d.messages, emitter: new EventEmitter(),
+          state: 'idle', sessionId: d.sessionId, model: d.model,
+          permissionMode: d.permissionMode, skipPermissions: !!d.skipPermissions,
+          slashCommands: [], totalCostUsd: d.totalCostUsd || 0,
+          pending: new Map(), blocks: new Map(), streamedQueue: [],
+          order: 0, restored: true, persistTimer: null,
+        });
+      }
+      if (files.length) console.log(`[claude-ui] Restored ${files.length} chat transcript(s)`);
+    } catch { /* never block startup on this */ }
+  }
+  restorePersisted();
+
   /** Append a conversation entry and notify subscribers. */
   function emitEntry(s, entry) {
     entry.seq = nextSeq();
     s.messages.push(entry);
     if (s.messages.length > MAX_MESSAGES) s.messages.splice(0, s.messages.length - MAX_MESSAGES);
     s.emitter.emit('event', { type: 'entry', entry });
+    schedulePersist(s);
     return entry;
   }
 
@@ -304,6 +409,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function patchEntry(s, entry, patch) {
     Object.assign(entry, patch);
     s.emitter.emit('event', { type: 'patch', id: entry.id, patch });
+    schedulePersist(s); // streamed text lands via patch, not emitEntry
   }
 
   function setState(s, state) {
@@ -835,7 +941,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       try { s.proc.kill(); } catch { /* ignore */ }
     }
     s.emitter.removeAllListeners();
+    clearTimeout(s.persistTimer);
     sessions.delete(id);
+    // Closing a cell is the user saying they're done with it, so the stored
+    // transcript goes too — otherwise it would come back on the next restart.
+    dropPersisted(id);
     console.log(`[claude-ui] Closed "${s.alias}" (${id})`);
     return { ok: true };
   }
@@ -873,7 +983,21 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   /** Full conversation for a session (used when a client subscribes). */
   function history(id) {
     const s = sessions.get(id);
-    if (!s) return null;
+    if (!s) {
+      // Not in memory — most often because the server restarted. Serve the
+      // stored transcript so the conversation is still readable, flagged as
+      // exited so the UI doesn't offer to send into a process that is gone.
+      const d = loadPersisted(id);
+      if (!d) return null;
+      return {
+        id: d.id, project: d.project, title: d.title, kind: 'ui',
+        status: 'exited', state: 'idle',
+        sessionId: d.sessionId, model: d.model,
+        permissionMode: d.permissionMode, skipPermissions: !!d.skipPermissions,
+        slashCommands: [], totalCostUsd: d.totalCostUsd, cwd: d.cwd,
+        messages: d.messages, restored: true,
+      };
+    }
     return {
       id: s.id, project: s.alias, title: s.title, kind: 'ui',
       status: s.proc ? 'running' : 'exited',

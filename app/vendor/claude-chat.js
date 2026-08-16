@@ -539,15 +539,32 @@
       log.scrollTop = stickBottom ? log.scrollHeight : lastTop;
       log.style.scrollBehavior = prev;
     }
-    // Self-heal for visibility toggles the host does not tell us about.
+    // Self-heal for visibility toggles the host does not tell us about, and
+    // for the on-screen keyboard: opening it shrinks the viewport, so the log
+    // gets shorter while scrollTop stays put and a reader who was pinned to the
+    // newest message silently ends up above it.
     if (window.ResizeObserver) {
       var logObserver = new ResizeObserver(function () {
         var h = log.clientHeight;
-        if (h && !lastH) restoreScroll(); // 0 → visible: the position was wiped
+        if (h && !lastH) restoreScroll();          // 0 → visible: position wiped
+        else if (h !== lastH && stickBottom) restoreScroll(); // resized while pinned
         lastH = h;
       });
       try { logObserver.observe(log); } catch (e) { logObserver = null; }
     }
+    // iOS Safari resizes the visual viewport without necessarily resizing the
+    // log element, so the observer above can miss the keyboard entirely.
+    var vv = window.visualViewport;
+    function onViewport() { if (stickBottom) restoreScroll(); }
+    if (vv) { vv.addEventListener('resize', onViewport); vv.addEventListener('scroll', onViewport); }
+    // Focusing the composer is the strongest signal the keyboard is coming;
+    // the geometry settles a beat after the event, hence the delayed re-pin.
+    input.addEventListener('focus', function () {
+      if (!stickBottom) return;
+      restoreScroll();
+      setTimeout(restoreScroll, 150);
+      setTimeout(restoreScroll, 400);
+    });
 
     function setState(s) {
       var was = state;
@@ -941,6 +958,10 @@
       input.value = '';
       saveDraft();
       autoGrow();
+      // Sending is an explicit "I want to see what happens next", so re-pin to
+      // the bottom even if the reader had scrolled up to check something.
+      stickBottom = true;
+      scrollDown(true);
       hideSlash();
       // Busy (working, or blocked on a prompt) → queue it for the next turn.
       if (state !== 'idle') { enqueue(text); return; }
@@ -1309,6 +1330,7 @@
         root.removeEventListener('dragleave', onDragLeave);
         root.removeEventListener('drop', onDrop);
         if (logObserver) { try { logObserver.disconnect(); } catch (e) {} }
+        if (vv) { vv.removeEventListener('resize', onViewport); vv.removeEventListener('scroll', onViewport); }
         if (widthObserver) { try { widthObserver.disconnect(); } catch (e) {} }
         else window.removeEventListener('resize', syncWidth);
         try { wsSend({ type: 'unsubscribe-ui', id: sessionId }); } catch (e) {}
