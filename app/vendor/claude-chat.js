@@ -26,6 +26,7 @@
   var STYLE_ID = 'cc-styles';
   var CSS = [
     '.cc-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg-primary);font-size:13px;line-height:1.55}',
+    '.cc-root.cc-drop{outline:2px dashed var(--accent);outline-offset:-2px}',
     '.cc-log{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 12px 4px;scroll-behavior:smooth}',
     '.cc-entry{margin-bottom:10px;animation:cc-in .18s ease}',
     '@keyframes cc-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}',
@@ -50,6 +51,8 @@
     '.cc-think-head{cursor:pointer;user-select:none;color:var(--text-secondary);font-style:normal;display:flex;align-items:center;gap:5px}',
     '.cc-think-body{margin-top:4px;white-space:pre-wrap;max-height:260px;overflow-y:auto}',
     '.cc-collapsed .cc-think-body,.cc-collapsed .cc-tool-body{display:none}',
+    '.cc-thought{display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:12px;font-style:italic;user-select:none}',
+    '.cc-thought-dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);opacity:.55;flex:0 0 auto}',
     '.cc-caret{transition:transform .15s}.cc-collapsed .cc-caret{transform:rotate(-90deg)}',
 
     '.cc-tool{border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--bg-secondary,rgba(255,255,255,.02));overflow:hidden}',
@@ -113,7 +116,7 @@
     '.cc-narrow .cc-input{flex:1 1 100%;order:1}',
     '.cc-narrow .cc-actions{order:2;display:flex;gap:7px;width:100%;align-items:center}',
     '.cc-narrow .cc-actions .cc-btn{flex:1;padding:8px 10px}',
-    '.cc-narrow .cc-attach{flex:none}',
+    '.cc-narrow .cc-attach,.cc-narrow .cc-stop{flex:none}',
     '.cc-narrow .cc-meta{gap:6px;font-size:10.5px}',
     '.cc-narrow .cc-sid{display:none}',          // duplicated by the cell header
     '.cc-actions{display:contents}',              // wide: behaves as if unwrapped
@@ -126,9 +129,25 @@
     '.cc-meta-sp{flex:1}',
     '.cc-busy{color:var(--accent-hover)}',
     // Enter-key behaviour toggle, sitting beside the permission-mode dropdown.
-    '.cc-toggle{background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:11px;padding:2px 7px;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:4px}',
-    '.cc-toggle:hover{border-color:var(--accent);color:var(--text-primary)}',
-    '.cc-toggle b{font-family:var(--mono);color:var(--accent-hover);font-weight:600}',
+    '.cc-toggle{background:none;border:0;color:var(--text-secondary);font-size:11px;padding:0;font-family:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:5px}',
+    '.cc-toggle:hover{color:var(--text-primary)}',
+    '.cc-toggle b{font-family:var(--mono);font-weight:600}',
+    // Enter-key switch: both options always visible, thumb marks the live one.
+    '.cc-sw{position:relative;display:inline-flex;align-items:center;background:var(--bg-tertiary,rgba(255,255,255,.06));border-radius:999px;padding:2px;line-height:1}',
+    '.cc-sw-thumb{position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:999px;background:var(--accent-dim);border:1px solid var(--accent);transition:transform .18s cubic-bezier(.4,0,.2,1)}',
+    '.cc-sw.alt .cc-sw-thumb{transform:translateX(100%)}',
+    '.cc-sw-opt{position:relative;z-index:1;padding:2px 8px;font-size:11px;opacity:.45;transition:opacity .18s ease}',
+    '.cc-sw:not(.alt) .cc-sw-opt:nth-child(2),.cc-sw.alt .cc-sw-opt:nth-child(3){opacity:1}',
+    '.cc-sw:not(.alt) .cc-sw-opt:nth-child(2) b,.cc-sw.alt .cc-sw-opt:nth-child(3) b{color:var(--accent-hover)}',
+    // The switch shows WHICH key; this says what it does.
+    '.cc-sw-lbl{font-size:11px;color:inherit}',
+    // Stop: icon by default, widens to reveal "Sure?" once armed.
+    '.cc-stop{flex:none;height:34px;min-width:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--red);border-radius:var(--radius-sm);cursor:pointer;padding:0 8px;transition:.15s}',
+    '.cc-stop:hover{color:var(--red);border-color:var(--red)}',
+    '.cc-stop svg{width:15px;height:15px;flex:none}',
+    '.cc-stop .cc-stop-label{max-width:0;margin-left:0;overflow:hidden;white-space:nowrap;font-size:11px;font-family:inherit;opacity:0;transition:max-width .18s ease,margin-left .18s ease,opacity .18s ease}',
+    '.cc-stop.cc-armed{color:var(--red);border-color:var(--red);background:var(--red-dim)}',
+    '.cc-stop.cc-armed .cc-stop-label{max-width:44px;margin-left:5px;opacity:1}',
     // Attach button matches the main input bar's paperclip.
     '.cc-attach{flex:none;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0}',
     '.cc-attach:hover{color:var(--accent-hover);border-color:var(--accent)}',
@@ -330,7 +349,13 @@
     input.rows = 1;
     input.placeholder = 'Message Claude…  (Enter to send, Shift+Enter for newline)';
     var sendBtn = el('button', 'cc-btn primary', 'Send');
-    var stopBtn = el('button', 'cc-btn danger', 'Stop');
+    // Icon button between attach and send. Interrupting mid-turn is
+    // destructive and easy to hit by accident on a phone, so it arms on the
+    // first tap and only fires on the second.
+    var stopBtn = el('button', 'cc-stop',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"'
+      + ' stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+      + '<span class="cc-stop-label">Sure?</span>');
     stopBtn.style.display = 'none';
     // Paperclip, mirroring the main input bar: uploads to crundi_attachments
     // and inserts the returned path into the message.
@@ -345,8 +370,8 @@
     // at full width the wrapper is display:contents and changes nothing.
     var actions = el('div', 'cc-actions');
     actions.appendChild(attachBtn);
-    actions.appendChild(sendBtn);
     actions.appendChild(stopBtn);
+    actions.appendChild(sendBtn);
     inrow.appendChild(input);
     inrow.appendChild(actions);
     inrow.appendChild(fileInput);
@@ -417,9 +442,14 @@
 
     function syncEnterMode() {
       var sends = enterMode === 'send';
-      enterBtn.innerHTML = sends
-        ? '<b>⏎</b> sends'
-        : '<b>⌃⏎</b> sends';
+      // Both options stay on screen inside a switch track, with the thumb over
+      // the active one — the state is readable without clicking to find out.
+      enterBtn.innerHTML =
+        '<span class="cc-sw' + (sends ? '' : ' alt') + '">'
+        + '<span class="cc-sw-thumb"></span>'
+        + '<span class="cc-sw-opt"><b>⏎</b></span>'
+        + '<span class="cc-sw-opt"><b>⌃⏎</b></span>'
+        + '</span><span class="cc-sw-lbl">sends</span>';
       enterBtn.title = sends
         ? 'Enter sends, Shift+Enter makes a newline — click to swap'
         : 'Enter makes a newline, Ctrl+Enter sends — click to swap';
@@ -487,6 +517,57 @@
       if (force || atBottom()) log.scrollTop = log.scrollHeight;
     }
 
+    // ─── Scroll retention across re-parenting ───
+    //
+    // The workbench re-parents cell elements whenever it re-renders the grid
+    // (mosaic arrange / replaceChildren), and moving a node resets scrollTop on
+    // every scrollable descendant — so returning to a chat would land at the
+    // top. The same happens when a hidden cell (display:none, clientHeight 0)
+    // is shown again. Remember where the reader was and put them back.
+    var stickBottom = true;   // fresh chats start pinned to the newest message
+    var lastTop = 0;
+    var lastH = 0;
+    log.addEventListener('scroll', function () {
+      if (!log.clientHeight) return; // a reset while hidden is not a user scroll
+      stickBottom = atBottom();
+      lastTop = log.scrollTop;
+    });
+    function restoreScroll() {
+      if (!log.clientHeight) return;
+      // scroll-behavior:smooth would animate the restore (and lose a race with
+      // the next render); a restore must be instant.
+      var prev = log.style.scrollBehavior;
+      log.style.scrollBehavior = 'auto';
+      log.scrollTop = stickBottom ? log.scrollHeight : lastTop;
+      log.style.scrollBehavior = prev;
+    }
+    // Self-heal for visibility toggles the host does not tell us about, and
+    // for the on-screen keyboard: opening it shrinks the viewport, so the log
+    // gets shorter while scrollTop stays put and a reader who was pinned to the
+    // newest message silently ends up above it.
+    if (window.ResizeObserver) {
+      var logObserver = new ResizeObserver(function () {
+        var h = log.clientHeight;
+        if (h && !lastH) restoreScroll();          // 0 → visible: position wiped
+        else if (h !== lastH && stickBottom) restoreScroll(); // resized while pinned
+        lastH = h;
+      });
+      try { logObserver.observe(log); } catch (e) { logObserver = null; }
+    }
+    // iOS Safari resizes the visual viewport without necessarily resizing the
+    // log element, so the observer above can miss the keyboard entirely.
+    var vv = window.visualViewport;
+    function onViewport() { if (stickBottom) restoreScroll(); }
+    if (vv) { vv.addEventListener('resize', onViewport); vv.addEventListener('scroll', onViewport); }
+    // Focusing the composer is the strongest signal the keyboard is coming;
+    // the geometry settles a beat after the event, hence the delayed re-pin.
+    input.addEventListener('focus', function () {
+      if (!stickBottom) return;
+      restoreScroll();
+      setTimeout(restoreScroll, 150);
+      setTimeout(restoreScroll, 400);
+    });
+
     function setState(s) {
       var was = state;
       state = s;
@@ -494,6 +575,7 @@
       stateLbl.textContent = busy ? 'working…' : s === 'needs-input' ? 'needs your input' : 'idle';
       stateLbl.className = busy || s === 'needs-input' ? 'cc-busy' : '';
       stopBtn.style.display = busy ? '' : 'none';
+      if (!busy) disarmStop(); // never leave it primed across turns
       // Send stays available while busy — it queues rather than sending, so the
       // label says so instead of the button vanishing.
       sendBtn.style.display = '';
@@ -578,6 +660,17 @@
     }
 
     function thinkingNode(e) {
+      // Models from Opus 4.7 on return thinking blocks with no text (see
+      // handleStreamEvent in claude-ui.js). An expander over an empty body
+      // reads as broken, so show a flat chip instead — same signal that
+      // reasoning happened, no affordance promising content that isn't there.
+      if (!e.text) {
+        var n = e.tokens;
+        return el('div', 'cc-thought',
+          '<span class="cc-thought-dot"></span><span>Thought'
+          + (n ? ' for ~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + ' tokens' : '')
+          + '</span>');
+      }
       var box = el('div', 'cc-think cc-collapsed');
       var head = el('div', 'cc-think-head', '<span class="cc-caret">▾</span><span>Thinking</span>');
       var body = el('div', 'cc-think-body', esc(e.text));
@@ -865,7 +958,12 @@
       var text = input.value.replace(/\s+$/, '');
       if (!text.trim()) return;
       input.value = '';
+      saveDraft();
       autoGrow();
+      // Sending is an explicit "I want to see what happens next", so re-pin to
+      // the bottom even if the reader had scrolled up to check something.
+      stickBottom = true;
+      scrollDown(true);
       hideSlash();
       // Busy (working, or blocked on a prompt) → queue it for the next turn.
       if (state !== 'idle') { enqueue(text); return; }
@@ -876,9 +974,30 @@
       setState('working');
     }
 
+    // Two-step stop. The first click arms and reveals "Sure?"; a second within
+    // the window interrupts. Auto-disarms so a stray tap can't leave it primed.
+    var STOP_ARM_MS = 3000;
+    var stopArmedAt = 0;
+    var stopTimer = null;
+    function disarmStop() {
+      stopArmedAt = 0;
+      clearTimeout(stopTimer);
+      stopBtn.classList.remove('cc-armed');
+      stopBtn.title = 'Stop this turn (click twice)';
+    }
     function doStop() {
+      if (!stopArmedAt || Date.now() - stopArmedAt > STOP_ARM_MS) {
+        stopArmedAt = Date.now();
+        stopBtn.classList.add('cc-armed');
+        stopBtn.title = 'Click again to interrupt';
+        clearTimeout(stopTimer);
+        stopTimer = setTimeout(disarmStop, STOP_ARM_MS);
+        return;
+      }
+      disarmStop();
       apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/interrupt', { method: 'POST' }).catch(function () {});
     }
+    disarmStop();
 
     function appendLocal(data) {
       data.id = 'local-' + Math.random().toString(16).slice(2);
@@ -900,6 +1019,7 @@
       var v = input.value;
       var pad = (!v || /\s$/.test(v)) ? '' : ' ';
       input.value = v + pad + p + ' ';
+      saveDraft();
       autoGrow();
       input.focus();
     }
@@ -929,6 +1049,55 @@
       fileInput.value = '';
       if (f) uploadFile(f);
     });
+
+    // ─── Drop target ───
+    //
+    // Two sources, same as a terminal cell:
+    //   • Workbench panel rows (Files / Git / Kanban / Mindmap / Media) drag a
+    //     text/plain ref like "[File Path: C:\p\x.js]".
+    //   • The OS drags real files, which arrive on dataTransfer.files.
+    // Images upload to crundi_attachments and insert the returned path; other
+    // files insert their path directly. stopPropagation keeps the workbench's
+    // .terminal-wrap handler from also routing the drop to the bottom input bar.
+
+    function onDragOver(e) {
+      if (!e.dataTransfer) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      root.classList.add('cc-drop');
+    }
+    function onDragLeave(e) {
+      if (!root.contains(e.relatedTarget)) root.classList.remove('cc-drop');
+    }
+    function onDrop(e) {
+      if (!e.dataTransfer) return;
+      e.preventDefault();
+      e.stopPropagation();
+      root.classList.remove('cc-drop');
+      var files = e.dataTransfer.files;
+      if (files && files.length) {
+        var paths = [];
+        for (var i = 0; i < files.length; i++) {
+          var f = files[i];
+          if (f.type && f.type.indexOf('image/') === 0) { uploadFile(f); continue; }
+          // Electron exposes the real path via the preload bridge; a plain
+          // browser gives us only the name, same limitation as the input bar.
+          var p = (window.api && window.api.getPathForFile && window.api.getPathForFile(f)) || f.path || f.name;
+          if (p) paths.push(p);
+        }
+        if (paths.length) {
+          insertPath(paths.join(' '));
+          toast(paths.length === 1 ? 'File added' : paths.length + ' files added');
+        }
+        return;
+      }
+      var text = e.dataTransfer.getData('text/plain');
+      if (text) insertPath(text);
+    }
+    root.addEventListener('dragover', onDragOver);
+    root.addEventListener('dragleave', onDragLeave);
+    root.addEventListener('drop', onDrop);
 
     // Paste an image straight into the composer.
     input.addEventListener('paste', function (e) {
@@ -1028,10 +1197,26 @@
       }
     }
 
+    // ─── Draft persistence ───
+    // Switching project or tab tears the cell down and rebuilds it, so an
+    // unsent message would be lost. Keyed per session, and deliberately NOT
+    // cleared on destroy() — destroy is exactly the case we're protecting.
+    var DRAFT_KEY = 'crundi_chat_draft_' + sessionId;
+    function saveDraft() {
+      try {
+        if (input.value) localStorage.setItem(DRAFT_KEY, input.value);
+        else localStorage.removeItem(DRAFT_KEY);
+      } catch (e) {}
+    }
+    try {
+      var draft = localStorage.getItem(DRAFT_KEY);
+      if (draft) { input.value = draft; setTimeout(autoGrow, 0); }
+    } catch (e) {}
+
     input.addEventListener('keydown', onKeyDown);
     input.addEventListener('input', function () {
       lastTypeAt = Date.now(); // keeps a pending batch waiting while you type
-      slashIdx = 0; autoGrow(); showSlash();
+      slashIdx = 0; autoGrow(); showSlash(); saveDraft();
     });
     input.addEventListener('blur', function () { setTimeout(hideSlash, 120); });
     sendBtn.addEventListener('click', doSend);
@@ -1074,6 +1259,7 @@
         input.placeholder = 'Session ended.';
         stateLbl.textContent = 'exited';
       }
+      stickBottom = true; // a full replay always lands on the newest message
       scrollDown(true);
     }
 
@@ -1101,6 +1287,10 @@
           scrollDown(stick2);
           break;
         }
+        // Server spliced older messages in front of the live ones (a resumed
+        // conversation whose stored transcript was replayed) — take the whole
+        // snapshot rather than trying to merge.
+        case 'history': applyHistory(ev.session); break;
         case 'state': setState(ev.state); break;
         case 'init':
           slashCommands = ev.slashCommands || [];
@@ -1135,9 +1325,18 @@
       applyEvent: applyEvent,
       focus: function () { try { input.focus(); } catch (e) {} },
       resubscribe: function () { wsSend({ type: 'subscribe-ui', id: sessionId }); },
+      restoreScroll: restoreScroll,
+      // Used by the workbench's pointer-drag (touch) path, which can't rely on
+      // HTML5 drag events — see insertRefToTarget in webapp-html.js.
+      insertText: function (text) { if (text) insertPath(text); },
       destroy: function () {
         destroyed = true;
         stopTicker(); // closing a cell must not leave an interval running
+        root.removeEventListener('dragover', onDragOver);
+        root.removeEventListener('dragleave', onDragLeave);
+        root.removeEventListener('drop', onDrop);
+        if (logObserver) { try { logObserver.disconnect(); } catch (e) {} }
+        if (vv) { vv.removeEventListener('resize', onViewport); vv.removeEventListener('scroll', onViewport); }
         if (widthObserver) { try { widthObserver.disconnect(); } catch (e) {} }
         else window.removeEventListener('resize', syncWidth);
         try { wsSend({ type: 'unsubscribe-ui', id: sessionId }); } catch (e) {}

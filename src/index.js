@@ -241,6 +241,7 @@ const isDev = process.env.CRUNDI_DEV === '1' || process.argv.includes('--dev');
 if (isDev) {
   config.webPort = parseInt(process.env.DEV_WEB_PORT || '8889', 10);
   process.env.DISABLE_TUNNEL = '1';
+  process.env.CRUNDI_DEV = '1'; // so modules loaded later can see it too
   console.log(`[crundi] DEV mode: port ${config.webPort}, Cloudflare disabled`);
 }
 
@@ -295,8 +296,14 @@ if (process.platform === 'win32') {
     .catch(() => { /* non-fatal */ });
 }
 
-// Refresh .mcp.json in ALL project directories so stale keys are updated
-try {
+// Refresh .mcp.json in ALL project directories so stale keys are updated.
+// Skipped in dev: these files live in the user's real project directories and
+// point Claude Code at whichever instance wrote them last, so a dev run would
+// redirect every project's MCP server to a throwaway port and key that die with
+// the run. Dev and production share this state; only production may own it.
+if (isDev) {
+  console.log('[crundi] DEV mode: leaving project .mcp.json files alone');
+} else try {
   const { listProjects } = await import('./project-store.js');
   const allProjects = listProjects();
   for (const p of allProjects) {

@@ -661,6 +661,49 @@ export function getWebappHtml(botUsername) {
       color: var(--text-primary);
     }
     .term-launch .btn-chat-skip:hover { border-color: var(--accent); background: var(--accent-dim); }
+    /* ── Launch grid: [mode | skip-permissions] × 2 ──
+       The shield is icon-only at rest and widens to name itself; its row-mate
+       drops its label at the same time, so the row's total width is constant
+       and the two buttons trade space rather than reflowing the column. */
+    /* Explicit width, not 100%: the row's parent (.term-agent-group) is
+       shrink-to-fit, so a percentage would resolve against content and the row
+       would grow as the shield opens — the one thing this layout must not do. */
+    .term-launch .tl-row { display: flex; gap: 8px; width: 300px; max-width: 100%; }
+    .term-launch .tl-row button { min-width: 0; }
+    .term-launch .tl-main {
+      flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center;
+      overflow: hidden; padding-inline: 12px;
+    }
+    .term-launch .tl-shield {
+      flex: 0 0 auto; width: 44px; padding: 9px 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      overflow: hidden; white-space: nowrap;
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.15s ease, background 0.15s ease;
+    }
+    .term-launch .tl-shield .ic { flex: none; }
+    .term-launch .tl-txt {
+      display: inline-block; overflow: hidden; white-space: nowrap; max-width: 200px;
+      margin-left: 8px;
+      transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+    }
+    .term-launch .tl-shield .tl-txt { max-width: 0; margin-left: 0; opacity: 0; }
+    /* Open state — driven by hover on the shield, or by .tl-peek on first paint. */
+    .term-launch .tl-row.tl-peek .tl-shield,
+    .term-launch .tl-shield:hover { width: 172px; }
+    .term-launch .tl-row.tl-peek .tl-shield .tl-txt,
+    .term-launch .tl-shield:hover .tl-txt { max-width: 140px; margin-left: 7px; opacity: 1; }
+    .term-launch .tl-row.tl-peek .tl-main .tl-txt,
+    .term-launch .tl-row:has(.tl-shield:hover) .tl-main .tl-txt { max-width: 0; margin-left: 0; opacity: 0; }
+    /* Marks the mode this project launched last (tooltip explains the dot). */
+    .term-launch .tl-last { position: relative; }
+    .term-launch .tl-last::after {
+      content: ''; position: absolute; top: 5px; right: 6px; width: 5px; height: 5px;
+      border-radius: 50%; background: var(--accent-hover);
+      box-shadow: 0 0 0 2px var(--bg-secondary); pointer-events: none; z-index: 2;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .term-launch .tl-shield, .term-launch .tl-txt { transition: none; }
+    }
     .term-launch .btn-chat-resume {
       border: 1px solid var(--border); background: transparent;
       color: var(--text-secondary); font-size: 12px; padding: 6px 14px; min-width: 0;
@@ -679,6 +722,22 @@ export function getWebappHtml(botUsername) {
     .cr-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 2px; }
     /* Resume-cost choice shown in the placeholder cell before any process spawns. */
     .cr-choice { gap: 7px !important; padding: 0 18px; text-align: center; }
+    /* Launching: the pressed button gets a spinner, the rest grey out. */
+    .cr-choice button:disabled { cursor: default; }
+    .cr-choice button:disabled:not(.cr-busy) { opacity: 0.4; }
+    .cr-choice button.cr-busy {
+      position: relative; color: transparent !important;
+    }
+    .cr-choice button.cr-busy::after {
+      content: ''; position: absolute; top: 50%; left: 50%;
+      width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px;
+      border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
+      border-radius: 50%; animation: crSpin 0.7s linear infinite;
+    }
+    @keyframes crSpin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .cr-choice button.cr-busy::after { animation-duration: 2s; }
+    }
     .cr-choice-title { font-size: 0.95rem; font-weight: 650; color: var(--text-primary); }
     .cr-choice-sub { font-size: 0.85rem; color: var(--text-secondary); max-width: 420px; }
     .cr-choice-meta { font-family: var(--mono); font-size: 0.76rem; color: var(--yellow); }
@@ -810,6 +869,19 @@ export function getWebappHtml(botUsername) {
       border-radius: var(--radius); color: var(--text-muted); font-size: 0.82rem;
     }
     .mosaic-empty.drop-hover { border-color: var(--accent); color: var(--accent-hover); background: var(--accent-dim); }
+    /* Inline panel launcher inside an empty leaf. */
+    .mosaic-empty .me-chips {
+      display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+      max-width: 300px; margin-bottom: 2px;
+    }
+    .mosaic-empty .me-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 10px; border-radius: 999px; cursor: pointer; font-size: 11.5px;
+      border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-secondary);
+      transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+    }
+    .mosaic-empty .me-chip:hover { border-color: var(--accent); color: var(--text-primary); background: var(--accent-dim); }
+    .mosaic-empty .me-chip .ic { width: 13px; height: 13px; color: var(--accent-hover); }
     .mosaic-empty .me-acts { display: flex; gap: 6px; }
     .mosaic-empty .me-acts button {
       display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; cursor: pointer;
@@ -2520,6 +2592,56 @@ export function getWebappHtml(botUsername) {
 
     // ─── State ───
     let token = localStorage.getItem('crundi_token');
+    let refreshToken = localStorage.getItem('crundi_refresh');
+    // One shared in-flight refresh. Without this, a burst of concurrent 401s
+    // would each rotate the refresh token; the second rotation would look like
+    // a replay to the server and revoke the whole login.
+    let refreshInFlight = null;
+    let refreshTimer = null;
+    let appReady = false;   // set by showApp(); gates the 401 reload recovery
+
+    function storeSession(d) {
+      if (!d || !d.token) return false;
+      token = d.token;
+      localStorage.setItem('crundi_token', token);
+      if (d.refreshToken) {
+        refreshToken = d.refreshToken;
+        localStorage.setItem('crundi_refresh', refreshToken);
+      }
+      scheduleRefresh(d.expiresIn);
+      return true;
+    }
+
+    function clearSession() {
+      token = null; refreshToken = null;
+      localStorage.removeItem('crundi_token');
+      localStorage.removeItem('crundi_refresh');
+      clearTimeout(refreshTimer);
+    }
+
+    // Renew a little before expiry so an idle tab rarely serves a 401 at all;
+    // apiFetch's retry is the safety net for sleep/suspend, where timers stall.
+    function scheduleRefresh(expiresIn) {
+      clearTimeout(refreshTimer);
+      const secs = Number(expiresIn);
+      if (!secs || !isFinite(secs)) return;
+      refreshTimer = setTimeout(refreshSession, Math.max(30, secs * 0.8) * 1000);
+    }
+
+    function refreshSession() {
+      if (refreshInFlight) return refreshInFlight;
+      if (!refreshToken) return Promise.resolve(false);
+      refreshInFlight = fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      })
+        .then(r => r.json())
+        .then(d => (d && d.ok) ? storeSession(d) : false)
+        .catch(() => false)
+        .then(ok => { refreshInFlight = null; return ok; });
+      return refreshInFlight;
+    }
     let ws = null;
     // Multi-terminal state: each live terminal gets an xterm view; the unified
     // input box / tool buttons act on whichever terminal is focused. Pending
@@ -2674,6 +2796,7 @@ export function getWebappHtml(botUsername) {
       folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
       file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
       'arrow-up': '<line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/>',
+      'shield-alert': '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12.5"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
       upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
       download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
       copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
@@ -2727,9 +2850,7 @@ export function getWebappHtml(botUsername) {
           body: JSON.stringify({ telegramLogin: user }),
         });
         const data = await res.json();
-        if (data.ok) {
-          token = data.token;
-          localStorage.setItem('crundi_token', token);
+        if (data.ok && storeSession(data)) {
           showApp();
         } else {
           toast('Login failed: ' + (data.error || 'Unknown error'), 'error');
@@ -2765,12 +2886,28 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── API ───
-    function apiFetch(path, opts = {}) {
+    function apiFetch(path, opts = {}, _retried = false) {
       if (token) {
         opts.headers = opts.headers || {};
         opts.headers['Authorization'] = 'Bearer ' + token;
       }
-      return fetch(path, opts);
+      return fetch(path, opts).then(res => {
+        // A 401 means the access token aged out. Renew once and replay. Bodies
+        // here are strings/JSON (never streams), so the request is safe to
+        // re-send; _retried stops a revoked session from looping.
+        if (res.status !== 401 || _retried || path.indexOf('/api/auth/') === 0) return res;
+        return refreshSession().then(ok => {
+          if (ok) return apiFetch(path, opts, true);
+          // Refresh is gone too — the session is genuinely over. Reloading
+          // re-runs init(), which re-authenticates from the stashed local key
+          // under Electron or shows the login screen on the web. Suppressed
+          // until the app is up: init() calls checkAuth() through here, and
+          // reloading from inside it would loop.
+          clearSession();
+          if (appReady) location.reload();
+          return res;
+        });
+      });
     }
 
     // ─── Auth Check ───
@@ -3194,6 +3331,7 @@ export function getWebappHtml(botUsername) {
     }
 
     function showApp() {
+      appReady = true;
       $('#login-screen').style.display = 'none';
       $('#app').classList.add('visible');
       connectWS();
@@ -3421,8 +3559,24 @@ export function getWebappHtml(botUsername) {
         + '</div>';
     }
 
+    // Which launcher button this project used last, so the next visit can lead
+    // with it. 'shell' is deliberately not recorded — it is not a Claude mode.
+    const LAUNCH_MODES = ['chat', 'chat-skip', 'normal', 'skip'];
+    function lastLaunchKey() { return 'crundi_last_mode_' + (currentProject || ''); }
+    function lastLaunchMode() {
+      try {
+        const m = localStorage.getItem(lastLaunchKey());
+        return LAUNCH_MODES.indexOf(m) >= 0 ? m : '';
+      } catch { return ''; }
+    }
+    function rememberLaunchMode(mode) {
+      if (LAUNCH_MODES.indexOf(mode) < 0) return;
+      try { localStorage.setItem(lastLaunchKey(), mode); } catch { /* ignore */ }
+    }
+
     async function launchTerminal(mode, localId, resumeId, sessionMode) {
       if (!currentProject) return;
+      rememberLaunchMode(mode);
       // bypassPermissions cannot be switched on after launch (the CLI rejects it
       // unless started with --dangerously-skip-permissions), so chat gets the
       // same normal/skip split as terminal mode.
@@ -3674,6 +3828,10 @@ export function getWebappHtml(botUsername) {
         else mountXterm(d.t, el);
       }
 
+      // The re-parent above also reset scrollTop on every scrollable descendant,
+      // which would drop each chat back to the top of its transcript.
+      for (const [, c] of chatViews) { try { c.restoreScroll(); } catch { /* ignore */ } }
+
       // Restore the cursor to the terminal the user was typing in, if it survived
       // the rebuild — the re-parent above blurred it.
       if (refocusTid && live.some(t => t.id === refocusTid)) {
@@ -3737,8 +3895,19 @@ export function getWebappHtml(botUsername) {
         + '</div>';
     }
     function emptyLeafHtml(id) {
+      // Dragging an existing panel in was the only way to fill a leaf, which
+      // meant you had to already have one open. Offer the launchable kinds
+      // here too; a new panel lands in the empty leaf on its own. Kinds already
+      // in the workbench are omitted, since addWbPanel refuses duplicates.
+      const open = new Set(wbCells.map(c => c.kind));
+      const chip = (kind, icon, label) =>
+        '<button class="me-chip" data-action="wb-add" data-kind="' + kind + '" title="Add ' + label + '">'
+        + ic(icon) + '<span>' + label + '</span></button>';
+      const chips = Object.keys(WB_KIND_META).filter(k => !open.has(k))
+        .map(k => chip(k, WB_KIND_META[k].icon, WB_KIND_META[k].label)).join('');
       return '<div class="mosaic-empty" data-leaf-drop="' + id + '">'
-        + '<div class="me-msg">Drop a panel here</div>'
+        + '<div class="me-msg">Drop a panel here or launch a new one</div>'
+        + '<div class="me-chips">' + chip('terminal', 'terminal', 'Terminal') + chips + '</div>'
         + '<div class="me-acts">'
         + '<button data-action="leaf-split" data-leaf="' + id + '|row" title="Split right">' + ic('plus') + 'Split &#9656;</button>'
         + '<button data-action="leaf-split" data-leaf="' + id + '|col" title="Split down">' + ic('plus') + 'Split &#9662;</button>'
@@ -3763,13 +3932,27 @@ export function getWebappHtml(botUsername) {
           + '<button class="btn-shell" data-action="launch-terminal" data-mode="shell" data-lid="' + d.localId + '">Empty Shell</button>'
           + '<div class="term-agent-group">'
           + '<div class="term-agent-label">Claude</div>'
-          + '<button class="btn-chat" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '"><span class="chat-caret">\\u258d</span>UI Mode</button>'
-          + '<button class="btn-chat-skip" data-action="launch-terminal" data-mode="chat-skip" data-lid="' + d.localId + '">UI Mode \\u2014 Skip Permissions</button>'
-          + '<button class="btn-normal" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">Terminal</button>'
-          + '<button class="btn-skip" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '">Terminal \\u2014 Skip Permissions</button>'
+          // Two rows of [mode | skip-permissions]. The shield peeks open to name
+          // itself on first paint and on hover; its row-mate gives up its label
+          // for the duration so the row's width never changes. See .tl-row CSS.
+          + '<div class="tl-row" data-tl-row="1">'
+          + '<button class="btn-chat tl-main' + lastCls('chat') + '" data-action="launch-terminal" data-mode="chat" data-lid="' + d.localId + '">'
+          + '<span class="chat-caret">\\u258d</span><span class="tl-txt">UI Mode</span></button>'
+          + '<button class="btn-chat-skip tl-shield' + lastCls('chat-skip') + '" data-action="launch-terminal" data-mode="chat-skip" data-lid="' + d.localId + '"'
+          + ' title="UI Mode \\u2014 Skip Permissions" aria-label="UI Mode \\u2014 Skip Permissions">'
+          + ic('shield-alert') + '<span class="tl-txt">Skip Permissions</span></button>'
+          + '</div>'
+          + '<div class="tl-row" data-tl-row="2">'
+          + '<button class="btn-normal tl-main' + lastCls('normal') + '" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">'
+          + ic('terminal') + '<span class="tl-txt">Terminal</span></button>'
+          + '<button class="btn-skip tl-shield' + lastCls('skip') + '" data-action="launch-terminal" data-mode="skip" data-lid="' + d.localId + '"'
+          + ' title="Terminal \\u2014 Skip Permissions" aria-label="Terminal \\u2014 Skip Permissions">'
+          + ic('shield-alert') + '<span class="tl-txt">Skip Permissions</span></button>'
+          + '</div>'
           + '<button class="btn-chat-resume" data-action="chat-resume" data-lid="' + d.localId + '">Resume a conversation\\u2026</button>'
           + '</div>'
           + '</div>';
+        peekShields(body);
       } else if (d.type === 'chat') {
         el.dataset.tid = d.t.id;
         el.dataset.chat = '1';
@@ -3817,6 +4000,23 @@ export function getWebappHtml(botUsername) {
         makeDraggable(el, Object.assign({ handle: head }, termDragHandlers(d.key)));
       }
       return el;
+    }
+
+    // One-shot reveal: each shield opens far enough to name itself, then closes,
+    // so the icon is legible on first sight without a hover. Rows fire in order
+    // rather than together, so the eye follows one thing at a time.
+    function lastCls(mode) { return lastLaunchMode() === mode ? ' tl-last' : ''; }
+
+    function peekShields(scope) {
+      scope.querySelectorAll('.tl-last').forEach(b => {
+        b.title = (b.title ? b.title + ' — ' : '') + 'Last used for this project';
+      });
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      scope.querySelectorAll('.tl-row').forEach((row, i) => {
+        const open = 300 + i * 1150;
+        setTimeout(() => row.classList.add('tl-peek'), open);
+        setTimeout(() => row.classList.remove('tl-peek'), open + 900);
+      });
     }
 
     // Mount the Claude chat renderer (served from /vendor/claude-chat.js) into a
@@ -4920,6 +5120,16 @@ export function getWebappHtml(botUsername) {
     }
     function insertRefToTarget(target, ref) {
       if (!ref || !target) return;
+      // A chat cell shares the .term-cell[data-tid] shape that wbDropTargetAt
+      // matches, but it has no PTY — sending 'input' would silently go nowhere.
+      // Drop it into that chat's composer instead.
+      if (target.kind === 'term' && chatViews.has(target.id)) {
+        chatViews.get(target.id).insertText(ref);
+        focusedTermId = target.id;
+        updateFocusStyles();
+        toast('Added to chat');
+        return;
+      }
       if (target.kind === 'term' && ws && ws.readyState === 1) {
         // Trailing space so the next token doesn't fuse onto the ref, then focus
         // the terminal so the user can keep typing right away.
@@ -5217,19 +5427,25 @@ export function getWebappHtml(botUsername) {
     // (forcing a reconnect on a healthy connection makes the badge flap).
     function wsHealthy() { return ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING); }
     function sseHealthy() { return sse && sse.readyState !== EventSource.CLOSED; }
-    function ensureConnections() {
+    async function ensureConnections() {
       if (!token) return false;
+      // WS/SSE authenticate from the query string at connect time and have no
+      // 401 retry of their own, so a token that aged out while the machine was
+      // asleep (timers don't fire there, so the proactive refresh was skipped)
+      // would make the socket 401 and flap on the 3s reconnect loop. Renew
+      // first when either side is actually down.
+      if ((!wsHealthy() || !sseHealthy()) && refreshToken) await refreshSession();
       let reconnected = false;
       if (!wsHealthy()) { connectWS(); reconnected = true; }   // re-subscribes on open
       if (!sseHealthy()) { connectSSE(); reconnected = true; } // server re-pushes state + usage
       return reconnected;
     }
     let resumeTimer = null;
-    function onResume() {
+    async function onResume() {
       if (document.visibilityState === 'hidden') return;
       reportPresence(true); // re-assert in case a heartbeat lapsed while the thread was busy/backgrounded
       if (token) loadUsage(); // always refresh usage on resume (cheap, server-cached, no force)
-      if (!ensureConnections()) return; // connections already alive → don't touch them
+      if (!await ensureConnections()) return; // connections already alive → don't touch them
       clearTimeout(resumeTimer);
       resumeTimer = setTimeout(() => { // we actually had to reconnect → refresh the active view
         if (!token || !$('#app').classList.contains('visible')) return;
@@ -7356,7 +7572,9 @@ export function getWebappHtml(botUsername) {
         case 'term-key': termSendKey(d.key); break;
         case 'term-add': addTerminalCell(); break;
         case 'wb-add-menu': e.stopPropagation(); toggleWbAddMenu(); break;
-        case 'wb-add': { hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
+        // stopPropagation: these buttons now also live inside an empty mosaic
+        // leaf, which is itself a click/drop target.
+        case 'wb-add': { e.stopPropagation(); hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
         case 'wb-layout': { hideWbAddMenu(); mosaicApplyPreset(d.mlayout); break; }
         case 'leaf-split': { e.stopPropagation(); const [id, dir] = (d.leaf || '').split('|'); setMosaic(mosaicSplitLeaf(currentMosaic(), id, dir)); renderTermGrid(); break; }
         case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
@@ -7372,13 +7590,32 @@ export function getWebappHtml(botUsername) {
           if (d.mode === 'chat' || d.mode === 'chat-skip') launchChatWithPreflight(d.lid, d.mode);
           else launchTerminal(d.mode, d.lid);
           break;
-        case 'chat-launch-mode': launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode); break;
+        case 'chat-launch-mode': {
+          // Spawning the CLI against a large transcript can take many seconds,
+          // and until it returns the panel looks inert — so the click reads as
+          // ignored and gets repeated, launching twice. Mark the pressed button
+          // and shut the whole choice down.
+          const btn = e.target.closest('[data-action="chat-launch-mode"]');
+          if (btn) {
+            if (btn.classList.contains('cr-busy')) break; // already launching
+            const panel = btn.closest('.cr-choice');
+            if (panel) panel.querySelectorAll('button').forEach(b => { b.disabled = true; });
+            btn.classList.add('cr-busy');
+            btn.disabled = true;
+          }
+          launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode);
+          break;
+        }
         case 'chat-resume': openChatResume(d.lid); break;
         case 'chat-resume-cancel': closeChatResume(); break;
         case 'chat-resume-pick': {
           const lid = crPendingLid;
           closeChatResume();
-          launchTerminal('chat', lid, d.sid);
+          // Resume in whichever chat variant this project used last. Terminal
+          // modes can't be resumed — /api/terminals/create takes no resumeId,
+          // so a transcript can only be replayed into a UI-mode session.
+          const last = lastLaunchMode();
+          launchTerminal(last === 'chat-skip' ? 'chat-skip' : 'chat', lid, d.sid);
           break;
         }
       }
@@ -9322,9 +9559,7 @@ export function getWebappHtml(botUsername) {
           body: JSON.stringify({ initData: tg.initData }),
         });
         const data = await res.json();
-        if (data.ok && data.token) {
-          token = data.token;
-          localStorage.setItem('crundi_token', token);
+        if (data.ok && storeSession(data)) {
           tg.ready();
           tg.expand();
           return true;
@@ -9336,7 +9571,13 @@ export function getWebappHtml(botUsername) {
     // ─── Local auth (Electron / localhost) ───
     async function tryLocalAuth() {
       const params = new URLSearchParams(location.search);
-      const key = params.get('key');
+      // Electron only puts ?key= on the URL at first load and we strip it
+      // below, so stash it for the lifetime of this window. Without it a
+      // reload after the refresh token dies has no way to re-authenticate,
+      // which is what used to force a full app restart. sessionStorage (not
+      // local) so it dies with the window; the server only accepts this key
+      // from localhost anyway.
+      const key = params.get('key') || sessionStorage.getItem('crundi_local_key');
       if (!key) return false;
       try {
         const res = await fetch('/api/auth/local', {
@@ -9345,9 +9586,8 @@ export function getWebappHtml(botUsername) {
           body: JSON.stringify({ key }),
         });
         const data = await res.json();
-        if (data.ok && data.token) {
-          token = data.token;
-          localStorage.setItem('crundi_token', token);
+        if (data.ok && storeSession(data)) {
+          try { sessionStorage.setItem('crundi_local_key', key); } catch { /* ignore */ }
           // Clean key from URL
           history.replaceState(null, '', location.pathname);
           return true;
@@ -9363,8 +9603,8 @@ export function getWebappHtml(botUsername) {
     function consumeRedirectToken() {
       const m = location.hash.match(/(?:^#|&)token=([a-f0-9]+)/);
       if (m) {
-        token = m[1];
-        localStorage.setItem('crundi_token', token);
+        const r = location.hash.match(/(?:^#|&)refresh=([a-f0-9]+)/);
+        storeSession({ token: m[1], refreshToken: r ? r[1] : null });
         history.replaceState(null, '', location.pathname);
         return true;
       }
@@ -9390,8 +9630,7 @@ export function getWebappHtml(botUsername) {
       } else if (await tryLocalAuth()) {
         showApp(); connectSSE(); checkImport();
       } else {
-        token = null;
-        localStorage.removeItem('crundi_token');
+        clearSession();
         $('#login-screen').style.display = '';
         injectTelegramWidget();
       }

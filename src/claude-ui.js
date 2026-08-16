@@ -39,9 +39,10 @@
 
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
-import { existsSync, readdirSync, statSync, openSync, readSync, closeSync } from 'fs';
+import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, readFileSync, renameSync, unlinkSync } from 'fs';
 import { join, delimiter, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
+import { config } from './config.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation } from './claude-terminals.js';
 
@@ -86,6 +87,14 @@ function transcriptDir(projectPath) {
  * cache_creation on a late message is exactly the context the model was carrying
  * — the same number Claude Code quotes ("this session is … 180.6k tokens").
  * Only the file's tail is scanned, so this stays cheap on multi-MB transcripts.
+ *
+ * Take the LAST such record, never the largest. `/compact` keeps writing to the
+ * same transcript, so the peak is a historical high-water mark that survives the
+ * compaction that was supposed to clear it — a compacted session would stay
+ * flagged as heavy forever. The final record is the context a resume inherits.
+ *
+ * Sidechain records are subagent turns carrying their own small contexts; they
+ * would understate the main thread, so prefer the last main-thread record.
  */
 function estimateTranscriptTokens(file, size) {
   try {
@@ -99,16 +108,18 @@ function estimateTranscriptTokens(file, size) {
     } finally { closeSync(fd); }
     const lines = text.split('\n');
     lines.shift(); // first line is probably truncated mid-JSON
-    let best = 0;
+    let last = 0;
+    let lastMain = 0;
     for (const line of lines) {
       if (!line.includes('cache_read_input_tokens')) continue;
       let o; try { o = JSON.parse(line); } catch { continue; }
       const u = o.message && o.message.usage;
       if (!u) continue;
       const ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-      if (ctx > best) best = ctx;
+      last = ctx;
+      if (!o.isSidechain) lastMain = ctx;
     }
-    return best;
+    return lastMain || last;
   } catch { return 0; }
 }
 
@@ -281,12 +292,121 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   const entriesForAlias = (key) => [...sessions.values()].filter(s => s.alias === key);
 
+  // ─── Transcript persistence ───
+  //
+  // One transcript per project — the last UI conversation, nothing more. It
+  // exists for a single job: when a chat reattaches to that conversation with
+  // --continue, show what was already said before the user types.
+  //
+  // Writes are debounced and atomic (tmp + rename) so a crash mid-write can't
+  // leave a truncated file that fails to parse.
+  const HISTORY_DIR = join(config.dataDir, 'chat-history');
+  const PERSIST_MS = 1500;
+  // Interactive entries are dropped: replaying a permission prompt whose
+  // decision the CLI already consumed would render buttons that do nothing.
+  const PERSIST_KINDS = new Set(['user', 'assistant-text', 'thinking', 'tool', 'result', 'error']);
+  // Only a tail is kept. A long agentic session runs to thousands of entries
+  // with large tool payloads; writing all of it on every patch would cost real
+  // I/O and replaying it would stall the renderer. Bounded by count AND
+  // serialized bytes, since a few big tool results blow the byte budget well
+  // before the count fills.
+  const PERSIST_MAX_MESSAGES = 200;
+  const PERSIST_MAX_BYTES = 256 * 1024;
+
+  function historyFile(alias) { return join(HISTORY_DIR, encodeURIComponent(alias) + '.json'); }
+
+  function persistNow(s) {
+    clearTimeout(s.persistTimer);
+    s.persistTimer = null;
+    if (!s.sessionId) return; // no conversation identity yet — nothing to pin it to
+    // A freshly spawned session holds nothing but a startup notice. With one
+    // file per project, writing that would wipe the transcript we are about to
+    // replay, so hold off until there is something real to record.
+    if (!s.messages.some(m => PERSIST_KINDS.has(m.kind))) return;
+    try {
+      mkdirSync(HISTORY_DIR, { recursive: true });
+      const head = {
+        uuid: s.sessionId, project: s.alias, title: s.title, cwd: s.cwd,
+        model: s.model, savedAt: Date.now(),
+      };
+      let msgs = s.messages.filter(m => PERSIST_KINDS.has(m.kind)).slice(-PERSIST_MAX_MESSAGES);
+      let json = JSON.stringify({ ...head, messages: msgs });
+      // Drop from the front until it fits — oldest is the cheapest to lose.
+      while (json.length > PERSIST_MAX_BYTES && msgs.length > 1) {
+        msgs = msgs.slice(Math.max(1, Math.floor(msgs.length * 0.25)));
+        json = JSON.stringify({ ...head, messages: msgs });
+      }
+      const tmp = historyFile(s.alias) + '.tmp';
+      writeFileSync(tmp, json);
+      renameSync(tmp, historyFile(s.alias));
+    } catch { /* disk full / permissions — history is best-effort, never fatal */ }
+  }
+
+  function schedulePersist(s) {
+    if (s.persistTimer) return;
+    s.persistTimer = setTimeout(() => persistNow(s), PERSIST_MS);
+    if (s.persistTimer.unref) s.persistTimer.unref();
+  }
+
+  function loadPersisted(alias) {
+    try {
+      const f = historyFile(alias);
+      if (!existsSync(f)) return null;
+      const d = JSON.parse(readFileSync(f, 'utf8'));
+      return (d && d.uuid && Array.isArray(d.messages)) ? d : null;
+    } catch { return null; }
+  }
+
+  /**
+   * Forget a project's stored transcript.
+   *
+   * Called when a TERMINAL session starts on that project: the user is about to
+   * continue the conversation somewhere we can't observe, so anything we replay
+   * afterwards would be a stale prefix presented as the whole story. Better to
+   * show nothing. The next UI message rewrites the file, so it self-heals.
+   */
+  function clearHistory(alias) { clearPersisted(alias); }
+
+  function clearPersisted(alias) {
+    try { const f = historyFile(alias); if (existsSync(f)) unlinkSync(f); } catch { /* ignore */ }
+  }
+
+  /**
+   * Render the stored conversation into a chat that is continuing it, before
+   * the user types anything.
+   *
+   * The stored copy is only trustworthy while nothing else has touched that
+   * conversation. If the user has since worked in a TERMINAL session, Claude's
+   * own transcript has moved on and ours is a stale prefix — so the check is
+   * simply whether that transcript still matches what we recorded. That needs
+   * no hook into terminal input, and it self-corrects: the next UI message
+   * rewrites the file and it works again.
+   *
+   * @param {object} s      session
+   * @param {string} uuid   conversation the process is attaching to
+   */
+  function replayForContinue(s, uuid) {
+    if (s.replayed) return;
+    s.replayed = true;
+    const d = loadPersisted(s.alias);
+    if (!d || !d.messages.length) return;
+    if (d.uuid !== uuid) { clearPersisted(s.alias); return; }  // different conversation
+    s.messages = [
+      ...d.messages,
+      { id: genId(), kind: 'notice', text: '— earlier messages in this conversation —', seq: nextSeq() },
+      ...s.messages,
+    ];
+    s.emitter.emit('event', { type: 'history', session: snapshot(s) });
+    console.log(`[claude-ui] Replayed ${d.messages.length} stored entries for "${s.alias}"`);
+  }
+
   /** Append a conversation entry and notify subscribers. */
   function emitEntry(s, entry) {
     entry.seq = nextSeq();
     s.messages.push(entry);
     if (s.messages.length > MAX_MESSAGES) s.messages.splice(0, s.messages.length - MAX_MESSAGES);
     s.emitter.emit('event', { type: 'entry', entry });
+    schedulePersist(s);
     return entry;
   }
 
@@ -294,6 +414,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function patchEntry(s, entry, patch) {
     Object.assign(entry, patch);
     s.emitter.emit('event', { type: 'patch', id: entry.id, patch });
+    schedulePersist(s); // streamed text lands via patch, not emitEntry
   }
 
   function setState(s, state) {
@@ -366,9 +487,23 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // 'compact' resumes and then immediately runs /compact, so the heavy context
     // is summarised once instead of riding along on every later turn.
     const compacting = sessionMode === 'compact';
-    if ((sessionMode === 'resume' || compacting) && resumeId) args.push('--resume', String(resumeId));
-    else if (sessionMode === 'new') { /* explicit fresh session */ }
-    else if ((sessionMode === 'continue' || compacting || !aliasHasLive) && hasExistingConversation(project.path)) args.push('--continue');
+    // Work out WHICH conversation this process will attach to, before it runs.
+    // The CLI only reveals its session uuid via system/init, which it emits
+    // lazily on the first turn — far too late to show the user what was already
+    // said. --resume names the uuid outright, and --continue attaches to the
+    // newest transcript, which is exactly what latestTranscript() reports.
+    let continueUuid = '';
+    if ((sessionMode === 'resume' || compacting) && resumeId) {
+      // Explicitly picking a session from the resume list is a deliberate jump
+      // to a named conversation — deliberately NOT replayed, so it behaves the
+      // way it always has.
+      args.push('--resume', String(resumeId));
+    } else if (sessionMode === 'new') { /* explicit fresh session */ }
+    else if ((sessionMode === 'continue' || compacting || !aliasHasLive) && hasExistingConversation(project.path)) {
+      args.push('--continue');
+      const t = latestTranscript(project.path);
+      if (t) continueUuid = t.id;
+    }
 
     let proc;
     try {
@@ -472,6 +607,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // work at all until the first message is sent.
     s.startupNotice = emitEntry(s, { id: genId(), kind: 'notice', text: 'Starting Claude…' });
 
+    // Show what was already said BEFORE the user types anything — the whole
+    // point is to walk into a resumed conversation already knowing where it
+    // left off. handleSystem re-runs this with the CLI's authoritative uuid in
+    // case --continue landed somewhere other than the newest transcript.
+    if (continueUuid) { s.continueUuid = continueUuid; s.sessionId = continueUuid; replayForContinue(s, continueUuid); }
+
     // Fired as the first turn once the CLI reports ready (see handleControlResponse).
     if (compacting) s.pendingFirstMessage = '/compact';
 
@@ -500,7 +641,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         patchEntry(s, s.startupNotice, { kind: 'gone', text: '' });
         s.startupNotice = null;
       }
+      const guessed = s.sessionId;
       s.sessionId = msg.session_id || s.sessionId;
+      // Pre-spawn we can only infer which conversation --continue lands on. If
+      // it went elsewhere, redo the replay against the real uuid.
+      if (s.continueUuid && guessed && s.sessionId !== guessed) {
+        s.replayed = false;
+        replayForContinue(s, s.sessionId);
+      }
       if (msg.model) s.model = msg.model;
       s.slashCommands = msg.slash_commands || [];
       s.emitter.emit('event', {
@@ -573,6 +721,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       const entry = s.blocks.get(ev.index);
       if (!entry) return;
       const d = ev.delta || {};
+      // Opus 4.7+ withholds reasoning text — `thinking.display` defaults to
+      // "omitted", and on Opus 5 the raw chain of thought is never returned at
+      // all. Those blocks arrive with `thinking: ""` but a populated
+      // `estimated_tokens`, which is the only progress signal they carry.
+      if (d.type === 'thinking_delta' && typeof d.estimated_tokens === 'number'
+          && d.estimated_tokens > (entry.tokens || 0)) {
+        patchEntry(s, entry, { tokens: d.estimated_tokens });
+      }
       const add = d.type === 'text_delta' ? d.text : d.type === 'thinking_delta' ? d.thinking : '';
       if (!add) return;
       entry.text = (entry.text + add).slice(-MAX_TEXT);
@@ -679,7 +835,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // Worth stating plainly: --continue/--resume restores Claude's context but
       // does NOT replay the old messages into this log, so the empty cell is
       // expected rather than a sign the resume failed.
-      if (s.resuming) patchEntry(s, s.startupNotice, { text: 'Continuing your previous conversation. Earlier messages are not shown here, but Claude still has them.' });
+      // replayForContinue() shows whatever we stored for this conversation; anything
+      // older than that (or from before transcripts were kept) is still in
+      // Claude's context even though it isn't rendered here.
+      if (s.resuming) patchEntry(s, s.startupNotice, { text: 'Continuing your previous conversation. Claude has the full context; only recent messages are shown here.' });
       else patchEntry(s, s.startupNotice, { kind: 'gone', text: '' });
       s.startupNotice = null;
     }
@@ -817,6 +976,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       try { s.proc.kill(); } catch { /* ignore */ }
     }
     s.emitter.removeAllListeners();
+    clearTimeout(s.persistTimer);
     sessions.delete(id);
     console.log(`[claude-ui] Closed "${s.alias}" (${id})`);
     return { ok: true };
@@ -855,7 +1015,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   /** Full conversation for a session (used when a client subscribes). */
   function history(id) {
     const s = sessions.get(id);
-    if (!s) return null;
+    return s ? snapshot(s) : null;
+  }
+
+  /** The full client-facing view of a session. */
+  function snapshot(s) {
     return {
       id: s.id, project: s.alias, title: s.title, kind: 'ui',
       status: s.proc ? 'running' : 'exited',
@@ -878,7 +1042,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   return {
-    list, create, close, closeProject, closeAll, rename, setOrder,
+    list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, respond, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange,
     set apiUrl(v) { apiUrl = v; },

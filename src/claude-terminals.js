@@ -44,6 +44,10 @@ export function stripAnsi(str) {
  * the Crundi MCP server.
  */
 function writeMcpConfig(projectPath, apiUrl, apiKey, projectAlias) {
+  // A dev instance must not repoint a real project's MCP server at its
+  // throwaway port and key — the file outlives the run and would leave Claude
+  // Code talking to nothing. See the matching guard in index.js.
+  if (process.env.CRUNDI_DEV === '1') return;
   const mcpFile = join(projectPath, '.mcp.json');
   const mcpStdioPath = resolvePath(join(__dirname, 'mcp-stdio.js'));
 
