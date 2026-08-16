@@ -106,6 +106,17 @@
 
     '.cc-composer{border-top:1px solid var(--border);padding:8px;background:var(--bg-secondary,rgba(0,0,0,.2));flex:none}',
     '.cc-inrow{display:flex;gap:7px;align-items:flex-end}',
+    // Narrow cell (phone, or a slim mosaic column): the message box gets the
+    // full width on its own row and the controls sit underneath, instead of all
+    // five competing for one line and squeezing the box to half width.
+    '.cc-narrow .cc-inrow{flex-wrap:wrap}',
+    '.cc-narrow .cc-input{flex:1 1 100%;order:1}',
+    '.cc-narrow .cc-actions{order:2;display:flex;gap:7px;width:100%;align-items:center}',
+    '.cc-narrow .cc-actions .cc-btn{flex:1;padding:8px 10px}',
+    '.cc-narrow .cc-attach{flex:none}',
+    '.cc-narrow .cc-meta{gap:6px;font-size:10.5px}',
+    '.cc-narrow .cc-sid{display:none}',          // duplicated by the cell header
+    '.cc-actions{display:contents}',              // wide: behaves as if unwrapped
     '.cc-input{flex:1;min-height:34px;max-height:180px;resize:none;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);padding:8px 10px;font-family:inherit;font-size:13px;line-height:1.45}',
     '.cc-input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}',
     '.cc-input:disabled{opacity:.55}',
@@ -330,17 +341,36 @@
     var fileInput = el('input');
     fileInput.type = 'file';
     fileInput.style.display = 'none';
+    // Wrapped in .cc-actions so a narrow cell can move them to their own row;
+    // at full width the wrapper is display:contents and changes nothing.
+    var actions = el('div', 'cc-actions');
+    actions.appendChild(attachBtn);
+    actions.appendChild(sendBtn);
+    actions.appendChild(stopBtn);
     inrow.appendChild(input);
-    inrow.appendChild(attachBtn);
-    inrow.appendChild(sendBtn);
-    inrow.appendChild(stopBtn);
+    inrow.appendChild(actions);
     inrow.appendChild(fileInput);
 
     var meta = el('div', 'cc-meta');
     var stateLbl = el('span', '', 'idle');
+    // Only modes the CLI will actually accept at runtime. bypassPermissions is
+    // deliberately absent: it can only be set at launch, and offering it here
+    // meant the dropdown showed a mode that was never in effect.
     var modeSel = el('select', 'cc-sel');
-    [['default', 'ask permissions'], ['acceptEdits', 'accept edits'], ['plan', 'plan mode'], ['dontAsk', "don't ask"], ['bypassPermissions', 'bypass all']]
-      .forEach(function (m) { var o = el('option'); o.value = m[0]; o.textContent = m[1]; modeSel.appendChild(o); });
+    var MODES = [['default', 'ask permissions'], ['acceptEdits', 'accept edits'],
+      ['auto', 'auto'], ['plan', 'plan mode'], ['dontAsk', "don't ask"]];
+    function buildModes(isBypass) {
+      modeSel.innerHTML = '';
+      // A bypass session is fixed for its lifetime — show that and nothing else.
+      (isBypass ? [['bypassPermissions', 'bypass all']] : MODES).forEach(function (m) {
+        var o = el('option'); o.value = m[0]; o.textContent = m[1]; modeSel.appendChild(o);
+      });
+      modeSel.disabled = !!isBypass;
+      modeSel.title = isBypass
+        ? 'This chat was launched with permissions bypassed — the mode is fixed for its lifetime'
+        : 'Permission mode for this chat';
+    }
+    buildModes(false);
     var enterBtn = el('button', 'cc-toggle');
     var sidLbl = el('span', 'cc-sid', '');
     sidLbl.style.display = 'none';
@@ -393,10 +423,33 @@
       enterBtn.title = sends
         ? 'Enter sends, Shift+Enter makes a newline — click to swap'
         : 'Enter makes a newline, Ctrl+Enter sends — click to swap';
-      input.placeholder = sends
+      // The long hint wraps to three lines in a phone-width cell and buries the
+      // box; the toggle beside it already says which key sends.
+      if (narrow) input.placeholder = 'Message Claude…';
+      else input.placeholder = sends
         ? 'Message Claude…  (Enter to send, Shift+Enter for newline)'
         : 'Message Claude…  (Ctrl+Enter to send, Enter for newline)';
     }
+
+    // Track the CELL's width, not the viewport: a chat can be a slim mosaic
+    // column on a wide screen and needs the same compact treatment.
+    var narrow = false;
+    function syncWidth() {
+      var w = root.clientWidth || 9999;
+      var want = w < 520;
+      if (want === narrow) return;
+      narrow = want;
+      root.classList.toggle('cc-narrow', narrow);
+      syncEnterMode();
+    }
+    var widthObserver = null;
+    if (window.ResizeObserver) {
+      widthObserver = new ResizeObserver(syncWidth);
+      widthObserver.observe(root);
+    } else {
+      window.addEventListener('resize', syncWidth);
+    }
+    setTimeout(syncWidth, 0);
     syncEnterMode();
     enterBtn.addEventListener('click', function () {
       enterMode = enterMode === 'send' ? 'newline' : 'send';
@@ -1010,6 +1063,7 @@
       activityNode = null; // detached by the wipe above; setState re-creates it
       (session.messages || []).forEach(addEntry);
       slashCommands = session.slashCommands || [];
+      buildModes(session.skipPermissions);
       modeSel.value = session.permissionMode || 'default';
       modelLbl.textContent = session.model || '';
       setSessionId(session.sessionId);
@@ -1084,6 +1138,8 @@
       destroy: function () {
         destroyed = true;
         stopTicker(); // closing a cell must not leave an interval running
+        if (widthObserver) { try { widthObserver.disconnect(); } catch (e) {} }
+        else window.removeEventListener('resize', syncWidth);
         try { wsSend({ type: 'unsubscribe-ui', id: sessionId }); } catch (e) {}
         input.removeEventListener('keydown', onKeyDown);
         hideSlash();
