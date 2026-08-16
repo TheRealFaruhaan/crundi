@@ -722,6 +722,22 @@ export function getWebappHtml(botUsername) {
     .cr-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 2px; }
     /* Resume-cost choice shown in the placeholder cell before any process spawns. */
     .cr-choice { gap: 7px !important; padding: 0 18px; text-align: center; }
+    /* Launching: the pressed button gets a spinner, the rest grey out. */
+    .cr-choice button:disabled { cursor: default; }
+    .cr-choice button:disabled:not(.cr-busy) { opacity: 0.4; }
+    .cr-choice button.cr-busy {
+      position: relative; color: transparent !important;
+    }
+    .cr-choice button.cr-busy::after {
+      content: ''; position: absolute; top: 50%; left: 50%;
+      width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px;
+      border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
+      border-radius: 50%; animation: crSpin 0.7s linear infinite;
+    }
+    @keyframes crSpin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .cr-choice button.cr-busy::after { animation-duration: 2s; }
+    }
     .cr-choice-title { font-size: 0.95rem; font-weight: 650; color: var(--text-primary); }
     .cr-choice-sub { font-size: 0.85rem; color: var(--text-secondary); max-width: 420px; }
     .cr-choice-meta { font-family: var(--mono); font-size: 0.76rem; color: var(--yellow); }
@@ -7574,7 +7590,22 @@ export function getWebappHtml(botUsername) {
           if (d.mode === 'chat' || d.mode === 'chat-skip') launchChatWithPreflight(d.lid, d.mode);
           else launchTerminal(d.mode, d.lid);
           break;
-        case 'chat-launch-mode': launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode); break;
+        case 'chat-launch-mode': {
+          // Spawning the CLI against a large transcript can take many seconds,
+          // and until it returns the panel looks inert — so the click reads as
+          // ignored and gets repeated, launching twice. Mark the pressed button
+          // and shut the whole choice down.
+          const btn = e.target.closest('[data-action="chat-launch-mode"]');
+          if (btn) {
+            if (btn.classList.contains('cr-busy')) break; // already launching
+            const panel = btn.closest('.cr-choice');
+            if (panel) panel.querySelectorAll('button').forEach(b => { b.disabled = true; });
+            btn.classList.add('cr-busy');
+            btn.disabled = true;
+          }
+          launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode);
+          break;
+        }
         case 'chat-resume': openChatResume(d.lid); break;
         case 'chat-resume-cancel': closeChatResume(); break;
         case 'chat-resume-pick': {
