@@ -139,6 +139,8 @@
     '.cc-sw-opt{position:relative;z-index:1;padding:2px 8px;font-size:11px;opacity:.45;transition:opacity .18s ease}',
     '.cc-sw:not(.alt) .cc-sw-opt:nth-child(2),.cc-sw.alt .cc-sw-opt:nth-child(3){opacity:1}',
     '.cc-sw:not(.alt) .cc-sw-opt:nth-child(2) b,.cc-sw.alt .cc-sw-opt:nth-child(3) b{color:var(--accent-hover)}',
+    // The switch shows WHICH key; this says what it does.
+    '.cc-sw-lbl{font-size:11px;color:inherit}',
     // Stop: icon by default, widens to reveal "Sure?" once armed.
     '.cc-stop{flex:none;height:34px;min-width:34px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0 8px;transition:.15s}',
     '.cc-stop:hover{color:var(--red);border-color:var(--red)}',
@@ -447,7 +449,7 @@
         + '<span class="cc-sw-thumb"></span>'
         + '<span class="cc-sw-opt"><b>⏎</b></span>'
         + '<span class="cc-sw-opt"><b>⌃⏎</b></span>'
-        + '</span>';
+        + '</span><span class="cc-sw-lbl">sends</span>';
       enterBtn.title = sends
         ? 'Enter sends, Shift+Enter makes a newline — click to swap'
         : 'Enter makes a newline, Ctrl+Enter sends — click to swap';
