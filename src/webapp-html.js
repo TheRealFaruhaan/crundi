@@ -2520,6 +2520,56 @@ export function getWebappHtml(botUsername) {
 
     // ─── State ───
     let token = localStorage.getItem('crundi_token');
+    let refreshToken = localStorage.getItem('crundi_refresh');
+    // One shared in-flight refresh. Without this, a burst of concurrent 401s
+    // would each rotate the refresh token; the second rotation would look like
+    // a replay to the server and revoke the whole login.
+    let refreshInFlight = null;
+    let refreshTimer = null;
+    let appReady = false;   // set by showApp(); gates the 401 reload recovery
+
+    function storeSession(d) {
+      if (!d || !d.token) return false;
+      token = d.token;
+      localStorage.setItem('crundi_token', token);
+      if (d.refreshToken) {
+        refreshToken = d.refreshToken;
+        localStorage.setItem('crundi_refresh', refreshToken);
+      }
+      scheduleRefresh(d.expiresIn);
+      return true;
+    }
+
+    function clearSession() {
+      token = null; refreshToken = null;
+      localStorage.removeItem('crundi_token');
+      localStorage.removeItem('crundi_refresh');
+      clearTimeout(refreshTimer);
+    }
+
+    // Renew a little before expiry so an idle tab rarely serves a 401 at all;
+    // apiFetch's retry is the safety net for sleep/suspend, where timers stall.
+    function scheduleRefresh(expiresIn) {
+      clearTimeout(refreshTimer);
+      const secs = Number(expiresIn);
+      if (!secs || !isFinite(secs)) return;
+      refreshTimer = setTimeout(refreshSession, Math.max(30, secs * 0.8) * 1000);
+    }
+
+    function refreshSession() {
+      if (refreshInFlight) return refreshInFlight;
+      if (!refreshToken) return Promise.resolve(false);
+      refreshInFlight = fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      })
+        .then(r => r.json())
+        .then(d => (d && d.ok) ? storeSession(d) : false)
+        .catch(() => false)
+        .then(ok => { refreshInFlight = null; return ok; });
+      return refreshInFlight;
+    }
     let ws = null;
     // Multi-terminal state: each live terminal gets an xterm view; the unified
     // input box / tool buttons act on whichever terminal is focused. Pending
@@ -2727,9 +2777,7 @@ export function getWebappHtml(botUsername) {
           body: JSON.stringify({ telegramLogin: user }),
         });
         const data = await res.json();
-        if (data.ok) {
-          token = data.token;
-          localStorage.setItem('crundi_token', token);
+        if (data.ok && storeSession(data)) {
           showApp();
         } else {
           toast('Login failed: ' + (data.error || 'Unknown error'), 'error');
@@ -2765,12 +2813,28 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── API ───
-    function apiFetch(path, opts = {}) {
+    function apiFetch(path, opts = {}, _retried = false) {
       if (token) {
         opts.headers = opts.headers || {};
         opts.headers['Authorization'] = 'Bearer ' + token;
       }
-      return fetch(path, opts);
+      return fetch(path, opts).then(res => {
+        // A 401 means the access token aged out. Renew once and replay. Bodies
+        // here are strings/JSON (never streams), so the request is safe to
+        // re-send; _retried stops a revoked session from looping.
+        if (res.status !== 401 || _retried || path.indexOf('/api/auth/') === 0) return res;
+        return refreshSession().then(ok => {
+          if (ok) return apiFetch(path, opts, true);
+          // Refresh is gone too — the session is genuinely over. Reloading
+          // re-runs init(), which re-authenticates from the stashed local key
+          // under Electron or shows the login screen on the web. Suppressed
+          // until the app is up: init() calls checkAuth() through here, and
+          // reloading from inside it would loop.
+          clearSession();
+          if (appReady) location.reload();
+          return res;
+        });
+      });
     }
 
     // ─── Auth Check ───
@@ -3194,6 +3258,7 @@ export function getWebappHtml(botUsername) {
     }
 
     function showApp() {
+      appReady = true;
       $('#login-screen').style.display = 'none';
       $('#app').classList.add('visible');
       connectWS();
@@ -5231,19 +5296,25 @@ export function getWebappHtml(botUsername) {
     // (forcing a reconnect on a healthy connection makes the badge flap).
     function wsHealthy() { return ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING); }
     function sseHealthy() { return sse && sse.readyState !== EventSource.CLOSED; }
-    function ensureConnections() {
+    async function ensureConnections() {
       if (!token) return false;
+      // WS/SSE authenticate from the query string at connect time and have no
+      // 401 retry of their own, so a token that aged out while the machine was
+      // asleep (timers don't fire there, so the proactive refresh was skipped)
+      // would make the socket 401 and flap on the 3s reconnect loop. Renew
+      // first when either side is actually down.
+      if ((!wsHealthy() || !sseHealthy()) && refreshToken) await refreshSession();
       let reconnected = false;
       if (!wsHealthy()) { connectWS(); reconnected = true; }   // re-subscribes on open
       if (!sseHealthy()) { connectSSE(); reconnected = true; } // server re-pushes state + usage
       return reconnected;
     }
     let resumeTimer = null;
-    function onResume() {
+    async function onResume() {
       if (document.visibilityState === 'hidden') return;
       reportPresence(true); // re-assert in case a heartbeat lapsed while the thread was busy/backgrounded
       if (token) loadUsage(); // always refresh usage on resume (cheap, server-cached, no force)
-      if (!ensureConnections()) return; // connections already alive → don't touch them
+      if (!await ensureConnections()) return; // connections already alive → don't touch them
       clearTimeout(resumeTimer);
       resumeTimer = setTimeout(() => { // we actually had to reconnect → refresh the active view
         if (!token || !$('#app').classList.contains('visible')) return;
@@ -9336,9 +9407,7 @@ export function getWebappHtml(botUsername) {
           body: JSON.stringify({ initData: tg.initData }),
         });
         const data = await res.json();
-        if (data.ok && data.token) {
-          token = data.token;
-          localStorage.setItem('crundi_token', token);
+        if (data.ok && storeSession(data)) {
           tg.ready();
           tg.expand();
           return true;
@@ -9350,7 +9419,13 @@ export function getWebappHtml(botUsername) {
     // ─── Local auth (Electron / localhost) ───
     async function tryLocalAuth() {
       const params = new URLSearchParams(location.search);
-      const key = params.get('key');
+      // Electron only puts ?key= on the URL at first load and we strip it
+      // below, so stash it for the lifetime of this window. Without it a
+      // reload after the refresh token dies has no way to re-authenticate,
+      // which is what used to force a full app restart. sessionStorage (not
+      // local) so it dies with the window; the server only accepts this key
+      // from localhost anyway.
+      const key = params.get('key') || sessionStorage.getItem('crundi_local_key');
       if (!key) return false;
       try {
         const res = await fetch('/api/auth/local', {
@@ -9359,9 +9434,8 @@ export function getWebappHtml(botUsername) {
           body: JSON.stringify({ key }),
         });
         const data = await res.json();
-        if (data.ok && data.token) {
-          token = data.token;
-          localStorage.setItem('crundi_token', token);
+        if (data.ok && storeSession(data)) {
+          try { sessionStorage.setItem('crundi_local_key', key); } catch { /* ignore */ }
           // Clean key from URL
           history.replaceState(null, '', location.pathname);
           return true;
@@ -9377,8 +9451,8 @@ export function getWebappHtml(botUsername) {
     function consumeRedirectToken() {
       const m = location.hash.match(/(?:^#|&)token=([a-f0-9]+)/);
       if (m) {
-        token = m[1];
-        localStorage.setItem('crundi_token', token);
+        const r = location.hash.match(/(?:^#|&)refresh=([a-f0-9]+)/);
+        storeSession({ token: m[1], refreshToken: r ? r[1] : null });
         history.replaceState(null, '', location.pathname);
         return true;
       }
@@ -9404,8 +9478,7 @@ export function getWebappHtml(botUsername) {
       } else if (await tryLocalAuth()) {
         showApp(); connectSSE(); checkImport();
       } else {
-        token = null;
-        localStorage.removeItem('crundi_token');
+        clearSession();
         $('#login-screen').style.display = '';
         injectTelegramWidget();
       }

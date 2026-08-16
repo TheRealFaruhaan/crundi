@@ -146,7 +146,13 @@ self.addEventListener('fetch', (e) => {
 `;
 
 const TUNNEL_KEY = '__webapp__';
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (webapp sessions last longer)
+// Short-lived access token + long-lived rotating refresh token, so a session
+// survives indefinitely while it is being used but a stolen access token is
+// only useful for minutes. Previously a single 24h token expired on an absolute
+// timer with no renewal path, which silently bricked the Electron window (it
+// authenticates once from ?key= at load and cannot re-run that flow).
+const ACCESS_TTL_MS = 15 * 60 * 1000;               // 15 minutes
+const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;    // 30 days, sliding
 
 const startedAt = Date.now();
 
@@ -178,8 +184,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     try { writeFileSync(keyFile, internalApiKey); } catch { /* ignore */ }
   }
 
-  // Session tokens: token → { username, createdAt }
+  // Access tokens: token → { username, familyId, expiresAt }
   const tokens = new Map();
+  // Refresh tokens: token → { username, familyId, expiresAt, used }
+  // A "family" is one login. Rotation issues a new refresh token per use and
+  // marks the old one used; presenting a used token means it leaked, so the
+  // whole family is revoked rather than just that token.
+  const refreshTokens = new Map();
 
   // Temporary file shares: token → { filePath, filename, expiresAt }
   const sharedFiles = new Map();
@@ -249,30 +260,79 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return { valid: true, user: data };
   }
 
-  function createToken(username) {
-    const tok = randomBytes(32).toString('hex');
-    tokens.set(tok, { username, createdAt: Date.now() });
-    return tok;
+  /** Drop every token belonging to one login. Used on logout and on reuse detection. */
+  function revokeFamily(familyId) {
+    for (const [t, e] of tokens) if (e.familyId === familyId) tokens.delete(t);
+    for (const [t, e] of refreshTokens) if (e.familyId === familyId) refreshTokens.delete(t);
+  }
+
+  /**
+   * Mint an access/refresh pair. `familyId` continues an existing login (on
+   * rotation); omitting it starts a new one.
+   *
+   * @returns {{ token: string, refreshToken: string, expiresIn: number }}
+   */
+  function createSession(username, familyId = randomBytes(16).toString('hex')) {
+    const now = Date.now();
+    const token = randomBytes(32).toString('hex');
+    const refreshToken = randomBytes(32).toString('hex');
+    tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS });
+    refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false });
+    return { token, refreshToken, expiresIn: Math.floor(ACCESS_TTL_MS / 1000) };
+  }
+
+  /** Back-compat shim: callers that only need an access token. */
+  function createToken(username) { return createSession(username).token; }
+
+  /**
+   * Exchange a refresh token for a fresh pair, rotating it.
+   *
+   * @returns {{ ok: true, token, refreshToken, expiresIn } | { ok: false, error: string }}
+   */
+  function rotateRefresh(rt) {
+    const entry = rt && refreshTokens.get(rt);
+    if (!entry) return { ok: false, error: 'Invalid refresh token' };
+    if (entry.used) {
+      // Replay of an already-rotated token — assume the token leaked and cut
+      // the whole login, forcing a real re-auth.
+      revokeFamily(entry.familyId);
+      return { ok: false, error: 'Refresh token reused' };
+    }
+    if (Date.now() >= entry.expiresAt) {
+      refreshTokens.delete(rt);
+      return { ok: false, error: 'Refresh token expired' };
+    }
+    // Kept (not deleted) with used=true so a later replay is distinguishable
+    // from an unknown token and can trip the revocation above. Swept once it
+    // passes expiresAt.
+    entry.used = true;
+    return { ok: true, ...createSession(entry.username, entry.familyId) };
+  }
+
+  /** Spent refresh tokens are retained for replay detection; drop them at expiry. */
+  function sweepTokens() {
+    const now = Date.now();
+    for (const [t, e] of tokens) if (now >= e.expiresAt) tokens.delete(t);
+    for (const [t, e] of refreshTokens) if (now >= e.expiresAt) refreshTokens.delete(t);
+  }
+  const tokenSweepTimer = setInterval(sweepTokens, 60 * 60 * 1000);
+  if (tokenSweepTimer.unref) tokenSweepTimer.unref();
+
+  function checkAccess(tok) {
+    const entry = tok && tokens.get(tok);
+    if (!entry) return false;
+    if (Date.now() >= entry.expiresAt) { tokens.delete(tok); return false; }
+    return true;
   }
 
   function validateToken(req) {
-    // Check Authorization header
+    // Authorization header (normal API calls)
     const auth = req.headers['authorization'];
-    if (auth?.startsWith('Bearer ')) {
-      const tok = auth.slice(7);
-      const entry = tokens.get(tok);
-      if (entry && Date.now() - entry.createdAt < TOKEN_TTL_MS) return true;
-      if (entry) tokens.delete(tok);
-    }
-    // Check query param (for WebSocket/SSE)
+    if (auth?.startsWith('Bearer ') && checkAccess(auth.slice(7))) return true;
+    // Query param (WebSocket/SSE, which can't set headers). Long-lived sockets
+    // are only authorized at connect; the client reconnects with a fresh token.
     const url = new URL(req.url, 'http://localhost');
-    const tok = url.searchParams.get('token');
-    if (tok) {
-      const entry = tokens.get(tok);
-      if (entry && Date.now() - entry.createdAt < TOKEN_TTL_MS) return true;
-      if (entry) tokens.delete(tok);
-    }
-    return false;
+    return checkAccess(url.searchParams.get('token'));
   }
 
   function extractToken(req) {
@@ -765,8 +825,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (parsed?.telegramLogin) {
         const result = validateTelegramLogin(parsed.telegramLogin);
         if (!result.valid) return json(res, { ok: false, error: result.error }, 403);
-        const token = createToken(result.user.username);
-        return json(res, { ok: true, token, user: result.user });
+        const session = createSession(result.user.username);
+        return json(res, { ok: true, ...session, user: result.user });
       }
 
       return json(res, { ok: false, error: 'Missing auth data' }, 400);
@@ -786,8 +846,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         res.end();
         return;
       }
-      const token = createToken(result.user.username);
-      res.writeHead(302, { Location: '/#token=' + token });
+      const session = createSession(result.user.username);
+      res.writeHead(302, {
+        Location: '/#token=' + session.token + '&refresh=' + session.refreshToken,
+      });
       res.end();
       return;
     }
@@ -824,8 +886,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const allowed = config.allowedUsername.replace(/^@/, '').toLowerCase();
       if (username !== allowed) return json(res, { ok: false, error: 'Unauthorized user' }, 403);
 
-      const token = createToken(username);
-      return json(res, { ok: true, token, user });
+      return json(res, { ok: true, ...createSession(username), user });
     }
 
     // ─── Local auth (Electron / localhost only) ───
@@ -837,8 +898,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       let parsed;
       try { parsed = JSON.parse(body); } catch { /* ignore */ }
       if (parsed?.key !== internalApiKey) return json(res, { ok: false, error: 'Invalid key' }, 403);
-      const token = createToken(config.allowedUsername || 'local');
-      return json(res, { ok: true, token });
+      return json(res, { ok: true, ...createSession(config.allowedUsername || 'local') });
+    }
+
+    // ─── Refresh ───
+    // Deliberately above the auth gate below: the access token is expected to
+    // be expired here, so requiring one would defeat the purpose.
+    if (path === '/api/auth/refresh' && req.method === 'POST') {
+      const body = await readBody(req);
+      let parsed;
+      try { parsed = JSON.parse(body); } catch { /* ignore */ }
+      const result = rotateRefresh(parsed?.refreshToken);
+      return json(res, result, result.ok ? 200 : 401);
     }
 
     // ─── SSE endpoint ───
@@ -2484,6 +2555,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       port = null;
       tunnelUrl = null;
       tokens.clear();
+      refreshTokens.clear();
       console.log('[webapp] Stopped');
     },
 
