@@ -30,6 +30,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Guards the class of bug that only shows up in a browser: webapp-html.js
+      # is one big template literal, so a SyntaxError in the page's own JS gets
+      # past `node --check` and ships a UI that dies at boot. Runs here because
+      # the build below calls electron-builder directly and skips `prebuild`.
+      - name: Check syntax (server + embedded browser JS)
+        run: npm run check
+
       - name: Build & publish (unsigned — no cert on the runner)
         run: npx electron-builder --win --publish always
         env:

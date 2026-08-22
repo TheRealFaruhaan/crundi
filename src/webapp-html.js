@@ -1501,6 +1501,15 @@ export function getWebappHtml(botUsername) {
     /* Notification matrix — a control-panel grid of tri-state "lamps". Each event
        is a row; the active mode lights up in its column colour (green=Always,
        indigo=When Away, dim=Never) so the whole board reads at a glance. */
+    .seg-pref-row { display: flex; align-items: flex-start; gap: 14px; }
+    .seg-pref-row > div:first-child { flex: 1; min-width: 0; }
+    .set-tgl-lbl { color: var(--text-primary); font-size: 0.85rem; margin-bottom: 4px; }
+    .set-tgl { flex: none; margin-top: 2px; width: 40px; height: 22px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--bg-tertiary); cursor: pointer; padding: 0; position: relative; transition: background .16s, border-color .16s; }
+    .set-tgl.on { background: var(--accent); border-color: var(--accent); }
+    .set-tgl-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--text-primary); transition: transform .16s; }
+    .set-tgl.on .set-tgl-knob { transform: translateX(18px); background: #fff; }
     .ntf-matrix { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-secondary); }
     .ntf-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 62px); align-items: stretch; border-top: 1px solid var(--border); }
     .ntf-matrix > .ntf-row:first-child { border-top: none; }
@@ -3337,6 +3346,7 @@ export function getWebappHtml(botUsername) {
       connectWS();
       loadProjectConfig();
       loadProjects();
+      syncTabScope();
       setupTerminalArea();
       updateMobileLayoutBtn();
       loadUsage();
@@ -3513,7 +3523,7 @@ export function getWebappHtml(botUsername) {
       focusedTermId = null;
       renderProjects();
       closeSidebar();
-      $('#tab-bar').classList.add('visible');
+      syncTabScope();
       switchTab('workbench');
       renderTermGrid();
     }
@@ -3715,6 +3725,7 @@ export function getWebappHtml(botUsername) {
           currentProject = null;
           $('#current-project').textContent = 'No project';
           focusedTermId = null;
+          syncTabScope();
           renderTermGrid();
         }
         await loadProjects();
@@ -5624,6 +5635,27 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Tabs ───
+    // Tabs that mean something with no project open. Media and Mindmap have a
+    // global scope of their own; Info, Secrets and Settings are app-level. The
+    // rest are meaningless without a project, so they stay hidden rather than
+    // being shown and then erroring.
+    const GLOBAL_TABS = ['media', 'mindmap', 'info', 'secrets', 'settings'];
+
+    function syncTabScope() {
+      const bar = $('#tab-bar');
+      if (!bar) return;
+      bar.classList.add('visible');
+      const global = !currentProject;
+      bar.classList.toggle('global-only', global);
+      $$('.tab-btn').forEach(b => {
+        const ok = !global || GLOBAL_TABS.indexOf(b.dataset.tab) >= 0;
+        b.style.display = ok ? '' : 'none';
+      });
+      // Stranded on a tab that just became meaningless — fall back to Info,
+      // which is the one that explains the state you are in.
+      if (global && GLOBAL_TABS.indexOf(currentTab) < 0) switchTab('info');
+    }
+
     function switchTab(tab) {
       // Leaving the Secrets tab — forget any revealed values for safety.
       if (currentTab === 'secrets' && tab !== 'secrets') {
@@ -7334,6 +7366,7 @@ export function getWebappHtml(botUsername) {
         const data = await r.json();
         if (!data.ok) { panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(data.error) + '</p></div>'; return; }
         const s = data.settings;
+        const warmStatus = data.limitWarmup || { enabled: false };
         const inputStyle = 'width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:13px;box-sizing:border-box;';
         const monoStyle = inputStyle + 'font-family:var(--mono);';
         const labelStyle = 'display:block;color:var(--text-secondary);font-size:0.78rem;margin-bottom:4px;';
@@ -7406,6 +7439,19 @@ export function getWebappHtml(botUsername) {
           + '<p style="' + hintStyle + ';margin-bottom:14px;">Telegram pings per event. \\u201cAlways\\u201d sends every time; \\u201cWhen Away\\u201d only while you\\u2019re not focused on Crundi (browser tab / Electron app); \\u201cNever\\u201d is off.</p>'
           + buildNotifyMatrix()
           + '</div>'
+          // Pre-start the rolling 5h window while idle. Off by default: it
+          // spends the user's own quota, so it must be asked for.
+          + '<div class="info-section"><h4>Usage</h4>'
+          + '<div class="seg-pref-row">'
+          + '<div><div class="set-tgl-lbl">Keep the 5-hour window warm</div>'
+          + '<p style="' + hintStyle + '">Claude’s 5-hour allowance is a rolling window that starts on your first message — so beginning real work also starts the clock, and it can run out mid-session. '
+          + 'When on, Crundi checks about once a minute and, if the window has lapsed while you were idle, sends a one-word message to open the next one. '
+          + 'Never while a session is working, and never if your own work already opened a window.</p>'
+          + (warmStatus.lastWarmAt ? '<p style="' + hintStyle + '">Last: ' + escHtml(warmStatus.lastWarmResult || '—') + ' · ' + escHtml(new Date(warmStatus.lastWarmAt).toLocaleString()) + '</p>' : '')
+          + (warmStatus.lastKnownReset ? '<p style="' + hintStyle + '">Current window resets ' + escHtml(new Date(warmStatus.lastKnownReset).toLocaleString()) + '</p>' : '')
+          + '</div>'
+          + '<button type="button" class="set-tgl' + (warmStatus.enabled ? ' on' : '') + '" id="set-limit-warmup" role="switch" aria-checked="' + (warmStatus.enabled ? 'true' : 'false') + '" data-action="toggle-limit-warmup"><span class="set-tgl-knob"></span></button>'
+          + '</div></div>'
           // Client-side terminal preferences — applied instantly, no restart.
           + '<div class="info-section"><h4>Terminal</h4>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">New Line Key</label>'
@@ -7525,6 +7571,29 @@ export function getWebappHtml(botUsername) {
         case 'update-install':
           if (window.api && window.api.installUpdate) window.api.installUpdate().catch(() => {});
           break;
+        case 'toggle-limit-warmup': {
+          const btn = $('#set-limit-warmup');
+          if (!btn) break;
+          const on = !btn.classList.contains('on');
+          btn.classList.toggle('on', on);
+          btn.setAttribute('aria-checked', on ? 'true' : 'false');
+          apiFetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limitWarmup: on }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) throw new Error(dd.error || 'Failed');
+              toast(on ? 'Crundi will keep the 5-hour window warm' : 'Window warm-up off', 'success');
+            })
+            .catch(err => {
+              btn.classList.toggle('on', !on);
+              btn.setAttribute('aria-checked', !on ? 'true' : 'false');
+              toast('Could not change that: ' + err.message, 'error');
+            });
+          break;
+        }
         case 'notify-pref': {
           const field = d.field, val = d.val;
           if (!field || !['always', 'away', 'never'].includes(val)) break;
@@ -8910,7 +8979,7 @@ export function getWebappHtml(botUsername) {
         const chip = (k, label, icon) => '<button class="media-chip' + (state.kind === k ? ' on' : '') + '" data-media-kind="' + k + '">' + (icon ? ic(icon) : '') + label + '</button>';
         h += chip('all', 'All') + chip('kanban', 'Kanban', 'kanban') + chip('mindmap', 'Mindmap', 'mindmap') + chip('unlinked', 'Unlinked');
         h += '<div class="spacer"></div>';
-        h += '<button class="media-chip' + (state.scope === 'project' ? ' on' : '') + '" data-media-scope="project">This project</button>';
+        if (currentProject) h += '<button class="media-chip' + (state.scope === 'project' ? ' on' : '') + '" data-media-scope="project">This project</button>';
         h += '<button class="media-chip' + (state.scope === 'all' ? ' on' : '') + '" data-media-scope="all">All projects</button>';
       }
       h += '</div><div class="media-body"></div>';
@@ -8941,6 +9010,10 @@ export function getWebappHtml(botUsername) {
     // other workbench panels).
     function loadMedia() {
       const host = $('#media-panel'); if (!host) return;
+      // With no project open, "this project" can only ever be empty — start on
+      // All projects rather than showing an empty shelf and a nudge to pick a
+      // scope the user cannot satisfy yet.
+      if (!currentProject && mediaTabState.scope === 'project') mediaTabState.scope = 'all';
       mountMediaBrowser(host, mediaTabState);
     }
     // Refresh every mounted media browser (tab/panel + open modal) after a change.

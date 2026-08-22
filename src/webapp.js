@@ -33,6 +33,7 @@ import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
 import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
+import { createLimitWarmer } from './limit-warmer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -476,6 +477,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (ts) agentStateTs.set(tid, ts);
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
+    if (state === 'working' || state === 'needs-input') limitWarmer.markActivity();
     if (state !== prev && (state === 'idle' || state === 'needs-input')) {
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
@@ -484,6 +486,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
     broadcastState();
   }
+
+  // Pre-start the rolling 5-hour window while idle (opt-in). handleAgentState is
+  // the single choke point every Claude session's activity passes through, so it
+  // is the honest place to answer "has any real work happened lately?".
+  // Constructed BEFORE the state subscription below: handleAgentState reads this
+  // binding, and a session changing state in between would hit the const's
+  // temporal dead zone.
+  const limitWarmer = createLimitWarmer({
+    getUsage: (opts) => usage.getUsage(opts || {}),
+    isBusy: () => [...agentStates.values()].some(v => v === 'working' || v === 'needs-input'),
+  });
 
   // Chat sessions push their agent state as it changes. These arrive in-order
   // from a single process, so no timestamp reordering guard is needed.
@@ -1496,7 +1509,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           settings[key] = m ? m[1].trim() : '';
         }
         const chatId = getChatId ? getChatId() : '';
-        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs });
+        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs, limitWarmup: limitWarmer.status() });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
@@ -1531,6 +1544,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (setChatId) setChatId(newId);
         }
         // Live update (no restart): per-event notification policy.
+        if (body.limitWarmup !== undefined) limitWarmer.setEnabled(!!body.limitWarmup);
         if (body.notifyPrefs && typeof body.notifyPrefs === 'object') {
           for (const k of Object.keys(NOTIFY_DEFAULTS)) {
             if (NOTIFY_MODES.includes(body.notifyPrefs[k])) notifyPrefs[k] = body.notifyPrefs[k];

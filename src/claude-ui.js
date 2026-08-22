@@ -312,6 +312,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // before the count fills.
   const PERSIST_MAX_MESSAGES = 200;
   const PERSIST_MAX_BYTES = 256 * 1024;
+  // Subagent transcripts are stored too, so reopening a project still opens
+  // the bubbles. They are the first thing sacrificed when the file overruns:
+  // a subagent's working-out is the least valuable part of "what was said".
+  const PERSIST_MAX_AGENTS = 6;
+  const PERSIST_MAX_AGENT_MESSAGES = 40;
 
   function historyFile(alias) { return join(HISTORY_DIR, encodeURIComponent(alias) + '.json'); }
 
@@ -330,11 +335,19 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         model: s.model, savedAt: Date.now(),
       };
       let msgs = s.messages.filter(m => PERSIST_KINDS.has(m.kind)).slice(-PERSIST_MAX_MESSAGES);
-      let json = JSON.stringify({ ...head, messages: msgs });
-      // Drop from the front until it fits — oldest is the cheapest to lose.
+      let agents = [...s.agents.values()].slice(-PERSIST_MAX_AGENTS).map(a => ({
+        ...a, messages: a.messages.slice(-PERSIST_MAX_AGENT_MESSAGES),
+      }));
+      let json = JSON.stringify({ ...head, messages: msgs, agents });
+      // Shed the agent transcripts first, then trim conversation from the
+      // front — oldest is the cheapest to lose.
+      if (json.length > PERSIST_MAX_BYTES && agents.length) {
+        agents = agents.map(a => ({ ...a, messages: [] }));
+        json = JSON.stringify({ ...head, messages: msgs, agents });
+      }
       while (json.length > PERSIST_MAX_BYTES && msgs.length > 1) {
         msgs = msgs.slice(Math.max(1, Math.floor(msgs.length * 0.25)));
-        json = JSON.stringify({ ...head, messages: msgs });
+        json = JSON.stringify({ ...head, messages: msgs, agents });
       }
       const tmp = historyFile(s.alias) + '.tmp';
       writeFileSync(tmp, json);
@@ -385,19 +398,207 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * @param {object} s      session
    * @param {string} uuid   conversation the process is attaching to
    */
-  function replayForContinue(s, uuid) {
-    if (s.replayed) return;
-    s.replayed = true;
+  function replayForContinue(s, uuid, authoritative = false) {
+    // Guard on having actually spliced, not on having tried. The first attempt
+    // runs against a GUESSED uuid; when init reveals a different one we retry,
+    // and that retry must be able to proceed — but must never splice a second
+    // copy if the first one landed.
+    if (s.replaySpliced || s.replayTriedFor === uuid) return;
+    s.replayTriedFor = uuid;
     const d = loadPersisted(s.alias);
     if (!d || !d.messages.length) return;
-    if (d.uuid !== uuid) { clearPersisted(s.alias); return; }  // different conversation
+    if (d.uuid !== uuid) {
+      // A mismatch against a GUESS proves nothing — the guess is just "the
+      // newest transcript on disk", and --continue may well have attached
+      // somewhere else. Deleting here destroyed the stored transcript AND left
+      // the post-init retry nothing to find, so the retry could never succeed.
+      // Only the uuid the CLI itself reports is grounds for discarding it.
+      if (authoritative) clearPersisted(s.alias);
+      return;
+    }
     s.messages = [
       ...d.messages,
       { id: genId(), kind: 'notice', text: '— earlier messages in this conversation —', seq: nextSeq() },
       ...s.messages,
     ];
+    for (const a of d.agents || []) {
+      if (a && a.toolUseId && !s.agents.has(a.toolUseId)) {
+        s.agents.set(a.toolUseId, { ...a, messages: a.messages || [] });
+      }
+    }
+    s.replaySpliced = true;
     s.emitter.emit('event', { type: 'history', session: snapshot(s) });
     console.log(`[claude-ui] Replayed ${d.messages.length} stored entries for "${s.alias}"`);
+  }
+
+  // ─── Subagents ───
+  //
+  // When Claude launches a Task/Agent subagent, the CLI streams that agent's
+  // OWN turns up the same pipe, tagged with `parent_tool_use_id` = the id of
+  // the tool_use that spawned it. Verified on the wire: two parallel Explore
+  // agents produced nine `assistant` messages and six `user` messages, all
+  // carrying a parent id, interleaved with each other and with the main thread.
+  //
+  // Treating those as main-thread messages was wrong twice over. They rendered
+  // in the transcript as if the user's own Claude had said them, and every
+  // text/thinking block among them consumed a slot from streamedQueue — which
+  // belongs to the MAIN thread — so a subagent's reasoning could overwrite the
+  // text the user was watching stream in. Both faults are fixed by routing on
+  // the parent id before any of that machinery runs.
+  //
+  // Partial-message deltas are always main-thread (parent id null on every
+  // stream_event observed), so blocks/streamedQueue stay single-threaded and
+  // need no partitioning — a subagent's text arrives only as complete messages.
+
+  const MAX_AGENT_MESSAGES = 150;
+  // A long session can spawn a great many subagents, and each one holds its own
+  // transcript, so the count needs a ceiling of its own — MAX_AGENT_MESSAGES
+  // only bounds a single agent. Finished agents are dropped oldest-first; a
+  // running one is never dropped, since its bubble is still on screen.
+  const MAX_AGENTS = 40;
+  // Agent tool output is supporting detail, not the conversation, so it is kept
+  // far tighter than the main transcript's MAX_TEXT (200k chars each, which
+  // across 40 agents x 150 entries is a memory problem rather than a feature).
+  const MAX_AGENT_TEXT = 20_000;
+
+  function trimAgents(s) {
+    if (s.agents.size <= MAX_AGENTS) return;
+    const drop = (id, a) => {
+      s.agents.delete(id);
+      if (a.taskId) s.agentsByTask.delete(a.taskId);
+    };
+    for (const [id, a] of s.agents) {
+      if (s.agents.size <= MAX_AGENTS) break;
+      if (a.status === 'running') continue;
+      drop(id, a);
+    }
+    // An agent whose terminal status never arrives (CLI killed mid-task) stays
+    // 'running' forever and would otherwise be permanently exempt, so the cap
+    // could be exceeded without limit. Past twice the cap, age wins.
+    if (s.agents.size > MAX_AGENTS * 2) {
+      for (const [id, a] of s.agents) {
+        if (s.agents.size <= MAX_AGENTS) break;
+        drop(id, a);
+      }
+    }
+  }
+
+  /** Get (or lazily create) the record for the subagent behind a tool_use id. */
+  function getAgent(s, toolUseId) {
+    let a = s.agents.get(toolUseId);
+    if (!a) {
+      a = {
+        toolUseId, taskId: '', description: '', step: '', subagentType: '', prompt: '',
+        status: 'running', summary: '', usage: null, lastTool: '',
+        startedAt: Date.now(), endedAt: 0, messages: [],
+      };
+      s.agents.set(toolUseId, a);
+      trimAgents(s);
+    }
+    return a;
+  }
+
+  /** Strip the transcript down to what the client needs to draw a bubble. */
+  function agentMeta(a) {
+    const { messages, ...meta } = a;
+    return { ...meta, count: messages.length };
+  }
+
+  function emitAgent(s, a) {
+    s.emitter.emit('event', { type: 'agent', agent: agentMeta(a) });
+    schedulePersist(s);
+  }
+
+  function agentEntry(s, a, entry) {
+    entry.seq = nextSeq();
+    a.messages.push(entry);
+    if (a.messages.length > MAX_AGENT_MESSAGES) {
+      a.messages.splice(0, a.messages.length - MAX_AGENT_MESSAGES);
+    }
+    s.emitter.emit('event', { type: 'agent-entry', toolUseId: a.toolUseId, entry });
+    schedulePersist(s);
+    return entry;
+  }
+
+  function agentPatch(s, a, entry, patch) {
+    Object.assign(entry, patch);
+    s.emitter.emit('event', { type: 'agent-patch', toolUseId: a.toolUseId, id: entry.id, patch });
+    schedulePersist(s);
+  }
+
+  /** A subagent's own assistant turn. */
+  function handleAgentAssistant(s, msg, toolUseId) {
+    const a = getAgent(s, toolUseId);
+    for (const block of msg.message?.content || []) {
+      if (block.type === 'text' || block.type === 'thinking') {
+        agentEntry(s, a, {
+          id: genId(),
+          kind: block.type === 'text' ? 'assistant-text' : 'thinking',
+          text: (block.type === 'text' ? block.text : block.thinking) || '',
+          tokens: 0,
+        });
+      } else if (block.type === 'tool_use') {
+        agentEntry(s, a, {
+          id: genId(), kind: 'tool', toolUseId: block.id, name: block.name,
+          input: block.input || {}, status: 'running', result: null, isError: false,
+        });
+      }
+    }
+  }
+
+  /** A subagent's tool results (and its opening prompt, which we skip). */
+  function handleAgentUser(s, msg, toolUseId) {
+    const a = getAgent(s, toolUseId);
+    for (const block of msg.message?.content || []) {
+      if (block.type !== 'tool_result') continue;
+      const target = [...a.messages].reverse().find(e => e.kind === 'tool' && e.toolUseId === block.tool_use_id);
+      if (!target) continue;
+      const content = Array.isArray(block.content)
+        ? block.content.map(c => (c.type === 'text' ? c.text : `[${c.type}]`)).join('\n')
+        : (typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''));
+      agentPatch(s, a, target, {
+        status: 'done', result: String(content).slice(0, MAX_AGENT_TEXT), isError: !!block.is_error,
+      });
+    }
+  }
+
+  /**
+   * Agent lifecycle, reported as `system` messages alongside the transcript:
+   * task_started (id, description, subagent_type, prompt), task_progress
+   * (running commentary + token usage), task_updated (status patch, keyed by
+   * task_id only) and task_notification (final status, summary, usage).
+   */
+  function handleTaskEvent(s, msg) {
+    const toolUseId = msg.tool_use_id || s.agentsByTask.get(msg.task_id) || '';
+    if (!toolUseId) return;
+    const a = getAgent(s, toolUseId);
+    if (msg.task_id) { a.taskId = msg.task_id; s.agentsByTask.set(msg.task_id, toolUseId); }
+
+    if (msg.subtype === 'task_started') {
+      a.description = msg.description || a.description;
+      a.subagentType = msg.subagent_type || a.subagentType;
+      a.prompt = String(msg.prompt || a.prompt).slice(0, MAX_TEXT);
+      a.status = 'running';
+    } else if (msg.subtype === 'task_progress') {
+      // task_progress reuses `description` for the CURRENT STEP ("Reading
+      // README.md"), not the agent's job. Overwriting the title with it left
+      // every bubble showing the same passing detail and no way to tell the
+      // agents apart, so the step is kept separately.
+      if (msg.description) a.step = msg.description;
+      if (msg.subagent_type) a.subagentType = msg.subagent_type;
+      if (msg.last_tool_name) a.lastTool = msg.last_tool_name;
+      if (msg.usage) a.usage = msg.usage;
+    } else if (msg.subtype === 'task_updated') {
+      const patch = msg.patch || {};
+      if (patch.status) a.status = patch.status;
+      if (patch.end_time) a.endedAt = patch.end_time;
+    } else if (msg.subtype === 'task_notification') {
+      if (msg.status) a.status = msg.status;
+      if (msg.summary) a.summary = String(msg.summary).slice(0, MAX_TEXT);
+      if (msg.usage) a.usage = msg.usage;
+      if (!a.endedAt) a.endedAt = Date.now();
+    }
+    emitAgent(s, a);
   }
 
   /** Append a conversation entry and notify subscribers. */
@@ -498,6 +699,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // to a named conversation — deliberately NOT replayed, so it behaves the
       // way it always has.
       args.push('--resume', String(resumeId));
+      // Compacting is the exception. It is not a jump elsewhere: it is THIS
+      // conversation, summarised, reached from the launch prompt's "compact
+      // first" button. So the stored transcript still describes it and must be
+      // replayed — otherwise choosing to compact silently threw away the very
+      // history the replay exists to show.
+      if (compacting) continueUuid = String(resumeId);
     } else if (sessionMode === 'new') { /* explicit fresh session */ }
     else if ((sessionMode === 'continue' || compacting || !aliasHasLive) && hasExistingConversation(project.path)) {
       args.push('--continue');
@@ -548,6 +755,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       stdoutBuf: '',
       blocks: new Map(),       // streaming block index -> entry (partial messages)
       streamedQueue: [],       // streamed text/thinking entries awaiting their final message
+      agents: new Map(),       // Task tool_use_id -> subagent record (see handleTaskEvent)
+      agentsByTask: new Map(), // CLI task_id -> tool_use_id (task_updated only carries task_id)
       onStateChange: stateChangeCb,
       totalCostUsd: 0,
     };
@@ -646,8 +855,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // Pre-spawn we can only infer which conversation --continue lands on. If
       // it went elsewhere, redo the replay against the real uuid.
       if (s.continueUuid && guessed && s.sessionId !== guessed) {
-        s.replayed = false;
-        replayForContinue(s, s.sessionId);
+        replayForContinue(s, s.sessionId, true);
       }
       if (msg.model) s.model = msg.model;
       s.slashCommands = msg.slash_commands || [];
@@ -661,6 +869,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       });
     } else if (msg.subtype === 'compact_boundary') {
       emitEntry(s, { id: genId(), kind: 'notice', text: 'Context compacted.' });
+    } else if (msg.subtype === 'task_started' || msg.subtype === 'task_progress'
+            || msg.subtype === 'task_updated' || msg.subtype === 'task_notification') {
+      handleTaskEvent(s, msg);
+    } else if (msg.subtype === 'status' && msg.permissionMode
+               && msg.permissionMode !== s.permissionMode) {
+      // The CLI changes mode on its own too — accepting a plan drops out of
+      // plan mode. Without this the picker would keep showing the old one.
+      s.permissionMode = msg.permissionMode;
+      s.emitter.emit('event', { type: 'meta', permissionMode: s.permissionMode });
     }
   }
 
@@ -673,6 +890,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * produced no deltas) falls through to a fresh entry.
    */
   function handleAssistant(s, msg) {
+    // A subagent's own turn — never the main transcript, and crucially never
+    // allowed near streamedQueue (see the Subagents section above).
+    if (msg.parent_tool_use_id) return handleAgentAssistant(s, msg, msg.parent_tool_use_id);
     for (const block of msg.message?.content || []) {
       if (block.type === 'text' || block.type === 'thinking') {
         const text = (block.type === 'text' ? block.text : block.thinking) || '';
@@ -689,7 +909,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   function handleUser(s, msg) {
+    if (msg.parent_tool_use_id) return handleAgentUser(s, msg, msg.parent_tool_use_id);
     for (const block of msg.message?.content || []) {
+      if (block.type === 'text') { handleHookFeedback(s, block.text || ''); continue; }
       if (block.type !== 'tool_result') continue;
       const target = [...s.messages].reverse().find(e => e.kind === 'tool' && e.toolUseId === block.tool_use_id);
       const content = Array.isArray(block.content)
@@ -697,6 +919,66 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         : (typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''));
       if (target) patchEntry(s, target, { status: 'done', result: String(content).slice(0, MAX_TEXT), isError: !!block.is_error });
     }
+  }
+
+  // ─── Goal mode ───
+  //
+  // `/goal <condition>` puts the CLI into an autonomous loop. Verified on the
+  // wire: it is NOT implemented as self-driven turns — the whole loop is a
+  // single `result` (turns=7 in the probe), and the evaluator pushes Claude
+  // onward through a STOP HOOK, which arrives as a plain `user` text message:
+  //
+  //     Stop hook feedback:
+  //     [<the goal condition>]: <why it is not yet met>
+  //
+  // handleUser only ever looked at tool_result blocks, so these were dropped
+  // outright: the user watched Claude carry on turn after turn with nothing on
+  // screen explaining why. Surfacing them is what makes goal mode legible.
+
+  const GOAL_FEEDBACK_RE = /^Stop hook feedback:\s*\n\[([\s\S]*?)\]:\s*([\s\S]*)$/;
+
+  function goalSnapshot(s) {
+    return s.goal ? { ...s.goal } : null;
+  }
+
+  function emitGoal(s) {
+    s.emitter.emit('event', { type: 'goal', goal: goalSnapshot(s) });
+  }
+
+  /**
+   * Read an outgoing user turn for goal commands so the banner appears the
+   * moment the goal is set, rather than waiting for the first verdict.
+   */
+  function noteGoalCommand(s, text) {
+    const t = String(text || '').trim();
+    if (!/^\/goal\b/.test(t)) return;
+    const arg = t.slice(5).trim();
+    if (!arg) return;                       // bare `/goal` is a status query
+    if (/^clear$/i.test(arg)) {
+      if (s.goal) { s.goal = null; emitGoal(s); }
+      return;
+    }
+    s.goal = { condition: arg.slice(0, 2000), verdicts: 0, lastVerdict: '', looping: true, startedAt: Date.now() };
+    emitGoal(s);
+  }
+
+  /** A hook injected feedback mid-turn. Only goal verdicts are surfaced. */
+  function handleHookFeedback(s, text) {
+    const m = GOAL_FEEDBACK_RE.exec(String(text || '').trim());
+    if (!m) return;   // some other Stop hook — not ours to interpret
+    const condition = m[1].trim();
+    const reason = m[2].trim();
+    // Adopt the condition if the goal was set before this session was watching
+    // (a resumed conversation still mid-goal).
+    if (!s.goal) s.goal = { condition, verdicts: 0, lastVerdict: '', looping: true, startedAt: Date.now() };
+    s.goal.verdicts += 1;
+    s.goal.lastVerdict = reason.slice(0, MAX_TEXT);
+    s.goal.looping = true;
+    emitEntry(s, {
+      id: genId(), kind: 'goal-verdict', text: reason.slice(0, MAX_TEXT),
+      condition, n: s.goal.verdicts,
+    });
+    emitGoal(s);
   }
 
   /** Token-level deltas from --include-partial-messages. */
@@ -744,6 +1026,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function handleResult(s, msg) {
     s.blocks.clear();
     s.streamedQueue.length = 0;
+    // The whole goal loop lives inside ONE result, so a result means the loop
+    // has stopped — met, abandoned, or needing input. We deliberately do NOT
+    // claim it was met: nothing on the wire says so, and inventing a verdict
+    // we never observed is exactly the kind of lie that erodes trust in it.
+    if (s.goal && s.goal.looping) { s.goal.looping = false; emitGoal(s); }
     if (typeof msg.total_cost_usd === 'number') s.totalCostUsd = msg.total_cost_usd;
     emitEntry(s, {
       id: genId(), kind: 'result', subtype: msg.subtype || 'success',
@@ -869,6 +1156,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (!s.proc) return { ok: false, error: 'Session is not running' };
     const body = String(text ?? '');
     if (!body.trim()) return { ok: false, error: 'Message is empty' };
+    noteGoalCommand(s, body);
     emitEntry(s, { id: genId(), kind: 'user', text: body });
     const ok = send(s, {
       type: 'user',
@@ -941,8 +1229,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function setPermissionMode(id, mode) {
     const s = sessions.get(id);
     if (!s?.proc) return { ok: false, error: `No session "${id}"` };
-    // Verified at runtime: acceptEdits / plan / dontAsk / auto all switch fine;
-    // bypassPermissions is rejected unless the session was launched for it.
+    // Verified at runtime: acceptEdits / plan / dontAsk / auto all switch fine,
+    // INCLUDING out of and back into bypassPermissions. Only switching INTO
+    // bypass is gated, and only for sessions not launched for it.
     const valid = ['default', 'acceptEdits', 'plan', 'dontAsk', 'auto'];
     if (mode === 'bypassPermissions' && !s.skipPermissions) {
       return { ok: false, error: 'Bypass permissions can only be chosen when the chat is launched — start a new "UI Mode — Skip Permissions" chat.' };
@@ -976,7 +1265,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       try { s.proc.kill(); } catch { /* ignore */ }
     }
     s.emitter.removeAllListeners();
-    clearTimeout(s.persistTimer);
+    // FLUSH, don't cancel. Writes are debounced by 1.5s, so cancelling here
+    // threw away everything said in the last moment before the cell was
+    // closed — and on a short exchange that is the entire conversation, which
+    // is precisely what the stored transcript exists to keep.
+    persistNow(s);
     sessions.delete(id);
     console.log(`[claude-ui] Closed "${s.alias}" (${id})`);
     return { ok: true };
@@ -1028,6 +1321,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       slashCommands: s.slashCommands,
       totalCostUsd: s.totalCostUsd, cwd: s.cwd,
       messages: s.messages,
+      agents: [...s.agents.values()],
+      goal: goalSnapshot(s),
     };
   }
 
