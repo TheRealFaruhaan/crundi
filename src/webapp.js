@@ -1678,7 +1678,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return isAbsolute(p) ? resolve(p) : resolve(project.path, p);
     }
     function isInsideProject(project, fullPath) {
-      return fullPath === project.path || fullPath.startsWith(project.path + sep);
+      // Normalise BOTH sides. project.path is whatever was registered, which may
+      // use forward slashes on Windows, while resolve() always returns
+      // backslashes — comparing them raw silently reports "outside the project"
+      // for paths that are plainly inside it.
+      const root = resolve(project.path);
+      const p = resolve(fullPath);
+      return p === root || p.startsWith(root + sep);
     }
 
     if (path === '/api/files/list' && req.method === 'GET') {
@@ -1792,8 +1798,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
-      const fullPath = resolve(project.path, body.file || '');
-      if (!fullPath.startsWith(project.path)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      // Same helpers the READ side uses. Raw resolve() mishandles the absolute
+      // paths the client actually sends when project.path is stored with
+      // forward slashes, so saving failed outright; and a bare startsWith()
+      // has no separator boundary, so a sibling directory sharing the project's
+      // name as a prefix would pass.
+      const fullPath = resolveFsPath(project, body.file || '');
+      if (!isInsideProject(project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
       try {
         writeFileSync(fullPath, body.content || '', 'utf-8');
         return json(res, { ok: true });
@@ -1837,13 +1848,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
       const relDir = body.dir || '.';
-      const targetDir = resolve(project.path, relDir);
-      if (!targetDir.startsWith(project.path)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      const targetDir = resolveFsPath(project, relDir);
+      if (!isInsideProject(project, targetDir)) return json(res, { ok: false, error: 'Invalid path' }, 403);
       if (!body.name || !body.data) return json(res, { ok: false, error: 'Missing name or data' }, 400);
       try {
         if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
         const filePath = join(targetDir, basename(body.name));
-        if (!filePath.startsWith(project.path)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+        if (!isInsideProject(project, filePath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
         const buf = Buffer.from(body.data, 'base64');
         writeFileSync(filePath, buf);
         return json(res, { ok: true, size: buf.length });
@@ -1854,9 +1865,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
-      const fullPath = resolve(project.path, body.file || '');
-      if (!fullPath.startsWith(project.path)) return json(res, { ok: false, error: 'Invalid path' }, 403);
-      if (fullPath === project.path) return json(res, { ok: false, error: 'Cannot delete project root' }, 403);
+      const fullPath = resolveFsPath(project, body.file || '');
+      if (!isInsideProject(project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      if (fullPath === resolve(project.path)) return json(res, { ok: false, error: 'Cannot delete project root' }, 403);
       if (!existsSync(fullPath)) return json(res, { ok: false, error: 'Not found' }, 404);
       try {
         const { rmSync } = await import('node:fs');

@@ -6284,6 +6284,7 @@ export function getWebappHtml(botUsername) {
             + '<span class="fi-icon">' + fileIcon(e.name) + '</span>'
             + '<span class="fi-name" data-action="files-open" data-file="' + escHtml(e.path) + '" style="cursor:pointer;flex:1;">' + escHtml(e.name) + '</span>'
             + '<span class="fi-size">' + formatFileSize(e.size) + '</span>'
+            + (feIsSourcePreview(e.name) ? _fbtn('files-edit', e.path, 'Edit the source', 'pencil') : '')
             + _fbtn('files-copy-path', e.path, 'Copy path', 'copy')
             + _fbtn('files-download', e.path, 'Download', 'download')
             + _fbtn('files-delete', e.path, 'Delete', 'trash', 'var(--red)')
@@ -6310,6 +6311,7 @@ export function getWebappHtml(botUsername) {
         html += '<div class="file-item ' + (isDir ? 'dir' : 'file') + '" data-drag-ref="' + escHtml(e.path) + '" data-drag-kind="' + (isDir ? 'folder' : 'file') + '" title="Drag onto a terminal to insert its path">'
           + '<span class="fi-icon">' + (isDir ? ic('folder') : fileIcon(e.name)) + '</span>'
           + nameCell
+          + (!isDir && feIsSourcePreview(e.name) ? _fbtn('files-edit', e.path, 'Edit the source', 'pencil') : '')
           + _fbtn('files-copy-path', e.path, 'Copy path', 'copy')
           + (isDir ? '' : _fbtn('files-download', e.path, 'Download', 'download'))
           + _fbtn('files-delete', e.path, 'Delete', 'trash', 'var(--red)')
@@ -6457,6 +6459,16 @@ export function getWebappHtml(botUsername) {
     // tile/grid/cascade. Mobile: a single full-screen window (opening replaces).
     // Per-window state lives on el._fe = { project, file, original, readOnly, view, kind }.
     const FE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'];
+    // Previewable, but the file on disk is source you can meaningfully edit —
+    // an SVG renders as a picture yet is XML. These get an explicit Edit button
+    // in the explorer; a plain click still previews, which is what you want far
+    // more often. Anything added here needs to be BOTH in a preview list above
+    // and genuinely text.
+    const FE_SOURCE_PREVIEW_EXTS = ['svg'];
+    function feIsSourcePreview(name) {
+      const ext = (name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '').toLowerCase();
+      return FE_SOURCE_PREVIEW_EXTS.includes(ext);
+    }
     function feMobile() { return window.innerWidth <= 768; }
     let feZ = 2100, feFront = null, feCascade = 0;
     function feOverlay() { return document.getElementById('file-editor'); }
@@ -6555,9 +6567,12 @@ export function getWebappHtml(botUsername) {
       const ta = w.querySelector('.fe-content textarea'); return ta ? ta.value : '';
     }
 
-    async function feOpen(project, file) {
+    async function feOpen(project, file, opts) {
       const ext = (file.includes('.') ? file.slice(file.lastIndexOf('.') + 1) : '').toLowerCase();
-      if (FE_IMAGE_EXTS.includes(ext) || ext === 'pdf') return feOpenViewer(project, file, ext);
+      // asSource skips the preview and goes straight to the editor.
+      if (!(opts && opts.asSource) && (FE_IMAGE_EXTS.includes(ext) || ext === 'pdf')) {
+        return feOpenViewer(project, file, ext);
+      }
       // Already open on desktop → focus it instead of duplicating.
       if (!feMobile()) {
         const ex = feWins().find(w => w._fe && w._fe.kind === 'edit' && w._fe.project === project && w._fe.file === file);
@@ -7628,6 +7643,7 @@ export function getWebappHtml(botUsername) {
         // Files actions
         case 'files-nav': loadFiles(d.dir); break;
         case 'files-open': feOpen(currentProject, d.file); break;
+        case 'files-edit': feOpen(currentProject, d.file, { asSource: true }); break;
         case 'files-upload': filesUpload(); break;
         case 'files-download': filesDownload(d.file); break;
         case 'files-copy-path': filesCopyPath(d.file); break;
