@@ -213,7 +213,36 @@
     '.cc-gv{border-left:2px solid var(--accent);background:var(--bg-secondary,#111119);border-radius:0 var(--radius-sm) var(--radius-sm) 0;padding:6px 10px}',
     '.cc-gv-head{display:flex;align-items:center;gap:6px;color:var(--accent-hover);font-size:11px;font-weight:600;margin-bottom:3px}',
     '.cc-gv-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none}',
-    '.cc-gv-body{color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;font-size:12px}'
+    '.cc-gv-body{color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;font-size:12px}',
+
+    // Scheduled messages.
+    '.cc-sched{flex:none;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;padding:3px 5px;display:flex;align-items:center}',
+    '.cc-sched svg{width:13px;height:13px}',
+    '.cc-sched:hover{color:var(--accent-hover);border-color:var(--accent)}',
+    '.cc-narrow .cc-sched{padding:7px 9px}',
+    '.cc-narrow .cc-sched svg{width:15px;height:15px}',
+    '.cc-schedpanel{position:absolute;left:8px;right:8px;bottom:8px;max-height:82%;display:flex;flex-direction:column;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);z-index:28;animation:cc-in .16s ease}',
+    '.cc-sched-head{display:flex;align-items:center;padding:8px 10px;border-bottom:1px solid var(--border-subtle);flex:none}',
+    '.cc-sched-title{flex:1;font-weight:600;color:var(--text-primary)}',
+    '.cc-sched-x{background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px}',
+    '.cc-sched-x:hover{color:var(--text-primary)}',
+    '.cc-sched-body{padding:10px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}',
+    '.cc-sched-msg{width:100%;box-sizing:border-box;resize:vertical;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:7px 9px}',
+    '.cc-sched-trigs{display:flex;gap:6px;flex-wrap:wrap}',
+    '.cc-sched-trig{flex:1;min-width:96px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-secondary);cursor:pointer;padding:6px 8px;font-size:11.5px}',
+    '.cc-sched-trig.on{background:var(--accent-dim);border-color:var(--accent);color:var(--text-primary)}',
+    '.cc-sched-at{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:6px 8px}',
+    '.cc-sched-note{color:var(--text-muted);font-size:11px}',
+    '.cc-sched-note:empty{display:none}',
+    '.cc-sched-list{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border-subtle);padding-top:8px;margin-top:2px}',
+    '.cc-sched-empty{color:var(--text-muted);font-style:italic;font-size:12px}',
+    '.cc-sched-item{position:relative;background:var(--bg-secondary,#111119);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:6px 26px 6px 9px}',
+    '.cc-sched-item.next{border-color:var(--accent)}',
+    '.cc-sched-when{font-size:10.5px;color:var(--text-muted);font-family:var(--mono);margin-bottom:2px}',
+    '.cc-sched-item.next .cc-sched-when b{color:var(--accent-hover)}',
+    '.cc-sched-text{color:var(--text-secondary);font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:52px;overflow:hidden}',
+    '.cc-sched-del{position:absolute;top:4px;right:4px;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;line-height:1;padding:2px 4px}',
+    '.cc-sched-del:hover{color:var(--red)}'
   ].join('');
 
   function ensureStyles() {
@@ -443,6 +472,13 @@
     fileInput.style.display = 'none';
     // Wrapped in .cc-actions so a narrow cell can move them to their own row;
     // at full width the wrapper is display:contents and changes nothing.
+    // Schedule-a-message. Lives next to the "sends" toggle on a wide cell and
+    // beside the paperclip on a narrow one; syncWidth() moves the single node
+    // rather than rendering two and hiding one.
+    var schedBtn = el('button', 'cc-sched',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+      + '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>');
+    schedBtn.title = 'Schedule this message';
     var actions = el('div', 'cc-actions');
     actions.appendChild(attachBtn);
     actions.appendChild(stopBtn);
@@ -489,6 +525,7 @@
     meta.appendChild(stateLbl);
     meta.appendChild(modeSel);
     meta.appendChild(enterBtn);
+    meta.appendChild(schedBtn);
     meta.appendChild(el('span', 'cc-meta-sp'));
     meta.appendChild(sidLbl);
     meta.appendChild(modelLbl);
@@ -564,6 +601,10 @@
       if (want === narrow) return;
       narrow = want;
       root.classList.toggle('cc-narrow', narrow);
+      // Narrow: sit with the paperclip, ahead of stop/send. Wide: back on the
+      // meta strip beside the enter toggle.
+      if (narrow) actions.insertBefore(schedBtn, stopBtn);
+      else meta.insertBefore(schedBtn, meta.querySelector('.cc-meta-sp'));
       syncEnterMode();
     }
     var widthObserver = null;
@@ -1633,6 +1674,147 @@
       if (activityNode && activityNode.parentNode === log) log.appendChild(activityNode);
       scrollDown(stick);
     }
+
+    // ─── Scheduled messages ───
+    // Opens with whatever is in the composer already copied in, so the common
+    // case (write it, then decide it should go later) is one click. Opened
+    // empty it is simply the list — the same panel, nothing special-cased.
+
+    var schedPanel = null;
+
+    function trigLabel(it) {
+      var t = it.trigger.type;
+      if (t === 'time') return new Date(it.trigger.at).toLocaleString();
+      if (t === 'turn-end') return 'when the turn ends';
+      if (t === 'limit-reset') return 'when the 5h window resets';
+      return t;
+    }
+
+    function closeSched() {
+      if (schedPanel) schedPanel.remove();
+      schedPanel = null;
+    }
+
+    function loadSched() {
+      if (!schedPanel || !project) return;
+      var listEl = schedPanel.querySelector('.cc-sched-list');
+      apiFetch('/api/chat-schedule?project=' + encodeURIComponent(project))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!schedPanel || !listEl) return;
+          var items = (d && d.items) || [];
+          if (!items.length) {
+            listEl.innerHTML = '<div class="cc-sched-empty">Nothing scheduled for this project.</div>';
+            return;
+          }
+          // Server sorts by next firing; the first row is what goes next.
+          listEl.innerHTML = items.map(function (it, i) {
+            return '<div class="cc-sched-item' + (i === 0 ? ' next' : '') + '" data-sid="' + esc(it.id) + '">'
+              + '<div class="cc-sched-when">' + (i === 0 ? '<b>next</b> · ' : '') + esc(trigLabel(it)) + '</div>'
+              + '<div class="cc-sched-text">' + esc(it.text) + '</div>'
+              + '<button class="cc-sched-del" title="Cancel this message">✕</button>'
+              + '</div>';
+          }).join('');
+          listEl.querySelectorAll('.cc-sched-del').forEach(function (b) {
+            b.addEventListener('click', function () {
+              var id = b.closest('.cc-sched-item').dataset.sid;
+              apiFetch('/api/chat-schedule/' + encodeURIComponent(id), { method: 'DELETE' })
+                .then(function () { loadSched(); })
+                .catch(function () {});
+            });
+          });
+        })
+        .catch(function () {
+          if (listEl) listEl.innerHTML = '<div class="cc-sched-empty">Could not load scheduled messages.</div>';
+        });
+    }
+
+    function openSched() {
+      if (schedPanel) { closeSched(); return; }
+      schedPanel = el('div', 'cc-schedpanel');
+      // Default the time field to a round-ish moment shortly ahead, so the
+      // common "later today" case needs one edit, not five.
+      var soon = new Date(Date.now() + 30 * 60000);
+      soon.setSeconds(0, 0);
+      var localIso = new Date(soon.getTime() - soon.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+      schedPanel.innerHTML =
+        '<div class="cc-sched-head"><span class="cc-sched-title">Schedule a message</span>'
+        + '<button class="cc-sched-x">✕</button></div>'
+        + '<div class="cc-sched-body">'
+        + '<textarea class="cc-sched-msg" rows="3" placeholder="Message to send later…"></textarea>'
+        + '<div class="cc-sched-trigs">'
+        + '<button class="cc-sched-trig on" data-trig="time">At a time</button>'
+        + '<button class="cc-sched-trig" data-trig="turn-end">Turn ends</button>'
+        + '<button class="cc-sched-trig" data-trig="limit-reset">Limit resets</button>'
+        + '</div>'
+        + '<input type="datetime-local" class="cc-sched-at" value="' + localIso + '">'
+        + '<div class="cc-sched-note"></div>'
+        + '<button class="cc-btn primary cc-sched-save">Schedule</button>'
+        + '<div class="cc-sched-list"></div>'
+        + '</div>';
+      root.appendChild(schedPanel);
+
+      var msg = schedPanel.querySelector('.cc-sched-msg');
+      var atEl = schedPanel.querySelector('.cc-sched-at');
+      var note = schedPanel.querySelector('.cc-sched-note');
+      var trig = 'time';
+
+      // Carry the composer across. Empty is fine — the panel is then just the list.
+      msg.value = input.value;
+
+      function syncTrig() {
+        atEl.style.display = trig === 'time' ? '' : 'none';
+        note.textContent = trig === 'turn-end'
+          ? 'Sends as soon as the current turn finishes. If nothing is running, it waits for the next turn to end.'
+          : trig === 'limit-reset'
+            ? 'Sends when the rolling 5-hour usage window rolls over.'
+            : '';
+      }
+      syncTrig();
+
+      schedPanel.querySelectorAll('.cc-sched-trig').forEach(function (b) {
+        b.addEventListener('click', function () {
+          trig = b.dataset.trig;
+          schedPanel.querySelectorAll('.cc-sched-trig').forEach(function (x) {
+            x.classList.toggle('on', x === b);
+          });
+          syncTrig();
+        });
+      });
+      schedPanel.querySelector('.cc-sched-x').addEventListener('click', closeSched);
+
+      schedPanel.querySelector('.cc-sched-save').addEventListener('click', function () {
+        var text = msg.value.trim();
+        if (!text) { note.textContent = 'Write a message first.'; return; }
+        var payload = { project: project, text: text, trigger: { type: trig } };
+        if (trig === 'time') {
+          if (!atEl.value) { note.textContent = 'Pick a time.'; return; }
+          payload.trigger.at = new Date(atEl.value).toISOString();
+        }
+        apiFetch('/api/chat-schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d.ok) { note.textContent = d.error || 'Could not schedule that.'; return; }
+            // It is queued now, so clear the composer it came from — leaving it
+            // there invites sending the same thing twice.
+            if (input.value.trim() === text) { input.value = ''; saveDraft(); autoGrow(); }
+            msg.value = '';
+            note.textContent = '';
+            loadSched();
+          })
+          .catch(function (err) { note.textContent = 'Could not schedule that: ' + err.message; });
+      });
+
+      loadSched();
+      msg.focus();
+    }
+
+    schedBtn.addEventListener('click', openSched);
 
     // ─── Goal mode ───
     // The CLI runs the loop inside a single turn, pushed on by a Stop hook, so

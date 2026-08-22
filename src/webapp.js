@@ -34,6 +34,7 @@ import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
 import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
 import { createLimitWarmer } from './limit-warmer.js';
+import { createChatSchedule } from './chat-schedule.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -478,6 +479,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
     if (state === 'working' || state === 'needs-input') limitWarmer.markActivity();
+    // working -> idle is a turn ending. Edge-triggered off `prev` so a repeated
+    // 'idle' report (hooks fire from independent processes) cannot fire twice.
+    if (state === 'idle' && prev === 'working' && term.project) {
+      chatSchedule.onTurnEnd(term.project);
+    }
     if (state !== prev && (state === 'idle' || state === 'needs-input')) {
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
@@ -496,6 +502,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const limitWarmer = createLimitWarmer({
     getUsage: (opts) => usage.getUsage(opts || {}),
     isBusy: () => [...agentStates.values()].some(v => v === 'working' || v === 'needs-input'),
+  });
+
+  // Deferred chat messages ("send this when the turn ends / the window resets").
+  const chatSchedule = createChatSchedule({
+    claudeUi,
+    getLatestUsage: () => usage.getLatestStored(),
   });
 
   // Chat sessions push their agent state as it changes. These arrive in-order
@@ -1266,6 +1278,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // but the conversation itself streams over the WebSocket rather than bytes.
     if (path === '/api/ui-sessions' && req.method === 'GET') {
       return json(res, { sessions: claudeUi ? claudeUi.list() : [] });
+    }
+
+    // ─── Deferred chat messages ───
+    if (path === '/api/chat-schedule' && req.method === 'GET') {
+      const alias = String(url.searchParams.get('project') || '').toLowerCase();
+      if (!alias) return json(res, { ok: false, error: 'A project is required' }, 400);
+      return json(res, {
+        ok: true,
+        items: chatSchedule.list(alias),
+        recent: chatSchedule.recent(alias),
+      });
+    }
+
+    if (path === '/api/chat-schedule' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+      const alias = String(body.project || '').toLowerCase();
+      if (!getProject(alias)) return json(res, { ok: false, error: 'Unknown project' }, 400);
+      const r = chatSchedule.add({ project: alias, text: body.text, trigger: body.trigger });
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    const schedDel = path.match(/^\/api\/chat-schedule\/([a-f0-9]+)$/i);
+    if (schedDel && req.method === 'DELETE') {
+      const r = chatSchedule.remove(schedDel[1]);
+      return json(res, r, r.ok ? 200 : 404);
     }
 
     // Prior Claude Code conversations for a project, newest first, so the UI can
