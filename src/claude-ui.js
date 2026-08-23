@@ -1333,6 +1333,30 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     };
   }
 
+  /**
+   * The final assistant message of the turn that just finished, for the
+   * Telegram ping — "Claude finished" says nothing you could act on, whereas
+   * what it actually concluded usually does.
+   *
+   * Scoped to the CURRENT turn by walking back only as far as the last user
+   * entry. A turn that ended without saying anything (interrupted, or pure tool
+   * work) must report nothing rather than re-sending text from an earlier turn,
+   * which would read as a fresh answer to the message you just sent.
+   */
+  function lastTurnOutput(id) {
+    const s = sessions.get(id);
+    if (!s) return '';
+    for (let i = s.messages.length - 1; i >= 0; i--) {
+      const m = s.messages[i];
+      if (m.kind === 'user') return '';   // turn boundary — nothing was said
+      if (m.kind === 'assistant-text') {
+        const t = String(m.text || '').trim();
+        if (t) return t;
+      }
+    }
+    return '';
+  }
+
   const has = (id) => sessions.has(id);
   const on = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.on('event', handler); };
   const off = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.off('event', handler); };
@@ -1346,7 +1370,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, respond, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange,
+    history, has, on, off, onAnyStateChange, lastTurnOutput,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },

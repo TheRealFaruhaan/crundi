@@ -462,6 +462,34 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   // Apply a hook-reported state for a terminal; notify on transitions to
   // done(idle)/needs-input. Unknown terminals are ignored.
+  // Telegram's hard cap is 4096; leave room for the header and the notice.
+  const TG_OUTPUT_MAX = 3500;
+
+  /**
+   * What to say when a session goes idle.
+   *
+   * For a CHAT session we can do better than "finished": the turn's final
+   * assistant message is the answer itself, which is usually the whole reason
+   * you wanted telling. Terminal cells are a PTY — there is no clean "final
+   * message" to lift out of a screen buffer, so they keep the plain line.
+   */
+  function finishedMessage(term, name, proj) {
+    if (term && term.kind === 'ui' && claudeUi && claudeUi.lastTurnOutput) {
+      try {
+        const out = claudeUi.lastTurnOutput(term.id);
+        if (out) {
+          const body = out.length > TG_OUTPUT_MAX
+            ? out.slice(0, TG_OUTPUT_MAX) + '\n\n[…truncated, open Crundi for the rest]'
+            : out;
+          return `✅ ${name}${proj}\n\n${body}`;
+        }
+      } catch { /* fall through to the plain line */ }
+    }
+    // Nothing was said this turn (interrupted, or pure tool work) — the plain
+    // line is honest; echoing an older message would read as a fresh answer.
+    return `✅ ${name} finished${proj}.`;
+  }
+
   function handleAgentState(tid, state, ts = 0) {
     // Terminal cells report via the lifecycle hook; UI (chat) cells report
     // straight off the stream-json message flow. Both land here so the status
@@ -488,7 +516,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
       if (state === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
-      else notifyEvent('finished', `✅ ${name} finished${proj}.`);
+      else notifyEvent('finished', finishedMessage(term, name, proj));
     }
     broadcastState();
   }
