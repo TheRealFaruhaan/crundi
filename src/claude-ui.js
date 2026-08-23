@@ -44,7 +44,7 @@ import { join, delimiter, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { config } from './config.js';
 import { getProject } from './project-store.js';
-import { hasExistingConversation } from './claude-terminals.js';
+import { hasExistingConversation, writeMcpConfig } from './claude-terminals.js';
 
 const isWin = process.platform === 'win32';
 const MAX_MESSAGES = 2000;      // conversation entries kept per session
@@ -684,6 +684,13 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // or pick up the most recent conversation by default. Only the FIRST live
     // chat for a project continues — extra chats start fresh rather than two
     // processes clobbering the same transcript. `sessionMode: 'new'` opts out.
+    // Make sure the project's Crundi MCP server is configured before spawning.
+    // Terminal mode does this on every launch and index.js does it for every
+    // project at boot, but chat mode did neither — so a project added AFTER
+    // startup and only ever opened as a chat had no .mcp.json, and none of the
+    // Crundi tools. Verified the tools do work once it exists. No-ops in dev.
+    try { writeMcpConfig(project.path, apiUrl, apiKey, key); } catch { /* non-fatal */ }
+
     const aliasHasLive = entriesForAlias(key).some(x => x.proc);
     // 'compact' resumes and then immediately runs /compact, so the heavy context
     // is summarised once instead of riding along on every later turn.

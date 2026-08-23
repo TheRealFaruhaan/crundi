@@ -43,7 +43,7 @@ export function stripAnsi(str) {
  * Write .mcp.json into a project directory so Claude Code auto-discovers
  * the Crundi MCP server.
  */
-function writeMcpConfig(projectPath, apiUrl, apiKey, projectAlias) {
+export function writeMcpConfig(projectPath, apiUrl, apiKey, projectAlias) {
   // A dev instance must not repoint a real project's MCP server at its
   // throwaway port and key — the file outlives the run and would leave Claude
   // Code talking to nothing. See the matching guard in index.js.

@@ -724,11 +724,14 @@ export function getWebappHtml(botUsername) {
     .cr-choice { gap: 7px !important; padding: 0 18px; text-align: center; }
     /* Launching: the pressed button gets a spinner, the rest grey out. */
     .cr-choice button:disabled { cursor: default; }
-    .cr-choice button:disabled:not(.cr-busy) { opacity: 0.4; }
-    .cr-choice button.cr-busy {
+    button:disabled:not(.cr-busy) { cursor: default; }
+    .cr-choice button:disabled:not(.cr-busy), .term-launch button:disabled:not(.cr-busy) { opacity: 0.4; }
+    /* Any button that spawns a terminal or chat, not just the resume choice. */
+    button.cr-busy {
       position: relative; color: transparent !important;
     }
-    .cr-choice button.cr-busy::after {
+    button.cr-busy svg, button.cr-busy .tl-txt { visibility: hidden; }
+    button.cr-busy::after {
       content: ''; position: absolute; top: 50%; left: 50%;
       width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px;
       border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
@@ -736,7 +739,7 @@ export function getWebappHtml(botUsername) {
     }
     @keyframes crSpin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) {
-      .cr-choice button.cr-busy::after { animation-duration: 2s; }
+      button.cr-busy::after { animation-duration: 2s; }
     }
     .cr-choice-title { font-size: 0.95rem; font-weight: 650; color: var(--text-primary); }
     .cr-choice-sub { font-size: 0.85rem; color: var(--text-secondary); max-width: 420px; }
@@ -3536,14 +3539,20 @@ export function getWebappHtml(botUsername) {
     // summary?" prompt does not exist over the stream-json protocol UI mode
     // uses, so a resume there always loads the whole transcript. Ask before
     // spawning, which is the last moment the choice is still free.
-    async function launchChatWithPreflight(localId, mode) {
+    async function launchChatWithPreflight(localId, mode, release) {
+      const done = release || (() => {});
       const m = mode || 'chat';
       let info = null;
       try {
         const r = await apiFetch('/api/ui-sessions/preflight?project=' + encodeURIComponent(currentProject));
         info = await r.json();
       } catch { /* fall through to a plain launch */ }
-      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal(m, localId); return; }
+      // Hand the lock straight to launchTerminal rather than releasing between
+      // the two, which would open a window for a second click to slip through.
+      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal(m, localId, undefined, undefined, done); return; }
+      // The choice panel replaces the launcher, so the lock is spent here — the
+      // user now has to pick, and those buttons take their own.
+      done();
       showResumeChoice(localId, info.latest, m);
     }
 
@@ -3584,8 +3593,40 @@ export function getWebappHtml(botUsername) {
       try { localStorage.setItem(lastLaunchKey(), mode); } catch { /* ignore */ }
     }
 
-    async function launchTerminal(mode, localId, resumeId, sessionMode) {
-      if (!currentProject) return;
+    // Spawning a CLI can take many seconds. Until it returns the button looks
+    // inert, so the click reads as ignored and gets repeated — and a second
+    // click really does spawn a second session. Every button that opens a
+    // terminal or a chat goes through this: the pressed one spins, its
+    // neighbours grey out, and the cell is locked until the attempt settles.
+    const launchInFlight = new Set();
+
+    function beginLaunch(btn, localId) {
+      const key = localId || '_global';
+      if (launchInFlight.has(key)) return null;          // already spawning here
+      if (btn && btn.classList.contains('cr-busy')) return null;
+      launchInFlight.add(key);
+      // Grey out the whole launcher, not just the pressed control — the others
+      // spawn into the same cell and would race it.
+      const scope = btn && (btn.closest('.cr-choice') || btn.closest('.term-launch') || btn.closest('.term-body'));
+      const siblings = scope ? [...scope.querySelectorAll('button')] : (btn ? [btn] : []);
+      siblings.forEach(b => { b.disabled = true; });
+      if (btn) btn.classList.add('cr-busy');
+      let done = false;
+      return () => {
+        if (done) return;
+        done = true;
+        launchInFlight.delete(key);
+        // The cell is usually replaced wholesale on success; this matters on
+        // FAILURE, where leaving everything disabled would strand the user with
+        // a dead launcher and no way back.
+        if (btn) btn.classList.remove('cr-busy');
+        siblings.forEach(b => { b.disabled = false; });
+      };
+    }
+
+    async function launchTerminal(mode, localId, resumeId, sessionMode, release) {
+      const done = release || (() => {});
+      if (!currentProject) { done(); return; }
       rememberLaunchMode(mode);
       // bypassPermissions cannot be switched on after launch (the CLI rejects it
       // unless started with --dangerously-skip-permissions), so chat gets the
@@ -3617,16 +3658,18 @@ export function getWebappHtml(botUsername) {
             : { project: currentProject, skipPermissions: skipPerms, shell: shellOnly }),
         });
         const data = await r.json();
-        if (!data.ok) { toast(data.error || 'Failed to launch', 'error'); return; }
+        if (!data.ok) { toast(data.error || 'Failed to launch', 'error'); done(); return; }
         if (localId) pendingCells = pendingCells.filter(x => x !== localId);
         if (!terminals.some(t => t.id === data.id)) {
           terminals.push({ id: data.id, project: currentProject, title: data.title || (isChat ? 'Chat' : 'Terminal'), order: data.order || 0, status: 'running', kind: isChat ? 'ui' : 'terminal' });
         }
         focusedTermId = data.id;
+        done();
         renderTermGrid();
         renderProjects();
       } catch (err) {
         toast('Failed to launch terminal: ' + err.message, 'error');
+        done();
       }
     }
 
@@ -7670,37 +7713,34 @@ export function getWebappHtml(botUsername) {
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
         case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
-        case 'launch-terminal':
+        case 'launch-terminal': {
+          const btn = e.target.closest('[data-action="launch-terminal"]');
+          const rel = beginLaunch(btn, d.lid);
+          if (!rel) break;   // a launch is already running for this cell
           // Chat launches check the resume cost first; other modes go straight through.
-          if (d.mode === 'chat' || d.mode === 'chat-skip') launchChatWithPreflight(d.lid, d.mode);
-          else launchTerminal(d.mode, d.lid);
+          if (d.mode === 'chat' || d.mode === 'chat-skip') launchChatWithPreflight(d.lid, d.mode, rel);
+          else launchTerminal(d.mode, d.lid, undefined, undefined, rel);
           break;
+        }
         case 'chat-launch-mode': {
-          // Spawning the CLI against a large transcript can take many seconds,
-          // and until it returns the panel looks inert — so the click reads as
-          // ignored and gets repeated, launching twice. Mark the pressed button
-          // and shut the whole choice down.
           const btn = e.target.closest('[data-action="chat-launch-mode"]');
-          if (btn) {
-            if (btn.classList.contains('cr-busy')) break; // already launching
-            const panel = btn.closest('.cr-choice');
-            if (panel) panel.querySelectorAll('button').forEach(b => { b.disabled = true; });
-            btn.classList.add('cr-busy');
-            btn.disabled = true;
-          }
-          launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode);
+          const rel = beginLaunch(btn, d.lid);
+          if (!rel) break;
+          launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode, rel);
           break;
         }
         case 'chat-resume': openChatResume(d.lid); break;
         case 'chat-resume-cancel': closeChatResume(); break;
         case 'chat-resume-pick': {
           const lid = crPendingLid;
+          const rel = beginLaunch(e.target.closest('[data-action="chat-resume-pick"]'), lid);
+          if (!rel) break;
           closeChatResume();
           // Resume in whichever chat variant this project used last. Terminal
           // modes can't be resumed — /api/terminals/create takes no resumeId,
           // so a transcript can only be replayed into a UI-mode session.
           const last = lastLaunchMode();
-          launchTerminal(last === 'chat-skip' ? 'chat-skip' : 'chat', lid, d.sid);
+          launchTerminal(last === 'chat-skip' ? 'chat-skip' : 'chat', lid, d.sid, undefined, rel);
           break;
         }
       }
