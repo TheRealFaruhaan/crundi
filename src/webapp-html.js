@@ -724,11 +724,14 @@ export function getWebappHtml(botUsername) {
     .cr-choice { gap: 7px !important; padding: 0 18px; text-align: center; }
     /* Launching: the pressed button gets a spinner, the rest grey out. */
     .cr-choice button:disabled { cursor: default; }
-    .cr-choice button:disabled:not(.cr-busy) { opacity: 0.4; }
-    .cr-choice button.cr-busy {
+    button:disabled:not(.cr-busy) { cursor: default; }
+    .cr-choice button:disabled:not(.cr-busy), .term-launch button:disabled:not(.cr-busy) { opacity: 0.4; }
+    /* Any button that spawns a terminal or chat, not just the resume choice. */
+    button.cr-busy {
       position: relative; color: transparent !important;
     }
-    .cr-choice button.cr-busy::after {
+    button.cr-busy svg, button.cr-busy .tl-txt { visibility: hidden; }
+    button.cr-busy::after {
       content: ''; position: absolute; top: 50%; left: 50%;
       width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px;
       border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
@@ -736,7 +739,7 @@ export function getWebappHtml(botUsername) {
     }
     @keyframes crSpin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) {
-      .cr-choice button.cr-busy::after { animation-duration: 2s; }
+      button.cr-busy::after { animation-duration: 2s; }
     }
     .cr-choice-title { font-size: 0.95rem; font-weight: 650; color: var(--text-primary); }
     .cr-choice-sub { font-size: 0.85rem; color: var(--text-secondary); max-width: 420px; }
@@ -1501,6 +1504,15 @@ export function getWebappHtml(botUsername) {
     /* Notification matrix — a control-panel grid of tri-state "lamps". Each event
        is a row; the active mode lights up in its column colour (green=Always,
        indigo=When Away, dim=Never) so the whole board reads at a glance. */
+    .seg-pref-row { display: flex; align-items: flex-start; gap: 14px; }
+    .seg-pref-row > div:first-child { flex: 1; min-width: 0; }
+    .set-tgl-lbl { color: var(--text-primary); font-size: 0.85rem; margin-bottom: 4px; }
+    .set-tgl { flex: none; margin-top: 2px; width: 40px; height: 22px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--bg-tertiary); cursor: pointer; padding: 0; position: relative; transition: background .16s, border-color .16s; }
+    .set-tgl.on { background: var(--accent); border-color: var(--accent); }
+    .set-tgl-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+      background: var(--text-primary); transition: transform .16s; }
+    .set-tgl.on .set-tgl-knob { transform: translateX(18px); background: #fff; }
     .ntf-matrix { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-secondary); }
     .ntf-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 62px); align-items: stretch; border-top: 1px solid var(--border); }
     .ntf-matrix > .ntf-row:first-child { border-top: none; }
@@ -3337,6 +3349,7 @@ export function getWebappHtml(botUsername) {
       connectWS();
       loadProjectConfig();
       loadProjects();
+      syncTabScope();
       setupTerminalArea();
       updateMobileLayoutBtn();
       loadUsage();
@@ -3513,7 +3526,7 @@ export function getWebappHtml(botUsername) {
       focusedTermId = null;
       renderProjects();
       closeSidebar();
-      $('#tab-bar').classList.add('visible');
+      syncTabScope();
       switchTab('workbench');
       renderTermGrid();
     }
@@ -3526,14 +3539,20 @@ export function getWebappHtml(botUsername) {
     // summary?" prompt does not exist over the stream-json protocol UI mode
     // uses, so a resume there always loads the whole transcript. Ask before
     // spawning, which is the last moment the choice is still free.
-    async function launchChatWithPreflight(localId, mode) {
+    async function launchChatWithPreflight(localId, mode, release) {
+      const done = release || (() => {});
       const m = mode || 'chat';
       let info = null;
       try {
         const r = await apiFetch('/api/ui-sessions/preflight?project=' + encodeURIComponent(currentProject));
         info = await r.json();
       } catch { /* fall through to a plain launch */ }
-      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal(m, localId); return; }
+      // Hand the lock straight to launchTerminal rather than releasing between
+      // the two, which would open a window for a second click to slip through.
+      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal(m, localId, undefined, undefined, done); return; }
+      // The choice panel replaces the launcher, so the lock is spent here — the
+      // user now has to pick, and those buttons take their own.
+      done();
       showResumeChoice(localId, info.latest, m);
     }
 
@@ -3574,8 +3593,40 @@ export function getWebappHtml(botUsername) {
       try { localStorage.setItem(lastLaunchKey(), mode); } catch { /* ignore */ }
     }
 
-    async function launchTerminal(mode, localId, resumeId, sessionMode) {
-      if (!currentProject) return;
+    // Spawning a CLI can take many seconds. Until it returns the button looks
+    // inert, so the click reads as ignored and gets repeated — and a second
+    // click really does spawn a second session. Every button that opens a
+    // terminal or a chat goes through this: the pressed one spins, its
+    // neighbours grey out, and the cell is locked until the attempt settles.
+    const launchInFlight = new Set();
+
+    function beginLaunch(btn, localId) {
+      const key = localId || '_global';
+      if (launchInFlight.has(key)) return null;          // already spawning here
+      if (btn && btn.classList.contains('cr-busy')) return null;
+      launchInFlight.add(key);
+      // Grey out the whole launcher, not just the pressed control — the others
+      // spawn into the same cell and would race it.
+      const scope = btn && (btn.closest('.cr-choice') || btn.closest('.term-launch') || btn.closest('.term-body'));
+      const siblings = scope ? [...scope.querySelectorAll('button')] : (btn ? [btn] : []);
+      siblings.forEach(b => { b.disabled = true; });
+      if (btn) btn.classList.add('cr-busy');
+      let done = false;
+      return () => {
+        if (done) return;
+        done = true;
+        launchInFlight.delete(key);
+        // The cell is usually replaced wholesale on success; this matters on
+        // FAILURE, where leaving everything disabled would strand the user with
+        // a dead launcher and no way back.
+        if (btn) btn.classList.remove('cr-busy');
+        siblings.forEach(b => { b.disabled = false; });
+      };
+    }
+
+    async function launchTerminal(mode, localId, resumeId, sessionMode, release) {
+      const done = release || (() => {});
+      if (!currentProject) { done(); return; }
       rememberLaunchMode(mode);
       // bypassPermissions cannot be switched on after launch (the CLI rejects it
       // unless started with --dangerously-skip-permissions), so chat gets the
@@ -3607,16 +3658,18 @@ export function getWebappHtml(botUsername) {
             : { project: currentProject, skipPermissions: skipPerms, shell: shellOnly }),
         });
         const data = await r.json();
-        if (!data.ok) { toast(data.error || 'Failed to launch', 'error'); return; }
+        if (!data.ok) { toast(data.error || 'Failed to launch', 'error'); done(); return; }
         if (localId) pendingCells = pendingCells.filter(x => x !== localId);
         if (!terminals.some(t => t.id === data.id)) {
           terminals.push({ id: data.id, project: currentProject, title: data.title || (isChat ? 'Chat' : 'Terminal'), order: data.order || 0, status: 'running', kind: isChat ? 'ui' : 'terminal' });
         }
         focusedTermId = data.id;
+        done();
         renderTermGrid();
         renderProjects();
       } catch (err) {
         toast('Failed to launch terminal: ' + err.message, 'error');
+        done();
       }
     }
 
@@ -3715,6 +3768,7 @@ export function getWebappHtml(botUsername) {
           currentProject = null;
           $('#current-project').textContent = 'No project';
           focusedTermId = null;
+          syncTabScope();
           renderTermGrid();
         }
         await loadProjects();
@@ -5624,6 +5678,27 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Tabs ───
+    // Tabs that mean something with no project open. Media and Mindmap have a
+    // global scope of their own; Info, Secrets and Settings are app-level. The
+    // rest are meaningless without a project, so they stay hidden rather than
+    // being shown and then erroring.
+    const GLOBAL_TABS = ['media', 'mindmap', 'info', 'secrets', 'settings'];
+
+    function syncTabScope() {
+      const bar = $('#tab-bar');
+      if (!bar) return;
+      bar.classList.add('visible');
+      const global = !currentProject;
+      bar.classList.toggle('global-only', global);
+      $$('.tab-btn').forEach(b => {
+        const ok = !global || GLOBAL_TABS.indexOf(b.dataset.tab) >= 0;
+        b.style.display = ok ? '' : 'none';
+      });
+      // Stranded on a tab that just became meaningless — fall back to Info,
+      // which is the one that explains the state you are in.
+      if (global && GLOBAL_TABS.indexOf(currentTab) < 0) switchTab('info');
+    }
+
     function switchTab(tab) {
       // Leaving the Secrets tab — forget any revealed values for safety.
       if (currentTab === 'secrets' && tab !== 'secrets') {
@@ -6252,6 +6327,7 @@ export function getWebappHtml(botUsername) {
             + '<span class="fi-icon">' + fileIcon(e.name) + '</span>'
             + '<span class="fi-name" data-action="files-open" data-file="' + escHtml(e.path) + '" style="cursor:pointer;flex:1;">' + escHtml(e.name) + '</span>'
             + '<span class="fi-size">' + formatFileSize(e.size) + '</span>'
+            + (feIsSourcePreview(e.name) ? _fbtn('files-edit', e.path, 'Edit the source', 'pencil') : '')
             + _fbtn('files-copy-path', e.path, 'Copy path', 'copy')
             + _fbtn('files-download', e.path, 'Download', 'download')
             + _fbtn('files-delete', e.path, 'Delete', 'trash', 'var(--red)')
@@ -6278,6 +6354,7 @@ export function getWebappHtml(botUsername) {
         html += '<div class="file-item ' + (isDir ? 'dir' : 'file') + '" data-drag-ref="' + escHtml(e.path) + '" data-drag-kind="' + (isDir ? 'folder' : 'file') + '" title="Drag onto a terminal to insert its path">'
           + '<span class="fi-icon">' + (isDir ? ic('folder') : fileIcon(e.name)) + '</span>'
           + nameCell
+          + (!isDir && feIsSourcePreview(e.name) ? _fbtn('files-edit', e.path, 'Edit the source', 'pencil') : '')
           + _fbtn('files-copy-path', e.path, 'Copy path', 'copy')
           + (isDir ? '' : _fbtn('files-download', e.path, 'Download', 'download'))
           + _fbtn('files-delete', e.path, 'Delete', 'trash', 'var(--red)')
@@ -6425,6 +6502,16 @@ export function getWebappHtml(botUsername) {
     // tile/grid/cascade. Mobile: a single full-screen window (opening replaces).
     // Per-window state lives on el._fe = { project, file, original, readOnly, view, kind }.
     const FE_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg', 'avif'];
+    // Previewable, but the file on disk is source you can meaningfully edit —
+    // an SVG renders as a picture yet is XML. These get an explicit Edit button
+    // in the explorer; a plain click still previews, which is what you want far
+    // more often. Anything added here needs to be BOTH in a preview list above
+    // and genuinely text.
+    const FE_SOURCE_PREVIEW_EXTS = ['svg'];
+    function feIsSourcePreview(name) {
+      const ext = (name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '').toLowerCase();
+      return FE_SOURCE_PREVIEW_EXTS.includes(ext);
+    }
     function feMobile() { return window.innerWidth <= 768; }
     let feZ = 2100, feFront = null, feCascade = 0;
     function feOverlay() { return document.getElementById('file-editor'); }
@@ -6523,9 +6610,12 @@ export function getWebappHtml(botUsername) {
       const ta = w.querySelector('.fe-content textarea'); return ta ? ta.value : '';
     }
 
-    async function feOpen(project, file) {
+    async function feOpen(project, file, opts) {
       const ext = (file.includes('.') ? file.slice(file.lastIndexOf('.') + 1) : '').toLowerCase();
-      if (FE_IMAGE_EXTS.includes(ext) || ext === 'pdf') return feOpenViewer(project, file, ext);
+      // asSource skips the preview and goes straight to the editor.
+      if (!(opts && opts.asSource) && (FE_IMAGE_EXTS.includes(ext) || ext === 'pdf')) {
+        return feOpenViewer(project, file, ext);
+      }
       // Already open on desktop → focus it instead of duplicating.
       if (!feMobile()) {
         const ex = feWins().find(w => w._fe && w._fe.kind === 'edit' && w._fe.project === project && w._fe.file === file);
@@ -7334,6 +7424,7 @@ export function getWebappHtml(botUsername) {
         const data = await r.json();
         if (!data.ok) { panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(data.error) + '</p></div>'; return; }
         const s = data.settings;
+        const warmStatus = data.limitWarmup || { enabled: false };
         const inputStyle = 'width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:13px;box-sizing:border-box;';
         const monoStyle = inputStyle + 'font-family:var(--mono);';
         const labelStyle = 'display:block;color:var(--text-secondary);font-size:0.78rem;margin-bottom:4px;';
@@ -7406,6 +7497,19 @@ export function getWebappHtml(botUsername) {
           + '<p style="' + hintStyle + ';margin-bottom:14px;">Telegram pings per event. \\u201cAlways\\u201d sends every time; \\u201cWhen Away\\u201d only while you\\u2019re not focused on Crundi (browser tab / Electron app); \\u201cNever\\u201d is off.</p>'
           + buildNotifyMatrix()
           + '</div>'
+          // Pre-start the rolling 5h window while idle. Off by default: it
+          // spends the user's own quota, so it must be asked for.
+          + '<div class="info-section"><h4>Usage</h4>'
+          + '<div class="seg-pref-row">'
+          + '<div><div class="set-tgl-lbl">Keep the 5-hour window warm</div>'
+          + '<p style="' + hintStyle + '">Claude’s 5-hour allowance is a rolling window that starts on your first message — so beginning real work also starts the clock, and it can run out mid-session. '
+          + 'When on, Crundi checks about once a minute and, if the window has lapsed while you were idle, sends a one-word message to open the next one. '
+          + 'Never while a session is working, and never if your own work already opened a window.</p>'
+          + (warmStatus.lastWarmAt ? '<p style="' + hintStyle + '">Last: ' + escHtml(warmStatus.lastWarmResult || '—') + ' · ' + escHtml(new Date(warmStatus.lastWarmAt).toLocaleString()) + '</p>' : '')
+          + (warmStatus.lastKnownReset ? '<p style="' + hintStyle + '">Current window resets ' + escHtml(new Date(warmStatus.lastKnownReset).toLocaleString()) + '</p>' : '')
+          + '</div>'
+          + '<button type="button" class="set-tgl' + (warmStatus.enabled ? ' on' : '') + '" id="set-limit-warmup" role="switch" aria-checked="' + (warmStatus.enabled ? 'true' : 'false') + '" data-action="toggle-limit-warmup"><span class="set-tgl-knob"></span></button>'
+          + '</div></div>'
           // Client-side terminal preferences — applied instantly, no restart.
           + '<div class="info-section"><h4>Terminal</h4>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">New Line Key</label>'
@@ -7525,6 +7629,29 @@ export function getWebappHtml(botUsername) {
         case 'update-install':
           if (window.api && window.api.installUpdate) window.api.installUpdate().catch(() => {});
           break;
+        case 'toggle-limit-warmup': {
+          const btn = $('#set-limit-warmup');
+          if (!btn) break;
+          const on = !btn.classList.contains('on');
+          btn.classList.toggle('on', on);
+          btn.setAttribute('aria-checked', on ? 'true' : 'false');
+          apiFetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limitWarmup: on }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) throw new Error(dd.error || 'Failed');
+              toast(on ? 'Crundi will keep the 5-hour window warm' : 'Window warm-up off', 'success');
+            })
+            .catch(err => {
+              btn.classList.toggle('on', !on);
+              btn.setAttribute('aria-checked', !on ? 'true' : 'false');
+              toast('Could not change that: ' + err.message, 'error');
+            });
+          break;
+        }
         case 'notify-pref': {
           const field = d.field, val = d.val;
           if (!field || !['always', 'away', 'never'].includes(val)) break;
@@ -7559,6 +7686,7 @@ export function getWebappHtml(botUsername) {
         // Files actions
         case 'files-nav': loadFiles(d.dir); break;
         case 'files-open': feOpen(currentProject, d.file); break;
+        case 'files-edit': feOpen(currentProject, d.file, { asSource: true }); break;
         case 'files-upload': filesUpload(); break;
         case 'files-download': filesDownload(d.file); break;
         case 'files-copy-path': filesCopyPath(d.file); break;
@@ -7585,37 +7713,34 @@ export function getWebappHtml(botUsername) {
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
         case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
-        case 'launch-terminal':
+        case 'launch-terminal': {
+          const btn = e.target.closest('[data-action="launch-terminal"]');
+          const rel = beginLaunch(btn, d.lid);
+          if (!rel) break;   // a launch is already running for this cell
           // Chat launches check the resume cost first; other modes go straight through.
-          if (d.mode === 'chat' || d.mode === 'chat-skip') launchChatWithPreflight(d.lid, d.mode);
-          else launchTerminal(d.mode, d.lid);
+          if (d.mode === 'chat' || d.mode === 'chat-skip') launchChatWithPreflight(d.lid, d.mode, rel);
+          else launchTerminal(d.mode, d.lid, undefined, undefined, rel);
           break;
+        }
         case 'chat-launch-mode': {
-          // Spawning the CLI against a large transcript can take many seconds,
-          // and until it returns the panel looks inert — so the click reads as
-          // ignored and gets repeated, launching twice. Mark the pressed button
-          // and shut the whole choice down.
           const btn = e.target.closest('[data-action="chat-launch-mode"]');
-          if (btn) {
-            if (btn.classList.contains('cr-busy')) break; // already launching
-            const panel = btn.closest('.cr-choice');
-            if (panel) panel.querySelectorAll('button').forEach(b => { b.disabled = true; });
-            btn.classList.add('cr-busy');
-            btn.disabled = true;
-          }
-          launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode);
+          const rel = beginLaunch(btn, d.lid);
+          if (!rel) break;
+          launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode, rel);
           break;
         }
         case 'chat-resume': openChatResume(d.lid); break;
         case 'chat-resume-cancel': closeChatResume(); break;
         case 'chat-resume-pick': {
           const lid = crPendingLid;
+          const rel = beginLaunch(e.target.closest('[data-action="chat-resume-pick"]'), lid);
+          if (!rel) break;
           closeChatResume();
           // Resume in whichever chat variant this project used last. Terminal
           // modes can't be resumed — /api/terminals/create takes no resumeId,
           // so a transcript can only be replayed into a UI-mode session.
           const last = lastLaunchMode();
-          launchTerminal(last === 'chat-skip' ? 'chat-skip' : 'chat', lid, d.sid);
+          launchTerminal(last === 'chat-skip' ? 'chat-skip' : 'chat', lid, d.sid, undefined, rel);
           break;
         }
       }
@@ -8910,7 +9035,7 @@ export function getWebappHtml(botUsername) {
         const chip = (k, label, icon) => '<button class="media-chip' + (state.kind === k ? ' on' : '') + '" data-media-kind="' + k + '">' + (icon ? ic(icon) : '') + label + '</button>';
         h += chip('all', 'All') + chip('kanban', 'Kanban', 'kanban') + chip('mindmap', 'Mindmap', 'mindmap') + chip('unlinked', 'Unlinked');
         h += '<div class="spacer"></div>';
-        h += '<button class="media-chip' + (state.scope === 'project' ? ' on' : '') + '" data-media-scope="project">This project</button>';
+        if (currentProject) h += '<button class="media-chip' + (state.scope === 'project' ? ' on' : '') + '" data-media-scope="project">This project</button>';
         h += '<button class="media-chip' + (state.scope === 'all' ? ' on' : '') + '" data-media-scope="all">All projects</button>';
       }
       h += '</div><div class="media-body"></div>';
@@ -8941,6 +9066,10 @@ export function getWebappHtml(botUsername) {
     // other workbench panels).
     function loadMedia() {
       const host = $('#media-panel'); if (!host) return;
+      // With no project open, "this project" can only ever be empty — start on
+      // All projects rather than showing an empty shelf and a nudge to pick a
+      // scope the user cannot satisfy yet.
+      if (!currentProject && mediaTabState.scope === 'project') mediaTabState.scope = 'all';
       mountMediaBrowser(host, mediaTabState);
     }
     // Refresh every mounted media browser (tab/panel + open modal) after a change.

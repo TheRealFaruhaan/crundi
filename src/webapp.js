@@ -33,6 +33,8 @@ import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
 import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
+import { createLimitWarmer } from './limit-warmer.js';
+import { createChatSchedule } from './chat-schedule.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -460,6 +462,34 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   // Apply a hook-reported state for a terminal; notify on transitions to
   // done(idle)/needs-input. Unknown terminals are ignored.
+  // Telegram's hard cap is 4096; leave room for the header and the notice.
+  const TG_OUTPUT_MAX = 3500;
+
+  /**
+   * What to say when a session goes idle.
+   *
+   * For a CHAT session we can do better than "finished": the turn's final
+   * assistant message is the answer itself, which is usually the whole reason
+   * you wanted telling. Terminal cells are a PTY — there is no clean "final
+   * message" to lift out of a screen buffer, so they keep the plain line.
+   */
+  function finishedMessage(term, name, proj) {
+    if (term && term.kind === 'ui' && claudeUi && claudeUi.lastTurnOutput) {
+      try {
+        const out = claudeUi.lastTurnOutput(term.id);
+        if (out) {
+          const body = out.length > TG_OUTPUT_MAX
+            ? out.slice(0, TG_OUTPUT_MAX) + '\n\n[…truncated, open Crundi for the rest]'
+            : out;
+          return `✅ ${name}${proj}\n\n${body}`;
+        }
+      } catch { /* fall through to the plain line */ }
+    }
+    // Nothing was said this turn (interrupted, or pure tool work) — the plain
+    // line is honest; echoing an older message would read as a fresh answer.
+    return `✅ ${name} finished${proj}.`;
+  }
+
   function handleAgentState(tid, state, ts = 0) {
     // Terminal cells report via the lifecycle hook; UI (chat) cells report
     // straight off the stream-json message flow. Both land here so the status
@@ -476,14 +506,37 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (ts) agentStateTs.set(tid, ts);
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
+    if (state === 'working' || state === 'needs-input') limitWarmer.markActivity();
+    // working -> idle is a turn ending. Edge-triggered off `prev` so a repeated
+    // 'idle' report (hooks fire from independent processes) cannot fire twice.
+    if (state === 'idle' && prev === 'working' && term.project) {
+      chatSchedule.onTurnEnd(term.project);
+    }
     if (state !== prev && (state === 'idle' || state === 'needs-input')) {
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
       if (state === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
-      else notifyEvent('finished', `✅ ${name} finished${proj}.`);
+      else notifyEvent('finished', finishedMessage(term, name, proj));
     }
     broadcastState();
   }
+
+  // Pre-start the rolling 5-hour window while idle (opt-in). handleAgentState is
+  // the single choke point every Claude session's activity passes through, so it
+  // is the honest place to answer "has any real work happened lately?".
+  // Constructed BEFORE the state subscription below: handleAgentState reads this
+  // binding, and a session changing state in between would hit the const's
+  // temporal dead zone.
+  const limitWarmer = createLimitWarmer({
+    getUsage: (opts) => usage.getUsage(opts || {}),
+    isBusy: () => [...agentStates.values()].some(v => v === 'working' || v === 'needs-input'),
+  });
+
+  // Deferred chat messages ("send this when the turn ends / the window resets").
+  const chatSchedule = createChatSchedule({
+    claudeUi,
+    getLatestUsage: () => usage.getLatestStored(),
+  });
 
   // Chat sessions push their agent state as it changes. These arrive in-order
   // from a single process, so no timestamp reordering guard is needed.
@@ -1255,6 +1308,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, { sessions: claudeUi ? claudeUi.list() : [] });
     }
 
+    // ─── Deferred chat messages ───
+    if (path === '/api/chat-schedule' && req.method === 'GET') {
+      const alias = String(url.searchParams.get('project') || '').toLowerCase();
+      if (!alias) return json(res, { ok: false, error: 'A project is required' }, 400);
+      return json(res, {
+        ok: true,
+        items: chatSchedule.list(alias),
+        recent: chatSchedule.recent(alias),
+      });
+    }
+
+    if (path === '/api/chat-schedule' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+      const alias = String(body.project || '').toLowerCase();
+      if (!getProject(alias)) return json(res, { ok: false, error: 'Unknown project' }, 400);
+      const r = chatSchedule.add({ project: alias, text: body.text, trigger: body.trigger });
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    const schedDel = path.match(/^\/api\/chat-schedule\/([a-f0-9]+)$/i);
+    if (schedDel && req.method === 'DELETE') {
+      const r = chatSchedule.remove(schedDel[1]);
+      return json(res, r, r.ok ? 200 : 404);
+    }
+
     // Prior Claude Code conversations for a project, newest first, so the UI can
     // offer a "resume" picker. These are on-disk transcripts, not live sessions.
     if (path === '/api/ui-sessions/resumable' && req.method === 'GET') {
@@ -1496,7 +1576,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           settings[key] = m ? m[1].trim() : '';
         }
         const chatId = getChatId ? getChatId() : '';
-        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs });
+        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs, limitWarmup: limitWarmer.status() });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
@@ -1531,6 +1611,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (setChatId) setChatId(newId);
         }
         // Live update (no restart): per-event notification policy.
+        if (body.limitWarmup !== undefined) limitWarmer.setEnabled(!!body.limitWarmup);
         if (body.notifyPrefs && typeof body.notifyPrefs === 'object') {
           for (const k of Object.keys(NOTIFY_DEFAULTS)) {
             if (NOTIFY_MODES.includes(body.notifyPrefs[k])) notifyPrefs[k] = body.notifyPrefs[k];
@@ -1625,7 +1706,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return isAbsolute(p) ? resolve(p) : resolve(project.path, p);
     }
     function isInsideProject(project, fullPath) {
-      return fullPath === project.path || fullPath.startsWith(project.path + sep);
+      // Normalise BOTH sides. project.path is whatever was registered, which may
+      // use forward slashes on Windows, while resolve() always returns
+      // backslashes — comparing them raw silently reports "outside the project"
+      // for paths that are plainly inside it.
+      const root = resolve(project.path);
+      const p = resolve(fullPath);
+      return p === root || p.startsWith(root + sep);
     }
 
     if (path === '/api/files/list' && req.method === 'GET') {
@@ -1739,8 +1826,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
-      const fullPath = resolve(project.path, body.file || '');
-      if (!fullPath.startsWith(project.path)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      // Same helpers the READ side uses. Raw resolve() mishandles the absolute
+      // paths the client actually sends when project.path is stored with
+      // forward slashes, so saving failed outright; and a bare startsWith()
+      // has no separator boundary, so a sibling directory sharing the project's
+      // name as a prefix would pass.
+      const fullPath = resolveFsPath(project, body.file || '');
+      if (!isInsideProject(project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
       try {
         writeFileSync(fullPath, body.content || '', 'utf-8');
         return json(res, { ok: true });
@@ -1784,13 +1876,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
       const relDir = body.dir || '.';
-      const targetDir = resolve(project.path, relDir);
-      if (!targetDir.startsWith(project.path)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      const targetDir = resolveFsPath(project, relDir);
+      if (!isInsideProject(project, targetDir)) return json(res, { ok: false, error: 'Invalid path' }, 403);
       if (!body.name || !body.data) return json(res, { ok: false, error: 'Missing name or data' }, 400);
       try {
         if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
         const filePath = join(targetDir, basename(body.name));
-        if (!filePath.startsWith(project.path)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+        if (!isInsideProject(project, filePath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
         const buf = Buffer.from(body.data, 'base64');
         writeFileSync(filePath, buf);
         return json(res, { ok: true, size: buf.length });
@@ -1801,9 +1893,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
-      const fullPath = resolve(project.path, body.file || '');
-      if (!fullPath.startsWith(project.path)) return json(res, { ok: false, error: 'Invalid path' }, 403);
-      if (fullPath === project.path) return json(res, { ok: false, error: 'Cannot delete project root' }, 403);
+      const fullPath = resolveFsPath(project, body.file || '');
+      if (!isInsideProject(project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      if (fullPath === resolve(project.path)) return json(res, { ok: false, error: 'Cannot delete project root' }, 403);
       if (!existsSync(fullPath)) return json(res, { ok: false, error: 'Not found' }, 404);
       try {
         const { rmSync } = await import('node:fs');

@@ -26,6 +26,9 @@
   var STYLE_ID = 'cc-styles';
   var CSS = [
     '.cc-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg-primary);font-size:13px;line-height:1.55}',
+    // Holds the scrolling log plus the floating agent dock, so the dock
+    // anchors just above the composer and does not scroll away with the log.
+    '.cc-logwrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}',
     '.cc-root.cc-drop{outline:2px dashed var(--accent);outline-offset:-2px}',
     '.cc-log{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 12px 4px;scroll-behavior:smooth}',
     '.cc-entry{margin-bottom:10px;animation:cc-in .18s ease}',
@@ -171,7 +174,75 @@
     '.cc-slash-item.on{background:var(--accent-dim)}',
     '.cc-slash-item b{font-family:var(--mono);color:var(--accent-hover);font-weight:600}',
     '.cc-slash-item span{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-    '.cc-wrap{position:relative}'
+    '.cc-wrap{position:relative}',
+
+    // Floating subagent dock. Sits over the transcript rather than in it: a
+    // subagent is work happening beside the conversation, not a turn in it.
+    '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:78%}',
+    '.cc-agents:empty{display:none}',
+    '.cc-bub{pointer-events:auto;display:flex;align-items:center;gap:7px;max-width:100%;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;padding:5px 11px 5px 9px;font-size:11.5px;color:var(--text-secondary);cursor:pointer;box-shadow:var(--shadow-md);animation:cc-in .2s ease}',
+    '.cc-bub:hover{border-color:var(--accent);color:var(--text-primary)}',
+    '.cc-bub-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cc-bub-n{font-family:var(--mono);font-size:10px;color:var(--text-muted);flex:none}',
+    '.cc-bub.done{opacity:.72}',
+    '.cc-bub.done:hover{opacity:1}',
+
+    // Expanded transcript, anchored inside the chat cell.
+    '.cc-agpanel{position:absolute;inset:8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);display:flex;flex-direction:column;z-index:25;animation:cc-in .16s ease}',
+    '.cc-agpanel-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border-subtle);flex:none}',
+    '.cc-agpanel-title{font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
+    '.cc-agpanel-sub{font-size:10.5px;color:var(--text-muted);font-family:var(--mono);flex:none}',
+    '.cc-agpanel-x{flex:none;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px}',
+    '.cc-agpanel-x:hover{color:var(--text-primary)}',
+    '.cc-agpanel-body{flex:1;overflow-y:auto;padding:10px 12px}',
+    '.cc-agpanel-prompt{background:var(--bg-secondary,#111119);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:7px 9px;margin-bottom:10px;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:150px;overflow:auto}',
+    '.cc-agpanel-empty{color:var(--text-muted);font-style:italic}',
+    '.cc-agentrow{display:flex;align-items:center;gap:8px;cursor:pointer}',
+    '.cc-agentrow:hover{border-color:var(--accent)}',
+    '.cc-agentrow-go{margin-left:auto;color:var(--accent-hover);font-size:11px;flex:none}',
+
+    // Goal mode. Present only while a goal is set, so a normal chat is unchanged.
+    '.cc-goalbar{flex:none;border-top:1px solid var(--border-subtle);background:var(--accent-dim);padding:6px 10px;font-size:11.5px}',
+    '.cc-goal-head{display:flex;align-items:center;gap:8px}',
+    '.cc-goal-tag{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;font-weight:700;color:var(--accent-hover);flex:none}',
+    '.cc-goal-cond{flex:1;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cc-goal-n{flex:none;color:var(--text-muted);font-family:var(--mono);font-size:10px}',
+    '.cc-goal-x{flex:none;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;font-size:10.5px;padding:1px 7px}',
+    '.cc-goal-x:hover{color:var(--red);border-color:var(--red)}',
+    '.cc-goal-idle{color:var(--text-muted);margin-top:4px}',
+    '.cc-gv{border-left:2px solid var(--accent);background:var(--bg-secondary,#111119);border-radius:0 var(--radius-sm) var(--radius-sm) 0;padding:6px 10px}',
+    '.cc-gv-head{display:flex;align-items:center;gap:6px;color:var(--accent-hover);font-size:11px;font-weight:600;margin-bottom:3px}',
+    '.cc-gv-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none}',
+    '.cc-gv-body{color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;font-size:12px}',
+
+    // Scheduled messages.
+    '.cc-sched{flex:none;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;padding:3px 5px;display:flex;align-items:center}',
+    '.cc-sched svg{width:13px;height:13px}',
+    '.cc-sched:hover{color:var(--accent-hover);border-color:var(--accent)}',
+    '.cc-narrow .cc-sched{padding:7px 9px}',
+    '.cc-narrow .cc-sched svg{width:15px;height:15px}',
+    '.cc-schedpanel{position:absolute;left:8px;right:8px;bottom:8px;max-height:82%;display:flex;flex-direction:column;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);z-index:28;animation:cc-in .16s ease}',
+    '.cc-sched-head{display:flex;align-items:center;padding:8px 10px;border-bottom:1px solid var(--border-subtle);flex:none}',
+    '.cc-sched-title{flex:1;font-weight:600;color:var(--text-primary)}',
+    '.cc-sched-x{background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px}',
+    '.cc-sched-x:hover{color:var(--text-primary)}',
+    '.cc-sched-body{padding:10px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}',
+    '.cc-sched-msg{width:100%;box-sizing:border-box;resize:vertical;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:7px 9px}',
+    '.cc-sched-trigs{display:flex;gap:6px;flex-wrap:wrap}',
+    '.cc-sched-trig{flex:1;min-width:96px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-secondary);cursor:pointer;padding:6px 8px;font-size:11.5px}',
+    '.cc-sched-trig.on{background:var(--accent-dim);border-color:var(--accent);color:var(--text-primary)}',
+    '.cc-sched-at{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:6px 8px}',
+    '.cc-sched-note{color:var(--text-muted);font-size:11px}',
+    '.cc-sched-note:empty{display:none}',
+    '.cc-sched-list{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border-subtle);padding-top:8px;margin-top:2px}',
+    '.cc-sched-empty{color:var(--text-muted);font-style:italic;font-size:12px}',
+    '.cc-sched-item{position:relative;background:var(--bg-secondary,#111119);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:6px 26px 6px 9px}',
+    '.cc-sched-item.next{border-color:var(--accent)}',
+    '.cc-sched-when{font-size:10.5px;color:var(--text-muted);font-family:var(--mono);margin-bottom:2px}',
+    '.cc-sched-item.next .cc-sched-when b{color:var(--accent-hover)}',
+    '.cc-sched-text{color:var(--text-secondary);font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:52px;overflow:hidden}',
+    '.cc-sched-del{position:absolute;top:4px;right:4px;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;line-height:1;padding:2px 4px}',
+    '.cc-sched-del:hover{color:var(--red)}'
   ].join('');
 
   function ensureStyles() {
@@ -331,12 +402,45 @@
     return esc(truncate(JSON.stringify(input, null, 2), 4000));
   }
 
+  // Which open chat currently owns each project-level draft, so two chats in
+  // one project never fight over it. Page-lifetime only; a claim is released on
+  // destroy() so reopening a closed chat can take the draft back.
+  var CLAIMED = {};
+
+  // Session-keyed drafts outlive the sessions they name (a restart strands
+  // them), so without this they would accumulate in localStorage forever.
+  var DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  function pruneDrafts() {
+    try {
+      var now = Date.now();
+      var kill = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        // Answer drafts leak the same way and are worse: their key contains
+        // BOTH a session id and an entry id, so once either is regenerated the
+        // card can never come back to clear it. Left alone they accumulate
+        // until the origin's storage quota is full, at which point every
+        // setItem here throws and is swallowed — drafts, prefs and workbench
+        // state all stop saving, silently.
+        if (!k || (k.indexOf('crundi_chat_draft_') !== 0 && k.indexOf('crundi_chat_ans_') !== 0)) continue;
+        var raw = localStorage.getItem(k);
+        if (!raw || raw.charAt(0) !== '{') continue;   // untimestamped: leave it
+        try {
+          var d = JSON.parse(raw);
+          if (d && d.t && now - d.t > DRAFT_TTL_MS) kill.push(k);
+        } catch (e) {}
+      }
+      kill.forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) {}
+  }
+
   // ─── Mount ───
 
   function mount(host, opts) {
     ensureStyles();
     opts = opts || {};
     var sessionId = opts.sessionId;
+    var project = opts.project || '';
     var apiFetch = opts.apiFetch;
     var wsSend = opts.wsSend || function () {};
 
@@ -368,6 +472,13 @@
     fileInput.style.display = 'none';
     // Wrapped in .cc-actions so a narrow cell can move them to their own row;
     // at full width the wrapper is display:contents and changes nothing.
+    // Schedule-a-message. Lives next to the "sends" toggle on a wide cell and
+    // beside the paperclip on a narrow one; syncWidth() moves the single node
+    // rather than rendering two and hiding one.
+    var schedBtn = el('button', 'cc-sched',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+      + '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>');
+    schedBtn.title = 'Schedule this message';
     var actions = el('div', 'cc-actions');
     actions.appendChild(attachBtn);
     actions.appendChild(stopBtn);
@@ -386,14 +497,24 @@
       ['auto', 'auto'], ['plan', 'plan mode'], ['dontAsk', "don't ask"]];
     function buildModes(isBypass) {
       modeSel.innerHTML = '';
-      // A bypass session is fixed for its lifetime — show that and nothing else.
-      (isBypass ? [['bypassPermissions', 'bypass all']] : MODES).forEach(function (m) {
+      // Only switching INTO bypass is a launch-time decision. A session started
+      // WITH it can move freely to plan (or any other mode) and back — verified
+      // against the CLI, which answers set_permission_mode with {mode:"plan"}
+      // and then {mode:"bypassPermissions"} on a --dangerously-skip-permissions
+      // session. Locking the picker to "bypass all" cost the user plan mode for
+      // no reason.
+      (isBypass ? [['bypassPermissions', 'bypass all']].concat(MODES) : MODES).forEach(function (m) {
         var o = el('option'); o.value = m[0]; o.textContent = m[1]; modeSel.appendChild(o);
       });
-      modeSel.disabled = !!isBypass;
+      modeSel.disabled = false;
       modeSel.title = isBypass
-        ? 'This chat was launched with permissions bypassed — the mode is fixed for its lifetime'
+        ? 'Permission mode — this chat can return to "bypass all" because it was launched for it'
         : 'Permission mode for this chat';
+    }
+    function setModeIfKnown(mode) {
+      for (var i = 0; i < modeSel.options.length; i++) {
+        if (modeSel.options[i].value === mode) { modeSel.value = mode; return; }
+      }
     }
     buildModes(false);
     var enterBtn = el('button', 'cc-toggle');
@@ -404,6 +525,7 @@
     meta.appendChild(stateLbl);
     meta.appendChild(modeSel);
     meta.appendChild(enterBtn);
+    meta.appendChild(schedBtn);
     meta.appendChild(el('span', 'cc-meta-sp'));
     meta.appendChild(sidLbl);
     meta.appendChild(modelLbl);
@@ -412,7 +534,16 @@
     wrap.appendChild(inrow);
     composer.appendChild(wrap);
     composer.appendChild(meta);
-    root.appendChild(log);
+    var logWrap = el('div', 'cc-logwrap');
+    var agentDock = el('div', 'cc-agents');
+    logWrap.appendChild(log);
+    logWrap.appendChild(agentDock);
+    // Goal mode is opt-in (`/goal <condition>`), so this stays out of the way
+    // entirely until the user asks for it.
+    var goalBar = el('div', 'cc-goalbar');
+    goalBar.style.display = 'none';
+    root.appendChild(logWrap);
+    root.appendChild(goalBar);
     root.appendChild(composer);
     host.appendChild(root);
 
@@ -470,6 +601,10 @@
       if (want === narrow) return;
       narrow = want;
       root.classList.toggle('cc-narrow', narrow);
+      // Narrow: sit with the paperclip, ahead of stop/send. Wide: back on the
+      // meta strip beside the enter toggle.
+      if (narrow) actions.insertBefore(schedBtn, stopBtn);
+      else meta.insertBefore(schedBtn, meta.querySelector('.cc-meta-sp'));
       syncEnterMode();
     }
     var widthObserver = null;
@@ -652,6 +787,14 @@
           }
           break;
         }
+        case 'goal-verdict': {
+          var gv = el('div', 'cc-gv');
+          gv.appendChild(el('div', 'cc-gv-head',
+            '<span class="cc-gv-dot"></span><span>Goal not yet met · check ' + (e.n || 1) + '</span>'));
+          gv.appendChild(el('div', 'cc-gv-body', esc(e.text)));
+          node.appendChild(gv);
+          break;
+        }
         case 'notice': node.appendChild(el('div', 'cc-notice', esc(e.text))); break;
         case 'error':  node.appendChild(el('div', 'cc-error', esc(e.text))); break;
         // A transient entry the server retired (e.g. the startup placeholder).
@@ -681,6 +824,22 @@
     }
 
     function toolNode(e) {
+      // A Task/Agent tool row IS a subagent. Give it the same drill-in as the
+      // floating bubble so the transcript stays reachable in chronological
+      // place once the bubble has aged out of the dock.
+      if (e.toolUseId && agents.has(e.toolUseId)) {
+        var ab = el('div', 'cc-tool cc-agentrow');
+        var am = agents.get(e.toolUseId).meta;
+        var arun = am.status === 'running' || !am.status;
+        ab.innerHTML =
+          (arun ? '<span class="cc-spin"></span>'
+                : '<span class="' + (am.status === 'failed' ? 'cc-dot-err' : 'cc-dot-ok') + '"></span>')
+          + '<span class="cc-tool-name">' + esc(am.subagentType || 'Agent') + '</span>'
+          + '<span class="cc-tool-sum">' + esc(am.description || '') + '</span>'
+          + '<span class="cc-agentrow-go">transcript ›</span>';
+        ab.addEventListener('click', function () { toggleAgentPanel(e.toolUseId); });
+        return ab;
+      }
       var box = el('div', 'cc-tool cc-collapsed' + (e.isError ? ' err' : ''));
       var status = e.status === 'running'
         ? '<span class="cc-spin"></span>'
@@ -754,6 +913,7 @@
       }
 
       var picks = questions.map(function () { return { chosen: [], other: '' }; });
+      var qNodes = [];
 
       questions.forEach(function (q, qi) {
         var qEl = el('div', 'cc-q');
@@ -791,6 +951,7 @@
                 : ri === oi);
             });
             syncSubmit();
+            saveAnswer();
           });
           qEl.appendChild(row);
         });
@@ -807,9 +968,11 @@
             qEl.querySelectorAll('.cc-opt').forEach(function (r) { r.classList.remove('sel'); });
           }
           syncSubmit();
+          saveAnswer();
         });
         qEl.appendChild(otherInput);
         box.appendChild(qEl);
+        qNodes.push({ qEl: qEl, otherInput: otherInput, name: name });
       });
 
       var btns = el('div', 'cc-btns');
@@ -829,12 +992,53 @@
         submit.disabled = questions.some(function (q, qi) { return !answerFor(qi); });
       }
 
+      // Half-finished answers survive leaving the cell, exactly like the message
+      // draft does. Answering one of Claude's questions often means going away
+      // to look something up first, and the card is rebuilt from scratch when
+      // the panel remounts — so without this, the trip costs you the answer.
+      var ANS_KEY = 'crundi_chat_ans_' + sessionId + '_' + e.id;
+      function saveAnswer() {
+        try {
+          var any = picks.some(function (p) { return (p.chosen && p.chosen.length) || p.other; });
+          if (any) localStorage.setItem(ANS_KEY, JSON.stringify({ v: picks, t: Date.now() }));
+          else localStorage.removeItem(ANS_KEY);
+        } catch (err) {}
+      }
+      function clearAnswer() { try { localStorage.removeItem(ANS_KEY); } catch (err) {} }
+      function restoreAnswer() {
+        var saved = null;
+        try {
+          var rawAns = JSON.parse(localStorage.getItem(ANS_KEY) || 'null');
+          // Older answers were a bare array, before they carried a timestamp.
+          saved = Array.isArray(rawAns) ? rawAns : (rawAns && rawAns.v);
+        } catch (err) { saved = null; }
+        if (!saved || !saved.length) return;
+        saved.forEach(function (p, qi) {
+          if (!p || !qNodes[qi]) return;
+          picks[qi].chosen = p.chosen || [];
+          picks[qi].other = p.other || '';
+          var n = qNodes[qi];
+          n.otherInput.value = picks[qi].other;
+          var inputs = n.qEl.querySelectorAll('input[name="' + n.name + '"]');
+          var rows = n.qEl.querySelectorAll('.cc-opt');
+          for (var i = 0; i < inputs.length; i++) {
+            var on = picks[qi].chosen.indexOf(inputs[i].value) >= 0;
+            inputs[i].checked = on;
+            if (rows[i]) rows[i].classList.toggle('sel', on);
+          }
+        });
+        syncSubmit();
+      }
+      restoreAnswer();
+
       submit.addEventListener('click', function () {
         var answers = {};
         questions.forEach(function (q, qi) { answers[q.question] = answerFor(qi); });
+        clearAnswer();
         respond(e, { behavior: 'allow', updatedInput: Object.assign({}, e.input, { answers: answers }) });
       });
       skip.addEventListener('click', function () {
+        clearAnswer();
         respond(e, { behavior: 'deny', message: 'The user dismissed the question.' });
       });
       return box;
@@ -1199,18 +1403,69 @@
 
     // ─── Draft persistence ───
     // Switching project or tab tears the cell down and rebuilds it, so an
-    // unsent message would be lost. Keyed per session, and deliberately NOT
-    // cleared on destroy() — destroy is exactly the case we're protecting.
+    // unsent message would be lost. Deliberately NOT cleared on destroy() —
+    // destroy is exactly the case we're protecting.
+    //
+    // Keyed per session AND per project, because the session id is not durable
+    // enough on its own: restarting Crundi drops every in-memory session, so
+    // relaunching the chat mints a NEW id and a draft saved under the old one
+    // is stranded forever. The conversation survives a restart (we replay the
+    // stored transcript), so the draft has to survive with it — and the project
+    // is the identity that lasts, matching one-transcript-per-project. The
+    // project copy is only adopted by a chat that has no draft of its own and
+    // while no other open chat has claimed it, so opening a second chat in the
+    // same project cannot steal the first one's text.
     var DRAFT_KEY = 'crundi_chat_draft_' + sessionId;
+    var DRAFT_PROJ_KEY = project ? 'crundi_chat_draft_p_' + project : '';
+    var claimedProject = false;
+
+    function writeDraft(key, text) {
+      if (!key) return;
+      if (text) localStorage.setItem(key, JSON.stringify({ v: text, t: Date.now() }));
+      else localStorage.removeItem(key);
+    }
+    function readDraft(key) {
+      if (!key) return '';
+      var raw = localStorage.getItem(key);
+      if (!raw) return '';
+      // Drafts written before this became a timestamped record are bare text.
+      if (raw.charAt(0) !== '{') return raw;
+      try { return JSON.parse(raw).v || ''; } catch (e) { return raw; }
+    }
     function saveDraft() {
       try {
-        if (input.value) localStorage.setItem(DRAFT_KEY, input.value);
-        else localStorage.removeItem(DRAFT_KEY);
+        writeDraft(DRAFT_KEY, input.value);
+        if (!DRAFT_PROJ_KEY) return;
+        // The claim has to gate the WRITE, not just the read. Gating on the
+        // local flag alone let a second chat in the same project overwrite the
+        // first one's project-level copy the moment it was typed in — and then,
+        // when the FIRST chat sent its message, clear the second one's. Only the
+        // owner (or nobody) may touch it.
+        var owner = CLAIMED[DRAFT_PROJ_KEY];
+        if (owner && owner !== sessionId) return;
+        if (input.value) {
+          writeDraft(DRAFT_PROJ_KEY, input.value);
+          claimedProject = true;
+          CLAIMED[DRAFT_PROJ_KEY] = sessionId;
+        } else if (claimedProject) {
+          writeDraft(DRAFT_PROJ_KEY, '');
+          claimedProject = false;
+          delete CLAIMED[DRAFT_PROJ_KEY];
+        }
       } catch (e) {}
     }
     try {
-      var draft = localStorage.getItem(DRAFT_KEY);
-      if (draft) { input.value = draft; setTimeout(autoGrow, 0); }
+      pruneDrafts();
+      var draft = readDraft(DRAFT_KEY);
+      if (!draft && DRAFT_PROJ_KEY && !CLAIMED[DRAFT_PROJ_KEY]) {
+        draft = readDraft(DRAFT_PROJ_KEY);   // stranded by a restart — adopt it
+      }
+      if (draft) {
+        input.value = draft;
+        setTimeout(autoGrow, 0);
+        if (DRAFT_PROJ_KEY) { claimedProject = true; CLAIMED[DRAFT_PROJ_KEY] = sessionId; }
+        saveDraft();   // re-anchor under this session's id
+      }
     } catch (e) {}
 
     input.addEventListener('keydown', onKeyDown);
@@ -1231,6 +1486,185 @@
 
     // ─── Event application ───
 
+    // ─── Subagents ───
+    //
+    // Claude's Task subagents stream their own turns up the same connection.
+    // The server routes them out of the transcript (see claude-ui.js) and sends
+    // them here instead, so they surface as bubbles floating over the log —
+    // present and inspectable, but never mistaken for the conversation itself.
+
+    var agents = new Map();   // toolUseId -> { meta, messages, bubble }
+    var openAgent = null;     // toolUseId of the expanded panel, if any
+    var agentPanel = null;
+
+    function agentRec(toolUseId) {
+      var rec = agents.get(toolUseId);
+      if (!rec) {
+        rec = { meta: { toolUseId: toolUseId, description: '', status: 'running' }, messages: [], bubble: null };
+        agents.set(toolUseId, rec);
+      }
+      return rec;
+    }
+
+    function agentLabel(m) {
+      return m.description || (m.subagentType ? m.subagentType + ' agent' : 'Agent');
+    }
+
+    function drawBubble(rec) {
+      var m = rec.meta;
+      var running = m.status === 'running' || !m.status;
+      if (!rec.bubble) {
+        rec.bubble = el('div', 'cc-bub');
+        rec.bubble.addEventListener('click', function () { toggleAgentPanel(m.toolUseId); });
+        agentDock.appendChild(rec.bubble);
+      } else if (!rec.bubble.parentNode && running) {
+        agentDock.appendChild(rec.bubble); // trimmed while idle, now active again
+      }
+      rec.bubble.className = 'cc-bub' + (running ? '' : ' done');
+      var tok = m.usage && m.usage.total_tokens;
+      rec.bubble.innerHTML =
+        (running ? '<span class="cc-spin"></span>'
+                 : '<span class="' + (m.status === 'failed' ? 'cc-dot-err' : 'cc-dot-ok') + '"></span>')
+        + '<span class="cc-bub-txt">' + esc(agentLabel(m)) + '</span>'
+        + '<span class="cc-bub-n">' + esc(tok ? (tok >= 1000 ? Math.round(tok / 1000) + 'k' : String(tok)) : '') + '</span>';
+      rec.bubble.title = (m.subagentType ? m.subagentType + ' · ' : '')
+        + (m.step ? m.step + ' · ' : '')
+        + (m.status || 'running') + ' — click to open the transcript';
+    }
+
+    function applyAgent(meta) {
+      if (!meta || !meta.toolUseId) return;
+      var rec = agentRec(meta.toolUseId);
+      // `count` is the server's tally; our own messages array is authoritative.
+      var count = rec.meta.count;
+      rec.meta = meta;
+      if (meta.count == null) rec.meta.count = count;
+      drawBubble(rec);
+      trimDock();
+      // The tool row that spawned this agent was painted before we knew it was
+      // one; repaint it now so it picks up the drill-in.
+      entries.forEach(function (r) {
+        if (r.data.kind === 'tool' && r.data.toolUseId === meta.toolUseId) paint(r.node, r.data);
+      });
+      if (openAgent === meta.toolUseId) paintAgentPanel();
+    }
+
+    function addAgentEntry(toolUseId, entry) {
+      var rec = agentRec(toolUseId);
+      rec.messages.push(entry);
+      if (openAgent === toolUseId) appendAgentEntry(entry);
+      else drawBubble(rec);
+    }
+
+    function patchAgentEntry(toolUseId, id, patch) {
+      var rec = agents.get(toolUseId);
+      if (!rec) return;
+      for (var i = 0; i < rec.messages.length; i++) {
+        if (rec.messages[i].id === id) {
+          Object.assign(rec.messages[i], patch);
+          if (openAgent === toolUseId && agentPanel) {
+            var n = agentPanel.querySelector('[data-agid="' + id + '"]');
+            if (n) paint(n, rec.messages[i]);
+          }
+          return;
+        }
+      }
+    }
+
+    function appendAgentEntry(entry) {
+      if (!agentPanel) return;
+      var body = agentPanel.querySelector('.cc-agpanel-body');
+      if (!body) return;
+      var empty = body.querySelector('.cc-agpanel-empty');
+      if (empty) empty.remove();
+      var stick = body.scrollTop + body.clientHeight >= body.scrollHeight - 40;
+      var node = el('div', 'cc-entry');
+      node.dataset.agid = entry.id;
+      paint(node, entry);
+      body.appendChild(node);
+      if (stick) body.scrollTop = body.scrollHeight;
+    }
+
+    function paintAgentPanel() {
+      if (!agentPanel || !openAgent) return;
+      var rec = agents.get(openAgent);
+      if (!rec) return;
+      var m = rec.meta;
+      var running = m.status === 'running' || !m.status;
+      var head = agentPanel.querySelector('.cc-agpanel-title');
+      var sub = agentPanel.querySelector('.cc-agpanel-sub');
+      if (head) head.textContent = agentLabel(m);
+      if (sub) {
+        var bits = [];
+        if (m.subagentType) bits.push(m.subagentType);
+        if (running && m.step) bits.push(m.step);
+        else bits.push(m.status || 'done');
+        if (m.usage && m.usage.tool_uses) bits.push(m.usage.tool_uses + ' tools');
+        if (m.usage && m.usage.total_tokens) bits.push(Math.round(m.usage.total_tokens / 1000) + 'k tok');
+        sub.textContent = bits.join(' · ');
+      }
+    }
+
+    function toggleAgentPanel(toolUseId) {
+      if (openAgent === toolUseId) { closeAgentPanel(); return; }
+      closeAgentPanel();
+      var rec = agents.get(toolUseId);
+      if (!rec) return;
+      openAgent = toolUseId;
+      agentPanel = el('div', 'cc-agpanel');
+      var head = el('div', 'cc-agpanel-head');
+      head.appendChild(el('span', 'cc-agpanel-title', ''));
+      head.appendChild(el('span', 'cc-agpanel-sub', ''));
+      var x = el('button', 'cc-agpanel-x', '✕');
+      x.addEventListener('click', closeAgentPanel);
+      head.appendChild(x);
+      var body = el('div', 'cc-agpanel-body');
+      if (rec.meta.prompt) body.appendChild(el('div', 'cc-agpanel-prompt', esc(rec.meta.prompt)));
+      if (rec.meta.summary) {
+        var sum = el('div', 'cc-assistant', md(rec.meta.summary));
+        var sw = el('div', 'cc-entry');
+        sw.appendChild(sum);
+        body.appendChild(sw);
+      }
+      if (!rec.messages.length) {
+        body.appendChild(el('div', 'cc-agpanel-empty',
+          rec.meta.status && rec.meta.status !== 'running'
+            ? 'This agent’s transcript was not kept.'
+            : 'Waiting for the agent’s first step…'));
+      }
+      agentPanel.appendChild(head);
+      agentPanel.appendChild(body);
+      logWrap.appendChild(agentPanel);
+      rec.messages.forEach(appendAgentEntry);
+      paintAgentPanel();
+      body.scrollTop = body.scrollHeight;
+    }
+
+    function closeAgentPanel() {
+      if (agentPanel) agentPanel.remove();
+      agentPanel = null;
+      openAgent = null;
+    }
+
+    // The dock floats over the transcript, so it must never grow into it.
+    // Running agents always stay visible; finished ones fall away oldest-first
+    // once the dock is full — their transcripts remain one click away on the
+    // Agent row in the log.
+    var DOCK_MAX = 4;
+    function trimDock() {
+      var bubs = [].slice.call(agentDock.children);
+      var over = bubs.length - DOCK_MAX;
+      for (var i = 0; i < bubs.length && over > 0; i++) {
+        if (bubs[i].classList.contains('done')) { bubs[i].remove(); over--; }
+      }
+    }
+
+    function resetAgents() {
+      closeAgentPanel();
+      agents.clear();
+      agentDock.innerHTML = '';
+    }
+
     function addEntry(data) {
       var node = renderEntry(data);
       entries.set(data.id, { data: data, node: node });
@@ -1241,12 +1675,198 @@
       scrollDown(stick);
     }
 
+    // ─── Scheduled messages ───
+    // Opens with whatever is in the composer already copied in, so the common
+    // case (write it, then decide it should go later) is one click. Opened
+    // empty it is simply the list — the same panel, nothing special-cased.
+
+    var schedPanel = null;
+
+    function trigLabel(it) {
+      var t = it.trigger.type;
+      if (t === 'time') return new Date(it.trigger.at).toLocaleString();
+      if (t === 'turn-end') return 'when the turn ends';
+      if (t === 'limit-reset') return 'when the 5h window resets';
+      return t;
+    }
+
+    function closeSched() {
+      if (schedPanel) schedPanel.remove();
+      schedPanel = null;
+    }
+
+    function loadSched() {
+      if (!schedPanel || !project) return;
+      var listEl = schedPanel.querySelector('.cc-sched-list');
+      apiFetch('/api/chat-schedule?project=' + encodeURIComponent(project))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!schedPanel || !listEl) return;
+          var items = (d && d.items) || [];
+          if (!items.length) {
+            listEl.innerHTML = '<div class="cc-sched-empty">Nothing scheduled for this project.</div>';
+            return;
+          }
+          // Server sorts by next firing; the first row is what goes next.
+          listEl.innerHTML = items.map(function (it, i) {
+            return '<div class="cc-sched-item' + (i === 0 ? ' next' : '') + '" data-sid="' + esc(it.id) + '">'
+              + '<div class="cc-sched-when">' + (i === 0 ? '<b>next</b> · ' : '') + esc(trigLabel(it)) + '</div>'
+              + '<div class="cc-sched-text">' + esc(it.text) + '</div>'
+              + '<button class="cc-sched-del" title="Cancel this message">✕</button>'
+              + '</div>';
+          }).join('');
+          listEl.querySelectorAll('.cc-sched-del').forEach(function (b) {
+            b.addEventListener('click', function () {
+              var id = b.closest('.cc-sched-item').dataset.sid;
+              apiFetch('/api/chat-schedule/' + encodeURIComponent(id), { method: 'DELETE' })
+                .then(function () { loadSched(); })
+                .catch(function () {});
+            });
+          });
+        })
+        .catch(function () {
+          if (listEl) listEl.innerHTML = '<div class="cc-sched-empty">Could not load scheduled messages.</div>';
+        });
+    }
+
+    function openSched() {
+      if (schedPanel) { closeSched(); return; }
+      schedPanel = el('div', 'cc-schedpanel');
+      // Default the time field to a round-ish moment shortly ahead, so the
+      // common "later today" case needs one edit, not five.
+      var soon = new Date(Date.now() + 30 * 60000);
+      soon.setSeconds(0, 0);
+      var localIso = new Date(soon.getTime() - soon.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+      schedPanel.innerHTML =
+        '<div class="cc-sched-head"><span class="cc-sched-title">Schedule a message</span>'
+        + '<button class="cc-sched-x">✕</button></div>'
+        + '<div class="cc-sched-body">'
+        + '<textarea class="cc-sched-msg" rows="3" placeholder="Message to send later…"></textarea>'
+        + '<div class="cc-sched-trigs">'
+        + '<button class="cc-sched-trig on" data-trig="time">At a time</button>'
+        + '<button class="cc-sched-trig" data-trig="turn-end">Turn ends</button>'
+        + '<button class="cc-sched-trig" data-trig="limit-reset">Limit resets</button>'
+        + '</div>'
+        + '<input type="datetime-local" class="cc-sched-at" value="' + localIso + '">'
+        + '<div class="cc-sched-note"></div>'
+        + '<button class="cc-btn primary cc-sched-save">Schedule</button>'
+        + '<div class="cc-sched-list"></div>'
+        + '</div>';
+      root.appendChild(schedPanel);
+
+      var msg = schedPanel.querySelector('.cc-sched-msg');
+      var atEl = schedPanel.querySelector('.cc-sched-at');
+      var note = schedPanel.querySelector('.cc-sched-note');
+      var trig = 'time';
+
+      // Carry the composer across. Empty is fine — the panel is then just the list.
+      msg.value = input.value;
+
+      function syncTrig() {
+        atEl.style.display = trig === 'time' ? '' : 'none';
+        note.textContent = trig === 'turn-end'
+          ? 'Sends as soon as the current turn finishes. If nothing is running, it waits for the next turn to end.'
+          : trig === 'limit-reset'
+            ? 'Sends when the rolling 5-hour usage window rolls over.'
+            : '';
+      }
+      syncTrig();
+
+      schedPanel.querySelectorAll('.cc-sched-trig').forEach(function (b) {
+        b.addEventListener('click', function () {
+          trig = b.dataset.trig;
+          schedPanel.querySelectorAll('.cc-sched-trig').forEach(function (x) {
+            x.classList.toggle('on', x === b);
+          });
+          syncTrig();
+        });
+      });
+      schedPanel.querySelector('.cc-sched-x').addEventListener('click', closeSched);
+
+      schedPanel.querySelector('.cc-sched-save').addEventListener('click', function () {
+        var text = msg.value.trim();
+        if (!text) { note.textContent = 'Write a message first.'; return; }
+        var payload = { project: project, text: text, trigger: { type: trig } };
+        if (trig === 'time') {
+          if (!atEl.value) { note.textContent = 'Pick a time.'; return; }
+          payload.trigger.at = new Date(atEl.value).toISOString();
+        }
+        apiFetch('/api/chat-schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d.ok) { note.textContent = d.error || 'Could not schedule that.'; return; }
+            // It is queued now, so clear the composer it came from — leaving it
+            // there invites sending the same thing twice.
+            if (input.value.trim() === text) { input.value = ''; saveDraft(); autoGrow(); }
+            msg.value = '';
+            note.textContent = '';
+            loadSched();
+          })
+          .catch(function (err) { note.textContent = 'Could not schedule that: ' + err.message; });
+      });
+
+      loadSched();
+      msg.focus();
+    }
+
+    schedBtn.addEventListener('click', openSched);
+
+    // ─── Goal mode ───
+    // The CLI runs the loop inside a single turn, pushed on by a Stop hook, so
+    // there is no per-iteration state to drive here — the bar exists to answer
+    // "why is it still going?", which is otherwise invisible.
+    var goal = null;
+
+    function renderGoal() {
+      if (!goal) { goalBar.style.display = 'none'; goalBar.innerHTML = ''; return; }
+      goalBar.style.display = '';
+      goalBar.innerHTML = '';
+      var head = el('div', 'cc-goal-head');
+      head.appendChild(el('span', 'cc-goal-tag', goal.looping ? '<span class="cc-spin"></span>GOAL' : 'GOAL'));
+      head.appendChild(el('span', 'cc-goal-cond', esc(goal.condition)));
+      var n = el('span', 'cc-goal-n', goal.verdicts
+        ? goal.verdicts + (goal.verdicts === 1 ? ' check' : ' checks')
+        : (goal.looping ? 'running' : 'set'));
+      head.appendChild(n);
+      var x = el('button', 'cc-goal-x', 'clear');
+      x.title = 'Stop working towards this goal (/goal clear)';
+      x.addEventListener('click', clearGoal);
+      head.appendChild(x);
+      goalBar.appendChild(head);
+      if (!goal.looping && goal.verdicts) {
+        goalBar.appendChild(el('div', 'cc-goal-idle',
+          'The goal loop has stopped. Send /goal to ask for its current verdict.'));
+      }
+    }
+
+    function clearGoal() {
+      // Route it through the normal send path so the CLI sees the real command
+      // and the transcript records that the user cleared it.
+      if (state !== 'idle') { enqueue('/goal clear'); return; }
+      postMessage('/goal clear');
+      setState('working');
+    }
+
     function applyHistory(session) {
       if (destroyed || !session) return;
       log.innerHTML = '';
       entries.clear();
       activityNode = null; // detached by the wipe above; setState re-creates it
       (session.messages || []).forEach(addEntry);
+      resetAgents();
+      (session.agents || []).forEach(function (a) {
+        if (!a || !a.toolUseId) return;
+        var rec = agentRec(a.toolUseId);
+        rec.messages = a.messages || [];
+        applyAgent(a);
+      });
+      goal = session.goal || null;
+      renderGoal();
       slashCommands = session.slashCommands || [];
       buildModes(session.skipPermissions);
       modeSel.value = session.permissionMode || 'default';
@@ -1291,17 +1911,25 @@
         // conversation whose stored transcript was replayed) — take the whole
         // snapshot rather than trying to merge.
         case 'history': applyHistory(ev.session); break;
+        case 'goal': goal = ev.goal; renderGoal(); break;
+        case 'agent': applyAgent(ev.agent); break;
+        case 'agent-entry': addAgentEntry(ev.toolUseId, ev.entry); break;
+        case 'agent-patch': patchAgentEntry(ev.toolUseId, ev.id, ev.patch); break;
         case 'state': setState(ev.state); break;
         case 'init':
           slashCommands = ev.slashCommands || [];
           if (ev.model) modelLbl.textContent = ev.model;
-          if (ev.permissionMode) modeSel.value = ev.permissionMode;
+          if (ev.permissionMode) setModeIfKnown(ev.permissionMode);
           // Fires twice: once when the process is ready (no session id yet) and
           // again on the first turn, which is when the CLI reveals its id.
           setSessionId(ev.sessionId);
           break;
         case 'meta':
-          if (ev.permissionMode) modeSel.value = ev.permissionMode;
+          // Assigning a value with no matching <option> silently sets
+          // selectedIndex to -1 and the picker renders EMPTY. The CLI can
+          // report a mode this session's list does not carry (e.g. a
+          // bypassPermissions default on a session not launched for it).
+          if (ev.permissionMode) setModeIfKnown(ev.permissionMode);
           if (ev.model) modelLbl.textContent = ev.model;
           break;
         case 'exit':
@@ -1331,6 +1959,8 @@
       insertText: function (text) { if (text) insertPath(text); },
       destroy: function () {
         destroyed = true;
+        // Let a later chat in this project pick the draft back up.
+        if (DRAFT_PROJ_KEY && CLAIMED[DRAFT_PROJ_KEY] === sessionId) delete CLAIMED[DRAFT_PROJ_KEY];
         stopTicker(); // closing a cell must not leave an interval running
         root.removeEventListener('dragover', onDragOver);
         root.removeEventListener('dragleave', onDragLeave);
