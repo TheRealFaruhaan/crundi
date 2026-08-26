@@ -7768,7 +7768,7 @@ export function getWebappHtml(botUsername) {
           // Notification policy — applied instantly, no restart. "When Away" only
           // pings when you are NOT focused on Crundi (browser tab / Electron app).
           + '<div class="info-section"><h4>Notification Settings</h4>'
-          + '<p style="' + hintStyle + ';margin-bottom:14px;">Telegram pings per event. \\u201cAlways\\u201d sends every time; \\u201cWhen Away\\u201d only while you\\u2019re not focused on Crundi (browser tab / Electron app); \\u201cNever\\u201d is off.</p>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Which events are worth a notification, sent on whichever channels are on above. \\u201cAlways\\u201d sends every time; \\u201cWhen Away\\u201d only while you\\u2019re not focused on Crundi (browser tab / desktop app); \\u201cNever\\u201d is off.</p>'
           + buildNotifyMatrix()
           + '</div>'
           // Pre-start the rolling 5h window while idle. Off by default: it
