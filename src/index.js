@@ -343,11 +343,22 @@ config.botUsername = '';
 
 // Mark as ready BEFORE bot init — webapp is usable without Telegram
 console.log(`[crundi] Ready!`);
+// Loud, and after the banner so it is the last thing on screen. An unconfigured
+// server only permits setting up a sign-in method, but whoever reaches it first
+// is the one who gets to set it.
+try {
+  const authConfig = await import('./auth-config.js');
+  authConfig.warnIfOpen();
+} catch { /* non-fatal */ }
 console.log(`[crundi] Web UI: ${webappUrl}`);
 console.log(`[crundi] Local:  http://localhost:${port}`);
 
 // Start Telegram bot in background — don't block the app
 (async () => {
+  if (!bot) {
+    console.log('[crundi] No Telegram bot configured — sign in with a password instead.');
+    return;
+  }
   try {
     await Promise.race([
       bot.init(),

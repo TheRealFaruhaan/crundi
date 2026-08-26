@@ -34,6 +34,7 @@ import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
 import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
 import { createLimitWarmer } from './limit-warmer.js';
+import * as authConfig from './auth-config.js';
 import { createChatSchedule } from './chat-schedule.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -954,6 +955,71 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, { ok: true, ...createSession(config.allowedUsername || 'local') });
     }
 
+    // ─── Password + TOTP login ───
+    // The alternative to Telegram. Both factors are required: see config.js for
+    // why a password alone is not offered as a login method.
+    if (path === '/api/auth/password' && req.method === 'POST') {
+      if (!authConfig.methods().password) {
+        return json(res, { ok: false, error: 'Password login is not set up on this server' }, 400);
+      }
+      let parsed;
+      try { parsed = JSON.parse(await readBody(req)); } catch { /* ignore */ }
+      if (!authConfig.checkPasswordLogin(parsed?.password, parsed?.code)) {
+        // Deliberately does not say WHICH was wrong: that would let someone
+        // confirm a password using any six digits.
+        await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 300)));
+        console.warn(`[crundi] Failed password login from ${req.socket.remoteAddress || 'unknown'}`);
+        return json(res, { ok: false, error: 'Incorrect password or code' }, 401);
+      }
+      console.log('[crundi] Password login succeeded');
+      return json(res, { ok: true, ...createSession(config.localUsername) });
+    }
+
+    // Which sign-in methods this server offers. Read before login, so it is
+    // deliberately outside the auth gate and says nothing a stranger could use.
+    if (path === '/api/auth/methods' && req.method === 'GET') {
+      const m = authConfig.methods();
+      return json(res, {
+        ok: true,
+        telegram: m.telegram,
+        password: m.password,
+        setupRequired: !m.anyConfigured,
+        botUsername: m.telegram ? (config.botUsername || '') : '',
+      });
+    }
+
+    // First-run setup. Reachable unauthenticated ONLY while nothing is
+    // configured; once a method exists this falls through to the auth gate and
+    // becomes an ordinary authenticated settings change.
+    if (path === '/api/auth/setup' && req.method === 'POST') {
+      const open = authConfig.isOpen();
+      if (!open && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+
+      if (body.method === 'password') {
+        const r = authConfig.setPassword(body.password);
+        if (!r.ok) return json(res, r, 400);
+        console.log('[crundi] Password sign-in configured');
+        // Hand back a session so whoever just set it up is not locked out by
+        // their own change, and the enrolment secret for their authenticator.
+        return json(res, { ...r, ...createSession(config.localUsername) });
+      }
+
+      if (body.method === 'telegram') {
+        const botToken = String(body.botToken || '').trim();
+        const username = String(body.username || '').replace(/^@/, '').trim();
+        if (!botToken || !username) return json(res, { ok: false, error: 'Both a bot token and a username are needed' }, 400);
+        const r = writeEnvKeys({ TELEGRAM_BOT_TOKEN: botToken, ALLOWED_USERNAME: username });
+        if (!r.ok) return json(res, r, 500);
+        console.log('[crundi] Telegram sign-in configured — restart required');
+        return json(res, { ok: true, restartRequired: true });
+      }
+
+      return json(res, { ok: false, error: 'Unknown method' }, 400);
+    }
+
     // ─── Refresh ───
     // Deliberately above the auth gate below: the access token is expected to
     // be expired here, so requiring one would defeat the purpose.
@@ -990,8 +1056,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
+
+    // ─── Setup mode ───
+    // With no sign-in method configured the server is unauthenticated, so it
+    // does exactly ONE thing: let someone configure one. Everything else is
+    // refused, authenticated or not. Without this the "open until set up" state
+    // would be a fully open shell on the host, which is not a state worth
+    // having however briefly.
+    if (authConfig.isOpen()) {
+      const setupAllowed = path === '/api/auth/methods' || path === '/api/auth/setup';
+      if (!setupAllowed) {
+        return json(res, {
+          error: 'Set up a sign-in method first — nothing else is available until then.',
+          setupRequired: true,
+        }, 403);
+      }
+    }
+
     // MCP call + hook status endpoints use their own X-Api-Key auth (not tokens)
-    if (path !== '/api/mcp/call' && path !== '/api/terminal-status' && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+    if (!authConfig.isOpen()
+        && path !== '/api/mcp/call' && path !== '/api/terminal-status'
+        && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
 
     // Claude Code lifecycle hooks report a terminal's agent state here.
     if (path === '/api/terminal-status' && req.method === 'POST') {
@@ -1565,6 +1650,57 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Settings ───
+
+    // Write specific keys into .env without disturbing the rest. The settings
+    // form rewrites the whole file from its own field list, which is fine when
+    // it owns every field — this is for the setup path, which knows only two.
+    function writeEnvKeys(pairs) {
+      try {
+        const dir = dirname(envPath);
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        let content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
+        for (const [key, value] of Object.entries(pairs)) {
+          const line = `${key}=${value}`;
+          const re = new RegExp(`^${key}=.*$`, 'm');
+          content = re.test(content) ? content.replace(re, line) : (content.replace(/\n*$/, '\n') + line + '\n');
+        }
+        writeFileSync(envPath, content, 'utf-8');
+        return { ok: true };
+      } catch (err) { return { ok: false, error: err.message }; }
+    }
+
+    // ─── Sign-in methods (authenticated) ───
+    if (path === '/api/auth/config' && req.method === 'GET') {
+      return json(res, { ok: true, ...authConfig.status() });
+    }
+
+    if (path === '/api/auth/config' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+
+      // Setting a password always (re)mints the TOTP secret, so the response
+      // carries the new one to enrol.
+      if (body.action === 'set-password') {
+        const r = authConfig.setPassword(body.password);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      if (body.action === 'enable') {
+        const r = body.method === 'telegram'
+          ? authConfig.setTelegramEnabled(true)
+          : authConfig.setPasswordEnabled(true);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      // Refused when it would leave nothing to sign in with — the server must
+      // never fall back to the open state once it has left it.
+      if (body.action === 'disable') {
+        const r = body.method === 'telegram'
+          ? authConfig.setTelegramEnabled(false)
+          : authConfig.setPasswordEnabled(false);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      return json(res, { ok: false, error: 'Unknown action' }, 400);
+    }
 
     if (path === '/api/settings' && req.method === 'GET') {
       try {

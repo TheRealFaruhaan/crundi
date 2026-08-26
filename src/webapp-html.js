@@ -2264,8 +2264,51 @@ export function getWebappHtml(botUsername) {
     <h1>Crundi</h1>
     <p class="subtitle">Claude Code terminal in your browser</p>
     <div class="login-box">
-      <p>Sign in with your Telegram account to continue</p>
+      <p id="login-prompt">Sign in to continue</p>
       <div id="telegram-login-container"></div>
+      <div id="login-or" style="display:none;color:var(--text-muted);font-size:0.76rem;letter-spacing:0.08em;">OR</div>
+      <!-- First run: nothing is configured, and nothing else is reachable
+           until something is. -->
+      <form id="login-setup" style="display:none;flex-direction:column;gap:10px;width:300px;text-align:left;">
+        <div style="color:var(--yellow);font-size:0.8rem;line-height:1.5;">
+          No sign-in method is set up yet. Choose one now &mdash; nothing else on this
+          server works until you do.
+        </div>
+        <input type="password" id="setup-pw" placeholder="Choose a password (12+ characters)" autocomplete="new-password"
+               style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;">
+        <button type="submit" id="setup-submit"
+                style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Set password</button>
+        <div id="setup-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
+      </form>
+
+      <!-- Shown once, right after the password is set: the code source must be
+           enrolled now or the next sign-in is impossible. -->
+      <div id="setup-enrol" style="display:none;flex-direction:column;gap:10px;width:320px;text-align:left;">
+        <div style="color:var(--text-primary);font-weight:600;">Add this to your authenticator app</div>
+        <div style="color:var(--text-secondary);font-size:0.8rem;line-height:1.5;">
+          Signing in needs a 6-digit code as well as the password. Save this now &mdash;
+          it is shown once, and without it you will not be able to sign in again.
+        </div>
+        <code id="setup-secret" style="font-family:var(--mono);font-size:0.95rem;letter-spacing:0.12em;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:10px;word-break:break-all;text-align:center;"></code>
+        <a id="setup-uri" href="#" style="font-size:0.78rem;color:var(--accent-hover);word-break:break-all;"></a>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:0.8rem;color:var(--text-secondary);cursor:pointer;">
+          <input type="checkbox" id="setup-saved" style="margin-top:2px;accent-color:var(--accent);">
+          <span>I have added it to my authenticator app</span>
+        </label>
+        <button id="setup-done" disabled
+                style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;opacity:0.5;">Continue</button>
+      </div>
+
+      <form id="password-login" style="display:none;flex-direction:column;gap:10px;width:260px;" autocomplete="on">
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password"
+               style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;">
+        <input type="text" id="login-code" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="6" pattern="[0-9]{6}"
+               style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;font-family:var(--mono);letter-spacing:0.18em;text-align:center;">
+        <button type="submit" id="login-submit"
+                style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Sign in</button>
+        <div id="login-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
+      </form>
     </div>
   </div>
 
@@ -2877,6 +2920,107 @@ export function getWebappHtml(botUsername) {
         toast('Login error: ' + err.message, 'error');
       }
     };
+
+    // Which sign-in methods this server actually offers. Asked rather than
+    // assumed: the same page is served by an all-in-one desktop install (where
+    // Telegram is the norm) and by a container that may have no bot at all.
+    async function initLogin() {
+      let methods = { telegram: true, password: false };
+      try {
+        const r = await fetch('/api/auth/methods');
+        const d = await r.json();
+        if (d && d.ok) methods = d;
+      } catch { /* fall back to Telegram, which is the older behaviour */ }
+
+      const prompt = $('#login-prompt');
+      const form = $('#password-login');
+      const orEl = $('#login-or');
+
+      // Nothing configured: the server will refuse everything else anyway, so
+      // do not pretend there is a choice.
+      if (methods.setupRequired) {
+        prompt.textContent = 'Set up a way to sign in';
+        $('#login-setup').style.display = 'flex';
+        $('#login-setup').addEventListener('submit', submitSetup);
+        setTimeout(() => { try { $('#setup-pw').focus(); } catch {} }, 60);
+        return;
+      }
+
+      if (methods.telegram) injectTelegramWidget();
+      if (methods.password) form.style.display = 'flex';
+      if (methods.telegram && methods.password) orEl.style.display = '';
+
+      prompt.textContent = methods.telegram && methods.password
+        ? 'Sign in with Telegram, or with your password'
+        : methods.password ? 'Sign in with your password and authenticator code'
+        : 'Sign in with your Telegram account to continue';
+
+      if (methods.password) setTimeout(() => { try { $('#login-password').focus(); } catch {} }, 60);
+    }
+
+    async function submitSetup(e) {
+      if (e) e.preventDefault();
+      const btn = $('#setup-submit');
+      const err = $('#setup-error');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      err.textContent = '';
+      try {
+        const r = await fetch('/api/auth/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method: 'password', password: $('#setup-pw').value }),
+        });
+        const d = await r.json();
+        if (!d.ok) { err.textContent = d.error || 'Could not set that'; return; }
+        // The server hands back a session too, so setting it up signs you in
+        // rather than immediately locking you out of your own change.
+        storeSession(d);
+        $('#setup-pw').value = '';
+        $('#login-setup').style.display = 'none';
+        $('#setup-secret').textContent = d.totpSecret;
+        const a = $('#setup-uri');
+        a.href = d.uri;
+        a.textContent = d.uri;
+        $('#setup-enrol').style.display = 'flex';
+        $('#login-prompt').textContent = 'One more step';
+      } catch (ex) {
+        err.textContent = 'Could not reach the server: ' + ex.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function submitPasswordLogin(e) {
+      if (e) e.preventDefault();
+      const btn = $('#login-submit');
+      const err = $('#login-error');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      err.textContent = '';
+      try {
+        const r = await fetch('/api/auth/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            password: $('#login-password').value,
+            code: $('#login-code').value.trim(),
+          }),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          err.textContent = d.error || 'Sign-in failed';
+          $('#login-code').value = '';   // codes are single-use in practice
+          $('#login-code').focus();
+          return;
+        }
+        if (storeSession(d)) { $('#login-password').value = ''; $('#login-code').value = ''; showApp(); }
+      } catch (ex) {
+        err.textContent = 'Could not reach the server: ' + ex.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
 
     function injectTelegramWidget() {
       const container = $('#telegram-login-container');
@@ -9767,7 +9911,14 @@ export function getWebappHtml(botUsername) {
       } else {
         clearSession();
         $('#login-screen').style.display = '';
-        injectTelegramWidget();
+        initLogin();
+        $('#password-login').addEventListener('submit', submitPasswordLogin);
+        $('#setup-saved').addEventListener('change', (ev) => {
+          const btn = $('#setup-done');
+          btn.disabled = !ev.target.checked;
+          btn.style.opacity = ev.target.checked ? '1' : '0.5';
+        });
+        $('#setup-done').addEventListener('click', () => { showApp(); connectSSE(); checkImport(); });
       }
     }
 

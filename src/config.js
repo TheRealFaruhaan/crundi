@@ -38,6 +38,19 @@ function required(key) {
   return val;
 }
 
+// ─── Login methods ───
+//
+// Two ways in: Telegram, or a password with a TOTP code. Either is enough, and
+// both can be on. Which are ACTIVE is decided at runtime in auth-config.js,
+// because Settings can turn them on and off without a restart; what lives here
+// is only what the environment supplied.
+//
+// Nothing is required. A brand-new install has no method configured and no way
+// to configure one if it refuses to boot, so it starts open and says so — see
+// the note in auth-config.js for how narrowly that is drawn.
+const telegramConfigured = !!(process.env.TELEGRAM_BOT_TOKEN && process.env.ALLOWED_USERNAME);
+const passwordConfigured = !!(process.env.CRUNDI_PASSWORD_HASH && process.env.CRUNDI_TOTP_SECRET);
+
 // Data dir: DATA_DIR env > <appDir>/data > <projectRoot>/data (dev fallback)
 const dataDir = process.env.DATA_DIR || join(appDir, 'data');
 const projectsDir = process.env.PROJECTS_DIR || '';
@@ -46,9 +59,18 @@ const projectsDir = process.env.PROJECTS_DIR || '';
 const projectMode = projectsDir ? 'single' : 'multi';
 
 export const config = {
-  // Telegram (required for login validation + notifications)
-  botToken: required('TELEGRAM_BOT_TOKEN'),
-  allowedUsername: required('ALLOWED_USERNAME'),
+  // Telegram: login + notifications. Optional now that password login exists,
+  // so these are empty strings rather than a hard exit when absent.
+  botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  allowedUsername: process.env.ALLOWED_USERNAME || '',
+  telegramConfigured,
+
+  // Password + TOTP login.
+  passwordConfigured,
+  passwordHash: process.env.CRUNDI_PASSWORD_HASH || '',
+  totpSecret: process.env.CRUNDI_TOTP_SECRET || '',
+  // Shown on the sign-in screen and used as the session's username.
+  localUsername: process.env.CRUNDI_USERNAME || process.env.ALLOWED_USERNAME || 'crundi',
 
   // Bot username — populated at runtime after bot.init()
   botUsername: '',
