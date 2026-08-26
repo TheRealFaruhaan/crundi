@@ -35,6 +35,8 @@ import { ensureGitignore } from './claude-terminals.js';
 import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
 import { createLimitWarmer } from './limit-warmer.js';
 import * as authConfig from './auth-config.js';
+import * as channels from './notify-channels.js';
+import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -123,6 +125,36 @@ self.addEventListener('activate', (e) => {
 // launch with a pending update).
 self.addEventListener('message', (e) => {
   if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+// ─── Push ───
+// Same worker serves an ordinary browser tab and the desktop app; both are
+// Chromium, so one implementation covers both.
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
+  if (!d.body) return;
+  e.waitUntil(self.registration.showNotification(d.title || 'Crundi', {
+    body: d.body,
+    icon: '/assets/icon_256x256.png',
+    badge: '/assets/icon_128x128.png',
+    // Same tag replaces rather than stacks, so a busy session does not bury
+    // the phone in near-identical lines.
+    tag: d.tag || 'crundi',
+    data: { url: d.url || '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || '/';
+  // Focus an existing window rather than opening yet another one.
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    for (const c of list) {
+      if ('focus' in c) { c.navigate ? c.navigate(target) : null; return c.focus(); }
+    }
+    return self.clients.openWindow ? self.clients.openWindow(target) : undefined;
+  }));
 });
 
 self.addEventListener('fetch', (e) => {
@@ -426,15 +458,46 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   // Single entry point for every Telegram notification. Honors the per-event
   // policy ('always' | 'away' | 'never') and the presence gate for 'away'.
+  // ─── Notification channels ───
+  // Registered once here; notifyEvent fans out to whichever are enabled. Adding
+  // another channel later means writing its send(), not touching call sites.
+  channels.register({
+    id: 'telegram',
+    label: 'Telegram',
+    enabledByDefault: true,
+    available: () => !!(bot && getChatId && getChatId()),
+    unavailableReason: () => (!bot
+      ? 'No Telegram bot is configured.'
+      : 'Send /start to your bot once so it knows where to reach you.'),
+    describe: () => 'Messages to your Telegram chat.',
+    send: async (text) => {
+      const chatId = getChatId ? getChatId() : null;
+      if (!chatId || !bot) return false;
+      await bot.api.sendMessage(chatId, text);
+      return true;
+    },
+  });
+
+  channels.register({
+    id: 'webpush',
+    label: 'Browser notifications',
+    enabledByDefault: false,
+    available: () => webPush.subscriptions().length > 0,
+    unavailableReason: () => 'No browser has been allowed to receive notifications yet.',
+    describe: () => {
+      const n = webPush.subscriptions().length;
+      return n ? `${n} browser${n === 1 ? '' : 's'} subscribed.` : 'Works in a browser tab and in the desktop app.';
+    },
+    send: (text, meta) => webPush.send(text, meta),
+  });
+
   function notifyEvent(key, message) {
     const mode = notifyPrefs[key];
     if (mode !== 'always' && mode !== 'away') return;   // 'never' / unknown
     if (mode === 'away' && anyClientPresent()) return;  // user is already here
-    try {
-      const chatId = getChatId ? getChatId() : null;
-      if (!chatId || !bot) return;
-      bot.api.sendMessage(chatId, message).catch(() => { /* non-fatal */ });
-    } catch { /* non-fatal */ }
+    // Fire and forget: a slow or dead channel must not hold up whatever was
+    // being notified about.
+    channels.deliver(message, { tag: key }).catch(() => { /* non-fatal */ });
   }
 
   // Detect service start / crash-stop transitions, independent of any connected
@@ -1667,6 +1730,50 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         writeFileSync(envPath, content, 'utf-8');
         return { ok: true };
       } catch (err) { return { ok: false, error: err.message }; }
+    }
+
+    // ─── Notification channels ───
+    if (path === '/api/notify/channels' && req.method === 'GET') {
+      return json(res, { ok: true, channels: channels.list() });
+    }
+
+    if (path === '/api/notify/channels' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body?.id) return json(res, { ok: false, error: 'Which channel?' }, 400);
+      const r = channels.setEnabled(body.id, !!body.enabled);
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    // The browser needs this public key to subscribe. Public by design.
+    if (path === '/api/push/key' && req.method === 'GET') {
+      return json(res, { ok: true, key: webPush.publicKey() });
+    }
+
+    if (path === '/api/push/subscribe' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      const r = webPush.addSubscription(body?.subscription ? { ...body.subscription, label: body.label } : body);
+      if (r.ok) {
+        // Subscribing is the act of asking for these, so turn the channel on
+        // rather than making it a second, easily-missed step.
+        channels.setEnabled('webpush', true);
+        console.log(`[crundi] Browser subscribed to push (${r.count} total)`);
+      }
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    if (path === '/api/push/unsubscribe' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      return json(res, webPush.removeSubscription(body?.endpoint));
+    }
+
+    if (path === '/api/push/test' && req.method === 'POST') {
+      const ok = await webPush.send('Notifications are working.', { title: 'Crundi', tag: 'test' });
+      return json(res, ok
+        ? { ok: true }
+        : { ok: false, error: 'Nothing was delivered — no live subscription.' });
     }
 
     // ─── Sign-in methods (authenticated) ───

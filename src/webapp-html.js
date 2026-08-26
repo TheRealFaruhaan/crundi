@@ -3047,6 +3047,51 @@ export function getWebappHtml(botUsername) {
       container.appendChild(script);
     }
 
+    // ─── Browser push ───
+    // The permission prompt must come from a user gesture, so this is only ever
+    // called from the button in Settings, never on load.
+    async function subscribeToPush() {
+      try {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          toast('This browser cannot do push notifications', 'error');
+          return;
+        }
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') {
+          toast(perm === 'denied'
+            ? 'Notifications are blocked for this site — allow them in your browser settings'
+            : 'Notifications were not allowed', 'error');
+          return;
+        }
+        const reg = await navigator.serviceWorker.ready;
+        const kr = await apiFetch('/api/push/key');
+        const kd = await kr.json();
+        if (!kd.ok) { toast('Could not get the push key', 'error'); return; }
+
+        // applicationServerKey wants raw bytes, not the base64url string.
+        const raw = atob(kd.key.replace(/-/g, '+').replace(/_/g, '/'));
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
+        // Re-subscribing with a different key throws, so drop any old one first.
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) await existing.unsubscribe();
+
+        const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
+        const r = await apiFetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscription: sub.toJSON(), label: navigator.userAgent.slice(0, 80) }),
+        });
+        const dd = await r.json();
+        if (!dd.ok) { toast(dd.error || 'Could not subscribe', 'error'); return; }
+        toast('This browser will now receive notifications', 'success');
+        renderSettings();
+      } catch (err) {
+        toast('Could not subscribe: ' + err.message, 'error');
+      }
+    }
+
     // ─── API ───
     function apiFetch(path, opts = {}, _retried = false) {
       if (token) {
@@ -7575,6 +7620,22 @@ export function getWebappHtml(botUsername) {
         if (!data.ok) { panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(data.error) + '</p></div>'; return; }
         const s = data.settings;
         const warmStatus = data.limitWarmup || { enabled: false };
+        // How you sign in. Fetched separately because it is managed at runtime
+        // rather than living in .env like the fields above.
+        let authCfg = { telegram: false, password: false, telegramAvailable: false, passwordSet: false };
+        try {
+          const ar = await apiFetch('/api/auth/config');
+          const ad = await ar.json();
+          if (ad && ad.ok) authCfg = ad;
+        } catch { /* leave the defaults; the section will show as unavailable */ }
+        // Where notifications go. A list, not a pair of flags, so adding a
+        // channel later needs no change here.
+        let chans = [];
+        try {
+          const cr = await apiFetch('/api/notify/channels');
+          const cd = await cr.json();
+          if (cd && cd.ok) chans = cd.channels || [];
+        } catch { /* section renders empty */ }
         const inputStyle = 'width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:13px;box-sizing:border-box;';
         const monoStyle = inputStyle + 'font-family:var(--mono);';
         const labelStyle = 'display:block;color:var(--text-secondary);font-size:0.78rem;margin-bottom:4px;';
@@ -7641,6 +7702,69 @@ export function getWebappHtml(botUsername) {
           + '<button data-action="settings-save" style="padding:8px 20px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">Save</button>'
           + '<span id="settings-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div></div>'
+          // Sign-in methods. At least one must stay on; the server refuses to
+          // disable the last, so these toggles can fail and say why.
+          + '<div class="info-section"><h4>Sign-in</h4>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Two ways in. Either is enough, both can be on, and one must always stay on.</p>'
+
+          + '<div class="seg-pref-row" style="margin-bottom:14px;">'
+          + '<div><div class="set-tgl-lbl">Telegram</div>'
+          + '<p style="' + hintStyle + '">'
+          + (authCfg.telegramAvailable
+              ? 'Sign in with the Telegram account set above.'
+              : 'Needs a bot token and username above before it can be turned on.')
+          + '</p></div>'
+          + '<button type="button" class="set-tgl' + (authCfg.telegram ? ' on' : '') + '" id="auth-tgl-telegram"'
+          + (authCfg.telegramAvailable ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+          + ' role="switch" aria-checked="' + (authCfg.telegram ? 'true' : 'false') + '" data-action="auth-toggle" data-method="telegram"><span class="set-tgl-knob"></span></button>'
+          + '</div>'
+
+          + '<div class="seg-pref-row" style="margin-bottom:10px;">'
+          + '<div><div class="set-tgl-lbl">Password + authenticator code</div>'
+          + '<p style="' + hintStyle + '">'
+          + (authCfg.passwordSet
+              ? 'A password and a 6-digit code. Setting a new password issues a new code source.'
+              : 'Not set up yet. Choose a password below to enable it.')
+          + '</p></div>'
+          + '<button type="button" class="set-tgl' + (authCfg.password ? ' on' : '') + '" id="auth-tgl-password"'
+          + (authCfg.passwordSet ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+          + ' role="switch" aria-checked="' + (authCfg.password ? 'true' : 'false') + '" data-action="auth-toggle" data-method="password"><span class="set-tgl-knob"></span></button>'
+          + '</div>'
+
+          + '<div style="display:flex;gap:8px;align-items:center;">'
+          + '<input type="password" id="auth-new-password" placeholder="' + (authCfg.passwordSet ? 'New password (12+ characters)' : 'Choose a password (12+ characters)') + '" autocomplete="new-password" style="' + inputStyle + 'flex:1;">'
+          + '<button type="button" class="btn" data-action="auth-set-password" style="white-space:nowrap;">' + (authCfg.passwordSet ? 'Change' : 'Set') + '</button>'
+          + '</div>'
+          + '<div id="auth-enrol" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-dim);">'
+          + '<div style="font-weight:600;color:var(--text-primary);margin-bottom:6px;">Add this to your authenticator app</div>'
+          + '<p style="' + hintStyle + ';margin-bottom:8px;">Shown once. Without it you will not be able to sign in with the new password.</p>'
+          + '<code id="auth-enrol-secret" style="display:block;font-family:var(--mono);font-size:0.95rem;letter-spacing:0.12em;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:9px;text-align:center;word-break:break-all;"></code>'
+          + '</div>'
+          + '</div>'
+
+          // Where notifications go. Unlike sign-in, having none on is a valid
+          // choice — it means "do not tell me".
+          + '<div class="info-section"><h4>Notification Channels</h4>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Which of these get told. Turn on as many as you like, or none at all. The table below decides <em>which events</em> are worth telling you about.</p>'
+          + chans.map(c =>
+              '<div class="seg-pref-row" style="margin-bottom:12px;">'
+              + '<div><div class="set-tgl-lbl">' + escHtml(c.label) + '</div>'
+              + '<p style="' + hintStyle + '">' + escHtml(c.available ? c.describe : (c.unavailableReason || c.describe)) + '</p>'
+              + (c.id === 'webpush'
+                  ? '<div style="display:flex;gap:8px;margin-top:6px;">'
+                    + '<button type="button" class="btn" data-action="push-subscribe">Allow in this browser</button>'
+                    + (c.available ? '<button type="button" class="btn" data-action="push-test">Send a test</button>' : '')
+                    + '</div>'
+                  : '')
+              + '</div>'
+              + '<button type="button" class="set-tgl' + (c.enabled ? ' on' : '') + '"'
+              + ' id="chan-tgl-' + escHtml(c.id) + '"'
+              + (c.available ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+              + ' role="switch" aria-checked="' + (c.enabled ? 'true' : 'false')
+              + '" data-action="channel-toggle" data-id="' + escHtml(c.id) + '"><span class="set-tgl-knob"></span></button>'
+              + '</div>').join('')
+          + '</div>'
+
           // Notification policy — applied instantly, no restart. "When Away" only
           // pings when you are NOT focused on Crundi (browser tab / Electron app).
           + '<div class="info-section"><h4>Notification Settings</h4>'
@@ -7779,6 +7903,84 @@ export function getWebappHtml(botUsername) {
         case 'update-install':
           if (window.api && window.api.installUpdate) window.api.installUpdate().catch(() => {});
           break;
+        case 'channel-toggle': {
+          const id = d.id;
+          const btn = $('#chan-tgl-' + id);
+          if (!btn || btn.disabled) break;
+          const on = !btn.classList.contains('on');
+          apiFetch('/api/notify/channels', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, enabled: on }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) { toast(dd.error || 'Could not change that', 'error'); return; }
+              btn.classList.toggle('on', on);
+              btn.setAttribute('aria-checked', on ? 'true' : 'false');
+            })
+            .catch(err => toast('Could not change that: ' + err.message, 'error'));
+          break;
+        }
+        case 'push-subscribe': {
+          subscribeToPush();
+          break;
+        }
+        case 'push-test': {
+          apiFetch('/api/push/test', { method: 'POST' })
+            .then(r => r.json())
+            .then(dd => toast(dd.ok ? 'Test sent' : (dd.error || 'Could not send'), dd.ok ? 'success' : 'error'))
+            .catch(err => toast('Could not send: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-toggle': {
+          const method = d.method;
+          const btn = $('#auth-tgl-' + method);
+          if (!btn || btn.disabled) break;
+          const on = !btn.classList.contains('on');
+          apiFetch('/api/auth/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: on ? 'enable' : 'disable', method }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              // The server refuses to leave you with no way in, so a failure
+              // here is expected and worth showing plainly.
+              if (!dd.ok) { toast(dd.error || 'Could not change that', 'error'); return; }
+              btn.classList.toggle('on', on);
+              btn.setAttribute('aria-checked', on ? 'true' : 'false');
+              toast(method === 'telegram'
+                ? (on ? 'Telegram sign-in enabled' : 'Telegram sign-in disabled')
+                : (on ? 'Password sign-in enabled' : 'Password sign-in disabled'), 'success');
+            })
+            .catch(err => toast('Could not change that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-set-password': {
+          const input = $('#auth-new-password');
+          const pw = input ? input.value : '';
+          if (!pw) { toast('Type a password first', 'error'); return; }
+          apiFetch('/api/auth/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'set-password', password: pw }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) { toast(dd.error || 'Could not set that', 'error'); return; }
+              input.value = '';
+              // A new secret is minted with every password change, so the old
+              // authenticator entry stops working — show the new one at once.
+              $('#auth-enrol-secret').textContent = dd.totpSecret;
+              $('#auth-enrol').style.display = '';
+              const tgl = $('#auth-tgl-password');
+              if (tgl) { tgl.disabled = false; tgl.style.opacity = ''; tgl.style.cursor = ''; tgl.classList.add('on'); tgl.setAttribute('aria-checked', 'true'); }
+              toast('Password set — add the new code to your authenticator', 'success');
+            })
+            .catch(err => toast('Could not set that: ' + err.message, 'error'));
+          break;
+        }
         case 'toggle-limit-warmup': {
           const btn = $('#set-limit-warmup');
           if (!btn) break;
