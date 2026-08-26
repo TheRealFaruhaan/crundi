@@ -10,6 +10,8 @@
  */
 
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
+import * as tls from './tls.js';
 import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomBytes, createHash } from 'node:crypto';
@@ -201,6 +203,7 @@ const startedAt = Date.now();
  */
 export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispatch, serverLogs, onServerLog, getChatId, setChatId }) {
   let server = null;
+  let acmeServer = null;
   let wss = null;
   let port = null;
   let tunnelUrl = null;
@@ -2846,20 +2849,78 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     async start(listenPort = 0) {
       if (server) throw new Error('Web app already running');
 
-      await new Promise((resolve, reject) => {
-        server = createServer((req, res) => {
-          handleRequest(req, res).catch(err => {
-            console.error('[webapp] Request error:', err.message);
-            try { json(res, { error: 'Internal error' }, 500); } catch { /* ignore */ }
+      const onRequest = (req, res) => {
+        handleRequest(req, res).catch(err => {
+          console.error('[webapp] Request error:', err.message);
+          try { json(res, { error: 'Internal error' }, 500); } catch { /* ignore */ }
+        });
+      };
+
+      // ─── TLS ───
+      // Off by default: behind the Cloudflare tunnel, or any proxy that
+      // terminates TLS, this machine only ever sees plain HTTP and should.
+      const creds = tls.init();
+      if (tls.enabled() && creds) {
+        await new Promise((resolve, reject) => {
+          server = createHttpsServer({ key: creds.key, cert: creds.cert }, onRequest);
+          server.listen(config.tlsPort, '0.0.0.0', () => {
+            port = server.address().port;
+            console.log(`[webapp] HTTPS server on 0.0.0.0:${port}`);
+            resolve();
           });
+          server.on('error', reject);
         });
-        server.listen(listenPort, '0.0.0.0', () => {
-          port = server.address().port;
-          console.log(`[webapp] HTTP server on 0.0.0.0:${port}`);
-          resolve();
+        // Renewal swaps the certificate into the live server. setSecureContext
+        // applies to connections made from then on, so nothing is dropped and
+        // no restart is needed.
+        tls.startRenewal((next) => {
+          try {
+            server.setSecureContext({ key: next.key, cert: next.cert });
+            console.log('[webapp] Certificate reloaded without a restart.');
+          } catch (err) {
+            console.error('[webapp] Could not reload the certificate:', err.message);
+          }
         });
-        server.on('error', reject);
-      });
+      } else {
+        if (tls.enabled() && !creds && tls.mode() === 'letsencrypt') {
+          console.log('[webapp] Starting on HTTP while the first certificate is obtained.');
+        }
+        await new Promise((resolve, reject) => {
+          server = createServer(onRequest);
+          server.listen(listenPort, '0.0.0.0', () => {
+            port = server.address().port;
+            console.log(`[webapp] HTTP server on 0.0.0.0:${port}`);
+            resolve();
+          });
+          server.on('error', reject);
+        });
+      }
+
+      // The ACME listener. Separate from the main server because the CA fetches
+      // the challenge over plain port 80 and will not follow a redirect — so
+      // this has to answer there even when everything else is on 443.
+      if (tls.mode() === 'letsencrypt') {
+        try {
+          acmeServer = createServer((req, res) => {
+            if (tls.handleAcmeChallenge(req, res)) return;
+            const host = req.headers.host ? String(req.headers.host).replace(/:\d+$/, '') : config.tlsDomain;
+            res.writeHead(301, { Location: `https://${host}${req.url || '/'}` });
+            res.end();
+          });
+          acmeServer.on('error', (err) => console.warn(`[webapp] Port ${config.tlsHttpPort} unavailable (${err.message}) — ACME renewal will fail.`));
+          acmeServer.listen(config.tlsHttpPort, '0.0.0.0', () => {
+            console.log(`[webapp] ACME challenge + redirect listener on 0.0.0.0:${config.tlsHttpPort}`);
+          });
+          // If HTTPS is not up yet the renewal loop has not been started above.
+          if (!creds) {
+            tls.startRenewal(() => {
+              console.log('[webapp] Certificate obtained — restart to serve HTTPS.');
+            });
+          }
+        } catch (err) {
+          console.warn('[webapp] Could not start the ACME listener:', err.message);
+        }
+      }
 
       setupWebSocket();
 

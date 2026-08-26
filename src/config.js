@@ -65,6 +65,22 @@ export const config = {
   allowedUsername: process.env.ALLOWED_USERNAME || '',
   telegramConfigured,
 
+  // ─── TLS ───
+  // Only for a server reached directly. Behind the Cloudflare tunnel, or any
+  // reverse proxy that terminates TLS, leave this off.
+  tlsMode: (process.env.TLS_MODE || 'off').toLowerCase(),
+  tlsDomain: process.env.TLS_DOMAIN || '',
+  tlsEmail: process.env.TLS_EMAIL || '',
+  tlsCertPath: process.env.TLS_CERT_PATH || '',
+  tlsKeyPath: process.env.TLS_KEY_PATH || '',
+  // Let's Encrypt rate-limits issuance hard. Point at staging while you are
+  // working out whether the DNS and ports are right.
+  tlsStaging: process.env.TLS_STAGING === '1',
+  tlsPort: parseInt(process.env.TLS_PORT || '443', 10),
+  // Where the ACME challenge is answered. Must be 80: the CA does not follow
+  // redirects and will not use another port.
+  tlsHttpPort: parseInt(process.env.TLS_HTTP_PORT || '80', 10),
+
   // Password + TOTP login.
   passwordConfigured,
   passwordHash: process.env.CRUNDI_PASSWORD_HASH || '',

@@ -76,6 +76,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "acme-client": "^5.4.0",
     "cloudflared": "^0.7.1",
     "dotenv": "^16.4.7",
     "electron-updater": "^6.8.9",
