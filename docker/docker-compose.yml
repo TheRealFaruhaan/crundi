@@ -1,0 +1,44 @@
+# Crundi standalone server.
+#
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml exec crundi claude    # log in, once
+#
+# Then point a browser — or the Windows desktop app, via Tray → Server… — at
+# http://<this-host>:8888. The desktop app additionally lends this server a GUI,
+# so the browser panel works even though nothing here can render.
+
+services:
+  crundi:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: crundi:latest
+    container_name: crundi
+    restart: unless-stopped
+
+    ports:
+      - "8888:8888"
+
+    environment:
+      # Both are REQUIRED — Crundi exits at startup without them. Telegram is
+      # how the web UI authenticates you, not just how it sends notifications.
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in docker/.env}"
+      ALLOWED_USERNAME: "${ALLOWED_USERNAME:?set ALLOWED_USERNAME in docker/.env}"
+      # Optional: expose the server publicly through a Cloudflare tunnel.
+      CLOUDFLARE_TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:-}"
+      CLOUDFLARE_TUNNEL_URL: "${CLOUDFLARE_TUNNEL_URL:-}"
+
+    volumes:
+      # Claude's own credentials. You run `claude` once inside the container to
+      # log in; this keeps that login across rebuilds. It holds live auth
+      # tokens, so treat it as a secret.
+      - claude-auth:/root/.claude
+      # Crundi's own state: projects list, kanban, transcripts, schedules.
+      - crundi-data:/data
+      # Your code. Point this at wherever your repositories live. Read-write —
+      # the whole purpose is to let Claude edit them.
+      - ${PROJECTS_DIR:-./projects}:/projects
+
+volumes:
+  claude-auth:
+  crundi-data:

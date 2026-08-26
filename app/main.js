@@ -282,15 +282,24 @@ function getOldAppDataDir() {
 // panel still opens in front of the person using it.
 const clientConfigFile = () => join(dataDir, 'client.json');
 
+// Whether THIS build ships a server at all. The client-only installer omits
+// src/, which makes the question self-answering — no build-time flag to set,
+// and no way for the two to disagree.
+const serverBundled = existsSync(join(srcDir, 'index.js'));
+
 function readClientConfig() {
+  // A client-only build has nothing to run locally, so 'local' is not a mode it
+  // can be in — say so plainly rather than failing later at spawn time.
+  const fallback = { mode: serverBundled ? 'local' : 'remote', serverUrl: '' };
   try {
-    if (!existsSync(clientConfigFile())) return { mode: 'local', serverUrl: '' };
+    if (!existsSync(clientConfigFile())) return fallback;
     const d = JSON.parse(readFileSync(clientConfigFile(), 'utf8'));
+    const wantsRemote = d.mode === 'remote' || !serverBundled;
     return {
-      mode: d.mode === 'remote' && d.serverUrl ? 'remote' : 'local',
+      mode: wantsRemote ? 'remote' : 'local',
       serverUrl: String(d.serverUrl || ''),
     };
-  } catch { return { mode: 'local', serverUrl: '' }; }
+  } catch { return fallback; }
 }
 
 function writeClientConfig(cfg) {
@@ -314,6 +323,14 @@ function startBot() {
   // the page to hand us a token so we can register as its native host.
   const client = readClientConfig();
   if (client.mode === 'remote') {
+    if (!client.serverUrl) {
+      // Nothing to connect to yet — ask, rather than sitting on a blank window.
+      appendLog('[client] Remote mode with no server set — prompting');
+      setBotStatus('stopped');
+      showWindow();
+      mainWindow?.webContents.send('show:server');
+      return;
+    }
     appendLog(`[client] Remote mode — using ${client.serverUrl}`);
     setBotStatus('running');
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(client.serverUrl);
@@ -1186,6 +1203,7 @@ function nativeHostStatus() {
     mode: cfg.mode,
     serverUrl: cfg.serverUrl,
     connected: !!(hostWs && hostWs.readyState === 1),
+    serverBundled,
   };
 }
 

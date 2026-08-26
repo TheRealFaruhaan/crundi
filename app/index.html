@@ -816,6 +816,11 @@
 
     async function showServerScreen() {
       const cfg = await api.getClientConfig();
+      // The client-only build has no server to run, so do not offer the choice.
+      if (!cfg.serverBundled) {
+        document.getElementById('srv-local').closest('label').style.display = 'none';
+        document.getElementById('srv-remote').closest('label').style.display = 'none';
+      }
       document.getElementById(cfg.mode === 'remote' ? 'srv-remote' : 'srv-local').checked = true;
       srvUrl.value = cfg.serverUrl || '';
       srvNote.textContent = cfg.mode === 'remote'

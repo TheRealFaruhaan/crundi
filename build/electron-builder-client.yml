@@ -1,0 +1,57 @@
+# Client-only Windows installer.
+#
+# The desktop app WITHOUT a server: it attaches to one running elsewhere (a
+# container, another machine) and lends it this machine's GUI, so the browser
+# panel still works. Distinct appId and productName so it installs alongside the
+# all-in-one build rather than replacing it — that build is unchanged and stays
+# the default for people who want everything on one machine.
+#
+#   npx electron-builder --win --config build/electron-builder-client.yml
+#
+# Note there is no `src` here. That omission is what tells the app at runtime
+# that it is a client (see serverBundled in app/main.js), so there is no build
+# flag to set and no way for the two to disagree.
+
+appId: com.crundi.client
+productName: Crundi Client
+npmRebuild: false
+directories:
+  output: dist
+artifactName: ${productName}-Setup-${version}.${ext}
+
+publish:
+  - provider: github
+    owner: TheRealFaruhaan
+    repo: crundi
+    releaseType: release
+
+files:
+  - app/main.js
+  - app/preload.js
+  - app/index.html
+  - package.json
+  - "!**/.env"
+
+# app/vendor is deliberately absent: xterm, CodeMirror and the chat renderer are
+# served by whichever server this connects to, so shipping a second copy here
+# would only risk it drifting out of step with the server's.
+
+asarUnpack:
+  - node_modules/**/*
+  - package.json
+
+extraResources:
+  - from: assets
+    to: assets
+
+win:
+  target:
+    - nsis
+  icon: assets/icon.ico
+
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Crundi Client

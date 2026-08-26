@@ -1,0 +1,14 @@
+# Keep the build context small and free of anything host-specific.
+node_modules
+dist
+.git
+.github
+data
+*.log
+.env
+crundi_attachments
+app/main.js
+app/preload.js
+app/index.html
+assets
+build
