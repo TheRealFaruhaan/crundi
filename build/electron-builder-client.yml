@@ -16,7 +16,10 @@ appId: com.crundi.client
 productName: Crundi Client
 npmRebuild: false
 directories:
-  output: dist
+  # Its own output tree. Sharing dist/ with the all-in-one build means sharing
+  # dist/win-unpacked, and the second build fails renaming an electron.exe the
+  # first one already renamed.
+  output: dist/client
 artifactName: ${productName}-Setup-${version}.${ext}
 
 publish:

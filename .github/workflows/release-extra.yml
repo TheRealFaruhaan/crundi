@@ -55,7 +55,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-client
-          path: dist/Crundi Client-Setup-*.exe
+          path: dist/client/Crundi Client-Setup-*.exe
           if-no-files-found: error
 
   server-windows:
