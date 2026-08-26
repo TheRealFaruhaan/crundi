@@ -2621,6 +2621,12 @@ export function getWebappHtml(botUsername) {
         localStorage.setItem('crundi_refresh', refreshToken);
       }
       scheduleRefresh(d.expiresIn);
+      // Running inside the desktop app attached to a REMOTE server: hand it the
+      // session so it can register as that server's native host and provide the
+      // browser panel. Re-sent on every refresh, since the socket is built on
+      // whichever token was current. No-op in a browser, or in the all-in-one
+      // install where the server is reached over the parent process channel.
+      try { window.api?.setServerToken?.(token); } catch (e) {}
       return true;
     }
 

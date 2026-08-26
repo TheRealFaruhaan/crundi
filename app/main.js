@@ -199,6 +199,23 @@ function updateTrayMenu() {
     { label: statusLabels[botStatus] || 'Unknown', enabled: false },
     { type: 'separator' },
     { label: 'Open', click: () => showWindow() },
+    {
+      // In remote mode the window goes straight to the other server, so this is
+      // the way back to the local shell to change or clear that setting.
+      label: 'Server…',
+      click: () => {
+        showWindow();
+        const send = () => mainWindow?.webContents.send('show:server');
+        try {
+          const url = mainWindow?.webContents.getURL() || '';
+          if (url.startsWith('file://')) send();
+          else {
+            mainWindow.loadFile(join(__dirname, 'index.html'));
+            mainWindow.webContents.once('did-finish-load', send);
+          }
+        } catch { /* ignore */ }
+      },
+    },
     { type: 'separator' },
     {
       label: 'Start',
@@ -257,8 +274,51 @@ function getOldAppDataDir() {
   return null;
 }
 
+// ─── Client mode ───
+//
+// The app can either run its own server (the all-in-one install, unchanged) or
+// attach to one somewhere else — a container on the LAN, say. In remote mode we
+// spawn nothing and instead lend that server this machine's GUI, so the browser
+// panel still opens in front of the person using it.
+const clientConfigFile = () => join(dataDir, 'client.json');
+
+function readClientConfig() {
+  try {
+    if (!existsSync(clientConfigFile())) return { mode: 'local', serverUrl: '' };
+    const d = JSON.parse(readFileSync(clientConfigFile(), 'utf8'));
+    return {
+      mode: d.mode === 'remote' && d.serverUrl ? 'remote' : 'local',
+      serverUrl: String(d.serverUrl || ''),
+    };
+  } catch { return { mode: 'local', serverUrl: '' }; }
+}
+
+function writeClientConfig(cfg) {
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(clientConfigFile(), JSON.stringify({
+      mode: cfg.mode === 'remote' ? 'remote' : 'local',
+      serverUrl: String(cfg.serverUrl || '').replace(/\/+$/, ''),
+    }, null, 2));
+    return true;
+  } catch (err) {
+    appendLog(`[client] Could not save client config: ${err.message}`);
+    return false;
+  }
+}
+
 function startBot() {
   if (botProcess) return;
+
+  // Remote: nothing to spawn. Point the window at the other server and wait for
+  // the page to hand us a token so we can register as its native host.
+  const client = readClientConfig();
+  if (client.mode === 'remote') {
+    appendLog(`[client] Remote mode — using ${client.serverUrl}`);
+    setBotStatus('running');
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(client.serverUrl);
+    return;
+  }
 
   if (!existsSync(envPath)) {
     // Check for old "Claude Telegram Bot" config to pre-fill setup wizard
@@ -352,7 +412,7 @@ function startBot() {
     String(data).split('\n').filter(Boolean).forEach(line => appendLog(`[err] ${line}`));
   });
 
-  botProcess.on('message', handleBotMessage);
+  botProcess.on('message', (m) => handleBotMessage(m));
 
   botProcess.on('exit', (code, signal) => {
     appendLog(`[electron] Process exited: code=${code} signal=${signal}`);
@@ -617,6 +677,34 @@ function showSetupWizard(oldConfig) {
 }
 
 // ─── IPC Handlers ───
+
+// ─── Client / native-host IPC ───
+
+ipcMain.handle('client:getConfig', () => nativeHostStatus());
+
+ipcMain.handle('client:setConfig', (_e, cfg) => {
+  const next = { mode: cfg?.mode === 'remote' ? 'remote' : 'local', serverUrl: cfg?.serverUrl || '' };
+  if (next.mode === 'remote' && !/^https?:\/\//i.test(next.serverUrl)) {
+    return { ok: false, error: 'Enter the full server address, including http:// or https://' };
+  }
+  if (!writeClientConfig(next)) return { ok: false, error: 'Could not save the setting' };
+  // Switching mode changes what this process is FOR, so start clean rather than
+  // trying to unpick a half-torn-down server or socket.
+  stopNativeHost();
+  hostToken = null;
+  return { ok: true, restartRequired: true };
+});
+
+// The page hands us its access token once the user is logged in. Only useful in
+// remote mode; a locally spawned server is reached over the parent channel.
+ipcMain.on('client:setToken', (_e, token) => {
+  const t = String(token || '');
+  if (!t || t === hostToken) return;
+  hostToken = t;
+  // A fresh token after a refresh should replace the socket built on the old one.
+  stopNativeHost();
+  connectNativeHost();
+});
 
 ipcMain.handle('setup:save', (_e, config) => {
   const lines = [
@@ -1034,16 +1122,20 @@ function browserActionTimeout(msg) {
   return 25000;
 }
 
-function handleBotMessage(msg) {
+// Reply channel is a parameter, not a hard-wired botProcess.send: the same
+// handlers now serve a server we spawned ourselves AND a remote server that has
+// borrowed this app as its native host.
+function handleBotMessage(msg, reply) {
   if (!msg || !msg.type) return;
+  const send = reply || ((payload) => botProcess?.send(payload));
 
   // Terminal IPC
   const termHandler = terminalIpcHandlers[msg.type];
   if (termHandler) {
     termHandler(msg).then(result => {
-      botProcess?.send({ type: 'terminalResult', requestId: msg.requestId, ...result });
+      send({ type: 'terminalResult', requestId: msg.requestId, ...result });
     }).catch(err => {
-      botProcess?.send({ type: 'terminalResult', requestId: msg.requestId, ok: false, error: err.message });
+      send({ type: 'terminalResult', requestId: msg.requestId, ok: false, error: err.message });
     });
     return;
   }
@@ -1053,11 +1145,100 @@ function handleBotMessage(msg) {
   const handler = browserIpcHandlers[msg.type];
   if (handler) {
     withTimeout(handler(msg), browserActionTimeout(msg), msg.type).then(result => {
-      botProcess?.send({ type: 'browserResult', requestId: msg.requestId, ...result });
+      send({ type: 'browserResult', requestId: msg.requestId, ...result });
     }).catch(err => {
-      botProcess?.send({ type: 'browserResult', requestId: msg.requestId, ok: false, error: err.message });
+      send({ type: 'browserResult', requestId: msg.requestId, ok: false, error: err.message });
     });
   }
+}
+
+/**
+ * Serve a REMOTE server that has registered this app as its native host.
+ *
+ * Deliberately narrower than the parent-process channel: only the browser
+ * handlers are exposed. A named terminal spawned by a remote server should run
+ * where that server's code lives, not on the laptop looking at it — bridging it
+ * here would silently run commands on the wrong machine.
+ */
+function handleNativeHostMessage(msg, reply) {
+  if (!msg || !msg.type || !msg.requestId) return;
+  if (!browserIpcHandlers[msg.type]) return;
+  handleBotMessage(msg, reply);
+}
+
+// ─── Native host client ───
+//
+// In remote mode we are the GUI for a server that has none. It cannot dial out
+// to us, so we open the socket and register; from then on its browser requests
+// arrive here and are answered by the same handlers the local server uses.
+//
+// The token comes from the page itself once the user has logged in, rather than
+// being stored separately: the web UI already owns that session and refreshes
+// it, and a second credential to keep in sync would only drift.
+let hostWs = null;
+let hostToken = null;
+let hostRetry = null;
+let hostClosing = false;
+
+function nativeHostStatus() {
+  const cfg = readClientConfig();
+  return {
+    mode: cfg.mode,
+    serverUrl: cfg.serverUrl,
+    connected: !!(hostWs && hostWs.readyState === 1),
+  };
+}
+
+function stopNativeHost() {
+  hostClosing = true;
+  clearTimeout(hostRetry); hostRetry = null;
+  try { hostWs?.close(); } catch { /* ignore */ }
+  hostWs = null;
+  hostClosing = false;
+}
+
+function connectNativeHost() {
+  const cfg = readClientConfig();
+  if (cfg.mode !== 'remote' || !cfg.serverUrl || !hostToken) return;
+  if (hostWs && (hostWs.readyState === 0 || hostWs.readyState === 1)) return;
+
+  let WSImpl;
+  try { WSImpl = require('ws'); } catch (err) {
+    appendLog(`[nativehost] ws module unavailable: ${err.message}`);
+    return;
+  }
+  const wsUrl = cfg.serverUrl.replace(/^http/, 'ws') + '/ws?token=' + encodeURIComponent(hostToken);
+  appendLog(`[nativehost] connecting to ${cfg.serverUrl}`);
+  try { hostWs = new WSImpl(wsUrl); } catch (err) {
+    appendLog(`[nativehost] connect failed: ${err.message}`);
+    return scheduleHostRetry();
+  }
+
+  hostWs.on('open', () => {
+    appendLog('[nativehost] connected — registering as native host');
+    hostWs.send(JSON.stringify({ type: 'register-native-host' }));
+  });
+  hostWs.on('message', (raw) => {
+    let m; try { m = JSON.parse(raw.toString()); } catch { return; }
+    if (m.type === 'native-host-ready') { appendLog('[nativehost] registered'); return; }
+    if (m.type !== 'native-host') return;
+    handleNativeHostMessage(m.payload, (payload) => {
+      if (hostWs && hostWs.readyState === 1) {
+        hostWs.send(JSON.stringify({ type: 'native-host-result', payload }));
+      }
+    });
+  });
+  hostWs.on('close', () => {
+    hostWs = null;
+    if (!hostClosing) { appendLog('[nativehost] disconnected'); scheduleHostRetry(); }
+  });
+  hostWs.on('error', (err) => appendLog(`[nativehost] socket error: ${err.message}`));
+}
+
+function scheduleHostRetry() {
+  clearTimeout(hostRetry);
+  // The server may simply be restarting; keep trying, but not in a tight loop.
+  hostRetry = setTimeout(connectNativeHost, 5000);
 }
 
 const browserIpcHandlers = {

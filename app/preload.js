@@ -29,6 +29,16 @@ contextBridge.exposeInMainWorld('api', {
   getRdpStatus: () => ipcRenderer.invoke('rdp:status'),
   setupRdp: () => ipcRenderer.invoke('rdp:setup'),
 
+  // Which server this app is attached to, and whether we are acting as its
+  // native host (lending it this machine's GUI for the browser panel).
+  getClientConfig: () => ipcRenderer.invoke('client:getConfig'),
+  setClientConfig: (cfg) => ipcRenderer.invoke('client:setConfig', cfg),
+  setServerToken: (token) => ipcRenderer.send('client:setToken', String(token || '')),
+  onShowServer: (cb) => {
+    ipcRenderer.on('show:server', () => cb());
+    return () => ipcRenderer.removeAllListeners('show:server');
+  },
+
   // Diagnostic: let the shell renderer append to crundi.log.
   shellLog: (m) => ipcRenderer.send('shell:log', String(m)),
 
