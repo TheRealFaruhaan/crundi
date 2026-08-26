@@ -44,27 +44,76 @@ let nextRequestId = 1;
  * @property {NodeJS.Timeout|null} idleTimer
  */
 
-// ─── IPC Bridge ───
+// ─── Native host bridge ───
+//
+// A browser panel has to be rendered by something with a GUI. Originally that
+// was always our own parent: Electron spawned the server as a child process and
+// we drove it over the Node IPC channel. A server in a container has no such
+// parent, so the same requests now go to whichever NATIVE HOST is attached —
+// either that parent, or a desktop app connected over the network that has
+// registered itself as one.
+//
+// The rule is simply "the browser opens where the human is". A remote host is
+// only consulted when there is no parent channel, so an all-in-one desktop
+// install behaves exactly as it always did.
+
+let remoteHost = null;   // { send(msg) } registered by a connected desktop app
 
 function isElectron() {
   return process.env.ELECTRON_RUN === '1';
 }
 
+function hasParentIpc() {
+  return isElectron() && typeof process.send === 'function';
+}
+
+/** Attach a desktop app as this server's native host. Returns a detach fn. */
+export function setRemoteHost(host) {
+  remoteHost = host && typeof host.send === 'function' ? host : null;
+  return () => { if (remoteHost === host) clearRemoteHost(); };
+}
+
+export function clearRemoteHost() {
+  remoteHost = null;
+  // Anything still in flight can never be answered now — fail it rather than
+  // leaving callers hanging until the 40s backstop.
+  for (const [id, entry] of pendingRequests) {
+    clearTimeout(entry.timer);
+    entry.reject(new Error('The desktop app disconnected'));
+    pendingRequests.delete(id);
+  }
+}
+
+export function hasNativeHost() {
+  return hasParentIpc() || !!remoteHost;
+}
+
+/** Deliver a reply from a remote host. Shares the parent-IPC handler. */
+export function handleHostMessage(msg) {
+  handleIpcMessage(msg);
+}
+
+function postToHost(msg) {
+  if (hasParentIpc()) { process.send(msg); return true; }
+  if (remoteHost) { remoteHost.send(msg); return true; }
+  return false;
+}
+
 function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
-    if (!isElectron() || typeof process.send !== 'function') {
-      return reject(new Error('Browser tools require the Electron desktop app.'));
+    if (!hasNativeHost()) {
+      return reject(new Error('Browser tools need the Crundi desktop app — run one, or connect it to this server.'));
     }
 
     const requestId = nextRequestId++;
     const timer = setTimeout(() => {
       pendingRequests.delete(requestId);
-      reject(new Error('Browser IPC request timed out'));
+      reject(new Error('Browser request timed out'));
     }, timeoutMs);
 
     pendingRequests.set(requestId, { resolve, reject, timer });
     try {
-      process.send({ type, requestId, ...payload });
+      postToHost({ type, requestId, ...payload });
     } catch (err) {
       pendingRequests.delete(requestId);
       clearTimeout(timer);
@@ -529,8 +578,6 @@ export async function closeAllBrowsers() {
 }
 
 export function emitBrowserUpdate() {
-  if (typeof process.send !== 'function') return;
-  try {
-    process.send({ type: 'browsers', data: listBrowsers() });
-  } catch { /* channel closed */ }
+  try { postToHost({ type: 'browsers', data: listBrowsers() }); }
+  catch { /* channel closed */ }
 }

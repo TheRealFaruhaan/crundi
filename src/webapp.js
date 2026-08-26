@@ -2481,10 +2481,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const subs = new Map();
       // …and several chat sessions: id → event handler.
       const uiSubs = new Map();
+      // Set when this socket is acting as the server's native host (a desktop
+      // app lending us its GUI for the browser panel).
+      let detachHost = null;
 
       ws.on('message', (raw) => {
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+        // ─── Native host ───
+        // A desktop app offering its GUI to this server. Only meaningful for a
+        // server with no Electron parent of its own (a container, or a headless
+        // install); browser.js prefers the parent channel when there is one, so
+        // this cannot hijack an all-in-one desktop install.
+        if (msg.type === 'register-native-host') {
+          if (detachHost) return;                       // already registered
+          detachHost = browserMod.setRemoteHost({
+            send: (m) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'native-host', payload: m })); },
+          });
+          console.log('[crundi] Desktop app attached as native host');
+          ws.send(JSON.stringify({ type: 'native-host-ready' }));
+          return;
+        }
+        // A reply coming back from that desktop app.
+        if (msg.type === 'native-host-result') {
+          browserMod.handleHostMessage(msg.payload);
+          return;
+        }
 
         // Server log subscription
         if (msg.type === 'subscribe-logs') {
@@ -2565,6 +2588,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         uiSubs.clear();
         logSubscribers.delete(ws);
         presentClients.delete(ws);
+        if (detachHost) {
+          detachHost();
+          detachHost = null;
+          console.log('[crundi] Desktop app detached as native host');
+        }
       });
     });
   }
