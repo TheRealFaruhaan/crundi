@@ -460,6 +460,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // far tighter than the main transcript's MAX_TEXT (200k chars each, which
   // across 40 agents x 150 entries is a memory problem rather than a feature).
   const MAX_AGENT_TEXT = 20_000;
+  // Labels are rendered in a small floating pill; a command line is not a label.
+  const MAX_LABEL = 70;
 
   function trimAgents(s) {
     if (s.agents.size <= MAX_AGENTS) return;
@@ -571,11 +573,25 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function handleTaskEvent(s, msg) {
     const toolUseId = msg.tool_use_id || s.agentsByTask.get(msg.task_id) || '';
     if (!toolUseId) return;
+    // These events cover every kind of background task the CLI tracks, not just
+    // subagents — a Bash command run in the background raises them too. Drawing
+    // one of those as an agent produced a bubble that sat there saying "waiting
+    // for the agent's first step" forever, because it was never going to have
+    // one. Real subagents report a subagent_type; nothing else does.
+    if (msg.subtype === 'task_started'
+        && !msg.subagent_type
+        && !String(msg.task_type || '').includes('agent')) {
+      return;
+    }
+    // A later event for a task we declined to track would resurrect it.
+    if (msg.subtype !== 'task_started' && !s.agents.has(toolUseId)) return;
     const a = getAgent(s, toolUseId);
     if (msg.task_id) { a.taskId = msg.task_id; s.agentsByTask.set(msg.task_id, toolUseId); }
 
     if (msg.subtype === 'task_started') {
-      a.description = msg.description || a.description;
+      // Long enough to identify the job, short enough that the bubble stays a
+      // bubble. The full text is on the tool row in the transcript.
+      a.description = String(msg.description || a.description).slice(0, MAX_LABEL);
       a.subagentType = msg.subagent_type || a.subagentType;
       a.prompt = String(msg.prompt || a.prompt).slice(0, MAX_TEXT);
       a.status = 'running';
@@ -584,7 +600,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // README.md"), not the agent's job. Overwriting the title with it left
       // every bubble showing the same passing detail and no way to tell the
       // agents apart, so the step is kept separately.
-      if (msg.description) a.step = msg.description;
+      if (msg.description) a.step = String(msg.description).slice(0, MAX_LABEL);
       if (msg.subagent_type) a.subagentType = msg.subagent_type;
       if (msg.last_tool_name) a.lastTool = msg.last_tool_name;
       if (msg.usage) a.usage = msg.usage;

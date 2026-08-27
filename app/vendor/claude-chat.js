@@ -178,12 +178,26 @@
 
     // Floating subagent dock. Sits over the transcript rather than in it: a
     // subagent is work happening beside the conversation, not a turn in it.
-    '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:78%}',
+    // 320px, not a percentage: on a wide cell 78% was a 900px pill lying across
+    // the conversation. A bubble is a label, and its size should not depend on
+    // how much room happens to be going spare.
+    '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:min(320px,calc(100% - 20px))}',
     '.cc-agents:empty{display:none}',
+    '.cc-agents-hd{pointer-events:auto;display:none;justify-content:flex-end}',
+    '.cc-agents-x{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;color:var(--text-muted);cursor:pointer;font-size:11px;line-height:1;padding:3px 7px;box-shadow:var(--shadow-md)}',
+    '.cc-agents-x:hover{color:var(--red);border-color:var(--red)}',
     '.cc-bub{pointer-events:auto;display:flex;align-items:center;gap:7px;max-width:100%;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;padding:5px 11px 5px 9px;font-size:11.5px;color:var(--text-secondary);cursor:pointer;box-shadow:var(--shadow-md);animation:cc-in .2s ease}',
     '.cc-bub:hover{border-color:var(--accent);color:var(--text-primary)}',
-    '.cc-bub-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    // min-width:0 is what makes the ellipsis work at all. A flex item defaults
+    // to min-width:auto and refuses to shrink below its content, so without
+    // this the text never truncates — the bubble just grows to fit an entire
+    // command line and overflows the cell, which is what dragged a horizontal
+    // scrollbar into the panel.
+    '.cc-bub-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}',
     '.cc-bub-n{font-family:var(--mono);font-size:10px;color:var(--text-muted);flex:none}',
+    '.cc-bub-x{flex:none;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;line-height:1;padding:0 1px;opacity:0;transition:opacity .12s}',
+    '.cc-bub:hover .cc-bub-x,.cc-bub-x:focus{opacity:1}',
+    '.cc-bub-x:hover{color:var(--red)}',
     '.cc-bub.done{opacity:.72}',
     '.cc-bub.done:hover{opacity:1}',
 
@@ -536,6 +550,11 @@
     composer.appendChild(meta);
     var logWrap = el('div', 'cc-logwrap');
     var agentDock = el('div', 'cc-agents');
+    // Sits above the stack so a burst of agents can be cleared in one go
+    // rather than one pill at a time.
+    var agentDockHd = el('div', 'cc-agents-hd');
+    agentDockHd.innerHTML = '<button class="cc-agents-x" title="Hide all">✕</button>';
+    agentDock.appendChild(agentDockHd);
     logWrap.appendChild(log);
     logWrap.appendChild(agentDock);
     // Goal mode is opt-in (`/goal <condition>`), so this stays out of the way
@@ -1510,9 +1529,26 @@
       return m.description || (m.subagentType ? m.subagentType + ' agent' : 'Agent');
     }
 
+    /** Header visible only when there is something to dismiss. */
+    function syncDock() {
+      var bubbles = agentDock.querySelectorAll('.cc-bub').length;
+      agentDockHd.style.display = bubbles ? 'flex' : 'none';
+      // Appended bubbles would otherwise land after it.
+      if (agentDock.firstChild !== agentDockHd) agentDock.insertBefore(agentDockHd, agentDock.firstChild);
+    }
+
+    function dismissAllBubbles() {
+      agents.forEach(function (rec) {
+        rec.dismissed = true;
+        if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
+      });
+      syncDock();
+    }
+
     function drawBubble(rec) {
       var m = rec.meta;
       var running = m.status === 'running' || !m.status;
+      if (rec.dismissed) return;   // the user put this one away; leave it there
       if (!rec.bubble) {
         rec.bubble = el('div', 'cc-bub');
         rec.bubble.addEventListener('click', function () { toggleAgentPanel(m.toolUseId); });
@@ -1526,7 +1562,19 @@
         (running ? '<span class="cc-spin"></span>'
                  : '<span class="' + (m.status === 'failed' ? 'cc-dot-err' : 'cc-dot-ok') + '"></span>')
         + '<span class="cc-bub-txt">' + esc(agentLabel(m)) + '</span>'
-        + '<span class="cc-bub-n">' + esc(tok ? (tok >= 1000 ? Math.round(tok / 1000) + 'k' : String(tok)) : '') + '</span>';
+        + '<span class="cc-bub-n">' + esc(tok ? (tok >= 1000 ? Math.round(tok / 1000) + 'k' : String(tok)) : '') + '</span>'
+        + '<button class="cc-bub-x" title="Dismiss">✕</button>';
+      // Dismissing hides the bubble, it does not stop the agent — that is the
+      // CLI's business. The transcript still has its Agent row, so the work
+      // remains reachable after the pill is out of the way.
+      var x = rec.bubble.querySelector('.cc-bub-x');
+      if (x) x.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        rec.dismissed = true;
+        if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
+        syncDock();
+      });
+      syncDock();
       rec.bubble.title = (m.subagentType ? m.subagentType + ' · ' : '')
         + (m.step ? m.step + ' · ' : '')
         + (m.status || 'running') + ' — click to open the transcript';
@@ -1663,6 +1711,8 @@
       closeAgentPanel();
       agents.clear();
       agentDock.innerHTML = '';
+      agentDock.appendChild(agentDockHd);   // the wipe above detaches it
+      syncDock();
     }
 
     function addEntry(data) {
@@ -1815,6 +1865,8 @@
     }
 
     schedBtn.addEventListener('click', openSched);
+    agentDockHd.querySelector('.cc-agents-x').addEventListener('click', dismissAllBubbles);
+    syncDock();
 
     // ─── Goal mode ───
     // The CLI runs the loop inside a single turn, pushed on by a Stop hook, so
