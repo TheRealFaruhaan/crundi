@@ -235,9 +235,21 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     runs-on: ubuntu-latest
     steps:
+      # Named explicitly rather than "download everything". buildx also uploads
+      # a .dockerbuild metadata artifact, which is not a release asset and
+      # whose download failed the whole job once already.
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: windows-client
+          path: artifacts/windows-client
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-server
+          path: artifacts/windows-server
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-server
+          path: artifacts/linux-server
 
       # Added to the release the main workflow created, rather than creating
       # one — so the installer it publishes stays the primary asset.
