@@ -65,9 +65,13 @@ function save() {
 
 function passwordCreds() {
   const s = load();
-  if (s.password && s.password.hash && s.password.totpSecret) {
-    return s.password.enabled === false ? null : s.password;
-  }
+  // An explicit decision in Settings beats the environment, and it has to be
+  // checked BEFORE either source. Testing it inside the "we have a stored hash"
+  // branch meant disabling an env-provided password wrote {enabled:false} with
+  // no hash, fell through to the env bootstrap, and left the password live —
+  // the switch reported success and changed nothing.
+  if (s.password && s.password.enabled === false) return null;
+  if (s.password && s.password.hash && s.password.totpSecret) return s.password;
   // Bootstrap from the environment when Settings has never been used.
   if (config.passwordHash && config.totpSecret) {
     return { hash: config.passwordHash, totpSecret: config.totpSecret, enabled: true, fromEnv: true };
