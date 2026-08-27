@@ -126,6 +126,64 @@ jobs:
           path: dist/crundi-server-*.zip
           if-no-files-found: error
 
+  server-linux:
+    name: Linux server tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - name: Check syntax
+        run: npm run check
+
+      # The whole point of this artifact: node_modules is built HERE, on Linux,
+      # so installing it needs no compiler. node-pty ships no prebuilt binary of
+      # its own, and asking every user to install a C++ toolchain to get a
+      # terminal is a poor trade.
+      - name: Stage with prebuilt native modules
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          mkdir -p staging/crundi
+          cp -r src scripts package.json package-lock.json staging/crundi/
+          mkdir -p staging/crundi/app
+          cp -r app/vendor staging/crundi/app/
+          cp docker/.env.example staging/crundi/.env.example
+          cd staging/crundi
+          npm ci --omit=dev --no-audit --no-fund
+          # Native code is tied to Node's ABI, so record which one these were
+          # built against. install.sh compares it and rebuilds if it differs
+          # rather than shipping modules that will not load.
+          node -p 'process.versions.modules' > .prebuilt
+          node -e "require('node-pty'); console.log('node-pty loads')"
+
+      - name: Verify the tree runs from a clean shell
+        run: |
+          cd staging/crundi
+          # Not a full boot — no config yet — but it proves every import
+          # resolves, which is what a broken prebuild would break.
+          node --input-type=module -e "
+            await import('./src/config.js').catch(e => { if (!/login method|Missing required/.test(e.message)) throw e; });
+            await import('./src/auth-password.js');
+            await import('./src/web-push.js');
+            console.log('imports resolve');
+          "
+
+      - name: Tar
+        run: |
+          mkdir -p dist
+          tar czf "dist/crundi-server-linux-x64-${VERSION}.tar.gz" -C staging crundi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-server
+          path: dist/crundi-server-linux-*.tar.gz
+          if-no-files-found: error
+
   server-image:
     name: Linux server image
     runs-on: ubuntu-latest
@@ -159,7 +217,7 @@ jobs:
 
   attach:
     name: Attach to the release
-    needs: [client, server-windows]
+    needs: [client, server-windows, server-linux]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     runs-on: ubuntu-latest
     steps:
@@ -174,5 +232,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          find artifacts -type f \( -name '*.exe' -o -name '*.zip' \) -print0 \
+          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' \) -print0 \
             | xargs -0 -I{} gh release upload "$TAG" "{}" --clobber --repo "$GITHUB_REPOSITORY"
