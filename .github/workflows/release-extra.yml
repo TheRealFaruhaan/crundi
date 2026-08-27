@@ -120,9 +120,13 @@ jobs:
           Back that up: it holds your projects list, history and credentials.
           EOF
 
+      # Nothing else in this job creates dist/ — it never runs electron-builder,
+      # and Compress-Archive will not make the destination directory itself.
       - name: Zip
         shell: pwsh
-        run: Compress-Archive -Path staging/crundi-server -DestinationPath "dist/crundi-server-${env:VERSION}.zip"
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path staging/crundi-server -DestinationPath "dist/crundi-server-${env:VERSION}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
