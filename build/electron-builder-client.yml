@@ -44,6 +44,23 @@ files:
   - app/index.html
   - package.json
   - "!**/.env"
+  # Server-only dependencies. The client speaks to a server over a websocket and
+  # answers browser-panel requests; it never opens a tunnel, drives Telegram,
+  # serves MCP or grabs the screen, and handleNativeHostMessage only dispatches
+  # browserIpcHandlers, so the terminal tools are unreachable here too. Together
+  # these are the bulk of the payload (node-pty 64M, cloudflared 52M), and the
+  # two the app requires are already inside try/catch.
+  - "!node_modules/node-pty/**/*"
+  - "!node_modules/cloudflared/**/*"
+  - "!node_modules/node-screenshots/**/*"
+  - "!node_modules/@modelcontextprotocol/**/*"
+  - "!node_modules/grammy/**/*"
+  - "!node_modules/@grammyjs/**/*"
+  - "!node_modules/acme-client/**/*"
+  - "!node_modules/telegramify-markdown/**/*"
+  - "!node_modules/express/**/*"
+  - "!node_modules/@hono/**/*"
+  - "!node_modules/hono/**/*"
 
 # app/vendor is deliberately absent: xterm, CodeMirror and the chat renderer are
 # served by whichever server this connects to, so shipping a second copy here

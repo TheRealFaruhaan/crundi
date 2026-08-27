@@ -166,6 +166,13 @@
       justify-content: center;
     }
     #setup-screen.visible { display: flex; }
+    /* Shown by script (display:flex), so only the alignment belongs here —
+       without it the card sits in the top-left corner instead of centred. */
+    #server-screen {
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+    }
     .setup-card {
       background: var(--bg-secondary);
       border: 1px solid var(--border);

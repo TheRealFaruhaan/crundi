@@ -1,6 +1,6 @@
 {
   "name": "crundi",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Self-hosted remote workbench for your projects — agent terminals, files, git, kanban, mindmap and scheduling, reachable from anywhere.",
   "type": "module",
   "main": "app/main.js",
@@ -83,6 +83,7 @@
     "grammy": "^1.35.0",
     "node-pty": "^1.1.0",
     "node-screenshots": "^0.2.8",
+    "telegramify-markdown": "^1.3.3",
     "ws": "^8.21.0"
   },
   "devDependencies": {

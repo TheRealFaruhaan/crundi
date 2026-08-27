@@ -1227,30 +1227,45 @@ function connectNativeHost() {
   }
   const wsUrl = cfg.serverUrl.replace(/^http/, 'ws') + '/ws?token=' + encodeURIComponent(hostToken);
   appendLog(`[nativehost] connecting to ${cfg.serverUrl}`);
-  try { hostWs = new WSImpl(wsUrl); } catch (err) {
+  // Every handler below talks to THIS socket, never to whatever `hostWs`
+  // happens to hold when it fires. Saving the server URL closes the in-flight
+  // socket and starts another, but a TLS handshake already past the point of
+  // no return still emits 'open' afterwards — and the old code then called
+  // hostWs.send() on a hostWs that stopNativeHost() had just set to null,
+  // which crashed the whole main process with an uncaught TypeError.
+  let ws;
+  try { ws = new WSImpl(wsUrl); } catch (err) {
     appendLog(`[nativehost] connect failed: ${err.message}`);
     return scheduleHostRetry();
   }
+  hostWs = ws;
+  const isCurrent = () => hostWs === ws;
 
-  hostWs.on('open', () => {
+  ws.on('open', () => {
+    // Superseded while connecting: close quietly and let the live one register.
+    if (!isCurrent()) { try { ws.close(); } catch { /* ignore */ } return; }
     appendLog('[nativehost] connected — registering as native host');
-    hostWs.send(JSON.stringify({ type: 'register-native-host' }));
+    try { ws.send(JSON.stringify({ type: 'register-native-host' })); }
+    catch (err) { appendLog(`[nativehost] register failed: ${err.message}`); }
   });
-  hostWs.on('message', (raw) => {
+  ws.on('message', (raw) => {
+    if (!isCurrent()) return;
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (m.type === 'native-host-ready') { appendLog('[nativehost] registered'); return; }
     if (m.type !== 'native-host') return;
     handleNativeHostMessage(m.payload, (payload) => {
-      if (hostWs && hostWs.readyState === 1) {
-        hostWs.send(JSON.stringify({ type: 'native-host-result', payload }));
-      }
+      if (ws.readyState !== 1) return;
+      try { ws.send(JSON.stringify({ type: 'native-host-result', payload })); }
+      catch (err) { appendLog(`[nativehost] reply failed: ${err.message}`); }
     });
   });
-  hostWs.on('close', () => {
+  ws.on('close', () => {
+    // An old socket closing must not null out the connection that replaced it.
+    if (!isCurrent()) return;
     hostWs = null;
     if (!hostClosing) { appendLog('[nativehost] disconnected'); scheduleHostRetry(); }
   });
-  hostWs.on('error', (err) => appendLog(`[nativehost] socket error: ${err.message}`));
+  ws.on('error', (err) => appendLog(`[nativehost] socket error: ${err.message}`));
 }
 
 function scheduleHostRetry() {
@@ -1612,6 +1627,30 @@ const browserIpcHandlers = {
 };
 
 // ─── App Lifecycle ───
+
+// One instance per install. The lock is keyed on the app id, so the client and
+// the all-in-one each get their own and can still run side by side — but a
+// second copy of the SAME build would fight the first over client.json, the
+// tray icon and the native-host socket. Hand the focus back instead.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    appendLog('[lifecycle] Second instance attempted — focusing this one');
+    showWindow();
+  });
+}
+
+// A stray async throw — a socket firing after its owner was torn down, say —
+// used to take the whole app down behind a modal "A JavaScript error occurred
+// in the main process". Losing a running session to that is worse than
+// carrying on: log it where the user (and we) can see it, and stay up.
+process.on('uncaughtException', (err) => {
+  appendLog(`[main] UNCAUGHT: ${err?.stack || err}`);
+});
+process.on('unhandledRejection', (reason) => {
+  appendLog(`[main] UNHANDLED REJECTION: ${reason?.stack || reason}`);
+});
 
 app.whenReady().then(() => {
   appendLog('[lifecycle] app.whenReady fired');

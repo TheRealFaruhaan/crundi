@@ -37,6 +37,7 @@ import { ensureGitignore } from './claude-terminals.js';
 import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
 import { createLimitWarmer } from './limit-warmer.js';
 import * as authConfig from './auth-config.js';
+import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
@@ -507,8 +508,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return false;
   }
 
-  // Single entry point for every Telegram notification. Honors the per-event
-  // policy ('always' | 'away' | 'never') and the presence gate for 'away'.
+  // Telegram's hard limit. MarkdownV2 escaping ADDS characters, so a body that
+  // fit before conversion can overflow after it.
+  const TG_HARD_MAX = 4096;
+
+  function toTelegramMarkdown(text) {
+    let src = String(text);
+    for (let i = 0; i < 4; i++) {
+      const out = telegramify(src, 'escape');
+      if (out.length <= TG_HARD_MAX) return out;
+      src = src.slice(0, Math.floor(src.length * 0.7)) + '\n\n[…truncated, open Crundi for the rest]';
+    }
+    return telegramify(src.slice(0, 1500), 'escape');
+  }
+
   // ─── Notification channels ───
   // Registered once here; notifyEvent fans out to whichever are enabled. Adding
   // another channel later means writing its send(), not touching call sites.
@@ -521,9 +534,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       ? 'No Telegram bot is configured.'
       : 'Send /start to your bot once so it knows where to reach you.'),
     describe: () => 'Messages to your Telegram chat.',
-    send: async (text) => {
+    send: async (text, meta = {}) => {
       const chatId = getChatId ? getChatId() : null;
       if (!chatId || !bot) return false;
+      // Claude answers in markdown, which Telegram shows literally unless we
+      // translate it into its own dialect. That parser is strict — one stray
+      // character rejects the whole message — so a failure falls back to the
+      // plain text rather than costing the user the notification.
+      if (meta.markdown) {
+        try {
+          await bot.api.sendMessage(chatId, toTelegramMarkdown(text), { parse_mode: 'MarkdownV2' });
+          return true;
+        } catch (err) {
+          console.warn('[channels] Telegram rejected the formatted message, sending plain:', err.message);
+        }
+      }
       await bot.api.sendMessage(chatId, text);
       return true;
     },
@@ -542,13 +567,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: (text, meta) => webPush.send(text, meta),
   });
 
-  function notifyEvent(key, message) {
+  // Single entry point for every Telegram notification. Honors the per-event
+  // policy ('always' | 'away' | 'never') and the presence gate for 'away'.
+  function notifyEvent(key, message, meta = {}) {
     const mode = notifyPrefs[key];
     if (mode !== 'always' && mode !== 'away') return;   // 'never' / unknown
     if (mode === 'away' && anyClientPresent()) return;  // user is already here
     // Fire and forget: a slow or dead channel must not hold up whatever was
     // being notified about.
-    channels.deliver(message, { tag: key }).catch(() => { /* non-fatal */ });
+    channels.deliver(message, { tag: key, ...meta }).catch(() => { /* non-fatal */ });
   }
 
   // Detect service start / crash-stop transitions, independent of any connected
@@ -596,13 +623,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           const body = out.length > TG_OUTPUT_MAX
             ? out.slice(0, TG_OUTPUT_MAX) + '\n\n[…truncated, open Crundi for the rest]'
             : out;
-          return `✅ ${name}${proj}\n\n${body}`;
+          // Claude writes markdown, so say so and let each channel decide what
+          // to do with it - Telegram renders it, plainer channels do not.
+          return { text: `✅ ${name}${proj}\n\n${body}`, markdown: true };
         }
       } catch { /* fall through to the plain line */ }
     }
     // Nothing was said this turn (interrupted, or pure tool work) — the plain
     // line is honest; echoing an older message would read as a fresh answer.
-    return `✅ ${name} finished${proj}.`;
+    return { text: `✅ ${name} finished${proj}.`, markdown: false };
   }
 
   function handleAgentState(tid, state, ts = 0) {
@@ -631,7 +660,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
       if (state === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
-      else notifyEvent('finished', finishedMessage(term, name, proj));
+      else {
+        const fin = finishedMessage(term, name, proj);
+        notifyEvent('finished', fin.text, { markdown: fin.markdown });
+      }
     }
     broadcastState();
   }

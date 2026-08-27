@@ -436,7 +436,8 @@
         // until the origin's storage quota is full, at which point every
         // setItem here throws and is swallowed — drafts, prefs and workbench
         // state all stop saving, silently.
-        if (!k || (k.indexOf('crundi_chat_draft_') !== 0 && k.indexOf('crundi_chat_ans_') !== 0)) continue;
+        if (!k || (k.indexOf('crundi_chat_draft_') !== 0 && k.indexOf('crundi_chat_ans_') !== 0
+                   && k.indexOf('crundi_chat_dis_') !== 0)) continue;
         var raw = localStorage.getItem(k);
         if (!raw || raw.charAt(0) !== '{') continue;   // untimestamped: leave it
         try {
@@ -446,6 +447,56 @@
       }
       kill.forEach(function (k) { localStorage.removeItem(k); });
     } catch (e) {}
+  }
+
+  // Dismissing an agent bubble is permanent and global. It must not come back
+  // on refresh, when the desktop app reopens, or when the same conversation is
+  // resumed under a fresh session id - so this is keyed on toolUseId (unique
+  // per agent) rather than per session, and lives at module scope so two chats
+  // open at once see each other's dismissals immediately.
+  //
+  // Each id carries its own timestamp. The ids outlive the sessions that made
+  // them, so without expiry and a cap the set would grow until the origin's
+  // storage quota is full - at which point every setItem in this file starts
+  // failing silently, taking drafts and prefs down with it.
+  var DIS_KEY = 'crundi_chat_dismissed';
+  var DIS_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+  var DIS_MAX = 2000;
+  var dismissedIds = null;   // id -> when it was dismissed
+
+  function loadDismissed() {
+    if (dismissedIds) return dismissedIds;
+    dismissedIds = {};
+    try {
+      var raw = localStorage.getItem(DIS_KEY);
+      var d = raw ? JSON.parse(raw) : null;
+      var ids = (d && d.ids) || {};
+      var now = Date.now();
+      if (Object.prototype.toString.call(ids) === '[object Array]') {
+        // A build in between stored a plain array; keep those dismissed.
+        ids.forEach(function (id) { dismissedIds[id] = now; });
+      } else {
+        Object.keys(ids).forEach(function (id) {
+          if (now - ids[id] < DIS_TTL_MS) dismissedIds[id] = ids[id];
+        });
+      }
+    } catch (e) {}
+    return dismissedIds;
+  }
+
+  function isDismissed(id) { return !!loadDismissed()[id]; }
+
+  function markDismissed(id) {
+    if (!id) return;
+    var map = loadDismissed();
+    map[id] = Date.now();
+    var keys = Object.keys(map);
+    if (keys.length > DIS_MAX) {
+      keys.sort(function (a, b) { return map[b] - map[a]; })
+          .slice(DIS_MAX)
+          .forEach(function (k) { delete map[k]; });
+    }
+    try { localStorage.setItem(DIS_KEY, JSON.stringify({ t: Date.now(), ids: map })); } catch (e) {}
   }
 
   // ─── Mount ───
@@ -1523,10 +1574,15 @@
     var openAgent = null;     // toolUseId of the expanded panel, if any
     var agentPanel = null;
 
+    // Putting a bubble away has to stick. It lived only in the record before,
+    // so a refresh - or reopening the desktop app - rebuilt every pill from
+    // the replayed session and handed back the exact clutter the X removed.
+    // Same {t, ids} shape as the drafts so the TTL sweep above reaps it too.
     function agentRec(toolUseId) {
       var rec = agents.get(toolUseId);
       if (!rec) {
-        rec = { meta: { toolUseId: toolUseId, description: '', status: 'running' }, messages: [], bubble: null };
+        rec = { meta: { toolUseId: toolUseId, description: '', status: 'running' }, messages: [], bubble: null,
+                dismissed: isDismissed(toolUseId) };
         agents.set(toolUseId, rec);
       }
       return rec;
@@ -1545,8 +1601,9 @@
     }
 
     function dismissAllBubbles() {
-      agents.forEach(function (rec) {
+      agents.forEach(function (rec, id) {
         rec.dismissed = true;
+        markDismissed(id);
         if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
       });
       syncDock();
@@ -1578,6 +1635,7 @@
       if (x) x.addEventListener('click', function (ev) {
         ev.stopPropagation();
         rec.dismissed = true;
+        markDismissed(m.toolUseId);
         if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
         syncDock();
       });

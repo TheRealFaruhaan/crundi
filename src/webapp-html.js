@@ -595,6 +595,11 @@ export function getWebappHtml(botUsername) {
     .term-font-btn:hover, .term-head-btn:hover { color: var(--text-primary); border-color: var(--accent); }
     .term-head-btn.term-close { font-size: 14px; padding: 1px 7px; }
     .term-head-btn.term-close:hover { color: var(--red); border-color: var(--red); }
+    /* Armed state mirrors the chat Stop button: one click asks, the next acts. */
+    .term-head-btn.term-close.armed {
+      color: var(--red); border-color: var(--red); background: var(--red-dim);
+      font-size: 11px; padding: 1px 6px;
+    }
     .term-body { position: relative; flex: 1; padding: 4px; overflow: hidden; min-height: 0; }
     .term-mount { height: 100%; }
     .term-body .xterm { height: 100%; }
@@ -3050,17 +3055,82 @@ export function getWebappHtml(botUsername) {
     // ─── Browser push ───
     // The permission prompt must come from a user gesture, so this is only ever
     // called from the button in Settings, never on load.
+    // A denied origin is never re-prompted, so the button can do nothing until
+    // the user clears it themselves. Where that switch lives differs per
+    // platform, and getting it wrong wastes their time - on Android the app
+    // is a WebAPK whose Android-level toggle can be ON while the ORIGIN is
+    // still blocked, and only "Reset permissions" clears that.
+    function explainBlockedPush() {
+      var ua = navigator.userAgent || '';
+      var android = /Android/i.test(ua);
+      var ios = /iPad|iPhone|iPod/.test(ua);
+      var installed = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || window.navigator.standalone === true;
+      var lines = [
+        'Notifications are blocked for ' + location.origin + '.',
+        '',
+        'The browser will not ask again until that block is cleared, which is',
+        'why pressing the button does nothing and no prompt appears.',
+        '',
+      ];
+      if (android) {
+        lines = lines.concat([
+          'On Android:',
+          '',
+          '1. Open this site\u2019s permissions - tap the icon left of the address,',
+          '   or the menu > Permissions if Crundi is installed as an app.',
+          '2. Tap "Reset permissions".',
+          '3. Close Crundi completely (swipe it out of recents).',
+          '4. Reopen it and press Enable again - the prompt returns.',
+          '',
+          'Android\u2019s own "Allow notifications" for the Crundi app must also be',
+          'on, but it is not enough by itself: while the site permission says',
+          'blocked, the app-level toggle has nothing to deliver.',
+        ]);
+      } else if (ios) {
+        lines = lines.concat([
+          'On iOS, web push only works when the site is added to the Home',
+          'Screen and opened from that icon. Add it, open it there, then press',
+          'Enable again.',
+        ]);
+      } else if (installed) {
+        lines = lines.concat([
+          'Crundi is installed as an app, so the permission belongs to the app',
+          'rather than the site - that is the "managed by" note.',
+          '',
+          '1. Open the menu (top right) > App info.',
+          '2. Set Notifications to Allow.',
+          '',
+          'If that is not offered: uninstall the app, reset the permission for',
+          location.host + ' in your browser settings, then reinstall.',
+        ]);
+      } else {
+        lines = lines.concat([
+          '1. Open your browser\u2019s notification settings',
+          '   (Chrome: chrome://settings/content/notifications).',
+          '2. Find ' + location.host + ' under the blocked list.',
+          '3. Reset or allow it, then press the button again.',
+        ]);
+      }
+      alert(lines.join('\\n'));
+    }
+
     async function subscribeToPush() {
       try {
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
           toast('This browser cannot do push notifications', 'error');
           return;
         }
+        // Once a site is denied, requestPermission() resolves 'denied'
+        // immediately and shows nothing — so telling the user to "allow it in
+        // settings" and stopping is a dead end. Say where the switch actually
+        // is, which differs once Crundi is installed as an app: Chrome scopes
+        // the permission to the app and the site entry reads "managed by".
+        if (Notification.permission === 'denied') { explainBlockedPush(); return; }
         const perm = await Notification.requestPermission();
         if (perm !== 'granted') {
-          toast(perm === 'denied'
-            ? 'Notifications are blocked for this site — allow them in your browser settings'
-            : 'Notifications were not allowed', 'error');
+          if (perm === 'denied') explainBlockedPush();
+          else toast('Notifications were not allowed', 'error');
           return;
         }
         const reg = await navigator.serviceWorker.ready;
@@ -3933,6 +4003,36 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // Closing a live cell kills the session, and the X sits a few pixels from
+    // the controls you actually want mid-turn. Same two-step as the chat Stop
+    // button: the first click arms and says "Sure?", the second closes, and it
+    // disarms itself so a stray tap cannot leave it primed.
+    const CLOSE_ARM_MS = 3000;
+    let closeArmTid = null, closeArmTimer = null;
+
+    function disarmClose() {
+      closeArmTid = null;
+      clearTimeout(closeArmTimer); closeArmTimer = null;
+      document.querySelectorAll('.term-close.armed').forEach(b => {
+        b.classList.remove('armed');
+        b.innerHTML = '\u00d7';
+        if (b.dataset.title0) b.title = b.dataset.title0;
+      });
+    }
+
+    function tryCloseTerminal(btn, id) {
+      if (closeArmTid === id) { disarmClose(); closeTerminal(id); return; }
+      disarmClose();
+      closeArmTid = id;
+      if (btn) {
+        btn.dataset.title0 = btn.title;
+        btn.classList.add('armed');
+        btn.textContent = 'Sure?';
+        btn.title = 'Click again to close';
+      }
+      closeArmTimer = setTimeout(disarmClose, CLOSE_ARM_MS);
+    }
+
     // Discard an un-launched placeholder cell.
     function closePendingCell(localId) {
       pendingCells = pendingCells.filter(x => x !== localId);
@@ -3998,6 +4098,10 @@ export function getWebappHtml(botUsername) {
     // re-appended in order (moving a cell within its parent doesn't disturb the
     // embedded terminal).
     function renderTermGrid() {
+      // A re-render replaces the armed button, so the visual warning would
+      // vanish while the timer still ran — the next click would close with no
+      // confirmation at all. Drop the arm with the DOM that showed it.
+      disarmClose();
       const grid = $('#term-grid'); const ph = $('#terminal-placeholder');
       const addBtn = $('#tab-add-term'); const bar = $('#term-input-bar');
       if (!grid) return;
@@ -8068,7 +8172,7 @@ export function getWebappHtml(botUsername) {
         case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
         case 'wb-close': if (d.wbid) { e.stopPropagation(); closeWbCell(d.wbid); } break;
         case 'wb-refresh': if (d.wbid) { e.stopPropagation(); refreshWbCell(d.wbid); } break;
-        case 'term-close': if (d.tid) { e.stopPropagation(); closeTerminal(d.tid); } break;
+        case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
