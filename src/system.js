@@ -6,7 +6,35 @@
  */
 
 import { execFile, execSync, execFileSync } from 'child_process';
-import { Window, Monitor as Screen } from 'node-screenshots';
+// node-screenshots is a native module, and it is not always there. A container
+// has no display to capture in the first place, and npm's optional-dependency
+// resolution can leave the platform binding out even where one exists (the
+// lockfile records whichever platform generated it). A missing capture backend
+// has to degrade to a clear error on the tools that need it — importing it at
+// the top level meant its absence took the entire server down at startup.
+let Window = null;
+let Screen = null;
+let captureError = '';
+try {
+  const ns = await import('node-screenshots');
+  Window = ns.Window;
+  Screen = ns.Monitor;
+} catch (err) {
+  captureError = err?.message || String(err);
+  console.warn('[system] Screen capture unavailable:', captureError.split('\n')[0]);
+}
+
+/** True when this machine can capture its screen at all. */
+export function captureAvailable() { return !!(Window && Screen); }
+
+function requireCapture() {
+  if (captureAvailable()) return;
+  // The underlying cause is logged once at import. Repeating it here just
+  // forwards node-screenshots' "npm has a bug" boilerplate to someone whose
+  // server simply has no screen, which is misleading.
+  throw new Error('Screen capture is not available on this server. It needs a machine with a display; this one has none.');
+}
+
 
 // ─── List all open windows (across all virtual desktops) ───
 
@@ -78,7 +106,7 @@ export function listWindows() {
   // Get node-screenshots data for current-desktop windows (has appName, focus, etc.)
   let nsWindows;
   try {
-    nsWindows = Window.all()
+    nsWindows = !Window ? [] : Window.all()
       .filter(w => {
         const t = w.title();
         return t && !SKIP_TITLES.has(t) && !t.startsWith('Default IME');
@@ -201,6 +229,7 @@ function isScreenLocked() {
 // ─── List all displays ───
 
 export function listScreens() {
+  requireCapture();
   return Screen.all().map((s, i) => ({
     index: i + 1,
     id: s.id(),
@@ -217,6 +246,7 @@ export function listScreens() {
 // Returns a Buffer (PNG)
 
 export async function screenshotDisplay(displayIndex = 1) {
+  requireCapture();
   const screens = Screen.all();
   const idx = Number(displayIndex) - 1;
   const screen = screens[idx] || screens.find(s => s.isPrimary()) || screens[0];
@@ -278,6 +308,7 @@ public class WinCapture {
 }
 
 export async function screenshotWindow(windowId) {
+  requireCapture();
   const id = Number(windowId);
 
   // Try node-screenshots first (current desktop, higher quality via WGC)

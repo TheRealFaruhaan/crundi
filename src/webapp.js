@@ -10,6 +10,8 @@
  */
 
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
+import * as tls from './tls.js';
 import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomBytes, createHash } from 'node:crypto';
@@ -34,6 +36,11 @@ import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
 import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
 import { createLimitWarmer } from './limit-warmer.js';
+import * as authConfig from './auth-config.js';
+import telegramify from 'telegramify-markdown';
+import * as channels from './notify-channels.js';
+import * as forwards from './forwards.js';
+import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +131,36 @@ self.addEventListener('message', (e) => {
   if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
+// ─── Push ───
+// Same worker serves an ordinary browser tab and the desktop app; both are
+// Chromium, so one implementation covers both.
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
+  if (!d.body) return;
+  e.waitUntil(self.registration.showNotification(d.title || 'Crundi', {
+    body: d.body,
+    icon: '/assets/icon_256x256.png',
+    badge: '/assets/icon_128x128.png',
+    // Same tag replaces rather than stacks, so a busy session does not bury
+    // the phone in near-identical lines.
+    tag: d.tag || 'crundi',
+    data: { url: d.url || '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || '/';
+  // Focus an existing window rather than opening yet another one.
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    for (const c of list) {
+      if ('focus' in c) { c.navigate ? c.navigate(target) : null; return c.focus(); }
+    }
+    return self.clients.openWindow ? self.clients.openWindow(target) : undefined;
+  }));
+});
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
@@ -168,6 +205,7 @@ const startedAt = Date.now();
  */
 export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispatch, serverLogs, onServerLog, getChatId, setChatId }) {
   let server = null;
+  let acmeServer = null;
   let wss = null;
   let port = null;
   let tunnelUrl = null;
@@ -327,6 +365,53 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return true;
   }
 
+  // ─── Forward cookie ───
+  //
+  // A forward lives on its own hostname, so the browser has no access token for
+  // it: localStorage belongs to Crundi's origin, not to myapp.crundi.example.com.
+  // A cookie scoped to the parent domain is the only thing that travels there.
+  //
+  // Deliberately a SEPARATE credential from the access token, and one the API
+  // never looks at. validateToken reads the Authorization header and the token
+  // query parameter and nothing else, so this cookie cannot be used to make an
+  // authenticated Crundi API call from a forwarded page — which matters, since
+  // those pages are running code we do not control.
+  const forwardTokens = new Map();   // token -> expiresAt
+  const FORWARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+  function mintForwardToken() {
+    const t = randomBytes(32).toString('hex');
+    forwardTokens.set(t, Date.now() + FORWARD_TTL_MS);
+    // Cheap sweep; this map only grows on sign-in.
+    if (forwardTokens.size > 200) {
+      const now = Date.now();
+      for (const [k, exp] of forwardTokens) if (exp <= now) forwardTokens.delete(k);
+    }
+    return t;
+  }
+
+  /** Attach the forward cookie to a successful sign-in response. */
+  function setForwardCookie(res) {
+    const base = forwards.baseDomain();
+    if (!base) return;                     // no forward domain configured
+    const token = mintForwardToken();
+    const secure = tls.enabled() ? '; Secure' : '';
+    res.setHeader('Set-Cookie',
+      `crundi_fwd=${token}; Domain=.${base}; Path=/; Max-Age=${Math.floor(FORWARD_TTL_MS / 1000)}`
+      + `; HttpOnly; SameSite=Lax${secure}`);
+  }
+
+  function hasForwardCookie(req) {
+    const raw = req.headers.cookie;
+    if (!raw) return false;
+    const m = /(?:^|;\s*)crundi_fwd=([a-f0-9]+)/.exec(raw);
+    if (!m) return false;
+    const exp = forwardTokens.get(m[1]);
+    if (!exp) return false;
+    if (Date.now() >= exp) { forwardTokens.delete(m[1]); return false; }
+    return true;
+  }
+
   function validateToken(req) {
     // Authorization header (normal API calls)
     const auth = req.headers['authorization'];
@@ -423,17 +508,74 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return false;
   }
 
+  // Telegram's hard limit. MarkdownV2 escaping ADDS characters, so a body that
+  // fit before conversion can overflow after it.
+  const TG_HARD_MAX = 4096;
+
+  function toTelegramMarkdown(text) {
+    let src = String(text);
+    for (let i = 0; i < 4; i++) {
+      const out = telegramify(src, 'escape');
+      if (out.length <= TG_HARD_MAX) return out;
+      src = src.slice(0, Math.floor(src.length * 0.7)) + '\n\n[…truncated, open Crundi for the rest]';
+    }
+    return telegramify(src.slice(0, 1500), 'escape');
+  }
+
+  // ─── Notification channels ───
+  // Registered once here; notifyEvent fans out to whichever are enabled. Adding
+  // another channel later means writing its send(), not touching call sites.
+  channels.register({
+    id: 'telegram',
+    label: 'Telegram',
+    enabledByDefault: true,
+    available: () => !!(bot && getChatId && getChatId()),
+    unavailableReason: () => (!bot
+      ? 'No Telegram bot is configured.'
+      : 'Send /start to your bot once so it knows where to reach you.'),
+    describe: () => 'Messages to your Telegram chat.',
+    send: async (text, meta = {}) => {
+      const chatId = getChatId ? getChatId() : null;
+      if (!chatId || !bot) return false;
+      // Claude answers in markdown, which Telegram shows literally unless we
+      // translate it into its own dialect. That parser is strict — one stray
+      // character rejects the whole message — so a failure falls back to the
+      // plain text rather than costing the user the notification.
+      if (meta.markdown) {
+        try {
+          await bot.api.sendMessage(chatId, toTelegramMarkdown(text), { parse_mode: 'MarkdownV2' });
+          return true;
+        } catch (err) {
+          console.warn('[channels] Telegram rejected the formatted message, sending plain:', err.message);
+        }
+      }
+      await bot.api.sendMessage(chatId, text);
+      return true;
+    },
+  });
+
+  channels.register({
+    id: 'webpush',
+    label: 'Browser notifications',
+    enabledByDefault: false,
+    available: () => webPush.subscriptions().length > 0,
+    unavailableReason: () => 'No browser has been allowed to receive notifications yet.',
+    describe: () => {
+      const n = webPush.subscriptions().length;
+      return n ? `${n} browser${n === 1 ? '' : 's'} subscribed.` : 'Works in a browser tab and in the desktop app.';
+    },
+    send: (text, meta) => webPush.send(text, meta),
+  });
+
   // Single entry point for every Telegram notification. Honors the per-event
   // policy ('always' | 'away' | 'never') and the presence gate for 'away'.
-  function notifyEvent(key, message) {
+  function notifyEvent(key, message, meta = {}) {
     const mode = notifyPrefs[key];
     if (mode !== 'always' && mode !== 'away') return;   // 'never' / unknown
     if (mode === 'away' && anyClientPresent()) return;  // user is already here
-    try {
-      const chatId = getChatId ? getChatId() : null;
-      if (!chatId || !bot) return;
-      bot.api.sendMessage(chatId, message).catch(() => { /* non-fatal */ });
-    } catch { /* non-fatal */ }
+    // Fire and forget: a slow or dead channel must not hold up whatever was
+    // being notified about.
+    channels.deliver(message, { tag: key, ...meta }).catch(() => { /* non-fatal */ });
   }
 
   // Detect service start / crash-stop transitions, independent of any connected
@@ -481,13 +623,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           const body = out.length > TG_OUTPUT_MAX
             ? out.slice(0, TG_OUTPUT_MAX) + '\n\n[…truncated, open Crundi for the rest]'
             : out;
-          return `✅ ${name}${proj}\n\n${body}`;
+          // Claude writes markdown, so say so and let each channel decide what
+          // to do with it - Telegram renders it, plainer channels do not.
+          return { text: `✅ ${name}${proj}\n\n${body}`, markdown: true };
         }
       } catch { /* fall through to the plain line */ }
     }
     // Nothing was said this turn (interrupted, or pure tool work) — the plain
     // line is honest; echoing an older message would read as a fresh answer.
-    return `✅ ${name} finished${proj}.`;
+    return { text: `✅ ${name} finished${proj}.`, markdown: false };
   }
 
   function handleAgentState(tid, state, ts = 0) {
@@ -516,7 +660,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
       if (state === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
-      else notifyEvent('finished', finishedMessage(term, name, proj));
+      else {
+        const fin = finishedMessage(term, name, proj);
+        notifyEvent('finished', fin.text, { markdown: fin.markdown });
+      }
     }
     broadcastState();
   }
@@ -754,6 +901,36 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
 
+    // ─── Subdomain forwards ───
+    // Checked first: this hostname belongs to somebody else's app, so none of
+    // Crundi's own routing applies to it.
+    // Path mode: /tunnel/<name>/… . Checked before anything else for the same
+    // reason as the subdomain case — this request belongs to another app.
+    const pathFwd = forwards.matchPath(req.url);
+    if (pathFwd) {
+      if (!pathFwd.forward.public && !validateToken(req) && !hasForwardCookie(req)) {
+        res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('This forward is private. Sign in to Crundi first, or recreate it as public.\n');
+        return;
+      }
+      forwards.proxy(pathFwd.forward, req, res, pathFwd.upstreamPath);
+      return;
+    }
+
+    const fwd = forwards.match(req.headers.host);
+    if (fwd) {
+      // Private by default. A quick tunnel is public by construction; a forward
+      // is not, because "let me look at this on my phone" is the common case and
+      // quietly publishing a dev database is not a default worth having.
+      if (!fwd.public && !validateToken(req) && !hasForwardCookie(req)) {
+        res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('This forward is private. Sign in to Crundi first, or recreate it as public.\n');
+        return;
+      }
+      forwards.proxy(fwd, req, res);
+      return;
+    }
+
     // CORS preflight
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
@@ -939,6 +1116,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const allowed = config.allowedUsername.replace(/^@/, '').toLowerCase();
       if (username !== allowed) return json(res, { ok: false, error: 'Unauthorized user' }, 403);
 
+      setForwardCookie(res);
       return json(res, { ok: true, ...createSession(username), user });
     }
 
@@ -951,7 +1129,74 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       let parsed;
       try { parsed = JSON.parse(body); } catch { /* ignore */ }
       if (parsed?.key !== internalApiKey) return json(res, { ok: false, error: 'Invalid key' }, 403);
+      setForwardCookie(res);
       return json(res, { ok: true, ...createSession(config.allowedUsername || 'local') });
+    }
+
+    // ─── Password + TOTP login ───
+    // The alternative to Telegram. Both factors are required: see config.js for
+    // why a password alone is not offered as a login method.
+    if (path === '/api/auth/password' && req.method === 'POST') {
+      if (!authConfig.methods().password) {
+        return json(res, { ok: false, error: 'Password login is not set up on this server' }, 400);
+      }
+      let parsed;
+      try { parsed = JSON.parse(await readBody(req)); } catch { /* ignore */ }
+      if (!authConfig.checkPasswordLogin(parsed?.password, parsed?.code)) {
+        // Deliberately does not say WHICH was wrong: that would let someone
+        // confirm a password using any six digits.
+        await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 300)));
+        console.warn(`[crundi] Failed password login from ${req.socket.remoteAddress || 'unknown'}`);
+        return json(res, { ok: false, error: 'Incorrect password or code' }, 401);
+      }
+      console.log('[crundi] Password login succeeded');
+      setForwardCookie(res);
+      return json(res, { ok: true, ...createSession(config.localUsername) });
+    }
+
+    // Which sign-in methods this server offers. Read before login, so it is
+    // deliberately outside the auth gate and says nothing a stranger could use.
+    if (path === '/api/auth/methods' && req.method === 'GET') {
+      const m = authConfig.methods();
+      return json(res, {
+        ok: true,
+        telegram: m.telegram,
+        password: m.password,
+        setupRequired: !m.anyConfigured,
+        botUsername: m.telegram ? (config.botUsername || '') : '',
+      });
+    }
+
+    // First-run setup. Reachable unauthenticated ONLY while nothing is
+    // configured; once a method exists this falls through to the auth gate and
+    // becomes an ordinary authenticated settings change.
+    if (path === '/api/auth/setup' && req.method === 'POST') {
+      const open = authConfig.isOpen();
+      if (!open && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+
+      if (body.method === 'password') {
+        const r = authConfig.setPassword(body.password);
+        if (!r.ok) return json(res, r, 400);
+        console.log('[crundi] Password sign-in configured');
+        // Hand back a session so whoever just set it up is not locked out by
+        // their own change, and the enrolment secret for their authenticator.
+        return json(res, { ...r, ...createSession(config.localUsername) });
+      }
+
+      if (body.method === 'telegram') {
+        const botToken = String(body.botToken || '').trim();
+        const username = String(body.username || '').replace(/^@/, '').trim();
+        if (!botToken || !username) return json(res, { ok: false, error: 'Both a bot token and a username are needed' }, 400);
+        const r = writeEnvKeys({ TELEGRAM_BOT_TOKEN: botToken, ALLOWED_USERNAME: username });
+        if (!r.ok) return json(res, r, 500);
+        console.log('[crundi] Telegram sign-in configured — restart required');
+        return json(res, { ok: true, restartRequired: true });
+      }
+
+      return json(res, { ok: false, error: 'Unknown method' }, 400);
     }
 
     // ─── Refresh ───
@@ -990,8 +1235,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
+
+    // ─── Setup mode ───
+    // With no sign-in method configured the server is unauthenticated, so it
+    // does exactly ONE thing: let someone configure one. Everything else is
+    // refused, authenticated or not. Without this the "open until set up" state
+    // would be a fully open shell on the host, which is not a state worth
+    // having however briefly.
+    if (authConfig.isOpen()) {
+      const setupAllowed = path === '/api/auth/methods' || path === '/api/auth/setup';
+      if (!setupAllowed) {
+        return json(res, {
+          error: 'Set up a sign-in method first — nothing else is available until then.',
+          setupRequired: true,
+        }, 403);
+      }
+    }
+
     // MCP call + hook status endpoints use their own X-Api-Key auth (not tokens)
-    if (path !== '/api/mcp/call' && path !== '/api/terminal-status' && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+    if (!authConfig.isOpen()
+        && path !== '/api/mcp/call' && path !== '/api/terminal-status'
+        && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
 
     // Claude Code lifecycle hooks report a terminal's agent state here.
     if (path === '/api/terminal-status' && req.method === 'POST') {
@@ -1565,6 +1829,137 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Settings ───
+
+    // Write specific keys into .env without disturbing the rest. The settings
+    // form rewrites the whole file from its own field list, which is fine when
+    // it owns every field — this is for the setup path, which knows only two.
+    function writeEnvKeys(pairs) {
+      try {
+        const dir = dirname(envPath);
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        let content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
+        for (const [key, value] of Object.entries(pairs)) {
+          const line = `${key}=${value}`;
+          const re = new RegExp(`^${key}=.*$`, 'm');
+          content = re.test(content) ? content.replace(re, line) : (content.replace(/\n*$/, '\n') + line + '\n');
+        }
+        writeFileSync(envPath, content, 'utf-8');
+        return { ok: true };
+      } catch (err) { return { ok: false, error: err.message }; }
+    }
+
+    // ─── Subdomain forwards ───
+    if (path === '/api/forwards' && req.method === 'GET') {
+      return json(res, { ok: true, forwards: forwards.list(), domain: forwards.baseDomain() });
+    }
+
+    // What ways of exposing a port exist here, and what each costs. Read before
+    // choosing, so the caller is not guessing.
+    if (path === '/api/forwards/options' && req.method === 'GET') {
+      return json(res, { ok: true, ...forwards.options() });
+    }
+
+    if (path === '/api/forwards' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+      // Path mode needs no domain at all — it hangs off whatever address Crundi
+      // is already reached on.
+      if (body.mode !== 'path' && !forwards.baseDomain()) {
+        return json(res, {
+          ok: false,
+          error: 'No domain is configured for subdomain forwards. Use mode "path", or set TLS_DOMAIN / FORWARD_DOMAIN.',
+        }, 400);
+      }
+      const r = forwards.add({
+        name: body.name, port: body.port, mode: body.mode,
+        isPublic: !!body.public, description: body.description,
+      });
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    const fwdDel = path.match(/^\/api\/forwards\/([a-z0-9-]+)$/i);
+    if (fwdDel && req.method === 'DELETE') {
+      const r = forwards.remove(fwdDel[1]);
+      return json(res, r, r.ok ? 200 : 404);
+    }
+
+    // ─── Notification channels ───
+    if (path === '/api/notify/channels' && req.method === 'GET') {
+      return json(res, { ok: true, channels: channels.list() });
+    }
+
+    if (path === '/api/notify/channels' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body?.id) return json(res, { ok: false, error: 'Which channel?' }, 400);
+      const r = channels.setEnabled(body.id, !!body.enabled);
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    // The browser needs this public key to subscribe. Public by design.
+    if (path === '/api/push/key' && req.method === 'GET') {
+      return json(res, { ok: true, key: webPush.publicKey() });
+    }
+
+    if (path === '/api/push/subscribe' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      const r = webPush.addSubscription(body?.subscription ? { ...body.subscription, label: body.label } : body);
+      if (r.ok) {
+        // Subscribing is the act of asking for these, so turn the channel on
+        // rather than making it a second, easily-missed step.
+        channels.setEnabled('webpush', true);
+        console.log(`[crundi] Browser subscribed to push (${r.count} total)`);
+      }
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    if (path === '/api/push/unsubscribe' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      return json(res, webPush.removeSubscription(body?.endpoint));
+    }
+
+    if (path === '/api/push/test' && req.method === 'POST') {
+      const ok = await webPush.send('Notifications are working.', { title: 'Crundi', tag: 'test' });
+      return json(res, ok
+        ? { ok: true }
+        : { ok: false, error: 'Nothing was delivered — no live subscription.' });
+    }
+
+    // ─── Sign-in methods (authenticated) ───
+    if (path === '/api/auth/config' && req.method === 'GET') {
+      return json(res, { ok: true, ...authConfig.status() });
+    }
+
+    if (path === '/api/auth/config' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+
+      // Setting a password always (re)mints the TOTP secret, so the response
+      // carries the new one to enrol.
+      if (body.action === 'set-password') {
+        const r = authConfig.setPassword(body.password);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      if (body.action === 'enable') {
+        const r = body.method === 'telegram'
+          ? authConfig.setTelegramEnabled(true)
+          : authConfig.setPasswordEnabled(true);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      // Refused when it would leave nothing to sign in with — the server must
+      // never fall back to the open state once it has left it.
+      if (body.action === 'disable') {
+        const r = body.method === 'telegram'
+          ? authConfig.setTelegramEnabled(false)
+          : authConfig.setPasswordEnabled(false);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      return json(res, { ok: false, error: 'Unknown action' }, 400);
+    }
 
     if (path === '/api/settings' && req.method === 'GET') {
       try {
@@ -2449,6 +2844,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     wss = new WebSocketServer({ noServer: true });
 
     server.on('upgrade', (req, socket, head) => {
+      // A forward's own WebSocket — hot reload, dev tooling, whatever the app
+      // uses. Without this every dev server's HMR dies at the first hop, which
+      // is the sort of thing you notice ten minutes later and blame elsewhere.
+      const pathFwd = forwards.matchPath(req.url);
+      if (pathFwd) {
+        if (!pathFwd.forward.public && !validateToken(req) && !hasForwardCookie(req)) { socket.destroy(); return; }
+        forwards.proxyUpgrade(pathFwd.forward, req, socket, head, pathFwd.upstreamPath);
+        return;
+      }
+
+      const fwd = forwards.match(req.headers.host);
+      if (fwd) {
+        if (!fwd.public && !validateToken(req) && !hasForwardCookie(req)) { socket.destroy(); return; }
+        forwards.proxyUpgrade(fwd, req, socket, head);
+        return;
+      }
+
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname !== '/ws') {
         socket.destroy();
@@ -2481,10 +2893,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const subs = new Map();
       // …and several chat sessions: id → event handler.
       const uiSubs = new Map();
+      // Set when this socket is acting as the server's native host (a desktop
+      // app lending us its GUI for the browser panel).
+      let detachHost = null;
 
       ws.on('message', (raw) => {
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+        // ─── Native host ───
+        // A desktop app offering its GUI to this server. Only meaningful for a
+        // server with no Electron parent of its own (a container, or a headless
+        // install); browser.js prefers the parent channel when there is one, so
+        // this cannot hijack an all-in-one desktop install.
+        if (msg.type === 'register-native-host') {
+          if (detachHost) return;                       // already registered
+          detachHost = browserMod.setRemoteHost({
+            send: (m) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'native-host', payload: m })); },
+          });
+          console.log('[crundi] Desktop app attached as native host');
+          ws.send(JSON.stringify({ type: 'native-host-ready' }));
+          return;
+        }
+        // A reply coming back from that desktop app.
+        if (msg.type === 'native-host-result') {
+          browserMod.handleHostMessage(msg.payload);
+          return;
+        }
 
         // Server log subscription
         if (msg.type === 'subscribe-logs') {
@@ -2565,6 +3000,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         uiSubs.clear();
         logSubscribers.delete(ws);
         presentClients.delete(ws);
+        if (detachHost) {
+          detachHost();
+          detachHost = null;
+          console.log('[crundi] Desktop app detached as native host');
+        }
       });
     });
   }
@@ -2575,20 +3015,78 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     async start(listenPort = 0) {
       if (server) throw new Error('Web app already running');
 
-      await new Promise((resolve, reject) => {
-        server = createServer((req, res) => {
-          handleRequest(req, res).catch(err => {
-            console.error('[webapp] Request error:', err.message);
-            try { json(res, { error: 'Internal error' }, 500); } catch { /* ignore */ }
+      const onRequest = (req, res) => {
+        handleRequest(req, res).catch(err => {
+          console.error('[webapp] Request error:', err.message);
+          try { json(res, { error: 'Internal error' }, 500); } catch { /* ignore */ }
+        });
+      };
+
+      // ─── TLS ───
+      // Off by default: behind the Cloudflare tunnel, or any proxy that
+      // terminates TLS, this machine only ever sees plain HTTP and should.
+      const creds = tls.init();
+      if (tls.enabled() && creds) {
+        await new Promise((resolve, reject) => {
+          server = createHttpsServer({ key: creds.key, cert: creds.cert }, onRequest);
+          server.listen(config.tlsPort, '0.0.0.0', () => {
+            port = server.address().port;
+            console.log(`[webapp] HTTPS server on 0.0.0.0:${port}`);
+            resolve();
           });
+          server.on('error', reject);
         });
-        server.listen(listenPort, '0.0.0.0', () => {
-          port = server.address().port;
-          console.log(`[webapp] HTTP server on 0.0.0.0:${port}`);
-          resolve();
+        // Renewal swaps the certificate into the live server. setSecureContext
+        // applies to connections made from then on, so nothing is dropped and
+        // no restart is needed.
+        tls.startRenewal((next) => {
+          try {
+            server.setSecureContext({ key: next.key, cert: next.cert });
+            console.log('[webapp] Certificate reloaded without a restart.');
+          } catch (err) {
+            console.error('[webapp] Could not reload the certificate:', err.message);
+          }
         });
-        server.on('error', reject);
-      });
+      } else {
+        if (tls.enabled() && !creds && tls.mode() === 'letsencrypt') {
+          console.log('[webapp] Starting on HTTP while the first certificate is obtained.');
+        }
+        await new Promise((resolve, reject) => {
+          server = createServer(onRequest);
+          server.listen(listenPort, '0.0.0.0', () => {
+            port = server.address().port;
+            console.log(`[webapp] HTTP server on 0.0.0.0:${port}`);
+            resolve();
+          });
+          server.on('error', reject);
+        });
+      }
+
+      // The ACME listener. Separate from the main server because the CA fetches
+      // the challenge over plain port 80 and will not follow a redirect — so
+      // this has to answer there even when everything else is on 443.
+      if (tls.mode() === 'letsencrypt') {
+        try {
+          acmeServer = createServer((req, res) => {
+            if (tls.handleAcmeChallenge(req, res)) return;
+            const host = req.headers.host ? String(req.headers.host).replace(/:\d+$/, '') : config.tlsDomain;
+            res.writeHead(301, { Location: `https://${host}${req.url || '/'}` });
+            res.end();
+          });
+          acmeServer.on('error', (err) => console.warn(`[webapp] Port ${config.tlsHttpPort} unavailable (${err.message}) — ACME renewal will fail.`));
+          acmeServer.listen(config.tlsHttpPort, '0.0.0.0', () => {
+            console.log(`[webapp] ACME challenge + redirect listener on 0.0.0.0:${config.tlsHttpPort}`);
+          });
+          // If HTTPS is not up yet the renewal loop has not been started above.
+          if (!creds) {
+            tls.startRenewal(() => {
+              console.log('[webapp] Certificate obtained — restart to serve HTTPS.');
+            });
+          }
+        } catch (err) {
+          console.warn('[webapp] Could not start the ACME listener:', err.message);
+        }
+      }
 
       setupWebSocket();
 

@@ -178,12 +178,26 @@
 
     // Floating subagent dock. Sits over the transcript rather than in it: a
     // subagent is work happening beside the conversation, not a turn in it.
-    '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:78%}',
+    // 320px, not a percentage: on a wide cell 78% was a 900px pill lying across
+    // the conversation. A bubble is a label, and its size should not depend on
+    // how much room happens to be going spare.
+    '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:min(320px,calc(100% - 20px))}',
     '.cc-agents:empty{display:none}',
+    '.cc-agents-hd{pointer-events:auto;display:none;justify-content:flex-end}',
+    '.cc-agents-x{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;color:var(--text-muted);cursor:pointer;font-size:11px;line-height:1;padding:3px 7px;box-shadow:var(--shadow-md)}',
+    '.cc-agents-x:hover{color:var(--red);border-color:var(--red)}',
     '.cc-bub{pointer-events:auto;display:flex;align-items:center;gap:7px;max-width:100%;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;padding:5px 11px 5px 9px;font-size:11.5px;color:var(--text-secondary);cursor:pointer;box-shadow:var(--shadow-md);animation:cc-in .2s ease}',
     '.cc-bub:hover{border-color:var(--accent);color:var(--text-primary)}',
-    '.cc-bub-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    // min-width:0 is what makes the ellipsis work at all. A flex item defaults
+    // to min-width:auto and refuses to shrink below its content, so without
+    // this the text never truncates — the bubble just grows to fit an entire
+    // command line and overflows the cell, which is what dragged a horizontal
+    // scrollbar into the panel.
+    '.cc-bub-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}',
     '.cc-bub-n{font-family:var(--mono);font-size:10px;color:var(--text-muted);flex:none}',
+    '.cc-bub-x{flex:none;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;line-height:1;padding:0 1px;opacity:0;transition:opacity .12s}',
+    '.cc-bub:hover .cc-bub-x,.cc-bub-x:focus{opacity:1}',
+    '.cc-bub-x:hover{color:var(--red)}',
     '.cc-bub.done{opacity:.72}',
     '.cc-bub.done:hover{opacity:1}',
 
@@ -422,7 +436,8 @@
         // until the origin's storage quota is full, at which point every
         // setItem here throws and is swallowed — drafts, prefs and workbench
         // state all stop saving, silently.
-        if (!k || (k.indexOf('crundi_chat_draft_') !== 0 && k.indexOf('crundi_chat_ans_') !== 0)) continue;
+        if (!k || (k.indexOf('crundi_chat_draft_') !== 0 && k.indexOf('crundi_chat_ans_') !== 0
+                   && k.indexOf('crundi_chat_dis_') !== 0)) continue;
         var raw = localStorage.getItem(k);
         if (!raw || raw.charAt(0) !== '{') continue;   // untimestamped: leave it
         try {
@@ -432,6 +447,56 @@
       }
       kill.forEach(function (k) { localStorage.removeItem(k); });
     } catch (e) {}
+  }
+
+  // Dismissing an agent bubble is permanent and global. It must not come back
+  // on refresh, when the desktop app reopens, or when the same conversation is
+  // resumed under a fresh session id - so this is keyed on toolUseId (unique
+  // per agent) rather than per session, and lives at module scope so two chats
+  // open at once see each other's dismissals immediately.
+  //
+  // Each id carries its own timestamp. The ids outlive the sessions that made
+  // them, so without expiry and a cap the set would grow until the origin's
+  // storage quota is full - at which point every setItem in this file starts
+  // failing silently, taking drafts and prefs down with it.
+  var DIS_KEY = 'crundi_chat_dismissed';
+  var DIS_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+  var DIS_MAX = 2000;
+  var dismissedIds = null;   // id -> when it was dismissed
+
+  function loadDismissed() {
+    if (dismissedIds) return dismissedIds;
+    dismissedIds = {};
+    try {
+      var raw = localStorage.getItem(DIS_KEY);
+      var d = raw ? JSON.parse(raw) : null;
+      var ids = (d && d.ids) || {};
+      var now = Date.now();
+      if (Object.prototype.toString.call(ids) === '[object Array]') {
+        // A build in between stored a plain array; keep those dismissed.
+        ids.forEach(function (id) { dismissedIds[id] = now; });
+      } else {
+        Object.keys(ids).forEach(function (id) {
+          if (now - ids[id] < DIS_TTL_MS) dismissedIds[id] = ids[id];
+        });
+      }
+    } catch (e) {}
+    return dismissedIds;
+  }
+
+  function isDismissed(id) { return !!loadDismissed()[id]; }
+
+  function markDismissed(id) {
+    if (!id) return;
+    var map = loadDismissed();
+    map[id] = Date.now();
+    var keys = Object.keys(map);
+    if (keys.length > DIS_MAX) {
+      keys.sort(function (a, b) { return map[b] - map[a]; })
+          .slice(DIS_MAX)
+          .forEach(function (k) { delete map[k]; });
+    }
+    try { localStorage.setItem(DIS_KEY, JSON.stringify({ t: Date.now(), ids: map })); } catch (e) {}
   }
 
   // ─── Mount ───
@@ -536,6 +601,11 @@
     composer.appendChild(meta);
     var logWrap = el('div', 'cc-logwrap');
     var agentDock = el('div', 'cc-agents');
+    // Sits above the stack so a burst of agents can be cleared in one go
+    // rather than one pill at a time.
+    var agentDockHd = el('div', 'cc-agents-hd');
+    agentDockHd.innerHTML = '<button class="cc-agents-x" title="Hide all">✕</button>';
+    agentDock.appendChild(agentDockHd);
     logWrap.appendChild(log);
     logWrap.appendChild(agentDock);
     // Goal mode is opt-in (`/goal <condition>`), so this stays out of the way
@@ -1156,6 +1226,13 @@
       queued = [];
       renderQueue();
       postMessage(text);
+      // Go busy immediately, for the same reason doSend does. A message queued
+      // just as the turn ends flushes AFTER the server has reported idle, so
+      // until its next state event lands the UI says idle while Claude is
+      // already working on it. Optimistic here, corrected by the server either
+      // way — and injections that land mid-turn are already 'working', where
+      // this is a no-op.
+      setState('working');
     }
 
     function doSend() {
@@ -1497,10 +1574,15 @@
     var openAgent = null;     // toolUseId of the expanded panel, if any
     var agentPanel = null;
 
+    // Putting a bubble away has to stick. It lived only in the record before,
+    // so a refresh - or reopening the desktop app - rebuilt every pill from
+    // the replayed session and handed back the exact clutter the X removed.
+    // Same {t, ids} shape as the drafts so the TTL sweep above reaps it too.
     function agentRec(toolUseId) {
       var rec = agents.get(toolUseId);
       if (!rec) {
-        rec = { meta: { toolUseId: toolUseId, description: '', status: 'running' }, messages: [], bubble: null };
+        rec = { meta: { toolUseId: toolUseId, description: '', status: 'running' }, messages: [], bubble: null,
+                dismissed: isDismissed(toolUseId) };
         agents.set(toolUseId, rec);
       }
       return rec;
@@ -1510,9 +1592,27 @@
       return m.description || (m.subagentType ? m.subagentType + ' agent' : 'Agent');
     }
 
+    /** Header visible only when there is something to dismiss. */
+    function syncDock() {
+      var bubbles = agentDock.querySelectorAll('.cc-bub').length;
+      agentDockHd.style.display = bubbles ? 'flex' : 'none';
+      // Appended bubbles would otherwise land after it.
+      if (agentDock.firstChild !== agentDockHd) agentDock.insertBefore(agentDockHd, agentDock.firstChild);
+    }
+
+    function dismissAllBubbles() {
+      agents.forEach(function (rec, id) {
+        rec.dismissed = true;
+        markDismissed(id);
+        if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
+      });
+      syncDock();
+    }
+
     function drawBubble(rec) {
       var m = rec.meta;
       var running = m.status === 'running' || !m.status;
+      if (rec.dismissed) return;   // the user put this one away; leave it there
       if (!rec.bubble) {
         rec.bubble = el('div', 'cc-bub');
         rec.bubble.addEventListener('click', function () { toggleAgentPanel(m.toolUseId); });
@@ -1526,7 +1626,20 @@
         (running ? '<span class="cc-spin"></span>'
                  : '<span class="' + (m.status === 'failed' ? 'cc-dot-err' : 'cc-dot-ok') + '"></span>')
         + '<span class="cc-bub-txt">' + esc(agentLabel(m)) + '</span>'
-        + '<span class="cc-bub-n">' + esc(tok ? (tok >= 1000 ? Math.round(tok / 1000) + 'k' : String(tok)) : '') + '</span>';
+        + '<span class="cc-bub-n">' + esc(tok ? (tok >= 1000 ? Math.round(tok / 1000) + 'k' : String(tok)) : '') + '</span>'
+        + '<button class="cc-bub-x" title="Dismiss">✕</button>';
+      // Dismissing hides the bubble, it does not stop the agent — that is the
+      // CLI's business. The transcript still has its Agent row, so the work
+      // remains reachable after the pill is out of the way.
+      var x = rec.bubble.querySelector('.cc-bub-x');
+      if (x) x.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        rec.dismissed = true;
+        markDismissed(m.toolUseId);
+        if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
+        syncDock();
+      });
+      syncDock();
       rec.bubble.title = (m.subagentType ? m.subagentType + ' · ' : '')
         + (m.step ? m.step + ' · ' : '')
         + (m.status || 'running') + ' — click to open the transcript';
@@ -1663,6 +1776,8 @@
       closeAgentPanel();
       agents.clear();
       agentDock.innerHTML = '';
+      agentDock.appendChild(agentDockHd);   // the wipe above detaches it
+      syncDock();
     }
 
     function addEntry(data) {
@@ -1815,6 +1930,8 @@
     }
 
     schedBtn.addEventListener('click', openSched);
+    agentDockHd.querySelector('.cc-agents-x').addEventListener('click', dismissAllBubbles);
+    syncDock();
 
     // ─── Goal mode ───
     // The CLI runs the loop inside a single turn, pushed on by a Stop hook, so

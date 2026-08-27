@@ -22,7 +22,22 @@ import { config } from './config.js';
  * @returns {{ bot: Bot, notify: Function, getChatId: Function }}
  */
 export function createBot({ webappUrl } = {}) {
-  const bot = new Bot(config.botToken);
+  // Telegram is optional now — a server can use password sign-in instead, and a
+  // fresh install has neither yet. grammy throws on an empty token, so without
+  // this the whole process died before the web UI could offer a way to set one
+  // up. Every export below is null-safe against `bot`.
+  const bot = config.botToken ? new Bot(config.botToken) : null;
+  if (!bot) {
+    const noop = () => {};
+    return {
+      bot: null,
+      notify: async () => false,
+      getChatId: () => null,
+      setChatId: noop,
+      setWebappUrl: noop,
+      onChatId: noop,
+    };
+  }
 
   // Cached chat ID for the authorized user (discovered on first /start or message)
   let authorizedChatId = null;

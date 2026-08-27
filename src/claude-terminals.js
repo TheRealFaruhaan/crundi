@@ -8,7 +8,10 @@
 
 import { createRequire } from 'module';
 import { EventEmitter } from 'events';
-import { existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync } from 'fs';
+import {
+  existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync,
+  statSync, openSync, readSync, closeSync,
+} from 'fs';
 import { join, dirname, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -150,13 +153,82 @@ export function ensureGitignore(projectPath) {
  * Passing `--continue` when no conversation exists makes the CLI exit
  * immediately with "No conversation found to continue", so we only add the
  * flag when at least one transcript is present.
+ *
+ * "Present" is not the same as "belongs to this project". The encoding is
+ * lossy — every non-alphanumeric character becomes a dash — so C:\Projects\my
+ * app, my-app and my_app all share ONE directory. A brand-new project whose
+ * name collides with an older one therefore finds transcripts that are not
+ * its own, we pass --continue, and the CLI (which matches on the recorded
+ * cwd) exits 1 with the very error this check exists to prevent.
+ *
+ * So verify a transcript actually records THIS working directory.
  */
+
+/** How much of a transcript to read when looking for its cwd. */
+const CWD_PROBE_BYTES = 64 * 1024;
+
+/**
+ * Read the head of a .jsonl transcript and report the cwd it belongs to.
+ * Returns null when the head carries no cwd at all (a transcript of nothing
+ * but queue-operation/summary stubs), which is different from "belongs to
+ * someone else" and is treated differently by the caller.
+ */
+function transcriptCwd(file) {
+  let fd;
+  try {
+    fd = openSync(file, 'r');
+    const buf = Buffer.alloc(CWD_PROBE_BYTES);
+    const bytes = readSync(fd, buf, 0, CWD_PROBE_BYTES, 0);
+    const text = buf.subarray(0, bytes).toString('utf8');
+    // The final line is probably truncated by the fixed-size read; drop it.
+    const lines = text.split('\n');
+    if (bytes === CWD_PROBE_BYTES) lines.pop();
+    for (const line of lines) {
+      if (!line || line.indexOf('"cwd"') === -1) continue;
+      try {
+        const o = JSON.parse(line);
+        if (o && typeof o.cwd === 'string' && o.cwd) return o.cwd;
+      } catch { /* partial or non-JSON line */ }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } }
+  }
+}
+
 export function hasExistingConversation(projectPath) {
   try {
-    const encoded = resolvePath(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
+    const target = resolvePath(projectPath);
+    const encoded = target.replace(/[^a-zA-Z0-9]/g, '-');
     const sessionDir = join(homedir(), '.claude', 'projects', encoded);
     if (!existsSync(sessionDir)) return false;
-    return readdirSync(sessionDir).some(f => f.endsWith('.jsonl'));
+
+    const files = readdirSync(sessionDir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map((f) => {
+        const p = join(sessionDir, f);
+        try { const st = statSync(p); return { p, mtime: st.mtimeMs, size: st.size }; }
+        catch { return null; }
+      })
+      .filter(f => f && f.size > 0)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 8);                        // newest few — --continue takes the latest anyway
+    if (!files.length) return false;
+
+    const same = (a, b) => (isWin ? a.toLowerCase() === b.toLowerCase() : a === b);
+    let sawAnyCwd = false;
+    for (const f of files) {
+      const cwd = transcriptCwd(f.p);
+      if (cwd === null) continue;
+      sawAnyCwd = true;
+      if (same(resolvePath(cwd), target)) return true;
+    }
+    // Every transcript named a different directory → these are a colliding
+    // project's, not ours. If none named one at all we cannot tell, so keep
+    // the old optimistic answer rather than silently stop resuming.
+    return !sawAnyCwd;
   } catch {
     return false;
   }
@@ -263,43 +335,48 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     if (effort) flagList.push('--effort', String(effort));
     if (skipPermissions) flagList.push('--dangerously-skip-permissions');
     const cleanPrompt = prompt ? String(prompt).replace(/[\r\n]+/g, ' ').trim() : '';
-    const claudeTokens = ['claude', ...flagList];
-    if (cleanPrompt) claudeTokens.push(cleanPrompt);
 
     const shell = isWin ? 'cmd.exe' : '/bin/bash';
-    let shellArgs;
-    if (shellOnly) {
-      // "Empty shell": just an interactive shell, no command.
-      shellArgs = isWin ? [] : ['-i'];
-    } else if (rawCommand) {
-      shellArgs = isWin ? ['/c', String(rawCommand)] : ['-c', String(rawCommand)];
-    } else if (isWin) {
-      // Discrete tokens → node-pty quotes the spaced prompt token correctly.
-      shellArgs = ['/c', ...claudeTokens];
-    } else {
+    const buildShellArgs = (flags) => {
+      if (shellOnly) {
+        // "Empty shell": just an interactive shell, no command.
+        return isWin ? [] : ['-i'];
+      }
+      if (rawCommand) {
+        return isWin ? ['/c', String(rawCommand)] : ['-c', String(rawCommand)];
+      }
+      if (isWin) {
+        // Discrete tokens → node-pty quotes the spaced prompt token correctly.
+        const tokens = ['claude', ...flags];
+        if (cleanPrompt) tokens.push(cleanPrompt);
+        return ['/c', ...tokens];
+      }
       // bash -c takes ONE command string; double-quote the prompt and escape
       // shell-special chars so it survives intact.
-      let cmd = 'claude' + (flagList.length ? ' ' + flagList.join(' ') : '');
+      let cmd = 'claude' + (flags.length ? ' ' + flags.join(' ') : '');
       if (cleanPrompt) cmd += ' "' + cleanPrompt.replace(/(["\\$`])/g, '\\$1') + '"';
-      shellArgs = ['-c', cmd];
-    }
+      return ['-c', cmd];
+    };
+    const shellArgs = buildShellArgs(flagList);
+
+    const spawnOpts = {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: project.path,
+      // Inject the API + this terminal's id so the lifecycle hooks can report
+      // state back to Crundi, attributed to this exact terminal.
+      env: {
+        ...process.env, FORCE_COLOR: '1',
+        CRUNDI_TERMINAL_ID: id,
+        ...(apiUrl ? { CRUNDI_API_URL: apiUrl } : {}),
+        ...(apiKey ? { CRUNDI_API_KEY: apiKey } : {}),
+      },
+    };
 
     let proc;
     try {
-      proc = pty.spawn(shell, shellArgs, {
-        name: 'xterm-256color',
-        cols,
-        rows,
-        cwd: project.path,
-        // Inject the API + this terminal's id so the lifecycle hooks can report
-        // state back to Crundi, attributed to this exact terminal.
-        env: {
-          ...process.env, FORCE_COLOR: '1',
-          CRUNDI_TERMINAL_ID: id,
-          ...(apiUrl ? { CRUNDI_API_URL: apiUrl } : {}),
-          ...(apiKey ? { CRUNDI_API_KEY: apiKey } : {}),
-        },
-      });
+      proc = pty.spawn(shell, shellArgs, spawnOpts);
     } catch (err) {
       return { ok: false, error: `Failed to spawn ${shellOnly ? 'shell' : 'terminal'}: ${err.message}` };
     }
@@ -321,21 +398,53 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     };
     terminals.set(id, entry);
 
-    proc.onData((data) => {
-      // Append to scrollback (trim if too long)
-      entry.scrollback += data;
-      if (entry.scrollback.length > MAX_SCROLLBACK) {
-        entry.scrollback = entry.scrollback.slice(-MAX_SCROLLBACK);
-      }
-      // Broadcast to WebSocket subscribers
-      emitter.emit('data', data);
-    });
+    // Resuming is a guess: the transcript check can only see what is on disk,
+    // and the CLI has the last word on whether a conversation is continuable.
+    // When it disagrees it exits 1 immediately, which used to leave the user
+    // with a dead terminal reading "No conversation found to continue". Start
+    // a fresh session instead - that is what they opened a terminal for.
+    const canRetryFresh = flagList.includes('--continue');
+    let retriedFresh = false;
 
-    proc.onExit(({ exitCode }) => {
-      console.log(`[claude-terminals] "${key}" (${id}) exited (code ${exitCode})`);
-      entry.proc = null;
-      emitter.emit('data', `\r\n[Process exited with code ${exitCode}]\r\n`);
-    });
+    const wire = (p) => {
+      p.onData((data) => {
+        // Append to scrollback (trim if too long)
+        entry.scrollback += data;
+        if (entry.scrollback.length > MAX_SCROLLBACK) {
+          entry.scrollback = entry.scrollback.slice(-MAX_SCROLLBACK);
+        }
+        // Broadcast to WebSocket subscribers
+        emitter.emit('data', data);
+      });
+
+      p.onExit(({ exitCode }) => {
+        if (exitCode !== 0 && canRetryFresh && !retriedFresh
+            && /No conversation found/i.test(stripAnsi(entry.scrollback))) {
+          retriedFresh = true;
+          const fresh = flagList.filter(f => f !== '--continue');
+          console.log(`[claude-terminals] "${key}" (${id}) had nothing to continue - starting a fresh session`);
+          let next;
+          try {
+            next = pty.spawn(shell, buildShellArgs(fresh), spawnOpts);
+          } catch (err) {
+            entry.proc = null;
+            emitter.emit('data', `\r\n[Could not start a fresh session: ${err.message}]\r\n`);
+            return;
+          }
+          // Drop the failed attempt's output so the error is not left on screen.
+          entry.scrollback = '';
+          entry.proc = next;
+          // Clear any attached viewer too, not just the stored scrollback.
+          emitter.emit('data', `\x1b[2J\x1b[3J\x1b[H`);
+          wire(next);
+          return;
+        }
+        console.log(`[claude-terminals] "${key}" (${id}) exited (code ${exitCode})`);
+        entry.proc = null;
+        emitter.emit('data', `\r\n[Process exited with code ${exitCode}]\r\n`);
+      });
+    };
+    wire(proc);
 
     console.log(`[claude-terminals] Spawned claude "${entry.title}" for "${key}" (${id}) in ${project.path} (${cols}x${rows})`);
     return { ok: true, id, project: key, title: entry.title, order: entry.order };

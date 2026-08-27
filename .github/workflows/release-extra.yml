@@ -1,0 +1,236 @@
+# Extra release artifacts, alongside the all-in-one Windows installer.
+#
+# release.yml is untouched and still builds Crundi-Setup-<version>.exe exactly
+# as it always has. This is a SEPARATE workflow so a problem here cannot stop
+# that one shipping — if this fails, the main installer is unaffected.
+#
+# Run it by hand first (Actions → this workflow → Run workflow) before trusting
+# it on a tag. Recovering the known-good release workflow, if ever needed:
+#   git show v1.3.0:.github/workflows/release.yml
+#
+# Produces:
+#   Crundi-Client-Setup-<version>.exe   desktop app with no server, attaches to one
+#   crundi-server-<version>.zip         headless server for Windows
+#   ghcr.io/<owner>/crundi:<version>    Linux server image
+name: Release extras
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Attach artifacts to the matching GitHub Release'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  client:
+    name: Windows client installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Same gate as the main release: a SyntaxError in the page's own JS is
+      # invisible to node --check and would ship a UI that dies at boot.
+      - name: Check syntax
+        run: npm run check
+
+      - name: Build client installer
+        run: npx electron-builder --win --config build/electron-builder-client.yml --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-client
+          path: dist/client/Crundi Client-Setup-*.exe
+          if-no-files-found: error
+
+  server-windows:
+    name: Windows server package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - name: Check syntax
+        run: npm run check
+
+      # Production dependencies only: no electron, no electron-builder. The
+      # server never renders anything.
+      - name: Stage the package
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          mkdir -p staging/crundi-server
+          cp -r src scripts package.json staging/crundi-server/
+          mkdir -p staging/crundi-server/app
+          cp -r app/vendor staging/crundi-server/app/
+          cp docker/.env.example staging/crundi-server/.env.example
+          cd staging/crundi-server
+          npm ci --omit=dev --ignore-scripts=false
+          cd ..
+          cp ../docker/README.md crundi-server/DOCKER.md || true
+
+      - name: Add a launcher
+        shell: bash
+        run: |
+          cat > staging/crundi-server/start.cmd <<'EOF'
+          @echo off
+          REM Crundi server. Copy .env.example to .env and fill it in first,
+          REM or set a password from the first-run screen in the browser.
+          node --no-deprecation src\index.js
+          EOF
+          cat > staging/crundi-server/README.txt <<'EOF'
+          Crundi server (Windows)
+
+            1. Install Node.js 22 or newer.
+            2. Run start.cmd
+            3. Open http://localhost:8888 and set up a way to sign in.
+
+          Until a sign-in method is configured the server does exactly one
+          thing: let someone configure one. Nothing else is reachable. It is
+          still first-come, so do this before exposing the port.
+
+          To run it as a service, see the service:* scripts in package.json
+          (they use pm2), or use your preferred supervisor.
+
+          Data lives in %APPDATA%\Crundi\data unless DATA_DIR says otherwise.
+          Back that up: it holds your projects list, history and credentials.
+          EOF
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path staging/crundi-server -DestinationPath "dist/crundi-server-${env:VERSION}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-server
+          path: dist/crundi-server-*.zip
+          if-no-files-found: error
+
+  server-linux:
+    name: Linux server tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - name: Check syntax
+        run: npm run check
+
+      # The whole point of this artifact: node_modules is built HERE, on Linux,
+      # so installing it needs no compiler. node-pty ships no prebuilt binary of
+      # its own, and asking every user to install a C++ toolchain to get a
+      # terminal is a poor trade.
+      - name: Stage with prebuilt native modules
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          mkdir -p staging/crundi
+          cp -r src scripts package.json package-lock.json staging/crundi/
+          mkdir -p staging/crundi/app
+          cp -r app/vendor staging/crundi/app/
+          cp docker/.env.example staging/crundi/.env.example
+          cd staging/crundi
+          npm ci --omit=dev --no-audit --no-fund
+          # Native code is tied to Node's ABI, so record which one these were
+          # built against. install.sh compares it and rebuilds if it differs
+          # rather than shipping modules that will not load.
+          node -p 'process.versions.modules' > .prebuilt
+          node -e "require('node-pty'); console.log('node-pty loads')"
+
+      - name: Verify the tree runs from a clean shell
+        run: |
+          cd staging/crundi
+          # Not a full boot — no config yet — but it proves every import
+          # resolves, which is what a broken prebuild would break.
+          node --input-type=module -e "
+            await import('./src/config.js').catch(e => { if (!/login method|Missing required/.test(e.message)) throw e; });
+            await import('./src/auth-password.js');
+            await import('./src/web-push.js');
+            console.log('imports resolve');
+          "
+
+      - name: Tar
+        run: |
+          mkdir -p dist
+          tar czf "dist/crundi-server-linux-x64-${VERSION}.tar.gz" -C staging crundi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-server
+          path: dist/crundi-server-linux-*.tar.gz
+          if-no-files-found: error
+
+  server-image:
+    name: Linux server image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tagged builds publish; a manual run builds only, so the workflow can be
+      # exercised without pushing anything.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/crundi:${{ env.VERSION }}
+            ghcr.io/${{ github.repository_owner }}/crundi:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  attach:
+    name: Attach to the release
+    needs: [client, server-windows, server-linux]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # Added to the release the main workflow created, rather than creating
+      # one — so the installer it publishes stays the primary asset.
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' \) -print0 \
+            | xargs -0 -I{} gh release upload "$TAG" "{}" --clobber --repo "$GITHUB_REPOSITORY"

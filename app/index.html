@@ -166,6 +166,13 @@
       justify-content: center;
     }
     #setup-screen.visible { display: flex; }
+    /* Shown by script (display:flex), so only the alignment belongs here —
+       without it the card sits in the top-left corner instead of centred. */
+    #server-screen {
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+    }
     .setup-card {
       background: var(--bg-secondary);
       border: 1px solid var(--border);
@@ -330,6 +337,35 @@
 
     <!-- Webapp iframe (shown when server is ready) -->
     <iframe id="webapp-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" allow="clipboard-write; clipboard-read"></iframe>
+
+    <!-- Which server to attach to. The app can run its own (the all-in-one
+         install) or drive one elsewhere, lending it this machine's GUI. -->
+    <div id="server-screen" style="display:none;">
+      <div class="setup-card">
+        <h2 style="margin-bottom:6px;">Server</h2>
+        <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px;line-height:1.5;">
+          Crundi can run its own server on this machine, or connect to one running elsewhere &mdash;
+          a container on your network, for instance. Either way the browser panel opens here, in
+          front of you.
+        </p>
+        <label style="display:flex;gap:9px;align-items:flex-start;margin-bottom:10px;cursor:pointer;">
+          <input type="radio" name="srvmode" value="local" id="srv-local" style="margin-top:3px;accent-color:var(--accent);">
+          <span><b>Run a server on this machine</b><br>
+            <span style="font-size:0.78rem;color:var(--text-muted);">The standard setup. Everything local.</span></span>
+        </label>
+        <label style="display:flex;gap:9px;align-items:flex-start;margin-bottom:10px;cursor:pointer;">
+          <input type="radio" name="srvmode" value="remote" id="srv-remote" style="margin-top:3px;accent-color:var(--accent);">
+          <span><b>Connect to a server</b><br>
+            <span style="font-size:0.78rem;color:var(--text-muted);">Your projects and Claude live there; this app is the window onto them.</span></span>
+        </label>
+        <input type="text" id="srv-url" placeholder="https://crundi.example.com" autocomplete="off" style="margin-bottom:6px;">
+        <p id="srv-note" style="font-size:0.78rem;color:var(--text-muted);margin-bottom:14px;min-height:1em;"></p>
+        <div class="btn-row">
+          <button class="btn primary" id="srv-save">Save</button>
+          <button class="btn" id="srv-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Setup wizard -->
     <div id="setup-screen">
@@ -771,6 +807,52 @@
         }
       } catch {}
     })();
+
+    // ─── Server selection ───
+    const srvScreen = document.getElementById('server-screen');
+    const srvUrl = document.getElementById('srv-url');
+    const srvNote = document.getElementById('srv-note');
+
+    function srvSyncEnabled() {
+      const remote = document.getElementById('srv-remote').checked;
+      srvUrl.disabled = !remote;
+      srvUrl.style.opacity = remote ? '1' : '0.45';
+    }
+    document.getElementById('srv-local').addEventListener('change', srvSyncEnabled);
+    document.getElementById('srv-remote').addEventListener('change', srvSyncEnabled);
+
+    async function showServerScreen() {
+      const cfg = await api.getClientConfig();
+      // The client-only build has no server to run, so do not offer the choice.
+      if (!cfg.serverBundled) {
+        document.getElementById('srv-local').closest('label').style.display = 'none';
+        document.getElementById('srv-remote').closest('label').style.display = 'none';
+      }
+      document.getElementById(cfg.mode === 'remote' ? 'srv-remote' : 'srv-local').checked = true;
+      srvUrl.value = cfg.serverUrl || '';
+      srvNote.textContent = cfg.mode === 'remote'
+        ? (cfg.connected ? 'Connected — the browser panel is being served from this machine.' : 'Not currently connected.')
+        : '';
+      srvSyncEnabled();
+      document.getElementById('status-screen').style.display = 'none';
+      document.getElementById('webapp-frame').style.display = 'none';
+      srvScreen.style.display = 'flex';
+    }
+
+    function hideServerScreen() {
+      srvScreen.style.display = 'none';
+      document.getElementById('status-screen').style.display = '';
+    }
+
+    document.getElementById('srv-cancel').addEventListener('click', hideServerScreen);
+    document.getElementById('srv-save').addEventListener('click', async () => {
+      const mode = document.getElementById('srv-remote').checked ? 'remote' : 'local';
+      const r = await api.setClientConfig({ mode, serverUrl: srvUrl.value.trim() });
+      if (!r.ok) { srvNote.textContent = r.error; return; }
+      srvNote.textContent = 'Saved. Restart Crundi for it to take effect.';
+    });
+
+    if (api.onShowServer) api.onShowServer(showServerScreen);
   </script>
 </body>
 </html>

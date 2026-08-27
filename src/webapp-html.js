@@ -595,6 +595,11 @@ export function getWebappHtml(botUsername) {
     .term-font-btn:hover, .term-head-btn:hover { color: var(--text-primary); border-color: var(--accent); }
     .term-head-btn.term-close { font-size: 14px; padding: 1px 7px; }
     .term-head-btn.term-close:hover { color: var(--red); border-color: var(--red); }
+    /* Armed state mirrors the chat Stop button: one click asks, the next acts. */
+    .term-head-btn.term-close.armed {
+      color: var(--red); border-color: var(--red); background: var(--red-dim);
+      font-size: 11px; padding: 1px 6px;
+    }
     .term-body { position: relative; flex: 1; padding: 4px; overflow: hidden; min-height: 0; }
     .term-mount { height: 100%; }
     .term-body .xterm { height: 100%; }
@@ -2264,8 +2269,51 @@ export function getWebappHtml(botUsername) {
     <h1>Crundi</h1>
     <p class="subtitle">Claude Code terminal in your browser</p>
     <div class="login-box">
-      <p>Sign in with your Telegram account to continue</p>
+      <p id="login-prompt">Sign in to continue</p>
       <div id="telegram-login-container"></div>
+      <div id="login-or" style="display:none;color:var(--text-muted);font-size:0.76rem;letter-spacing:0.08em;">OR</div>
+      <!-- First run: nothing is configured, and nothing else is reachable
+           until something is. -->
+      <form id="login-setup" style="display:none;flex-direction:column;gap:10px;width:300px;text-align:left;">
+        <div style="color:var(--yellow);font-size:0.8rem;line-height:1.5;">
+          No sign-in method is set up yet. Choose one now &mdash; nothing else on this
+          server works until you do.
+        </div>
+        <input type="password" id="setup-pw" placeholder="Choose a password (12+ characters)" autocomplete="new-password"
+               style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;">
+        <button type="submit" id="setup-submit"
+                style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Set password</button>
+        <div id="setup-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
+      </form>
+
+      <!-- Shown once, right after the password is set: the code source must be
+           enrolled now or the next sign-in is impossible. -->
+      <div id="setup-enrol" style="display:none;flex-direction:column;gap:10px;width:320px;text-align:left;">
+        <div style="color:var(--text-primary);font-weight:600;">Add this to your authenticator app</div>
+        <div style="color:var(--text-secondary);font-size:0.8rem;line-height:1.5;">
+          Signing in needs a 6-digit code as well as the password. Save this now &mdash;
+          it is shown once, and without it you will not be able to sign in again.
+        </div>
+        <code id="setup-secret" style="font-family:var(--mono);font-size:0.95rem;letter-spacing:0.12em;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:10px;word-break:break-all;text-align:center;"></code>
+        <a id="setup-uri" href="#" style="font-size:0.78rem;color:var(--accent-hover);word-break:break-all;"></a>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:0.8rem;color:var(--text-secondary);cursor:pointer;">
+          <input type="checkbox" id="setup-saved" style="margin-top:2px;accent-color:var(--accent);">
+          <span>I have added it to my authenticator app</span>
+        </label>
+        <button id="setup-done" disabled
+                style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;opacity:0.5;">Continue</button>
+      </div>
+
+      <form id="password-login" style="display:none;flex-direction:column;gap:10px;width:260px;" autocomplete="on">
+        <input type="password" id="login-password" placeholder="Password" autocomplete="current-password"
+               style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;">
+        <input type="text" id="login-code" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="6" pattern="[0-9]{6}"
+               style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;font-family:var(--mono);letter-spacing:0.18em;text-align:center;">
+        <button type="submit" id="login-submit"
+                style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Sign in</button>
+        <div id="login-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
+      </form>
     </div>
   </div>
 
@@ -2621,6 +2669,12 @@ export function getWebappHtml(botUsername) {
         localStorage.setItem('crundi_refresh', refreshToken);
       }
       scheduleRefresh(d.expiresIn);
+      // Running inside the desktop app attached to a REMOTE server: hand it the
+      // session so it can register as that server's native host and provide the
+      // browser panel. Re-sent on every refresh, since the socket is built on
+      // whichever token was current. No-op in a browser, or in the all-in-one
+      // install where the server is reached over the parent process channel.
+      try { window.api?.setServerToken?.(token); } catch (e) {}
       return true;
     }
 
@@ -2872,6 +2926,107 @@ export function getWebappHtml(botUsername) {
       }
     };
 
+    // Which sign-in methods this server actually offers. Asked rather than
+    // assumed: the same page is served by an all-in-one desktop install (where
+    // Telegram is the norm) and by a container that may have no bot at all.
+    async function initLogin() {
+      let methods = { telegram: true, password: false };
+      try {
+        const r = await fetch('/api/auth/methods');
+        const d = await r.json();
+        if (d && d.ok) methods = d;
+      } catch { /* fall back to Telegram, which is the older behaviour */ }
+
+      const prompt = $('#login-prompt');
+      const form = $('#password-login');
+      const orEl = $('#login-or');
+
+      // Nothing configured: the server will refuse everything else anyway, so
+      // do not pretend there is a choice.
+      if (methods.setupRequired) {
+        prompt.textContent = 'Set up a way to sign in';
+        $('#login-setup').style.display = 'flex';
+        $('#login-setup').addEventListener('submit', submitSetup);
+        setTimeout(() => { try { $('#setup-pw').focus(); } catch {} }, 60);
+        return;
+      }
+
+      if (methods.telegram) injectTelegramWidget();
+      if (methods.password) form.style.display = 'flex';
+      if (methods.telegram && methods.password) orEl.style.display = '';
+
+      prompt.textContent = methods.telegram && methods.password
+        ? 'Sign in with Telegram, or with your password'
+        : methods.password ? 'Sign in with your password and authenticator code'
+        : 'Sign in with your Telegram account to continue';
+
+      if (methods.password) setTimeout(() => { try { $('#login-password').focus(); } catch {} }, 60);
+    }
+
+    async function submitSetup(e) {
+      if (e) e.preventDefault();
+      const btn = $('#setup-submit');
+      const err = $('#setup-error');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      err.textContent = '';
+      try {
+        const r = await fetch('/api/auth/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method: 'password', password: $('#setup-pw').value }),
+        });
+        const d = await r.json();
+        if (!d.ok) { err.textContent = d.error || 'Could not set that'; return; }
+        // The server hands back a session too, so setting it up signs you in
+        // rather than immediately locking you out of your own change.
+        storeSession(d);
+        $('#setup-pw').value = '';
+        $('#login-setup').style.display = 'none';
+        $('#setup-secret').textContent = d.totpSecret;
+        const a = $('#setup-uri');
+        a.href = d.uri;
+        a.textContent = d.uri;
+        $('#setup-enrol').style.display = 'flex';
+        $('#login-prompt').textContent = 'One more step';
+      } catch (ex) {
+        err.textContent = 'Could not reach the server: ' + ex.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function submitPasswordLogin(e) {
+      if (e) e.preventDefault();
+      const btn = $('#login-submit');
+      const err = $('#login-error');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      err.textContent = '';
+      try {
+        const r = await fetch('/api/auth/password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            password: $('#login-password').value,
+            code: $('#login-code').value.trim(),
+          }),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          err.textContent = d.error || 'Sign-in failed';
+          $('#login-code').value = '';   // codes are single-use in practice
+          $('#login-code').focus();
+          return;
+        }
+        if (storeSession(d)) { $('#login-password').value = ''; $('#login-code').value = ''; showApp(); }
+      } catch (ex) {
+        err.textContent = 'Could not reach the server: ' + ex.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     function injectTelegramWidget() {
       const container = $('#telegram-login-container');
       if (!container) return;
@@ -2895,6 +3050,116 @@ export function getWebappHtml(botUsername) {
       script.setAttribute('data-auth-url', location.origin + '/auth/telegram/callback');
       script.setAttribute('data-request-access', 'write');
       container.appendChild(script);
+    }
+
+    // ─── Browser push ───
+    // The permission prompt must come from a user gesture, so this is only ever
+    // called from the button in Settings, never on load.
+    // A denied origin is never re-prompted, so the button can do nothing until
+    // the user clears it themselves. Where that switch lives differs per
+    // platform, and getting it wrong wastes their time - on Android the app
+    // is a WebAPK whose Android-level toggle can be ON while the ORIGIN is
+    // still blocked, and only "Reset permissions" clears that.
+    function explainBlockedPush() {
+      var ua = navigator.userAgent || '';
+      var android = /Android/i.test(ua);
+      var ios = /iPad|iPhone|iPod/.test(ua);
+      var installed = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+        || window.navigator.standalone === true;
+      var lines = [
+        'Notifications are blocked for ' + location.origin + '.',
+        '',
+        'The browser will not ask again until that block is cleared, which is',
+        'why pressing the button does nothing and no prompt appears.',
+        '',
+      ];
+      if (android) {
+        lines = lines.concat([
+          'On Android:',
+          '',
+          '1. Open this site\u2019s permissions - tap the icon left of the address,',
+          '   or the menu > Permissions if Crundi is installed as an app.',
+          '2. Tap "Reset permissions".',
+          '3. Close Crundi completely (swipe it out of recents).',
+          '4. Reopen it and press Enable again - the prompt returns.',
+          '',
+          'Android\u2019s own "Allow notifications" for the Crundi app must also be',
+          'on, but it is not enough by itself: while the site permission says',
+          'blocked, the app-level toggle has nothing to deliver.',
+        ]);
+      } else if (ios) {
+        lines = lines.concat([
+          'On iOS, web push only works when the site is added to the Home',
+          'Screen and opened from that icon. Add it, open it there, then press',
+          'Enable again.',
+        ]);
+      } else if (installed) {
+        lines = lines.concat([
+          'Crundi is installed as an app, so the permission belongs to the app',
+          'rather than the site - that is the "managed by" note.',
+          '',
+          '1. Open the menu (top right) > App info.',
+          '2. Set Notifications to Allow.',
+          '',
+          'If that is not offered: uninstall the app, reset the permission for',
+          location.host + ' in your browser settings, then reinstall.',
+        ]);
+      } else {
+        lines = lines.concat([
+          '1. Open your browser\u2019s notification settings',
+          '   (Chrome: chrome://settings/content/notifications).',
+          '2. Find ' + location.host + ' under the blocked list.',
+          '3. Reset or allow it, then press the button again.',
+        ]);
+      }
+      alert(lines.join('\\n'));
+    }
+
+    async function subscribeToPush() {
+      try {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          toast('This browser cannot do push notifications', 'error');
+          return;
+        }
+        // Once a site is denied, requestPermission() resolves 'denied'
+        // immediately and shows nothing — so telling the user to "allow it in
+        // settings" and stopping is a dead end. Say where the switch actually
+        // is, which differs once Crundi is installed as an app: Chrome scopes
+        // the permission to the app and the site entry reads "managed by".
+        if (Notification.permission === 'denied') { explainBlockedPush(); return; }
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') {
+          if (perm === 'denied') explainBlockedPush();
+          else toast('Notifications were not allowed', 'error');
+          return;
+        }
+        const reg = await navigator.serviceWorker.ready;
+        const kr = await apiFetch('/api/push/key');
+        const kd = await kr.json();
+        if (!kd.ok) { toast('Could not get the push key', 'error'); return; }
+
+        // applicationServerKey wants raw bytes, not the base64url string.
+        const raw = atob(kd.key.replace(/-/g, '+').replace(/_/g, '/'));
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+
+        // Re-subscribing with a different key throws, so drop any old one first.
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) await existing.unsubscribe();
+
+        const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
+        const r = await apiFetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscription: sub.toJSON(), label: navigator.userAgent.slice(0, 80) }),
+        });
+        const dd = await r.json();
+        if (!dd.ok) { toast(dd.error || 'Could not subscribe', 'error'); return; }
+        toast('This browser will now receive notifications', 'success');
+        renderSettings();
+      } catch (err) {
+        toast('Could not subscribe: ' + err.message, 'error');
+      }
     }
 
     // ─── API ───
@@ -3738,6 +4003,36 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // Closing a live cell kills the session, and the X sits a few pixels from
+    // the controls you actually want mid-turn. Same two-step as the chat Stop
+    // button: the first click arms and says "Sure?", the second closes, and it
+    // disarms itself so a stray tap cannot leave it primed.
+    const CLOSE_ARM_MS = 3000;
+    let closeArmTid = null, closeArmTimer = null;
+
+    function disarmClose() {
+      closeArmTid = null;
+      clearTimeout(closeArmTimer); closeArmTimer = null;
+      document.querySelectorAll('.term-close.armed').forEach(b => {
+        b.classList.remove('armed');
+        b.innerHTML = '\u00d7';
+        if (b.dataset.title0) b.title = b.dataset.title0;
+      });
+    }
+
+    function tryCloseTerminal(btn, id) {
+      if (closeArmTid === id) { disarmClose(); closeTerminal(id); return; }
+      disarmClose();
+      closeArmTid = id;
+      if (btn) {
+        btn.dataset.title0 = btn.title;
+        btn.classList.add('armed');
+        btn.textContent = 'Sure?';
+        btn.title = 'Click again to close';
+      }
+      closeArmTimer = setTimeout(disarmClose, CLOSE_ARM_MS);
+    }
+
     // Discard an un-launched placeholder cell.
     function closePendingCell(localId) {
       pendingCells = pendingCells.filter(x => x !== localId);
@@ -3803,6 +4098,10 @@ export function getWebappHtml(botUsername) {
     // re-appended in order (moving a cell within its parent doesn't disturb the
     // embedded terminal).
     function renderTermGrid() {
+      // A re-render replaces the armed button, so the visual warning would
+      // vanish while the timer still ran — the next click would close with no
+      // confirmation at all. Drop the arm with the DOM that showed it.
+      disarmClose();
       const grid = $('#term-grid'); const ph = $('#terminal-placeholder');
       const addBtn = $('#tab-add-term'); const bar = $('#term-input-bar');
       if (!grid) return;
@@ -7425,11 +7724,35 @@ export function getWebappHtml(botUsername) {
         if (!data.ok) { panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(data.error) + '</p></div>'; return; }
         const s = data.settings;
         const warmStatus = data.limitWarmup || { enabled: false };
+        // How you sign in. Fetched separately because it is managed at runtime
+        // rather than living in .env like the fields above.
+        let authCfg = { telegram: false, password: false, telegramAvailable: false, passwordSet: false };
+        try {
+          const ar = await apiFetch('/api/auth/config');
+          const ad = await ar.json();
+          if (ad && ad.ok) authCfg = ad;
+        } catch { /* leave the defaults; the section will show as unavailable */ }
+        // Where notifications go. A list, not a pair of flags, so adding a
+        // channel later needs no change here.
+        let chans = [];
+        try {
+          const cr = await apiFetch('/api/notify/channels');
+          const cd = await cr.json();
+          if (cd && cd.ok) chans = cd.channels || [];
+        } catch { /* section renders empty */ }
         const inputStyle = 'width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:13px;box-sizing:border-box;';
         const monoStyle = inputStyle + 'font-family:var(--mono);';
         const labelStyle = 'display:block;color:var(--text-secondary);font-size:0.78rem;margin-bottom:4px;';
         const hintStyle = 'color:var(--text-muted);font-size:0.7rem;margin-top:2px;';
         const fieldStyle = 'margin-bottom:14px;';
+        // Buttons in this panel are styled inline from the same variables as the
+        // fields above, matching the existing Save button. There is no shared
+        // .btn class in the stylesheet — a bare class="btn" renders as an
+        // unstyled browser default, which is exactly what it looks like.
+        const btnStyle = 'padding:8px 20px;border-radius:6px;border:none;background:var(--accent);'
+          + 'color:#fff;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;';
+        const btnSubtleStyle = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);'
+          + 'background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12.5px;white-space:nowrap;';
 
         // Notification policy matrix, reflecting server state. Each event row gets
         // three lamps (Always / When Away / Never); the active one lights up.
@@ -7488,13 +7811,76 @@ export function getWebappHtml(botUsername) {
           + '<input type="text" id="set-data-dir" style="' + monoStyle + '" value="' + escHtml(s.DATA_DIR || '') + '" placeholder="(default: platform app dir)" />'
           + '<p style="' + hintStyle + '">Override data storage location. Leave empty for default.</p></div>'
           + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
-          + '<button data-action="settings-save" style="padding:8px 20px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">Save</button>'
+          + '<button data-action="settings-save" style="' + btnStyle + '">Save</button>'
           + '<span id="settings-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div></div>'
+          // Sign-in methods. At least one must stay on; the server refuses to
+          // disable the last, so these toggles can fail and say why.
+          + '<div class="info-section"><h4>Sign-in</h4>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Two ways in. Either is enough, both can be on, and one must always stay on.</p>'
+
+          + '<div class="seg-pref-row" style="margin-bottom:14px;">'
+          + '<div><div class="set-tgl-lbl">Telegram</div>'
+          + '<p style="' + hintStyle + '">'
+          + (authCfg.telegramAvailable
+              ? 'Sign in with the Telegram account set above.'
+              : 'Needs a bot token and username above before it can be turned on.')
+          + '</p></div>'
+          + '<button type="button" class="set-tgl' + (authCfg.telegram ? ' on' : '') + '" id="auth-tgl-telegram"'
+          + (authCfg.telegramAvailable ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+          + ' role="switch" aria-checked="' + (authCfg.telegram ? 'true' : 'false') + '" data-action="auth-toggle" data-method="telegram"><span class="set-tgl-knob"></span></button>'
+          + '</div>'
+
+          + '<div class="seg-pref-row" style="margin-bottom:10px;">'
+          + '<div><div class="set-tgl-lbl">Password + authenticator code</div>'
+          + '<p style="' + hintStyle + '">'
+          + (authCfg.passwordSet
+              ? 'A password and a 6-digit code. Setting a new password issues a new code source.'
+              : 'Not set up yet. Choose a password below to enable it.')
+          + '</p></div>'
+          + '<button type="button" class="set-tgl' + (authCfg.password ? ' on' : '') + '" id="auth-tgl-password"'
+          + (authCfg.passwordSet ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+          + ' role="switch" aria-checked="' + (authCfg.password ? 'true' : 'false') + '" data-action="auth-toggle" data-method="password"><span class="set-tgl-knob"></span></button>'
+          + '</div>'
+
+          + '<div style="display:flex;gap:8px;align-items:center;">'
+          + '<input type="password" id="auth-new-password" placeholder="' + (authCfg.passwordSet ? 'New password (12+ characters)' : 'Choose a password (12+ characters)') + '" autocomplete="new-password" style="' + inputStyle + 'flex:1;">'
+          + '<button type="button" data-action="auth-set-password" style="' + btnStyle + '">' + (authCfg.passwordSet ? 'Change' : 'Set') + '</button>'
+          + '</div>'
+          + '<div id="auth-enrol" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-dim);">'
+          + '<div style="font-weight:600;color:var(--text-primary);margin-bottom:6px;">Add this to your authenticator app</div>'
+          + '<p style="' + hintStyle + ';margin-bottom:8px;">Shown once. Without it you will not be able to sign in with the new password.</p>'
+          + '<code id="auth-enrol-secret" style="display:block;font-family:var(--mono);font-size:0.95rem;letter-spacing:0.12em;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:9px;text-align:center;word-break:break-all;"></code>'
+          + '</div>'
+          + '</div>'
+
+          // Where notifications go. Unlike sign-in, having none on is a valid
+          // choice — it means "do not tell me".
+          + '<div class="info-section"><h4>Notification Channels</h4>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Which of these get told. Turn on as many as you like, or none at all. The table below decides <em>which events</em> are worth telling you about.</p>'
+          + chans.map(c =>
+              '<div class="seg-pref-row" style="margin-bottom:12px;">'
+              + '<div><div class="set-tgl-lbl">' + escHtml(c.label) + '</div>'
+              + '<p style="' + hintStyle + '">' + escHtml(c.available ? c.describe : (c.unavailableReason || c.describe)) + '</p>'
+              + (c.id === 'webpush'
+                  ? '<div style="display:flex;gap:8px;margin-top:8px;">'
+                    + '<button type="button" data-action="push-subscribe" style="' + btnSubtleStyle + '">Allow in this browser</button>'
+                    + (c.available ? '<button type="button" data-action="push-test" style="' + btnSubtleStyle + '">Send a test</button>' : '')
+                    + '</div>'
+                  : '')
+              + '</div>'
+              + '<button type="button" class="set-tgl' + (c.enabled ? ' on' : '') + '"'
+              + ' id="chan-tgl-' + escHtml(c.id) + '"'
+              + (c.available ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+              + ' role="switch" aria-checked="' + (c.enabled ? 'true' : 'false')
+              + '" data-action="channel-toggle" data-id="' + escHtml(c.id) + '"><span class="set-tgl-knob"></span></button>'
+              + '</div>').join('')
+          + '</div>'
+
           // Notification policy — applied instantly, no restart. "When Away" only
           // pings when you are NOT focused on Crundi (browser tab / Electron app).
           + '<div class="info-section"><h4>Notification Settings</h4>'
-          + '<p style="' + hintStyle + ';margin-bottom:14px;">Telegram pings per event. \\u201cAlways\\u201d sends every time; \\u201cWhen Away\\u201d only while you\\u2019re not focused on Crundi (browser tab / Electron app); \\u201cNever\\u201d is off.</p>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Which events are worth a notification, sent on whichever channels are on above. \\u201cAlways\\u201d sends every time; \\u201cWhen Away\\u201d only while you\\u2019re not focused on Crundi (browser tab / desktop app); \\u201cNever\\u201d is off.</p>'
           + buildNotifyMatrix()
           + '</div>'
           // Pre-start the rolling 5h window while idle. Off by default: it
@@ -7629,6 +8015,84 @@ export function getWebappHtml(botUsername) {
         case 'update-install':
           if (window.api && window.api.installUpdate) window.api.installUpdate().catch(() => {});
           break;
+        case 'channel-toggle': {
+          const id = d.id;
+          const btn = $('#chan-tgl-' + id);
+          if (!btn || btn.disabled) break;
+          const on = !btn.classList.contains('on');
+          apiFetch('/api/notify/channels', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, enabled: on }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) { toast(dd.error || 'Could not change that', 'error'); return; }
+              btn.classList.toggle('on', on);
+              btn.setAttribute('aria-checked', on ? 'true' : 'false');
+            })
+            .catch(err => toast('Could not change that: ' + err.message, 'error'));
+          break;
+        }
+        case 'push-subscribe': {
+          subscribeToPush();
+          break;
+        }
+        case 'push-test': {
+          apiFetch('/api/push/test', { method: 'POST' })
+            .then(r => r.json())
+            .then(dd => toast(dd.ok ? 'Test sent' : (dd.error || 'Could not send'), dd.ok ? 'success' : 'error'))
+            .catch(err => toast('Could not send: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-toggle': {
+          const method = d.method;
+          const btn = $('#auth-tgl-' + method);
+          if (!btn || btn.disabled) break;
+          const on = !btn.classList.contains('on');
+          apiFetch('/api/auth/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: on ? 'enable' : 'disable', method }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              // The server refuses to leave you with no way in, so a failure
+              // here is expected and worth showing plainly.
+              if (!dd.ok) { toast(dd.error || 'Could not change that', 'error'); return; }
+              btn.classList.toggle('on', on);
+              btn.setAttribute('aria-checked', on ? 'true' : 'false');
+              toast(method === 'telegram'
+                ? (on ? 'Telegram sign-in enabled' : 'Telegram sign-in disabled')
+                : (on ? 'Password sign-in enabled' : 'Password sign-in disabled'), 'success');
+            })
+            .catch(err => toast('Could not change that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-set-password': {
+          const input = $('#auth-new-password');
+          const pw = input ? input.value : '';
+          if (!pw) { toast('Type a password first', 'error'); return; }
+          apiFetch('/api/auth/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'set-password', password: pw }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) { toast(dd.error || 'Could not set that', 'error'); return; }
+              input.value = '';
+              // A new secret is minted with every password change, so the old
+              // authenticator entry stops working — show the new one at once.
+              $('#auth-enrol-secret').textContent = dd.totpSecret;
+              $('#auth-enrol').style.display = '';
+              const tgl = $('#auth-tgl-password');
+              if (tgl) { tgl.disabled = false; tgl.style.opacity = ''; tgl.style.cursor = ''; tgl.classList.add('on'); tgl.setAttribute('aria-checked', 'true'); }
+              toast('Password set — add the new code to your authenticator', 'success');
+            })
+            .catch(err => toast('Could not set that: ' + err.message, 'error'));
+          break;
+        }
         case 'toggle-limit-warmup': {
           const btn = $('#set-limit-warmup');
           if (!btn) break;
@@ -7708,7 +8172,7 @@ export function getWebappHtml(botUsername) {
         case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
         case 'wb-close': if (d.wbid) { e.stopPropagation(); closeWbCell(d.wbid); } break;
         case 'wb-refresh': if (d.wbid) { e.stopPropagation(); refreshWbCell(d.wbid); } break;
-        case 'term-close': if (d.tid) { e.stopPropagation(); closeTerminal(d.tid); } break;
+        case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
@@ -9761,7 +10225,14 @@ export function getWebappHtml(botUsername) {
       } else {
         clearSession();
         $('#login-screen').style.display = '';
-        injectTelegramWidget();
+        initLogin();
+        $('#password-login').addEventListener('submit', submitPasswordLogin);
+        $('#setup-saved').addEventListener('change', (ev) => {
+          const btn = $('#setup-done');
+          btn.disabled = !ev.target.checked;
+          btn.style.opacity = ev.target.checked ? '1' : '0.5';
+        });
+        $('#setup-done').addEventListener('click', () => { showApp(); connectSSE(); checkImport(); });
       }
     }
 

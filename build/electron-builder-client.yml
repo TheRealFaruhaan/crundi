@@ -1,0 +1,87 @@
+# Client-only Windows installer.
+#
+# The desktop app WITHOUT a server: it attaches to one running elsewhere (a
+# container, another machine) and lends it this machine's GUI, so the browser
+# panel still works. Distinct appId and productName so it installs alongside the
+# all-in-one build rather than replacing it — that build is unchanged and stays
+# the default for people who want everything on one machine.
+#
+#   npx electron-builder --win --config build/electron-builder-client.yml
+#
+# Note there is no `src` here. That omission is what tells the app at runtime
+# that it is a client (see serverBundled in app/main.js), so there is no build
+# flag to set and no way for the two to disagree.
+
+appId: com.crundi.client
+productName: Crundi Client
+
+# Electron derives userData from productName (falling back to name), and the
+# packaged manifest carries neither unless it is put there — so both builds
+# resolved to %APPDATA%\crundi and SHARED a data directory. Separate install
+# dirs are not enough: client.json lives in userData, so pointing the client at
+# a remote server would have made the all-in-one read mode:remote and quietly
+# stop starting its own server.
+extraMetadata:
+  name: crundi-client
+  productName: Crundi Client
+npmRebuild: false
+directories:
+  # Its own output tree. Sharing dist/ with the all-in-one build means sharing
+  # dist/win-unpacked, and the second build fails renaming an electron.exe the
+  # first one already renamed.
+  output: dist/client
+artifactName: ${productName}-Setup-${version}.${ext}
+
+publish:
+  - provider: github
+    owner: TheRealFaruhaan
+    repo: crundi
+    releaseType: release
+
+files:
+  - app/main.js
+  - app/preload.js
+  - app/index.html
+  - package.json
+  - "!**/.env"
+  # Server-only dependencies. The client speaks to a server over a websocket and
+  # answers browser-panel requests; it never opens a tunnel, drives Telegram,
+  # serves MCP or grabs the screen, and handleNativeHostMessage only dispatches
+  # browserIpcHandlers, so the terminal tools are unreachable here too. Together
+  # these are the bulk of the payload (node-pty 64M, cloudflared 52M), and the
+  # two the app requires are already inside try/catch.
+  - "!node_modules/node-pty/**/*"
+  - "!node_modules/cloudflared/**/*"
+  - "!node_modules/node-screenshots/**/*"
+  - "!node_modules/@modelcontextprotocol/**/*"
+  - "!node_modules/grammy/**/*"
+  - "!node_modules/@grammyjs/**/*"
+  - "!node_modules/acme-client/**/*"
+  - "!node_modules/telegramify-markdown/**/*"
+  - "!node_modules/express/**/*"
+  - "!node_modules/@hono/**/*"
+  - "!node_modules/hono/**/*"
+
+# app/vendor is deliberately absent: xterm, CodeMirror and the chat renderer are
+# served by whichever server this connects to, so shipping a second copy here
+# would only risk it drifting out of step with the server's.
+
+asarUnpack:
+  - node_modules/**/*
+  - package.json
+
+extraResources:
+  - from: assets
+    to: assets
+
+win:
+  target:
+    - nsis
+  icon: assets/icon.ico
+
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Crundi Client

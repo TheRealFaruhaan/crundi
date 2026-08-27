@@ -38,6 +38,19 @@ function required(key) {
   return val;
 }
 
+// ─── Login methods ───
+//
+// Two ways in: Telegram, or a password with a TOTP code. Either is enough, and
+// both can be on. Which are ACTIVE is decided at runtime in auth-config.js,
+// because Settings can turn them on and off without a restart; what lives here
+// is only what the environment supplied.
+//
+// Nothing is required. A brand-new install has no method configured and no way
+// to configure one if it refuses to boot, so it starts open and says so — see
+// the note in auth-config.js for how narrowly that is drawn.
+const telegramConfigured = !!(process.env.TELEGRAM_BOT_TOKEN && process.env.ALLOWED_USERNAME);
+const passwordConfigured = !!(process.env.CRUNDI_PASSWORD_HASH && process.env.CRUNDI_TOTP_SECRET);
+
 // Data dir: DATA_DIR env > <appDir>/data > <projectRoot>/data (dev fallback)
 const dataDir = process.env.DATA_DIR || join(appDir, 'data');
 const projectsDir = process.env.PROJECTS_DIR || '';
@@ -46,9 +59,45 @@ const projectsDir = process.env.PROJECTS_DIR || '';
 const projectMode = projectsDir ? 'single' : 'multi';
 
 export const config = {
-  // Telegram (required for login validation + notifications)
-  botToken: required('TELEGRAM_BOT_TOKEN'),
-  allowedUsername: required('ALLOWED_USERNAME'),
+  // Telegram: login + notifications. Optional now that password login exists,
+  // so these are empty strings rather than a hard exit when absent.
+  botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  allowedUsername: process.env.ALLOWED_USERNAME || '',
+  telegramConfigured,
+
+  // ─── TLS ───
+  // Only for a server reached directly. Behind the Cloudflare tunnel, or any
+  // reverse proxy that terminates TLS, leave this off.
+  tlsMode: (process.env.TLS_MODE || 'off').toLowerCase(),
+  tlsDomain: process.env.TLS_DOMAIN || '',
+  tlsEmail: process.env.TLS_EMAIL || '',
+  tlsCertPath: process.env.TLS_CERT_PATH || '',
+  tlsKeyPath: process.env.TLS_KEY_PATH || '',
+  // Let's Encrypt rate-limits issuance hard. Point at staging while you are
+  // working out whether the DNS and ports are right.
+  tlsStaging: process.env.TLS_STAGING === '1',
+  // Also cover *.<domain>, so each forward gets its own hostname. Requires
+  // DNS-01, hence the token below.
+  tlsWildcard: process.env.TLS_WILDCARD === '1',
+  // Scope this to Zone:DNS:Edit on the one zone. It is used to publish a TXT
+  // record and nothing else.
+  cfDnsToken: process.env.CLOUDFLARE_DNS_TOKEN || '',
+  // Where subdomain forwards live, if different from TLS_DOMAIN.
+  forwardDomain: process.env.FORWARD_DOMAIN || '',
+  // Override the scheme reported for forward URLs. Only needed if the guess is
+  // wrong — behind an unusual proxy, say.
+  forwardScheme: (process.env.FORWARD_SCHEME || '').toLowerCase(),
+  tlsPort: parseInt(process.env.TLS_PORT || '443', 10),
+  // Where the ACME challenge is answered. Must be 80: the CA does not follow
+  // redirects and will not use another port.
+  tlsHttpPort: parseInt(process.env.TLS_HTTP_PORT || '80', 10),
+
+  // Password + TOTP login.
+  passwordConfigured,
+  passwordHash: process.env.CRUNDI_PASSWORD_HASH || '',
+  totpSecret: process.env.CRUNDI_TOTP_SECRET || '',
+  // Shown on the sign-in screen and used as the session's username.
+  localUsername: process.env.CRUNDI_USERNAME || process.env.ALLOWED_USERNAME || 'crundi',
 
   // Bot username — populated at runtime after bot.init()
   botUsername: '',

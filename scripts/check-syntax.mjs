@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -57,23 +57,39 @@ for (const f of files) {
 }
 console.log(`node --check: ${files.length} file(s)`);
 
-// ─── Pass 2: the browser JS embedded in webapp-html.js ───
+// ─── Pass 2: browser JS that node --check cannot see ───
+//
+// Two sources: the page webapp-html.js builds as one template literal, and the
+// desktop shell's own inline script in app/index.html. Both are plain strings
+// as far as Node is concerned, so a SyntaxError in either ships silently.
 
-try {
-  const mod = await import(pathToFileURL(join(root, 'src', 'webapp-html.js')).href);
-  const html = mod.getWebappHtml({});
+function checkInlineScripts(label, html) {
   const blocks = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map(m => m[1]);
-  if (!blocks.length) fail('webapp-html.js', 'no inline <script> found — did the markup change?');
+  if (!blocks.length) { fail(label, 'no inline <script> found — did the markup change?'); return 0; }
   blocks.forEach((code, i) => {
     // new Function parses the body under the same rules the browser applies to
     // a classic script, so `await` outside async, bad syntax etc. all surface.
     try { new Function(code); }
-    catch (err) { fail(`webapp-html.js inline script #${i + 1}`, `${err.name}: ${err.message}`); }
+    catch (err) { fail(`${label} inline script #${i + 1}`, `${err.name}: ${err.message}`); }
   });
-  console.log(`inline browser scripts: ${blocks.length} block(s)`);
+  return blocks.length;
+}
+
+let inlineCount = 0;
+try {
+  const mod = await import(pathToFileURL(join(root, 'src', 'webapp-html.js')).href);
+  inlineCount += checkInlineScripts('webapp-html.js', mod.getWebappHtml({}));
 } catch (err) {
   fail('webapp-html.js', `could not render the page: ${err.message}`);
 }
+
+try {
+  inlineCount += checkInlineScripts('app/index.html', readFileSync(join(root, 'app', 'index.html'), 'utf8'));
+} catch (err) {
+  fail('app/index.html', `could not read the shell: ${err.message}`);
+}
+
+console.log(`inline browser scripts: ${inlineCount} block(s)`);
 
 if (failures) {
   console.error(`\n${failures} syntax problem(s) found.`);
