@@ -349,6 +349,8 @@ console.log(`[crundi] Ready!`);
 try {
   const authConfig = await import('./auth-config.js');
   authConfig.warnIfOpen();
+  const forwards = await import('./forwards.js');
+  forwards.warnIfLikelyUncovered();
 } catch { /* non-fatal */ }
 console.log(`[crundi] Web UI: ${webappUrl}`);
 console.log(`[crundi] Local:  http://localhost:${port}`);

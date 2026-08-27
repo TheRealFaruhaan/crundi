@@ -84,6 +84,9 @@ export const config = {
   cfDnsToken: process.env.CLOUDFLARE_DNS_TOKEN || '',
   // Where subdomain forwards live, if different from TLS_DOMAIN.
   forwardDomain: process.env.FORWARD_DOMAIN || '',
+  // Override the scheme reported for forward URLs. Only needed if the guess is
+  // wrong — behind an unusual proxy, say.
+  forwardScheme: (process.env.FORWARD_SCHEME || '').toLowerCase(),
   tlsPort: parseInt(process.env.TLS_PORT || '443', 10),
   // Where the ACME challenge is answered. Must be 80: the CA does not follow
   // redirects and will not use another port.

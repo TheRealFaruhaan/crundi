@@ -33,8 +33,12 @@ import { config } from './config.js';
 const FILE = () => join(config.dataDir, 'forwards.json');
 const NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 
-// Names that would collide with the server itself or with common conventions.
-const RESERVED = new Set(['www', 'api', 'admin', 'mail', 'ns', 'crundi', 'localhost']);
+// Names that would shadow infrastructure people usually have on a domain. Kept
+// deliberately short: pointing the MAIN domain here means a wildcard DNS record,
+// and an explicit record for mail or www beats a wildcard anyway — this is
+// belt-and-braces, not a policy. "api" and "admin" are not on the list because
+// they are perfectly ordinary things to call a forward.
+const RESERVED = new Set(['www', 'mail', 'ns', 'ns1', 'ns2', 'mx', 'autodiscover', 'autoconfig']);
 
 let store = null;
 
@@ -68,6 +72,36 @@ export function baseDomain() {
   return String(config.tlsDomain || config.forwardDomain || '').trim().toLowerCase();
 }
 
+/**
+ * Warn when the chosen domain is probably not covered by a certificate.
+ *
+ * Cloudflare's free Universal SSL covers example.com and *.example.com — ONE
+ * level. Nested under a subdomain, *.crundi.example.com is not covered, and the
+ * failure is invisible until you try: DNS resolves, the edge answers, ping is
+ * perfectly happy, and only the TLS handshake fails. Saying so at startup is
+ * cheaper than discovering it from a browser error.
+ *
+ * Deliberately a hint rather than a rule: the label count cannot distinguish
+ * example.co.uk from crundi.example.com without a public-suffix list, which is
+ * more machinery than a warning deserves.
+ */
+export function warnIfLikelyUncovered() {
+  const base = baseDomain();
+  if (!base) return;
+  const labels = base.split('.').length;
+  if (labels < 3) return;                    // example.com — fine
+  if (config.tlsWildcard && config.cfDnsToken) return;   // issuing our own wildcard
+  console.warn('');
+  console.warn(`[forwards] Forwards are set up under *.${base}`);
+  console.warn('[forwards] If that domain sits behind Cloudflare, the free Universal SSL');
+  console.warn('[forwards] certificate covers only one level of subdomain, so these will');
+  console.warn(`[forwards] resolve and proxy but fail the TLS handshake ("not covered by a`);
+  console.warn('[forwards] certificate"). Either move them one level up, buy Advanced');
+  console.warn('[forwards] Certificate Manager, or set TLS_WILDCARD=1 with a DNS token and');
+  console.warn('[forwards] turn the proxy off for these names.');
+  console.warn('');
+}
+
 export function list() {
   return load().forwards.map(f => ({ ...f, url: urlFor(f) }));
 }
@@ -75,8 +109,22 @@ export function list() {
 function urlFor(f) {
   const base = baseDomain();
   if (!base) return `http://localhost:${f.port}`;
-  const scheme = config.tlsMode && config.tlsMode !== 'off' ? 'https' : 'http';
-  return `${scheme}://${f.host}.${base}`;
+  return `${scheme()}://${f.host}.${base}`;
+}
+
+/**
+ * Which scheme the world reaches these on.
+ *
+ * Not the same question as whether WE terminate TLS. Behind a Cloudflare tunnel
+ * or a reverse proxy the origin speaks plain HTTP while the public URL is https,
+ * so deriving this from TLS_MODE alone reported http:// for a URL that is only
+ * reachable over https.
+ */
+function scheme() {
+  if (config.forwardScheme) return config.forwardScheme;
+  if (config.tlsMode && config.tlsMode !== 'off') return 'https';
+  if (config.tunnelToken || config.tunnelUrl) return 'https';   // fronted by Cloudflare
+  return 'http';
 }
 
 export function add({ name, port, isPublic = false, description = '' } = {}) {
