@@ -7641,6 +7641,14 @@ export function getWebappHtml(botUsername) {
         const labelStyle = 'display:block;color:var(--text-secondary);font-size:0.78rem;margin-bottom:4px;';
         const hintStyle = 'color:var(--text-muted);font-size:0.7rem;margin-top:2px;';
         const fieldStyle = 'margin-bottom:14px;';
+        // Buttons in this panel are styled inline from the same variables as the
+        // fields above, matching the existing Save button. There is no shared
+        // .btn class in the stylesheet — a bare class="btn" renders as an
+        // unstyled browser default, which is exactly what it looks like.
+        const btnStyle = 'padding:8px 20px;border-radius:6px;border:none;background:var(--accent);'
+          + 'color:#fff;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;';
+        const btnSubtleStyle = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);'
+          + 'background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12.5px;white-space:nowrap;';
 
         // Notification policy matrix, reflecting server state. Each event row gets
         // three lamps (Always / When Away / Never); the active one lights up.
@@ -7699,7 +7707,7 @@ export function getWebappHtml(botUsername) {
           + '<input type="text" id="set-data-dir" style="' + monoStyle + '" value="' + escHtml(s.DATA_DIR || '') + '" placeholder="(default: platform app dir)" />'
           + '<p style="' + hintStyle + '">Override data storage location. Leave empty for default.</p></div>'
           + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
-          + '<button data-action="settings-save" style="padding:8px 20px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600;">Save</button>'
+          + '<button data-action="settings-save" style="' + btnStyle + '">Save</button>'
           + '<span id="settings-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div></div>'
           // Sign-in methods. At least one must stay on; the server refuses to
@@ -7733,7 +7741,7 @@ export function getWebappHtml(botUsername) {
 
           + '<div style="display:flex;gap:8px;align-items:center;">'
           + '<input type="password" id="auth-new-password" placeholder="' + (authCfg.passwordSet ? 'New password (12+ characters)' : 'Choose a password (12+ characters)') + '" autocomplete="new-password" style="' + inputStyle + 'flex:1;">'
-          + '<button type="button" class="btn" data-action="auth-set-password" style="white-space:nowrap;">' + (authCfg.passwordSet ? 'Change' : 'Set') + '</button>'
+          + '<button type="button" data-action="auth-set-password" style="' + btnStyle + '">' + (authCfg.passwordSet ? 'Change' : 'Set') + '</button>'
           + '</div>'
           + '<div id="auth-enrol" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-dim);">'
           + '<div style="font-weight:600;color:var(--text-primary);margin-bottom:6px;">Add this to your authenticator app</div>'
@@ -7751,9 +7759,9 @@ export function getWebappHtml(botUsername) {
               + '<div><div class="set-tgl-lbl">' + escHtml(c.label) + '</div>'
               + '<p style="' + hintStyle + '">' + escHtml(c.available ? c.describe : (c.unavailableReason || c.describe)) + '</p>'
               + (c.id === 'webpush'
-                  ? '<div style="display:flex;gap:8px;margin-top:6px;">'
-                    + '<button type="button" class="btn" data-action="push-subscribe">Allow in this browser</button>'
-                    + (c.available ? '<button type="button" class="btn" data-action="push-test">Send a test</button>' : '')
+                  ? '<div style="display:flex;gap:8px;margin-top:8px;">'
+                    + '<button type="button" data-action="push-subscribe" style="' + btnSubtleStyle + '">Allow in this browser</button>'
+                    + (c.available ? '<button type="button" data-action="push-test" style="' + btnSubtleStyle + '">Send a test</button>' : '')
                     + '</div>'
                   : '')
               + '</div>'
