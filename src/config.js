@@ -76,6 +76,14 @@ export const config = {
   // Let's Encrypt rate-limits issuance hard. Point at staging while you are
   // working out whether the DNS and ports are right.
   tlsStaging: process.env.TLS_STAGING === '1',
+  // Also cover *.<domain>, so each forward gets its own hostname. Requires
+  // DNS-01, hence the token below.
+  tlsWildcard: process.env.TLS_WILDCARD === '1',
+  // Scope this to Zone:DNS:Edit on the one zone. It is used to publish a TXT
+  // record and nothing else.
+  cfDnsToken: process.env.CLOUDFLARE_DNS_TOKEN || '',
+  // Where subdomain forwards live, if different from TLS_DOMAIN.
+  forwardDomain: process.env.FORWARD_DOMAIN || '',
   tlsPort: parseInt(process.env.TLS_PORT || '443', 10),
   // Where the ACME challenge is answered. Must be 80: the CA does not follow
   // redirects and will not use another port.

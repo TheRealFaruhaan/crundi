@@ -38,6 +38,7 @@ import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE
 import { createLimitWarmer } from './limit-warmer.js';
 import * as authConfig from './auth-config.js';
 import * as channels from './notify-channels.js';
+import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
 
@@ -360,6 +361,53 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const entry = tok && tokens.get(tok);
     if (!entry) return false;
     if (Date.now() >= entry.expiresAt) { tokens.delete(tok); return false; }
+    return true;
+  }
+
+  // ─── Forward cookie ───
+  //
+  // A forward lives on its own hostname, so the browser has no access token for
+  // it: localStorage belongs to Crundi's origin, not to myapp.crundi.example.com.
+  // A cookie scoped to the parent domain is the only thing that travels there.
+  //
+  // Deliberately a SEPARATE credential from the access token, and one the API
+  // never looks at. validateToken reads the Authorization header and the token
+  // query parameter and nothing else, so this cookie cannot be used to make an
+  // authenticated Crundi API call from a forwarded page — which matters, since
+  // those pages are running code we do not control.
+  const forwardTokens = new Map();   // token -> expiresAt
+  const FORWARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+  function mintForwardToken() {
+    const t = randomBytes(32).toString('hex');
+    forwardTokens.set(t, Date.now() + FORWARD_TTL_MS);
+    // Cheap sweep; this map only grows on sign-in.
+    if (forwardTokens.size > 200) {
+      const now = Date.now();
+      for (const [k, exp] of forwardTokens) if (exp <= now) forwardTokens.delete(k);
+    }
+    return t;
+  }
+
+  /** Attach the forward cookie to a successful sign-in response. */
+  function setForwardCookie(res) {
+    const base = forwards.baseDomain();
+    if (!base) return;                     // no forward domain configured
+    const token = mintForwardToken();
+    const secure = tls.enabled() ? '; Secure' : '';
+    res.setHeader('Set-Cookie',
+      `crundi_fwd=${token}; Domain=.${base}; Path=/; Max-Age=${Math.floor(FORWARD_TTL_MS / 1000)}`
+      + `; HttpOnly; SameSite=Lax${secure}`);
+  }
+
+  function hasForwardCookie(req) {
+    const raw = req.headers.cookie;
+    if (!raw) return false;
+    const m = /(?:^|;\s*)crundi_fwd=([a-f0-9]+)/.exec(raw);
+    if (!m) return false;
+    const exp = forwardTokens.get(m[1]);
+    if (!exp) return false;
+    if (Date.now() >= exp) { forwardTokens.delete(m[1]); return false; }
     return true;
   }
 
@@ -821,6 +869,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
 
+    // ─── Subdomain forwards ───
+    // Checked first: this hostname belongs to somebody else's app, so none of
+    // Crundi's own routing applies to it.
+    const fwd = forwards.match(req.headers.host);
+    if (fwd) {
+      // Private by default. A quick tunnel is public by construction; a forward
+      // is not, because "let me look at this on my phone" is the common case and
+      // quietly publishing a dev database is not a default worth having.
+      if (!fwd.public && !validateToken(req) && !hasForwardCookie(req)) {
+        res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('This forward is private. Sign in to Crundi first, or recreate it as public.\n');
+        return;
+      }
+      forwards.proxy(fwd, req, res);
+      return;
+    }
+
     // CORS preflight
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
@@ -1006,6 +1071,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const allowed = config.allowedUsername.replace(/^@/, '').toLowerCase();
       if (username !== allowed) return json(res, { ok: false, error: 'Unauthorized user' }, 403);
 
+      setForwardCookie(res);
       return json(res, { ok: true, ...createSession(username), user });
     }
 
@@ -1018,6 +1084,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       let parsed;
       try { parsed = JSON.parse(body); } catch { /* ignore */ }
       if (parsed?.key !== internalApiKey) return json(res, { ok: false, error: 'Invalid key' }, 403);
+      setForwardCookie(res);
       return json(res, { ok: true, ...createSession(config.allowedUsername || 'local') });
     }
 
@@ -1038,6 +1105,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, { ok: false, error: 'Incorrect password or code' }, 401);
       }
       console.log('[crundi] Password login succeeded');
+      setForwardCookie(res);
       return json(res, { ok: true, ...createSession(config.localUsername) });
     }
 
@@ -1733,6 +1801,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         writeFileSync(envPath, content, 'utf-8');
         return { ok: true };
       } catch (err) { return { ok: false, error: err.message }; }
+    }
+
+    // ─── Subdomain forwards ───
+    if (path === '/api/forwards' && req.method === 'GET') {
+      return json(res, { ok: true, forwards: forwards.list(), domain: forwards.baseDomain() });
+    }
+
+    if (path === '/api/forwards' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+      if (!forwards.baseDomain()) {
+        return json(res, { ok: false, error: 'No forward domain is configured (set TLS_DOMAIN or FORWARD_DOMAIN).' }, 400);
+      }
+      const r = forwards.add({
+        name: body.name, port: body.port, isPublic: !!body.public, description: body.description,
+      });
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    const fwdDel = path.match(/^\/api\/forwards\/([a-z0-9-]+)$/i);
+    if (fwdDel && req.method === 'DELETE') {
+      const r = forwards.remove(fwdDel[1]);
+      return json(res, r, r.ok ? 200 : 404);
     }
 
     // ─── Notification channels ───
@@ -2695,6 +2787,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     wss = new WebSocketServer({ noServer: true });
 
     server.on('upgrade', (req, socket, head) => {
+      // A forward's own WebSocket — hot reload, dev tooling, whatever the app
+      // uses. Without this every dev server's HMR dies at the first hop, which
+      // is the sort of thing you notice ten minutes later and blame elsewhere.
+      const fwd = forwards.match(req.headers.host);
+      if (fwd) {
+        if (!fwd.public && !validateToken(req) && !hasForwardCookie(req)) { socket.destroy(); return; }
+        forwards.proxyUpgrade(fwd, req, socket, head);
+        return;
+      }
+
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname !== '/ws') {
         socket.destroy();

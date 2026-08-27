@@ -8,8 +8,19 @@
  *
  * Three modes:
  *   off          no HTTPS; the tunnel or a reverse proxy handles it (default)
- *   letsencrypt  obtain and renew automatically over ACME HTTP-01
+ *   letsencrypt  obtain and renew automatically over ACME
  *   provided     use certificate files you supply and manage yourself
+ *
+ * With TLS_WILDCARD the certificate also covers *.<domain>, which is what makes
+ * the subdomain forwards in forwards.js possible. Let's Encrypt will not issue a
+ * wildcard over HTTP-01 — only DNS-01 — so that path needs a Cloudflare API
+ * token scoped to Zone:DNS:Edit and nothing more.
+ *
+ * Worth knowing why this is needed at all: Cloudflare's free Universal SSL
+ * covers example.com and *.example.com, but not a second level such as
+ * *.crundi.example.com. Forwards nested under a subdomain therefore cannot be
+ * proxied on the free plan, which means the origin has to present a valid
+ * certificate itself.
  *
  * A self-signed certificate is deliberately not on that list. It would satisfy
  * "the port speaks TLS" while failing Cloudflare Full (strict) — the exact case
@@ -169,6 +180,84 @@ async function maybeRenew() {
   }
 }
 
+// ─── DNS-01 via Cloudflare ───
+//
+// Only reached for a wildcard. The token needs Zone:DNS:Edit on the zone and
+// nothing else — a full-access API key would let this process do considerably
+// more than publish a TXT record.
+
+const CF_API = 'https://api.cloudflare.com/client/v4';
+
+async function cf(path, init = {}) {
+  const res = await fetch(CF_API + path, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${config.cfDnsToken}`,
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.success === false) {
+    const msg = body?.errors?.[0]?.message || `HTTP ${res.status}`;
+    throw new Error(`Cloudflare API: ${msg}`);
+  }
+  return body.result;
+}
+
+/** The zone this name belongs to — walk up until Cloudflare recognises one. */
+async function cfZoneId(name) {
+  const parts = String(name).split('.');
+  for (let i = 0; i < parts.length - 1; i++) {
+    const candidate = parts.slice(i).join('.');
+    const zones = await cf(`/zones?name=${encodeURIComponent(candidate)}`);
+    if (zones?.length) return { id: zones[0].id, name: zones[0].name };
+  }
+  throw new Error(`No Cloudflare zone found for ${name} — is the token scoped to the right account?`);
+}
+
+function txtName(identifier) {
+  // The identifier for a wildcard authorisation is the bare domain, so the
+  // record is the same either way.
+  return `_acme-challenge.${identifier}`;
+}
+
+async function cfDnsCreate(identifier, keyAuthorization) {
+  const acme = await import('acme-client');
+  const value = acme.forge?.createDnsRecordText
+    ? await acme.forge.createDnsRecordText(keyAuthorization)
+    : acme.crypto.createDnsRecordText(keyAuthorization);
+  const zone = await cfZoneId(identifier);
+  const name = txtName(identifier);
+  console.log(`[tls] Publishing ${name} TXT`);
+  await cf(`/zones/${zone.id}/dns_records`, {
+    method: 'POST',
+    body: JSON.stringify({ type: 'TXT', name, content: value, ttl: 60 }),
+  });
+  // Let the record propagate. Cloudflare is fast, but the CA queries an
+  // authoritative server that may not have it the instant the API returns.
+  await new Promise(r => setTimeout(r, 15000));
+}
+
+async function cfDnsRemove(identifier, keyAuthorization) {
+  try {
+    const acme = await import('acme-client');
+    const value = acme.forge?.createDnsRecordText
+      ? await acme.forge.createDnsRecordText(keyAuthorization)
+      : acme.crypto.createDnsRecordText(keyAuthorization);
+    const zone = await cfZoneId(identifier);
+    const name = txtName(identifier);
+    const records = await cf(`/zones/${zone.id}/dns_records?type=TXT&name=${encodeURIComponent(name)}`);
+    for (const r of records || []) {
+      if (r.content === value) await cf(`/zones/${zone.id}/dns_records/${r.id}`, { method: 'DELETE' });
+    }
+  } catch (err) {
+    // Not fatal: a leftover TXT record is untidy, not harmful, and failing the
+    // renewal over it would be worse.
+    console.warn('[tls] Could not clean up the DNS record:', err.message);
+  }
+}
+
 async function obtain() {
   const domain = String(config.tlsDomain || '').trim();
   const email = String(config.tlsEmail || '').trim();
@@ -202,19 +291,41 @@ async function obtain() {
     accountKey,
   });
 
-  const [certKey, csr] = await acme.crypto.createCsr({ commonName: domain });
+  // A wildcard covers every forward under this domain with one certificate. It
+  // is also the ONLY way to have them at all: Let's Encrypt will not issue a
+  // wildcard over HTTP-01, so this path requires DNS-01 and therefore an API
+  // token for the DNS provider.
+  const wildcard = !!config.tlsWildcard && !!config.cfDnsToken;
+  if (config.tlsWildcard && !config.cfDnsToken) {
+    console.warn('[tls] TLS_WILDCARD is set but CLOUDFLARE_DNS_TOKEN is not.');
+    console.warn('[tls] Wildcards can only be issued over DNS-01. Falling back to a certificate for the bare domain.');
+  }
+
+  const [certKey, csr] = await acme.crypto.createCsr(
+    wildcard
+      ? { commonName: domain, altNames: [`*.${domain}`] }
+      : { commonName: domain },
+  );
 
   try {
     const cert = await client.auto({
       csr,
       email,
       termsOfServiceAgreed: true,
-      challengePriority: ['http-01'],
+      challengePriority: wildcard ? ['dns-01'] : ['http-01'],
       challengeCreateFn: async (authz, challenge, keyAuthorization) => {
-        challenges.set(challenge.token, keyAuthorization);
+        if (challenge.type === 'dns-01') {
+          await cfDnsCreate(authz.identifier.value, keyAuthorization);
+        } else {
+          challenges.set(challenge.token, keyAuthorization);
+        }
       },
-      challengeRemoveFn: async (authz, challenge) => {
-        challenges.delete(challenge.token);
+      challengeRemoveFn: async (authz, challenge, keyAuthorization) => {
+        if (challenge.type === 'dns-01') {
+          await cfDnsRemove(authz.identifier.value, keyAuthorization);
+        } else {
+          challenges.delete(challenge.token);
+        }
       },
     });
 
