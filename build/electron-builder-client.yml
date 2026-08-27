@@ -14,6 +14,16 @@
 
 appId: com.crundi.client
 productName: Crundi Client
+
+# Electron derives userData from productName (falling back to name), and the
+# packaged manifest carries neither unless it is put there — so both builds
+# resolved to %APPDATA%\crundi and SHARED a data directory. Separate install
+# dirs are not enough: client.json lives in userData, so pointing the client at
+# a remote server would have made the all-in-one read mode:remote and quietly
+# stop starting its own server.
+extraMetadata:
+  name: crundi-client
+  productName: Crundi Client
 npmRebuild: false
 directories:
   # Its own output tree. Sharing dist/ with the all-in-one build means sharing

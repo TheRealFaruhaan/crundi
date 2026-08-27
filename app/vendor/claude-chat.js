@@ -1175,6 +1175,13 @@
       queued = [];
       renderQueue();
       postMessage(text);
+      // Go busy immediately, for the same reason doSend does. A message queued
+      // just as the turn ends flushes AFTER the server has reported idle, so
+      // until its next state event lands the UI says idle while Claude is
+      // already working on it. Optimistic here, corrected by the server either
+      // way — and injections that land mid-turn are already 'working', where
+      // this is a no-op.
+      setState('working');
     }
 
     function doSend() {
