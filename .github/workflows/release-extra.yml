@@ -24,6 +24,10 @@ on:
         description: 'Attach artifacts to the matching GitHub Release'
         type: boolean
         default: false
+      tag:
+        description: 'Release tag to attach to (e.g. v1.4.0). Needed on a manual run.'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -80,7 +84,7 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           mkdir -p staging/crundi-server
-          cp -r src scripts package.json staging/crundi-server/
+          cp -r src scripts package.json package-lock.json staging/crundi-server/
           mkdir -p staging/crundi-server/app
           cp -r app/vendor staging/crundi-server/app/
           cp docker/.env.example staging/crundi-server/.env.example
@@ -193,6 +197,12 @@ jobs:
       - name: Read version
         run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
 
+      # ghcr.io rejects any uppercase in the repository name, and this owner
+      # has some. github.repository_owner is verbatim, so lowercase it here
+      # rather than hardcoding the name.
+      - name: Lowercase the owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -210,8 +220,8 @@ jobs:
           file: docker/Dockerfile
           push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/crundi:${{ env.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/crundi:latest
+            ghcr.io/${{ env.OWNER }}/crundi:${{ env.VERSION }}
+            ghcr.io/${{ env.OWNER }}/crundi:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -231,6 +241,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          # On a tag push GITHUB_REF_NAME is the tag; on a manual run it is the
+          # branch, which is not a release. Take the input in that case.
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
           find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' \) -print0 \
             | xargs -0 -I{} gh release upload "$TAG" "{}" --clobber --repo "$GITHUB_REPOSITORY"
