@@ -872,6 +872,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // ─── Subdomain forwards ───
     // Checked first: this hostname belongs to somebody else's app, so none of
     // Crundi's own routing applies to it.
+    // Path mode: /tunnel/<name>/… . Checked before anything else for the same
+    // reason as the subdomain case — this request belongs to another app.
+    const pathFwd = forwards.matchPath(req.url);
+    if (pathFwd) {
+      if (!pathFwd.forward.public && !validateToken(req) && !hasForwardCookie(req)) {
+        res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('This forward is private. Sign in to Crundi first, or recreate it as public.\n');
+        return;
+      }
+      forwards.proxy(pathFwd.forward, req, res, pathFwd.upstreamPath);
+      return;
+    }
+
     const fwd = forwards.match(req.headers.host);
     if (fwd) {
       // Private by default. A quick tunnel is public by construction; a forward
@@ -1808,15 +1821,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, { ok: true, forwards: forwards.list(), domain: forwards.baseDomain() });
     }
 
+    // What ways of exposing a port exist here, and what each costs. Read before
+    // choosing, so the caller is not guessing.
+    if (path === '/api/forwards/options' && req.method === 'GET') {
+      return json(res, { ok: true, ...forwards.options() });
+    }
+
     if (path === '/api/forwards' && req.method === 'POST') {
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { body = null; }
       if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
-      if (!forwards.baseDomain()) {
-        return json(res, { ok: false, error: 'No forward domain is configured (set TLS_DOMAIN or FORWARD_DOMAIN).' }, 400);
+      // Path mode needs no domain at all — it hangs off whatever address Crundi
+      // is already reached on.
+      if (body.mode !== 'path' && !forwards.baseDomain()) {
+        return json(res, {
+          ok: false,
+          error: 'No domain is configured for subdomain forwards. Use mode "path", or set TLS_DOMAIN / FORWARD_DOMAIN.',
+        }, 400);
       }
       const r = forwards.add({
-        name: body.name, port: body.port, isPublic: !!body.public, description: body.description,
+        name: body.name, port: body.port, mode: body.mode,
+        isPublic: !!body.public, description: body.description,
       });
       return json(res, r, r.ok ? 200 : 400);
     }
@@ -2790,6 +2815,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // A forward's own WebSocket — hot reload, dev tooling, whatever the app
       // uses. Without this every dev server's HMR dies at the first hop, which
       // is the sort of thing you notice ten minutes later and blame elsewhere.
+      const pathFwd = forwards.matchPath(req.url);
+      if (pathFwd) {
+        if (!pathFwd.forward.public && !validateToken(req) && !hasForwardCookie(req)) { socket.destroy(); return; }
+        forwards.proxyUpgrade(pathFwd.forward, req, socket, head, pathFwd.upstreamPath);
+        return;
+      }
+
       const fwd = forwards.match(req.headers.host);
       if (fwd) {
         if (!fwd.public && !validateToken(req) && !hasForwardCookie(req)) { socket.destroy(); return; }

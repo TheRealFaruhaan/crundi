@@ -110,12 +110,80 @@ export function warnIfLikelyUncovered() {
   console.warn('');
 }
 
+/**
+ * What ways of exposing a port are available here, and what each costs.
+ *
+ * Presented as a choice rather than decided for the user: the right answer
+ * depends on whether the thing needs to be public, whether it copes with not
+ * being at the root of its origin, and whether they are willing to spend money
+ * or expose an IP. None of that is knowable from here.
+ */
+export function options() {
+  const base = baseDomain();
+  const labels = base ? base.split('.').length : 0;
+  const nested = labels >= 3;
+  // One level up, so the free wildcard covers it. Crude — it cannot tell
+  // example.co.uk from crundi.example.com — so it is offered as a suggestion
+  // for the user to confirm, never applied silently.
+  const suggested = nested ? base.split('.').slice(-2).join('.') : base;
+  const ownWildcard = !!(config.tlsWildcard && config.cfDnsToken);
+
+  return {
+    domain: base,
+    choices: [
+      {
+        id: 'path',
+        label: 'A path on this server',
+        example: `${base ? scheme() + '://' + base : 'http://<this server>'}${PATH_PREFIX}/myapp/`,
+        available: true,
+        setup: 'None. Works immediately, including through a tunnel.',
+        caveat: 'The app is not at the root of its origin. Fine for APIs, webhooks and '
+              + 'simple servers; dev servers that emit root-absolute asset URLs (Vite, CRA) '
+              + 'will not load correctly.',
+      },
+      {
+        id: 'subdomain',
+        label: 'Its own subdomain',
+        example: base ? `${scheme()}://myapp.${nested ? suggested : base}` : '(needs a domain)',
+        available: !!base,
+        setup: base
+          ? (nested && !ownWildcard
+              ? `A wildcard DNS record for *.${suggested}. Using *.${base} instead would need `
+                + `paid Advanced Certificate Manager, because Cloudflare's free certificate covers `
+                + `only one level of subdomain — or set those records to DNS-only and let Crundi `
+                + `issue a Let's Encrypt wildcard, which exposes this machine's IP.`
+              : `A wildcard DNS record for *.${base}.`)
+          : 'Set TLS_DOMAIN or FORWARD_DOMAIN first.',
+        caveat: 'The app is at the root of its own hostname, so anything works. '
+              + 'Needs DNS, and certificate coverage for the name you choose.',
+        suggestedDomain: nested ? suggested : base,
+        nested,
+      },
+      {
+        id: 'tunnel',
+        label: 'A Cloudflare quick tunnel',
+        example: 'https://<random-words>.trycloudflare.com',
+        available: true,
+        setup: 'None, but it starts another cloudflared process and takes a few seconds.',
+        caveat: 'Public to anyone with the link, and the hostname is random and changes '
+              + 'every time. Good for a one-off share or a webhook; poor for anything you '
+              + 'want to keep reaching.',
+      },
+    ],
+  };
+}
+
 export function list() {
   return load().forwards.map(f => ({ ...f, url: urlFor(f) }));
 }
 
 function urlFor(f) {
   const base = baseDomain();
+  if (f.mode === 'path') {
+    // Relative to whatever address Crundi is already reached on, so this works
+    // through a tunnel, over plain HTTP, from a LAN address — anywhere.
+    return `${base ? `${scheme()}://${base}` : ''}${PATH_PREFIX}/${f.host}/`;
+  }
   if (!base) return `http://localhost:${f.port}`;
   return `${scheme()}://${f.host}.${base}`;
 }
@@ -135,7 +203,7 @@ function scheme() {
   return 'http';
 }
 
-export function add({ name, port, isPublic = false, description = '' } = {}) {
+export function add({ name, port, mode = '', isPublic = false, description = '' } = {}) {
   const p = Number(port);
   if (!Number.isInteger(p) || p < 1 || p > 65535) return { ok: false, error: `Not a usable port: ${port}` };
 
@@ -154,6 +222,10 @@ export function add({ name, port, isPublic = false, description = '' } = {}) {
   const f = {
     host,
     port: p,
+    // 'subdomain' needs DNS and certificate coverage; 'path' needs neither and
+    // works the moment it is created, at the cost of the app having to cope
+    // with not being at the root of its origin.
+    mode: mode === 'path' ? 'path' : 'subdomain',
     // A public forward is reachable by anyone who knows the hostname, so the
     // hostname carries the entropy rather than the pretty name.
     public: !!isPublic,
@@ -178,7 +250,30 @@ export function remove(host) {
   return { ok: true };
 }
 
-/** Match an incoming Host header to a forward, or null. */
+export const PATH_PREFIX = '/tunnel';
+
+/**
+ * Match a request path to a path-mode forward.
+ *
+ * Returns the forward and the upstream path with the prefix removed, so the app
+ * sees the URL it expects rather than one nested under /tunnel/name.
+ */
+export function matchPath(reqUrl) {
+  const u = String(reqUrl || '');
+  if (!u.startsWith(PATH_PREFIX + '/')) return null;
+  const rest = u.slice(PATH_PREFIX.length + 1);
+  const slash = rest.indexOf('/');
+  const qmark = rest.indexOf('?');
+  const cut = slash === -1 ? (qmark === -1 ? rest.length : qmark) : slash;
+  const name = rest.slice(0, cut).toLowerCase();
+  if (!name) return null;
+  const f = load().forwards.find(x => x.host === name && x.mode === 'path');
+  if (!f) return null;
+  const tail = rest.slice(cut) || '/';
+  return { forward: f, upstreamPath: tail.startsWith('/') ? tail : '/' + tail };
+}
+
+/** Match an incoming Host header to a subdomain forward, or null. */
 export function match(hostHeader) {
   const base = baseDomain();
   if (!base || !hostHeader) return null;
@@ -188,7 +283,7 @@ export function match(hostHeader) {
   // Only one level: a.b.crundi.example.com is not a forward, and treating it as
   // one would make the wildcard certificate's coverage a lie.
   if (sub.includes('.')) return null;
-  return load().forwards.find(f => f.host === sub) || null;
+  return load().forwards.find(f => f.host === sub && f.mode !== 'path') || null;
 }
 
 /**
@@ -198,7 +293,7 @@ export function match(hostHeader) {
  * its own hostname, which is the entire reason for doing it this way. Only
  * X-Forwarded-* are added, so an app that cares can tell.
  */
-export function proxy(forward, req, res) {
+export function proxy(forward, req, res, upstreamPath) {
   const headers = { ...req.headers };
   delete headers['accept-encoding'];   // avoid double-encoding through the hop
   headers['x-forwarded-proto'] = req.socket.encrypted ? 'https' : 'http';
@@ -209,7 +304,7 @@ export function proxy(forward, req, res) {
     host: '127.0.0.1',
     port: forward.port,
     method: req.method,
-    path: req.url,
+    path: upstreamPath || req.url,
     headers,
   }, (up) => {
     res.writeHead(up.statusCode || 502, up.headers);
@@ -236,12 +331,12 @@ export function proxy(forward, req, res) {
  * Without this every dev server's hot reload dies at the first hop, which is
  * exactly the thing you notice ten minutes later and blame on something else.
  */
-export function proxyUpgrade(forward, req, socket, head) {
+export function proxyUpgrade(forward, req, socket, head, upstreamPath) {
   const upstream = httpRequest({
     host: '127.0.0.1',
     port: forward.port,
     method: req.method,
-    path: req.url,
+    path: upstreamPath || req.url,
     headers: req.headers,
   });
 
