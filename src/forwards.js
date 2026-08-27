@@ -96,9 +96,17 @@ export function warnIfLikelyUncovered() {
   console.warn('[forwards] If that domain sits behind Cloudflare, the free Universal SSL');
   console.warn('[forwards] certificate covers only one level of subdomain, so these will');
   console.warn(`[forwards] resolve and proxy but fail the TLS handshake ("not covered by a`);
-  console.warn('[forwards] certificate"). Either move them one level up, buy Advanced');
-  console.warn('[forwards] Certificate Manager, or set TLS_WILDCARD=1 with a DNS token and');
-  console.warn('[forwards] turn the proxy off for these names.');
+  console.warn('[forwards] certificate").');
+  console.warn('[forwards]');
+  console.warn('[forwards] A certificate on THIS machine does not fix that. While a record is');
+  console.warn('[forwards] proxied there are two TLS legs: browser->Cloudflare uses');
+  console.warn(`[forwards] Cloudflare's certificate, and only Cloudflare->origin uses ours.`);
+  console.warn('[forwards] The handshake fails on the first leg, so the request never arrives');
+  console.warn('[forwards] here and our certificate is never offered.');
+  console.warn('[forwards]');
+  console.warn('[forwards] Fixes: move the forwards one level up so the existing wildcard');
+  console.warn('[forwards] covers them, buy Advanced Certificate Manager, or set the records');
+  console.warn('[forwards] to DNS-only and use TLS_WILDCARD=1 — which exposes this origin IP.');
   console.warn('');
 }
 
