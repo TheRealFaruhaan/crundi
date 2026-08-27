@@ -1,7 +1,29 @@
-# Crundi server on Linux
+# Crundi server in Docker
+
+> **Prefer the native install.** `scripts/install.sh` is the recommended way to
+> run Crundi on Linux, and this container is the fallback for people who want
+> everything in one.
+>
+> The reason is not taste. Claude works on *your* files, with your git identity,
+> your SSH keys and your shell — in a container each of those becomes a
+> mounting problem, and the ones you forget fail in confusing ways. Services
+> Crundi starts are children of the container and die with it. Screen capture
+> and the browser panel need a display the container does not have.
+>
+> ```bash
+> ./scripts/install.sh
+> ```
+>
+> Installs to `~/.local/share/crundi`, keeps data in `~/.config/crundi`, and
+> sets up a systemd user service that survives logout. The release tarball
+> bundles its native modules, so it needs Node and no compiler.
 
 The server half of Crundi in a container: Claude sessions, terminals, projects,
 the web UI. No display, no Electron.
+
+Reasonable reasons to use this anyway: you already run everything in Docker, you
+want the host left untouched, or you are on a distro where installing Node is
+more trouble than pulling an image.
 
 ```bash
 cp docker/.env.example docker/.env      # fill in PROJECTS_DIR at minimum

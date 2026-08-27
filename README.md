@@ -20,12 +20,26 @@ Agents and the access channel are pluggable. Today the available agent is **Clau
 
 - **Node.js** 18+
 - The agent's CLI on your PATH — currently **Claude Code** (`claude`), installed and authenticated
-- A login/notification channel — currently a **Telegram bot token** from [@BotFather](https://t.me/BotFather)
+- A way to sign in — either a **Telegram bot token** from [@BotFather](https://t.me/BotFather), or a password with an authenticator code (set up on first run)
 - *(Optional)* a Cloudflare account for a persistent tunnel domain — otherwise a free random quick tunnel is used
 
 ## Install
 
-**Windows (recommended):** download `Crundi.Setup.<version>.exe` from the [latest release](../../releases/latest) and run it. The installer is self-signed (`TheRealFaruhaan`).
+**Windows — everything on one machine:** download `Crundi.Setup.<version>.exe` from the [latest release](../../releases/latest) and run it. The installer is self-signed (`TheRealFaruhaan`).
+
+**Windows — client only:** `Crundi.Client-Setup-<version>.exe` is the desktop app *without* a server. It attaches to one running elsewhere and lends it this machine's GUI, so the browser panel opens in front of you even though the server has no display. Tray → Server… to point it somewhere.
+
+**Linux — recommended:** the native install, not Docker.
+
+```bash
+./scripts/install.sh
+```
+
+Installs to `~/.local/share/crundi`, keeps data in `~/.config/crundi`, and sets up a systemd **user** service with lingering so it survives logout without running as root. Re-run it to upgrade in place; `scripts/uninstall.sh` removes it and leaves your data unless you pass `--purge`.
+
+The release tarball bundles its native modules, so it needs Node and no compiler. From a git checkout it compiles `node-pty`, and will offer to install `python3 make g++` for your distro if they are missing.
+
+**Linux — Docker:** [`docker/`](docker/) has an image and compose file. It works, but prefer the native install: Claude works on *your* files with your git identity, SSH keys and shell, and a container turns each of those into a mounting problem. Services Crundi starts also die with the container. Use it if you already run everything in Docker or want the host left alone.
 
 **From source:**
 
