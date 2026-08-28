@@ -3159,17 +3159,28 @@ export function getWebappHtml(botUsername) {
       ];
       if (android) {
         lines = lines.concat([
-          'On Android:',
+          'On Android there are TWO switches, and the browser owns only one.',
           '',
-          '1. Open this site\u2019s permissions - tap the icon left of the address,',
-          '   or the menu > Permissions if Crundi is installed as an app.',
+          'If the site info sheet says "Turned off in Android settings", the',
+          'block is at the OS level and nothing you tap in the page will clear',
+          'it. Push is delivered BY the browser, and Chrome keeps a separate',
+          'Android notification channel for each website:',
+          '',
+          '1. Android Settings > Apps > Chrome > Notifications.',
+          '2. Turn Chrome notifications on, then find the channel named',
+          '   ' + location.host + ' - Chrome lists sites individually.',
+          '',
+          'If it simply says blocked instead:',
+          '',
+          '1. Open the site permissions - the icon left of the address, or the',
+          '   menu > Permissions when installed as an app.',
           '2. Tap "Reset permissions".',
-          '3. Close Crundi completely (swipe it out of recents).',
-          '4. Reopen it and press Enable again - the prompt returns.',
+          '3. Close the app completely (swipe it from recents), reopen, and',
+          '   press Enable again - the prompt returns.',
           '',
-          'Android\u2019s own "Allow notifications" for the Crundi app must also be',
-          'on, but it is not enough by itself: while the site permission says',
-          'blocked, the app-level toggle has nothing to deliver.',
+          'An installed Crundi app and Chrome are separate Android apps with',
+          'their own notification settings; enabling one does nothing for the',
+          'other.',
         ]);
       } else if (ios) {
         lines = lines.concat([
@@ -3217,7 +3228,25 @@ export function getWebappHtml(botUsername) {
           else toast('Notifications were not allowed', 'error');
           return;
         }
-        const reg = await navigator.serviceWorker.ready;
+        // navigator.serviceWorker.ready NEVER rejects and never times out. If the
+        // worker does not become active - a failed registration, a worker stuck
+        // installing, a stale one from a bad deploy - this await simply hangs,
+        // and the button looks dead with no error anywhere. Race it.
+        let reg;
+        try {
+          reg = await Promise.race([
+            navigator.serviceWorker.ready,
+            new Promise((_, rej) => setTimeout(
+              () => rej(new Error('the service worker never became active')), 10000)),
+          ]);
+        } catch (err) {
+          const r = await navigator.serviceWorker.getRegistration().catch(() => null);
+          toast(r
+            ? 'Notifications are allowed, but the service worker is stuck. Reload the page and try again.'
+            : 'Notifications are allowed, but no service worker is registered. Reload the page; if this is an installed app, reinstall it.',
+            'error');
+          return;
+        }
         const kr = await apiFetch('/api/push/key');
         const kd = await kr.json();
         if (!kd.ok) { toast('Could not get the push key', 'error'); return; }
