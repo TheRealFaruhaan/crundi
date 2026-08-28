@@ -144,7 +144,7 @@ mkdir -p "$PREFIX" "$CONFIG_DIR"
 # Copy rather than symlink: an upgrade should not break a running server by
 # swapping files under it, and the source directory may well be a git checkout
 # you keep working in.
-for item in src scripts package.json package-lock.json; do
+for item in src scripts assets package.json package-lock.json; do
   [ -e "$SRC/$item" ] && cp -r "$SRC/$item" "$PREFIX/"
 done
 mkdir -p "$PREFIX/app"

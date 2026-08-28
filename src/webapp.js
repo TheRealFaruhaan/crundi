@@ -39,6 +39,7 @@ import { createLimitWarmer } from './limit-warmer.js';
 import * as authConfig from './auth-config.js';
 import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
+import * as serverUpdate from './server-update.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
@@ -1915,6 +1916,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, r, r.ok ? 200 : 400);
     }
 
+    // ─── Server updates ───
+    // The desktop app has electron-updater; a server does not, so it asks
+    // GitHub and reports here. Applying is a separate, explicit call because it
+    // restarts the server and takes every running session with it.
+    if (path === '/api/update/status' && req.method === 'GET') {
+      const force = /[?&]force=1/.test(req.url || '');
+      if (force) await serverUpdate.check({ force: true }).catch(() => {});
+      return json(res, { ok: true, update: serverUpdate.status(), log: serverUpdate.readLog() });
+    }
+
+    if (path === '/api/update/apply' && req.method === 'POST') {
+      const r = serverUpdate.apply();
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
     // The browser needs this public key to subscribe. Public by design.
     if (path === '/api/push/key' && req.method === 'GET') {
       return json(res, { ok: true, key: webPush.publicKey() });
@@ -3112,6 +3128,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Set DISABLE_TUNNEL=1 to run localhost-only (no Cloudflare at all).
       if (process.env.DISABLE_TUNNEL === '1') {
         console.log('[webapp] Tunnel disabled (DISABLE_TUNNEL=1) — localhost only');
+      } else if (config.tlsMode !== 'off' && config.tlsDomain) {
+        // This server is already reachable at its own name over its own TLS.
+        // A quick tunnel would publish a SECOND, unauthenticated-looking URL to
+        // the same thing, which is both redundant and a wider door than the one
+        // the user chose to open.
+        console.log(`[webapp] Reachable at https://${config.tlsDomain} — not starting a tunnel`);
       } else if (config.tunnelToken) {
         const tunnelResult = startNamedTunnel(TUNNEL_KEY, config.tunnelToken, config.tunnelUrl);
         if (!tunnelResult.ok) {
@@ -3153,6 +3175,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Service start / crash-stop notifications (independent of SSE clients).
       checkServiceTransitions(); // baseline current statuses (no alerts on first pass)
       setInterval(checkServiceTransitions, 7000);
+
+      // Ask GitHub whether there is a newer release, now and every six hours.
+      // Only ever reports — applying is an explicit request from Settings.
+      serverUpdate.start();
 
       return { port, tunnelUrl };
     },
