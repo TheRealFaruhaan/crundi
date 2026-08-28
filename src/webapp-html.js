@@ -7298,9 +7298,7 @@ export function getWebappHtml(botUsername) {
         panel.innerHTML = toolbar + '<div class="services-empty">'
           + '<div class="icon">' + ic('server') + '</div>'
           + '<p>No services registered' + (currentProject ? ' for this project' : '') + '</p>'
-          + '</div>'
-          + '<div id="forwards-section"></div>';
-        renderForwards();
+          + '</div>';
         return;
       }
 
