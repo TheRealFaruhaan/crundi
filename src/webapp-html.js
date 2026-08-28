@@ -3748,6 +3748,10 @@ export function getWebappHtml(botUsername) {
       connectWS();
       loadProjectConfig();
       loadProjects();
+      // Don't wait for the first SSE push to learn what is running. Until it
+      // arrives the workbench looks empty, and someone whose chat is already
+      // open on the server starts a second one.
+      loadState();
       syncTabScope();
       setupTerminalArea();
       updateMobileLayoutBtn();
@@ -3788,6 +3792,14 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Projects ───
+    async function loadState() {
+      try {
+        const res = await apiFetch('/api/state');
+        if (!res.ok) return;                  // SSE will fill it in shortly
+        applyState(await res.json());
+      } catch { /* SSE is the fallback */ }
+    }
+
     async function loadProjects() {
       try {
         const res = await apiFetch('/api/projects');
@@ -3913,6 +3925,9 @@ export function getWebappHtml(botUsername) {
 
     async function selectProject(alias) {
       currentProject = alias;
+      // So a reload, or a second browser, lands where you left off instead of
+      // on an empty workbench.
+      try { localStorage.setItem('crundi_last_project', alias); } catch { /* private mode */ }
       filesState = { path: '', root: '', parent: null, inside: true, entries: [], crumbs: [] };
       filesSearchQuery = ''; filesSearchResults = null;
       clearInterval(gitRefreshTimer);
@@ -5848,31 +5863,37 @@ export function getWebappHtml(botUsername) {
     setInterval(() => { if (_present) reportPresence(true); }, 25000);
 
     // ─── SSE for state updates ───
+    // One place both the SSE push and the startup fetch land, so a browser's
+    // first paint and its later updates cannot disagree about what is running.
+    function applyState(state) {
+      if (!state) return;
+      terminals = state.terminals || [];
+      userTerminals = state.userTerminals || [];
+      if (state.services) services = state.services;   // keep sidebar heartbeat fresh
+      if (state.scheduled) scheduledProjects = state.scheduled;
+      if (state.projects) projects = state.projects;
+      autoPickProject();
+      renderProjects();
+      renderTerminals();
+      // Status dots/badges update in place every push (cheap, no focus loss).
+      updateLiveCellHeads();
+      // Only rebuild the grid when the terminal SET/layout actually changes -
+      // NOT for agent-status changes (working<->done), which are excluded from
+      // the signature so a rebuild cannot re-parent cells and steal typing focus.
+      const termSig = JSON.stringify(terminals.map(t => [t.id, t.project, t.title, t.order, t.status]));
+      if (termSig !== lastTermSig) { lastTermSig = termSig; renderTermGrid(); }
+    }
+
     function connectSSE() {
       clearTimeout(sseReconnectTimer);
       if (sse) { try { sse.close(); } catch {} }
       const es = sse = new EventSource('/api/events?token=' + encodeURIComponent(token));
       es.addEventListener('state', (e) => {
         try {
-          const state = JSON.parse(e.data);
-          terminals = state.terminals || [];
-          userTerminals = state.userTerminals || [];
-          if (state.services) services = state.services; // keep sidebar heartbeat fresh
-          if (state.scheduled) scheduledProjects = state.scheduled; // projects with upcoming schedules
-          if (state.projects) {
-            projects = state.projects;
-          }
-          renderProjects();
-          renderTerminals();
-          // Status dots/badges update in place every push (cheap, no focus loss).
-          updateLiveCellHeads();
-          // Only rebuild the grid when the terminal SET/layout actually changes —
-          // NOT for agent-status changes (working↔done), which are excluded from
-          // the signature so a rebuild can't re-parent cells and steal typing focus.
-          const termSig = JSON.stringify(terminals.map(t => [t.id, t.project, t.title, t.order, t.status]));
-          if (termSig !== lastTermSig) { lastTermSig = termSig; renderTermGrid(); }
+          applyState(JSON.parse(e.data));
         } catch { /* ignore */ }
       });
+
       es.addEventListener('kanban', (e) => {
         try {
           const d = JSON.parse(e.data);
@@ -10553,6 +10574,26 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Init ───
+    // A browser with nothing stored selects no project, so the workbench looks
+    // empty even while a chat is running on the server - and the natural
+    // response is to start a second one. Pick a project on first state instead:
+    // where you were last, or failing that wherever something is actually live.
+    let autoPicked = false;
+    function autoPickProject() {
+      if (autoPicked || currentProject || !projects.length) return;
+      autoPicked = true;
+      let pick = null;
+      try {
+        const last = localStorage.getItem('crundi_last_project');
+        if (last && projects.some(p => p.alias === last)) pick = last;
+      } catch { /* private mode: fall through to the live session */ }
+      if (!pick) {
+        const live = terminals.find(t => t && t.project && projects.some(p => p.alias === t.project));
+        if (live) pick = live.project;
+      }
+      if (pick) selectProject(pick);
+    }
+
     async function init() {
       if (consumeRedirectToken() && await checkAuth()) {
         showApp(); connectSSE(); checkImport();

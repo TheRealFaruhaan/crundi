@@ -749,6 +749,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   function broadcastState() {
     if (!sseClients.size) return;
+    broadcastSSE('state', buildState());
+  }
+
+  /**
+   * The same payload the SSE 'state' event carries.
+   *
+   * Also served over HTTP, because a browser that has just loaded knows nothing
+   * until the first push arrives - it renders an empty workbench, and someone
+   * looking at a project whose chat is already running quite reasonably starts
+   * a second one. Built in one place so the two can never disagree.
+   */
+  function buildState() {
     const projects = listProjects();
     const services = getAllServiceStatus().map(s => ({
       key: s.key, name: s.name, alias: s.alias, command: s.command,
@@ -781,14 +793,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Project aliases that have at least one enabled schedule (for the sidebar
     // "upcoming schedule" clock indicator).
     const scheduled = [...new Set(schedule.listSchedules().filter(s => s.enabled).map(s => String(s.project || '').toLowerCase()))];
-    broadcastSSE('state', {
+    return {
       uptime: formatUptime(Date.now() - startedAt),
       projects,
       services,
       terminals,
       userTerminals: userTerminals.terminals || [],
       scheduled,
-    });
+    };
   }
 
   // ─── Kanban live updates ───
@@ -1563,6 +1575,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Claude Terminals ───
+    // What SSE would push, fetched once at startup so the first paint is right.
+    if (path === '/api/state' && req.method === 'GET') {
+      return json(res, buildState());
+    }
+
     if (path === '/api/terminals' && req.method === 'GET') {
       return json(res, { terminals: claudeTerminals ? claudeTerminals.list() : [] });
     }
