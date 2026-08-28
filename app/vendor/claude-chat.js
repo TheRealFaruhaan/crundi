@@ -531,7 +531,13 @@
     var attachBtn = el('button', 'cc-attach',
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
       + '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>');
-    attachBtn.title = 'Attach a file (uploads to crundi_attachments)';
+    attachBtn.title = 'Attach a file (uploads to crundi_attachments). Long-press to paste an image from the clipboard.';
+    // A phone has no Ctrl+V into a textarea worth relying on, so give the
+    // clipboard an explicit gesture as well as the paste event.
+    attachBtn.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      pasteImageFromClipboard(false);
+    });
     var fileInput = el('input');
     fileInput.type = 'file';
     fileInput.style.display = 'none';
@@ -544,7 +550,26 @@
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
       + '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>');
     schedBtn.title = 'Schedule this message';
+    // Paste an image straight from the system clipboard.
+    //
+    // A <textarea> is a text-only editor, so neither Gboard nor iOS will offer
+    // a screenshot for pasting into it — the clipboard strip shows text only,
+    // which is why "just paste it" does not work on a phone. Reading the
+    // clipboard ourselves sidesteps the keyboard completely.
+    //
+    // A real tap is also what Safari demands: it will only honour
+    // clipboard.read() inside a user gesture, which rules out a long-press
+    // timer. Hidden entirely where the API does not exist.
+    var pasteBtn = el('button', 'cc-attach',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+      + '<path d="M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1z"/>'
+      + '<path d="M8 6H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-2"/>'
+      + '<circle cx="12" cy="14" r="2.5"/></svg>');
+    pasteBtn.title = 'Paste an image from the clipboard';
+    pasteBtn.addEventListener('click', function () { pasteImageFromClipboard(false); });
+
     var actions = el('div', 'cc-actions');
+    if (navigator.clipboard && navigator.clipboard.read) actions.appendChild(pasteBtn);
     actions.appendChild(attachBtn);
     actions.appendChild(stopBtn);
     actions.appendChild(sendBtn);
@@ -1309,6 +1334,7 @@
       if (!file) return;
       if (!project) { toast('No project for this chat', 'error'); return; }
       attachBtn.classList.add('busy');
+      pasteBtn.classList.add('busy');
       var name = file.name || ('image.' + ((file.type || 'image/png').split('/')[1] || 'png'));
       file.arrayBuffer().then(function (buf) {
         return apiFetch('/api/attachments/upload', {
@@ -1321,7 +1347,10 @@
         else toast('Upload failed: ' + ((d && d.error) || '?'), 'error');
       }).catch(function (err) {
         toast('Upload failed: ' + (err.message || err), 'error');
-      }).then(function () { attachBtn.classList.remove('busy'); });
+      }).then(function () {
+        attachBtn.classList.remove('busy');
+        pasteBtn.classList.remove('busy');
+      });
     }
 
     attachBtn.addEventListener('click', function () { fileInput.click(); });
@@ -1389,7 +1418,52 @@
           if (f) { e.preventDefault(); uploadFile(f); return; }
         }
       }
+      // Android hands a plain <textarea> an EMPTY clipboardData for an image,
+      // so the loop above finds nothing and the screenshot is silently lost.
+      // The async Clipboard API can still see it, and this paste IS the user
+      // gesture it requires — but only try when nothing text-like arrived,
+      // otherwise an ordinary text paste would ask for clipboard permission.
+      var text = e.clipboardData && e.clipboardData.getData && e.clipboardData.getData('text');
+      if (!text) pasteImageFromClipboard(true);
     });
+
+    /**
+     * Pull an image out of the clipboard the long way round.
+     *
+     * navigator.clipboard.read() returns real blobs where clipboardData gives
+     * a textarea nothing. It needs a user gesture and may prompt for
+     * permission, so it is only reached from a paste or an explicit tap.
+     *
+     * quiet: a paste that turned out to hold no image is not an error worth
+     * shouting about; an explicit tap is.
+     */
+    function pasteImageFromClipboard(quiet) {
+      if (!navigator.clipboard || !navigator.clipboard.read) {
+        if (!quiet) toast('This browser cannot read the clipboard directly', 'error');
+        return;
+      }
+      navigator.clipboard.read().then(function (items) {
+        for (var i = 0; i < items.length; i++) {
+          var types = items[i].types || [];
+          for (var j = 0; j < types.length; j++) {
+            if (types[j].indexOf('image/') === 0) {
+              return items[i].getType(types[j]).then(function (blob) {
+                var ext = (blob.type.split('/')[1] || 'png').replace('+xml', '');
+                // Blob has no name; uploadFile needs one for the saved file.
+                uploadFile(new File([blob], 'pasted-' + Date.now() + '.' + ext, { type: blob.type }));
+              });
+            }
+          }
+        }
+        if (!quiet) toast('No image in the clipboard', 'error');
+      }).catch(function (err) {
+        if (!quiet) {
+          toast(/denied|permission/i.test(err.message || '')
+            ? 'Clipboard access was blocked. Allow it for this site and try again.'
+            : 'Could not read the clipboard: ' + (err.message || err), 'error');
+        }
+      });
+    }
 
     // Drag a file anywhere onto the chat to attach it.
     var dropHint = null;

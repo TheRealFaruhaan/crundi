@@ -116,7 +116,16 @@ const SHELL = ['/', '/manifest.webmanifest', '/assets/icon_128x128.png', '/asset
 self.addEventListener('install', (e) => {
   // Precache the shell but do NOT skipWaiting: let the new worker wait so the
   // page can prompt the user, then apply on demand (or auto on next launch).
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+  // add() each, NOT addAll(): addAll is all-or-nothing, so one 404 in the
+  // shell list rejects the whole install and the worker NEVER activates. That
+  // is not a degraded cache, it is a dead service worker - no push, no offline,
+  // and navigator.serviceWorker.ready hanging forever with nothing logged. A
+  // missing icon must not be able to do that.
+  e.waitUntil(caches.open(CACHE).then((c) => Promise.all(
+    SHELL.map((u) => c.add(u).catch((err) => {
+      console.warn('[sw] could not precache ' + u + ': ' + (err && err.message));
+    })),
+  )));
 });
 
 self.addEventListener('activate', (e) => {
