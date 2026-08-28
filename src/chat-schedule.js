@@ -40,6 +40,8 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
   // The window reset we last observed, so a rollover is detectable as a CHANGE
   // rather than by watching the clock pass a boundary we might sleep through.
   let seenReset = null;
+  // How far the window end must move before it counts as a real rollover.
+  const ROLLOVER_SLACK_MS = 5 * 60 * 1000;
 
   function genId() { return randomBytes(8).toString('hex'); }
 
@@ -84,10 +86,29 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
     return now;
   }
 
+  /**
+   * When the current 5-hour window ends, as a timestamp - or null when there
+   * is no open window.
+   *
+   * The upstream value carries microseconds that differ on EVERY poll for the
+   * same window:
+   *
+   *   2026-08-28T21:40:00.297562+00:00
+   *   2026-08-28T21:40:00.379392+00:00
+   *   2026-08-28T21:40:00.100972+00:00
+   *
+   * It used to be compared as a raw string, so every poll looked like a
+   * rollover and anything waiting on the limit reset fired on the next tick
+   * instead of at the reset. Parsed here; the caller decides what counts as a
+   * real move (see ROLLOVER_SLACK_MS).
+   */
   function currentReset() {
     try {
       const u = getLatestUsage ? getLatestUsage() : null;
-      return (u && u.ok && u.fiveHour && u.fiveHour.resetsAt) || null;
+      const raw = (u && u.ok && u.fiveHour && u.fiveHour.resetsAt) || null;
+      if (!raw) return null;
+      const ms = Date.parse(raw);
+      return Number.isFinite(ms) ? ms : null;
     } catch { return null; }
   }
 
@@ -196,10 +217,25 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
     // Detect a window rollover as a change in the reported reset time. Watching
     // for the clock to pass a boundary would miss it whenever the process was
     // asleep or the poll landed on the wrong side of it.
+    // Ask whether the window has ENDED, not whether the reported value changed.
+    // The limit warmer gets this right by comparing the instant to the clock
+    // (resetsAt > now) rather than watching for a change, and is immune to the
+    // jitter for that reason; this now works the same way.
+    //
+    // Primary: the end we last observed is in the past. That survives a sleeping
+    // process and a stale poll, because it stays true until a newer window is
+    // seen. The other two catch the same event sooner - the window disappearing,
+    // or jumping forward to a new one. The slack is there because the reported
+    // instant wobbles by under a second between polls, which is enough to
+    // straddle a boundary and look like movement in both directions; a genuine
+    // window is five hours.
     const reset = currentReset();
     let rolled = false;
-    if (reset && seenReset && reset !== seenReset) rolled = true;
-    if (reset && reset !== seenReset) { seenReset = reset; save(); }
+    if (seenReset && (now >= seenReset || reset === null || reset > seenReset + ROLLOVER_SLACK_MS)) rolled = true;
+    // Track the newest value seen, so jitter downwards cannot rearm it.
+    if (reset === null || seenReset === null || reset > seenReset) {
+      if (reset !== seenReset) { seenReset = reset; save(); }
+    }
 
     let changed = false;
     for (const it of items) {

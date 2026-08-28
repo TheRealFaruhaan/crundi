@@ -66,10 +66,17 @@ function sanitize(data = {}) {
     date: w.date || '',                                   // for one-time
     days: Array.isArray(w.days) ? w.days.filter(d => d >= 0 && d <= 6) : [], // 0=Sun .. 6=Sat
   };
+  // The IANA zone the time was written in. "09:00" means nine where the user
+  // is, and the server may be in another country entirely - without this it is
+  // matched against the host's clock. Absent on schedules written before this
+  // existed, which keep the old host-clock behaviour rather than silently
+  // moving when they fire.
+  const tz = typeof data.tz === 'string' && /^[A-Za-z_+\-/0-9]{1,64}$/.test(data.tz) ? data.tz : '';
   return {
     name: (data.name || '').toString().slice(0, 120) || 'Scheduled task',
     project: String(data.project || '').toLowerCase(),
     enabled: data.enabled !== false,
+    tz,
     action,
     when,
     conditions,

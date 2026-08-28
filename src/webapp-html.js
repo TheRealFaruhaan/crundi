@@ -10422,7 +10422,11 @@ export function getWebappHtml(botUsername) {
       if (d.action.kind === 'agent' && !d.action.prompt.trim()) { toast('Agent needs a prompt', 'error'); return; }
       if (d.action.kind === 'command' && !d.action.command.trim()) { toast('Enter a command', 'error'); return; }
       if (d.action.kind === 'service' && !d.action.serviceKey) { toast('Pick a service', 'error'); return; }
-      const payload = { name: d.name, project: d.project, enabled: d.enabled, action: d.action, when: d.when, conditions: d.conditions };
+      // Send the zone this time was written in. The server may be in another
+      // country, and "09:00" means nine o'clock HERE.
+      let tz = '';
+      try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { /* older browser */ }
+      const payload = { name: d.name, project: d.project, enabled: d.enabled, tz, action: d.action, when: d.when, conditions: d.conditions };
       const body = d.id ? { action: 'update', id: d.id, schedule: payload } : { action: 'add', schedule: payload };
       try {
         const r = await apiFetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

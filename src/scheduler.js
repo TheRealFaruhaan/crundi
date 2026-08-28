@@ -66,11 +66,47 @@ function effectiveWhen(sch) {
   if (t && t.at) return { mode: 'recurring', days: [0, 1, 2, 3, 4, 5, 6], time: t.at };
   return null;
 }
-function sameDay(a, b) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-function ymd(d) {
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+/**
+ * Wall-clock fields for an instant, in a named zone.
+ *
+ * "09:00" means nine in the morning WHERE THE USER IS. This used to be matched
+ * against the server's local clock, which was the same machine back when Crundi
+ * was only a desktop app. On a server in another country it is not: a schedule
+ * written in Male (UTC+5) against a host on CEST fires three hours out, and a
+ * date or weekday near midnight lands on the wrong day entirely.
+ *
+ * Falls back to the host's own zone when a schedule carries none, which is
+ * every schedule written before this existed - same behaviour as before for
+ * them, rather than silently moving when they fire.
+ */
+const DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+function clockIn(tz, date = new Date()) {
+  if (!tz) {
+    return {
+      hm: String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0'),
+      ymd: date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0'),
+      dow: date.getDay(),
+    };
+  }
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      // h23 rather than hour12:false: the latter reports midnight as "24" in
+      // some runtimes, which would never match a stored "00:00".
+      hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', weekday: 'short',
+    }).formatToParts(date).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+    return {
+      hm: parts.hour + ':' + parts.minute,
+      ymd: parts.year + '-' + parts.month + '-' + parts.day,
+      dow: DOW[parts.weekday] ?? 0,
+    };
+  } catch {
+    // An unknown zone must not stop schedules running altogether.
+    return clockIn(null, date);
+  }
 }
 // "Due" = the current clock minute IS the scheduled minute, and this occurrence
 // hasn't already run. Fires ONLY at the specified time — a missed run (app off,
@@ -80,19 +116,22 @@ function ymd(d) {
 export function isDue(sch) {
   const when = effectiveWhen(sch);
   if (!when || !when.time) return false;
-  const now = new Date();
-  const nowHM = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-  if (nowHM !== when.time) return false; // only at the exact scheduled minute
-  const lastRun = sch.lastRun ? new Date(sch.lastRun) : null;
+  // The zone the schedule was written in, not the host's.
+  const tz = sch.tz || when.tz || null;
+  const now = clockIn(tz);
+  if (now.hm !== when.time) return false; // only at the exact scheduled minute
+  // "Already ran today" has to be asked in the same zone, or a run late in the
+  // user's evening looks like a different day to the server and repeats.
+  const ranToday = sch.lastRun ? clockIn(tz, new Date(sch.lastRun)).ymd === now.ymd : false;
   if (when.mode === 'once') {
-    if (when.date !== ymd(now)) return false;          // wrong day
-    if (lastRun && sameDay(lastRun, now)) return false; // already ran today
+    if (when.date !== now.ymd) return false;   // wrong day
+    if (ranToday) return false;
     return true;
   }
   // recurring
   const days = Array.isArray(when.days) ? when.days : [];
-  if (!days.includes(now.getDay())) return false;
-  if (lastRun && sameDay(lastRun, now)) return false;   // already ran today
+  if (!days.includes(now.dow)) return false;
+  if (ranToday) return false;
   return true;
 }
 function conditionsMet(sch, deps) {
