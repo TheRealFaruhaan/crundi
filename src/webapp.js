@@ -512,14 +512,32 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // fit before conversion can overflow after it.
   const TG_HARD_MAX = 4096;
 
+  // telegramify-markdown double-escapes inside TABLE CELLS: it emits two
+  // backslashes before a reserved character where it means one. Telegram
+  // consumes backslashes in pairs, so the character is left bare and the whole
+  // message is rejected with "Character '-' is reserved". Every other
+  // construct escapes correctly; this is upstream and still in 1.3.3, the
+  // current release.
+  //
+  // An EVEN run of backslashes before a reserved character is always wrong -
+  // there is no valid MarkdownV2 in which it renders - so dropping one to make
+  // the run odd is a safe repair, while a correct odd run is left alone.
+  const TG_RESERVED = '_*[]()~`>#+-=|{}.!';
+  const TG_ESCAPE_RUN = /(\\+)([_*[\]()~`>#+\-=|{}.!])/g;
+
+  function repairDoubleEscapes(s) {
+    return s.replace(TG_ESCAPE_RUN, (m, slashes, ch) =>
+      (slashes.length % 2 === 0 ? slashes.slice(1) : slashes) + ch);
+  }
+
   function toTelegramMarkdown(text) {
     let src = String(text);
     for (let i = 0; i < 4; i++) {
-      const out = telegramify(src, 'escape');
+      const out = repairDoubleEscapes(telegramify(src, 'escape'));
       if (out.length <= TG_HARD_MAX) return out;
       src = src.slice(0, Math.floor(src.length * 0.7)) + '\n\n[…truncated, open Crundi for the rest]';
     }
-    return telegramify(src.slice(0, 1500), 'escape');
+    return repairDoubleEscapes(telegramify(src.slice(0, 1500), 'escape'));
   }
 
   // ─── Notification channels ───
