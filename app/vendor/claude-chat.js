@@ -124,12 +124,6 @@
     '.cc-narrow .cc-sid{display:none}',          // duplicated by the cell header
     '.cc-actions{display:contents}',              // wide: behaves as if unwrapped
     '.cc-input{flex:1;min-height:34px;max-height:180px;resize:none;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);padding:8px 10px;font-family:inherit;font-size:13px;line-height:1.45}',
-    // pre-wrap makes newlines render without any markup, so .value can stay
-    // plain text. overflow-y replaces the textarea's own scrolling.
-    '.cc-input{white-space:pre-wrap;overflow-wrap:anywhere;overflow-y:auto}',
-    // The placeholder a textarea gave us for free.
-    '.cc-input:empty:before,.cc-input.cc-empty:before{content:attr(data-placeholder);color:var(--text-muted);pointer-events:none}',
-    '.cc-input[aria-disabled="true"]{opacity:.55}',
     '.cc-input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}',
     '.cc-input:disabled{opacity:.55}',
     '.cc-meta{display:flex;gap:7px;align-items:center;margin-top:6px;font-size:11px;color:var(--text-muted);flex-wrap:wrap}',
@@ -526,55 +520,8 @@
     var composer = el('div', 'cc-composer');
     var wrap = el('div', 'cc-wrap');
     var inrow = el('div', 'cc-inrow');
-    // A contenteditable div, NOT a textarea.
-    //
-    // Android decides what the clipboard strip offers from the editor's
-    // declared content types, and a <textarea> declares text only — which is
-    // why a screenshot sitting in the clipboard could not be pasted into it
-    // while every other app accepted one. A rich editor accepts images.
-    //
-    // Everything else here still expects a textarea, so the differences are
-    // shimmed rather than spread across ~20 call sites: .value, .placeholder,
-    // .disabled and setSelectionRange behave as before.
-    var input = el('div', 'cc-input');
-    input.contentEditable = 'true';
-    input.setAttribute('role', 'textbox');
-    input.setAttribute('aria-multiline', 'true');
-    input.setAttribute('enterkeyhint', 'send');
-    input.spellcheck = true;
-
-    Object.defineProperty(input, 'value', {
-      // innerText collapses the <div>/<br> a browser inserts on Enter back into
-      // newlines. textContent would run the lines together.
-      get: function () { return this.innerText.replace(/\n$/, ''); },
-      set: function (v) {
-        // Plain text only: CSS white-space:pre-wrap renders the newlines, so
-        // no markup is needed and none can be injected.
-        this.textContent = v == null ? '' : String(v);
-        this.classList.toggle('cc-empty', !this.textContent);
-      },
-    });
-    Object.defineProperty(input, 'placeholder', {
-      get: function () { return this.getAttribute('data-placeholder') || ''; },
-      set: function (v) { this.setAttribute('data-placeholder', v == null ? '' : String(v)); },
-    });
-    Object.defineProperty(input, 'disabled', {
-      get: function () { return this.getAttribute('aria-disabled') === 'true'; },
-      set: function (v) {
-        this.contentEditable = v ? 'false' : 'true';
-        this.setAttribute('aria-disabled', v ? 'true' : 'false');
-      },
-    });
-    // Only ever used to park the caret at the end after restoring a draft.
-    input.setSelectionRange = function () {
-      var r = document.createRange();
-      r.selectNodeContents(this);
-      r.collapse(false);
-      var sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(r);
-    };
-
+    var input = el('textarea', 'cc-input');
+    input.rows = 1;
     input.placeholder = 'Message Claude…  (Enter to send, Shift+Enter for newline)';
     var sendBtn = el('button', 'cc-btn primary', 'Send');
     // Icon button between attach and send. Interrupting mid-turn is
@@ -1468,12 +1415,6 @@
           if (f) { e.preventDefault(); uploadFile(f); return; }
         }
       }
-      // No image, so it is text. The field is now a rich editor, which would
-      // happily paste in another app's fonts and colours; force plain text.
-      if (root.contains(document.activeElement)) {
-        var text = e.clipboardData && e.clipboardData.getData && e.clipboardData.getData('text/plain');
-        if (text) { e.preventDefault(); insertPlain(text); }
-      }
     }
     window.addEventListener('paste', onPaste);
     input.addEventListener('focus', function () { LAST_FOCUSED = sessionId; });
@@ -1504,11 +1445,9 @@
 
     // ─── Composer behaviour ───
 
-    // A contenteditable div grows on its own; min/max-height and overflow-y in
-    // the stylesheet do what the old scrollHeight juggling did. Kept as a
-    // no-op so the call sites read the same.
     function autoGrow() {
-      input.classList.toggle('cc-empty', !input.textContent);
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 180) + 'px';
     }
 
     function hideSlash() {
@@ -1559,34 +1498,12 @@
         if (ev.key === 'Escape') { hideSlash(); return; }
       }
       if (ev.key !== 'Enter') return;
-      var sending = enterMode === 'send'
-        ? (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey)
-        : (ev.ctrlKey || ev.metaKey);
-      if (sending) { ev.preventDefault(); doSend(); return; }
-      // Otherwise it is a newline. In a contenteditable the browser would
-      // build <div>/<br> markup for it; insertText keeps the field plain text
-      // (and keeps undo working), which is what .value reads back.
-      ev.preventDefault();
-      insertPlain('\n');
-    }
-
-    /** Insert text at the caret, replacing any selection. */
-    function insertPlain(text) {
-      if (document.execCommand) {
-        // Deprecated, but the only thing that keeps native undo intact.
-        if (document.execCommand('insertText', false, text)) { autoGrow(); return; }
+      if (enterMode === 'send') {
+        // Enter sends; Shift+Enter (and Ctrl+Enter) fall through to a newline.
+        if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) { ev.preventDefault(); doSend(); }
+      } else if (ev.ctrlKey || ev.metaKey) {
+        ev.preventDefault(); doSend();
       }
-      var sel = window.getSelection();
-      if (!sel || !sel.rangeCount) { input.textContent += text; autoGrow(); return; }
-      var r = sel.getRangeAt(0);
-      r.deleteContents();
-      var node = document.createTextNode(text);
-      r.insertNode(node);
-      r.setStartAfter(node);
-      r.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(r);
-      autoGrow();
     }
 
     // ─── Draft persistence ───
