@@ -12,6 +12,7 @@
 #   ./scripts/install.sh --prefix DIR    somewhere other than ~/.local/share/crundi
 #   ./scripts/install.sh --as-user NAME  run as NAME (created if missing), system service
 #   ./scripts/install.sh --as-root       really install for root (see below)
+#   ./scripts/install.sh --grant-sudo    give that user passwordless sudo
 #
 # Run as root with no --as-user and it installs for a dedicated 'crundi' user
 # instead of root. That is not tidiness: Claude Code REFUSES
@@ -32,6 +33,7 @@ ASSUME_YES=0
 MIN_NODE_MAJOR=20
 SERVICE_USER=""       # non-empty => install for that user with a SYSTEM unit
 AS_ROOT=0
+GRANT_SUDO=0
 PREFIX_SET=0
 
 say()  { printf '\033[36m›\033[0m %s\n' "$*"; }
@@ -42,6 +44,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --prefix)     PREFIX="${2:?--prefix needs a directory}"; PREFIX_SET=1; shift 2 ;;
     --as-user)    SERVICE_USER="${2:?--as-user needs a name}"; shift 2 ;;
+    --grant-sudo) GRANT_SUDO=1; shift ;;
     --as-root)    AS_ROOT=1; shift ;;
     --no-service) WITH_SERVICE=0; shift ;;
     -y|--yes)     ASSUME_YES=1; shift ;;
@@ -73,6 +76,29 @@ if [ -n "$SERVICE_USER" ]; then
   [ "$PREFIX_SET" -eq 1 ] || PREFIX="${TARGET_HOME}/.local/share/crundi"
   CONFIG_DIR="${TARGET_HOME}/.config/crundi"
   UNIT_DIR=/etc/systemd/system
+
+  # Opt-in, and worth being clear about what it does. Claude must not RUN as
+  # root - Claude Code refuses --dangerously-skip-permissions when its own euid
+  # is 0 - but on a box it effectively owns it still has to install packages and
+  # manage services. Passwordless because a non-interactive session cannot
+  # answer a password prompt.
+  #
+  # This is close to giving it root: anything it runs can escalate. The point is
+  # that it escalates explicitly, and keeps the one property the CLI requires.
+  if [ "$GRANT_SUDO" -eq 1 ]; then
+    if [ -d /etc/sudoers.d ]; then
+      printf '%s ALL=(ALL) NOPASSWD:ALL
+' "$SERVICE_USER" > "/etc/sudoers.d/${SERVICE_USER}"
+      chmod 440 "/etc/sudoers.d/${SERVICE_USER}"
+      if command -v visudo >/dev/null 2>&1 && ! visudo -c -f "/etc/sudoers.d/${SERVICE_USER}" >/dev/null 2>&1; then
+        rm -f "/etc/sudoers.d/${SERVICE_USER}"
+        die "The sudoers snippet did not validate, so it was removed rather than left to break sudo."
+      fi
+      say "Granted ${SERVICE_USER} passwordless sudo"
+    else
+      warn "No /etc/sudoers.d — skipping --grant-sudo."
+    fi
+  fi
 else
   TARGET_HOME="$HOME"
   [ "$PREFIX_SET" -eq 1 ] || PREFIX="${HOME}/.local/share/crundi"
