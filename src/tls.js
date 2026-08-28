@@ -223,10 +223,17 @@ function txtName(identifier) {
 }
 
 async function cfDnsCreate(identifier, keyAuthorization) {
-  const acme = await import('acme-client');
-  const value = acme.forge?.createDnsRecordText
-    ? await acme.forge.createDnsRecordText(keyAuthorization)
-    : acme.crypto.createDnsRecordText(keyAuthorization);
+  // Publish keyAuthorization VERBATIM. acme-client has already applied the
+  // RFC 8555 section 8.4 transform for dns-01 - getChallengeKeyAuthorization
+  // returns base64url(SHA-256(token.thumbprint)) for this challenge type,
+  // unlike http-01 where it returns the raw string. Hashing it again yields a
+  // record the CA can never match, and the only symptom is acme-client
+  // retrying "Authorization not found in DNS TXT record" until it gives up.
+  //
+  // The original code here called acme.crypto.createDnsRecordText, which
+  // exists in no release of the library, so wildcard issuance had never
+  // actually worked.
+  const value = keyAuthorization;
   const zone = await cfZoneId(identifier);
   const name = txtName(identifier);
   console.log(`[tls] Publishing ${name} TXT`);
@@ -241,10 +248,8 @@ async function cfDnsCreate(identifier, keyAuthorization) {
 
 async function cfDnsRemove(identifier, keyAuthorization) {
   try {
-    const acme = await import('acme-client');
-    const value = acme.forge?.createDnsRecordText
-      ? await acme.forge.createDnsRecordText(keyAuthorization)
-      : acme.crypto.createDnsRecordText(keyAuthorization);
+    // Same value acme-client gave us at create time; see cfDnsCreate.
+    const value = keyAuthorization;
     const zone = await cfZoneId(identifier);
     const name = txtName(identifier);
     const records = await cf(`/zones/${zone.id}/dns_records?type=TXT&name=${encodeURIComponent(name)}`);
