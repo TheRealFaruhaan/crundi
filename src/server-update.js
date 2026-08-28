@@ -187,7 +187,9 @@ curl -fsSL -o pkg.tar.gz "${latest.asset.browser_download_url}"
 tar xzf pkg.tar.gz
 cd crundi
 echo "installing into ${ROOT}"
-sh scripts/install.sh --no-service --prefix "${ROOT}"
+# bash, NOT sh: install.sh uses 'set -o pipefail', which dash rejects
+# outright - and /bin/sh is dash on Debian and Ubuntu.
+bash scripts/install.sh --no-service --prefix "${ROOT}"
 echo "restarting"
 # The unit is called crundi either way; which manager owns it depends on how
 # it was installed, so try the system one and fall back to the user one.
