@@ -249,19 +249,25 @@ if (isDev) {
 console.log('[crundi] Starting...');
 
 // Start webapp (HTTP + WebSocket + tunnel)
-let port, tunnelUrl;
+let port, tunnelUrl, localPort;
 try {
-  ({ port, tunnelUrl } = await webapp.start(config.webPort));
+  ({ port, tunnelUrl, localPort } = await webapp.start(config.webPort));
 } catch (err) {
   console.error(`[crundi] Failed to start webapp: ${err.message}`);
   process.exit(1);
 }
 
-// Update Claude terminals with API info for MCP config
+// Update Claude terminals with API info for MCP config.
+//
+// MCP and the lifecycle hooks speak plain HTTP over loopback. When TLS owns
+// the main port, `port` is 443 and http://localhost:443 is an HTTP request
+// into a TLS socket — every MCP call died with "socket hang up". localPort is
+// the loopback listener that exists precisely for these callers.
 const apiKey = webapp.getInternalApiKey();
-claudeTerminals.apiUrl = `http://localhost:${port}`;
+const localApi = `http://localhost:${localPort || port}`;
+claudeTerminals.apiUrl = localApi;
 claudeTerminals.apiKey = apiKey;
-claudeUi.apiUrl = `http://localhost:${port}`;
+claudeUi.apiUrl = localApi;
 claudeUi.apiKey = apiKey;
 // Log API key for Electron to pick up (local auth for iframe)
 console.log(`[crundi] API_KEY=${apiKey}`);
@@ -321,7 +327,7 @@ if (isDev) {
           crundi: {
             command: 'node',
             args: [mcpStdioPath],
-            env: { CRUNDI_API_URL: `http://localhost:${port}`, CRUNDI_API_KEY: apiKey, CRUNDI_PROJECT: p.alias },
+            env: { CRUNDI_API_URL: localApi, CRUNDI_API_KEY: apiKey, CRUNDI_PROJECT: p.alias },
           },
         },
       };

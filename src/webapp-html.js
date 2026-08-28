@@ -1509,6 +1509,18 @@ export function getWebappHtml(botUsername) {
     /* Notification matrix — a control-panel grid of tri-state "lamps". Each event
        is a row; the active mode lights up in its column colour (green=Always,
        indigo=When Away, dim=Never) so the whole board reads at a glance. */
+    /* Naming a forward happens in the card, not in a browser prompt(). */
+    .svc-fwd { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+    .svc-fwd input {
+      flex: 1 1 130px; min-width: 0; padding: 6px 10px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg-primary);
+      color: var(--text-primary); font-size: 0.8rem; font-family: var(--mono);
+    }
+    .svc-fwd input:focus { outline: none; border-color: var(--accent); }
+    .svc-fwd-suffix { color: var(--text-muted); font-size: 0.76rem; font-family: var(--mono); white-space: nowrap; }
+    .seg-expose { padding: 2px; gap: 2px; }
+    .seg-expose button { padding: 4px 10px; font-size: 0.72rem; }
     .seg-pref-row { display: flex; align-items: flex-start; gap: 14px; }
     .seg-pref-row > div:first-child { flex: 1; min-width: 0; }
     .set-tgl-lbl { color: var(--text-primary); font-size: 0.85rem; margin-bottom: 4px; }
@@ -3232,19 +3244,28 @@ export function getWebappHtml(botUsername) {
         // worker does not become active - a failed registration, a worker stuck
         // installing, a stale one from a bad deploy - this await simply hangs,
         // and the button looks dead with no error anywhere. Race it.
-        let reg;
+        // The registration at page load has no error path — if it failed, the
+        // rejection went nowhere and push simply never worked. Register here
+        // too, so this both recovers and reports what actually went wrong.
+        let reg = await navigator.serviceWorker.getRegistration().catch(() => null);
+        if (!reg) {
+          try {
+            reg = await navigator.serviceWorker.register('/sw.js');
+          } catch (err) {
+            toast('The service worker could not be registered: ' + err.message
+              + '. This is usually private browsing, or site data being blocked for this site.', 'error');
+            return;
+          }
+        }
         try {
           reg = await Promise.race([
             navigator.serviceWorker.ready,
             new Promise((_, rej) => setTimeout(
-              () => rej(new Error('the service worker never became active')), 10000)),
+              () => rej(new Error('it never became active')), 10000)),
           ]);
         } catch (err) {
-          const r = await navigator.serviceWorker.getRegistration().catch(() => null);
-          toast(r
-            ? 'Notifications are allowed, but the service worker is stuck. Reload the page and try again.'
-            : 'Notifications are allowed, but no service worker is registered. Reload the page; if this is an installed app, reinstall it.',
-            'error');
+          toast('The service worker registered but ' + err.message
+            + '. Reload the page; if this is an installed app, reinstall it.', 'error');
           return;
         }
         const kr = await apiFetch('/api/push/key');
@@ -7218,11 +7239,42 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Services ───
+    // How a port is exposed is a property of the port, not of the service, so
+    // forwards live in their own store and are matched back by port here.
+    let forwards = [];
+    let forwardOpts = null;
+    // Which card is currently naming a forward: { key, port, mode }.
+    let exposeEdit = null;
+
+    // Service keys look like "playground:Test"; hostnames may only be
+    // lowercase letters, digits and hyphens, so the key cannot be the default.
+    function defaultForwardName(s) {
+      const raw = String(s.name || s.key || '').split(':').pop();
+      return raw.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || 'app';
+    }
+
+    async function loadForwards() {
+      try {
+        const [fr, or_] = await Promise.all([
+          apiFetch('/api/forwards'),
+          forwardOpts ? Promise.resolve(null) : apiFetch('/api/forwards/options'),
+        ]);
+        const fd = await fr.json();
+        forwards = (fd && fd.forwards) || [];
+        if (or_) { const od = await or_.json(); if (od && od.ok) forwardOpts = od; }
+      } catch { /* the card falls back to tunnel-only */ }
+    }
+
+    function forwardForPort(port) {
+      return forwards.find(f => Number(f.port) === Number(port)) || null;
+    }
+
     async function loadServices() {
       try {
         const res = await apiFetch('/api/services');
         const data = await res.json();
         services = data.services || [];
+        await loadForwards();
         renderServices();
         renderProjects(); // refresh sidebar heartbeats
       } catch (err) {
@@ -7259,20 +7311,59 @@ export function getWebappHtml(botUsername) {
         const tPort = s.tunnelPort || 0;
         const tEnabled = !!s.tunnelEnabled;
         const tStatus = s.tunnelStatus;
+        // Three ways to reach a port, chosen with the same segmented control as
+        // Settings. A tunnel is a separate cloudflared process with a random
+        // hostname; the other two are this server answering on its own
+        // certificate, which is the whole point of having a wildcard.
+        const fwd = forwardForPort(tPort);
+        const mode = fwd ? fwd.mode : (tEnabled ? 'tunnel' : '');
+        const subOpt = forwardOpts && (forwardOpts.choices || []).find(c => c.id === 'subdomain');
+        const subAvailable = !!(subOpt && subOpt.available);
+        const subDomain = (subOpt && subOpt.suggestedDomain) || (forwardOpts && forwardOpts.domain) || '';
+
         let tunnelRow = '';
-        if (tPort > 0 || tEnabled) {
+        if (tPort > 0 || tEnabled || fwd) {
           let badge;
-          if (tEnabled && s.tunnelUrl && tStatus === 'active') badge = '<a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>';
+          if (fwd) badge = '<a class="tunnel-link" href="' + escHtml(fwd.url) + '" target="_blank">' + escHtml(fwd.url) + '</a>';
+          else if (tEnabled && s.tunnelUrl && tStatus === 'active') badge = '<a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>';
           else if (tEnabled && tStatus === 'connecting') badge = '<span class="svc-tunnel-badge" style="color:var(--yellow)">starting…</span>';
           else if (tEnabled && tStatus === 'error') badge = '<span class="svc-tunnel-badge" style="color:var(--red)">error</span>';
           else if (tEnabled) badge = '<span class="svc-tunnel-badge">idle</span>';
           else badge = '<span class="svc-tunnel-badge">off</span>';
+
+          const seg = (id, label, on, title) => '<button type="button" data-action="svc-expose"'
+            + ' data-key="' + k + '" data-port="' + tPort + '" data-mode="' + id + '"'
+            + (on ? ' class="active"' : '') + ' title="' + escHtml(title) + '">' + label + '</button>';
+
           tunnelRow = '<div class="svc-tunnel">'
             + '<span class="svc-tunnel-ic">' + ic('globe') + '</span>'
             + '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '">' + (tPort > 0 ? 'Port ' + tPort : 'Set port') + '</button>'
-            + '<button class="svc-btn' + (tEnabled ? ' on' : '') + '" data-action="svc-tunnel-toggle" data-key="' + k + '" data-port="' + tPort + '" data-enabled="' + (tEnabled ? '1' : '0') + '"' + (tPort > 0 ? '' : ' title="Set a tunnel port first"') + '>' + ic('globe') + (tEnabled ? 'On' : 'Off') + '</button>'
+            + '<div class="seg-pref seg-expose">'
+            + seg('off', 'Off', !mode, 'Not reachable from outside')
+            + seg('tunnel', 'Tunnel', mode === 'tunnel', 'A cloudflared process with a random trycloudflare.com hostname')
+            + seg('subdomain', 'Subdomain', mode === 'subdomain',
+                subAvailable ? 'name.' + subDomain + ' — served by this server on its own certificate'
+                             : 'Needs a domain: set TLS_DOMAIN or FORWARD_DOMAIN')
+            + seg('path', 'Path', mode === 'path', 'A path on this server: /tunnel/name/')
+            + '</div>'
             + badge
+            + (fwd ? '<button class="svc-btn danger" data-action="fwd-remove" data-host="' + escHtml(fwd.host) + '" title="Remove this forward">' + ic('trash') + '</button>' : '')
             + '</div>';
+
+          if (exposeEdit && exposeEdit.key === s.key) {
+            const editing = exposeEdit.mode;
+            const suffix = editing === 'subdomain' ? '.' + subDomain : '';
+            const prefix = editing === 'path' ? '/tunnel/' : '';
+            tunnelRow += '<div class="svc-fwd">'
+              + (prefix ? '<span class="svc-fwd-suffix">' + escHtml(prefix) + '</span>' : '')
+              + '<input type="text" id="fwd-name-' + k + '" value="' + escHtml(exposeEdit.name || '') + '"'
+              + ' placeholder="name" spellcheck="false" autocapitalize="off" autocomplete="off"'
+              + ' maxlength="32" data-key="' + k + '">'
+              + '<span class="svc-fwd-suffix">' + escHtml(suffix || '/') + '</span>'
+              + '<button class="svc-btn primary" data-action="fwd-save" data-key="' + k + '">' + ic('check') + 'Save</button>'
+              + '<button class="svc-btn" data-action="fwd-cancel">Cancel</button>'
+              + '</div>';
+          }
         }
         return '<div class="svc-card" data-svc-key="' + k + '">'
           + '<div class="svc-header">'
@@ -7295,6 +7386,119 @@ export function getWebappHtml(botUsername) {
           + '<div class="svc-logs" id="svc-logs-' + k + '"></div>'
           + '</div>';
       }).join('');
+    }
+
+    // Switching how a port is exposed. Only one route at a time: leaving two
+    // live would mean two public URLs for one port, one of which the user did
+    // not think they had.
+    async function exposeService(key, port, mode) {
+      if (!port) { toast('Set a port first', 'error'); return; }
+      const existing = forwardForPort(port);
+
+      // Tear down whatever is there now, whichever kind it is.
+      const clear = async () => {
+        if (existing) {
+          await apiFetch('/api/forwards/' + encodeURIComponent(existing.host), { method: 'DELETE' }).catch(() => {});
+        }
+        const r = await apiFetch('/api/services/' + encodeURIComponent(key) + '/tunnel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: false, port }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (d && d.ok === false) throw new Error(d.error || 'could not turn the tunnel off');
+      };
+
+      try {
+        if (mode === 'off') {
+          await clear();
+          toast('No longer exposed', 'success');
+        } else if (mode === 'tunnel') {
+          await clear();
+          const r = await apiFetch('/api/services/' + encodeURIComponent(key) + '/tunnel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: true, port }),
+          });
+          const d = await r.json();
+          if (!d.ok) { toast(d.error || 'Could not start the tunnel', 'error'); return; }
+          toast('Starting a tunnel', 'success');
+        }
+      } catch (err) {
+        toast('Failed: ' + err.message, 'error');
+      }
+      await loadServices();
+    }
+
+    // Picking subdomain or path opens the naming form inside the card. Nothing
+    // is created until Save, so switching between the two costs nothing.
+    function beginExpose(key, port, mode) {
+      if (!port) { toast('Set a port first', 'error'); return; }
+      const sub = forwardOpts && (forwardOpts.choices || []).find(c => c.id === 'subdomain');
+      if (mode === 'subdomain' && !(sub && sub.available)) {
+        toast('No domain is configured. Set TLS_DOMAIN or FORWARD_DOMAIN, or use Path.', 'error');
+        return;
+      }
+      const svc = services.find(x => x.key === key);
+      const existing = forwardForPort(port);
+      exposeEdit = {
+        key, port, mode,
+        name: (existing && existing.host) || (svc ? defaultForwardName(svc) : 'app'),
+      };
+      renderServices();
+      const input = document.getElementById('fwd-name-' + key);
+      if (input) { input.focus(); input.select(); }
+    }
+
+    async function saveExpose(key) {
+      if (!exposeEdit || exposeEdit.key !== key) return;
+      const input = document.getElementById('fwd-name-' + key);
+      const name = (input ? input.value : '').trim().toLowerCase();
+      if (!name) { toast('A name is required', 'error'); return; }
+      // The same rule the server enforces, checked here so the answer is
+      // instant instead of a round trip.
+      if (!/^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/.test(name)) {
+        toast('Lowercase letters, digits and hyphens only, not starting or ending with one.', 'error');
+        return;
+      }
+      const port = exposeEdit.port, mode = exposeEdit.mode;
+      const existing = forwardForPort(port);
+      try {
+        if (existing) {
+          await apiFetch('/api/forwards/' + encodeURIComponent(existing.host), { method: 'DELETE' }).catch(() => {});
+        }
+        await apiFetch('/api/services/' + encodeURIComponent(key) + '/tunnel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: false, port }),
+        }).catch(() => { /* no tunnel to stop is fine; the forward is what matters */ });
+        const r = await apiFetch('/api/forwards', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, port, mode }),
+        });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Could not create the forward', 'error'); return; }
+        exposeEdit = null;
+        toast('Reachable at ' + (d.forward && d.forward.url ? d.forward.url : name), 'success');
+      } catch (err) {
+        toast('Failed: ' + err.message, 'error');
+        return;
+      }
+      await loadServices();
+    }
+
+    async function removeForward(host) {
+      if (!host) return;
+      try {
+        const r = await apiFetch('/api/forwards/' + encodeURIComponent(host), { method: 'DELETE' });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Could not remove it', 'error'); return; }
+        toast('Removed', 'success');
+      } catch (err) {
+        toast('Failed: ' + err.message, 'error');
+      }
+      await loadServices();
     }
 
     async function svcAction(action, key) {
@@ -8121,6 +8325,19 @@ export function getWebappHtml(botUsername) {
         case 'term-newline-key':
           setTermNewlineKey(d.val);
           $$('#set-newline-key button').forEach(b => b.classList.toggle('active', b.dataset.val === termNewlineKey));
+          break;
+        case 'svc-expose':
+          if (d.mode === 'subdomain' || d.mode === 'path') beginExpose(d.key, parseInt(d.port || '0', 10), d.mode);
+          else { exposeEdit = null; exposeService(d.key, parseInt(d.port || '0', 10), d.mode); }
+          break;
+        case 'fwd-save':
+          saveExpose(d.key);
+          break;
+        case 'fwd-cancel':
+          exposeEdit = null; renderServices();
+          break;
+        case 'fwd-remove':
+          removeForward(d.host);
           break;
         case 'srv-update-check':
           renderServerUpdate(true);
@@ -10368,7 +10585,12 @@ export function getWebappHtml(botUsername) {
     // Skip under Electron (window.api present) — the desktop app has its own
     // updater. This is PWA-scoped: prompt while running, force on next launch.
     if ('serviceWorker' in navigator && !window.api) {
-      window.addEventListener('load', initPwaUpdates);
+      // If load has ALREADY fired — a bfcache restore, or simply a slow page
+      // that finished before this script got here — adding the listener
+      // registers nothing, ever. The worker is then permanently absent and the
+      // only symptom is that push cannot be enabled.
+      if (document.readyState === 'complete') initPwaUpdates();
+      else window.addEventListener('load', initPwaUpdates);
     }
 
     function initPwaUpdates() {
@@ -10413,7 +10635,13 @@ export function getWebappHtml(botUsername) {
         document.body.appendChild(bar);
       };
 
-      navigator.serviceWorker.register('/sw.js').then((reg) => {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        // Silent before: a rejected registration meant push never worked and
+        // nothing anywhere said why.
+        console.warn('[sw] registration failed:', err && err.message);
+        return null;
+      }).then((reg) => {
+        if (!reg) return;
         // A worker left waiting from a previous session → apply it now, silently.
         // This is the "forcefully update on next launch" path.
         if (reg.waiting && navigator.serviceWorker.controller) { applyUpdate(reg); return; }

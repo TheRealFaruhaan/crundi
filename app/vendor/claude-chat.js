@@ -421,6 +421,12 @@
   // destroy() so reopening a closed chat can take the draft back.
   var CLAIMED = {};
 
+  // Which chat the user last put the cursor in. A paste on a phone frequently
+  // arrives with focus already moved off the field (the paste UI takes it), so
+  // activeElement alone is not enough to tell whose paste it is — and without
+  // that, every open chat would upload the same image.
+  var LAST_FOCUSED = null;
+
   // Session-keyed drafts outlive the sessions they name (a restart strands
   // them), so without this they would accumulate in localStorage forever.
   var DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -1381,15 +1387,37 @@
     root.addEventListener('drop', onDrop);
 
     // Paste an image straight into the composer.
-    input.addEventListener('paste', function (e) {
+    /**
+     * Paste an image into the chat.
+     *
+     * Bound to WINDOW, not the textarea. A paste does not necessarily target
+     * the field — on Android an image paste often lands on the document — so a
+     * listener on the input alone never fires and the screenshot is lost with
+     * no sign that anything happened.
+     *
+     * clipboardData.files is the reliable accessor; .items needs a kind check
+     * and misses cases .files catches.
+     *
+     * Scoped to the chat the user is actually in: several chats can be open at
+     * once and every one of them would otherwise upload the same image.
+     */
+    function onPaste(e) {
+      if (destroyed) return;
+      if (!root.contains(document.activeElement) && LAST_FOCUSED !== sessionId) return;
+      var files = (e.clipboardData && e.clipboardData.files) || [];
+      for (var i = 0; i < files.length; i++) {
+        if (files[i]) { e.preventDefault(); uploadFile(files[i]); return; }
+      }
       var items = (e.clipboardData && e.clipboardData.items) || [];
-      for (var i = 0; i < items.length; i++) {
-        if (items[i].kind === 'file') {
-          var f = items[i].getAsFile();
+      for (var j = 0; j < items.length; j++) {
+        if (items[j].kind === 'file') {
+          var f = items[j].getAsFile();
           if (f) { e.preventDefault(); uploadFile(f); return; }
         }
       }
-    });
+    }
+    window.addEventListener('paste', onPaste);
+    input.addEventListener('focus', function () { LAST_FOCUSED = sessionId; });
 
     // Drag a file anywhere onto the chat to attach it.
     var dropHint = null;
@@ -2079,6 +2107,7 @@
         // Let a later chat in this project pick the draft back up.
         if (DRAFT_PROJ_KEY && CLAIMED[DRAFT_PROJ_KEY] === sessionId) delete CLAIMED[DRAFT_PROJ_KEY];
         stopTicker(); // closing a cell must not leave an interval running
+        window.removeEventListener('paste', onPaste);
         root.removeEventListener('dragover', onDragOver);
         root.removeEventListener('dragleave', onDragLeave);
         root.removeEventListener('drop', onDrop);

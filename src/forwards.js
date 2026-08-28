@@ -125,8 +125,13 @@ export function options() {
   // One level up, so the free wildcard covers it. Crude — it cannot tell
   // example.co.uk from crundi.example.com — so it is offered as a suggestion
   // for the user to confirm, never applied silently.
-  const suggested = nested ? base.split('.').slice(-2).join('.') : base;
   const ownWildcard = !!(config.tlsWildcard && config.cfDnsToken);
+  // Going one level up only makes sense when relying on Cloudflare's free
+  // certificate, which covers a single wildcard level. With our own Let's
+  // Encrypt wildcard for *.<base> the nesting is already covered, and
+  // suggesting the parent domain sends people to a name they may not even own
+  // a certificate for.
+  const suggested = (nested && !ownWildcard) ? base.split('.').slice(-2).join('.') : base;
 
   return {
     domain: base,
@@ -156,8 +161,11 @@ export function options() {
           : 'Set TLS_DOMAIN or FORWARD_DOMAIN first.',
         caveat: 'The app is at the root of its own hostname, so anything works. '
               + 'Needs DNS, and certificate coverage for the name you choose.',
-        suggestedDomain: nested ? suggested : base,
-        nested,
+        suggestedDomain: suggested,
+        // Only "nested" in the sense that matters: needing a name one level up
+        // because the certificate will not stretch to this one.
+        nested: nested && !ownWildcard,
+        ownWildcard,
       },
       {
         id: 'tunnel',

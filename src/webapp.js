@@ -116,7 +116,16 @@ const SHELL = ['/', '/manifest.webmanifest', '/assets/icon_128x128.png', '/asset
 self.addEventListener('install', (e) => {
   // Precache the shell but do NOT skipWaiting: let the new worker wait so the
   // page can prompt the user, then apply on demand (or auto on next launch).
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+  // add() each, NOT addAll(): addAll is all-or-nothing, so one 404 in the
+  // shell list rejects the whole install and the worker NEVER activates. That
+  // is not a degraded cache, it is a dead service worker - no push, no offline,
+  // and navigator.serviceWorker.ready hanging forever with nothing logged. A
+  // missing icon must not be able to do that.
+  e.waitUntil(caches.open(CACHE).then((c) => Promise.all(
+    SHELL.map((u) => c.add(u).catch((err) => {
+      console.warn('[sw] could not precache ' + u + ': ' + (err && err.message));
+    })),
+  )));
 });
 
 self.addEventListener('activate', (e) => {
@@ -209,6 +218,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   let acmeServer = null;
   let wss = null;
   let port = null;
+  // Plain-HTTP loopback listener, only when TLS has taken the main port.
+  let localPort = null;
+  let localServer = null;
   let tunnelUrl = null;
 
   // Internal API key for MCP stdio servers — persisted so it survives restarts
@@ -3070,6 +3082,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           });
           server.on('error', reject);
         });
+        // Everything on this machine that talks to the API speaks plain HTTP:
+        // the MCP server Claude loads from .mcp.json, and the lifecycle hooks.
+        // Once TLS owns the port, http://localhost:443 is a TLS socket being
+        // fed an HTTP request, which is the "socket hang up" every MCP call
+        // died with. Bind a loopback-only HTTP listener for them. 127.0.0.1,
+        // never 0.0.0.0 — this is deliberately not reachable off the box.
+        await new Promise((resolve) => {
+          localServer = createServer(onRequest);
+          localServer.listen(config.webPort, '127.0.0.1', () => {
+            localPort = localServer.address().port;
+            console.log(`[webapp] Local HTTP API on 127.0.0.1:${localPort} (for MCP and hooks)`);
+            resolve();
+          });
+          localServer.on('error', (err) => {
+            console.warn('[webapp] Could not bind the local HTTP API:', err.message);
+            localServer = null;
+            resolve();
+          });
+        });
+
         // Renewal swaps the certificate into the live server. setSecureContext
         // applies to connections made from then on, so nothing is dropped and
         // no restart is needed.
@@ -3180,7 +3212,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Only ever reports — applying is an explicit request from Settings.
       serverUpdate.start();
 
-      return { port, tunnelUrl };
+      return { port, tunnelUrl, localPort };
     },
 
     stop() {
@@ -3191,6 +3223,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (wss) { wss.close(); wss = null; }
       stopTunnel(TUNNEL_KEY);
       if (server) { server.close(); server = null; }
+      if (localServer) { try { localServer.close(); } catch { /* ignore */ } localServer = null; }
+      localPort = null;
       port = null;
       tunnelUrl = null;
       tokens.clear();
