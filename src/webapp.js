@@ -1976,7 +1976,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     if (path === '/api/update/apply' && req.method === 'POST') {
-      const r = serverUpdate.apply();
+      const r = await serverUpdate.apply();
       return json(res, r, r.ok ? 200 : 400);
     }
 

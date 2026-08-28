@@ -31,6 +31,8 @@ const API = `https://api.github.com/repos/${REPO}/releases/latest`;
 // not something you need to hear about within the minute.
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const MIN_RECHECK_MS = 5 * 1000;           // anti-burst floor for a forced check
+// How soon to look again when a release is found mid-publish.
+const RETRY_WHILE_PUBLISHING_MS = 3 * 60 * 1000;
 
 let state = {
   checkedAt: 0,
@@ -105,7 +107,12 @@ export function updateBlocker(latest) {
     return `${ROOT} is not writable by this process.`;
   }
   if (latest && !latest.asset) {
-    return 'That release has no Linux server tarball attached.';
+    // Almost always a race rather than a broken release: the main workflow
+    // creates the release with the Windows installer, and the one that attaches
+    // the Linux tarball finishes minutes later. A check landing in that gap used
+    // to cache the gap and report it as permanent.
+    return `The Linux server package for ${latest.version} has not been attached yet — `
+      + 'the release is still publishing. It will clear on the next check.';
   }
   return '';
 }
@@ -139,6 +146,12 @@ export async function check({ force = false } = {}) {
     state.error = err.message;
   }
   state.checkedAt = Date.now();
+  // A release whose platform asset is not attached yet is a passing state, so
+  // do not sit on it for the full six hours. Age the timestamp so the next
+  // poll retries within minutes and the answer corrects itself.
+  if (state.latest && !state.latest.asset && isNewer(state.latest.version, currentVersion())) {
+    state.checkedAt = Date.now() - (CHECK_INTERVAL_MS - RETRY_WHILE_PUBLISHING_MS);
+  }
   return state.latest;
 }
 
