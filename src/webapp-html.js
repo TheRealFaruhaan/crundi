@@ -596,6 +596,16 @@ export function getWebappHtml(botUsername) {
     .term-head-btn.term-close { font-size: 14px; padding: 1px 7px; }
     .term-head-btn.term-close:hover { color: var(--red); border-color: var(--red); }
     /* Armed state mirrors the chat Stop button: one click asks, the next acts. */
+    /* Upload progress in the terminal input bar. */
+    .term-upload { display: none; align-items: center; gap: 8px; flex-basis: 100%; padding: 4px 2px 0; }
+    .term-upload.on { display: flex; }
+    .term-upload .tu-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font-size: 0.72rem; color: var(--text-muted); }
+    .term-upload .tu-bar { flex: 2; height: 4px; border-radius: 999px; background: var(--bg-tertiary); overflow: hidden; }
+    .term-upload .tu-fill { display: block; height: 100%; width: 0; background: var(--accent);
+      border-radius: 999px; transition: width .15s ease; }
+    .term-upload .tu-pct { flex: none; font-size: 0.72rem; color: var(--text-muted);
+      font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
     .term-head-btn.term-close.armed {
       color: var(--red); border-color: var(--red); background: var(--red-dim);
       font-size: 11px; padding: 1px 6px;
@@ -2461,6 +2471,7 @@ export function getWebappHtml(botUsername) {
             <textarea id="term-input" class="term-input" rows="1" autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true" placeholder="Type here... (Ctrl+Enter or Send button)"></textarea>
             <button class="term-attach-btn" data-action="term-attach" title="Attach a file (uploads to crundi_attachments)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
             <input type="file" id="term-attach-input" style="display:none">
+            <div class="term-upload" id="term-upload"><span class="tu-name"></span><span class="tu-bar"><span class="tu-fill"></span></span><span class="tu-pct"></span></div>
             <button class="term-send-btn" data-action="term-send" title="Send to terminal" aria-label="Send"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
           </div>
         </div>
@@ -4540,6 +4551,10 @@ export function getWebappHtml(botUsername) {
         sessionId: t.id,
         project: t.project || currentProject,
         apiFetch,
+        // fetch() cannot report upload progress, so attachments go over XHR.
+        // The token lives here, not in the chat component, so the uploader is
+        // passed in rather than the credential.
+        apiUpload: uploadWithProgress,
         toast,
         wsSend: (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
       });
@@ -5716,22 +5731,65 @@ export function getWebappHtml(botUsername) {
       for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
       return btoa(bin);
     }
+    /**
+     * POST JSON and report how much of it has gone.
+     *
+     * XHR rather than fetch, which cannot report upload progress at all. Shared
+     * by the chat composer and the terminal input bar so both behave the same.
+     */
+    function uploadWithProgress(path, payload, onProgress) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', path);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable && onProgress) onProgress(ev.loaded / ev.total);
+        };
+        // Once the body is sent the server still has to store it; report that
+        // as sent rather than leaving the bar stuck just short of full.
+        xhr.upload.onload = () => { if (onProgress) onProgress(1); };
+        xhr.onload = () => {
+          try { resolve(JSON.parse(xhr.responseText)); }
+          catch { reject(new Error('Bad response from the server')); }
+        };
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.onabort = () => reject(new Error('Upload cancelled'));
+        xhr.send(JSON.stringify(payload));
+      });
+    }
+
+    /** Draw the input bar's upload progress. pct null hides it. */
+    function showTermUpload(name, pct) {
+      const row = document.getElementById('term-upload');
+      if (!row) return;
+      if (pct === null) { row.classList.remove('on'); return; }
+      row.classList.add('on');
+      const p = Math.max(0, Math.min(1, pct));
+      row.querySelector('.tu-name').textContent = name;
+      row.querySelector('.tu-fill').style.width = (p * 100).toFixed(0) + '%';
+      row.querySelector('.tu-pct').textContent = p >= 1 ? 'saving' : (p * 100).toFixed(0) + '%';
+    }
+
     async function uploadAttachment(file) {
       if (!file || !currentProject) return;
       const btn = document.querySelector('.term-attach-btn');
       if (btn) btn.classList.add('busy');
+      let name = file.name || ('image.' + ((file.type || 'image/png').split('/')[1] || 'png'));
+      showTermUpload(name, 0);
       try {
-        const name = file.name || ('image.' + ((file.type || 'image/png').split('/')[1] || 'png'));
         const b64 = arrayBufferToBase64(await file.arrayBuffer());
-        const r = await apiFetch('/api/attachments/upload', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: currentProject, name, data: b64 }),
-        });
-        const d = await r.json();
+        const d = await uploadWithProgress('/api/attachments/upload',
+          { project: currentProject, name, data: b64 },
+          (p) => showTermUpload(name, p));
         if (d.ok && d.path) { insertIntoTermInput(d.path); toast('Attached: ' + d.name); }
         else toast('Upload failed: ' + (d.error || '?'), 'error');
       } catch (err) { toast('Upload failed: ' + err.message, 'error'); }
-      finally { if (btn) btn.classList.remove('busy'); }
+      finally {
+        if (btn) btn.classList.remove('busy');
+        // Held briefly so a fast upload does not just flicker.
+        setTimeout(() => showTermUpload(name, null), 400);
+      }
     }
 
     // Auto-grow textarea + Ctrl+Enter to send

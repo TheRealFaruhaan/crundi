@@ -155,6 +155,14 @@
     '.cc-attach{flex:none;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0}',
     '.cc-attach:hover{color:var(--accent-hover);border-color:var(--accent)}',
     '.cc-attach.busy{opacity:.55;pointer-events:none}',
+    // Upload progress. A screenshot over a phone connection is not instant,
+    // and a dimmed paperclip does not say whether anything is happening.
+    '.cc-up{display:none;align-items:center;gap:8px;padding:4px 2px 0}',
+    '.cc-up.on{display:flex}',
+    '.cc-up-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--text-muted)}',
+    '.cc-up-bar{flex:2;height:4px;border-radius:999px;background:var(--bg-tertiary);overflow:hidden}',
+    '.cc-up-fill{display:block;height:100%;width:0;background:var(--accent);border-radius:999px;transition:width .15s ease}',
+    '.cc-up-pct{flex:none;font-size:11px;color:var(--text-muted);font-variant-numeric:tabular-nums;min-width:34px;text-align:right}',
     '.cc-attach svg{width:16px;height:16px}',
     // Queued input: one bubble however many lines were added, click to reclaim.
     '.cc-queue{margin-bottom:7px;border:1px dashed rgba(99,102,241,.55);background:rgba(99,102,241,.08);border-radius:10px;padding:7px 11px;cursor:pointer;transition:.14s}',
@@ -513,6 +521,7 @@
     var sessionId = opts.sessionId;
     var project = opts.project || '';
     var apiFetch = opts.apiFetch;
+    var apiUpload = opts.apiUpload || null;   // absent in older hosts
     var wsSend = opts.wsSend || function () {};
 
     var root = el('div', 'cc-root');
@@ -557,6 +566,17 @@
     inrow.appendChild(input);
     inrow.appendChild(actions);
     inrow.appendChild(fileInput);
+
+    // Upload progress, between the input row and the status line.
+    var upRow = el('div', 'cc-up');
+    var upName = el('span', 'cc-up-name');
+    var upBar = el('div', 'cc-up-bar');
+    var upFill = el('span', 'cc-up-fill');
+    var upPct = el('span', 'cc-up-pct');
+    upBar.appendChild(upFill);
+    upRow.appendChild(upName);
+    upRow.appendChild(upBar);
+    upRow.appendChild(upPct);
 
     var meta = el('div', 'cc-meta');
     var stateLbl = el('span', '', 'idle');
@@ -603,6 +623,7 @@
     meta.appendChild(costLbl);
 
     wrap.appendChild(inrow);
+    wrap.appendChild(upRow);
     composer.appendChild(wrap);
     composer.appendChild(meta);
     var logWrap = el('div', 'cc-logwrap');
@@ -1311,23 +1332,51 @@
       input.focus();
     }
 
+    /** Show, move, or hide the upload bar. pct null hides it. */
+    function showUpload(name, pct) {
+      if (pct === null) { upRow.classList.remove('on'); return; }
+      upRow.classList.add('on');
+      upName.textContent = name;
+      var p = Math.max(0, Math.min(1, pct));
+      upFill.style.width = (p * 100).toFixed(0) + '%';
+      // 100% while the server is still storing it would read as finished, so
+      // the last step says so instead of showing a number.
+      upPct.textContent = p >= 1 ? 'saving' : (p * 100).toFixed(0) + '%';
+    }
+
     function uploadFile(file) {
       if (!file) return;
       if (!project) { toast('No project for this chat', 'error'); return; }
       attachBtn.classList.add('busy');
       var name = file.name || ('image.' + ((file.type || 'image/png').split('/')[1] || 'png'));
+      showUpload(name, 0);
+
+      var done = function (d) {
+        if (d && d.ok && d.path) { insertPath(d.path); toast('Attached: ' + (d.name || name)); }
+        else toast('Upload failed: ' + ((d && d.error) || '?'), 'error');
+      };
+      var failed = function (err) { toast('Upload failed: ' + (err.message || err), 'error'); };
+      var always = function () {
+        attachBtn.classList.remove('busy');
+        // Leave the finished bar visible for a moment; vanishing instantly on a
+        // fast connection just flickers.
+        setTimeout(function () { showUpload(name, null); }, 400);
+      };
+
       file.arrayBuffer().then(function (buf) {
+        var payload = { project: project, name: name, data: b64(buf) };
+        if (apiUpload) {
+          return apiUpload('/api/attachments/upload', payload, function (p) { showUpload(name, p); })
+            .then(done, failed).then(always);
+        }
+        // Older host with no uploader: no progress to report, so the bar just
+        // sits at the start rather than lying about how far along it is.
         return apiFetch('/api/attachments/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ project: project, name: name, data: b64(buf) }),
-        });
-      }).then(function (r) { return r.json(); }).then(function (d) {
-        if (d && d.ok && d.path) { insertPath(d.path); toast('Attached: ' + (d.name || name)); }
-        else toast('Upload failed: ' + ((d && d.error) || '?'), 'error');
-      }).catch(function (err) {
-        toast('Upload failed: ' + (err.message || err), 'error');
-      }).then(function () { attachBtn.classList.remove('busy'); });
+          body: JSON.stringify(payload),
+        }).then(function (r) { return r.json(); }).then(done, failed).then(always);
+      }).catch(function (err) { failed(err); always(); });
     }
 
     attachBtn.addEventListener('click', function () { fileInput.click(); });
@@ -1401,8 +1450,13 @@
      * Scoped to the chat the user is actually in: several chats can be open at
      * once and every one of them would otherwise upload the same image.
      */
+    var lastPasteEvent = null;
     function onPaste(e) {
       if (destroyed) return;
+      // Bound on the element AND on window, so the same event arrives twice as
+      // it bubbles. Upload it once.
+      if (e === lastPasteEvent) return;
+      lastPasteEvent = e;
       if (!root.contains(document.activeElement) && LAST_FOCUSED !== sessionId) return;
       var files = (e.clipboardData && e.clipboardData.files) || [];
       for (var i = 0; i < files.length; i++) {
@@ -1416,7 +1470,16 @@
         }
       }
     }
+    // BOTH, deliberately.
+    //
+    // window catches a paste that does not target the field, which is common on
+    // Android. The element listener is what Google's own AI-mode box has - its
+    // "Ask anything" box is an ordinary <textarea> with paste bound directly on
+    // it, and the Samsung keyboard DOES offer it a screenshot. Chromium decides
+    // what to advertise to the keyboard from the focused editable, so a handler
+    // on the element itself is not redundant with one on window.
     window.addEventListener('paste', onPaste);
+    input.addEventListener('paste', onPaste);
     input.addEventListener('focus', function () { LAST_FOCUSED = sessionId; });
 
     // Drag a file anywhere onto the chat to attach it.
@@ -2108,6 +2171,7 @@
         if (DRAFT_PROJ_KEY && CLAIMED[DRAFT_PROJ_KEY] === sessionId) delete CLAIMED[DRAFT_PROJ_KEY];
         stopTicker(); // closing a cell must not leave an interval running
         window.removeEventListener('paste', onPaste);
+        input.removeEventListener('paste', onPaste);
         root.removeEventListener('dragover', onDragOver);
         root.removeEventListener('dragleave', onDragLeave);
         root.removeEventListener('drop', onDrop);
