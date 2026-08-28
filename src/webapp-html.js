@@ -2804,7 +2804,12 @@ export function getWebappHtml(botUsername) {
     // every running session and terminal with it, which is the user's call.
     let srvUpdatePoll = null;
 
+    // Settings was showing whatever the last six-hourly check found, with no way
+    // to refresh once an update was available. Opening the panel now asks again.
+    let srvUpdateCheckedAt = 0;
     async function renderServerUpdate(force) {
+      if (!force && Date.now() - srvUpdateCheckedAt > 60_000) force = true;
+      if (force) srvUpdateCheckedAt = Date.now();
       const body = document.getElementById('srv-update-body');
       if (!body) { clearInterval(srvUpdatePoll); srvUpdatePoll = null; return; }
       let u, log = '';
@@ -2831,13 +2836,16 @@ export function getWebappHtml(botUsername) {
               ? ('Version ' + escHtml(u.latest) + ' is available.')
               : u.error
                 ? ('Last check failed: ' + escHtml(u.error))
-                : 'Up to date.')
+                : ('Up to date' + (u.checkedAt ? ' \u00b7 checked ' + escHtml(relTime(u.checkedAt)) : '') + '.'))
         + '</div></div>';
 
       if (u.applying) {
         h += '<span style="font-size:0.75rem;color:var(--text-muted);">Working…</span>';
       } else if (u.available && !u.blocker) {
-        h += '<button type="button" style="' + primary + '" data-action="srv-update-apply">Update to ' + escHtml(u.latest) + '</button>';
+        h += '<span style="display:flex;gap:8px;align-items:center;">'
+          + '<button type="button" style="' + btn + '" data-action="srv-update-check" title="Ask GitHub again">Check</button>'
+          + '<button type="button" style="' + primary + '" data-action="srv-update-apply">Update to ' + escHtml(u.latest) + '</button>'
+          + '</span>';
       } else {
         h += '<button type="button" style="' + btn + '" data-action="srv-update-check">Check now</button>';
       }
