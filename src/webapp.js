@@ -585,6 +585,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     },
   });
 
+  // The desktop app cannot receive Web Push: Electron's Chromium has no push
+  // service behind it, so PushManager.subscribe never succeeds there. It does
+  // hold a live socket to this server though, so the notification is simply
+  // sent down that and shown natively by the app.
+  channels.register({
+    id: 'desktop',
+    label: 'Desktop app',
+    enabledByDefault: true,
+    available: () => browserMod.hostSupports('notify'),
+    unavailableReason: () => (browserMod.hasNativeHost()
+      ? 'The attached desktop app is too old to show notifications. Update it.'
+      : 'No Crundi desktop app is attached to this server.'),
+    describe: () => 'Native notifications on the machine running the desktop app.',
+    send: (text, meta = {}) => browserMod.notifyHost({
+      title: meta.title || 'Crundi',
+      body: String(text).slice(0, 400),
+    }),
+  });
+
   channels.register({
     id: 'webpush',
     label: 'Browser notifications',
@@ -593,7 +612,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     unavailableReason: () => 'No browser has been allowed to receive notifications yet.',
     describe: () => {
       const n = webPush.subscriptions().length;
-      return n ? `${n} browser${n === 1 ? '' : 's'} subscribed.` : 'Works in a browser tab and in the desktop app.';
+      return n ? `${n} browser${n === 1 ? '' : 's'} subscribed.`
+        : 'For browsers. The desktop app cannot do Web Push - use the Desktop app channel.';
     },
     send: (text, meta) => webPush.send(text, meta),
   });
@@ -2956,6 +2976,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (detachHost) return;                       // already registered
           detachHost = browserMod.setRemoteHost({
             send: (m) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'native-host', payload: m })); },
+            // What this app version can do. Absent from older clients, which is
+            // exactly what it is here to tell us.
+            capabilities: Array.isArray(msg.capabilities) ? msg.capabilities : [],
           });
           console.log('[crundi] Desktop app attached as native host');
           ws.send(JSON.stringify({ type: 'native-host-ready' }));
