@@ -10,5 +10,7 @@ crundi_attachments
 app/main.js
 app/preload.js
 app/index.html
-assets
+# NOT assets/ - the server serves the logo, favicons and PWA icons from
+# there, and without them every /assets/* is a 404 and the app cannot be
+# installed to a home screen.
 build
