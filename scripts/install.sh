@@ -244,7 +244,10 @@ User=${SERVICE_USER}
 Group=${SERVICE_USER}
 ExecStart=$(command -v node) --no-deprecation ${PREFIX}/src/index.js
 WorkingDirectory=${PREFIX}
-Restart=on-failure
+# always, not on-failure: systemd counts termination by SIGTERM as a CLEAN
+# stop, so on-failure leaves the service down when anything asks it to exit -
+# including an update restarting itself.
+Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
 Environment=HOME=${TARGET_HOME}
@@ -260,6 +263,26 @@ TimeoutStopSec=20
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+  # A system unit can normally only be managed by root, so the in-app updater
+  # finished installing and then could not restart the very service it had just
+  # replaced. This grants exactly one user the right to manage exactly one unit.
+  if [ -d /etc/polkit-1/rules.d ]; then
+    cat > /etc/polkit-1/rules.d/49-crundi.rules <<POLKIT
+// Let ${SERVICE_USER} start, stop and restart crundi.service - and nothing
+// else. Written by Crundi's installer so the in-app updater can restart the
+// server after upgrading it.
+polkit.addRule(function (action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      action.lookup("unit") == "crundi.service" &&
+      subject.user == "${SERVICE_USER}") {
+    return polkit.Result.YES;
+  }
+});
+POLKIT
+  else
+    warn "No polkit rules directory — the in-app updater will not be able to restart the service."
+  fi
 
   systemctl daemon-reload
   systemctl enable crundi.service >/dev/null 2>&1 || true
