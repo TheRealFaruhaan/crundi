@@ -140,6 +140,26 @@ for — so it would mostly produce confusing failures.
 
 ---
 
+## Skip Permissions in the container
+
+The container runs as root, and Claude Code refuses
+`--dangerously-skip-permissions` as root — it exits immediately with "cannot be
+used with root/sudo privileges for security reasons". Crundi now says so when
+you pick that mode rather than handing you a dead terminal.
+
+Claude Code's own escape hatch is `IS_SANDBOX=1`, which tells it the root it is
+running as is a container's root rather than your machine's:
+
+```env
+IS_SANDBOX=1
+```
+
+Not set for you. It disables a real check, and whether a container that mounts
+your source tree counts as a sandbox is your call, not ours. The other
+permission modes work without it.
+
+---
+
 ## The browser panel
 
 The container has no display, so the browser panel and screen capture are not

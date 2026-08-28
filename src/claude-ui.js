@@ -44,7 +44,7 @@ import { join, delimiter, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { config } from './config.js';
 import { getProject } from './project-store.js';
-import { hasExistingConversation, writeMcpConfig } from './claude-terminals.js';
+import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from './claude-terminals.js';
 
 const isWin = process.platform === 'win32';
 const MAX_MESSAGES = 2000;      // conversation entries kept per session
@@ -670,6 +670,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     const key = String(alias || '').toLowerCase();
     const project = getProject(key);
     if (!project) return { ok: false, error: `Project "${alias}" not found` };
+    // Refuse before spawning: the CLI exits 1 on this and the user would get a
+    // chat cell that dies on arrival with no explanation.
+    if (skipPermissions) {
+      const blocked = skipPermissionsBlocker();
+      if (blocked) return { ok: false, error: blocked };
+    }
     if (!existsSync(project.path)) return { ok: false, error: `Project path does not exist: ${project.path}` };
 
     const bin = resolveClaudeBin();

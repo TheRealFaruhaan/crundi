@@ -84,7 +84,7 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           mkdir -p staging/crundi-server
-          cp -r src scripts package.json package-lock.json staging/crundi-server/
+          cp -r src scripts assets package.json package-lock.json staging/crundi-server/
           mkdir -p staging/crundi-server/app
           cp -r app/vendor staging/crundi-server/app/
           cp docker/.env.example staging/crundi-server/.env.example
@@ -157,7 +157,7 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           mkdir -p staging/crundi
-          cp -r src scripts package.json package-lock.json staging/crundi/
+          cp -r src scripts assets package.json package-lock.json staging/crundi/
           mkdir -p staging/crundi/app
           cp -r app/vendor staging/crundi/app/
           cp docker/.env.example staging/crundi/.env.example

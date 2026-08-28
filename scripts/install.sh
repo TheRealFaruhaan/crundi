@@ -10,18 +10,29 @@
 #   ./scripts/install.sh                 install or upgrade, then enable at boot
 #   ./scripts/install.sh --no-service    just install; start it yourself
 #   ./scripts/install.sh --prefix DIR    somewhere other than ~/.local/share/crundi
+#   ./scripts/install.sh --as-user NAME  run as NAME (created if missing), system service
+#   ./scripts/install.sh --as-root       really install for root (see below)
+#
+# Run as root with no --as-user and it installs for a dedicated 'crundi' user
+# instead of root. That is not tidiness: Claude Code REFUSES
+# --dangerously-skip-permissions when it is running as root, so a root install
+# silently loses that mode, and everything Claude does inherits root's git
+# config and SSH keys.
 #
 # Re-running upgrades in place and keeps your data. Nothing is written outside
 # the prefix, ~/.config/crundi and the systemd user unit.
 
 set -euo pipefail
 
-PREFIX="${HOME}/.local/share/crundi"
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/crundi"
-UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+PREFIX=""
+CONFIG_DIR=""
+UNIT_DIR=""
 WITH_SERVICE=1
 ASSUME_YES=0
 MIN_NODE_MAJOR=20
+SERVICE_USER=""       # non-empty => install for that user with a SYSTEM unit
+AS_ROOT=0
+PREFIX_SET=0
 
 say()  { printf '\033[36m›\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m!\033[0m %s\n' "$*" >&2; }
@@ -29,7 +40,9 @@ die()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --prefix)     PREFIX="${2:?--prefix needs a directory}"; shift 2 ;;
+    --prefix)     PREFIX="${2:?--prefix needs a directory}"; PREFIX_SET=1; shift 2 ;;
+    --as-user)    SERVICE_USER="${2:?--as-user needs a name}"; shift 2 ;;
+    --as-root)    AS_ROOT=1; shift ;;
     --no-service) WITH_SERVICE=0; shift ;;
     -y|--yes)     ASSUME_YES=1; shift ;;
     -h|--help)    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -37,7 +50,36 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ "$(id -u)" -eq 0 ] && warn "Running as root. Crundi is meant to run as your own user — Claude will act with root's git config and SSH keys."
+# ─── Who this install belongs to ───
+#
+# An upgrade re-runs this with an explicit --prefix (that is how the in-app
+# updater works), and it runs as the service user, not root — so this only ever
+# fires on a genuine root install.
+if [ "$(id -u)" -eq 0 ] && [ -z "$SERVICE_USER" ] && [ "$AS_ROOT" -eq 0 ] && [ "$PREFIX_SET" -eq 0 ]; then
+  SERVICE_USER=crundi
+  say "Running as root — installing for a dedicated '${SERVICE_USER}' user instead."
+  say "Claude Code refuses --dangerously-skip-permissions as root, so a root install loses that mode."
+  say "Pass --as-root to override."
+fi
+
+if [ -n "$SERVICE_USER" ]; then
+  [ "$(id -u)" -eq 0 ] || die "--as-user needs root, so it can create the user and write a system unit."
+  if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+    say "Creating user ${SERVICE_USER}"
+    useradd -m -s /bin/bash -c 'Crundi server' "$SERVICE_USER"
+  fi
+  TARGET_HOME="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
+  [ -n "$TARGET_HOME" ] || die "Could not find a home directory for ${SERVICE_USER}."
+  [ "$PREFIX_SET" -eq 1 ] || PREFIX="${TARGET_HOME}/.local/share/crundi"
+  CONFIG_DIR="${TARGET_HOME}/.config/crundi"
+  UNIT_DIR=/etc/systemd/system
+else
+  TARGET_HOME="$HOME"
+  [ "$PREFIX_SET" -eq 1 ] || PREFIX="${HOME}/.local/share/crundi"
+  CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/crundi"
+  UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  [ "$(id -u)" -eq 0 ] && warn "Installing for root. Claude will act with root's git config and SSH keys, and --dangerously-skip-permissions will not work."
+fi
 
 # ─── Source ───
 # Works both from a checkout and from the release tarball, which has the same
@@ -144,7 +186,7 @@ mkdir -p "$PREFIX" "$CONFIG_DIR"
 # Copy rather than symlink: an upgrade should not break a running server by
 # swapping files under it, and the source directory may well be a git checkout
 # you keep working in.
-for item in src scripts package.json package-lock.json; do
+for item in src scripts assets package.json package-lock.json; do
   [ -e "$SRC/$item" ] && cp -r "$SRC/$item" "$PREFIX/"
 done
 mkdir -p "$PREFIX/app"
@@ -176,7 +218,60 @@ if [ "$WITH_SERVICE" -eq 1 ]; then
   fi
 fi
 
-if [ "$WITH_SERVICE" -eq 1 ]; then
+# Everything under the prefix and the config dir was written by root; hand it
+# to the user that will actually run it, or the service cannot read its own
+# certificate, let alone write history.
+if [ -n "$SERVICE_USER" ]; then
+  say "Handing ${PREFIX} and ${CONFIG_DIR} to ${SERVICE_USER}"
+  mkdir -p "$CONFIG_DIR"
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "$PREFIX" "$CONFIG_DIR"
+fi
+
+# A system unit running as the service user. Not a user unit: those need
+# lingering to survive logout, and there is no login session here to linger.
+if [ "$WITH_SERVICE" -eq 1 ] && [ -n "$SERVICE_USER" ]; then
+  mkdir -p "$UNIT_DIR"
+  cat > "$UNIT_DIR/crundi.service" <<UNIT
+[Unit]
+Description=Crundi
+Documentation=https://github.com/TheRealFaruhaan/crundi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+ExecStart=$(command -v node) --no-deprecation ${PREFIX}/src/index.js
+WorkingDirectory=${PREFIX}
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=HOME=${TARGET_HOME}
+Environment=PATH=${TARGET_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin
+# TLS_MODE binds 443 and 80, which are privileged. This grants exactly that and
+# nothing else, so the server never has to run as root to answer on them.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+# Long-running services Crundi starts are children of this unit; without this
+# they are killed the moment the unit restarts.
+KillMode=mixed
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  systemctl daemon-reload
+  systemctl enable crundi.service >/dev/null 2>&1 || true
+  systemctl restart crundi.service
+  sleep 2
+  if systemctl is-active --quiet crundi.service; then
+    say "Service is running as ${SERVICE_USER}"
+  else
+    warn "Service did not start. Logs:  journalctl -u crundi -n 40 --no-pager"
+  fi
+
+elif [ "$WITH_SERVICE" -eq 1 ]; then
   mkdir -p "$UNIT_DIR"
   cat > "$UNIT_DIR/crundi.service" <<UNIT
 [Unit]
@@ -244,7 +339,20 @@ cat <<DONE
 
 DONE
 
-if [ "$WITH_SERVICE" -eq 1 ]; then
+if [ "$WITH_SERVICE" -eq 1 ] && [ -n "$SERVICE_USER" ]; then
+cat <<DONE
+    Runs as     ${SERVICE_USER}
+    Status      systemctl status crundi
+    Logs        journalctl -u crundi -f
+    Stop        systemctl stop crundi
+    Upgrade     re-run this script, or use Settings in the app
+
+  Claude Code logs in per user, so sign it in as the one that runs it:
+
+    sudo -u ${SERVICE_USER} -H claude
+
+DONE
+elif [ "$WITH_SERVICE" -eq 1 ]; then
 cat <<DONE
     Status      systemctl --user status crundi
     Logs        journalctl --user -u crundi -f

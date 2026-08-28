@@ -2786,6 +2786,90 @@ export function getWebappHtml(botUsername) {
         : '<button class="kanban-btn" data-action="update-check">Check now</button>';
       return status + action;
     }
+    // ─── Server updates ───
+    // The desktop app has electron-updater; a server does not, so it asks
+    // GitHub. Applying is never automatic: it restarts the server and takes
+    // every running session and terminal with it, which is the user's call.
+    let srvUpdatePoll = null;
+
+    async function renderServerUpdate(force) {
+      const body = document.getElementById('srv-update-body');
+      if (!body) { clearInterval(srvUpdatePoll); srvUpdatePoll = null; return; }
+      let u, log = '';
+      try {
+        const r = await apiFetch('/api/update/status' + (force ? '?force=1' : ''));
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        u = d.update; log = d.log || '';
+      } catch (err) {
+        body.innerHTML = '<span style="color:var(--text-muted);">Could not check for updates: ' + escHtml(err.message) + '</span>';
+        return;
+      }
+      const btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);'
+        + 'background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12.5px;white-space:nowrap;';
+      const primary = 'padding:8px 18px;border-radius:6px;border:none;background:var(--accent);'
+        + 'color:#fff;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;';
+
+      let h = '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+        + '<div><div style="font-size:0.86rem;color:var(--text-primary);">Version ' + escHtml(u.current) + '</div>'
+        + '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">'
+        + (u.applying
+            ? 'Updating… the server will restart on its own.'
+            : u.available
+              ? ('Version ' + escHtml(u.latest) + ' is available.')
+              : u.error
+                ? ('Last check failed: ' + escHtml(u.error))
+                : 'Up to date.')
+        + '</div></div>';
+
+      if (u.applying) {
+        h += '<span style="font-size:0.75rem;color:var(--text-muted);">Working…</span>';
+      } else if (u.available && !u.blocker) {
+        h += '<button type="button" style="' + primary + '" data-action="srv-update-apply">Update to ' + escHtml(u.latest) + '</button>';
+      } else {
+        h += '<button type="button" style="' + btn + '" data-action="srv-update-check">Check now</button>';
+      }
+      h += '</div>';
+
+      // Say plainly why the button is not there, rather than hiding the fact
+      // that an update exists and this install cannot take it.
+      if (u.available && u.blocker) {
+        h += '<p style="font-size:0.72rem;color:var(--yellow, #eab308);margin-top:10px;">' + escHtml(u.blocker) + '</p>';
+      }
+      if (u.available && u.notesUrl) {
+        h += '<p style="font-size:0.72rem;margin-top:8px;"><a href="' + escHtml(u.notesUrl) + '" target="_blank" rel="noopener" style="color:var(--accent);">Release notes</a></p>';
+      }
+      if (u.applying && log) {
+        h += '<pre style="margin-top:10px;padding:8px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border);'
+          + 'font-size:0.68rem;color:var(--text-muted);max-height:150px;overflow:auto;white-space:pre-wrap;">'
+          + escHtml(log.slice(-1200)) + '</pre>';
+      }
+      body.innerHTML = h;
+
+      // While an update runs the server restarts underneath us, so keep polling
+      // until it answers again with a new version.
+      if (u.applying && !srvUpdatePoll) {
+        srvUpdatePoll = setInterval(() => renderServerUpdate(), 5000);
+      } else if (!u.applying && srvUpdatePoll) {
+        clearInterval(srvUpdatePoll); srvUpdatePoll = null;
+      }
+    }
+
+    async function applyServerUpdate() {
+      if (!confirm('Update the server now?\\n\\nThis restarts Crundi when it finishes, which ends every running chat and terminal on it.')) return;
+      const body = document.getElementById('srv-update-body');
+      if (body) body.innerHTML = '<span style="color:var(--text-muted);">Starting the update…</span>';
+      try {
+        const r = await apiFetch('/api/update/apply', { method: 'POST' });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Could not start the update', 'error'); renderServerUpdate(); return; }
+        toast('Updating to ' + d.version, 'success');
+      } catch (err) {
+        toast('Could not start the update: ' + err.message, 'error');
+      }
+      renderServerUpdate();
+    }
+
     function buildUpdatesSection() {
       const us = updateState;
       const sw = (on, act, title) => '<button type="button" class="sw' + (on ? ' on' : '') + '" data-action="' + act + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '" title="' + title + '"><span class="sw-knob"></span></button>';
@@ -7907,8 +7991,14 @@ export function getWebappHtml(botUsername) {
 
         // Updates section — desktop app only (driven by Electron's auto-updater).
         if (window.api && window.api.getUpdateState) html += buildUpdatesSection();
+        // A server has no electron-updater, so it asks GitHub instead. Rendered
+        // as a placeholder and filled in after, because the check is a network
+        // call and Settings should not wait on GitHub to draw.
+        else html += '<div class="info-section" id="srv-update-section"><h4>Server</h4>'
+          + '<div id="srv-update-body" style="font-size:0.8rem;color:var(--text-muted);">Checking for updates…</div></div>';
 
         panel.innerHTML = html;
+        if (!(window.api && window.api.getUpdateState)) renderServerUpdate();
       } catch (err) {
         panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(err.message) + '</p></div>';
       }
@@ -8002,6 +8092,12 @@ export function getWebappHtml(botUsername) {
         case 'term-newline-key':
           setTermNewlineKey(d.val);
           $$('#set-newline-key button').forEach(b => b.classList.toggle('active', b.dataset.val === termNewlineKey));
+          break;
+        case 'srv-update-check':
+          renderServerUpdate(true);
+          break;
+        case 'srv-update-apply':
+          applyServerUpdate();
           break;
         case 'update-toggle':
           if (window.api && window.api.setAutoUpdate) window.api.setAutoUpdate(!updateState.enabled).then(applyUpdateState).catch(() => {});

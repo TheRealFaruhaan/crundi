@@ -234,6 +234,25 @@ export function hasExistingConversation(projectPath) {
   }
 }
 
+/**
+ * Why --dangerously-skip-permissions cannot be used here, or '' when it can.
+ *
+ * Claude Code refuses that flag outright when running as root: it exits 1 with
+ * "cannot be used with root/sudo privileges for security reasons" before doing
+ * anything. Spawning anyway hands the user a terminal that is already dead, so
+ * the launch is refused up front with something they can act on.
+ *
+ * IS_SANDBOX=1 is Claude Code's own escape hatch for containers, where root is
+ * ordinary. We honour it rather than second-guessing it, but never set it.
+ */
+export function skipPermissionsBlocker() {
+  if (process.platform === 'win32') return '';
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) return '';
+  if (process.env.IS_SANDBOX === '1') return '';
+  return 'Claude Code refuses --dangerously-skip-permissions as root. '
+    + 'Run Crundi as a normal user, or set IS_SANDBOX=1 if this really is a container.';
+}
+
 /** 16-char hex id for a terminal (project-independent). */
 function genTermId() {
   let s = '';
@@ -298,6 +317,10 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     effort = '',                       // --effort <level>; '' = omit
   } = {}) {
     if (!pty) return { ok: false, error: 'node-pty is not available. Install it with: npm install node-pty' };
+    if (skipPermissions && !shellOnly) {
+      const blocked = skipPermissionsBlocker();
+      if (blocked) return { ok: false, error: blocked };
+    }
 
     const key = alias.toLowerCase();
     const project = getProject(key);
