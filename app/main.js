@@ -8,7 +8,7 @@
  *   4. Setup wizard for first-time .env configuration
  */
 
-import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard } from 'electron';
+import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification } from 'electron';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
@@ -1142,9 +1142,33 @@ function browserActionTimeout(msg) {
 // Reply channel is a parameter, not a hard-wired botProcess.send: the same
 // handlers now serve a server we spawned ourselves AND a remote server that has
 // borrowed this app as its native host.
+/**
+ * A notification pushed from the server.
+ *
+ * This exists because the desktop app cannot receive Web Push - Electron's
+ * Chromium has no push service - so the server sends it down the socket the
+ * app already holds and it is shown natively here.
+ */
+function showServerNotification(msg) {
+  try {
+    if (!Notification.isSupported()) { appendLog('[notify] not supported on this OS'); return; }
+    const n = new Notification({
+      title: String(msg.title || 'Crundi').slice(0, 120),
+      body: String(msg.body || '').slice(0, 400),
+    });
+    n.on('click', () => { try { showWindow(); } catch { /* tray-only is fine */ } });
+    n.show();
+  } catch (err) {
+    appendLog(`[notify] could not show: ${err?.message || err}`);
+  }
+}
+
 function handleBotMessage(msg, reply) {
   if (!msg || !msg.type) return;
   const send = reply || ((payload) => botProcess?.send(payload));
+
+  // Fire-and-forget: no requestId, nothing to reply to.
+  if (msg.type === 'notify') { showServerNotification(msg); return; }
 
   // Terminal IPC
   const termHandler = terminalIpcHandlers[msg.type];
@@ -1178,7 +1202,11 @@ function handleBotMessage(msg, reply) {
  * here would silently run commands on the wrong machine.
  */
 function handleNativeHostMessage(msg, reply) {
-  if (!msg || !msg.type || !msg.requestId) return;
+  if (!msg || !msg.type) return;
+  // Notifications carry no requestId and are not browser calls, so they have
+  // to be let through before the request-shaped checks below.
+  if (msg.type === 'notify') { showServerNotification(msg); return; }
+  if (!msg.requestId) return;
   if (!browserIpcHandlers[msg.type]) return;
   handleBotMessage(msg, reply);
 }
@@ -1245,7 +1273,9 @@ function connectNativeHost() {
     // Superseded while connecting: close quietly and let the live one register.
     if (!isCurrent()) { try { ws.close(); } catch { /* ignore */ } return; }
     appendLog('[nativehost] connected — registering as native host');
-    try { ws.send(JSON.stringify({ type: 'register-native-host' })); }
+    // Tell the server what this build can do, so it does not offer the user a
+    // notification channel that an older app would silently drop.
+    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify'] })); }
     catch (err) { appendLog(`[nativehost] register failed: ${err.message}`); }
   });
   ws.on('message', (raw) => {

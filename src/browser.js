@@ -88,6 +88,32 @@ export function hasNativeHost() {
   return hasParentIpc() || !!remoteHost;
 }
 
+/**
+ * Does the attached app support a given feature?
+ *
+ * An older client is attached and answering browser calls quite happily, but
+ * silently drops anything it does not know - so "a host is attached" is not the
+ * same question as "this will arrive". A remote client announces what it can do
+ * when it registers; the parent process in an all-in-one install is the same
+ * build as this server, so it can be taken at its word.
+ */
+export function hostSupports(feature) {
+  if (hasParentIpc()) return true;
+  return !!(remoteHost && Array.isArray(remoteHost.capabilities)
+    && remoteHost.capabilities.indexOf(feature) !== -1);
+}
+
+/**
+ * Fire-and-forget message to whichever desktop app is attached: the parent
+ * process in an all-in-one install, or a remote client over the websocket.
+ *
+ * Not a request - there is no requestId and no reply. Returns false when no
+ * app is attached, so a caller can report that rather than pretending it sent.
+ */
+export function notifyHost(payload) {
+  return postToHost({ type: 'notify', ...payload });
+}
+
 /** Deliver a reply from a remote host. Shares the parent-IPC handler. */
 export function handleHostMessage(msg) {
   handleIpcMessage(msg);
