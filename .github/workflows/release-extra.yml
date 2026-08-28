@@ -222,7 +222,9 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
-          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          # A manual run's ref is a BRANCH, so gating on the ref alone meant a
+          # re-run built the image, pushed nothing, and still reported success.
+          push: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish }}
           tags: |
             ghcr.io/${{ env.OWNER }}/crundi:${{ env.VERSION }}
             ghcr.io/${{ env.OWNER }}/crundi:latest
