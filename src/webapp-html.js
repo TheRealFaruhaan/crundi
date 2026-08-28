@@ -1509,6 +1509,8 @@ export function getWebappHtml(botUsername) {
     /* Notification matrix — a control-panel grid of tri-state "lamps". Each event
        is a row; the active mode lights up in its column colour (green=Always,
        indigo=When Away, dim=Never) so the whole board reads at a glance. */
+    .seg-expose { padding: 2px; gap: 2px; }
+    .seg-expose button { padding: 4px 10px; font-size: 0.72rem; }
     .seg-pref-row { display: flex; align-items: flex-start; gap: 14px; }
     .seg-pref-row > div:first-child { flex: 1; min-width: 0; }
     .set-tgl-lbl { color: var(--text-primary); font-size: 0.85rem; margin-bottom: 4px; }
@@ -7218,11 +7220,33 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Services ───
+    // How a port is exposed is a property of the port, not of the service, so
+    // forwards live in their own store and are matched back by port here.
+    let forwards = [];
+    let forwardOpts = null;
+
+    async function loadForwards() {
+      try {
+        const [fr, or_] = await Promise.all([
+          apiFetch('/api/forwards'),
+          forwardOpts ? Promise.resolve(null) : apiFetch('/api/forwards/options'),
+        ]);
+        const fd = await fr.json();
+        forwards = (fd && fd.forwards) || [];
+        if (or_) { const od = await or_.json(); if (od && od.ok) forwardOpts = od; }
+      } catch { /* the card falls back to tunnel-only */ }
+    }
+
+    function forwardForPort(port) {
+      return forwards.find(f => Number(f.port) === Number(port)) || null;
+    }
+
     async function loadServices() {
       try {
         const res = await apiFetch('/api/services');
         const data = await res.json();
         services = data.services || [];
+        await loadForwards();
         renderServices();
         renderProjects(); // refresh sidebar heartbeats
       } catch (err) {
@@ -7246,7 +7270,9 @@ export function getWebappHtml(botUsername) {
         panel.innerHTML = toolbar + '<div class="services-empty">'
           + '<div class="icon">' + ic('server') + '</div>'
           + '<p>No services registered' + (currentProject ? ' for this project' : '') + '</p>'
-          + '</div>';
+          + '</div>'
+          + '<div id="forwards-section"></div>';
+        renderForwards();
         return;
       }
 
@@ -7259,19 +7285,43 @@ export function getWebappHtml(botUsername) {
         const tPort = s.tunnelPort || 0;
         const tEnabled = !!s.tunnelEnabled;
         const tStatus = s.tunnelStatus;
+        // Three ways to reach a port, chosen with the same segmented control as
+        // Settings. A tunnel is a separate cloudflared process with a random
+        // hostname; the other two are this server answering on its own
+        // certificate, which is the whole point of having a wildcard.
+        const fwd = forwardForPort(tPort);
+        const mode = fwd ? fwd.mode : (tEnabled ? 'tunnel' : '');
+        const subOpt = forwardOpts && (forwardOpts.choices || []).find(c => c.id === 'subdomain');
+        const subAvailable = !!(subOpt && subOpt.available);
+        const subDomain = (subOpt && subOpt.suggestedDomain) || (forwardOpts && forwardOpts.domain) || '';
+
         let tunnelRow = '';
-        if (tPort > 0 || tEnabled) {
+        if (tPort > 0 || tEnabled || fwd) {
           let badge;
-          if (tEnabled && s.tunnelUrl && tStatus === 'active') badge = '<a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>';
+          if (fwd) badge = '<a class="tunnel-link" href="' + escHtml(fwd.url) + '" target="_blank">' + escHtml(fwd.url) + '</a>';
+          else if (tEnabled && s.tunnelUrl && tStatus === 'active') badge = '<a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>';
           else if (tEnabled && tStatus === 'connecting') badge = '<span class="svc-tunnel-badge" style="color:var(--yellow)">starting…</span>';
           else if (tEnabled && tStatus === 'error') badge = '<span class="svc-tunnel-badge" style="color:var(--red)">error</span>';
           else if (tEnabled) badge = '<span class="svc-tunnel-badge">idle</span>';
           else badge = '<span class="svc-tunnel-badge">off</span>';
+
+          const seg = (id, label, on, title) => '<button type="button" data-action="svc-expose"'
+            + ' data-key="' + k + '" data-port="' + tPort + '" data-mode="' + id + '"'
+            + (on ? ' class="active"' : '') + ' title="' + escHtml(title) + '">' + label + '</button>';
+
           tunnelRow = '<div class="svc-tunnel">'
             + '<span class="svc-tunnel-ic">' + ic('globe') + '</span>'
             + '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '">' + (tPort > 0 ? 'Port ' + tPort : 'Set port') + '</button>'
-            + '<button class="svc-btn' + (tEnabled ? ' on' : '') + '" data-action="svc-tunnel-toggle" data-key="' + k + '" data-port="' + tPort + '" data-enabled="' + (tEnabled ? '1' : '0') + '"' + (tPort > 0 ? '' : ' title="Set a tunnel port first"') + '>' + ic('globe') + (tEnabled ? 'On' : 'Off') + '</button>'
+            + '<div class="seg-pref seg-expose">'
+            + seg('off', 'Off', !mode, 'Not reachable from outside')
+            + seg('tunnel', 'Tunnel', mode === 'tunnel', 'A cloudflared process with a random trycloudflare.com hostname')
+            + seg('subdomain', 'Subdomain', mode === 'subdomain',
+                subAvailable ? 'name.' + subDomain + ' — served by this server on its own certificate'
+                             : 'Needs a domain: set TLS_DOMAIN or FORWARD_DOMAIN')
+            + seg('path', 'Path', mode === 'path', 'A path on this server: /tunnel/name/')
+            + '</div>'
             + badge
+            + (fwd ? '<button class="svc-btn danger" data-action="fwd-remove" data-host="' + escHtml(fwd.host) + '" title="Remove this forward">' + ic('trash') + '</button>' : '')
             + '</div>';
         }
         return '<div class="svc-card" data-svc-key="' + k + '">'
@@ -7295,6 +7345,82 @@ export function getWebappHtml(botUsername) {
           + '<div class="svc-logs" id="svc-logs-' + k + '"></div>'
           + '</div>';
       }).join('');
+    }
+
+    // Switching how a port is exposed. Only one route at a time: leaving two
+    // live would mean two public URLs for one port, one of which the user did
+    // not think they had.
+    async function exposeService(key, port, mode) {
+      if (!port) { toast('Set a port first', 'error'); return; }
+      const existing = forwardForPort(port);
+
+      // Tear down whatever is there now, whichever kind it is.
+      const clear = async () => {
+        if (existing) {
+          await apiFetch('/api/forwards/' + encodeURIComponent(existing.host), { method: 'DELETE' }).catch(() => {});
+        }
+        await apiFetch('/api/services/' + encodeURIComponent(key), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'tunnel', enabled: false, port }),
+        }).catch(() => {});
+      };
+
+      try {
+        if (mode === 'off') {
+          await clear();
+          toast('No longer exposed', 'success');
+        } else if (mode === 'tunnel') {
+          await clear();
+          const r = await apiFetch('/api/services/' + encodeURIComponent(key), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'tunnel', enabled: true, port }),
+          });
+          const d = await r.json();
+          if (!d.ok) { toast(d.error || 'Could not start the tunnel', 'error'); return; }
+          toast('Starting a tunnel', 'success');
+        } else {
+          const sub = forwardOpts && (forwardOpts.choices || []).find(c => c.id === 'subdomain');
+          if (mode === 'subdomain' && !(sub && sub.available)) {
+            toast('No domain is configured. Set TLS_DOMAIN or FORWARD_DOMAIN, or use Path.', 'error');
+            return;
+          }
+          const dom = (sub && sub.suggestedDomain) || (forwardOpts && forwardOpts.domain) || '';
+          const suggestion = (existing && existing.host) || key;
+          const name = prompt(mode === 'subdomain'
+            ? 'Name for the subdomain:\\n\\n  <name>.' + dom
+            : 'Name for the path:\\n\\n  /tunnel/<name>/', suggestion);
+          if (name === null) return;
+          const clean = String(name).trim();
+          if (!clean) { toast('A name is required', 'error'); return; }
+          await clear();
+          const r = await apiFetch('/api/forwards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: clean, port, mode }),
+          });
+          const d = await r.json();
+          if (!d.ok) { toast(d.error || 'Could not create the forward', 'error'); return; }
+          toast('Reachable at ' + (d.forward && d.forward.url ? d.forward.url : clean), 'success');
+        }
+      } catch (err) {
+        toast('Failed: ' + err.message, 'error');
+      }
+      await loadServices();
+    }
+
+    async function removeForward(host) {
+      if (!host) return;
+      try {
+        const r = await apiFetch('/api/forwards/' + encodeURIComponent(host), { method: 'DELETE' });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Could not remove it', 'error'); return; }
+        toast('Removed', 'success');
+      } catch (err) {
+        toast('Failed: ' + err.message, 'error');
+      }
+      await loadServices();
     }
 
     async function svcAction(action, key) {
@@ -8121,6 +8247,12 @@ export function getWebappHtml(botUsername) {
         case 'term-newline-key':
           setTermNewlineKey(d.val);
           $$('#set-newline-key button').forEach(b => b.classList.toggle('active', b.dataset.val === termNewlineKey));
+          break;
+        case 'svc-expose':
+          exposeService(d.key, parseInt(d.port || '0', 10), d.mode);
+          break;
+        case 'fwd-remove':
+          removeForward(d.host);
           break;
         case 'srv-update-check':
           renderServerUpdate(true);
