@@ -1,0 +1,9 @@
+# Shell scripts and Dockerfiles are executed by Linux, which treats a CR as
+# part of the command. A CRLF install.sh fails with "$'\r': command not found"
+# on line 1 and nothing about the message points at line endings. Checking
+# these out with LF on every platform makes that impossible.
+*.sh        text eol=lf
+*.bash      text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
