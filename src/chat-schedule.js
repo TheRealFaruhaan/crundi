@@ -84,10 +84,29 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
     return now;
   }
 
+  /**
+   * When the current 5-hour window ends, as a timestamp - or null when there
+   * is no open window.
+   *
+   * The upstream value carries microseconds that differ on EVERY poll for the
+   * same window:
+   *
+   *   2026-08-28T21:40:00.297562+00:00
+   *   2026-08-28T21:40:00.379392+00:00
+   *   2026-08-28T21:40:00.100972+00:00
+   *
+   * It used to be compared as a raw string, so every poll looked like a
+   * rollover and anything waiting on the limit reset fired on the next tick
+   * instead of at the reset. Parsed to an instant here so the caller can ask
+   * whether it has passed, rather than whether it changed.
+   */
   function currentReset() {
     try {
       const u = getLatestUsage ? getLatestUsage() : null;
-      return (u && u.ok && u.fiveHour && u.fiveHour.resetsAt) || null;
+      const raw = (u && u.ok && u.fiveHour && u.fiveHour.resetsAt) || null;
+      if (!raw) return null;
+      const ms = Date.parse(raw);
+      return Number.isFinite(ms) ? ms : null;
     } catch { return null; }
   }
 
@@ -196,10 +215,26 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
     // Detect a window rollover as a change in the reported reset time. Watching
     // for the clock to pass a boundary would miss it whenever the process was
     // asleep or the poll landed on the wrong side of it.
+    // ONE condition, and it must be provable: we observed a window ending at T,
+    // and the clock is now past T. Nothing here infers a reset from the reported
+    // value moving - that is what fired this early in the first place, and a
+    // value that jumps could always be the API revising an open window rather
+    // than a window closing. This cannot fire before the reset: it fires only
+    // once the end we recorded is genuinely in the past.
+    //
+    // The limit warmer has always compared the instant to the clock
+    // (resetsAt > now) rather than watching for changes, which is exactly why
+    // it was never affected.
+    //
+    // Being late is acceptable here; being early is not. A stale poll or a
+    // sleeping process only delays this, because the condition stays true until
+    // a newer window replaces it.
     const reset = currentReset();
-    let rolled = false;
-    if (reset && seenReset && reset !== seenReset) rolled = true;
-    if (reset && reset !== seenReset) { seenReset = reset; save(); }
+    const rolled = !!(seenReset && now >= seenReset);
+    // Track the newest value seen, so jitter downwards cannot rearm it.
+    if (reset === null || seenReset === null || reset > seenReset) {
+      if (reset !== seenReset) { seenReset = reset; save(); }
+    }
 
     let changed = false;
     for (const it of items) {

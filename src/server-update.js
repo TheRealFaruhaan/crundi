@@ -30,7 +30,7 @@ const API = `https://api.github.com/repos/${REPO}/releases/latest`;
 // inside that even with several servers behind one address, and a release is
 // not something you need to hear about within the minute.
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const MIN_RECHECK_MS = 60 * 1000;          // floor for a forced check
+const MIN_RECHECK_MS = 5 * 1000;           // anti-burst floor for a forced check
 
 let state = {
   checkedAt: 0,
@@ -114,6 +114,9 @@ export function updateBlocker(latest) {
 export async function check({ force = false } = {}) {
   const age = Date.now() - state.checkedAt;
   if (!force && age < CHECK_INTERVAL_MS && state.latest) return state.latest;
+  // A forced check still gets an anti-burst floor, but a few seconds - not a
+  // minute. Someone pressing "check" wants an answer, and someone about to
+  // install wants the real latest.
   if (force && age < MIN_RECHECK_MS && state.latest) return state.latest;
 
   try {
@@ -164,7 +167,13 @@ export function status() {
  * which kills this process. A child in our own process group would die with it
  * halfway through, leaving a half-written install.
  */
-export function apply() {
+export async function apply() {
+  // ALWAYS re-check before downloading. state.latest can be hours old - the
+  // interval is six hours - and installing whatever was newest last time we
+  // looked means "update" can fetch a version that is no longer the latest, or
+  // one already installed. Ask GitHub now, then install what it says.
+  await check({ force: true }).catch(() => { /* fall back to what we have */ });
+
   const latest = state.latest;
   if (!latest) return { ok: false, error: 'No release information yet — check for updates first.' };
   if (!isNewer(latest.version, currentVersion())) return { ok: false, error: 'Already up to date.' };
