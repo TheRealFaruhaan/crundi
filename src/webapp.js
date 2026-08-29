@@ -12,8 +12,8 @@
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import * as tls from './tls.js';
-import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomBytes, createHash } from 'node:crypto';
 import { basename, join, dirname, resolve, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
@@ -245,6 +245,55 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // whole family is revoked rather than just that token.
   const refreshTokens = new Map();
 
+  // Refresh tokens outlive the process, or every restart logs everyone out -
+  // which on a server you reach from a phone means finding a terminal. Only the
+  // REFRESH tokens are persisted: access tokens last 15 minutes and the client
+  // renews on a 401 by itself, so this restores the login without putting a
+  // long-lived bearer token on disk. 0600, same as the credentials themselves.
+  const sessionFile = join(config.dataDir, 'sessions.json');
+
+  /**
+   * Would anything bring this process back if it stopped?
+   *
+   * systemd sets INVOCATION_ID for the processes it starts. Without a manager,
+   * "restart" would just be "stop", so the button is not offered at all rather
+   * than taking the server down on someone who cannot reach a terminal - which
+   * is the exact situation the button exists for.
+   */
+  function canRestart() {
+    return !!process.env.INVOCATION_ID && !process.versions.electron;
+  }
+
+  function saveSessions() {
+    try {
+      const now = Date.now();
+      const out = [];
+      for (const [t, e] of refreshTokens) if (now < e.expiresAt) out.push([t, e]);
+      const tmp = sessionFile + '.tmp';
+      writeFileSync(tmp, JSON.stringify({ refreshTokens: out }), { mode: 0o600 });
+      renameSync(tmp, sessionFile);
+    } catch (err) {
+      // Not fatal: the worst case is the old behaviour, a logout on restart.
+      console.warn('[webapp] Could not save sessions:', err.message);
+    }
+  }
+
+  function loadSessions() {
+    try {
+      if (!existsSync(sessionFile)) return;
+      const d = JSON.parse(readFileSync(sessionFile, 'utf-8'));
+      const now = Date.now();
+      let restored = 0;
+      for (const [t, e] of (d.refreshTokens || [])) {
+        if (e && e.expiresAt > now) { refreshTokens.set(t, e); restored++; }
+      }
+      if (restored) console.log(`[webapp] Restored ${restored} sign-in(s) across the restart`);
+    } catch (err) {
+      console.warn('[webapp] Could not read stored sessions:', err.message);
+    }
+  }
+  loadSessions();
+
   // Temporary file shares: token → { filePath, filename, expiresAt }
   const sharedFiles = new Map();
   let shareCleanupTimer = null;
@@ -317,6 +366,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   function revokeFamily(familyId) {
     for (const [t, e] of tokens) if (e.familyId === familyId) tokens.delete(t);
     for (const [t, e] of refreshTokens) if (e.familyId === familyId) refreshTokens.delete(t);
+    saveSessions();   // a revoked login must not come back on restart
   }
 
   /**
@@ -331,6 +381,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const refreshToken = randomBytes(32).toString('hex');
     tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS });
     refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false });
+    saveSessions();
     return { token, refreshToken, expiresIn: Math.floor(ACCESS_TTL_MS / 1000) };
   }
 
@@ -359,6 +410,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // from an unknown token and can trip the revocation above. Swept once it
     // passes expiresAt.
     entry.used = true;
+    // createSession saves, which also records this one as spent - so a replay
+    // after a restart is still caught and still revokes the family.
     return { ok: true, ...createSession(entry.username, entry.familyId) };
   }
 
@@ -367,6 +420,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const now = Date.now();
     for (const [t, e] of tokens) if (now >= e.expiresAt) tokens.delete(t);
     for (const [t, e] of refreshTokens) if (now >= e.expiresAt) refreshTokens.delete(t);
+    saveSessions();
   }
   const tokenSweepTimer = setInterval(sweepTokens, 60 * 60 * 1000);
   if (tokenSweepTimer.unref) tokenSweepTimer.unref();
@@ -1972,7 +2026,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/update/status' && req.method === 'GET') {
       const force = /[?&]force=1/.test(req.url || '');
       if (force) await serverUpdate.check({ force: true }).catch(() => {});
-      return json(res, { ok: true, update: serverUpdate.status(), log: serverUpdate.readLog() });
+      return json(res, { ok: true, update: serverUpdate.status(), log: serverUpdate.readLog(), canRestart: canRestart() });
+    }
+
+    // ─── Restart ───
+    // Several settings only take effect on a restart (the Telegram token, TLS,
+    // ports), and on a server reached from a phone there is otherwise no way to
+    // do it. Offered only when something will actually bring the process back.
+    if (path === '/api/restart' && req.method === 'POST') {
+      if (!canRestart()) {
+        return json(res, {
+          ok: false,
+          error: 'This install is not managed by a service manager, so stopping it would leave it stopped. Restart it the way you started it.',
+        }, 400);
+      }
+      // Answer BEFORE going away, or the caller sees a dropped connection and
+      // cannot tell a restart from a crash.
+      json(res, { ok: true, message: 'Restarting. This page will reconnect on its own.' });
+      setTimeout(() => {
+        console.log('[crundi] Restart requested from Settings');
+        // systemctl when it is permitted (the installer grants exactly this via
+        // polkit); otherwise exit and let the unit's Restart=always do it.
+        const child = spawn('sh', ['-c',
+          'systemctl restart crundi 2>/dev/null || systemctl --user restart crundi 2>/dev/null || kill -TERM ' + process.pid],
+          { detached: true, stdio: 'ignore' });
+        child.unref();
+      }, 250);
+      return;
     }
 
     if (path === '/api/update/apply' && req.method === 'POST') {
