@@ -30,7 +30,11 @@ directories:
   # dist/win-unpacked, and the second build fails renaming an electron.exe the
   # first one already renamed.
   output: dist/client
-artifactName: ${productName}-Setup-${version}.${ext}
+# No space in the filename. productName is "Crundi Client", and GitHub turns
+# the space into a dot in the asset name while electron-builder writes a hyphen
+# into the update manifest - so the updater asked for a file that did not exist
+# and the download 404'd. Spelled out here so the two always agree.
+artifactName: Crundi-Client-Setup-${version}.${ext}
 
 # A channel of its own, so this build publishes client.yml instead of
 # latest.yml. Both installers go to the SAME GitHub release, so without this

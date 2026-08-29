@@ -62,8 +62,8 @@ jobs:
           # The .yml is the update manifest: without it the installed client has
           # nothing of its own to read and falls back to the all-in-one's.
           path: |
-            dist/client/Crundi Client-Setup-*.exe
-            dist/client/*.yml
+            dist/client/Crundi-Client-Setup-*.exe
+            dist/client/client.yml
           if-no-files-found: error
 
   server-windows:
