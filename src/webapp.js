@@ -2152,15 +2152,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         let restartRequired = false;
         if (body.settings) {
           const settings = body.settings;
+          // The keys this form owns. It does NOT own the file.
+          //
+          // This used to rebuild .env from exactly these seven keys, starting
+          // from an empty string — so saving the Telegram token silently deleted
+          // TLS_MODE, TLS_DOMAIN, TLS_EMAIL, TLS_WILDCARD and
+          // CLOUDFLARE_DNS_TOKEN, along with anything else added by hand. The
+          // running process still held the old values, so nothing looked wrong
+          // until the next restart brought the server up with no TLS at all,
+          // unreachable at its own domain and back on a random tunnel URL.
+          //
+          // Merge, like writeEnvKeys does: replace what the form manages, keep
+          // everything else exactly as it was.
           const KEYS = ['TELEGRAM_BOT_TOKEN', 'ALLOWED_USERNAME', 'PROJECTS_DIR', 'WEB_PORT', 'CLOUDFLARE_TUNNEL_TOKEN', 'CLOUDFLARE_TUNNEL_URL', 'DATA_DIR'];
-          let content = '';
+          const pairs = {};
           for (const key of KEYS) {
-            const val = settings[key] !== undefined ? settings[key] : '';
-            content += `${key}=${val}\n`;
+            if (settings[key] !== undefined) pairs[key] = settings[key];
           }
-          const dir = dirname(envPath);
-          if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-          writeFileSync(envPath, content, 'utf-8');
+          const w = writeEnvKeys(pairs);
+          if (!w.ok) return json(res, { ok: false, error: `Could not save settings: ${w.error}` }, 500);
           restartRequired = true;
         }
         // Save chat ID to state file and update live
