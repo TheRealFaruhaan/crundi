@@ -1383,6 +1383,33 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   const on = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.on('event', handler); };
   const off = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.off('event', handler); };
 
+  /**
+   * Mark agent bubbles dismissed, for good.
+   *
+   * Server-side because dismissing one is a fact about the CONVERSATION, not
+   * about the browser that happened to be looking at it. This lived in
+   * localStorage, which is scoped to an origin and a device - so the same
+   * conversation opened on a phone, in another browser, or (as happened here)
+   * moved to a different hostname, brought every dismissed bubble back.
+   *
+   * The flag rides along in the persisted agent record and the replay payload,
+   * so nothing else has to know about it.
+   */
+  function dismissAgents(sessionId, toolUseIds) {
+    const s = sessions.get(sessionId);
+    if (!s) return { ok: false, error: 'No such session' };
+    const ids = toolUseIds === 'all'
+      ? [...s.agents.keys()]
+      : (Array.isArray(toolUseIds) ? toolUseIds : []);
+    let n = 0;
+    for (const id of ids) {
+      const a = s.agents.get(id);
+      if (a && !a.dismissed) { a.dismissed = true; n++; }
+    }
+    if (n) persistNow(s);   // survive a restart, not just this process
+    return { ok: true, dismissed: n };
+  }
+
   /** Register a callback fired whenever any session's agent state changes. */
   function onAnyStateChange(cb) {
     stateChangeCb = cb;
@@ -1392,7 +1419,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, respond, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, lastTurnOutput,
+    history, has, on, off, onAnyStateChange, lastTurnOutput, dismissAgents,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },

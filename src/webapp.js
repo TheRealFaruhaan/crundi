@@ -1764,7 +1764,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result);
     }
 
-    const uiMatch = path.match(/^\/api\/ui-sessions\/([^/]+)\/(send|respond|interrupt|close|rename|permission-mode|model|history)$/);
+    const uiMatch = path.match(/^\/api\/ui-sessions\/([^/]+)\/(send|respond|interrupt|close|rename|permission-mode|model|history|dismiss-agents)$/);
     if (uiMatch) {
       const sid = decodeURIComponent(uiMatch[1]);
       const action = uiMatch[2];
@@ -1784,6 +1784,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
 
       const body = JSON.parse(await readBody(req) || '{}');
+      // Dismissing an agent bubble belongs to the conversation, not to the
+      // browser that dismissed it — see claude-ui.dismissAgents.
+      if (action === 'dismiss-agents') {
+        return json(res, claudeUi.dismissAgents(sid, body.all ? 'all' : (body.toolUseIds || [])));
+      }
       if (action === 'send') return json(res, claudeUi.sendMessage(sid, body.text));
       if (action === 'respond') return json(res, claudeUi.respond(sid, body));
       if (action === 'rename') {
