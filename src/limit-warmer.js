@@ -166,27 +166,43 @@ export function createLimitWarmer({ getUsage, isBusy, onChange } = {}) {
       if (isBusy && isBusy()) { markActivity(); return; }
       reloadShared();
 
-      const lastReset = state.lastKnownReset ? Date.parse(state.lastKnownReset) : 0;
-      // Real work since the last reset already started a window. Leave it be.
-      if (lastReset && state.lastActivityAt > lastReset) return;
-      if (Date.now() - (state.lastWarmAt || 0) < MIN_GAP_MS) return;
-
+      // Ask what is true NOW, before deciding anything.
+      //
+      // This used to start with a guard comparing lastActivityAt against
+      // lastKnownReset and returning early - above the code that refreshes
+      // lastKnownReset. So once that anchor went stale the warmer could never
+      // refresh it, and every tick exited at the guard: permanently dormant,
+      // while reporting the old window as current. It went stale exactly as you
+      // would expect, when the re-read after a successful warm came back empty
+      // because the usage API lags a moment behind a window opening.
+      //
+      // "Has real work already opened a window?" is answered directly by
+      // whether a window is open, so no stale anchor is needed for it.
       const usage = await getUsage({});        // cached ~60s inside usage.js
       if (!usage || !usage.ok) return;
 
       const resetsAt = usage.fiveHour && usage.fiveHour.resetsAt;
       const open = resetsAt && Date.parse(resetsAt) > Date.now();
       if (open) {
-        // A window is already running; just remember when it ends.
+        // A window is already running - real work or an earlier warm. Record
+        // when it ends and leave it alone. This is also the only place the
+        // anchor gets refreshed, which is why it must not sit behind a guard.
         if (state.lastKnownReset !== resetsAt) { state.lastKnownReset = resetsAt; save(); }
         return;
       }
+
+      // No window open. Nothing to protect, so warming is the whole point -
+      // subject only to not doing it twice in quick succession.
+      if (Date.now() - (state.lastWarmAt || 0) < MIN_GAP_MS) return;
 
       const r = await ping();
       state.lastWarmAt = Date.now();
       state.lastWarmResult = r.ok ? 'started a new window' : ('failed: ' + r.error);
       console.log(`[limit-warmer] ${state.lastWarmResult}`);
-      // Re-read so the new window's reset time is recorded, not the stale one.
+      // Try to record the new window's end straight away. The usage API often
+      // lags a moment behind a window opening, so this can come back empty -
+      // that is fine now, because the next tick reads usage before deciding
+      // anything and will pick it up. It is no longer load-bearing.
       if (r.ok) {
         const fresh = await getUsage({ force: true });
         const na = fresh && fresh.ok && fresh.fiveHour && fresh.fiveHour.resetsAt;

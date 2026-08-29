@@ -8296,7 +8296,16 @@ export function getWebappHtml(botUsername) {
           + 'When on, Crundi checks about once a minute and, if the window has lapsed while you were idle, sends a one-word message to open the next one. '
           + 'Never while a session is working, and never if your own work already opened a window.</p>'
           + (warmStatus.lastWarmAt ? '<p style="' + hintStyle + '">Last: ' + escHtml(warmStatus.lastWarmResult || '—') + ' · ' + escHtml(new Date(warmStatus.lastWarmAt).toLocaleString()) + '</p>' : '')
-          + (warmStatus.lastKnownReset ? '<p style="' + hintStyle + '">Current window resets ' + escHtml(new Date(warmStatus.lastKnownReset).toLocaleString()) + '</p>' : '')
+          // A reset time in the PAST is not the current window - it is the last
+          // one we saw, already finished. Saying "current window resets" of a
+          // past moment is how a dormant warmer looked healthy.
+          + (warmStatus.lastKnownReset
+              ? '<p style="' + hintStyle + '">'
+                + (Date.parse(warmStatus.lastKnownReset) > Date.now()
+                    ? 'Current window resets ' + escHtml(new Date(warmStatus.lastKnownReset).toLocaleString())
+                    : 'No window open \u00b7 last one ended ' + escHtml(new Date(warmStatus.lastKnownReset).toLocaleString()))
+                + '</p>'
+              : '')
           + '</div>'
           + '<button type="button" class="set-tgl' + (warmStatus.enabled ? ' on' : '') + '" id="set-limit-warmup" role="switch" aria-checked="' + (warmStatus.enabled ? 'true' : 'false') + '" data-action="toggle-limit-warmup"><span class="set-tgl-knob"></span></button>'
           + '</div></div>'
