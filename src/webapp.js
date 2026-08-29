@@ -2905,6 +2905,32 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, { ok: true });
       }
 
+      // ─── Forwards ───
+      // A tunnel was the only way to expose a port from here, which meant the
+      // one route that needs no extra process and serves on this server's own
+      // certificate was unreachable to an agent.
+      if (body.tool === 'list_forwards') {
+        return json(res, { ok: true, forwards: forwards.list(), domain: forwards.baseDomain(), options: forwards.options() });
+      }
+      if (body.tool === 'add_forward') {
+        const a = body.args || {};
+        if (a.mode !== 'path' && !forwards.baseDomain()) {
+          return json(res, {
+            ok: false,
+            error: 'No domain is configured for subdomain forwards. Use mode "path", or set TLS_DOMAIN / FORWARD_DOMAIN.',
+          });
+        }
+        const r = forwards.add({
+          name: a.name, port: a.port, mode: a.mode,
+          // Public means no Crundi sign-in. Explicit, and never the default.
+          isPublic: !!a.public, description: a.description,
+        });
+        return json(res, r);
+      }
+      if (body.tool === 'remove_forward') {
+        return json(res, forwards.remove(body.args?.host));
+      }
+
       // Delegate to external dispatch handler (for browser, screenshots, etc.)
       if (mcpDispatch) {
         try {
