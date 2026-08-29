@@ -2829,12 +2829,16 @@ export function getWebappHtml(botUsername) {
       if (force) srvUpdateCheckedAt = Date.now();
       const body = document.getElementById('srv-update-body');
       if (!body) { clearInterval(srvUpdatePoll); srvUpdatePoll = null; return; }
-      let u, log = '';
+      // Everything the render needs must be captured HERE, not left in the try
+      // block: reading a block-scoped d further down threw a ReferenceError
+      // after the catch, so the section never rendered and sat on
+      // "Checking for updates" forever.
+      let u, log = '', canRestart = false;
       try {
         const r = await apiFetch('/api/update/status' + (force ? '?force=1' : ''));
         const d = await r.json();
         if (!d.ok) throw new Error(d.error || 'Failed');
-        u = d.update; log = d.log || '';
+        u = d.update; log = d.log || ''; canRestart = !!d.canRestart;
       } catch (err) {
         body.innerHTML = '<span style="color:var(--text-muted);">Could not check for updates: ' + escHtml(err.message) + '</span>';
         return;
@@ -2883,7 +2887,7 @@ export function getWebappHtml(botUsername) {
       }
       // Several settings only apply on a restart, and on a server you reach from
       // a phone there is otherwise no way to do one.
-      if (d.canRestart) {
+      if (canRestart) {
         h += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);'
           + 'display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
           + '<div style="font-size:0.72rem;color:var(--text-muted);">'
