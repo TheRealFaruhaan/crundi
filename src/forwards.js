@@ -223,7 +223,7 @@ export function add({ name, port, mode = '', isPublic = false, description = '' 
   if (RESERVED.has(host)) return { ok: false, error: `"${host}" is reserved.` };
 
   const s = load();
-  if (s.forwards.some(f => f.host === host || (isPublic && f.publicHost === host))) {
+  if (s.forwards.some(f => f.host === host)) {
     return { ok: false, error: `"${host}" is already in use.` };
   }
 
@@ -234,15 +234,18 @@ export function add({ name, port, mode = '', isPublic = false, description = '' 
     // works the moment it is created, at the cost of the app having to cope
     // with not being at the root of its origin.
     mode: mode === 'path' ? 'path' : 'subdomain',
-    // A public forward is reachable by anyone who knows the hostname, so the
-    // hostname carries the entropy rather than the pretty name.
+    // Public means "no Crundi sign-in", not "unguessable". This used to replace
+    // the chosen name with name-<random>, on the theory that a public URL should
+    // carry its own entropy - but that silently changes the hostname the user
+    // just typed, which breaks the two things public forwards are actually for:
+    // an OAuth redirect URI, which must be a stable hostname registered with the
+    // provider, and an app that has its own sign-in and wants a real name.
+    //
+    // Private is still the default, and publishing is still an explicit choice.
     public: !!isPublic,
-    publicHost: isPublic ? `${host}-${randomBytes(8).toString('hex')}` : '',
     description: String(description || '').slice(0, 200),
     createdAt: Date.now(),
   };
-  if (isPublic) f.host = f.publicHost;
-
   s.forwards.push(f);
   if (!save()) return { ok: false, error: 'Could not save' };
   console.log(`[forwards] ${f.host} -> localhost:${p}${isPublic ? ' (public)' : ''}`);

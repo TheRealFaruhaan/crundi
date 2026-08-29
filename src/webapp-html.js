@@ -597,6 +597,12 @@ export function getWebappHtml(botUsername) {
     .term-head-btn.term-close:hover { color: var(--red); border-color: var(--red); }
     /* Armed state mirrors the chat Stop button: one click asks, the next acts. */
     /* Upload progress in the terminal input bar. */
+    .svc-pub-tag { flex: none; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 2px 6px; border-radius: 4px; background: var(--yellow-dim, rgba(234,179,8,0.15));
+      color: var(--yellow, #eab308); }
+    .svc-fwd-pub { display: flex; align-items: center; gap: 7px; flex-basis: 100%;
+      margin-top: 6px; font-size: 0.74rem; color: var(--text-muted); cursor: pointer; }
+    .svc-fwd-pub input { accent-color: var(--accent); margin: 0; }
     .term-upload { display: none; align-items: center; gap: 8px; flex-basis: 100%; padding: 4px 2px 0; }
     .term-upload.on { display: flex; }
     .term-upload .tu-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
@@ -7411,7 +7417,10 @@ export function getWebappHtml(botUsername) {
         let tunnelRow = '';
         if (tPort > 0 || tEnabled || fwd) {
           let badge;
-          if (fwd) badge = '<a class="tunnel-link" href="' + escHtml(fwd.url) + '" target="_blank">' + escHtml(fwd.url) + '</a>';
+          if (fwd) badge = '<a class="tunnel-link" href="' + escHtml(fwd.url) + '" target="_blank">' + escHtml(fwd.url) + '</a>'
+            + (fwd.public
+                ? '<span class="svc-pub-tag" title="Reachable without signing in to Crundi">public</span>'
+                : '');
           else if (tEnabled && s.tunnelUrl && tStatus === 'active') badge = '<a class="tunnel-link" href="' + escHtml(s.tunnelUrl) + '" target="_blank">' + escHtml(s.tunnelUrl) + '</a>';
           else if (tEnabled && tStatus === 'connecting') badge = '<span class="svc-tunnel-badge" style="color:var(--yellow)">starting…</span>';
           else if (tEnabled && tStatus === 'error') badge = '<span class="svc-tunnel-badge" style="color:var(--red)">error</span>';
@@ -7449,7 +7458,14 @@ export function getWebappHtml(botUsername) {
               + '<span class="svc-fwd-suffix">' + escHtml(suffix || '/') + '</span>'
               + '<button class="svc-btn primary" data-action="fwd-save" data-key="' + k + '">' + ic('check') + 'Save</button>'
               + '<button class="svc-btn" data-action="fwd-cancel">Cancel</button>'
-              + '</div>';
+              + '</div>'
+              // Private by default: a forward is usually "let me look at this on
+              // my phone", and quietly publishing a dev database is not a
+              // default worth having. Public is for an app with its own sign-in,
+              // or an OAuth callback that cannot carry a Crundi session.
+              + '<label class="svc-fwd-pub"><input type="checkbox" id="fwd-pub-' + k + '"'
+              + (exposeEdit.isPublic ? ' checked' : '') + '>'
+              + '<span>Public \u2014 reachable without signing in to Crundi</span></label>';
           }
         }
         return '<div class="svc-card" data-svc-key="' + k + '">'
@@ -7531,6 +7547,10 @@ export function getWebappHtml(botUsername) {
       exposeEdit = {
         key, port, mode,
         name: (existing && existing.host) || (svc ? defaultForwardName(svc) : 'app'),
+        // Seeded from the existing forward. Without this the box opens unticked
+        // for a forward that IS public, and saving silently republishes it as
+        // private - which would break an OAuth callback that depends on it.
+        isPublic: !!(existing && existing.public),
       };
       renderServices();
       const input = document.getElementById('fwd-name-' + key);
@@ -7559,10 +7579,14 @@ export function getWebappHtml(botUsername) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ enabled: false, port }),
         }).catch(() => { /* no tunnel to stop is fine; the forward is what matters */ });
+        const pubEl = document.getElementById('fwd-pub-' + key);
+        const isPublic = !!(pubEl && pubEl.checked);
+        if (isPublic && !confirm('Publish ' + name + '?' + '\\n\\n' + 'Anyone who knows the address reaches it '
+            + 'without signing in to Crundi. Only do this for something that has its own sign-in.')) return;
         const r = await apiFetch('/api/forwards', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, port, mode }),
+          body: JSON.stringify({ name, port, mode, public: isPublic }),
         });
         const d = await r.json();
         if (!d.ok) { toast(d.error || 'Could not create the forward', 'error'); return; }

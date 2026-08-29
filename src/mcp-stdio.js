@@ -108,6 +108,26 @@ const TOOLS = [
   { name: 'enable_tunnel', description: 'Start a Cloudflare tunnel for a local port.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Tunnel key' }, port: { type: 'number', description: 'Local port to tunnel' } }, required: ['key', 'port'] } },
   { name: 'disable_tunnel', description: 'Stop a Cloudflare tunnel.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Tunnel key' } }, required: ['key'] } },
 
+  // Forwards: this server answering for the port on its own certificate, with
+  // no extra process and a hostname that does not change - unlike a tunnel.
+  { name: 'list_forwards', description: 'List port forwards (subdomain and path), with the domain and the available modes.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'add_forward',
+    description: 'Expose a local port on this server. mode "subdomain" serves it at name.<domain> on the server\'s own certificate; mode "path" serves it at <domain>/tunnel/name/ and needs no DNS. Unlike a Cloudflare tunnel the hostname is chosen and stable. Private by default: private forwards require a Crundi sign-in, so set public only for something with its own authentication, such as an app using Google sign-in or an OAuth callback.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Hostname or path segment: lowercase letters, digits and hyphens, max 32' },
+        port: { type: 'number', description: 'Local port to expose' },
+        mode: { type: 'string', enum: ['subdomain', 'path'], description: 'subdomain (default) or path' },
+        public: { type: 'boolean', description: 'Reachable without signing in to Crundi. Default false.' },
+        description: { type: 'string', description: 'Optional note' },
+      },
+      required: ['name', 'port'],
+    },
+  },
+  { name: 'remove_forward', description: 'Remove a port forward by its host/name.', inputSchema: { type: 'object', properties: { host: { type: 'string', description: 'The forward name, as returned by list_forwards' } }, required: ['host'] } },
+
   // Syntax check
   { name: 'syntax_check', description: 'Run syntax/compile checks on files. Auto-detects language from extension.', inputSchema: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' }, description: 'Array of absolute file paths to check' } }, required: ['files'] } },
 
