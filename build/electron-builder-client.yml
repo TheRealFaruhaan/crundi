@@ -32,11 +32,16 @@ directories:
   output: dist/client
 artifactName: ${productName}-Setup-${version}.${ext}
 
+# A channel of its own, so this build publishes client.yml instead of
+# latest.yml. Both installers go to the SAME GitHub release, so without this
+# they collide on one filename - and since only the all-in-one job uploaded its
+# yml, the client read that one and updated itself into the full PC version.
 publish:
   - provider: github
     owner: TheRealFaruhaan
     repo: crundi
     releaseType: release
+    channel: client
 
 files:
   - app/main.js
