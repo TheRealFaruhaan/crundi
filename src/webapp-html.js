@@ -2881,6 +2881,16 @@ export function getWebappHtml(botUsername) {
           + 'font-size:0.68rem;color:var(--text-muted);max-height:150px;overflow:auto;white-space:pre-wrap;">'
           + escHtml(log.slice(-1200)) + '</pre>';
       }
+      // Several settings only apply on a restart, and on a server you reach from
+      // a phone there is otherwise no way to do one.
+      if (d.canRestart) {
+        h += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);'
+          + 'display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+          + '<div style="font-size:0.72rem;color:var(--text-muted);">'
+          + 'Settings like the Telegram token and TLS only take effect after a restart.</div>'
+          + '<button type="button" style="' + btn + '" data-action="srv-restart">Restart server</button>'
+          + '</div>';
+      }
       body.innerHTML = h;
 
       // While an update runs the server restarts underneath us, so keep polling
@@ -2890,6 +2900,31 @@ export function getWebappHtml(botUsername) {
       } else if (!u.applying && srvUpdatePoll) {
         clearInterval(srvUpdatePoll); srvUpdatePoll = null;
       }
+    }
+
+    async function restartServer() {
+      if (!confirm('Restart the server?\\n\\nThis ends every running chat and terminal on it. '
+          + 'It comes back on its own in a few seconds.')) return;
+      try {
+        const r = await apiFetch('/api/restart', { method: 'POST' });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Could not restart', 'error'); return; }
+        toast('Restarting\u2026', 'success');
+      } catch (err) {
+        // The connection dropping IS the restart, so this is not an error.
+        toast('Restarting\u2026', 'success');
+      }
+      // Poll until it answers again, then reload so the new build is loaded.
+      const until = Date.now() + 60000;
+      const wait = async () => {
+        if (Date.now() > until) { toast('Server has not come back \u2014 check it', 'error'); return; }
+        try {
+          const r = await fetch('/api/auth/methods', { cache: 'no-store' });
+          if (r.ok) { location.reload(); return; }
+        } catch { /* still down */ }
+        setTimeout(wait, 1500);
+      };
+      setTimeout(wait, 2500);
     }
 
     async function applyServerUpdate() {
@@ -8458,6 +8493,9 @@ export function getWebappHtml(botUsername) {
           break;
         case 'fwd-remove':
           removeForward(d.host);
+          break;
+        case 'srv-restart':
+          restartServer();
           break;
         case 'srv-update-check':
           renderServerUpdate(true);
