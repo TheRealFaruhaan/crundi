@@ -1691,12 +1691,28 @@
       if (agentDock.firstChild !== agentDockHd) agentDock.insertBefore(agentDockHd, agentDock.firstChild);
     }
 
+    /**
+     * Record a dismissal with the CONVERSATION, not just this browser.
+     *
+     * localStorage still runs alongside it for instant feedback and for hosts
+     * where the call fails, but the server copy is what makes a dismissal stick
+     * across devices, origins and reinstalls.
+     */
+    function persistDismissed(ids, all) {
+      apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/dismiss-agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(all ? { all: true } : { toolUseIds: ids }),
+      }).catch(function () { /* localStorage still covers this browser */ });
+    }
+
     function dismissAllBubbles() {
       agents.forEach(function (rec, id) {
         rec.dismissed = true;
         markDismissed(id);
         if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
       });
+      persistDismissed(null, true);
       syncDock();
     }
 
@@ -1727,6 +1743,7 @@
         ev.stopPropagation();
         rec.dismissed = true;
         markDismissed(m.toolUseId);
+        persistDismissed([m.toolUseId], false);
         if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
         syncDock();
       });
@@ -1742,6 +1759,10 @@
       // `count` is the server's tally; our own messages array is authoritative.
       var count = rec.meta.count;
       rec.meta = meta;
+      // The server remembers dismissals now. localStorage is per-origin and
+      // per-device, so the same conversation on a phone, in another browser, or
+      // moved to a different hostname brought every dismissed bubble back.
+      if (meta.dismissed) rec.dismissed = true;
       if (meta.count == null) rec.meta.count = count;
       drawBubble(rec);
       trimDock();
