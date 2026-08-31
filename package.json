@@ -1,6 +1,6 @@
 {
   "name": "crundi",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "chromeVersion": "152.0.7977.64",
   "description": "Self-hosted remote workbench for your projects — agent terminals, files, git, kanban, mindmap and scheduling, reachable from anywhere.",
   "type": "module",
@@ -18,7 +18,7 @@
     "service:logs": "pm2 logs crundi",
     "service:install": "pm2 start ecosystem.config.cjs && pm2 save && powershell -ExecutionPolicy Bypass -File scripts/startup-install.ps1",
     "service:uninstall": "pm2 stop crundi && pm2 delete crundi && pm2 save && powershell -ExecutionPolicy Bypass -File scripts/startup-uninstall.ps1",
-    "check": "node scripts/check-syntax.mjs",
+    "check": "node scripts/check-syntax.mjs && node scripts/test-waiting-state.mjs",
     "prebuild": "node scripts/check-syntax.mjs"
   },
   "build": {
