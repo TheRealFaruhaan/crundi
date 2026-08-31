@@ -2015,6 +2015,16 @@ export function getWebappHtml(botUsername) {
     }
     .sreq-bind { font-size: 0.7rem; color: var(--text-muted); font-family: var(--mono); }
     .sreq-actions { display: flex; gap: 6px; margin-top: 2px; }
+    /* The PIN lives IN the card. It used to open the shared centre-screen modal,
+       which the card then covered on a phone — the Unlock button sat behind it. */
+    .sreq-pin { display: flex; gap: 6px; margin-top: 2px; }
+    .sreq-pin input {
+      flex: 1; min-width: 0; padding: 7px 10px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary);
+      font-family: var(--mono); font-size: 0.9rem; letter-spacing: 0.3em; text-align: center;
+    }
+    .sreq-pin input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+    .sreq-err { font-size: 0.73rem; color: var(--red); }
     @media (max-width: 640px) {
       .sreq-dock { left: 12px; right: 12px; bottom: 12px; max-width: none; }
     }
@@ -7786,6 +7796,8 @@ export function getWebappHtml(botUsername) {
     // rather than up front, because pulling ten log tails to show none of them
     // is work nobody asked for.
 
+    var sreqArmed = null;    // request id whose PIN field is open
+    var sreqError = '';      // inline PIN error for that card
     var ctrOpen = null;      // id whose logs are showing
     var ctrShown = false;
 
@@ -9926,35 +9938,75 @@ export function getWebappHtml(botUsername) {
               + '<div class="sreq-bind">the value is bound to $' + escHtml(r.envName)
               + ' and never shown to Claude</div>'
             : '<div class="sreq-why">Claude will be able to read this value.</div>')
-          + '<div class="sreq-actions">'
-          + '<button class="kanban-btn primary" data-sp-approve="' + escHtml(r.id) + '" data-sp-name="' + escHtml(r.secretName) + '">Approve</button>'
-          + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Deny</button>'
-          + '</div></div>';
+          + (sreqArmed === r.id
+            ? '<div class="sreq-pin">'
+              + '<input id="sreq-pin" inputmode="numeric" maxlength="6" placeholder="PIN" autocomplete="off" aria-label="6-digit PIN">'
+              + '<button class="kanban-btn primary" data-sp-confirm="' + escHtml(r.id) + '">Unlock</button>'
+              + '<button class="kanban-btn" data-sp-cancel="1">Cancel</button>'
+              + '</div>'
+              + (sreqError ? '<div class="sreq-err">' + escHtml(sreqError) + '</div>' : '')
+            : '<div class="sreq-actions">'
+              + '<button class="kanban-btn primary" data-sp-approve="' + escHtml(r.id) + '">Approve</button>'
+              + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Deny</button>'
+              + '</div>')
+          + '</div>';
       }
+      // An SSE push re-renders this dock. Rebuilding innerHTML underneath
+      // someone mid-PIN would silently eat their digits, so carry them over.
+      const typed = ($('#sreq-pin') || {}).value || '';
+      const hadFocus = document.activeElement && document.activeElement.id === 'sreq-pin';
       dock.innerHTML = h;
+      const pin = $('#sreq-pin');
+      if (pin) {
+        pin.value = typed;
+        if (hadFocus || sreqError) { pin.focus(); pin.select(); }
+        else setTimeout(() => pin.focus(), 30);
+        pin.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); confirmSecretPin(sreqArmed); }
+          if (ev.key === 'Escape') { sreqArmed = null; sreqError = ''; renderSecretPrompt(); }
+        });
+      }
+    }
+
+    async function confirmSecretPin(reqId) {
+      const el = $('#sreq-pin');
+      if (!el || !reqId) return;
+      const pin = String(el.value || '').trim();
+      if (!/^\\d{6}$/.test(pin)) { sreqError = 'Enter a 6-digit PIN'; renderSecretPrompt(); return; }
+      const btn = $('[data-sp-confirm]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Unlocking\\u2026'; }
+      let d;
+      try { d = await secretsPost({ action: 'approve', reqId: reqId, pin: pin }); }
+      catch (err) { d = { ok: false, error: err.message }; }
+      // A wrong PIN leaves the request pending on purpose, so the card stays up
+      // and says why rather than vanishing.
+      if (!d || !d.ok) {
+        sreqError = (d && d.error) || 'Wrong PIN';
+        renderSecretPrompt();
+        return;
+      }
+      sreqArmed = null;
+      sreqError = '';
+      toast('Approved', 'success');
+      renderSecretPrompt();
     }
 
     async function onSecretPromptClick(e) {
       const ok = e.target.closest('[data-sp-approve]');
       if (ok) {
-        const reqId = ok.dataset.spApprove;
-        openPinModal({
-          title: 'Approve',
-          subtitle: 'Enter the PIN for "' + ok.dataset.spName + '".',
-          submitLabel: 'Approve',
-          onSubmit: async (pin) => {
-            const d = await secretsPost({ action: 'approve', reqId, pin });
-            // A wrong PIN leaves the request pending on purpose, so the modal
-            // reports it and the card stays up to try again.
-            if (!d.ok) return d.error || 'Wrong PIN';
-            toast('Approved', 'success');
-            return null;
-          },
-        });
+        sreqArmed = ok.dataset.spApprove;
+        sreqError = '';
+        renderSecretPrompt();
         return;
       }
+      const confirm = e.target.closest('[data-sp-confirm]');
+      if (confirm) { await confirmSecretPin(confirm.dataset.spConfirm); return; }
+      const cancel = e.target.closest('[data-sp-cancel]');
+      if (cancel) { sreqArmed = null; sreqError = ''; renderSecretPrompt(); return; }
       const no = e.target.closest('[data-sp-deny]');
       if (no) {
+        sreqArmed = null;
+        sreqError = '';
         await secretsPost({ action: 'deny', reqId: no.dataset.spDeny });
         toast('Denied', 'info');
       }
