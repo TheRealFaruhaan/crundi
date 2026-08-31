@@ -1985,6 +1985,39 @@ export function getWebappHtml(botUsername) {
 
     /* ─── Secrets ─── */
     .secrets-panel { padding: 14px; gap: 16px; }
+    /* A secret request has to be answerable from wherever you are. It used to
+       live only in the Secrets tab, so approving meant leaving the chat that was
+       blocked waiting for you. */
+    .sreq-dock {
+      position: fixed; right: 16px; bottom: 16px; z-index: 400;
+      display: flex; flex-direction: column; gap: 10px; max-width: min(460px, calc(100vw - 32px));
+    }
+    .sreq-card {
+      background: var(--bg-card); border: 1px solid var(--accent); border-radius: var(--radius);
+      box-shadow: var(--shadow-lg), var(--surface-hi); padding: 14px 16px;
+      display: flex; flex-direction: column; gap: 8px;
+      animation: sreqIn 0.18s ease-out;
+    }
+    @keyframes sreqIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .sreq-card { animation: none; } }
+    .sreq-head { display: flex; align-items: center; gap: 7px; font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
+    .sreq-head .ic { width: 15px; height: 15px; color: var(--accent-hover); }
+    .sreq-name { font-family: var(--mono); color: var(--accent-hover); }
+    .sreq-why { font-size: 0.76rem; color: var(--text-secondary); }
+    /* The command is the decision. It gets room to be read, and wraps rather
+       than truncating — approving a command you cannot see is not consent. */
+    .sreq-cmd {
+      font-family: var(--mono); font-size: 0.72rem; line-height: 1.5;
+      background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 8px; max-height: 140px; overflow: auto;
+      white-space: pre-wrap; word-break: break-word; color: var(--text-primary);
+      user-select: text; -webkit-user-select: text;
+    }
+    .sreq-bind { font-size: 0.7rem; color: var(--text-muted); font-family: var(--mono); }
+    .sreq-actions { display: flex; gap: 6px; margin-top: 2px; }
+    @media (max-width: 640px) {
+      .sreq-dock { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+    }
     .secret-badge {
       display: inline-flex; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
       background: var(--red); color: #fff; font-size: 0.65rem; font-weight: 700;
@@ -6156,6 +6189,7 @@ export function getWebappHtml(botUsername) {
           const d = JSON.parse(e.data);
           secretRequests = d.requests || [];
           updateSecretBadge();
+          renderSecretPrompt();
           if (currentTab === 'secrets') renderSecrets();
         } catch { /* ignore */ }
       });
@@ -9845,7 +9879,7 @@ export function getWebappHtml(botUsername) {
       try {
         const res = await apiFetch('/api/secrets');
         const d = await res.json();
-        if (d.ok) { secretsList = d.secrets || []; secretRequests = d.requests || []; }
+        if (d.ok) { secretsList = d.secrets || []; secretRequests = d.requests || []; renderSecretPrompt(); }
         updateSecretBadge();
         renderSecrets();
       } catch (err) {
@@ -9858,6 +9892,72 @@ export function getWebappHtml(botUsername) {
       if (!el) return;
       if (secretRequests.length) { el.style.display = ''; el.textContent = String(secretRequests.length); }
       else el.style.display = 'none';
+    }
+
+    /**
+     * Pending secret requests, shown wherever you are.
+     *
+     * The MCP server knows which PROJECT asked but not which session: .mcp.json
+     * is written per project and shared by every chat and terminal in it. So
+     * this is anchored to the workbench rather than to one cell, and names the
+     * project instead of pretending to know the exact chat.
+     */
+    function renderSecretPrompt() {
+      let dock = $('#sreq-dock');
+      if (!secretRequests.length) { if (dock) dock.remove(); return; }
+      if (!dock) {
+        dock = document.createElement('div');
+        dock.className = 'sreq-dock';
+        dock.id = 'sreq-dock';
+        document.body.appendChild(dock);
+        dock.addEventListener('click', onSecretPromptClick);
+      }
+      let h = '';
+      for (const r of secretRequests) {
+        const isRun = r.kind === 'run';
+        h += '<div class="sreq-card">'
+          + '<div class="sreq-head">' + ic('lock')
+          + (isRun ? 'Run a command with ' : 'Release ')
+          + '<span class="sreq-name">' + escHtml(r.secretName) + '</span></div>'
+          + (r.project ? '<div class="sreq-why">project: ' + escHtml(r.project) + '</div>' : '')
+          + (r.reason ? '<div class="sreq-why">' + escHtml(r.reason) + '</div>' : '')
+          + (isRun
+            ? '<div class="sreq-cmd">' + escHtml(r.command) + '</div>'
+              + '<div class="sreq-bind">the value is bound to $' + escHtml(r.envName)
+              + ' and never shown to Claude</div>'
+            : '<div class="sreq-why">Claude will be able to read this value.</div>')
+          + '<div class="sreq-actions">'
+          + '<button class="kanban-btn primary" data-sp-approve="' + escHtml(r.id) + '" data-sp-name="' + escHtml(r.secretName) + '">Approve</button>'
+          + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Deny</button>'
+          + '</div></div>';
+      }
+      dock.innerHTML = h;
+    }
+
+    async function onSecretPromptClick(e) {
+      const ok = e.target.closest('[data-sp-approve]');
+      if (ok) {
+        const reqId = ok.dataset.spApprove;
+        openPinModal({
+          title: 'Approve',
+          subtitle: 'Enter the PIN for "' + ok.dataset.spName + '".',
+          submitLabel: 'Approve',
+          onSubmit: async (pin) => {
+            const d = await secretsPost({ action: 'approve', reqId, pin });
+            // A wrong PIN leaves the request pending on purpose, so the modal
+            // reports it and the card stays up to try again.
+            if (!d.ok) return d.error || 'Wrong PIN';
+            toast('Approved', 'success');
+            return null;
+          },
+        });
+        return;
+      }
+      const no = e.target.closest('[data-sp-deny]');
+      if (no) {
+        await secretsPost({ action: 'deny', reqId: no.dataset.spDeny });
+        toast('Denied', 'info');
+      }
     }
 
     function renderSecrets() {

@@ -24,6 +24,7 @@ import { getAllServiceStatus, startService, stopService, restartService, getServ
 import { getSystemStats, startStatsSampler, stopStatsSampler } from './stats.js';
 import { listTasks as listMaintenanceTasks, runTask as runMaintenanceTask } from './maintenance.js';
 import * as dockerMod from './docker.js';
+import { runWithSecret, isValidEnvName } from './secret-run.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -951,6 +952,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return [...pendingSecretRequests.values()].map(r => ({
       id: r.id, secretId: r.secretId, secretName: r.secretName,
       project: r.projectAlias, reason: r.reason, createdAt: r.createdAt,
+      // For a run request, the exact command and the variable it binds to.
+      // Approving "give Claude this token" and approving "run THIS with the
+      // token" are different decisions, and only one of them can be made
+      // without seeing the command.
+      kind: r.kind || 'get', command: r.command || '', envName: r.envName || '',
     }));
   }
 
@@ -964,7 +970,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * The value is never cached — every request is independent and needs its own
    * PIN entry.
    */
-  function waitForSecretApproval({ secretId, secretName, projectAlias, reason }) {
+  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '' }) {
     return new Promise((resolve) => {
       const id = randomBytes(8).toString('hex');
       const timer = setTimeout(() => {
@@ -974,7 +980,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }, SECRET_REQUEST_TIMEOUT_MS);
 
       pendingSecretRequests.set(id, {
-        id, secretId, secretName, projectAlias, reason,
+        id, secretId, secretName, projectAlias, reason, kind, command, envName,
         createdAt: new Date().toISOString(),
         timer,
         fulfill: (value) => {
@@ -996,7 +1002,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Ping the user over Telegram so they know to come approve.
       const from = projectAlias ? ` (project: ${projectAlias})` : '';
       const why = reason ? `\nReason: ${reason}` : '';
-      notifyEvent('secretRequest', `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}\n\nOpen Crundi → Secrets to review and approve.`);
+      const what = kind === 'run'
+        ? `🔐 Claude wants to RUN a command with secret "${secretName}"${from}.\n\n${command}\n\n(the value is bound to $${envName} and never shown to Claude)${why}`
+        : `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}`;
+      notifyEvent('secretRequest', `${what}\n\nApprove it in Crundi — the prompt appears in the chat itself, or under Secrets.`);
     });
   }
 
@@ -1357,6 +1366,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       req.on('close', () => sseClients.delete(client));
       broadcastState();
       broadcastUsage();
+      // A request that was already pending must reach a client that connects
+      // afterwards. Without this, refreshing the page while Claude is blocked
+      // waiting for approval loses the prompt and the call just times out.
+      broadcastSecretRequests();
       return;
     }
 
@@ -2976,6 +2989,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
 
       // ─── Secret access (requires user approval + PIN; blocks until then) ───
+      // Both secret tools identify a secret the same way, so they resolve it the
+      // same way rather than drifting apart.
+      function resolveSecretMeta(args) {
+        let meta = args.id ? secrets.getSecretMeta(args.id) : null;
+        if (!meta && args.name) {
+          const byName = secrets.searchSecrets(args.name)
+            .filter(x => x.name.toLowerCase() === String(args.name).toLowerCase());
+          if (byName.length > 1) {
+            return { error: `Multiple secrets named "${args.name}" — pass the id instead.`, matches: byName };
+          }
+          meta = byName[0] || null;
+        }
+        if (!meta) return { error: 'Secret not found. Use secret_search to find the right name/id.' };
+        return { meta };
+      }
+
       if (body.tool === 'secret_get') {
         // Resolve which secret: by id, else by exact (case-insensitive) name.
         let meta = a.id ? secrets.getSecretMeta(a.id) : null;
@@ -2996,6 +3025,41 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           reason: a.reason || '',
         });
         return json(res, result);
+      }
+
+      // ─── Run a command with a secret, without ever revealing it ───
+      if (body.tool === 'secret_run') {
+        const meta = resolveSecretMeta(a);
+        if (meta.error) return json(res, { ok: false, error: meta.error, matches: meta.matches });
+        const envName = a.envName || 'SECRET';
+        if (!isValidEnvName(envName)) {
+          return json(res, { ok: false, error: `"${envName}" is not a valid environment variable name.` });
+        }
+        const command = String(a.command || '').trim();
+        if (!command) return json(res, { ok: false, error: 'No command given.' });
+
+        const approval = await waitForSecretApproval({
+          secretId: meta.meta.id,
+          secretName: meta.meta.name,
+          projectAlias: a.alias || '',
+          reason: a.reason || '',
+          kind: 'run',
+          command,
+          envName,
+        });
+        if (!approval.ok) return json(res, approval);
+
+        // From here the plaintext exists only in this call frame and the child's
+        // environment. It is never returned, logged, or put in the response.
+        const cwd = a.cwd || (a.alias ? (getProject(a.alias)?.path || undefined) : undefined);
+        const run = await runWithSecret({
+          command, value: approval.value, envName, cwd,
+          timeoutMs: Math.min(Math.max(Number(a.timeoutMs) || 120000, 1000), 600000),
+        });
+        return json(res, {
+          ok: run.ok, code: run.code, stdout: run.stdout, stderr: run.stderr,
+          ...(run.error ? { error: run.error } : {}),
+        });
       }
 
       // Built-in notification tools
