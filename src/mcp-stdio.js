@@ -244,6 +244,7 @@ const TOOLS = [
   // ─── Secrets tools (global) ───
   { name: 'secret_search', description: 'Search the global secrets store by name and description (case-insensitive). Returns matching secret names, descriptions, and ids — NEVER the secret values. No approval needed. Use this to discover which secret to request.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Search text matched against name and description. Empty returns all.' } } } },
   { name: 'secret_get', description: 'Request the decrypted value of a secret. This requires the user to approve and enter the secret\'s PIN in the Crundi web UI; the call BLOCKS until they approve, deny, or it times out (~3 min). The user is notified via Telegram. Identify the secret by id (preferred) or exact name. Always provide a clear reason.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } } } },
+  { name: 'secret_run', description: 'Run a shell command with a secret bound to an environment variable, WITHOUT the value ever being shown to you. Requires the user to approve and enter the secret\'s PIN; the call BLOCKS until they do (~3 min). They see the exact command before approving. Reference the secret in your command as $SECRET (or the envName you choose) — never try to read or print it, and note that stdout/stderr have the value redacted out. Prefer this over secret_get whenever you only need to USE a secret rather than know it.', inputSchema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to run. Reference the secret as $SECRET, e.g. curl -H "Authorization: Bearer $SECRET" https://api.example.com' }, id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, envName: { type: 'string', description: 'Environment variable to bind the value to (default: SECRET)' }, cwd: { type: 'string', description: 'Working directory (defaults to the project directory)' }, timeoutMs: { type: 'number', description: 'Max run time in ms (default 120000, max 600000)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } }, required: ['command'] } },
 ];
 
 // ─── Tool handler ───
@@ -254,7 +255,8 @@ const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service',
   'mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors', 'mindmap_add_node', 'mindmap_link_node',
   'schedule_list', 'schedule_get', 'schedule_add', 'schedule_update', 'schedule_set_enabled', 'schedule_delete',
   'media_list', 'media_get', 'media_add_path', 'media_delete',
-  'secret_get']);
+  'secret_get',
+  'secret_run']);
 const IMAGE_TOOLS = new Set(['browser_screenshot', 'capture_window', 'capture_display']);
 
 async function handleToolCall(name, args) {
