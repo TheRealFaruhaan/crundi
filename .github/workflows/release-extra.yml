@@ -306,5 +306,24 @@ jobs:
           # branch, which is not a release. Take the input in that case.
           TAG="${{ inputs.tag }}"
           [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          # Wait for the release to exist before uploading into it.
+          #
+          # This workflow and the Release workflow start from the same tag push
+          # and run in parallel, but only the other one creates the release.
+          # Whether these builds finish first is a coin toss: 1.9.1 and 1.9.3
+          # won it, 1.9.4 lost and every upload failed with "release not found",
+          # publishing a version with no Linux tarball and no client installer.
+          # The updater then offers an update it cannot install.
+          for attempt in $(seq 1 60); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "release $TAG exists (after ${attempt} check(s))"
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "The release $TAG never appeared — the Release workflow must have failed."
+              exit 1
+            fi
+            sleep 10
+          done
           find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.yml' \) -print0 \
             | xargs -0 -I{} gh release upload "$TAG" "{}" --clobber --repo "$GITHUB_REPOSITORY"
