@@ -1418,9 +1418,13 @@ const browserIpcHandlers = {
     const wc = entry.win.webContents;
     const html = await wc.executeJavaScript(`
       (function() {
-        const clone = document.body.cloneNode(true);
-        clone.querySelectorAll('script,style,noscript,svg').forEach(el => el.remove());
-        return clone.innerText.substring(0, 50000);
+        // innerText on the LIVE body, not a clone. A cloned node is detached,
+        // so it has no layout, so innerText silently degrades to textContent
+        // and every line break is lost ("HeadingFirst para.Second para.").
+        // Live innerText also already omits script/style/noscript, because
+        // they are not rendered — the clone-and-remove dance was doing damage
+        // to solve a problem that did not exist.
+        return (document.body.innerText || '').substring(0, 50000);
       })()
     `);
     return {

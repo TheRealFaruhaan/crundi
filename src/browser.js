@@ -339,7 +339,11 @@ export async function readBrowserPage(key) {
     resetIdleTimer(key);
     return {
       ok: true,
-      html: result.html,
+      // The handler returns the cleaned page text as `text`; this read
+      // `result.html`, which no handler has ever set. So browser_read_page has
+      // returned a title and a URL and silently dropped the page content since
+      // the first public release — on Electron too, not just headless.
+      text: result.text,
       consoleLogs: inst.consoleLogs,
       url: result.url,
       title: result.title,
