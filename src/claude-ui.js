@@ -532,7 +532,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   /** A subagent's own assistant turn. */
   function handleAgentAssistant(s, msg, toolUseId) {
     const a = getAgent(s, toolUseId);
-    for (const block of msg.message?.content || []) {
+    for (const block of contentBlocks(msg)) {
       if (block.type === 'text' || block.type === 'thinking') {
         agentEntry(s, a, {
           id: genId(),
@@ -552,7 +552,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   /** A subagent's tool results (and its opening prompt, which we skip). */
   function handleAgentUser(s, msg, toolUseId) {
     const a = getAgent(s, toolUseId);
-    for (const block of msg.message?.content || []) {
+    for (const block of contentBlocks(msg)) {
       if (block.type !== 'tool_result') continue;
       const target = [...a.messages].reverse().find(e => e.kind === 'tool' && e.toolUseId === block.tool_use_id);
       if (!target) continue;
@@ -936,7 +936,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // those turns produced output while the cell still showed idle. Promoting
     // only from idle leaves needs-input alone, which is a different question.
     if (s.state === 'idle' || s.state === 'waiting') setState(s, 'working');
-    for (const block of msg.message?.content || []) {
+    for (const block of contentBlocks(msg)) {
       if (block.type === 'text' || block.type === 'thinking') {
         const text = (block.type === 'text' ? block.text : block.thinking) || '';
         const prior = s.streamedQueue.shift();
@@ -951,9 +951,30 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
   }
 
+  /**
+   * A message's content blocks, whatever shape the CLI sent.
+   *
+   * `content` is EITHER an array of blocks OR a bare string, and the string
+   * form is not an edge case: every task notification and every stop-hook
+   * feedback message in the transcripts arrives that way (44 of 44 here).
+   *
+   * `for (const block of content)` over a string iterates CHARACTERS. Each one
+   * has no .type, so every branch skipped it and the whole message vanished.
+   * That is why a chat parked on a background command stayed on "waiting"
+   * forever - the launch was seen (tool results really are arrays) but the
+   * notification that should have cleared it never registered. It also ate the
+   * goal-mode stop-hook feedback this code was written to surface.
+   */
+  function contentBlocks(msg) {
+    const raw = msg?.message?.content;
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string' && raw) return [{ type: 'text', text: raw }];
+    return [];
+  }
+
   function handleUser(s, msg) {
     if (msg.parent_tool_use_id) return handleAgentUser(s, msg, msg.parent_tool_use_id);
-    for (const block of msg.message?.content || []) {
+    for (const block of contentBlocks(msg)) {
       if (block.type === 'text') {
         noteTriggerFired(s, block.text || '');
         handleHookFeedback(s, block.text || '');
@@ -1089,6 +1110,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // A Monitor may emit many events and stay armed, so it is expired at its own
   // stated timeout rather than trusted to announce its death — otherwise a
   // monitor that simply times out would wedge the cell on 'waiting' forever.
+  // A background command has no stated timeout, so nothing bounds it the way a
+  // monitor's own timeout does. Without a cap, one missed notification parks the
+  // cell on "waiting" for the rest of the session — which is exactly what
+  // happened. Showing idle while a very long command is still running is a far
+  // smaller lie than showing waiting forever after everything has finished.
+  const BG_MAX_MS = 30 * 60 * 1000;
+  // Nothing sensible has hundreds of outstanding triggers; a leak should be
+  // bounded rather than growing for as long as the session lives.
+  const MAX_WAITING = 64;
+
   const BG_LAUNCH_RE = /(?:running in background with ID|moved to the background \(ID):\s*([a-z0-9]+)/i;
   const MONITOR_LAUNCH_RE = /Monitor started \(task ([a-z0-9]+), timeout (\d+)ms/i;
 
@@ -1101,7 +1132,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       return;
     }
     const bg = BG_LAUNCH_RE.exec(t);
-    if (bg) s.waiting.set(bg[1], { label: 'background command', expiresAt: 0 });
+    if (bg) s.waiting.set(bg[1], { label: 'background command', expiresAt: Date.now() + BG_MAX_MS });
+    while (s.waiting.size > MAX_WAITING) s.waiting.delete(s.waiting.keys().next().value);
   }
 
   function noteTriggerFired(s, text) {
