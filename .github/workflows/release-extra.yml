@@ -107,7 +107,8 @@ jobs:
           rm -rf chrome.zip unpacked
           test -f "staging/crundi-server/chrome/win-${CHROME_VER}/chrome-win64/chrome.exe"
           echo "bundled Chrome ${CHROME_VER} for Windows"
-          cd staging/crundi-server          npm ci --omit=dev --ignore-scripts=false
+          cd staging/crundi-server
+          npm ci --omit=dev --ignore-scripts=false
           cd ..
           cp ../docker/README.md crundi-server/DOCKER.md || true
 
