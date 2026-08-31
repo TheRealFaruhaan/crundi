@@ -1071,6 +1071,64 @@ export function getWebappHtml(botUsername) {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .svc-card .svc-meta .svc-up { color: var(--text-secondary); }
+
+    /* ── Live usage ───────────────────────────────────────────────────────
+       Two readouts share one visual language: the strip inside a service card
+       and the machine panel in Info. Numbers are mono and tabular so a column
+       of them reads as a column and digits stop jittering as they tick.
+
+       Colour is a signal, not decoration. Bars sit green and only climb through
+       yellow to red as load rises, so a healthy box shows no alarm anywhere and
+       a hot one is obvious without reading a single number. */
+    .stat-strip {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 8px 10px; background: var(--bg-primary);
+      border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+    }
+    .stat-cell { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 160px; }
+    .stat-k {
+      flex: none; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-muted);
+    }
+    .stat-v {
+      flex: none; min-width: 64px; font-family: var(--mono); font-size: 0.78rem;
+      color: var(--text-primary); font-variant-numeric: tabular-nums;
+    }
+    .stat-pid { flex: none; font-family: var(--mono); font-size: 0.68rem; color: var(--text-muted); }
+    /* The sparkline. Zero-anchored area + line, drawn from the real 3-minute
+       history so the shape means something; preserveAspectRatio="none" lets one
+       100x20 viewBox stretch to whatever width the card gives it. */
+    .stat-spark { flex: 1 1 40px; height: 20px; min-width: 36px; display: block; }
+    .stat-spark path.line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .stat-spark path.area { stroke: none; opacity: 0.15; }
+
+    /* Machine panel */
+    .sys-block { display: flex; flex-direction: column; gap: 6px; }
+    .sys-block + .sys-block { margin-top: 14px; }
+    .sys-line { display: flex; align-items: baseline; gap: 8px; font-size: 0.8rem; }
+    .sys-line .sys-k { color: var(--text-secondary); }
+    .sys-line .sys-v {
+      margin-left: auto; font-family: var(--mono); font-size: 0.8rem;
+      color: var(--text-primary); font-variant-numeric: tabular-nums;
+    }
+    .sys-bar { height: 6px; border-radius: 999px; background: var(--bg-tertiary); overflow: hidden; }
+    .sys-bar i { display: block; height: 100%; width: 0; border-radius: 999px; transition: width 0.4s ease, background-color 0.4s ease; }
+    /* Per-core strip: one bar per core, so the panel shows the real shape of
+       this machine rather than a single averaged number that hides a pegged
+       core sitting next to five idle ones. */
+    .sys-cores { display: flex; align-items: flex-end; gap: 3px; height: 28px; }
+    .sys-core { flex: 1; height: 100%; background: var(--bg-tertiary); border-radius: 2px; position: relative; overflow: hidden; }
+    .sys-core i { position: absolute; left: 0; right: 0; bottom: 0; display: block; height: 0; transition: height 0.4s ease, background-color 0.4s ease; }
+    .sys-spark { width: 100%; height: 40px; display: block; }
+    .sys-spark path.line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .sys-spark path.area { stroke: none; opacity: 0.14; }
+    .sys-quiet { color: var(--text-muted); font-size: 0.8rem; }
+    .lv-ok { background: var(--green); }
+    .lv-warn { background: var(--yellow); }
+    .lv-hot { background: var(--red); }
+    @media (prefers-reduced-motion: reduce) {
+      .sys-bar i, .sys-core i { transition: none; }
+    }
     /* Action buttons — one consistent button style across the card. The bare
        .svc-actions button selector also covers panels that reuse this row
        (Terminals, Browsers) without needing the explicit class. */
@@ -1464,6 +1522,8 @@ export function getWebappHtml(botUsername) {
       }
       .tab-btn { padding: 8px 12px; font-size: 0.76rem; }
       .svc-card { padding: 12px; }
+      .stat-strip { gap: 8px 12px; padding: 8px; }
+      .stat-cell { flex: 1 1 100%; }
       .info-panel { padding: 12px; }
       .info-row { flex-direction: column; gap: 2px; }
       .info-row .value { text-align: left; max-width: 100%; }
@@ -6069,6 +6129,10 @@ export function getWebappHtml(botUsername) {
     }
     let resumeTimer = null;
     async function onResume() {
+      // Runs on every visibilitychange, both directions — so this is also where
+      // polling stops when the tab is backgrounded. A phone in a pocket has no
+      // use for a stats request every two seconds.
+      ensureStatsPolling();
       if (document.visibilityState === 'hidden') return;
       reportPresence(true); // re-assert in case a heartbeat lapsed while the thread was busy/backgrounded
       if (token) loadUsage(); // always refresh usage on resume (cheap, server-cached, no force)
@@ -6297,6 +6361,7 @@ export function getWebappHtml(botUsername) {
       if (tab === 'schedule') loadSchedules();
       if (tab === 'info') renderInfo();
       if (tab === 'settings') renderSettings();
+      ensureStatsPolling();
     }
 
     // ─── Git Panel ───
@@ -7422,6 +7487,206 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // ─── Live usage ───
+    //
+    // One /api/stats poll feeds both the Services strip and the Info panel, and
+    // only runs while one of those tabs is actually on screen.
+
+    var statsTimer = null;
+    var lastStats = null;
+
+    function fmtBytes(n) {
+      if (n == null || !isFinite(n)) return '\\u2014';
+      if (n < 1024) return Math.round(n) + ' B';
+      var u = ['KB', 'MB', 'GB', 'TB'];
+      var v = n / 1024, i = 0;
+      while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+      return (v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + u[i];
+    }
+
+    function fmtPct(n) { return n == null ? '\\u2014' : (n >= 100 ? Math.round(n) : n.toFixed(1)) + '%'; }
+
+    function fmtDur(sec) {
+      if (sec == null || !isFinite(sec)) return '\\u2014';
+      var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+      if (d) return d + 'd ' + h + 'h';
+      if (h) return h + 'h ' + m + 'm';
+      return m + 'm';
+    }
+
+    // Green until it matters. These thresholds are the whole colour system.
+    function lvl(pct) { return pct >= 85 ? 'lv-hot' : pct >= 60 ? 'lv-warn' : 'lv-ok'; }
+    function lvlColor(pct) {
+      return pct >= 85 ? 'var(--red)' : pct >= 60 ? 'var(--yellow)' : 'var(--green)';
+    }
+
+    /**
+     * Zero-anchored sparkline over the values, scaled to max.
+     * Returns an empty chart below two points: one sample is not a trend, and
+     * drawing a flat line for it would imply history that does not exist yet.
+     */
+    function sparkSvg(vals, max, color, cls) {
+      var klass = cls || 'stat-spark';
+      var open = '<svg class="' + klass + '" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">';
+      if (!vals || vals.length < 2 || !(max > 0)) return open + '</svg>';
+      var n = vals.length, d = '';
+      for (var i = 0; i < n; i++) {
+        var x = (i / (n - 1)) * 100;
+        var r = Math.max(0, Math.min(1, vals[i] / max));
+        var y = 19 - r * 18;
+        d += (i ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
+      }
+      return open
+        + '<path class="area" d="' + d + 'L100 20L0 20Z" fill="' + color + '"/>'
+        + '<path class="line" d="' + d + '" stroke="' + color + '"/>'
+        + '</svg>';
+    }
+
+    function maxOf(vals, floor) {
+      var m = floor || 0;
+      for (var i = 0; i < (vals || []).length; i++) if (vals[i] > m) m = vals[i];
+      return m;
+    }
+
+    /**
+     * The usage strip for one running service.
+     *
+     * CPU is a share of ONE core, the same figure top(1) reports, so a service
+     * using two cores reads 200% rather than being silently capped at 100.
+     */
+    function statStripInner(st) {
+      if (!st) return '';
+      var cpuH = st.cpuHistory || [];
+      var memH = st.memHistory || [];
+      // Anchored at one full core so idle noise is not amplified into a mountain
+      // range, but still grows for a service that genuinely uses more.
+      var cpuMax = maxOf(cpuH, 100);
+      var memMax = maxOf(memH, 0) * 1.25;
+      var cpuC = lvlColor(st.cpuPct == null ? 0 : st.cpuPct);
+      return '<div class="stat-cell" title="Share of one CPU core, as top reports it">'
+        + '<span class="stat-k">CPU</span>'
+        + '<span class="stat-v">' + fmtPct(st.cpuPct) + '</span>'
+        + sparkSvg(cpuH, cpuMax, cpuC)
+        + '</div>'
+        + '<div class="stat-cell" title="Resident memory across the whole process tree">'
+        + '<span class="stat-k">Memory</span>'
+        + '<span class="stat-v">' + fmtBytes(st.memory) + '</span>'
+        + sparkSvg(memH, memMax, 'var(--sky)')
+        + '</div>'
+        + (st.pid ? '<span class="stat-pid">pid ' + st.pid + '</span>' : '');
+    }
+
+    /** Patch the strips in place — a full re-render would close open logs. */
+    function applyServiceStats(map) {
+      var m = map || {};
+      // Every strip on screen, not just the ones in the payload: a service that
+      // stopped between polls drops out of the payload entirely, and skipping it
+      // would leave its last numbers frozen on the card looking live.
+      var strips = document.querySelectorAll('.stat-strip');
+      for (var i = 0; i < strips.length; i++) {
+        // The id was written through escHtml, but the parser decodes attribute
+        // entities, so .id reads back as the raw key the payload is keyed by.
+        var key = strips[i].id.slice('svc-stat-'.length);
+        strips[i].innerHTML = m[key] ? statStripInner(m[key]) : '';
+      }
+    }
+
+    function sysBar(pct) {
+      var p = Math.max(0, Math.min(100, pct || 0));
+      return '<div class="sys-bar"><i class="' + lvl(p) + '" style="width:' + p.toFixed(1) + '%"></i></div>';
+    }
+
+    function sysLine(label, value) {
+      return '<div class="sys-line"><span class="sys-k">' + escHtml(label) + '</span>'
+        + '<span class="sys-v">' + escHtml(value) + '</span></div>';
+    }
+
+    /** The machine panel in Info. */
+    function renderSystemStats(sys) {
+      var el = $('#sys-stats-body');
+      if (!el || !sys) return;
+      var cpu = sys.cpu || {};
+      var mem = sys.mem || {};
+      var disk = sys.disk || {};
+      var host = sys.host || {};
+
+      // Per-core strip: the signature of this panel.
+      var cores = cpu.cores || [];
+      var coreBars = '';
+      for (var i = 0; i < cores.length; i++) {
+        var c = cores[i] == null ? 0 : cores[i];
+        coreBars += '<div class="sys-core" title="Core ' + i + ' \\u00b7 ' + fmtPct(cores[i]) + '">'
+          + '<i class="' + lvl(c) + '" style="height:' + c.toFixed(1) + '%"></i></div>';
+      }
+
+      var memPct = mem.total ? (mem.used / mem.total) * 100 : 0;
+      var diskPct = disk.total ? (disk.used / disk.total) * 100 : 0;
+      var hist = (sys.history && sys.history.cpu) || [];
+
+      var html = '<div class="sys-block">'
+        + sysLine('CPU', fmtPct(cpu.overall))
+        + (coreBars ? '<div class="sys-cores">' + coreBars + '</div>' : '')
+        + sparkSvg(hist, 100, lvlColor(cpu.overall || 0), 'sys-spark')
+        + '</div>';
+
+      html += '<div class="sys-block">'
+        + sysLine('Memory', fmtBytes(mem.used) + ' of ' + fmtBytes(mem.total))
+        + sysBar(memPct)
+        + '</div>';
+
+      if (mem.swapTotal > 0) {
+        html += '<div class="sys-block">'
+          + sysLine('Swap', fmtBytes(mem.swapUsed) + ' of ' + fmtBytes(mem.swapTotal))
+          + sysBar((mem.swapUsed / mem.swapTotal) * 100)
+          + '</div>';
+      }
+
+      html += '<div class="sys-block">'
+        + sysLine('Disk', fmtBytes(disk.used) + ' of ' + fmtBytes(disk.total))
+        + sysBar(diskPct)
+        + '</div>';
+
+      html += '<div class="sys-block">';
+      // Windows has no load average and no /proc/net/dev; those rows are left
+      // out entirely rather than shown as a convincing zero.
+      if (sys.load) {
+        html += sysLine('Load', sys.load.one.toFixed(2) + '  ' + sys.load.five.toFixed(2) + '  ' + sys.load.fifteen.toFixed(2));
+      }
+      if (sys.net && sys.net.rxPerSec != null) {
+        html += sysLine('Network', 'down ' + fmtBytes(sys.net.rxPerSec) + '/s   up ' + fmtBytes(sys.net.txPerSec) + '/s');
+      }
+      html += sysLine('Uptime', fmtDur(sys.uptimeSec));
+      html += sysLine('Crundi', fmtDur(sys.processUptimeSec) + ' \\u00b7 ' + fmtBytes(sys.processRssBytes));
+      html += sysLine('Machine', host.hostname || '\\u2014');
+      html += sysLine('Processor', (host.cores || 0) + ' cores \\u00b7 ' + (host.cpuModel || '\\u2014'));
+      html += '</div>';
+
+      el.innerHTML = html;
+    }
+
+    async function pollStats() {
+      try {
+        const res = await apiFetch('/api/stats');
+        const d = await res.json();
+        lastStats = d;
+        if (currentTab === 'services') applyServiceStats(d.services);
+        if (currentTab === 'info') renderSystemStats(d.system);
+      } catch (err) { /* one dropped tick is not worth interrupting anyone */ }
+    }
+
+    /** Poll only while a tab that shows numbers is actually on screen. */
+    function ensureStatsPolling() {
+      const want = (currentTab === 'services' || currentTab === 'info')
+        && !document.hidden && document.visibilityState !== 'hidden';
+      if (want && !statsTimer) {
+        pollStats();
+        statsTimer = setInterval(pollStats, 2000);
+      } else if (!want && statsTimer) {
+        clearInterval(statsTimer);
+        statsTimer = null;
+      }
+    }
+
     function renderServices() {
       const panel = $('#services-panel');
       const projectServices = currentProject
@@ -7523,6 +7788,11 @@ export function getWebappHtml(botUsername) {
           + '</div>'
           + '<div class="svc-meta">' + escHtml(s.command || '')
           + (s.uptime ? ' <span class="svc-up">&middot; up ' + escHtml(s.uptime) + '</span>' : '') + '</div>'
+          + (running ? '<div class="stat-strip" id="svc-stat-' + k + '">'
+              + statStripInner({ cpuPct: s.cpuPct, memory: s.memory, pid: s.pid,
+                  cpuHistory: (lastStats && lastStats.services && lastStats.services[s.key] || {}).cpuHistory,
+                  memHistory: (lastStats && lastStats.services && lastStats.services[s.key] || {}).memHistory })
+              + '</div>' : '')
           + '<div class="svc-actions">'
           + (running
             ? '<button class="svc-btn" data-action="svc-stop" data-key="' + k + '">' + ic('stop') + 'Stop</button>'
@@ -8135,7 +8405,13 @@ export function getWebappHtml(botUsername) {
         + 'font-family:var(--mono);font-size:0.75rem;line-height:1.5;color:var(--text-muted);">'
         + '(loading...)</div></div>';
 
-      $('#info-panel').innerHTML = projectHtml + tunnelHtml + logsHtml;
+      const sysHtml = '<div class="info-section"><h4>This machine</h4>'
+        + '<div id="sys-stats-body"><div class="sys-quiet">Reading the machine\\u2026</div></div></div>';
+
+      $('#info-panel').innerHTML = projectHtml + sysHtml + tunnelHtml + logsHtml;
+      // Paint immediately from the last poll so the panel is not blank on open.
+      if (lastStats) renderSystemStats(lastStats.system);
+      ensureStatsPolling();
 
       // Load server logs
       try {

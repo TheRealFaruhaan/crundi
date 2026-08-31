@@ -20,7 +20,8 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
-import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService } from './services.js';
+import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService, getServiceHistory } from './services.js';
+import { getSystemStats, startStatsSampler, stopStatsSampler } from './stats.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -1821,6 +1822,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         key: s.key, name: s.name, alias: s.alias, command: s.command,
         projectPath: s.projectPath, status: s.status, pid: s.pid,
         memory: s.memoryBytes,
+        cpuPct: s.cpuPct,
         uptime: s.startedAt ? formatUptime(Date.now() - new Date(s.startedAt).getTime()) : null,
         tunnelPort: s.tunnelPort || 0,
         tunnelEnabled: !!s.tunnelEnabled,
@@ -1828,6 +1830,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         tunnelUrl: s.tunnel?.url || null,
       }));
       return json(res, { services: all });
+    }
+
+    // Machine + per-service usage, polled by whichever tab is open. Kept apart
+    // from /api/services so a 2s poll carries only numbers, not the tunnel and
+    // forward config that never changes between ticks.
+    if (path === '/api/stats' && req.method === 'GET') {
+      const system = await getSystemStats();
+      const svc = {};
+      for (const s of getAllServiceStatus()) {
+        if (s.status !== 'running') continue;
+        const h = getServiceHistory(s.key);
+        svc[s.key] = {
+          status: s.status,
+          pid: s.pid,
+          cpuPct: s.cpuPct,
+          memory: s.memoryBytes,
+          cpuHistory: h.cpu,
+          memHistory: h.mem,
+        };
+      }
+      return json(res, { system, services: svc });
     }
 
     // Register a new service
@@ -3380,10 +3403,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Only ever reports — applying is an explicit request from Settings.
       serverUpdate.start();
 
+      // Machine stats. CPU is a rate, so the sampler has to be running before
+      // anyone asks — a cold /api/stats can only report memory and disk.
+      startStatsSampler(2000);
+
       return { port, tunnelUrl, localPort };
     },
 
     stop() {
+      stopStatsSampler();
       for (const client of sseClients) {
         try { client.res.end(); } catch { /* ignore */ }
       }
