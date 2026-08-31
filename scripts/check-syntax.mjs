@@ -91,6 +91,78 @@ try {
 
 console.log(`inline browser scripts: ${inlineCount} block(s)`);
 
+// ─── Pass 3: shell inside GitHub workflows ───
+//
+// A workflow's YAML can parse perfectly while the shell script inside a
+// `run: |` block is broken, and that only surfaces when the release is already
+// running. It has: an edit joined two commands onto one line
+// ("cd staging/crundi-server          npm ci"), the YAML still parsed, and the
+// Windows server package failed mid-release with "cd: too many arguments".
+
+function bashBlocks(text) {
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(\s*)run:\s*\|-?\s*$/.exec(lines[i]);
+    if (!m) continue;
+    const indent = m[1].length;
+    // The step's own `shell:` may sit either side of `run:`.
+    const near = lines.slice(Math.max(0, i - 8), i + 1).join('\n');
+    const shell = /^\s*shell:\s*(\S+)/m.exec(near)?.[1];
+    const body = [];
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      if (lines[j].trim() === '') { body.push(''); continue; }
+      const lead = lines[j].match(/^\s*/)[0].length;
+      if (lead <= indent) break;
+      body.push(lines[j].slice(indent + 2));
+    }
+    i = j - 1;
+    const code = body.join('\n');
+    // Only bash is checkable here; pwsh and cmd blocks are left alone rather
+    // than reported as broken bash.
+    const isPwsh = shell && /^(pwsh|powershell|cmd)$/i.test(shell);
+    if (isPwsh) continue;
+    if (!shell && /\$env:|Compress-Archive|Get-ChildItem|-NoProfile\s+-Command/.test(code)) continue;
+    out.push({ line: i + 1, code });
+  }
+  return out;
+}
+
+let shellBlocks = 0;
+const wfDir = join(root, '.github', 'workflows');
+try {
+  for (const name of readdirSync(wfDir)) {
+    if (!/\.ya?ml$/.test(name)) continue;
+    const text = readFileSync(join(wfDir, name), 'utf8');
+    for (const block of bashBlocks(text)) {
+      shellBlocks++;
+      try {
+        execFileSync('bash', ['-n'], { input: block.code, stdio: ['pipe', 'pipe', 'pipe'] });
+      } catch (err) {
+        fail(`.github/workflows/${name} (run block near line ${block.line})`,
+          String(err.stderr || err.message).trim().split('\n').slice(0, 2).join(' '));
+      }
+      // bash -n alone would NOT have caught the bug this pass exists for:
+      // `cd staging/crundi-server          npm ci` is valid syntax and only
+      // fails at runtime with "cd: too many arguments". What gives it away is
+      // the shape — two commands welded onto one line by an edit that ate the
+      // newline between them.
+      for (const [n, line] of block.code.split('\n').entries()) {
+        if (/^\s*#/.test(line)) continue;
+        const welded = /\S {2,}(npm|node|cd|cp|mv|rm|mkdir|curl|tar|git|unzip|chmod|echo|test|docker)\s/.exec(line);
+        if (welded) {
+          fail(`.github/workflows/${name} (run block near line ${block.line + n + 1})`,
+            `two commands look welded onto one line by a lost newline: ...${line.trim().slice(0, 70)}`);
+        }
+      }
+    }
+  }
+  console.log(`workflow shell blocks: ${shellBlocks}`);
+} catch (err) {
+  if (err?.code !== 'ENOENT') fail('.github/workflows', String(err.message));
+}
+
 if (failures) {
   console.error(`\n${failures} syntax problem(s) found.`);
   process.exit(1);
