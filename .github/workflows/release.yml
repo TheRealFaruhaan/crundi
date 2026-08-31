@@ -17,6 +17,9 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    # A job that hangs should die in minutes, not burn six hours of the
+    # default. A test with an unbounded scan hung every Windows job here.
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
