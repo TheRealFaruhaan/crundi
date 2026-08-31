@@ -30,6 +30,32 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # npm ci can report complete success while a package's postinstall has
+      # quietly failed to fetch its binary. 1.9.2 shipped exactly that: a
+      # network wobble ate cloudflared's download, npm still said "added 532
+      # packages", and the installer went out 13 MB lighter with no tunnel
+      # binary in it. Nothing failed; it was only caught by eyeballing the
+      # asset size against the previous release.
+      #
+      # These are payloads, not modules — their absence cannot be caught by
+      # importing anything, so they get checked for directly.
+      - name: Verify the native payloads actually downloaded
+        shell: bash
+        run: |
+          missing=0
+          for f in \
+            "node_modules/cloudflared/bin/cloudflared.exe" \
+            "node_modules/node-pty/prebuilds/win32-x64/winpty-agent.exe"
+          do
+            if [ -s "$f" ]; then
+              echo "ok   $f ($(wc -c < "$f") bytes)"
+            else
+              echo "MISSING  $f"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || { echo "A binary payload is missing — refusing to ship a half-built installer."; exit 1; }
+
       # Guards the class of bug that only shows up in a browser: webapp-html.js
       # is one big template literal, so a SyntaxError in the page's own JS gets
       # past `node --check` and ships a UI that dies at boot. Runs here because
