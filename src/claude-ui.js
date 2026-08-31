@@ -486,11 +486,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   /** Get (or lazily create) the record for the subagent behind a tool_use id. */
-  function getAgent(s, toolUseId) {
+  function getAgent(s, toolUseId, kind) {
     let a = s.agents.get(toolUseId);
     if (!a) {
       a = {
-        toolUseId, taskId: '', description: '', step: '', subagentType: '', prompt: '',
+        toolUseId, kind: kind || 'agent',
+        taskId: '', description: '', step: '', subagentType: '', prompt: '',
         status: 'running', summary: '', usage: null, lastTool: '',
         startedAt: Date.now(), endedAt: 0, messages: [],
       };
@@ -574,18 +575,17 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     const toolUseId = msg.tool_use_id || s.agentsByTask.get(msg.task_id) || '';
     if (!toolUseId) return;
     // These events cover every kind of background task the CLI tracks, not just
-    // subagents — a Bash command run in the background raises them too. Drawing
-    // one of those as an agent produced a bubble that sat there saying "waiting
-    // for the agent's first step" forever, because it was never going to have
-    // one. Real subagents report a subagent_type; nothing else does.
-    if (msg.subtype === 'task_started'
-        && !msg.subagent_type
-        && !String(msg.task_type || '').includes('agent')) {
-      return;
-    }
+    // subagents — a background Bash command and a Monitor raise them too. Both
+    // now get a bubble, because "what is still running?" is the same question
+    // whichever spawned it, but they are NOT agents and must not be drawn as
+    // one: a task has no transcript to drill into, so presenting it as an agent
+    // is what produced a bubble stuck on "waiting for the agent's first step"
+    // forever. Real subagents report a subagent_type; nothing else does.
+    const kind = (msg.subagent_type || String(msg.task_type || '').includes('agent'))
+      ? 'agent' : 'task';
     // A later event for a task we declined to track would resurrect it.
     if (msg.subtype !== 'task_started' && !s.agents.has(toolUseId)) return;
-    const a = getAgent(s, toolUseId);
+    const a = getAgent(s, toolUseId, kind);
     if (msg.task_id) { a.taskId = msg.task_id; s.agentsByTask.set(msg.task_id, toolUseId); }
 
     if (msg.subtype === 'task_started') {
@@ -612,7 +612,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       if (msg.status) a.status = msg.status;
       if (msg.summary) a.summary = String(msg.summary).slice(0, MAX_TEXT);
       if (msg.usage) a.usage = msg.usage;
-      if (!a.endedAt) a.endedAt = Date.now();
+      // For an agent the notification IS the end. A Monitor fires one per event
+      // and stays armed, so a task only ends when it says so — otherwise the
+      // first event would grey out a bubble that is still watching.
+      const ends = a.kind !== 'task' || (msg.status && msg.status !== 'running');
+      if (ends && !a.endedAt) a.endedAt = Date.now();
+      if (a.kind === 'task' && !ends) a.status = 'running';
     }
     emitAgent(s, a);
   }
@@ -783,6 +788,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       cwd: project.path,
       stdoutBuf: '',
       blocks: new Map(),       // streaming block index -> entry (partial messages)
+      waiting: new Map(),      // taskId -> { label, expiresAt } outstanding background triggers
       streamedQueue: [],       // streamed text/thinking entries awaiting their final message
       agents: new Map(),       // Task tool_use_id -> subagent record (see handleTaskEvent)
       agentsByTask: new Map(), // CLI task_id -> tool_use_id (task_updated only carries task_id)
@@ -922,6 +928,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // A subagent's own turn — never the main transcript, and crucially never
     // allowed near streamedQueue (see the Subagents section above).
     if (msg.parent_tool_use_id) return handleAgentAssistant(s, msg, msg.parent_tool_use_id);
+    // Output means it is working, whoever started the turn.
+    //
+    // 'working' used to be set only when WE sent a message or answered a
+    // permission prompt. The CLI also resumes on its own — a background task
+    // finishing and re-invoking it, or the Stop hook that drives /goal — and
+    // those turns produced output while the cell still showed idle. Promoting
+    // only from idle leaves needs-input alone, which is a different question.
+    if (s.state === 'idle' || s.state === 'waiting') setState(s, 'working');
     for (const block of msg.message?.content || []) {
       if (block.type === 'text' || block.type === 'thinking') {
         const text = (block.type === 'text' ? block.text : block.thinking) || '';
@@ -940,13 +954,18 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function handleUser(s, msg) {
     if (msg.parent_tool_use_id) return handleAgentUser(s, msg, msg.parent_tool_use_id);
     for (const block of msg.message?.content || []) {
-      if (block.type === 'text') { handleHookFeedback(s, block.text || ''); continue; }
+      if (block.type === 'text') {
+        noteTriggerFired(s, block.text || '');
+        handleHookFeedback(s, block.text || '');
+        continue;
+      }
       if (block.type !== 'tool_result') continue;
       const target = [...s.messages].reverse().find(e => e.kind === 'tool' && e.toolUseId === block.tool_use_id);
       const content = Array.isArray(block.content)
         ? block.content.map(c => (c.type === 'text' ? c.text : `[${c.type}]`)).join('\n')
         : (typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''));
       if (target) patchEntry(s, target, { status: 'done', result: String(content).slice(0, MAX_TEXT), isError: !!block.is_error });
+      noteTriggerLaunch(s, content);
     }
   }
 
@@ -1052,6 +1071,56 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
   }
 
+  // ─── Waiting on a trigger ───
+  //
+  // A turn can end with work still outstanding: a background command, or a
+  // Monitor armed to fire on a condition. The CLI then resumes ON ITS OWN when
+  // the trigger fires. Both halves are observable on the wire, verified
+  // against real transcripts:
+  //
+  //   launch (tool_result text)
+  //     "Command running in background with ID: bbva76f5d."
+  //     "...was moved to the background (ID: b7w603pjm)."
+  //     "Monitor started (task bfzvmf3g1, timeout 120000ms)."
+  //   fire (a plain user message)
+  //     <task-notification><task-id>bbva76f5d</task-id>...<status>completed</status>
+  //
+  // so a turn that ends with any of these outstanding is 'waiting', not 'idle'.
+  // A Monitor may emit many events and stay armed, so it is expired at its own
+  // stated timeout rather than trusted to announce its death — otherwise a
+  // monitor that simply times out would wedge the cell on 'waiting' forever.
+  const BG_LAUNCH_RE = /(?:running in background with ID|moved to the background \(ID):\s*([a-z0-9]+)/i;
+  const MONITOR_LAUNCH_RE = /Monitor started \(task ([a-z0-9]+), timeout (\d+)ms/i;
+
+  function noteTriggerLaunch(s, text) {
+    const t = String(text || '');
+    const mon = MONITOR_LAUNCH_RE.exec(t);
+    if (mon) {
+      const ms = Number(mon[2]) || 0;
+      s.waiting.set(mon[1], { label: 'monitor', expiresAt: Date.now() + ms + 5000 });
+      return;
+    }
+    const bg = BG_LAUNCH_RE.exec(t);
+    if (bg) s.waiting.set(bg[1], { label: 'background command', expiresAt: 0 });
+  }
+
+  function noteTriggerFired(s, text) {
+    const t = String(text || '');
+    if (!t.includes('<task-notification>')) return false;
+    const id = /<task-id>([^<]+)<\/task-id>/.exec(t)?.[1];
+    // Monitors keep running after an event; only a terminal status retires one.
+    const done = /<status>\s*(completed|failed|killed|timed[- ]out)\s*<\/status>/i.test(t);
+    if (id && (done || !/Monitor event/i.test(t))) s.waiting.delete(id);
+    return true;
+  }
+
+  /** Outstanding triggers, dropping any whose stated timeout has passed. */
+  function activeTriggers(s) {
+    const now = Date.now();
+    for (const [id, w] of s.waiting) if (w.expiresAt && now >= w.expiresAt) s.waiting.delete(id);
+    return s.waiting.size;
+  }
+
   function handleResult(s, msg) {
     s.blocks.clear();
     s.streamedQueue.length = 0;
@@ -1067,7 +1136,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       numTurns: msg.num_turns || 0, isError: !!msg.is_error,
       text: msg.subtype && msg.subtype !== 'success' ? String(msg.result || msg.subtype) : '',
     });
-    setState(s, 'idle');
+    setState(s, activeTriggers(s) ? 'waiting' : 'idle');
   }
 
   /**

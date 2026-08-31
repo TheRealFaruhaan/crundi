@@ -88,6 +88,7 @@ export function getWebappHtml(botUsername) {
       --red: #ef4444;
       --red-dim: rgba(239, 68, 68, 0.15);
       --yellow: #f59e0b;
+      --sky: #38bdf8;
       --yellow-dim: rgba(245, 158, 11, 0.15);
       --sidebar-width: 240px;
       --topbar-height: 48px;
@@ -425,6 +426,7 @@ export function getWebappHtml(botUsername) {
        needs input, amber = a terminal is working, green = running/idle. */
     .sidebar-item.ts-running .dot { background: var(--green); }
     .sidebar-item.ts-working .dot { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim, rgba(245,180,60,0.18)); }
+    .sidebar-item.ts-waiting .dot { background: var(--sky); box-shadow: 0 0 0 3px rgba(56,189,248,0.18); }
     .sidebar-item.ts-input .dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
     .sidebar-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sidebar-item .svc-heart { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-muted); }
@@ -583,9 +585,11 @@ export function getWebappHtml(botUsername) {
     .term-status-dot.exited { background: var(--text-muted); }
     .term-status-dot.working { background: var(--yellow); }
     .term-status-dot.input { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+    .term-status-dot.waiting { background: var(--sky); }
     .term-agent-badge { flex-shrink: 0; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 999px; }
     .term-agent-badge.working { background: var(--yellow-dim, rgba(245,180,60,0.16)); color: var(--yellow); }
     .term-agent-badge.input { background: var(--accent-dim); color: var(--accent-hover); }
+    .term-agent-badge.waiting { background: rgba(56,189,248,0.16); color: var(--sky); }
     .term-head-spacer { flex: 1; }
     .term-font-btn, .term-head-btn {
       border: 1px solid var(--border); background: var(--bg-primary);
@@ -1067,6 +1071,134 @@ export function getWebappHtml(botUsername) {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .svc-card .svc-meta .svc-up { color: var(--text-secondary); }
+
+    /* ── Live usage ───────────────────────────────────────────────────────
+       Two readouts share one visual language: the strip inside a service card
+       and the machine panel in Info. Numbers are mono and tabular so a column
+       of them reads as a column and digits stop jittering as they tick.
+
+       Colour is a signal, not decoration. Bars sit green and only climb through
+       yellow to red as load rises, so a healthy box shows no alarm anywhere and
+       a hot one is obvious without reading a single number. */
+    .stat-strip {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 8px 10px; background: var(--bg-primary);
+      border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+    }
+    .stat-cell { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 160px; }
+    .stat-k {
+      flex: none; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-muted);
+    }
+    .stat-v {
+      flex: none; min-width: 64px; font-family: var(--mono); font-size: 0.78rem;
+      color: var(--text-primary); font-variant-numeric: tabular-nums;
+    }
+    .stat-pid { flex: none; font-family: var(--mono); font-size: 0.68rem; color: var(--text-muted); }
+    /* The sparkline. Zero-anchored area + line, drawn from the real 3-minute
+       history so the shape means something; preserveAspectRatio="none" lets one
+       100x20 viewBox stretch to whatever width the card gives it. */
+    .stat-spark { flex: 1 1 40px; height: 20px; min-width: 36px; display: block; }
+    .stat-spark path.line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .stat-spark path.area { stroke: none; opacity: 0.15; }
+
+    /* Machine panel */
+    .sys-block { display: flex; flex-direction: column; gap: 6px; }
+    .sys-block + .sys-block { margin-top: 14px; }
+    .sys-line { display: flex; align-items: baseline; gap: 8px; font-size: 0.8rem; }
+    .sys-line .sys-k { color: var(--text-secondary); }
+    .sys-line .sys-v {
+      margin-left: auto; font-family: var(--mono); font-size: 0.8rem;
+      color: var(--text-primary); font-variant-numeric: tabular-nums;
+    }
+    .sys-bar { height: 6px; border-radius: 999px; background: var(--bg-tertiary); overflow: hidden; }
+    .sys-bar i { display: block; height: 100%; width: 0; border-radius: 999px; transition: width 0.4s ease, background-color 0.4s ease; }
+    /* Per-core strip: one bar per core, so the panel shows the real shape of
+       this machine rather than a single averaged number that hides a pegged
+       core sitting next to five idle ones. */
+    .sys-cores { display: flex; align-items: flex-end; gap: 3px; height: 28px; }
+    .sys-core { flex: 1; height: 100%; background: var(--bg-tertiary); border-radius: 2px; position: relative; overflow: hidden; }
+    .sys-core i { position: absolute; left: 0; right: 0; bottom: 0; display: block; height: 0; transition: height 0.4s ease, background-color 0.4s ease; }
+    .sys-spark { width: 100%; height: 40px; display: block; }
+    .sys-spark path.line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .sys-spark path.area { stroke: none; opacity: 0.14; }
+    .sys-quiet { color: var(--text-muted); font-size: 0.8rem; }
+
+    /* Reclaim rows. The size sits between the description and the button so the
+       eye lands on what the button is worth before it reaches the button. */
+    .maint-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 0; border-bottom: 1px solid var(--border-subtle);
+    }
+    .maint-row:last-child { border-bottom: none; }
+    .maint-text { flex: 1; min-width: 0; }
+    .maint-label { font-size: 0.82rem; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+    .maint-desc { font-size: 0.73rem; color: var(--text-muted); margin-top: 2px; }
+    .maint-size {
+      flex: none; font-family: var(--mono); font-size: 0.82rem;
+      color: var(--text-primary); font-variant-numeric: tabular-nums; text-align: right; min-width: 68px;
+    }
+    .maint-size.none { color: var(--text-muted); }
+    .maint-root {
+      flex: none; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 1px 6px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-muted);
+    }
+    .maint-total { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 4px; }
+    /* The named casualties of a prune, always visible — not hidden behind the
+       confirm, because it is what decides whether you press at all. */
+    .maint-detail { font-size: 0.73rem; color: var(--yellow); margin-top: 3px; font-family: var(--mono); }
+    .maint-danger {
+      flex: none; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 1px 6px; border-radius: 999px; background: var(--red-dim); color: var(--red);
+    }
+
+    /* Containers. The whole row is the control for opening logs, so it gets a
+       pointer and a hover the way a link would. */
+    .ctr-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 8px; border-radius: var(--radius-sm); cursor: pointer;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .ctr-row:last-of-type { border-bottom: none; }
+    .ctr-row:hover { background: var(--bg-hover); }
+    .ctr-row.open { background: var(--bg-tertiary); }
+    .ctr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+    .ctr-dot.running { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
+    .ctr-dot.unhealthy { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim); }
+    .ctr-main { flex: 1; min-width: 0; }
+    .ctr-name { font-size: 0.82rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ctr-sub {
+      font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
+    }
+    /* Which stack it belongs to. On a shared machine this is the difference
+       between stopping your own container and stopping someone else's. */
+    .ctr-proj {
+      flex: none; font-size: 0.62rem; font-family: var(--mono);
+      padding: 1px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-secondary);
+    }
+    .ctr-logs {
+      max-height: 300px; overflow: auto; margin: 0 0 10px;
+      background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 8px; font-family: var(--mono); font-size: 0.72rem; line-height: 1.5;
+      color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
+      user-select: text; -webkit-user-select: text;
+    }
+    .ctr-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    @media (max-width: 640px) {
+      .ctr-sub { white-space: normal; }
+    }
+    .svc-btn.confirming { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    @media (max-width: 640px) {
+      .maint-row { flex-wrap: wrap; }
+      .maint-text { flex: 1 1 100%; }
+    }
+    .lv-ok { background: var(--green); }
+    .lv-warn { background: var(--yellow); }
+    .lv-hot { background: var(--red); }
+    @media (prefers-reduced-motion: reduce) {
+      .sys-bar i, .sys-core i { transition: none; }
+    }
     /* Action buttons — one consistent button style across the card. The bare
        .svc-actions button selector also covers panels that reuse this row
        (Terminals, Browsers) without needing the explicit class. */
@@ -1460,6 +1592,8 @@ export function getWebappHtml(botUsername) {
       }
       .tab-btn { padding: 8px 12px; font-size: 0.76rem; }
       .svc-card { padding: 12px; }
+      .stat-strip { gap: 8px 12px; padding: 8px; }
+      .stat-cell { flex: 1 1 100%; }
       .info-panel { padding: 12px; }
       .info-row { flex-direction: column; gap: 2px; }
       .info-row .value { text-align: left; max-width: 100%; }
@@ -3899,11 +4033,12 @@ export function getWebappHtml(botUsername) {
       list.innerHTML = '';
       for (const p of projects) {
         // Terminal-state precedence for this project's dot/border:
-        // needs-input (purple) > working (amber) > running/idle (green) > none.
+        // needs-input (purple) > working (amber) > waiting (sky) > running/idle (green) > none.
         const projTerms = terminals.filter(t => t.project === p.alias && t.status === 'running');
         let ts = '';
         if (projTerms.some(t => t.agentState === 'needs-input')) ts = 'ts-input';
         else if (projTerms.some(t => t.agentState === 'working')) ts = 'ts-working';
+        else if (projTerms.some(t => t.agentState === 'waiting')) ts = 'ts-waiting';
         else if (projTerms.length) ts = 'ts-running';
         const isActive = currentProject === p.alias;
         const item = document.createElement('div');
@@ -4628,9 +4763,10 @@ export function getWebappHtml(botUsername) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
       const as = exited ? '' : (t.agentState || 'idle');
-      const dotCls = exited ? ' exited' : (as === 'working' ? ' working' : as === 'needs-input' ? ' input' : '');
+      const dotCls = exited ? ' exited' : (as === 'working' ? ' working' : as === 'needs-input' ? ' input' : as === 'waiting' ? ' waiting' : '');
       const badge = (!exited && as === 'working') ? '<span class="term-agent-badge working">working</span>'
-        : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>' : '';
+        : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>'
+        : (!exited && as === 'waiting') ? '<span class="term-agent-badge waiting">waiting</span>' : '';
       // Font-size controls only make sense for an xterm cell; a chat cell gets a
       // "chat" tag instead so the two kinds are distinguishable at a glance.
       const controls = isChat
@@ -4657,12 +4793,14 @@ export function getWebappHtml(botUsername) {
         dot.classList.toggle('exited', exited);
         dot.classList.toggle('working', as === 'working');
         dot.classList.toggle('input', as === 'needs-input');
+        dot.classList.toggle('waiting', as === 'waiting');
         dot.title = exited ? 'exited' : as;
       }
       // Agent-state badge (working / needs input) next to the title.
       let badge = el.querySelector('.term-agent-badge');
       const want = (!exited && as === 'working') ? ['working', 'working']
-        : (!exited && as === 'needs-input') ? ['input', 'needs input'] : null;
+        : (!exited && as === 'needs-input') ? ['input', 'needs input']
+        : (!exited && as === 'waiting') ? ['waiting', 'waiting'] : null;
       if (!want) { if (badge) badge.remove(); }
       else {
         if (!badge && titleEl) { badge = document.createElement('span'); titleEl.after(badge); }
@@ -6061,6 +6199,10 @@ export function getWebappHtml(botUsername) {
     }
     let resumeTimer = null;
     async function onResume() {
+      // Runs on every visibilitychange, both directions — so this is also where
+      // polling stops when the tab is backgrounded. A phone in a pocket has no
+      // use for a stats request every two seconds.
+      ensureStatsPolling();
       if (document.visibilityState === 'hidden') return;
       reportPresence(true); // re-assert in case a heartbeat lapsed while the thread was busy/backgrounded
       if (token) loadUsage(); // always refresh usage on resume (cheap, server-cached, no force)
@@ -6289,6 +6431,7 @@ export function getWebappHtml(botUsername) {
       if (tab === 'schedule') loadSchedules();
       if (tab === 'info') renderInfo();
       if (tab === 'settings') renderSettings();
+      ensureStatsPolling();
     }
 
     // ─── Git Panel ───
@@ -7414,6 +7557,446 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // ─── Live usage ───
+    //
+    // One /api/stats poll feeds both the Services strip and the Info panel, and
+    // only runs while one of those tabs is actually on screen.
+
+    var statsTimer = null;
+    var lastStats = null;
+
+    function fmtBytes(n) {
+      if (n == null || !isFinite(n)) return '\\u2014';
+      if (n < 1024) return Math.round(n) + ' B';
+      var u = ['KB', 'MB', 'GB', 'TB'];
+      var v = n / 1024, i = 0;
+      while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+      return (v >= 100 ? Math.round(v) : v.toFixed(1)) + ' ' + u[i];
+    }
+
+    function fmtPct(n) { return n == null ? '\\u2014' : (n >= 100 ? Math.round(n) : n.toFixed(1)) + '%'; }
+
+    function fmtDur(sec) {
+      if (sec == null || !isFinite(sec)) return '\\u2014';
+      var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+      if (d) return d + 'd ' + h + 'h';
+      if (h) return h + 'h ' + m + 'm';
+      return m + 'm';
+    }
+
+    // Green until it matters. These thresholds are the whole colour system.
+    function lvl(pct) { return pct >= 85 ? 'lv-hot' : pct >= 60 ? 'lv-warn' : 'lv-ok'; }
+    function lvlColor(pct) {
+      return pct >= 85 ? 'var(--red)' : pct >= 60 ? 'var(--yellow)' : 'var(--green)';
+    }
+
+    /**
+     * Zero-anchored sparkline over the values, scaled to max.
+     * Returns an empty chart below two points: one sample is not a trend, and
+     * drawing a flat line for it would imply history that does not exist yet.
+     */
+    function sparkSvg(vals, max, color, cls) {
+      var klass = cls || 'stat-spark';
+      var open = '<svg class="' + klass + '" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">';
+      if (!vals || vals.length < 2 || !(max > 0)) return open + '</svg>';
+      var n = vals.length, d = '';
+      for (var i = 0; i < n; i++) {
+        var x = (i / (n - 1)) * 100;
+        var r = Math.max(0, Math.min(1, vals[i] / max));
+        var y = 19 - r * 18;
+        d += (i ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
+      }
+      return open
+        + '<path class="area" d="' + d + 'L100 20L0 20Z" fill="' + color + '"/>'
+        + '<path class="line" d="' + d + '" stroke="' + color + '"/>'
+        + '</svg>';
+    }
+
+    function maxOf(vals, floor) {
+      var m = floor || 0;
+      for (var i = 0; i < (vals || []).length; i++) if (vals[i] > m) m = vals[i];
+      return m;
+    }
+
+    /**
+     * The usage strip for one running service.
+     *
+     * CPU is a share of ONE core, the same figure top(1) reports, so a service
+     * using two cores reads 200% rather than being silently capped at 100.
+     */
+    function statStripInner(st) {
+      if (!st) return '';
+      var cpuH = st.cpuHistory || [];
+      var memH = st.memHistory || [];
+      // Anchored at one full core so idle noise is not amplified into a mountain
+      // range, but still grows for a service that genuinely uses more.
+      var cpuMax = maxOf(cpuH, 100);
+      var memMax = maxOf(memH, 0) * 1.25;
+      var cpuC = lvlColor(st.cpuPct == null ? 0 : st.cpuPct);
+      return '<div class="stat-cell" title="Share of one CPU core, as top reports it">'
+        + '<span class="stat-k">CPU</span>'
+        + '<span class="stat-v">' + fmtPct(st.cpuPct) + '</span>'
+        + sparkSvg(cpuH, cpuMax, cpuC)
+        + '</div>'
+        + '<div class="stat-cell" title="Resident memory across the whole process tree">'
+        + '<span class="stat-k">Memory</span>'
+        + '<span class="stat-v">' + fmtBytes(st.memory) + '</span>'
+        + sparkSvg(memH, memMax, 'var(--sky)')
+        + '</div>'
+        + (st.pid ? '<span class="stat-pid">pid ' + st.pid + '</span>' : '');
+    }
+
+    /** Patch the strips in place — a full re-render would close open logs. */
+    function applyServiceStats(map) {
+      var m = map || {};
+      // Every strip on screen, not just the ones in the payload: a service that
+      // stopped between polls drops out of the payload entirely, and skipping it
+      // would leave its last numbers frozen on the card looking live.
+      var strips = document.querySelectorAll('.stat-strip');
+      for (var i = 0; i < strips.length; i++) {
+        // The id was written through escHtml, but the parser decodes attribute
+        // entities, so .id reads back as the raw key the payload is keyed by.
+        var key = strips[i].id.slice('svc-stat-'.length);
+        strips[i].innerHTML = m[key] ? statStripInner(m[key]) : '';
+      }
+    }
+
+    function sysBar(pct) {
+      var p = Math.max(0, Math.min(100, pct || 0));
+      return '<div class="sys-bar"><i class="' + lvl(p) + '" style="width:' + p.toFixed(1) + '%"></i></div>';
+    }
+
+    function sysLine(label, value) {
+      return '<div class="sys-line"><span class="sys-k">' + escHtml(label) + '</span>'
+        + '<span class="sys-v">' + escHtml(value) + '</span></div>';
+    }
+
+    /** The machine panel in Info. */
+    function renderSystemStats(sys) {
+      var el = $('#sys-stats-body');
+      if (!el || !sys) return;
+      var cpu = sys.cpu || {};
+      var mem = sys.mem || {};
+      var disk = sys.disk || {};
+      var host = sys.host || {};
+
+      // Per-core strip: the signature of this panel.
+      var cores = cpu.cores || [];
+      var coreBars = '';
+      for (var i = 0; i < cores.length; i++) {
+        var c = cores[i] == null ? 0 : cores[i];
+        coreBars += '<div class="sys-core" title="Core ' + i + ' \\u00b7 ' + fmtPct(cores[i]) + '">'
+          + '<i class="' + lvl(c) + '" style="height:' + c.toFixed(1) + '%"></i></div>';
+      }
+
+      var memPct = mem.total ? (mem.used / mem.total) * 100 : 0;
+      var diskPct = disk.total ? (disk.used / disk.total) * 100 : 0;
+      var hist = (sys.history && sys.history.cpu) || [];
+
+      var html = '<div class="sys-block">'
+        + sysLine('CPU', fmtPct(cpu.overall))
+        + (coreBars ? '<div class="sys-cores">' + coreBars + '</div>' : '')
+        + sparkSvg(hist, 100, lvlColor(cpu.overall || 0), 'sys-spark')
+        + '</div>';
+
+      html += '<div class="sys-block">'
+        + sysLine('Memory', fmtBytes(mem.used) + ' of ' + fmtBytes(mem.total))
+        + sysBar(memPct)
+        + '</div>';
+
+      if (mem.swapTotal > 0) {
+        html += '<div class="sys-block">'
+          + sysLine('Swap', fmtBytes(mem.swapUsed) + ' of ' + fmtBytes(mem.swapTotal))
+          + sysBar((mem.swapUsed / mem.swapTotal) * 100)
+          + '</div>';
+      }
+
+      html += '<div class="sys-block">'
+        + sysLine('Disk', fmtBytes(disk.used) + ' of ' + fmtBytes(disk.total))
+        + sysBar(diskPct)
+        + '</div>';
+
+      html += '<div class="sys-block">';
+      // Windows has no load average and no /proc/net/dev; those rows are left
+      // out entirely rather than shown as a convincing zero.
+      if (sys.load) {
+        html += sysLine('Load', sys.load.one.toFixed(2) + '  ' + sys.load.five.toFixed(2) + '  ' + sys.load.fifteen.toFixed(2));
+      }
+      if (sys.net && sys.net.rxPerSec != null) {
+        html += sysLine('Traffic', 'down ' + fmtBytes(sys.net.rxPerSec) + '/s   up ' + fmtBytes(sys.net.txPerSec) + '/s');
+      }
+      html += sysLine('Uptime', fmtDur(sys.uptimeSec));
+      html += sysLine('Crundi', fmtDur(sys.processUptimeSec) + ' \\u00b7 ' + fmtBytes(sys.processRssBytes));
+      html += sysLine('Machine', host.hostname || '\\u2014');
+      html += sysLine('Processor', (host.cores || 0) + ' cores \\u00b7 ' + (host.cpuModel || '\\u2014'));
+      html += '</div>';
+
+      // Addresses. One line per interface, because "which IP is this box on"
+      // has more than one right answer on a machine hosting containers.
+      var ifs = sys.interfaces || [];
+      if (ifs.length) {
+        html += '<div class="sys-block">';
+        for (var n = 0; n < ifs.length; n++) {
+          html += sysLine(ifs[n].name, ifs[n].addresses.map(function (a) { return a.address; }).join('  '));
+        }
+        html += '</div>';
+      }
+
+      el.innerHTML = html;
+    }
+
+    // ─── Containers ───
+    //
+    // Hidden behind a button: this is a long list on a busy machine and it is
+    // not what Info is mainly for. Logs are fetched per container on demand
+    // rather than up front, because pulling ten log tails to show none of them
+    // is work nobody asked for.
+
+    var ctrOpen = null;      // id whose logs are showing
+    var ctrShown = false;
+
+    async function toggleContainers() {
+      ctrShown = !ctrShown;
+      const btn = $('#ctr-toggle');
+      if (btn) btn.textContent = ctrShown ? 'Hide' : 'Show';
+      const body = $('#ctr-body');
+      if (!body) return;
+      body.style.display = ctrShown ? '' : 'none';
+      if (ctrShown) await loadContainers();
+    }
+
+    async function loadContainers() {
+      const body = $('#ctr-body');
+      if (!body) return;
+      try {
+        const res = await apiFetch('/api/containers');
+        const d = await res.json();
+        renderContainers(d.containers || [], d.error);
+      } catch (err) {
+        body.innerHTML = '<div class="sys-quiet">Could not reach Docker.</div>';
+      }
+    }
+
+    function renderContainers(list, error) {
+      const body = $('#ctr-body');
+      if (!body) return;
+      if (error) { body.innerHTML = '<div class="sys-quiet">' + escHtml(error) + '</div>'; return; }
+      if (!list.length) { body.innerHTML = '<div class="sys-quiet">No containers on this machine.</div>'; return; }
+      var html = '';
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        var dot = c.running ? (c.health === 'unhealthy' ? 'unhealthy' : 'running') : '';
+        var id = escHtml(c.id);
+        html += '<div class="ctr-row' + (ctrOpen === c.id ? ' open' : '') + '" data-action="ctr-logs" data-id="' + id + '">'
+          + '<span class="ctr-dot ' + dot + '"></span>'
+          + '<div class="ctr-main">'
+          + '<div class="ctr-name">' + escHtml(c.name) + '</div>'
+          + '<div class="ctr-sub">' + escHtml(c.image) + ' \u00b7 ' + escHtml(c.status)
+          + ((c.ips || []).length ? ' \u00b7 ' + escHtml(c.ips.map(function (x) { return x.ip; }).join(', ')) : '')
+          + '</div>'
+          + '</div>'
+          + (c.project ? '<span class="ctr-proj">' + escHtml(c.project) + '</span>' : '')
+          + (c.running
+            ? '<button class="svc-btn danger" data-action="ctr-stop" data-id="' + id + '" data-name="' + escHtml(c.name) + '">Stop</button>'
+            : '<button class="svc-btn" data-action="ctr-start" data-id="' + id + '">Start</button>')
+          + '</div>';
+        if (ctrOpen === c.id) {
+          html += '<div class="ctr-logs" id="ctr-logs-' + id + '">Loading logs\u2026</div>';
+        }
+      }
+      body.innerHTML = html;
+      if (ctrOpen) fetchContainerLogs(ctrOpen);
+    }
+
+    async function showContainerLogs(id) {
+      ctrOpen = (ctrOpen === id) ? null : id;
+      await loadContainers();
+    }
+
+    async function fetchContainerLogs(id) {
+      const pane = document.getElementById('ctr-logs-' + id);
+      if (!pane) return;
+      try {
+        const res = await apiFetch('/api/containers/logs?id=' + encodeURIComponent(id) + '&tail=300');
+        const d = await res.json();
+        if (!d.ok) { pane.textContent = d.error || 'Could not read logs.'; return; }
+        // An empty log is a fact about the container, not a failure to report.
+        pane.textContent = d.text.trim() || 'This container has not logged anything.';
+        pane.scrollTop = pane.scrollHeight;
+      } catch (err) {
+        pane.textContent = 'Could not read logs.';
+      }
+    }
+
+    /** Stopping is two-step: these are often somebody else's containers. */
+    async function containerStop(id, name, btn) {
+      if (!btn) return;
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.classList.add('confirming');
+        btn.textContent = 'Stop ' + (name || 'it') + '?';
+        clearTimeout(btn._armTimer);
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = '';
+          btn.classList.remove('confirming');
+          btn.textContent = 'Stop';
+        }, 6000);
+        return;
+      }
+      clearTimeout(btn._armTimer);
+      btn.disabled = true;
+      btn.textContent = 'Stopping\u2026';
+      try {
+        const res = await apiFetch('/api/containers/stop', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id }),
+        });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error || 'Could not stop it');
+        toast('Stopped ' + d.name, 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      loadContainers();
+    }
+
+    async function containerStart(id, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = 'Starting\u2026'; }
+      try {
+        const res = await apiFetch('/api/containers/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id }),
+        });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error || 'Could not start it');
+        toast('Started ' + d.name, 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      loadContainers();
+    }
+
+    // ─── Reclaim disk space ───
+    //
+    // Probing costs real work (a directory walk, a docker query), so this loads
+    // when Info opens and after a task runs, never on the 2s stats tick.
+
+    async function loadMaintenance() {
+      const el = $('#maint-body');
+      if (!el) return;
+      try {
+        const res = await apiFetch('/api/maintenance');
+        const d = await res.json();
+        renderMaintenance(d.tasks || []);
+      } catch (err) {
+        el.innerHTML = '<div class="sys-quiet">Could not read reclaimable space.</div>';
+      }
+    }
+
+    function renderMaintenance(tasks) {
+      const el = $('#maint-body');
+      if (!el) return;
+      if (!tasks.length) {
+        el.innerHTML = '<div class="sys-quiet">Nothing on this machine to reclaim.</div>';
+        return;
+      }
+      var total = 0;
+      for (var i = 0; i < tasks.length; i++) if (tasks[i].available) total += tasks[i].bytes;
+      var html = '<div class="maint-total">'
+        + (total > 0 ? fmtBytes(total) + ' can be reclaimed' : 'Nothing to reclaim right now')
+        + '</div>';
+      for (var j = 0; j < tasks.length; j++) {
+        var t = tasks[j];
+        var names = t.details || [];
+        // A prune row can be worth pressing while freeing almost no space, so
+        // "is there anything to do" is not the same question as "are there
+        // bytes". Gating on bytes alone left it disabled with work to do.
+        var has = t.available && (t.bytes > 0 || names.length > 0);
+        html += '<div class="maint-row">'
+          + '<div class="maint-text">'
+          + '<div class="maint-label">' + escHtml(t.label)
+          + (t.elevated ? '<span class="maint-root">root</span>' : '')
+          + (t.danger ? '<span class="maint-danger">destructive</span>' : '') + '</div>'
+          + '<div class="maint-desc">' + escHtml(t.description) + '</div>'
+          + (names.length ? '<div class="maint-detail">Will remove: ' + escHtml(names.join(', ')) + '</div>' : '')
+          + '</div>'
+          + '<span class="maint-size' + (t.bytes > 0 ? '' : ' none') + '">'
+          + (t.available ? fmtBytes(t.bytes) : '\u2014') + '</span>'
+          + '<button class="svc-btn' + (t.danger ? ' danger' : '') + '" data-action="maint-run"'
+          + ' data-id="' + escHtml(t.id) + '" data-count="' + names.length + '"'
+          + (has ? '' : ' disabled') + '>' + ic('trash') + (t.danger ? 'Remove' : 'Clear') + '</button>'
+          + '</div>';
+      }
+      el.innerHTML = html;
+    }
+
+    /**
+     * Two-step, in place: the first press arms the button, the second runs it.
+     * Same shape as stopping a terminal — no modal, but no single misplaced tap
+     * wiping a build cache either.
+     */
+    async function runMaintenance(id, btn) {
+      if (!btn) return;
+      const danger = btn.classList.contains('danger');
+      const count = parseInt(btn.dataset.count || '0', 10);
+      const idle = ic('trash') + (danger ? 'Remove' : 'Clear');
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.classList.add('confirming');
+        // Name the number, not just the intent. What actually goes is listed on
+        // the row above, so the armed button only has to count.
+        btn.innerHTML = count > 0
+          ? 'Remove ' + count + (count === 1 ? ' container?' : ' containers?')
+          : (danger ? 'Prune it?' : 'Clear it?');
+        clearTimeout(btn._armTimer);
+        // Longer for a destructive one: there is a list to read first.
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = '';
+          btn.classList.remove('confirming');
+          btn.innerHTML = idle;
+        }, danger ? 9000 : 4000);
+        return;
+      }
+      clearTimeout(btn._armTimer);
+      btn.dataset.armed = '';
+      btn.classList.remove('confirming');
+      btn.disabled = true;
+      btn.innerHTML = danger ? 'Removing\u2026' : 'Clearing\u2026';
+      try {
+        const res = await apiFetch('/api/maintenance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id }),
+        });
+        const d = await res.json();
+        if (!res.ok || !d.ok) throw new Error(d.error || 'The command failed');
+        toast(d.freed == null ? 'Done.' : 'Freed ' + fmtBytes(d.freed), 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      loadMaintenance();
+      pollStats();   // the disk bar above should move at the same moment
+    }
+
+    async function pollStats() {
+      try {
+        const res = await apiFetch('/api/stats');
+        const d = await res.json();
+        lastStats = d;
+        if (currentTab === 'services') applyServiceStats(d.services);
+        if (currentTab === 'info') renderSystemStats(d.system);
+      } catch (err) { /* one dropped tick is not worth interrupting anyone */ }
+    }
+
+    /** Poll only while a tab that shows numbers is actually on screen. */
+    function ensureStatsPolling() {
+      const want = (currentTab === 'services' || currentTab === 'info')
+        && !document.hidden && document.visibilityState !== 'hidden';
+      if (want && !statsTimer) {
+        pollStats();
+        statsTimer = setInterval(pollStats, 2000);
+      } else if (!want && statsTimer) {
+        clearInterval(statsTimer);
+        statsTimer = null;
+      }
+    }
+
     function renderServices() {
       const panel = $('#services-panel');
       const projectServices = currentProject
@@ -7515,6 +8098,11 @@ export function getWebappHtml(botUsername) {
           + '</div>'
           + '<div class="svc-meta">' + escHtml(s.command || '')
           + (s.uptime ? ' <span class="svc-up">&middot; up ' + escHtml(s.uptime) + '</span>' : '') + '</div>'
+          + (running ? '<div class="stat-strip" id="svc-stat-' + k + '">'
+              + statStripInner({ cpuPct: s.cpuPct, memory: s.memory, pid: s.pid,
+                  cpuHistory: (lastStats && lastStats.services && lastStats.services[s.key] || {}).cpuHistory,
+                  memHistory: (lastStats && lastStats.services && lastStats.services[s.key] || {}).memHistory })
+              + '</div>' : '')
           + '<div class="svc-actions">'
           + (running
             ? '<button class="svc-btn" data-action="svc-stop" data-key="' + k + '">' + ic('stop') + 'Stop</button>'
@@ -8127,7 +8715,34 @@ export function getWebappHtml(botUsername) {
         + 'font-family:var(--mono);font-size:0.75rem;line-height:1.5;color:var(--text-muted);">'
         + '(loading...)</div></div>';
 
-      $('#info-panel').innerHTML = projectHtml + tunnelHtml + logsHtml;
+      const sysHtml = '<div class="info-section"><h4>This machine</h4>'
+        + '<div id="sys-stats-body"><div class="sys-quiet">Reading the machine\\u2026</div></div></div>'
+        + '<div class="info-section" id="ctr-section" style="display:none">'
+        + '<div class="ctr-head"><h4 style="margin:0;flex:1">Containers</h4>'
+        + '<button class="svc-btn" id="ctr-toggle" data-action="ctr-toggle">Show</button></div>'
+        + '<div id="ctr-body" style="display:none"></div></div>'
+        + '<div class="info-section"><h4>Reclaim disk space</h4>'
+        + '<div id="maint-body"><div class="sys-quiet">Measuring\\u2026</div></div></div>';
+
+      $('#info-panel').innerHTML = projectHtml + sysHtml + tunnelHtml + logsHtml;
+      // Paint immediately from the last poll so the panel is not blank on open.
+      if (lastStats) renderSystemStats(lastStats.system);
+      ensureStatsPolling();
+      loadMaintenance();
+      // The Containers section only appears on a machine that has Docker; the
+      // listing doubles as the availability check, so it costs one call.
+      ctrShown = false;
+      ctrOpen = null;
+      try {
+        const cres = await apiFetch('/api/containers');
+        const cd = await cres.json();
+        if (cd.ok) {
+          const sec = $('#ctr-section');
+          if (sec) sec.style.display = '';
+          const tog = $('#ctr-toggle');
+          if (tog) tog.textContent = 'Show ' + (cd.containers || []).length;
+        }
+      } catch (err) { /* no Docker, no section */ }
 
       // Load server logs
       try {
@@ -8477,6 +9092,11 @@ export function getWebappHtml(botUsername) {
         case 'svc-tunnel-port': svcTunnelSetPort(d.key, d.port); break;
         case 'svc-tunnel-toggle': svcTunnelToggle(d.key, d.enabled === '1', d.port); break;
         case 'svc-delete': svcDelete(d.key); break;
+        case 'ctr-toggle': toggleContainers(); break;
+        case 'ctr-logs': showContainerLogs(d.id); break;
+        case 'ctr-stop': containerStop(d.id, d.name, e.target.closest('button')); break;
+        case 'ctr-start': containerStart(d.id, e.target.closest('button')); break;
+        case 'maint-run': runMaintenance(d.id, e.target.closest('button')); break;
         case 'svc-register': showRegisterServiceForm(); break;
         case 'svc-reg-submit': submitRegisterService(); break;
         case 'svc-reg-cancel': cancelRegisterService(); break;

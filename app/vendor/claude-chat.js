@@ -206,6 +206,9 @@
     '.cc-bub-x{flex:none;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;line-height:1;padding:0 1px;opacity:0;transition:opacity .12s}',
     '.cc-bub:hover .cc-bub-x,.cc-bub-x:focus{opacity:1}',
     '.cc-bub-x:hover{color:var(--red)}',
+    // A background task reads as a task, not a subagent, at a glance.
+    '.cc-bub.task{border-style:dashed}',
+    '.cc-bub.task:hover{border-color:var(--accent)}',
     '.cc-bub.done{opacity:.72}',
     '.cc-bub.done:hover{opacity:1}',
 
@@ -924,7 +927,7 @@
       // A Task/Agent tool row IS a subagent. Give it the same drill-in as the
       // floating bubble so the transcript stays reachable in chronological
       // place once the bubble has aged out of the dock.
-      if (e.toolUseId && agents.has(e.toolUseId)) {
+      if (e.toolUseId && agents.has(e.toolUseId) && agents.get(e.toolUseId).meta.kind !== 'task') {
         var ab = el('div', 'cc-tool cc-agentrow');
         var am = agents.get(e.toolUseId).meta;
         var arun = am.status === 'running' || !am.status;
@@ -1672,7 +1675,7 @@
     function agentRec(toolUseId) {
       var rec = agents.get(toolUseId);
       if (!rec) {
-        rec = { meta: { toolUseId: toolUseId, description: '', status: 'running' }, messages: [], bubble: null,
+        rec = { meta: { toolUseId: toolUseId, kind: 'agent', description: '', status: 'running' }, messages: [], bubble: null,
                 dismissed: isDismissed(toolUseId) };
         agents.set(toolUseId, rec);
       }
@@ -1680,6 +1683,7 @@
     }
 
     function agentLabel(m) {
+      if (m.kind === 'task') return m.description || m.summary || 'Background task';
       return m.description || (m.subagentType ? m.subagentType + ' agent' : 'Agent');
     }
 
@@ -1727,7 +1731,7 @@
       } else if (!rec.bubble.parentNode && running) {
         agentDock.appendChild(rec.bubble); // trimmed while idle, now active again
       }
-      rec.bubble.className = 'cc-bub' + (running ? '' : ' done');
+      rec.bubble.className = 'cc-bub' + (running ? '' : ' done') + (m.kind === 'task' ? ' task' : '');
       var tok = m.usage && m.usage.total_tokens;
       rec.bubble.innerHTML =
         (running ? '<span class="cc-spin"></span>'
@@ -1750,7 +1754,9 @@
       syncDock();
       rec.bubble.title = (m.subagentType ? m.subagentType + ' · ' : '')
         + (m.step ? m.step + ' · ' : '')
-        + (m.status || 'running') + ' — click to open the transcript';
+        + (m.status || 'running')
+        + (m.kind === 'task' ? ' — background task, click for details'
+                             : ' — click to open the transcript');
     }
 
     function applyAgent(meta) {
@@ -1853,9 +1859,13 @@
       }
       if (!rec.messages.length) {
         body.appendChild(el('div', 'cc-agpanel-empty',
-          rec.meta.status && rec.meta.status !== 'running'
-            ? 'This agent’s transcript was not kept.'
-            : 'Waiting for the agent’s first step…'));
+          rec.meta.kind === 'task'
+            ? (rec.meta.status && rec.meta.status !== 'running'
+                ? 'This task has finished.'
+                : 'Running in the background — it reports when something happens.')
+            : (rec.meta.status && rec.meta.status !== 'running'
+                ? 'This agent’s transcript was not kept.'
+                : 'Waiting for the agent’s first step…')));
       }
       agentPanel.appendChild(head);
       agentPanel.appendChild(body);

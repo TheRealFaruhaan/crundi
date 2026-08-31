@@ -13,6 +13,7 @@ import {
   getRegistered,
   deleteRegistered,
 } from './service-registry.js';
+import { sampleProcessTrees, pushHistory } from './stats.js';
 import {
   startTunnel,
   stopTunnel,
@@ -26,8 +27,13 @@ const execP = promisify(exec);
 // key -> ServiceEntry (live process state). Registry holds persistent config.
 const running = new Map();
 
-// pid -> bytes, populated by sampleAllMemory() roughly every 3s while services run
+// pid -> bytes / percent, refreshed by sampleUsage() every 3s while services run
 const pidMemoryBytes = new Map();
+const pidCpuPct = new Map();
+// key -> { cpu: number[], mem: number[] } — what the sparklines draw. Keyed by
+// service key, not pid, so a restart continues the same trace instead of
+// silently starting a new one under a new pid.
+const usageHistory = new Map();
 let memorySamplerTimer = null;
 
 /**
@@ -298,6 +304,7 @@ export function getAllServiceStatus() {
         logCount: 0,
         pid: null,
         memoryBytes: null,
+        cpuPct: null,
         registered: true,
         tunnelPort: reg.tunnelPort || 0,
         tunnelEnabled,
@@ -318,6 +325,7 @@ export function getAllServiceStatus() {
 }
 
 function toStatus(entry, registered) {
+  const live = entry.status === 'running' && entry.proc?.pid != null;
   return {
     key: entry.key,
     alias: entry.alias,
@@ -330,103 +338,62 @@ function toStatus(entry, registered) {
     startedAt: entry.startedAt?.toISOString() || null,
     logCount: entry.logs.length,
     pid: entry.proc?.pid ?? null,
-    memoryBytes: entry.proc?.pid != null ? (pidMemoryBytes.get(entry.proc.pid) ?? null) : null,
+    // Gated on status, not just on having a pid. The sampled values live until
+    // the next tick up to 3s later, so a service stopped a moment ago went on
+    // reporting the CPU and memory it had while alive — a stopped service that
+    // looks like it is still working is worse than one showing nothing.
+    memoryBytes: live ? (pidMemoryBytes.get(entry.proc.pid) ?? null) : null,
+    cpuPct: live ? (pidCpuPct.get(entry.proc.pid) ?? null) : null,
     registered,
   };
 }
 
-// ─── Memory sampler ───
+// ─── Usage sampler ───
+//
+// The tree-walking and the per-platform reading both live in stats.js now.
+// This used to shell out to `wmic` unconditionally, so on Linux every sample
+// threw, the throw was swallowed, and every service reported no memory at all.
 
-async function sampleAllMemory() {
-  const pids = [];
+async function sampleUsage() {
+  const pidToKey = new Map();
   for (const entry of running.values()) {
-    if (entry.status === 'running' && entry.proc?.pid != null) pids.push(entry.proc.pid);
+    if (entry.status === 'running' && entry.proc?.pid != null) pidToKey.set(entry.proc.pid, entry.key);
   }
-  if (pids.length === 0) { pidMemoryBytes.clear(); return; }
-
-  let procs;
-  try {
-    const { stdout } = await execP(
-      'wmic process get ProcessId,ParentProcessId,WorkingSetSize /format:csv',
-      { windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-    );
-    procs = parseWmicCsv(stdout);
-  } catch {
-    try {
-      const { stdout } = await execP(
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize | ConvertTo-Csv -NoTypeInformation"',
-        { windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-      );
-      procs = parsePsCsv(stdout);
-    } catch {
-      return;
-    }
+  if (pidToKey.size === 0) {
+    pidMemoryBytes.clear();
+    pidCpuPct.clear();
+    return;
   }
 
-  const children = new Map();
-  for (const p of procs) {
-    if (!children.has(p.ppid)) children.set(p.ppid, []);
-    children.get(p.ppid).push(p.pid);
-  }
-  const memByPid = new Map(procs.map(p => [p.pid, p.mem]));
-
-  const freshMem = new Map();
-  for (const rootPid of pids) {
-    let total = 0;
-    const stack = [rootPid];
-    const visited = new Set();
-    while (stack.length) {
-      const pid = stack.pop();
-      if (visited.has(pid)) continue;
-      visited.add(pid);
-      total += memByPid.get(pid) || 0;
-      const kids = children.get(pid);
-      if (kids) stack.push(...kids);
-    }
-    freshMem.set(rootPid, total);
-  }
+  const sample = await sampleProcessTrees([...pidToKey.keys()]);
   pidMemoryBytes.clear();
-  for (const [k, v] of freshMem) pidMemoryBytes.set(k, v);
+  pidCpuPct.clear();
+  for (const [pid, v] of sample) {
+    pidMemoryBytes.set(pid, v.rssBytes);
+    if (v.cpuPct != null) pidCpuPct.set(pid, v.cpuPct);
+    const key = pidToKey.get(pid);
+    // CPU is a rate and is null until a second sample exists. Holding the whole
+    // history back until then keeps the two traces aligned on one time axis.
+    if (key && v.cpuPct != null) {
+      let h = usageHistory.get(key);
+      if (!h) { h = { cpu: [], mem: [] }; usageHistory.set(key, h); }
+      pushHistory(h.cpu, Math.round(v.cpuPct * 10) / 10);
+      pushHistory(h.mem, v.rssBytes);
+    }
+  }
   emitServiceUpdate();
 }
 
-function parseWmicCsv(stdout) {
-  const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const out = [];
-  for (const line of lines) {
-    if (line.startsWith('Node,')) continue;
-    const parts = line.split(',');
-    if (parts.length < 4) continue;
-    const ppid = parseInt(parts[1], 10);
-    const pid = parseInt(parts[2], 10);
-    const mem = parseInt(parts[3], 10);
-    if (!Number.isFinite(pid)) continue;
-    out.push({ pid, ppid: Number.isFinite(ppid) ? ppid : 0, mem: Number.isFinite(mem) ? mem : 0 });
-  }
-  return out;
-}
-
-function parsePsCsv(stdout) {
-  const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const out = [];
-  let headerSeen = false;
-  for (const line of lines) {
-    if (!headerSeen) { headerSeen = true; continue; }
-    const parts = line.split(',').map(s => s.replace(/^"|"$/g, ''));
-    if (parts.length < 3) continue;
-    const pid = parseInt(parts[0], 10);
-    const ppid = parseInt(parts[1], 10);
-    const mem = parseInt(parts[2], 10);
-    if (!Number.isFinite(pid)) continue;
-    out.push({ pid, ppid: Number.isFinite(ppid) ? ppid : 0, mem: Number.isFinite(mem) ? mem : 0 });
-  }
-  return out;
+/** Rolling CPU/memory history for a service, for the sparklines. */
+export function getServiceHistory(key) {
+  const h = usageHistory.get(key);
+  return h ? { cpu: [...h.cpu], mem: [...h.mem] } : { cpu: [], mem: [] };
 }
 
 function startMemorySampler() {
   if (memorySamplerTimer) return;
-  sampleAllMemory().catch(() => {});
-  memorySamplerTimer = setInterval(() => { sampleAllMemory().catch(() => {}); }, 3000);
+  sampleUsage().catch(() => {});
+  memorySamplerTimer = setInterval(() => { sampleUsage().catch(() => {}); }, 3000);
 }
 
 function stopMemorySamplerIfIdle() {
@@ -435,6 +402,7 @@ function stopMemorySamplerIfIdle() {
     clearInterval(memorySamplerTimer);
     memorySamplerTimer = null;
     pidMemoryBytes.clear();
+    pidCpuPct.clear();
   }
 }
 

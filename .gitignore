@@ -20,3 +20,6 @@ clipboard-*.png
 crundi_attachments/
 .claude/settings.local.json
 Temppushdata*/
+
+# Bundled browser (fetched by CI / the installer, never committed)
+chrome/

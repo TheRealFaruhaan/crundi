@@ -10,6 +10,8 @@
 
 // ─── Constants ───
 
+import * as headless from './browser-headless.js';
+
 const MAX_WIDTH = 1920;
 const MAX_HEIGHT = 1080;
 const MAX_PER_PROJECT = 5;
@@ -119,6 +121,20 @@ export function handleHostMessage(msg) {
   handleIpcMessage(msg);
 }
 
+/**
+ * Is anything able to drive a browser — a desktop host, or a local headless
+ * one? This replaced a bare isElectron() check on every single operation, which
+ * is what made the tools refuse to work on a server even though nothing they do
+ * requires a display.
+ */
+function browserBackendReady() {
+  return hasNativeHost() || headless.isSupported();
+}
+
+function backendUnavailableReason() {
+  return 'No browser available: connect the Crundi desktop app, or re-run the installer to provision a headless browser.';
+}
+
 function postToHost(msg) {
   if (hasParentIpc()) { process.send(msg); return true; }
   if (remoteHost) { remoteHost.send(msg); return true; }
@@ -126,6 +142,16 @@ function postToHost(msg) {
 }
 
 function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS) {
+  // No desktop app? Drive a headless browser here instead.
+  //
+  // The desktop host still wins whenever one is attached — it owns the visible
+  // windows and the device emulation that genuinely need a display. This only
+  // covers the case that used to be a flat refusal: a server, where fetching a
+  // page or taking a screenshot never needed a desktop in the first place.
+  if (!hasNativeHost() && headless.supports(type) && headless.isSupported()) {
+    return headless.handle({ type, ...payload });
+  }
+
   return new Promise((resolve, reject) => {
     if (!hasNativeHost()) {
       return reject(new Error('Browser tools need the Crundi desktop app — run one, or connect it to this server.'));
@@ -202,7 +228,7 @@ function clampDimensions(width, height) {
 // ─── Public API ───
 
 export async function openBrowser({ alias, name, url, width, height }) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const key = makeKey(alias, name || 'default');
   const dims = clampDimensions(width, height);
@@ -248,7 +274,7 @@ export async function openBrowser({ alias, name, url, width, height }) {
 }
 
 export async function closeBrowser(key) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
@@ -264,7 +290,7 @@ export async function closeBrowser(key) {
 }
 
 export async function navigateBrowser(key, url) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
@@ -282,7 +308,7 @@ export async function navigateBrowser(key, url) {
 }
 
 export async function screenshotBrowser(key) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
@@ -298,7 +324,7 @@ export async function screenshotBrowser(key) {
 }
 
 export async function readBrowserPage(key) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
@@ -324,7 +350,7 @@ export async function readBrowserPage(key) {
 }
 
 export async function clickBrowser(key, selector) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
@@ -340,7 +366,7 @@ export async function clickBrowser(key, selector) {
 }
 
 export async function typeBrowser(key, text, selector) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
@@ -356,7 +382,7 @@ export async function typeBrowser(key, text, selector) {
 }
 
 export async function resizeBrowser(key, width, height) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
@@ -377,7 +403,7 @@ export async function resizeBrowser(key, width, height) {
 }
 
 export async function mouseBrowser(key, x, y, action) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
@@ -393,7 +419,7 @@ export async function mouseBrowser(key, x, y, action) {
 }
 
 export async function evalBrowser(key, code) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -407,7 +433,7 @@ export async function evalBrowser(key, code) {
 }
 
 export async function getBrowserSource(key) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -421,7 +447,7 @@ export async function getBrowserSource(key) {
 }
 
 export async function getBrowserConsole(key, { clear = false, start, end, countOnly } = {}) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -441,7 +467,7 @@ export async function getBrowserConsole(key, { clear = false, start, end, countO
  * 'clear' empties the buffer so the next view shows only fresh calls.
  */
 export async function browserNetwork(key, action, { start, end, countOnly } = {}) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -473,7 +499,7 @@ export function listBrowsers(alias) {
 }
 
 export async function goBackBrowser(key) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -485,7 +511,7 @@ export async function goBackBrowser(key) {
 }
 
 export async function goForwardBrowser(key) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -497,7 +523,7 @@ export async function goForwardBrowser(key) {
 }
 
 export async function scrollBrowser(key, { x, y, selector } = {}) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -509,7 +535,7 @@ export async function scrollBrowser(key, { x, y, selector } = {}) {
 }
 
 export async function waitBrowser(key, { selector, timeout } = {}) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -524,7 +550,7 @@ export async function waitBrowser(key, { selector, timeout } = {}) {
 }
 
 export async function cookiesBrowser(key, { action, cookie, filter, url } = {}) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -536,7 +562,7 @@ export async function cookiesBrowser(key, { action, cookie, filter, url } = {}) 
 }
 
 export async function snapshotBrowser(key, { maxDepth, maxLength } = {}) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -548,7 +574,7 @@ export async function snapshotBrowser(key, { maxDepth, maxLength } = {}) {
 }
 
 export async function elementsBrowser(key, { start, end, countOnly, selector } = {}) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -561,7 +587,7 @@ export async function elementsBrowser(key, { start, end, countOnly, selector } =
 }
 
 export async function fillBrowser(key, selector, value) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -573,7 +599,7 @@ export async function fillBrowser(key, selector, value) {
 }
 
 export async function selectBrowser(key, selector, value) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
@@ -585,7 +611,7 @@ export async function selectBrowser(key, selector, value) {
 }
 
 export async function pdfBrowser(key, { landscape } = {}) {
-  if (!isElectron()) return { ok: false, error: 'Browser tools require the Electron desktop app.' };
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = browsers.get(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {

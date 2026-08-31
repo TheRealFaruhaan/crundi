@@ -27,6 +27,7 @@ set -euo pipefail
 
 PREFIX=""
 CONFIG_DIR=""
+WITH_BROWSER=1""
 UNIT_DIR=""
 WITH_SERVICE=1
 ASSUME_YES=0
@@ -43,6 +44,7 @@ die()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --prefix)     PREFIX="${2:?--prefix needs a directory}"; PREFIX_SET=1; shift 2 ;;
+    --no-browser) WITH_BROWSER=0; shift ;;
     --as-user)    SERVICE_USER="${2:?--as-user needs a name}"; shift 2 ;;
     --grant-sudo) GRANT_SUDO=1; shift ;;
     --as-root)    AS_ROOT=1; shift ;;
@@ -234,6 +236,127 @@ if ! ( cd "$PREFIX" && npm ci --omit=dev --no-audit --no-fund ) >"$NPM_LOG" 2>&1
   fi
 fi
 rm -f "$NPM_LOG"
+fi
+
+# ─── Headless browser ───
+#
+# Only the standalone server needs this. The desktop build ships Electron, which
+# IS a browser host, so it drives the browser tools itself and provisioning a
+# second browser there would be dead weight.
+#
+# Without it the MCP browser tools have nothing to drive: they used to refuse
+# outright on a server, which was wrong — nothing about loading a page or taking
+# a screenshot requires a desktop.
+if [ "$WITH_BROWSER" -eq 1 ]; then
+  BROWSER_DIR="${CONFIG_DIR}/data/chrome"
+
+  # Chrome will not start without these. On a fresh server none of them are
+  # present, and the failure is an unreadable "error while loading shared
+  # libraries" rather than anything that names Chrome.
+  if command -v apt-get >/dev/null 2>&1; then
+    CHROME_LIBS="libatk1.0-0t64 libatk-bridge2.0-0t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64 libatspi2.0-0t64 libcups2t64 libpango-1.0-0 libcairo2"
+    # The t64 names are Ubuntu 24.04+; fall back to the older ones elsewhere.
+    if ! apt-cache show libatk1.0-0t64 >/dev/null 2>&1; then
+      CHROME_LIBS="libatk1.0-0 libatk-bridge2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libatspi2.0-0 libcups2 libpango-1.0-0 libcairo2"
+    fi
+    say "Installing the browser's system libraries"
+    if [ "$(id -u)" -eq 0 ]; then
+      apt-get update -qq >/dev/null 2>&1 || true
+      apt-get install -y --no-install-recommends $CHROME_LIBS >/dev/null 2>&1 || warn "Some browser libraries did not install; the browser tools may not start."
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      sudo apt-get update -qq >/dev/null 2>&1 || true
+      sudo apt-get install -y --no-install-recommends $CHROME_LIBS >/dev/null 2>&1 || warn "Some browser libraries did not install; the browser tools may not start."
+    else
+      warn "No root: skipping the browser's system libraries. Install them, or re-run with sudo."
+    fi
+  else
+    warn "Not a Debian/Ubuntu system — install Chrome's libraries yourself if the browser tools fail to start."
+  fi
+
+  # Chrome for Testing, pinned to whatever is current stable. Crundi keeps its
+  # own copy rather than borrowing a puppeteer or playwright cache: those belong
+  # to other projects, and Crundi itself now offers a button that deletes them.
+  #
+  # The version is PINNED in package.json, not resolved to whatever is current
+  # stable at install time. Two servers installed a month apart would otherwise
+  # be running different browsers, and "works on mine" would come down to which
+  # day it was set up. Bumping it is a deliberate commit, tested like any other.
+  CHROME_VER="$(node -p "require('${PREFIX}/package.json').chromeVersion || ''" 2>/dev/null)"
+  if [ -z "$CHROME_VER" ]; then
+    # No pin in this build: fall back to current stable rather than no browser.
+    CFT_JSON="https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json"
+    CHROME_VER="$(curl -fsSL --max-time 20 "$CFT_JSON" 2>/dev/null | tr ',' '\n' | grep -A2 '"Stable"' | grep '"version"' | head -1 | sed 's/.*"version":"\([^"]*\)".*/\1/')"
+    [ -n "$CHROME_VER" ] && warn "No pinned browser version in this build; using current stable ${CHROME_VER}."
+  fi
+  if [ -z "$CHROME_VER" ]; then
+    warn "No browser version to install; leaving the browser as it is."
+  elif [ -x "${BROWSER_DIR}/linux-${CHROME_VER}/chrome-linux64/chrome" ]; then
+    say "Browser already at ${CHROME_VER}"
+  elif [ -x "${SRC}/chrome/linux-${CHROME_VER}/chrome-linux64/chrome" ]; then
+    # The release tarball carries the browser, so a normal install never
+    # touches the network for it — and an air-gapped one still gets a browser.
+    say "Installing the bundled browser ${CHROME_VER}"
+    mkdir -p "${BROWSER_DIR}"
+    rm -rf "${BROWSER_DIR}/linux-${CHROME_VER}"
+    cp -r "${SRC}/chrome/linux-${CHROME_VER}" "${BROWSER_DIR}/"
+    chmod +x "${BROWSER_DIR}/linux-${CHROME_VER}/chrome-linux64/chrome" 2>/dev/null || true
+    for old in "${BROWSER_DIR}"/linux-*; do
+      [ "$old" = "${BROWSER_DIR}/linux-${CHROME_VER}" ] || rm -rf "$old"
+    done
+  else
+    say "Downloading Chrome ${CHROME_VER} (about 180 MB)"
+    CHROME_TMP="$(mktemp -d)"
+    CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VER}/linux64/chrome-linux64.zip"
+    # unzip is not on a minimal server image (this one did not have it), so
+    # python3's zipfile is the fallback rather than a hard dependency.
+    unpack() {
+      if command -v unzip >/dev/null 2>&1; then unzip -q "$1" -d "$2" 2>/dev/null && return 0; fi
+      if command -v python3 >/dev/null 2>&1; then python3 -m zipfile -e "$1" "$2" 2>/dev/null && return 0; fi
+      return 1
+    }
+    if curl -fsSL --max-time 300 -o "${CHROME_TMP}/chrome.zip" "$CHROME_URL" 2>/dev/null \
+       && unpack "${CHROME_TMP}/chrome.zip" "${CHROME_TMP}"; then
+      # python3 -m zipfile does not preserve the executable bit.
+      chmod +x "${CHROME_TMP}/chrome-linux64/chrome" 2>/dev/null || true
+      find "${CHROME_TMP}/chrome-linux64" -maxdepth 1 -type f -name 'chrome*' -exec chmod +x {} + 2>/dev/null || true
+      mkdir -p "${BROWSER_DIR}/linux-${CHROME_VER}"
+      rm -rf "${BROWSER_DIR}/linux-${CHROME_VER}/chrome-linux64"
+      mv "${CHROME_TMP}/chrome-linux64" "${BROWSER_DIR}/linux-${CHROME_VER}/"
+      # Only the current version is kept; old ones are 150 MB each of nothing.
+      for old in "${BROWSER_DIR}"/linux-*; do
+        [ "$old" = "${BROWSER_DIR}/linux-${CHROME_VER}" ] || rm -rf "$old"
+      done
+      say "Browser installed"
+    else
+      warn "Browser download failed (needs curl and unzip). The browser tools will stay unavailable."
+    fi
+    rm -rf "$CHROME_TMP"
+  fi
+
+  # Ubuntu 23.10+ blocks the unprivileged user namespaces Chrome's sandbox needs,
+  # so without this profile Chrome can only run with --no-sandbox. Crundi falls
+  # back to that rather than failing, but a sandboxed browser is the one we want
+  # when it is loading pages nobody has vetted.
+  CHROME_BIN="${BROWSER_DIR}/linux-${CHROME_VER}/chrome-linux64/chrome"
+  if [ -n "$CHROME_VER" ] && [ -x "$CHROME_BIN" ] && [ -d /etc/apparmor.d ] \
+     && [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = "1" ]; then
+    APPARMOR_PROFILE="abi <abi/4.0>,
+include <tunables/global>
+
+profile crundi-chrome \"${CHROME_BIN}\" flags=(unconfined) {
+  userns,
+  include if exists <local/crundi-chrome>
+}"
+    if [ "$(id -u)" -eq 0 ]; then
+      printf '%s\n' "$APPARMOR_PROFILE" > /etc/apparmor.d/crundi-chrome
+      apparmor_parser -r /etc/apparmor.d/crundi-chrome 2>/dev/null && say "Browser sandbox enabled (AppArmor)" || warn "Could not load the AppArmor profile; the browser will run unsandboxed."
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      printf '%s\n' "$APPARMOR_PROFILE" | sudo tee /etc/apparmor.d/crundi-chrome >/dev/null
+      sudo apparmor_parser -r /etc/apparmor.d/crundi-chrome 2>/dev/null && say "Browser sandbox enabled (AppArmor)" || warn "Could not load the AppArmor profile; the browser will run unsandboxed."
+    else
+      warn "No root: the browser will run without its sandbox."
+    fi
+  fi
 fi
 
 # ─── Service ───

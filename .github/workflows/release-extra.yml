@@ -92,8 +92,22 @@ jobs:
           mkdir -p staging/crundi-server/app
           cp -r app/vendor staging/crundi-server/app/
           cp docker/.env.example staging/crundi-server/.env.example
-          cd staging/crundi-server
-          npm ci --omit=dev --ignore-scripts=false
+          # Same pinned browser as the Linux tarball. The Windows server is a
+          # zip you extract and run — there is no installer to fetch one later,
+          # so if it is not in here the browser tools have nothing to drive.
+          CHROME_VER=$(node -p "require('./package.json').chromeVersion || ''")
+          if [ -z "$CHROME_VER" ]; then echo "No chromeVersion pinned"; exit 1; fi
+          curl -fsSL --retry 3 --max-time 600 -o chrome.zip \
+            "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VER}/win64/chrome-win64.zip"
+          mkdir -p "staging/crundi-server/chrome/win-${CHROME_VER}"
+          # Git Bash on the Windows runner has no unzip; PowerShell always does.
+          unzip -q chrome.zip -d unpacked 2>/dev/null \
+            || powershell -NoProfile -Command "Expand-Archive -Path chrome.zip -DestinationPath unpacked -Force"
+          mv unpacked/chrome-win64 "staging/crundi-server/chrome/win-${CHROME_VER}/"
+          rm -rf chrome.zip unpacked
+          test -f "staging/crundi-server/chrome/win-${CHROME_VER}/chrome-win64/chrome.exe"
+          echo "bundled Chrome ${CHROME_VER} for Windows"
+          cd staging/crundi-server          npm ci --omit=dev --ignore-scripts=false
           cd ..
           cp ../docker/README.md crundi-server/DOCKER.md || true
 
@@ -185,10 +199,34 @@ jobs:
             console.log('imports resolve');
           "
 
+      # The browser ships WITH the release rather than being fetched at install
+      # time, so every server on a given version runs the exact same Chrome.
+      # Resolving "current stable" during install meant two boxes set up a month
+      # apart could differ, which is the kind of drift nobody discovers until a
+      # page renders differently on one of them.
+      #
+      # Only the standalone server needs it: the desktop build ships Electron,
+      # which is already a browser host.
+      - name: Bundle the pinned browser
+        run: |
+          CHROME_VER=$(node -p "require('./package.json').chromeVersion || ''")
+          if [ -z "$CHROME_VER" ]; then echo "No chromeVersion pinned in package.json"; exit 1; fi
+          echo "Bundling Chrome for Testing $CHROME_VER"
+          curl -fsSL --retry 3 --max-time 600 -o chrome.zip \
+            "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VER}/linux64/chrome-linux64.zip"
+          mkdir -p "staging/crundi/chrome/linux-${CHROME_VER}"
+          unzip -q chrome.zip -d unpacked
+          mv unpacked/chrome-linux64 "staging/crundi/chrome/linux-${CHROME_VER}/"
+          chmod +x "staging/crundi/chrome/linux-${CHROME_VER}/chrome-linux64/chrome"
+          # A browser that cannot report its own version is not one worth shipping.
+          "staging/crundi/chrome/linux-${CHROME_VER}/chrome-linux64/chrome" --version
+          rm -rf chrome.zip unpacked
+
       - name: Tar
         run: |
           mkdir -p dist
           tar czf "dist/crundi-server-linux-x64-${VERSION}.tar.gz" -C staging crundi
+          ls -lh dist/
 
       - uses: actions/upload-artifact@v4
         with:

@@ -20,7 +20,10 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
-import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService } from './services.js';
+import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService, getServiceHistory } from './services.js';
+import { getSystemStats, startStatsSampler, stopStatsSampler } from './stats.js';
+import { listTasks as listMaintenanceTasks, runTask as runMaintenanceTask } from './maintenance.js';
+import * as dockerMod from './docker.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -756,15 +759,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
     if (state === 'working' || state === 'needs-input') limitWarmer.markActivity();
+    // 'waiting' (turn over, parked on a background trigger) is still a turn
+    // ending, so it is normalised to 'idle' HERE ONLY — scheduling and pings
+    // behave exactly as they did before the state existed. Normalising `prev`
+    // too is what stops a later waiting -> idle from firing a second ping for
+    // the same turn. The raw state is what gets broadcast to clients.
+    const cur = state === 'waiting' ? 'idle' : state;
+    const pv = prev === 'waiting' ? 'idle' : prev;
     // working -> idle is a turn ending. Edge-triggered off `prev` so a repeated
     // 'idle' report (hooks fire from independent processes) cannot fire twice.
-    if (state === 'idle' && prev === 'working' && term.project) {
+    if (cur === 'idle' && pv === 'working' && term.project) {
       chatSchedule.onTurnEnd(term.project);
     }
-    if (state !== prev && (state === 'idle' || state === 'needs-input')) {
+    if (cur !== pv && (cur === 'idle' || cur === 'needs-input')) {
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
-      if (state === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
+      if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
       else {
         const fin = finishedMessage(term, name, proj);
         notifyEvent('finished', fin.text, { markdown: fin.markdown });
@@ -1814,6 +1824,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         key: s.key, name: s.name, alias: s.alias, command: s.command,
         projectPath: s.projectPath, status: s.status, pid: s.pid,
         memory: s.memoryBytes,
+        cpuPct: s.cpuPct,
         uptime: s.startedAt ? formatUptime(Date.now() - new Date(s.startedAt).getTime()) : null,
         tunnelPort: s.tunnelPort || 0,
         tunnelEnabled: !!s.tunnelEnabled,
@@ -1821,6 +1832,63 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         tunnelUrl: s.tunnel?.url || null,
       }));
       return json(res, { services: all });
+    }
+
+    // Machine + per-service usage, polled by whichever tab is open. Kept apart
+    // from /api/services so a 2s poll carries only numbers, not the tunnel and
+    // forward config that never changes between ticks.
+    if (path === '/api/stats' && req.method === 'GET') {
+      const system = await getSystemStats();
+      const svc = {};
+      for (const s of getAllServiceStatus()) {
+        if (s.status !== 'running') continue;
+        const h = getServiceHistory(s.key);
+        svc[s.key] = {
+          status: s.status,
+          pid: s.pid,
+          cpuPct: s.cpuPct,
+          memory: s.memoryBytes,
+          cpuHistory: h.cpu,
+          memHistory: h.mem,
+        };
+      }
+      return json(res, { system, services: svc });
+    }
+
+    // Docker containers. Every id is resolved against the live listing inside
+    // docker.js before any command runs, so what arrives here is only ever a
+    // lookup key.
+    if (path === '/api/containers' && req.method === 'GET') {
+      return json(res, await dockerMod.listContainers());
+    }
+    if (path === '/api/containers/logs' && req.method === 'GET') {
+      const result = await dockerMod.containerLogs(
+        url.searchParams.get('id') || '',
+        url.searchParams.get('tail') || 200,
+      );
+      return json(res, result, result.ok ? 200 : 404);
+    }
+    if (path === '/api/containers/stop' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = await dockerMod.stopContainer(String(body.id || ''));
+      return json(res, result, result.ok ? 200 : 400);
+    }
+    if (path === '/api/containers/start' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = await dockerMod.startContainer(String(body.id || ''));
+      return json(res, result, result.ok ? 200 : 400);
+    }
+
+    // Disk maintenance. The catalogue is fixed in maintenance.js; the client
+    // only ever names an id, never a command.
+    if (path === '/api/maintenance' && req.method === 'GET') {
+      return json(res, { tasks: await listMaintenanceTasks() });
+    }
+    if (path === '/api/maintenance' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = await runMaintenanceTask(String(body.id || ''));
+      if (!result.ok) return json(res, result, 400);
+      return json(res, result);
     }
 
     // Register a new service
@@ -3373,10 +3441,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Only ever reports — applying is an explicit request from Settings.
       serverUpdate.start();
 
+      // Machine stats. CPU is a rate, so the sampler has to be running before
+      // anyone asks — a cold /api/stats can only report memory and disk.
+      startStatsSampler(2000);
+
       return { port, tunnelUrl, localPort };
     },
 
     stop() {
+      stopStatsSampler();
       for (const client of sseClients) {
         try { client.res.end(); } catch { /* ignore */ }
       }
