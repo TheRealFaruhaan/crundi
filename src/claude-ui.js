@@ -975,11 +975,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function handleUser(s, msg) {
     if (msg.parent_tool_use_id) return handleAgentUser(s, msg, msg.parent_tool_use_id);
     for (const block of contentBlocks(msg)) {
-      if (block.type === 'text') {
-        noteTriggerFired(s, block.text || '');
-        handleHookFeedback(s, block.text || '');
-        continue;
-      }
+      if (block.type === 'text') { handleHookFeedback(s, block.text || ''); continue; }
       if (block.type !== 'tool_result') continue;
       const target = [...s.messages].reverse().find(e => e.kind === 'tool' && e.toolUseId === block.tool_use_id);
       const content = Array.isArray(block.content)
@@ -1095,61 +1091,43 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // ─── Waiting on a trigger ───
   //
   // A turn can end with work still outstanding: a background command, or a
-  // Monitor armed to fire on a condition. The CLI then resumes ON ITS OWN when
-  // the trigger fires. Both halves are observable on the wire, verified
-  // against real transcripts:
+  // Monitor armed on a condition. The CLI then resumes ON ITS OWN when that
+  // fires, and a cell showing "idle" through all of it is simply wrong.
   //
-  //   launch (tool_result text)
-  //     "Command running in background with ID: bbva76f5d."
-  //     "...was moved to the background (ID: b7w603pjm)."
-  //     "Monitor started (task bfzvmf3g1, timeout 120000ms)."
-  //   fire (a plain user message)
-  //     <task-notification><task-id>bbva76f5d</task-id>...<status>completed</status>
+  // Only the LAUNCH is observable, and this was verified by capturing a real
+  // stream-json session rather than by reading transcripts:
   //
-  // so a turn that ends with any of these outstanding is 'waiting', not 'idle'.
-  // A Monitor may emit many events and stay armed, so it is expired at its own
-  // stated timeout rather than trusted to announce its death — otherwise a
-  // monitor that simply times out would wedge the cell on 'waiting' forever.
-  // A background command has no stated timeout, so nothing bounds it the way a
-  // monitor's own timeout does. Without a cap, one missed notification parks the
-  // cell on "waiting" for the rest of the session — which is exactly what
-  // happened. Showing idle while a very long command is still running is a far
-  // smaller lie than showing waiting forever after everything has finished.
-  const BG_MAX_MS = 30 * 60 * 1000;
-  // Nothing sensible has hundreds of outstanding triggers; a leak should be
-  // bounded rather than growing for as long as the session lives.
-  const MAX_WAITING = 64;
-
+  //   assistant(tool_use) -> user(tool_result "Command running in background
+  //   with ID: b42fon2a4") -> assistant("PARKED") -> result
+  //   ...then, with NO user message in between...
+  //   assistant("The background command completed") -> result
+  //
+  // The <task-notification> that announces completion is written to the CLI's
+  // own transcript but is NEVER emitted over stream-json. An earlier version of
+  // this code tried to retire triggers by parsing that notification, which is
+  // why chats stuck on "waiting" for the rest of the session: nothing Crundi
+  // can see was ever going to clear them.
+  //
+  // So "waiting" means what is actually knowable — this turn ended having
+  // started background work — and it is cleared at every result. If the CLI
+  // resumes and finishes another turn without starting anything new, that turn
+  // ends idle. A long command still running then reads idle rather than
+  // waiting, which under-reports by a little; the alternative is a badge that
+  // never goes out, which is worse and was the bug.
   const BG_LAUNCH_RE = /(?:running in background with ID|moved to the background \(ID):\s*([a-z0-9]+)/i;
   const MONITOR_LAUNCH_RE = /Monitor started \(task ([a-z0-9]+), timeout (\d+)ms/i;
 
+  /** Note that this turn started something that will call back later. */
   function noteTriggerLaunch(s, text) {
     const t = String(text || '');
     const mon = MONITOR_LAUNCH_RE.exec(t);
-    if (mon) {
-      const ms = Number(mon[2]) || 0;
-      s.waiting.set(mon[1], { label: 'monitor', expiresAt: Date.now() + ms + 5000 });
-      return;
-    }
+    if (mon) { s.waiting.set(mon[1], 'monitor'); return; }
     const bg = BG_LAUNCH_RE.exec(t);
-    if (bg) s.waiting.set(bg[1], { label: 'background command', expiresAt: Date.now() + BG_MAX_MS });
-    while (s.waiting.size > MAX_WAITING) s.waiting.delete(s.waiting.keys().next().value);
+    if (bg) s.waiting.set(bg[1], 'background command');
   }
 
-  function noteTriggerFired(s, text) {
-    const t = String(text || '');
-    if (!t.includes('<task-notification>')) return false;
-    const id = /<task-id>([^<]+)<\/task-id>/.exec(t)?.[1];
-    // Monitors keep running after an event; only a terminal status retires one.
-    const done = /<status>\s*(completed|failed|killed|timed[- ]out)\s*<\/status>/i.test(t);
-    if (id && (done || !/Monitor event/i.test(t))) s.waiting.delete(id);
-    return true;
-  }
-
-  /** Outstanding triggers, dropping any whose stated timeout has passed. */
+  /** How many callbacks this turn armed. Reset by handleResult. */
   function activeTriggers(s) {
-    const now = Date.now();
-    for (const [id, w] of s.waiting) if (w.expiresAt && now >= w.expiresAt) s.waiting.delete(id);
     return s.waiting.size;
   }
 
@@ -1169,6 +1147,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       text: msg.subtype && msg.subtype !== 'success' ? String(msg.result || msg.subtype) : '',
     });
     setState(s, activeTriggers(s) ? 'waiting' : 'idle');
+    // Cleared every turn: the completion notification never reaches us, so the
+    // only honest scope for "waiting" is the turn that armed it.
+    s.waiting.clear();
   }
 
   /**
