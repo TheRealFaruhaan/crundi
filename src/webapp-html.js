@@ -88,6 +88,7 @@ export function getWebappHtml(botUsername) {
       --red: #ef4444;
       --red-dim: rgba(239, 68, 68, 0.15);
       --yellow: #f59e0b;
+      --sky: #38bdf8;
       --yellow-dim: rgba(245, 158, 11, 0.15);
       --sidebar-width: 240px;
       --topbar-height: 48px;
@@ -425,6 +426,7 @@ export function getWebappHtml(botUsername) {
        needs input, amber = a terminal is working, green = running/idle. */
     .sidebar-item.ts-running .dot { background: var(--green); }
     .sidebar-item.ts-working .dot { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim, rgba(245,180,60,0.18)); }
+    .sidebar-item.ts-waiting .dot { background: var(--sky); box-shadow: 0 0 0 3px rgba(56,189,248,0.18); }
     .sidebar-item.ts-input .dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
     .sidebar-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sidebar-item .svc-heart { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-muted); }
@@ -583,9 +585,11 @@ export function getWebappHtml(botUsername) {
     .term-status-dot.exited { background: var(--text-muted); }
     .term-status-dot.working { background: var(--yellow); }
     .term-status-dot.input { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+    .term-status-dot.waiting { background: var(--sky); }
     .term-agent-badge { flex-shrink: 0; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 7px; border-radius: 999px; }
     .term-agent-badge.working { background: var(--yellow-dim, rgba(245,180,60,0.16)); color: var(--yellow); }
     .term-agent-badge.input { background: var(--accent-dim); color: var(--accent-hover); }
+    .term-agent-badge.waiting { background: rgba(56,189,248,0.16); color: var(--sky); }
     .term-head-spacer { flex: 1; }
     .term-font-btn, .term-head-btn {
       border: 1px solid var(--border); background: var(--bg-primary);
@@ -3899,11 +3903,12 @@ export function getWebappHtml(botUsername) {
       list.innerHTML = '';
       for (const p of projects) {
         // Terminal-state precedence for this project's dot/border:
-        // needs-input (purple) > working (amber) > running/idle (green) > none.
+        // needs-input (purple) > working (amber) > waiting (sky) > running/idle (green) > none.
         const projTerms = terminals.filter(t => t.project === p.alias && t.status === 'running');
         let ts = '';
         if (projTerms.some(t => t.agentState === 'needs-input')) ts = 'ts-input';
         else if (projTerms.some(t => t.agentState === 'working')) ts = 'ts-working';
+        else if (projTerms.some(t => t.agentState === 'waiting')) ts = 'ts-waiting';
         else if (projTerms.length) ts = 'ts-running';
         const isActive = currentProject === p.alias;
         const item = document.createElement('div');
@@ -4628,9 +4633,10 @@ export function getWebappHtml(botUsername) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
       const as = exited ? '' : (t.agentState || 'idle');
-      const dotCls = exited ? ' exited' : (as === 'working' ? ' working' : as === 'needs-input' ? ' input' : '');
+      const dotCls = exited ? ' exited' : (as === 'working' ? ' working' : as === 'needs-input' ? ' input' : as === 'waiting' ? ' waiting' : '');
       const badge = (!exited && as === 'working') ? '<span class="term-agent-badge working">working</span>'
-        : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>' : '';
+        : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>'
+        : (!exited && as === 'waiting') ? '<span class="term-agent-badge waiting">waiting</span>' : '';
       // Font-size controls only make sense for an xterm cell; a chat cell gets a
       // "chat" tag instead so the two kinds are distinguishable at a glance.
       const controls = isChat
@@ -4657,12 +4663,14 @@ export function getWebappHtml(botUsername) {
         dot.classList.toggle('exited', exited);
         dot.classList.toggle('working', as === 'working');
         dot.classList.toggle('input', as === 'needs-input');
+        dot.classList.toggle('waiting', as === 'waiting');
         dot.title = exited ? 'exited' : as;
       }
       // Agent-state badge (working / needs input) next to the title.
       let badge = el.querySelector('.term-agent-badge');
       const want = (!exited && as === 'working') ? ['working', 'working']
-        : (!exited && as === 'needs-input') ? ['input', 'needs input'] : null;
+        : (!exited && as === 'needs-input') ? ['input', 'needs input']
+        : (!exited && as === 'waiting') ? ['waiting', 'waiting'] : null;
       if (!want) { if (badge) badge.remove(); }
       else {
         if (!badge && titleEl) { badge = document.createElement('span'); titleEl.after(badge); }

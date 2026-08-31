@@ -756,15 +756,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
     if (state === 'working' || state === 'needs-input') limitWarmer.markActivity();
+    // 'waiting' (turn over, parked on a background trigger) is still a turn
+    // ending, so it is normalised to 'idle' HERE ONLY — scheduling and pings
+    // behave exactly as they did before the state existed. Normalising `prev`
+    // too is what stops a later waiting -> idle from firing a second ping for
+    // the same turn. The raw state is what gets broadcast to clients.
+    const cur = state === 'waiting' ? 'idle' : state;
+    const pv = prev === 'waiting' ? 'idle' : prev;
     // working -> idle is a turn ending. Edge-triggered off `prev` so a repeated
     // 'idle' report (hooks fire from independent processes) cannot fire twice.
-    if (state === 'idle' && prev === 'working' && term.project) {
+    if (cur === 'idle' && pv === 'working' && term.project) {
       chatSchedule.onTurnEnd(term.project);
     }
-    if (state !== prev && (state === 'idle' || state === 'needs-input')) {
+    if (cur !== pv && (cur === 'idle' || cur === 'needs-input')) {
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
-      if (state === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
+      if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
       else {
         const fin = finishedMessage(term, name, proj);
         notifyEvent('finished', fin.text, { markdown: fin.markdown });
