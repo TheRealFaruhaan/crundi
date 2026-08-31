@@ -37,6 +37,9 @@ jobs:
   client:
     name: Windows client installer
     runs-on: windows-latest
+    # A job that hangs should die in minutes, not burn six hours of the
+    # default. A test with an unbounded scan hung every Windows job here.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -69,6 +72,9 @@ jobs:
   server-windows:
     name: Windows server package
     runs-on: windows-latest
+    # A job that hangs should die in minutes, not burn six hours of the
+    # default. A test with an unbounded scan hung every Windows job here.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -156,6 +162,9 @@ jobs:
   server-linux:
     name: Linux server tarball
     runs-on: ubuntu-latest
+    # A job that hangs should die in minutes, not burn six hours of the
+    # default. A test with an unbounded scan hung every Windows job here.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -238,6 +247,9 @@ jobs:
   server-image:
     name: Linux server image
     runs-on: ubuntu-latest
+    # A job that hangs should die in minutes, not burn six hours of the
+    # default. A test with an unbounded scan hung every Windows job here.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -279,6 +291,9 @@ jobs:
     needs: [client, server-windows, server-linux]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     runs-on: ubuntu-latest
+    # A job that hangs should die in minutes, not burn six hours of the
+    # default. A test with an unbounded scan hung every Windows job here.
+    timeout-minutes: 25
     steps:
       # Named explicitly rather than "download everything". buildx also uploads
       # a .dockerbuild metadata artifact, which is not a release asset and

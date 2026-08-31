@@ -26,7 +26,11 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const lines = readFileSync(join(root, 'src', 'claude-ui.js'), 'utf8').split('\n');
+// Split on either line ending. A Windows checkout gives CRLF, and comparing
+// those lines against '  }' matches nothing — which turned the scan below into
+// an infinite loop and hung every Windows CI job for 25 minutes before it was
+// caught. Normalise once, here.
+const lines = readFileSync(join(root, 'src', 'claude-ui.js'), 'utf8').split(/\r?\n/);
 const src = lines.join('\n');
 
 // The handlers are closures inside createClaudeUi, so they are lifted out by
@@ -42,8 +46,11 @@ const iBlocks = at("   * A message's content blocks") - 1;
 const iUser = at('  function handleUser(s, msg) {');
 const iTrig = at('  // ─── Waiting on a trigger ───');
 const iResult = at('  function handleResult(s, msg) {');
-let iEnd = iResult;
-while (lines[iEnd] !== '  }') iEnd++;
+// Bounded regardless: a scan with no stopping condition is a hang waiting to
+// happen, and a test that hangs is worse than a test that fails.
+let iEnd = iResult + 1;
+while (iEnd < lines.length && lines[iEnd] !== '  }') iEnd++;
+if (iEnd >= lines.length) throw new Error('Could not find the end of handleResult — the test needs updating.');
 const seg = (a, b) => lines.slice(a, b).join('\n');
 const setStateFn = src.match(/function setState\(s, state\) \{[^]*?\n {2}\}/)[0];
 
@@ -76,7 +83,7 @@ const session = {
 
 const fixture = readFileSync(join(root, 'test', 'fixtures', 'parked-turn.stream.jsonl'), 'utf8');
 let replayed = 0;
-for (const line of fixture.split('\n')) {
+for (const line of fixture.split(/\r?\n/)) {
   if (!line.trim().startsWith('{')) continue;
   handleMessage(session, JSON.parse(line));
   replayed++;
