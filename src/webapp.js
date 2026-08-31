@@ -22,6 +22,8 @@ import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
 import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService, getServiceHistory } from './services.js';
 import { getSystemStats, startStatsSampler, stopStatsSampler } from './stats.js';
+import { listTasks as listMaintenanceTasks, runTask as runMaintenanceTask } from './maintenance.js';
+import * as dockerMod from './docker.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -1851,6 +1853,42 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         };
       }
       return json(res, { system, services: svc });
+    }
+
+    // Docker containers. Every id is resolved against the live listing inside
+    // docker.js before any command runs, so what arrives here is only ever a
+    // lookup key.
+    if (path === '/api/containers' && req.method === 'GET') {
+      return json(res, await dockerMod.listContainers());
+    }
+    if (path === '/api/containers/logs' && req.method === 'GET') {
+      const result = await dockerMod.containerLogs(
+        url.searchParams.get('id') || '',
+        url.searchParams.get('tail') || 200,
+      );
+      return json(res, result, result.ok ? 200 : 404);
+    }
+    if (path === '/api/containers/stop' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = await dockerMod.stopContainer(String(body.id || ''));
+      return json(res, result, result.ok ? 200 : 400);
+    }
+    if (path === '/api/containers/start' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = await dockerMod.startContainer(String(body.id || ''));
+      return json(res, result, result.ok ? 200 : 400);
+    }
+
+    // Disk maintenance. The catalogue is fixed in maintenance.js; the client
+    // only ever names an id, never a command.
+    if (path === '/api/maintenance' && req.method === 'GET') {
+      return json(res, { tasks: await listMaintenanceTasks() });
+    }
+    if (path === '/api/maintenance' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = await runMaintenanceTask(String(body.id || ''));
+      if (!result.ok) return json(res, result, 400);
+      return json(res, result);
     }
 
     // Register a new service

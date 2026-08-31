@@ -1123,6 +1123,76 @@ export function getWebappHtml(botUsername) {
     .sys-spark path.line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
     .sys-spark path.area { stroke: none; opacity: 0.14; }
     .sys-quiet { color: var(--text-muted); font-size: 0.8rem; }
+
+    /* Reclaim rows. The size sits between the description and the button so the
+       eye lands on what the button is worth before it reaches the button. */
+    .maint-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 0; border-bottom: 1px solid var(--border-subtle);
+    }
+    .maint-row:last-child { border-bottom: none; }
+    .maint-text { flex: 1; min-width: 0; }
+    .maint-label { font-size: 0.82rem; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
+    .maint-desc { font-size: 0.73rem; color: var(--text-muted); margin-top: 2px; }
+    .maint-size {
+      flex: none; font-family: var(--mono); font-size: 0.82rem;
+      color: var(--text-primary); font-variant-numeric: tabular-nums; text-align: right; min-width: 68px;
+    }
+    .maint-size.none { color: var(--text-muted); }
+    .maint-root {
+      flex: none; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 1px 6px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-muted);
+    }
+    .maint-total { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 4px; }
+    /* The named casualties of a prune, always visible — not hidden behind the
+       confirm, because it is what decides whether you press at all. */
+    .maint-detail { font-size: 0.73rem; color: var(--yellow); margin-top: 3px; font-family: var(--mono); }
+    .maint-danger {
+      flex: none; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 1px 6px; border-radius: 999px; background: var(--red-dim); color: var(--red);
+    }
+
+    /* Containers. The whole row is the control for opening logs, so it gets a
+       pointer and a hover the way a link would. */
+    .ctr-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 8px; border-radius: var(--radius-sm); cursor: pointer;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .ctr-row:last-of-type { border-bottom: none; }
+    .ctr-row:hover { background: var(--bg-hover); }
+    .ctr-row.open { background: var(--bg-tertiary); }
+    .ctr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
+    .ctr-dot.running { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
+    .ctr-dot.unhealthy { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim); }
+    .ctr-main { flex: 1; min-width: 0; }
+    .ctr-name { font-size: 0.82rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ctr-sub {
+      font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
+    }
+    /* Which stack it belongs to. On a shared machine this is the difference
+       between stopping your own container and stopping someone else's. */
+    .ctr-proj {
+      flex: none; font-size: 0.62rem; font-family: var(--mono);
+      padding: 1px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-secondary);
+    }
+    .ctr-logs {
+      max-height: 300px; overflow: auto; margin: 0 0 10px;
+      background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 8px; font-family: var(--mono); font-size: 0.72rem; line-height: 1.5;
+      color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
+      user-select: text; -webkit-user-select: text;
+    }
+    .ctr-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    @media (max-width: 640px) {
+      .ctr-sub { white-space: normal; }
+    }
+    .svc-btn.confirming { border-color: var(--red); color: var(--red); background: var(--red-dim); }
+    @media (max-width: 640px) {
+      .maint-row { flex-wrap: wrap; }
+      .maint-text { flex: 1 1 100%; }
+    }
     .lv-ok { background: var(--green); }
     .lv-warn { background: var(--yellow); }
     .lv-hot { background: var(--red); }
@@ -7653,7 +7723,7 @@ export function getWebappHtml(botUsername) {
         html += sysLine('Load', sys.load.one.toFixed(2) + '  ' + sys.load.five.toFixed(2) + '  ' + sys.load.fifteen.toFixed(2));
       }
       if (sys.net && sys.net.rxPerSec != null) {
-        html += sysLine('Network', 'down ' + fmtBytes(sys.net.rxPerSec) + '/s   up ' + fmtBytes(sys.net.txPerSec) + '/s');
+        html += sysLine('Traffic', 'down ' + fmtBytes(sys.net.rxPerSec) + '/s   up ' + fmtBytes(sys.net.txPerSec) + '/s');
       }
       html += sysLine('Uptime', fmtDur(sys.uptimeSec));
       html += sysLine('Crundi', fmtDur(sys.processUptimeSec) + ' \\u00b7 ' + fmtBytes(sys.processRssBytes));
@@ -7661,7 +7731,247 @@ export function getWebappHtml(botUsername) {
       html += sysLine('Processor', (host.cores || 0) + ' cores \\u00b7 ' + (host.cpuModel || '\\u2014'));
       html += '</div>';
 
+      // Addresses. One line per interface, because "which IP is this box on"
+      // has more than one right answer on a machine hosting containers.
+      var ifs = sys.interfaces || [];
+      if (ifs.length) {
+        html += '<div class="sys-block">';
+        for (var n = 0; n < ifs.length; n++) {
+          html += sysLine(ifs[n].name, ifs[n].addresses.map(function (a) { return a.address; }).join('  '));
+        }
+        html += '</div>';
+      }
+
       el.innerHTML = html;
+    }
+
+    // ─── Containers ───
+    //
+    // Hidden behind a button: this is a long list on a busy machine and it is
+    // not what Info is mainly for. Logs are fetched per container on demand
+    // rather than up front, because pulling ten log tails to show none of them
+    // is work nobody asked for.
+
+    var ctrOpen = null;      // id whose logs are showing
+    var ctrShown = false;
+
+    async function toggleContainers() {
+      ctrShown = !ctrShown;
+      const btn = $('#ctr-toggle');
+      if (btn) btn.textContent = ctrShown ? 'Hide' : 'Show';
+      const body = $('#ctr-body');
+      if (!body) return;
+      body.style.display = ctrShown ? '' : 'none';
+      if (ctrShown) await loadContainers();
+    }
+
+    async function loadContainers() {
+      const body = $('#ctr-body');
+      if (!body) return;
+      try {
+        const res = await apiFetch('/api/containers');
+        const d = await res.json();
+        renderContainers(d.containers || [], d.error);
+      } catch (err) {
+        body.innerHTML = '<div class="sys-quiet">Could not reach Docker.</div>';
+      }
+    }
+
+    function renderContainers(list, error) {
+      const body = $('#ctr-body');
+      if (!body) return;
+      if (error) { body.innerHTML = '<div class="sys-quiet">' + escHtml(error) + '</div>'; return; }
+      if (!list.length) { body.innerHTML = '<div class="sys-quiet">No containers on this machine.</div>'; return; }
+      var html = '';
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        var dot = c.running ? (c.health === 'unhealthy' ? 'unhealthy' : 'running') : '';
+        var id = escHtml(c.id);
+        html += '<div class="ctr-row' + (ctrOpen === c.id ? ' open' : '') + '" data-action="ctr-logs" data-id="' + id + '">'
+          + '<span class="ctr-dot ' + dot + '"></span>'
+          + '<div class="ctr-main">'
+          + '<div class="ctr-name">' + escHtml(c.name) + '</div>'
+          + '<div class="ctr-sub">' + escHtml(c.image) + ' \u00b7 ' + escHtml(c.status)
+          + ((c.ips || []).length ? ' \u00b7 ' + escHtml(c.ips.map(function (x) { return x.ip; }).join(', ')) : '')
+          + '</div>'
+          + '</div>'
+          + (c.project ? '<span class="ctr-proj">' + escHtml(c.project) + '</span>' : '')
+          + (c.running
+            ? '<button class="svc-btn danger" data-action="ctr-stop" data-id="' + id + '" data-name="' + escHtml(c.name) + '">Stop</button>'
+            : '<button class="svc-btn" data-action="ctr-start" data-id="' + id + '">Start</button>')
+          + '</div>';
+        if (ctrOpen === c.id) {
+          html += '<div class="ctr-logs" id="ctr-logs-' + id + '">Loading logs\u2026</div>';
+        }
+      }
+      body.innerHTML = html;
+      if (ctrOpen) fetchContainerLogs(ctrOpen);
+    }
+
+    async function showContainerLogs(id) {
+      ctrOpen = (ctrOpen === id) ? null : id;
+      await loadContainers();
+    }
+
+    async function fetchContainerLogs(id) {
+      const pane = document.getElementById('ctr-logs-' + id);
+      if (!pane) return;
+      try {
+        const res = await apiFetch('/api/containers/logs?id=' + encodeURIComponent(id) + '&tail=300');
+        const d = await res.json();
+        if (!d.ok) { pane.textContent = d.error || 'Could not read logs.'; return; }
+        // An empty log is a fact about the container, not a failure to report.
+        pane.textContent = d.text.trim() || 'This container has not logged anything.';
+        pane.scrollTop = pane.scrollHeight;
+      } catch (err) {
+        pane.textContent = 'Could not read logs.';
+      }
+    }
+
+    /** Stopping is two-step: these are often somebody else's containers. */
+    async function containerStop(id, name, btn) {
+      if (!btn) return;
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.classList.add('confirming');
+        btn.textContent = 'Stop ' + (name || 'it') + '?';
+        clearTimeout(btn._armTimer);
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = '';
+          btn.classList.remove('confirming');
+          btn.textContent = 'Stop';
+        }, 6000);
+        return;
+      }
+      clearTimeout(btn._armTimer);
+      btn.disabled = true;
+      btn.textContent = 'Stopping\u2026';
+      try {
+        const res = await apiFetch('/api/containers/stop', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id }),
+        });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error || 'Could not stop it');
+        toast('Stopped ' + d.name, 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      loadContainers();
+    }
+
+    async function containerStart(id, btn) {
+      if (btn) { btn.disabled = true; btn.textContent = 'Starting\u2026'; }
+      try {
+        const res = await apiFetch('/api/containers/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id }),
+        });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error || 'Could not start it');
+        toast('Started ' + d.name, 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      loadContainers();
+    }
+
+    // ─── Reclaim disk space ───
+    //
+    // Probing costs real work (a directory walk, a docker query), so this loads
+    // when Info opens and after a task runs, never on the 2s stats tick.
+
+    async function loadMaintenance() {
+      const el = $('#maint-body');
+      if (!el) return;
+      try {
+        const res = await apiFetch('/api/maintenance');
+        const d = await res.json();
+        renderMaintenance(d.tasks || []);
+      } catch (err) {
+        el.innerHTML = '<div class="sys-quiet">Could not read reclaimable space.</div>';
+      }
+    }
+
+    function renderMaintenance(tasks) {
+      const el = $('#maint-body');
+      if (!el) return;
+      if (!tasks.length) {
+        el.innerHTML = '<div class="sys-quiet">Nothing on this machine to reclaim.</div>';
+        return;
+      }
+      var total = 0;
+      for (var i = 0; i < tasks.length; i++) if (tasks[i].available) total += tasks[i].bytes;
+      var html = '<div class="maint-total">'
+        + (total > 0 ? fmtBytes(total) + ' can be reclaimed' : 'Nothing to reclaim right now')
+        + '</div>';
+      for (var j = 0; j < tasks.length; j++) {
+        var t = tasks[j];
+        var names = t.details || [];
+        // A prune row can be worth pressing while freeing almost no space, so
+        // "is there anything to do" is not the same question as "are there
+        // bytes". Gating on bytes alone left it disabled with work to do.
+        var has = t.available && (t.bytes > 0 || names.length > 0);
+        html += '<div class="maint-row">'
+          + '<div class="maint-text">'
+          + '<div class="maint-label">' + escHtml(t.label)
+          + (t.elevated ? '<span class="maint-root">root</span>' : '')
+          + (t.danger ? '<span class="maint-danger">destructive</span>' : '') + '</div>'
+          + '<div class="maint-desc">' + escHtml(t.description) + '</div>'
+          + (names.length ? '<div class="maint-detail">Will remove: ' + escHtml(names.join(', ')) + '</div>' : '')
+          + '</div>'
+          + '<span class="maint-size' + (t.bytes > 0 ? '' : ' none') + '">'
+          + (t.available ? fmtBytes(t.bytes) : '\u2014') + '</span>'
+          + '<button class="svc-btn' + (t.danger ? ' danger' : '') + '" data-action="maint-run"'
+          + ' data-id="' + escHtml(t.id) + '" data-count="' + names.length + '"'
+          + (has ? '' : ' disabled') + '>' + ic('trash') + (t.danger ? 'Remove' : 'Clear') + '</button>'
+          + '</div>';
+      }
+      el.innerHTML = html;
+    }
+
+    /**
+     * Two-step, in place: the first press arms the button, the second runs it.
+     * Same shape as stopping a terminal — no modal, but no single misplaced tap
+     * wiping a build cache either.
+     */
+    async function runMaintenance(id, btn) {
+      if (!btn) return;
+      const danger = btn.classList.contains('danger');
+      const count = parseInt(btn.dataset.count || '0', 10);
+      const idle = ic('trash') + (danger ? 'Remove' : 'Clear');
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.classList.add('confirming');
+        // Name the number, not just the intent. What actually goes is listed on
+        // the row above, so the armed button only has to count.
+        btn.innerHTML = count > 0
+          ? 'Remove ' + count + (count === 1 ? ' container?' : ' containers?')
+          : (danger ? 'Prune it?' : 'Clear it?');
+        clearTimeout(btn._armTimer);
+        // Longer for a destructive one: there is a list to read first.
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = '';
+          btn.classList.remove('confirming');
+          btn.innerHTML = idle;
+        }, danger ? 9000 : 4000);
+        return;
+      }
+      clearTimeout(btn._armTimer);
+      btn.dataset.armed = '';
+      btn.classList.remove('confirming');
+      btn.disabled = true;
+      btn.innerHTML = danger ? 'Removing\u2026' : 'Clearing\u2026';
+      try {
+        const res = await apiFetch('/api/maintenance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id }),
+        });
+        const d = await res.json();
+        if (!res.ok || !d.ok) throw new Error(d.error || 'The command failed');
+        toast(d.freed == null ? 'Done.' : 'Freed ' + fmtBytes(d.freed), 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      loadMaintenance();
+      pollStats();   // the disk bar above should move at the same moment
     }
 
     async function pollStats() {
@@ -8406,12 +8716,33 @@ export function getWebappHtml(botUsername) {
         + '(loading...)</div></div>';
 
       const sysHtml = '<div class="info-section"><h4>This machine</h4>'
-        + '<div id="sys-stats-body"><div class="sys-quiet">Reading the machine\\u2026</div></div></div>';
+        + '<div id="sys-stats-body"><div class="sys-quiet">Reading the machine\\u2026</div></div></div>'
+        + '<div class="info-section" id="ctr-section" style="display:none">'
+        + '<div class="ctr-head"><h4 style="margin:0;flex:1">Containers</h4>'
+        + '<button class="svc-btn" id="ctr-toggle" data-action="ctr-toggle">Show</button></div>'
+        + '<div id="ctr-body" style="display:none"></div></div>'
+        + '<div class="info-section"><h4>Reclaim disk space</h4>'
+        + '<div id="maint-body"><div class="sys-quiet">Measuring\\u2026</div></div></div>';
 
       $('#info-panel').innerHTML = projectHtml + sysHtml + tunnelHtml + logsHtml;
       // Paint immediately from the last poll so the panel is not blank on open.
       if (lastStats) renderSystemStats(lastStats.system);
       ensureStatsPolling();
+      loadMaintenance();
+      // The Containers section only appears on a machine that has Docker; the
+      // listing doubles as the availability check, so it costs one call.
+      ctrShown = false;
+      ctrOpen = null;
+      try {
+        const cres = await apiFetch('/api/containers');
+        const cd = await cres.json();
+        if (cd.ok) {
+          const sec = $('#ctr-section');
+          if (sec) sec.style.display = '';
+          const tog = $('#ctr-toggle');
+          if (tog) tog.textContent = 'Show ' + (cd.containers || []).length;
+        }
+      } catch (err) { /* no Docker, no section */ }
 
       // Load server logs
       try {
@@ -8761,6 +9092,11 @@ export function getWebappHtml(botUsername) {
         case 'svc-tunnel-port': svcTunnelSetPort(d.key, d.port); break;
         case 'svc-tunnel-toggle': svcTunnelToggle(d.key, d.enabled === '1', d.port); break;
         case 'svc-delete': svcDelete(d.key); break;
+        case 'ctr-toggle': toggleContainers(); break;
+        case 'ctr-logs': showContainerLogs(d.id); break;
+        case 'ctr-stop': containerStop(d.id, d.name, e.target.closest('button')); break;
+        case 'ctr-start': containerStart(d.id, e.target.closest('button')); break;
+        case 'maint-run': runMaintenance(d.id, e.target.closest('button')); break;
         case 'svc-register': showRegisterServiceForm(); break;
         case 'svc-reg-submit': submitRegisterService(); break;
         case 'svc-reg-cancel': cancelRegisterService(); break;

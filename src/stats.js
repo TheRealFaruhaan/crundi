@@ -331,6 +331,34 @@ async function sampleNetwork() {
   return { rxPerSec, txPerSec };
 }
 
+/**
+ * Network interfaces with real addresses.
+ *
+ * Filtered hard, because the raw list on a Docker host is mostly noise: one
+ * veth per container, all of them carrying nothing but a link-local address.
+ * What is left is what someone would actually use to reach this machine — the
+ * public address, and the bridge gateways that explain the container IPs.
+ */
+function sampleInterfaces() {
+  const out = [];
+  const ifaces = os.networkInterfaces() || {};
+  for (const name of Object.keys(ifaces)) {
+    if (/^veth/i.test(name)) continue;
+    const addresses = [];
+    for (const a of ifaces[name] || []) {
+      const addr = String(a.address || '');
+      if (a.internal) continue;
+      // Link-local tells you nothing you can connect to.
+      if (/^fe80:/i.test(addr) || addr.startsWith('169.254.')) continue;
+      const family = a.family === 4 || a.family === 'IPv4' ? 'IPv4' : 'IPv6';
+      addresses.push({ address: addr, family });
+    }
+    if (addresses.length) out.push({ name, addresses });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
 /** Facts that cannot change while the process is alive — read once. */
 let hostInfo = null;
 function getHostInfo() {
@@ -363,6 +391,7 @@ async function tick() {
     disk,
     net,
     load: hasLoad ? { one: load[0], five: load[1], fifteen: load[2] } : null,
+    interfaces: sampleInterfaces(),
     uptimeSec: os.uptime(),
     processUptimeSec: process.uptime(),
     processRssBytes: process.memoryUsage().rss,
