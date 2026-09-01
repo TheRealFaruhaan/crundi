@@ -25,6 +25,7 @@ import { getSystemStats, startStatsSampler, stopStatsSampler } from './stats.js'
 import { listTasks as listMaintenanceTasks, runTask as runMaintenanceTask } from './maintenance.js';
 import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
+import * as claudeUpdate from './claude-update.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -527,6 +528,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     mindmapAdd: 'never', mindmapDelete: 'never',
     browserLaunch: 'never', browserStop: 'never',
     secretRequest: 'always',
+    updateAvailable: 'away',
   };
   const notifyPrefs = { ...NOTIFY_DEFAULTS };
   try {
@@ -1007,6 +1009,38 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         : `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}`;
       notifyEvent('secretRequest', `${what}\n\nApprove it in Crundi — the prompt appears in the chat itself, or under Secrets.`);
     });
+  }
+
+  // ─── Claude Code version watch ───
+  //
+  // Notifies once per version, not once per check: a six-hourly reminder about
+  // the same release is a reminder you learn to ignore, and then you also
+  // ignore the one that matters.
+  let lastNotifiedClaude = '';
+  let claudeWatchTimer = null;
+
+  async function checkClaudeVersion() {
+    try {
+      const c = await claudeUpdate.status({ force: true });
+      if (!c.available || !c.latest || c.latest === lastNotifiedClaude) return;
+      lastNotifiedClaude = c.latest;
+      const beyond = c.beyondTested
+        ? `\n\nThat is newer than ${c.tested}, the version this Crundi build was tested with, so it will ask before installing.`
+        : '';
+      const how = c.canUpdate
+        ? '\n\nUpdate it in Crundi → Settings.'
+        : `\n\nIt cannot be updated from here: ${c.blocker}`;
+      notifyEvent('updateAvailable',
+        `⬆️ Claude Code ${c.latest} is available (you have ${c.installed}).${beyond}${how}`);
+    } catch { /* a failed check is not worth waking anyone for */ }
+  }
+
+  function startClaudeVersionWatch() {
+    if (claudeWatchTimer) return;
+    // Not on the first tick — a server that has just started has enough to do.
+    setTimeout(() => { checkClaudeVersion(); }, 60000).unref?.();
+    claudeWatchTimer = setInterval(checkClaudeVersion, 6 * 60 * 60 * 1000);
+    claudeWatchTimer.unref?.();
   }
 
   // ─── Request Handling ───
@@ -1866,6 +1900,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         };
       }
       return json(res, { system, services: svc });
+    }
+
+    // Claude Code's own version. It cannot self-update when it is installed as
+    // root and Crundi runs unprivileged, which is how it silently falls behind.
+    if (path === '/api/claude-update/status' && req.method === 'GET') {
+      const force = url.searchParams.get('force') === '1';
+      return json(res, { ok: true, claude: await claudeUpdate.status({ force }) });
+    }
+    if (path === '/api/claude-update/apply' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = await claudeUpdate.apply({
+        version: String(body.version || ''),
+        // Going past the tested version is a separate decision, so it takes a
+        // separate flag that only the confirm step sets.
+        allowBeyondTested: body.allowBeyondTested === true,
+      });
+      return json(res, result, result.ok || result.needsConfirm ? 200 : 400);
     }
 
     // Docker containers. Every id is resolved against the live listing inside
@@ -3505,6 +3556,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Only ever reports — applying is an explicit request from Settings.
       serverUpdate.start();
 
+      // Claude Code rides along on the same schedule. It normally updates
+      // itself, but it cannot when it is installed somewhere Crundi may not
+      // write, and it says so only in a terminal nobody is reading. Checking it
+      // here means a new version is something you are told about rather than
+      // something you find out from a stale CLI weeks later.
+      startClaudeVersionWatch();
+
       // Machine stats. CPU is a rate, so the sampler has to be running before
       // anyone asks — a cold /api/stats can only report memory and disk.
       startStatsSampler(2000);
@@ -3513,6 +3571,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     },
 
     stop() {
+      if (claudeWatchTimer) { clearInterval(claudeWatchTimer); claudeWatchTimer = null; }
       stopStatsSampler();
       for (const client of sseClients) {
         try { client.res.end(); } catch { /* ignore */ }

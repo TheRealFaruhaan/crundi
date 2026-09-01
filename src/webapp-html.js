@@ -2959,6 +2959,7 @@ export function getWebappHtml(botUsername) {
       kanbanTask: 'never', kanbanSubtask: 'never',
       scheduleRun: 'away',
       serviceDown: 'always', serviceUp: 'away',
+      updateAvailable: 'away',
       mindmapAdd: 'never', mindmapDelete: 'never',
       browserLaunch: 'never', browserStop: 'never',
       secretRequest: 'always',
@@ -3001,6 +3002,104 @@ export function getWebappHtml(botUsername) {
     // Settings was showing whatever the last six-hourly check found, with no way
     // to refresh once an update was available. Opening the panel now asks again.
     let srvUpdateCheckedAt = 0;
+    /**
+     * Claude Code's version row.
+     *
+     * It updates itself when it can write to its own install. Installed as root
+     * with Crundi running unprivileged it cannot, and it fails quietly in a
+     * terminal — "Auto-update failed: no write permission" — while falling
+     * further behind. This says so, and offers to do it with sudo.
+     */
+    async function renderClaudeUpdate(force) {
+      const body = document.getElementById('cc-update-body');
+      if (!body) return;
+      let c;
+      try {
+        const r = await apiFetch('/api/claude-update/status' + (force ? '?force=1' : ''));
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        c = d.claude;
+      } catch (err) {
+        body.innerHTML = '<span style="color:var(--text-muted);">Could not check: ' + escHtml(err.message) + '</span>';
+        return;
+      }
+      const btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);'
+        + 'background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12.5px;white-space:nowrap;';
+      const primary = 'padding:8px 18px;border-radius:6px;border:none;background:var(--accent);'
+        + 'color:#fff;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;';
+      const warn = 'padding:8px 18px;border-radius:6px;border:1px solid var(--yellow);'
+        + 'background:var(--yellow-dim,rgba(245,158,11,0.16));color:var(--yellow);cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;';
+
+      let sub;
+      if (c.applying) sub = 'Installing…';
+      else if (!c.installed) sub = 'Not installed, or not on the server\u2019s PATH.';
+      else if (c.error) sub = 'Last check failed: ' + escHtml(c.error);
+      else if (c.available) sub = 'Version ' + escHtml(c.latest) + ' is available.';
+      else sub = 'Up to date.';
+
+      let h = '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+        + '<div><div style="font-size:0.86rem;color:var(--text-primary);">Version ' + escHtml(c.installed || '—') + '</div>'
+        + '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">' + sub + '</div></div>';
+
+      if (c.applying) {
+        h += '<span style="font-size:0.75rem;color:var(--text-muted);">Working…</span>';
+      } else if (c.available && c.canUpdate) {
+        // Past the tested version is a different button in a different colour,
+        // so the two decisions never look like the same click.
+        h += '<span style="display:flex;gap:8px;align-items:center;">'
+          + '<button type="button" style="' + btn + '" data-action="cc-update-check">Check</button>'
+          + '<button type="button" style="' + (c.beyondTested ? warn : primary) + '" data-action="cc-update-apply"'
+          + ' data-beyond="' + (c.beyondTested ? '1' : '') + '" data-version="' + escHtml(c.latest) + '">'
+          + 'Update to ' + escHtml(c.latest) + '</button></span>';
+      } else {
+        h += '<button type="button" style="' + btn + '" data-action="cc-update-check">Check now</button>';
+      }
+      h += '</div>';
+
+      if (c.tested) {
+        h += '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;">'
+          + 'This Crundi build was tested with ' + escHtml(c.tested) + '.'
+          + (c.beyondTested && c.available
+              ? ' <span style="color:var(--yellow);">' + escHtml(c.latest) + ' is newer than that — it will ask first.</span>'
+              : '')
+          + (c.runningBeyondTested
+              ? ' <span style="color:var(--yellow);">You are already running ' + escHtml(c.installed) + ', past it.</span>'
+              : '')
+          + '</div>';
+      }
+      if (!c.canUpdate && c.blocker) {
+        h += '<div style="font-size:0.72rem;color:var(--yellow);margin-top:6px;">' + escHtml(c.blocker) + '</div>';
+      } else if (c.needsSudo) {
+        h += '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">'
+          + 'Installed system-wide, so updating uses sudo — which is also why Claude Code cannot update itself here.</div>';
+      }
+      if (c.lastResult) {
+        h += '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">' + escHtml(c.lastResult) + '</div>';
+      }
+      body.innerHTML = h;
+    }
+
+    async function applyClaudeUpdate(version, beyond) {
+      if (beyond && !confirm('Claude Code ' + version + ' is newer than the version this Crundi build was tested with.'
+        + String.fromCharCode(10) + String.fromCharCode(10)
+        + 'Claude Code is what every chat and terminal runs on, so a problem there affects all of them.'
+        + String.fromCharCode(10) + String.fromCharCode(10) + 'Install it anyway?')) return;
+      const body = document.getElementById('cc-update-body');
+      if (body) body.innerHTML = '<span style="color:var(--text-muted);">Installing… this can take a minute.</span>';
+      try {
+        const r = await apiFetch('/api/claude-update/apply', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version: version, allowBeyondTested: !!beyond }),
+        });
+        const d = await r.json();
+        if (!d.ok) toast(d.error || 'Update failed', 'error');
+        else toast('Claude Code updated to ' + d.installed, 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      renderClaudeUpdate(true);
+    }
+
     async function renderServerUpdate(force) {
       if (!force && Date.now() - srvUpdateCheckedAt > 60_000) force = true;
       if (force) srvUpdateCheckedAt = Date.now();
@@ -8894,6 +8993,7 @@ export function getWebappHtml(botUsername) {
           ['Mindmap', [['mindmapAdd', 'When a node is added'], ['mindmapDelete', 'When a node is deleted']]],
           ['MCP Browser', [['browserLaunch', 'When a browser launches'], ['browserStop', 'When a browser stops']]],
           ['Security', [['secretRequest', 'Secret access requested']]],
+          ['Updates', [['updateAvailable', 'When a new Claude Code version is out']]],
         ];
         const buildNotifyMatrix = () => {
           let m = '<div class="ntf-matrix"><div class="ntf-row head"><div class="ntf-h lbl">Event</div>'
@@ -9049,9 +9149,14 @@ export function getWebappHtml(botUsername) {
         // call and Settings should not wait on GitHub to draw.
         else html += '<div class="info-section" id="srv-update-section"><h4>Server</h4>'
           + '<div id="srv-update-body" style="font-size:0.8rem;color:var(--text-muted);">Checking for updates…</div></div>';
+        // Claude Code sits next to the server update because it is the other
+        // thing whose version decides what your sessions can do.
+        html += '<div class="info-section" id="cc-update-section"><h4>Claude Code</h4>'
+          + '<div id="cc-update-body" style="font-size:0.8rem;color:var(--text-muted);">Checking…</div></div>';
 
         panel.innerHTML = html;
         if (!(window.api && window.api.getUpdateState)) renderServerUpdate();
+        renderClaudeUpdate();
       } catch (err) {
         panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(err.message) + '</p></div>';
       }
@@ -9172,6 +9277,12 @@ export function getWebappHtml(botUsername) {
           break;
         case 'srv-update-apply':
           applyServerUpdate();
+          break;
+        case 'cc-update-check':
+          renderClaudeUpdate(true);
+          break;
+        case 'cc-update-apply':
+          applyClaudeUpdate(d.version, d.beyond === '1');
           break;
         case 'update-toggle':
           if (window.api && window.api.setAutoUpdate) window.api.setAutoUpdate(!updateState.enabled).then(applyUpdateState).catch(() => {});
