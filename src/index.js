@@ -275,8 +275,27 @@ console.log(`[crundi] API_KEY=${apiKey}`);
 // Start the task scheduler (fires scheduled agents / commands / service actions).
 try {
   const { startScheduler } = await import('./scheduler.js');
+  const { runScheduledChat } = await import('./scheduled-chat.js');
   startScheduler({
     claudeTerminals,
+    // A chat job opens a chat, does the work and closes itself. It reports
+    // separately from the generic "a schedule ran" ping, because what you want
+    // to know is what it DID, not that it started.
+    runScheduledChat: (sch) => runScheduledChat({
+      schedule: sch,
+      claudeUi,
+      notify: (outcome, label, text) => {
+        try {
+          const proj = sch.project ? ` (${sch.project})` : '';
+          const body = String(text || '').trim().slice(0, 1200);
+          const head = outcome === 'finished' ? `✅ "${label}" finished${proj}.`
+            : outcome === 'needs-input' ? `⏳ "${label}" is waiting for you${proj} — the chat is still open.`
+              : outcome === 'overran' ? `⌛ "${label}" is still running${proj} — left open.`
+                : `⚠️ "${label}" did not finish${proj} (${outcome}) — left open.`;
+          webapp.notifyEvent('scheduledChat', body ? `${head}\n\n${body}` : head);
+        } catch { /* non-fatal */ }
+      },
+    }),
     onFire: (sch) => {
       try {
         const proj = sch.project ? ` (${sch.project})` : '';

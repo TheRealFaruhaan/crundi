@@ -26,6 +26,7 @@ import { listTasks as listMaintenanceTasks, runTask as runMaintenanceTask } from
 import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
 import * as claudeUpdate from './claude-update.js';
+import { decodeImage } from './image-input.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -529,6 +530,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     browserLaunch: 'never', browserStop: 'never',
     secretRequest: 'always',
     updateAvailable: 'away',
+    scheduledChat: 'always',
   };
   const notifyPrefs = { ...NOTIFY_DEFAULTS };
   try {
@@ -1009,6 +1011,49 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         : `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}`;
       notifyEvent('secretRequest', `${what}\n\nApprove it in Crundi — the prompt appears in the chat itself, or under Secrets.`);
     });
+  }
+
+  // ─── Scheduled chat jobs ───
+  //
+  // A job set to RESUME needs a conversation to resume into, and the CLI only
+  // reveals a session's id once it has actually started one. So the id is
+  // captured at setup: open the chat, say hello so a transcript exists, read
+  // the id the CLI reports, and close it again. Every later run reattaches to
+  // that same conversation and can therefore remember what it did last time.
+  async function provisionChatSession(id) {
+    const sch = schedule.getSchedule(id);
+    if (!sch) return { ok: false, error: 'No such schedule' };
+    const a = sch.action || {};
+    if (a.kind !== 'chat') return { ok: false, error: 'That schedule is not a chat job' };
+
+    const created = await claudeUi.create(sch.project, {
+      title: (sch.name || 'Scheduled chat') + ' (setup)',
+      cwd: a.cwd || '',
+      model: a.model || '',
+      skipPermissions: a.mode === 'skip',
+      sessionMode: 'new',
+      background: true,
+    });
+    if (!created.ok) return { ok: false, error: created.error };
+
+    claudeUi.sendMessage(created.id,
+      'hi — this conversation is the memory for a scheduled job. '
+      + 'Reply with one short line confirming that, and nothing else.');
+
+    // Poll for the id rather than racing it: system/init arrives on its own
+    // schedule and there is nothing to await.
+    let sessionId = '';
+    for (let i = 0; i < 60 && !sessionId; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const entry = claudeUi.list().find((x) => x.id === created.id);
+      sessionId = entry?.sessionId || '';
+      if (entry && entry.status !== 'running') break;
+    }
+    try { await claudeUi.close(created.id); } catch { /* fine */ }
+
+    if (!sessionId) return { ok: false, error: 'The chat never reported a session id, so there is nothing to resume.' };
+    const upd = schedule.updateSchedule(id, { action: { ...a, session: 'resume', sessionId } });
+    return upd.ok ? { ok: true, sessionId, schedule: upd.schedule } : upd;
   }
 
   // ─── Claude Code version watch ───
@@ -1660,6 +1705,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       switch (action) {
         case 'add': result = schedule.addSchedule(body.schedule || {}); break;
         case 'update': result = schedule.updateSchedule(body.id, body.schedule || {}); break;
+        // Give a resuming chat job the conversation it will come back to.
+        case 'provisionChat': result = await provisionChatSession(body.id); break;
         case 'enable': result = schedule.setEnabled(body.id, body.enabled); break;
         case 'delete': result = schedule.deleteSchedule(body.id); break;
         default: return json(res, { ok: false, error: `Unknown schedule action: ${action}` }, 400);
@@ -3129,9 +3176,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         try {
           const chatId = getChatId ? getChatId() : null;
           if (!chatId) return json(res, { ok: false, error: 'No chat ID configured' });
+          // Path or bytes. Sending the bytes either way means one code path,
+          // and a bad path now fails with "no such file" rather than whatever
+          // the Telegram client makes of a missing stream.
+          const img = decodeImage({ path: body.args?.path, data: body.args?.data });
+          if (!img.ok) return json(res, { ok: false, error: img.error });
           const { InputFile } = await import('grammy');
-          await bot.api.sendPhoto(chatId, new InputFile(body.args?.path));
-          return json(res, { ok: true });
+          await bot.api.sendPhoto(chatId, new InputFile(img.buffer, img.filename),
+            body.args?.caption ? { caption: String(body.args.caption).slice(0, 1024) } : undefined);
+          return json(res, { ok: true, sent: img.ext, bytes: img.buffer.length });
         } catch (err) {
           return json(res, { ok: false, error: err.message });
         }

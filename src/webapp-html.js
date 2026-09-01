@@ -2960,6 +2960,7 @@ export function getWebappHtml(botUsername) {
       scheduleRun: 'away',
       serviceDown: 'always', serviceUp: 'away',
       updateAvailable: 'away',
+      scheduledChat: 'always',
       mindmapAdd: 'never', mindmapDelete: 'never',
       browserLaunch: 'never', browserStop: 'never',
       secretRequest: 'always',
@@ -8988,7 +8989,7 @@ export function getWebappHtml(botUsername) {
         const NOTIFY_GROUPS = [
           ['Agent', [['finished', 'When agent finishes'], ['needsInput', 'When agent needs input']]],
           ['Kanban', [['kanbanTask', 'Main task status change'], ['kanbanSubtask', 'Sub task status change']]],
-          ['Schedule', [['scheduleRun', 'When a schedule executes']]],
+          ['Schedule', [['scheduleRun', 'When a schedule executes'], ['scheduledChat', 'Result of a scheduled chat']]],
           ['Services', [['serviceDown', 'When a service crashes / stops'], ['serviceUp', 'When a service starts']]],
           ['Mindmap', [['mindmapAdd', 'When a node is added'], ['mindmapDelete', 'When a node is deleted']]],
           ['MCP Browser', [['browserLaunch', 'When a browser launches'], ['browserStop', 'When a browser stops']]],
