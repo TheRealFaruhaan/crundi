@@ -14,7 +14,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import * as tls from './tls.js';
 import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
-import { createHmac, randomBytes, createHash } from 'node:crypto';
+import { createHmac, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { basename, join, dirname, resolve, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -257,6 +257,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // renews on a 401 by itself, so this restores the login without putting a
   // long-lived bearer token on disk. 0600, same as the credentials themselves.
   const sessionFile = join(config.dataDir, 'sessions.json');
+  let forwardKey = '';   // signs the forward cookie; persisted with the sessions
 
   /**
    * Would anything bring this process back if it stopped?
@@ -276,7 +277,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const out = [];
       for (const [t, e] of refreshTokens) if (now < e.expiresAt) out.push([t, e]);
       const tmp = sessionFile + '.tmp';
-      writeFileSync(tmp, JSON.stringify({ refreshTokens: out }), { mode: 0o600 });
+      writeFileSync(tmp, JSON.stringify({ refreshTokens: out, forwardKey }), { mode: 0o600 });
       renameSync(tmp, sessionFile);
     } catch (err) {
       // Not fatal: the worst case is the old behaviour, a logout on restart.
@@ -288,6 +289,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     try {
       if (!existsSync(sessionFile)) return;
       const d = JSON.parse(readFileSync(sessionFile, 'utf-8'));
+      // Same key across restarts, or every forward cookie already out there
+      // would stop verifying — which is the bug this replaced.
+      if (typeof d.forwardKey === 'string' && /^[a-f0-9]{64}$/.test(d.forwardKey)) forwardKey = d.forwardKey;
       const now = Date.now();
       let restored = 0;
       for (const [t, e] of (d.refreshTokens || [])) {
@@ -449,18 +453,38 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // query parameter and nothing else, so this cookie cannot be used to make an
   // authenticated Crundi API call from a forwarded page — which matters, since
   // those pages are running code we do not control.
-  const forwardTokens = new Map();   // token -> expiresAt
   const FORWARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-  function mintForwardToken() {
-    const t = randomBytes(32).toString('hex');
-    forwardTokens.set(t, Date.now() + FORWARD_TTL_MS);
-    // Cheap sweep; this map only grows on sign-in.
-    if (forwardTokens.size > 200) {
-      const now = Date.now();
-      for (const [k, exp] of forwardTokens) if (exp <= now) forwardTokens.delete(k);
+  // The forward cookie used to be a random string looked up in an in-memory
+  // Map, minted only at sign-in. Two consequences, and between them they made
+  // private forwards look broken to someone who was plainly signed in:
+  //
+  //   A restart emptied the Map. Sign-ins now survive restarts, so nobody signs
+  //   in again — the browser kept sending a cookie the server no longer knew,
+  //   and every private forward answered "sign in first" to a signed-in user
+  //   with no way to fix it short of signing out and back in.
+  //
+  //   And it was never refreshed. Stay signed in past the 7 days and forwards
+  //   stopped working while the app carried on fine.
+  //
+  // It is now signed rather than remembered: "<expiry>.<hmac>", verified by
+  // recomputing. No server-side state, so a restart cannot invalidate it, and
+  // it is re-issued below on any authenticated request.
+  function forwardSecret() {
+    if (!forwardKey) {
+      forwardKey = randomBytes(32).toString('hex');
+      saveSessions();
     }
-    return t;
+    return forwardKey;
+  }
+
+  function signForward(expiresAt) {
+    return createHmac('sha256', forwardSecret()).update(String(expiresAt)).digest('hex');
+  }
+
+  function mintForwardToken() {
+    const exp = Date.now() + FORWARD_TTL_MS;
+    return `${exp}.${signForward(exp)}`;
   }
 
   /** Attach the forward cookie to a successful sign-in response. */
@@ -477,12 +501,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   function hasForwardCookie(req) {
     const raw = req.headers.cookie;
     if (!raw) return false;
-    const m = /(?:^|;\s*)crundi_fwd=([a-f0-9]+)/.exec(raw);
-    if (!m) return false;
-    const exp = forwardTokens.get(m[1]);
-    if (!exp) return false;
-    if (Date.now() >= exp) { forwardTokens.delete(m[1]); return false; }
-    return true;
+    const m = /(?:^|;\s*)crundi_fwd=(\d+)\.([a-f0-9]{64})/.exec(raw);
+    if (!m) return false;                       // absent, or the old opaque form
+    const exp = Number(m[1]);
+    if (!Number.isFinite(exp) || Date.now() >= exp) return false;
+    const want = Buffer.from(signForward(exp), 'utf8');
+    const got = Buffer.from(m[2], 'utf8');
+    // Compared in constant time: this is the check that decides whether a
+    // stranger reaches an app that never expected to be public.
+    return want.length === got.length && timingSafeEqual(want, got);
   }
 
   function validateToken(req) {
@@ -1475,6 +1502,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (!authConfig.isOpen()
         && path !== '/api/mcp/call' && path !== '/api/terminal-status'
         && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+
+    // Top the forward cookie up on any authenticated call. It used to be minted
+    // only at sign-in, so a session that outlived its cookie — or a restart in
+    // the old scheme — left private forwards refusing someone who was signed in
+    // and had no reason to suspect a cookie. Now simply using Crundi fixes it.
+    if (!authConfig.isOpen() && path.startsWith('/api/') && !hasForwardCookie(req)) {
+      try { setForwardCookie(res); } catch { /* never worth failing a request for */ }
+    }
 
     // Claude Code lifecycle hooks report a terminal's agent state here.
     if (path === '/api/terminal-status' && req.method === 'POST') {
