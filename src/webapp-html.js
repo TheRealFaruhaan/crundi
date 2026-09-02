@@ -2864,6 +2864,12 @@ export function getWebappHtml(botUsername) {
     // a replay to the server and revoke the whole login.
     let refreshInFlight = null;
     let refreshTimer = null;
+    // Another tab rotating the session writes the new tokens here. Picking them
+    // up as they land keeps this tab from ever holding a spent copy.
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'crundi_refresh' && e.newValue) refreshToken = e.newValue;
+      if (e.key === 'crundi_token' && e.newValue) token = e.newValue;
+    });
     let appReady = false;   // set by showApp(); gates the 401 reload recovery
 
     function storeSession(d) {
@@ -2902,6 +2908,13 @@ export function getWebappHtml(botUsername) {
 
     function refreshSession() {
       if (refreshInFlight) return refreshInFlight;
+      // Take the freshest token, not the one captured at page load. Another tab
+      // may have rotated it since, and refreshInFlight only serialises refreshes
+      // WITHIN this tab. Sending a copy a sibling already spent looked like a
+      // leaked token to the server, which revoked the whole login — so simply
+      // returning to a backgrounded tab could sign you out everywhere.
+      const stored = localStorage.getItem('crundi_refresh');
+      if (stored && stored !== refreshToken) refreshToken = stored;
       if (!refreshToken) return Promise.resolve(false);
       refreshInFlight = fetch('/api/auth/refresh', {
         method: 'POST',
