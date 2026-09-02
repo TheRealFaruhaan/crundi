@@ -3011,6 +3011,164 @@ export function getWebappHtml(botUsername) {
      * terminal — "Auto-update failed: no write permission" — while falling
      * further behind. This says so, and offers to do it with sudo.
      */
+    // ─── Signed-in devices ───
+    //
+    // Hidden until asked for: most of the time there is one, and a list of one
+    // is noise. It matters when it is not one.
+
+    let sessOpen = false;
+
+    async function toggleSessions() {
+      sessOpen = !sessOpen;
+      const btn = $('#sess-toggle');
+      const body = $('#sess-body');
+      if (btn) btn.textContent = sessOpen ? 'Hide' : 'Show';
+      if (!body) return;
+      body.style.display = sessOpen ? '' : 'none';
+      if (sessOpen) await loadSessions();
+    }
+
+    async function loadSessions() {
+      const body = $('#sess-body');
+      if (!body) return;
+      body.innerHTML = '<div class="sys-quiet">Loading…</div>';
+      let list;
+      try {
+        const r = await apiFetch('/api/auth/sessions');
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        list = d.sessions || [];
+      } catch (err) {
+        body.innerHTML = '<div class="sys-quiet">Could not load sessions: ' + escHtml(err.message) + '</div>';
+        return;
+      }
+      if (!list.length) { body.innerHTML = '<div class="sys-quiet">No active sessions.</div>'; return; }
+      let h = '';
+      for (const x of list) {
+        h += '<div class="maint-row">'
+          + '<div class="maint-text">'
+          + '<div class="maint-label">' + escHtml(describeAgent(x.userAgent))
+          + (x.current ? '<span class="maint-root">this device</span>' : '') + '</div>'
+          + '<div class="maint-desc">'
+          + (x.ip ? escHtml(x.ip) + ' · ' : '')
+          + 'signed in ' + escHtml(relTime(x.createdAt))
+          + (x.lastSeenAt ? ' · last used ' + escHtml(relTime(x.lastSeenAt)) : '')
+          + '</div></div>'
+          + (x.current
+            ? '<span class="maint-size none">—</span>'
+            : '<button class="svc-btn danger" data-action="sess-revoke" data-id="' + escHtml(x.id) + '">Revoke</button>')
+          + '</div>';
+      }
+      const others = list.filter((x) => !x.current).length;
+      if (others) {
+        h += '<div style="margin-top:10px;display:flex;justify-content:flex-end;">'
+          + '<button class="svc-btn danger" data-action="sess-revoke-others">Sign out the other '
+          + (others === 1 ? 'device' : others + ' devices') + '</button></div>';
+      }
+      body.innerHTML = h;
+    }
+
+    /** A user-agent string is unreadable; the device and browser are the point. */
+    function describeAgent(ua) {
+      const s = String(ua || '');
+      if (!s) return 'Unknown device';
+      const os = /Android/i.test(s) ? 'Android'
+        : /iPhone|iPad|iOS/i.test(s) ? 'iOS'
+          : /Windows/i.test(s) ? 'Windows'
+            : /Mac OS X|Macintosh/i.test(s) ? 'macOS'
+              : /Linux/i.test(s) ? 'Linux' : '';
+      // Substring tests, not regexes: a literal slash inside a regex needs
+      // escaping, and this file is one big template literal that eats the
+      // backslash — /Edg\//i arrived in the browser as /Edg//i and threw.
+      // Order matters: Edge and Opera both contain "Chrome/", and Chrome
+      // contains "Safari/".
+      const has = (n) => s.indexOf(n) >= 0;
+      const browser = has('Edg/') ? 'Edge'
+        : has('OPR/') ? 'Opera'
+          : has('Electron/') ? 'Desktop app'
+            : has('Chrome/') ? 'Chrome'
+              : has('Firefox/') ? 'Firefox'
+                : has('Safari/') ? 'Safari' : '';
+      if (browser && os) return browser + ' on ' + os;
+      return browser || os || 'Unknown device';
+    }
+
+    async function revokeSession(id, btn) {
+      if (!id) return;
+      if (btn && btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.classList.add('confirming');
+        btn.textContent = 'Revoke?';
+        clearTimeout(btn._armTimer);
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = 'Revoke';
+        }, 5000);
+        return;
+      }
+      if (btn) { clearTimeout(btn._armTimer); btn.disabled = true; btn.textContent = 'Revoking…'; }
+      try {
+        const r = await apiFetch('/api/auth/sessions/revoke', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id }),
+        });
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        toast('Session revoked', 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      loadSessions();
+    }
+
+    async function revokeOtherSessions(btn) {
+      if (btn && btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.classList.add('confirming');
+        btn.textContent = 'Sign them all out?';
+        clearTimeout(btn._armTimer);
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = 'Sign out the others';
+        }, 5000);
+        return;
+      }
+      if (btn) { clearTimeout(btn._armTimer); btn.disabled = true; btn.textContent = 'Signing out…'; }
+      try {
+        const r = await apiFetch('/api/auth/sessions/revoke', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ others: true }),
+        });
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        toast(d.revoked ? 'Signed out ' + d.revoked + ' other session(s)' : 'Nothing else was signed in', 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      loadSessions();
+    }
+
+    /**
+     * End this sign-in. Two-step, because it is easy to hit by accident and the
+     * way back is the login screen.
+     */
+    async function signOut(btn) {
+      if (btn && btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Sign out?';
+        btn.classList.add('confirming');
+        clearTimeout(btn._armTimer);
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = '';
+          btn.classList.remove('confirming');
+          btn.textContent = 'Sign out';
+        }, 5000);
+        return;
+      }
+      if (btn) { clearTimeout(btn._armTimer); btn.disabled = true; btn.textContent = 'Signing out…'; }
+      // Tell the server first so the tokens are revoked even if the reload is
+      // interrupted; a local clear alone would leave a usable refresh token.
+      try {
+        await apiFetch('/api/auth/logout', { method: 'POST' });
+      } catch (err) { /* still clear locally — a stale token is worse than a failed call */ }
+      try { clearSession(); } catch (err) { /* ignore */ }
+      location.reload();
+    }
+
     async function renderClaudeUpdate(force) {
       const body = document.getElementById('cc-update-body');
       if (!body) return;
@@ -9154,6 +9312,21 @@ export function getWebappHtml(botUsername) {
         // thing whose version decides what your sessions can do.
         html += '<div class="info-section" id="cc-update-section"><h4>Claude Code</h4>'
           + '<div id="cc-update-body" style="font-size:0.8rem;color:var(--text-muted);">Checking…</div></div>';
+        // Signing out had no button and no endpoint, so a session could not be
+        // ended from the browser at all — and sign-ins survive restarts now, so
+        // not even a restart ended one.
+        html += '<div class="info-section"><h4>Session</h4>'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+          + '<div style="font-size:0.72rem;color:var(--text-muted);max-width:60ch;">'
+          + 'Ends this sign-in on this device and revokes its tokens, so they cannot be refreshed. '
+          + 'Also clears the cookie that reaches private forwards.</div>'
+          + '<button type="button" class="kanban-btn" id="signout-btn" data-action="sign-out">Sign out</button>'
+          + '</div>'
+          + '<div class="ctr-head" style="margin-top:12px;">'
+          + '<span style="flex:1;font-size:0.78rem;color:var(--text-secondary);">Signed in devices</span>'
+          + '<button type="button" class="svc-btn" id="sess-toggle" data-action="sess-toggle">Show</button></div>'
+          + '<div id="sess-body" style="display:none"></div>'
+          + '</div>';
 
         panel.innerHTML = html;
         if (!(window.api && window.api.getUpdateState)) renderServerUpdate();
@@ -9278,6 +9451,18 @@ export function getWebappHtml(botUsername) {
           break;
         case 'srv-update-apply':
           applyServerUpdate();
+          break;
+        case 'sign-out':
+          signOut(e.target.closest('button'));
+          break;
+        case 'sess-toggle':
+          toggleSessions();
+          break;
+        case 'sess-revoke':
+          revokeSession(d.id, e.target.closest('button'));
+          break;
+        case 'sess-revoke-others':
+          revokeOtherSessions(e.target.closest('button'));
           break;
         case 'cc-update-check':
           renderClaudeUpdate(true);

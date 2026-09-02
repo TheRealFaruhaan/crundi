@@ -258,6 +258,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // long-lived bearer token on disk. 0600, same as the credentials themselves.
   const sessionFile = join(config.dataDir, 'sessions.json');
   let forwardKey = '';   // signs the forward cookie; persisted with the sessions
+  const families = new Map();   // familyId -> { username, createdAt, lastSeenAt, userAgent, ip }
 
   /**
    * Would anything bring this process back if it stopped?
@@ -277,7 +278,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const out = [];
       for (const [t, e] of refreshTokens) if (now < e.expiresAt) out.push([t, e]);
       const tmp = sessionFile + '.tmp';
-      writeFileSync(tmp, JSON.stringify({ refreshTokens: out, forwardKey }), { mode: 0o600 });
+      writeFileSync(tmp, JSON.stringify({ refreshTokens: out, forwardKey, families: [...families] }), { mode: 0o600 });
       renameSync(tmp, sessionFile);
     } catch (err) {
       // Not fatal: the worst case is the old behaviour, a logout on restart.
@@ -292,6 +293,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Same key across restarts, or every forward cookie already out there
       // would stop verifying — which is the bug this replaced.
       if (typeof d.forwardKey === 'string' && /^[a-f0-9]{64}$/.test(d.forwardKey)) forwardKey = d.forwardKey;
+      for (const [fid, meta] of (d.families || [])) if (fid && meta) families.set(fid, meta);
       const now = Date.now();
       let restored = 0;
       for (const [t, e] of (d.refreshTokens || [])) {
@@ -376,7 +378,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   function revokeFamily(familyId) {
     for (const [t, e] of tokens) if (e.familyId === familyId) tokens.delete(t);
     for (const [t, e] of refreshTokens) if (e.familyId === familyId) refreshTokens.delete(t);
+    families.delete(familyId);
     saveSessions();   // a revoked login must not come back on restart
+  }
+
+  /** Every sign-in still able to authenticate, newest activity first. */
+  function listSessions(currentFamilyId) {
+    const live = new Set();
+    for (const [, e] of tokens) live.add(e.familyId);
+    for (const [, e] of refreshTokens) live.add(e.familyId);
+    const out = [];
+    for (const fid of live) {
+      const m = families.get(fid) || {};
+      out.push({
+        id: fid,
+        current: fid === currentFamilyId,
+        username: m.username || '',
+        createdAt: m.createdAt || 0,
+        lastSeenAt: m.lastSeenAt || 0,
+        userAgent: m.userAgent || '',
+        ip: m.ip || '',
+      });
+    }
+    out.sort((a, b) => (b.current - a.current) || (b.lastSeenAt - a.lastSeenAt));
+    return out;
   }
 
   /**
@@ -385,14 +410,31 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ token: string, refreshToken: string, expiresIn: number }}
    */
-  function createSession(username, familyId = randomBytes(16).toString('hex')) {
+  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null) {
     const now = Date.now();
     const token = randomBytes(32).toString('hex');
     const refreshToken = randomBytes(32).toString('hex');
     tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS });
     refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false });
+    // Remember enough about the sign-in to recognise it in a list later. "A
+    // session" tells you nothing; "Chrome on Android, from this address, last
+    // seen an hour ago" is something you can decide about.
+    const prev = families.get(familyId);
+    families.set(familyId, {
+      username,
+      createdAt: prev?.createdAt || now,
+      lastSeenAt: now,
+      userAgent: req ? String(req.headers['user-agent'] || '').slice(0, 200) : (prev?.userAgent || ''),
+      ip: req ? clientIp(req) : (prev?.ip || ''),
+    });
     saveSessions();
     return { token, refreshToken, expiresIn: Math.floor(ACCESS_TTL_MS / 1000) };
+  }
+
+  /** Best guess at who is calling, honouring the proxy header Crundi sits behind. */
+  function clientIp(req) {
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return (fwd || req.socket?.remoteAddress || '').replace(/^::ffff:/, '').slice(0, 45);
   }
 
   /** Back-compat shim: callers that only need an access token. */
@@ -403,7 +445,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ ok: true, token, refreshToken, expiresIn } | { ok: false, error: string }}
    */
-  function rotateRefresh(rt) {
+  function rotateRefresh(rt, req = null) {
     const entry = rt && refreshTokens.get(rt);
     if (!entry) return { ok: false, error: 'Invalid refresh token' };
     if (entry.used) {
@@ -422,7 +464,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     entry.used = true;
     // createSession saves, which also records this one as spent - so a replay
     // after a restart is still caught and still revokes the family.
-    return { ok: true, ...createSession(entry.username, entry.familyId) };
+    return { ok: true, ...createSession(entry.username, entry.familyId, req) };
   }
 
   /** Spent refresh tokens are retained for replay detection; drop them at expiry. */
@@ -439,6 +481,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const entry = tok && tokens.get(tok);
     if (!entry) return false;
     if (Date.now() >= entry.expiresAt) { tokens.delete(tok); return false; }
+    // In memory only. "Last seen" is worth having in the session list, but not
+    // worth a disk write per request; the periodic refresh persists it.
+    const fam = families.get(entry.familyId);
+    if (fam) fam.lastSeenAt = Date.now();
     return true;
   }
 
@@ -1297,7 +1343,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (parsed?.telegramLogin) {
         const result = validateTelegramLogin(parsed.telegramLogin);
         if (!result.valid) return json(res, { ok: false, error: result.error }, 403);
-        const session = createSession(result.user.username);
+        const session = createSession(result.user.username, undefined, req);
         return json(res, { ok: true, ...session, user: result.user });
       }
 
@@ -1318,7 +1364,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         res.end();
         return;
       }
-      const session = createSession(result.user.username);
+      const session = createSession(result.user.username, undefined, req);
       res.writeHead(302, {
         Location: '/#token=' + session.token + '&refresh=' + session.refreshToken,
       });
@@ -1359,7 +1405,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (username !== allowed) return json(res, { ok: false, error: 'Unauthorized user' }, 403);
 
       setForwardCookie(res);
-      return json(res, { ok: true, ...createSession(username), user });
+      return json(res, { ok: true, ...createSession(username, undefined, req), user });
     }
 
     // ─── Local auth (Electron / localhost only) ───
@@ -1372,7 +1418,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { parsed = JSON.parse(body); } catch { /* ignore */ }
       if (parsed?.key !== internalApiKey) return json(res, { ok: false, error: 'Invalid key' }, 403);
       setForwardCookie(res);
-      return json(res, { ok: true, ...createSession(config.allowedUsername || 'local') });
+      return json(res, { ok: true, ...createSession(config.allowedUsername || 'local', undefined, req) });
     }
 
     // ─── Password + TOTP login ───
@@ -1393,7 +1439,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       console.log('[crundi] Password login succeeded');
       setForwardCookie(res);
-      return json(res, { ok: true, ...createSession(config.localUsername) });
+      return json(res, { ok: true, ...createSession(config.localUsername, undefined, req) });
     }
 
     // Which sign-in methods this server offers. Read before login, so it is
@@ -1425,7 +1471,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         console.log('[crundi] Password sign-in configured');
         // Hand back a session so whoever just set it up is not locked out by
         // their own change, and the enrolment secret for their authenticator.
-        return json(res, { ...r, ...createSession(config.localUsername) });
+        return json(res, { ...r, ...createSession(config.localUsername, undefined, req) });
       }
 
       if (body.method === 'telegram') {
@@ -1444,11 +1490,65 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // ─── Refresh ───
     // Deliberately above the auth gate below: the access token is expected to
     // be expired here, so requiring one would defeat the purpose.
+    // Sign out. There was no way to do this at all: revokeFamily existed but
+    // nothing user-facing called it, so a session could not be ended from the
+    // browser — and since sign-ins now survive restarts, not even a restart
+    // would end one. A lost phone had no answer short of changing the auth
+    // config.
+    if (path === '/api/auth/logout' && req.method === 'POST') {
+      const tok = extractToken(req);
+      const entry = tok && tokens.get(tok);
+      // Revoke the whole family, not just this access token: the refresh token
+      // beside it would mint a new one seconds later otherwise.
+      if (entry?.familyId) revokeFamily(entry.familyId);
+      // And take the forward cookie with it. Leaving it behind would mean
+      // signing out of Crundi while every private forward stayed reachable
+      // from that browser for another week.
+      const base = forwards.baseDomain();
+      if (base) {
+        const secure = tls.enabled() ? '; Secure' : '';
+        res.setHeader('Set-Cookie',
+          `crundi_fwd=; Domain=.${base}; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`);
+      }
+      return json(res, { ok: true });
+    }
+
+    // Who is signed in. Needs the caller's own family so the list can mark
+    // which row is this device — revoking the wrong one is otherwise easy.
+    if (path === '/api/auth/sessions' && req.method === 'GET') {
+      if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      const mine = tokens.get(extractToken(req))?.familyId || '';
+      return json(res, { ok: true, sessions: listSessions(mine) });
+    }
+
+    // Revoke one session, or every session except this one.
+    if (path === '/api/auth/sessions/revoke' && req.method === 'POST') {
+      if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      const mine = tokens.get(extractToken(req))?.familyId || '';
+      const body = JSON.parse(await readBody(req));
+      let revoked = 0;
+      if (body.others === true) {
+        // Deliberately spares this device: "sign out everywhere else" that also
+        // signs YOU out is a good way to lock yourself out of a remote server.
+        for (const sess of listSessions(mine)) {
+          if (sess.id !== mine) { revokeFamily(sess.id); revoked++; }
+        }
+      } else {
+        const id = String(body.id || '');
+        if (!id) return json(res, { ok: false, error: 'No session given' }, 400);
+        if (id === mine) return json(res, { ok: false, error: 'That is this device — use Sign out instead.' }, 400);
+        if (!listSessions(mine).some((x) => x.id === id)) return json(res, { ok: false, error: 'No such session' }, 404);
+        revokeFamily(id);
+        revoked = 1;
+      }
+      return json(res, { ok: true, revoked });
+    }
+
     if (path === '/api/auth/refresh' && req.method === 'POST') {
       const body = await readBody(req);
       let parsed;
       try { parsed = JSON.parse(body); } catch { /* ignore */ }
-      const result = rotateRefresh(parsed?.refreshToken);
+      const result = rotateRefresh(parsed?.refreshToken, req);
       return json(res, result, result.ok ? 200 : 401);
     }
 
