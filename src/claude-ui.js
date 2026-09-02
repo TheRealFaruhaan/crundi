@@ -304,7 +304,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   const PERSIST_MS = 1500;
   // Interactive entries are dropped: replaying a permission prompt whose
   // decision the CLI already consumed would render buttons that do nothing.
-  const PERSIST_KINDS = new Set(['user', 'assistant-text', 'thinking', 'tool', 'result', 'error']);
+  // Questions and permission prompts are persisted too. They were not, so a
+  // conversation that ended WAITING on you replayed with no trace of the ask:
+  // the transcript simply stopped, and nothing said why. The one entry that
+  // explains where a conversation got to was the one being thrown away.
+  const PERSIST_KINDS = new Set(['user', 'assistant-text', 'thinking', 'tool', 'result', 'error',
+    'question', 'permission']);
   // Only a tail is kept. A long agentic session runs to thousands of entries
   // with large tool payloads; writing all of it on every patch would cost real
   // I/O and replaying it would stall the renderer. Bounded by count AND
@@ -416,8 +421,27 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       if (authoritative) clearPersisted(s.alias);
       return;
     }
+    // A replayed ask can never be answered: the request id belonged to a
+    // process that has exited. Showing live Allow/Deny buttons would be a lie,
+    // so it comes back marked unanswered — visible, and honest about being
+    // closed.
+    const restored = d.messages.map((m) => (
+      (m.kind === 'question' || m.kind === 'permission') && (!m.status || m.status === 'pending')
+        ? { ...m, status: 'unanswered' }
+        : m
+    ));
+    // If the conversation STOPPED on one, say so where it happened. Otherwise
+    // the only clue is a card partway up a long transcript.
+    const lastAsk = [...restored].reverse().find((m) => PERSIST_KINDS.has(m.kind));
+    const endedWaiting = lastAsk && (lastAsk.kind === 'question' || lastAsk.kind === 'permission')
+      && lastAsk.status === 'unanswered';
+
     s.messages = [
-      ...d.messages,
+      ...restored,
+      ...(endedWaiting ? [{
+        id: genId(), kind: 'notice', seq: nextSeq(),
+        text: 'This conversation stopped waiting for an answer. That question closed with the previous session — say what you want done and Claude will pick it up again.',
+      }] : []),
       { id: genId(), kind: 'notice', text: '— earlier messages in this conversation —', seq: nextSeq() },
       ...s.messages,
     ];
