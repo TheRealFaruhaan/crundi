@@ -376,6 +376,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   /** Drop every token belonging to one login. Used on logout and on reuse detection. */
   function revokeFamily(familyId) {
+    // Logged because "why was I signed out?" is otherwise unanswerable.
+    const m = families.get(familyId);
+    console.log(`[webapp] Revoked session ${String(familyId).slice(0, 8)}`
+      + (m?.ip ? ` (${m.ip})` : '') + (m?.userAgent ? ` ${m.userAgent.slice(0, 40)}` : ''));
     for (const [t, e] of tokens) if (e.familyId === familyId) tokens.delete(t);
     for (const [t, e] of refreshTokens) if (e.familyId === familyId) refreshTokens.delete(t);
     families.delete(familyId);
@@ -449,8 +453,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const entry = rt && refreshTokens.get(rt);
     if (!entry) return { ok: false, error: 'Invalid refresh token' };
     if (entry.used) {
-      // Replay of an already-rotated token — assume the token leaked and cut
-      // the whole login, forcing a real re-auth.
+      // A replay is EITHER a leaked token being exercised, OR two tabs racing.
+      // The second is common and innocent: each tab holds its own copy of the
+      // refresh token, so when one rotates, the other's copy is instantly
+      // stale — and returning to that tab replays it. Revoking the family
+      // there logs the user out of everything for doing nothing.
+      //
+      // So a replay moments after the rotation is treated as the race it
+      // almost certainly is: issue a fresh pair for the same login. A replay
+      // later — the shape an actually-stolen token has — still cuts the login.
+      const age = Date.now() - (entry.usedAt || 0);
+      if (entry.usedAt && age <= REPLAY_GRACE_MS) {
+        return { ok: true, ...createSession(entry.username, entry.familyId, req) };
+      }
       revokeFamily(entry.familyId);
       return { ok: false, error: 'Refresh token reused' };
     }
@@ -462,6 +477,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // from an unknown token and can trip the revocation above. Swept once it
     // passes expiresAt.
     entry.used = true;
+    entry.usedAt = Date.now();   // how the grace above tells a race from a theft
     // createSession saves, which also records this one as spent - so a replay
     // after a restart is still caught and still revokes the family.
     return { ok: true, ...createSession(entry.username, entry.familyId, req) };
@@ -500,6 +516,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // authenticated Crundi API call from a forwarded page — which matters, since
   // those pages are running code we do not control.
   const FORWARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  // Long enough for a woken tab to replay a just-rotated token; far too
+  // short to be a useful window for a stolen one.
+  const REPLAY_GRACE_MS = 30 * 1000;
 
   // The forward cookie used to be a random string looked up in an in-memory
   // Map, minted only at sign-in. Two consequences, and between them they made
@@ -1525,6 +1544,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/auth/sessions/revoke' && req.method === 'POST') {
       if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
       const mine = tokens.get(extractToken(req))?.familyId || '';
+      // If we cannot tell WHICH session is asking, "everything except mine"
+      // has no meaning and the loop below would revoke every session including
+      // the caller's — signing you out of the thing you are holding.
+      if (!mine) return json(res, { ok: false, error: 'Could not identify this session. Reload and try again.' }, 409);
       const body = JSON.parse(await readBody(req));
       let revoked = 0;
       if (body.others === true) {
