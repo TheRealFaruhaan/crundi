@@ -1014,31 +1014,28 @@
       var box = el('div', 'cc-ask');
       var questions = (e.input && e.input.questions) || [];
 
-      if (e.status !== 'pending') {
-        var closedQ = e.status === 'unanswered' || e.status === 'cancelled';
+      // A restart orphans an in-flight question: its control request belonged
+      // to a process that has exited, so no control response can satisfy it.
+      // The card stays fully answerable anyway — the answer goes back as an
+      // ordinary message instead. Claude has the whole transcript on resume, so
+      // it reads the same either way, and a decision you already made is not
+      // work worth throwing away.
+      var orphaned = e.status === 'unanswered' || e.status === 'cancelled';
+      if (e.status !== 'pending' && !orphaned) {
         var answered = (e.answeredInput && e.answeredInput.answers) || {};
         var html = e.status === 'denied'
           ? '<span class="cc-tag no">dismissed</span>'
-          : closedQ
-            ? '<span class="cc-tag no">never answered</span>'
-            : Object.keys(answered).map(function (k) {
-                return '<span class="cc-tag ok">' + esc(answered[k]) + '</span>';
-              }).join(' ');
+          : Object.keys(answered).map(function (k) {
+              return '<span class="cc-tag ok">' + esc(answered[k]) + '</span>';
+            }).join(' ');
         box.appendChild(el('div', 'cc-answered', html || '<span class="cc-tag">answered</span>'));
-        // The question AND its options. A resumed conversation cannot answer
-        // the original request — that id died with the previous process — so
-        // the card's job is to tell you what was being asked and what the
-        // choices were, well enough to answer it in the message box.
-        if (closedQ) {
-          questions.forEach(function (q) {
-            if (!q) return;
-            if (q.question) box.appendChild(el('div', 'cc-ask-sub', esc(q.question)));
-            (q.options || []).forEach(function (o) {
-              if (o && o.label) box.appendChild(el('div', 'cc-ask-opt', esc(o.label)));
-            });
-          });
-        }
         return box;
+      }
+      if (orphaned) {
+        // Say why the buttons behave differently, rather than letting it look
+        // like an ordinary live question that happens to be old.
+        box.appendChild(el('div', 'cc-ask-sub',
+          'This question outlived the session that asked it. Answering sends your choice as a message.'));
       }
 
       var picks = questions.map(function () { return { chosen: [], other: '' }; });
@@ -1164,10 +1161,19 @@
         var answers = {};
         questions.forEach(function (q, qi) { answers[q.question] = answerFor(qi); });
         clearAnswer();
+        if (orphaned) {
+          var lines = questions.map(function (q, qi) { return q.question + ' -> ' + answerFor(qi); });
+          answerOrphaned(e, answers,
+            'Answering the question from before the session restarted:' + String.fromCharCode(10) + lines.join(String.fromCharCode(10)));
+          return;
+        }
         respond(e, { behavior: 'allow', updatedInput: Object.assign({}, e.input, { answers: answers }) });
       });
       skip.addEventListener('click', function () {
         clearAnswer();
+        // Dismissing an orphaned card just closes it. There is nothing waiting
+        // on an answer, so sending "I dismissed it" would be noise.
+        if (orphaned) { answerOrphaned(e, {}, ''); return; }
         respond(e, { behavior: 'deny', message: 'The user dismissed the question.' });
       });
       return box;
@@ -1189,6 +1195,29 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(Object.assign({ requestId: e.requestId }, payload)),
       }).catch(function () { /* the socket will resync */ });
+    }
+
+    /**
+     * Answer a question whose original request is gone.
+     *
+     * Recorded on the SERVER, not just here: marking it only in this browser
+     * would leave the next reload — or the next restart — offering the same
+     * question again as though it had never been answered.
+     */
+    function answerOrphaned(e, answers, text) {
+      var rec = entries.get(e.id);
+      if (rec) {
+        rec.data.status = 'answered-late';
+        rec.data.answeredInput = Object.assign({}, e.input, { answers: answers });
+        paint(rec.node, rec.data);
+      }
+      apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/answer-closed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entryId: e.id, answers: answers, text: text }),
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.ok === false) appendLocal({ kind: 'error', text: d.error || 'Could not record that answer' });
+      }).catch(function (err) { appendLocal({ kind: 'error', text: String(err.message || err) }); });
     }
 
     function postMessage(text) {
