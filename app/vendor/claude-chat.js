@@ -78,6 +78,10 @@
     '.cc-ask.perm{border-color:var(--yellow);background:var(--yellow-dim)}',
     '.cc-ask-title{font-weight:650;margin-bottom:3px;color:var(--text-primary)}',
     '.cc-ask-sub{color:var(--text-secondary);font-size:12px;margin-bottom:8px;word-break:break-word}',
+    // The choices a closed question offered. Indented and dimmed: they are
+    // a record of what was on the table, not buttons — that request is gone.
+    '.cc-ask-opt{color:var(--text-muted);font-size:12px;margin:0 0 4px 12px;word-break:break-word}',
+    '.cc-ask-opt:before{content:"\\2022 ";color:var(--text-muted)}',
     '.cc-ask-reason{color:var(--text-muted);font-size:11.5px;margin-bottom:8px}',
     '.cc-ask-pre{font-family:var(--mono);font-size:11.5px;background:var(--bg-primary);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:7px 9px;margin-bottom:9px;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-word;color:var(--text-secondary)}',
     '.cc-btns{display:flex;gap:7px;flex-wrap:wrap}',
@@ -967,10 +971,19 @@
     function permissionNode(e) {
       var box = el('div', 'cc-ask perm');
       if (e.status !== 'pending') {
+        // Anything that is not an actual answer must not read as one. This
+        // branch used to print "allowed" for every status except denied, so a
+        // question nobody ever answered came back claiming you had approved it.
+        var closed = e.status === 'unanswered' || e.status === 'cancelled';
+        var tag = e.status === 'denied' ? 'denied'
+          : closed ? 'never answered'
+            : e.always ? 'always allowed' : 'allowed';
         box.appendChild(el('div', 'cc-answered',
           '<b>' + esc(e.displayName || e.toolName) + '</b>'
-          + '<span class="cc-tag ' + (e.status === 'denied' ? 'no' : 'ok') + '">'
-          + (e.status === 'denied' ? 'denied' : e.always ? 'always allowed' : 'allowed') + '</span>'));
+          + '<span class="cc-tag ' + (e.status === 'denied' || closed ? 'no' : 'ok') + '">' + tag + '</span>'));
+        // Show WHAT it wanted. A closed ask you cannot see the contents of
+        // tells you a decision was missed but not which one.
+        if (closed && e.title) box.appendChild(el('div', 'cc-ask-sub', esc(e.title)));
         return box;
       }
       box.appendChild(el('div', 'cc-ask-title', esc(e.title || ('Claude wants to use ' + (e.displayName || e.toolName)))));
@@ -1002,13 +1015,29 @@
       var questions = (e.input && e.input.questions) || [];
 
       if (e.status !== 'pending') {
+        var closedQ = e.status === 'unanswered' || e.status === 'cancelled';
         var answered = (e.answeredInput && e.answeredInput.answers) || {};
         var html = e.status === 'denied'
           ? '<span class="cc-tag no">dismissed</span>'
-          : Object.keys(answered).map(function (k) {
-              return '<span class="cc-tag ok">' + esc(answered[k]) + '</span>';
-            }).join(' ');
+          : closedQ
+            ? '<span class="cc-tag no">never answered</span>'
+            : Object.keys(answered).map(function (k) {
+                return '<span class="cc-tag ok">' + esc(answered[k]) + '</span>';
+              }).join(' ');
         box.appendChild(el('div', 'cc-answered', html || '<span class="cc-tag">answered</span>'));
+        // The question AND its options. A resumed conversation cannot answer
+        // the original request — that id died with the previous process — so
+        // the card's job is to tell you what was being asked and what the
+        // choices were, well enough to answer it in the message box.
+        if (closedQ) {
+          questions.forEach(function (q) {
+            if (!q) return;
+            if (q.question) box.appendChild(el('div', 'cc-ask-sub', esc(q.question)));
+            (q.options || []).forEach(function (o) {
+              if (o && o.label) box.appendChild(el('div', 'cc-ask-opt', esc(o.label)));
+            });
+          });
+        }
         return box;
       }
 
