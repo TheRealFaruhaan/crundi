@@ -652,15 +652,29 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     s.messages.push(entry);
     if (s.messages.length > MAX_MESSAGES) s.messages.splice(0, s.messages.length - MAX_MESSAGES);
     s.emitter.emit('event', { type: 'entry', entry });
-    schedulePersist(s);
+    // A question is written NOW, not on the debounce.
+    //
+    // Everything else can afford to wait: losing the last few seconds of a
+    // transcript to a crash costs you some scrollback. Losing the question
+    // costs you the one entry that says the conversation is waiting on YOU,
+    // and the crash window is exactly when it is most likely to be pending —
+    // the session sits on a question for minutes at a time, doing nothing,
+    // which is when a restart or a crash tends to land.
+    if (entry.kind === 'question' || entry.kind === 'permission') persistNow(s);
+    else schedulePersist(s);
     return entry;
   }
 
   /** Patch an existing entry in place (tool results, streamed text, answers). */
   function patchEntry(s, entry, patch) {
+    const wasAsk = entry.kind === 'question' || entry.kind === 'permission';
     Object.assign(entry, patch);
     s.emitter.emit('event', { type: 'patch', id: entry.id, patch });
-    schedulePersist(s); // streamed text lands via patch, not emitEntry
+    // An answered question is written straight away for the same reason the
+    // asking was: a crash between answering and the debounce would bring the
+    // card back still unanswered, and you would be asked the same thing twice.
+    if (wasAsk) persistNow(s);
+    else schedulePersist(s); // streamed text lands via patch, not emitEntry
   }
 
   function setState(s, state) {
@@ -1358,6 +1372,44 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     return { ok: true };
   }
 
+  /**
+   * Answer a question whose original request no longer exists.
+   *
+   * A restart orphans an in-flight AskUserQuestion: the control request
+   * belonged to a process that has exited, so no control_response can ever
+   * satisfy it. But the ANSWER is not lost work — Claude has the whole
+   * transcript on resume, so telling it the choice as an ordinary message
+   * carries exactly the same information, and it simply carries on.
+   *
+   * The card is marked here rather than only in the browser. Doing it client
+   * side would leave the next reload — or the next restart — offering the same
+   * question again as if it had never been answered, which is the bug this is
+   * fixing, one level down.
+   */
+  function answerClosed(id, { entryId, answers = {}, text = '' } = {}) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: `No session "${id}"` };
+    const entry = s.messages.find(m => m.id === entryId);
+    if (!entry) return { ok: false, error: 'That question is no longer in this conversation' };
+    if (entry.kind !== 'question' && entry.kind !== 'permission') {
+      return { ok: false, error: 'That entry is not a question' };
+    }
+    if (entry.status === 'pending') {
+      // Still live: it must go back as a real control response, or the CLI
+      // stays blocked waiting for one.
+      return { ok: false, error: 'That question is still live — answer it normally.' };
+    }
+    patchEntry(s, entry, {
+      status: 'answered-late',
+      answeredInput: { ...(entry.input || {}), answers },
+    });
+    if (text && text.trim()) {
+      const sent = sendMessage(id, text);
+      if (!sent.ok) return sent;
+    }
+    return { ok: true };
+  }
+
   /** Stop the current turn without killing the session. */
   function interrupt(id) {
     const s = sessions.get(id);
@@ -1531,7 +1583,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
-    sendMessage, respond, interrupt, setPermissionMode, setModel,
+    sendMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, lastTurnOutput, dismissAgents,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
