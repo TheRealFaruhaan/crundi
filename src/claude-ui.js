@@ -652,15 +652,29 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     s.messages.push(entry);
     if (s.messages.length > MAX_MESSAGES) s.messages.splice(0, s.messages.length - MAX_MESSAGES);
     s.emitter.emit('event', { type: 'entry', entry });
-    schedulePersist(s);
+    // A question is written NOW, not on the debounce.
+    //
+    // Everything else can afford to wait: losing the last few seconds of a
+    // transcript to a crash costs you some scrollback. Losing the question
+    // costs you the one entry that says the conversation is waiting on YOU,
+    // and the crash window is exactly when it is most likely to be pending —
+    // the session sits on a question for minutes at a time, doing nothing,
+    // which is when a restart or a crash tends to land.
+    if (entry.kind === 'question' || entry.kind === 'permission') persistNow(s);
+    else schedulePersist(s);
     return entry;
   }
 
   /** Patch an existing entry in place (tool results, streamed text, answers). */
   function patchEntry(s, entry, patch) {
+    const wasAsk = entry.kind === 'question' || entry.kind === 'permission';
     Object.assign(entry, patch);
     s.emitter.emit('event', { type: 'patch', id: entry.id, patch });
-    schedulePersist(s); // streamed text lands via patch, not emitEntry
+    // An answered question is written straight away for the same reason the
+    // asking was: a crash between answering and the debounce would bring the
+    // card back still unanswered, and you would be asked the same thing twice.
+    if (wasAsk) persistNow(s);
+    else schedulePersist(s); // streamed text lands via patch, not emitEntry
   }
 
   function setState(s, state) {
