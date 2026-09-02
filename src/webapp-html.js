@@ -11558,6 +11558,9 @@ export function getWebappHtml(botUsername) {
     function renderSchedModal() {
       const card = $('#sched-modal-card'); if (!card || !scheduleDraft) return;
       const d = scheduleDraft, a = d.action, w = d.when;
+      // Shown as the folder placeholder, so "blank means the project root"
+      // names the actual folder rather than leaving you to guess it.
+      const projPath = (projects.find((x) => x.alias === d.project) || {}).path || '';
       const svcs = scheduleServices.filter(s => String(s.alias || '').toLowerCase() === String(d.project).toLowerCase());
       let h = '<div class="sm-head"><h3>' + (d.id ? 'Edit schedule' : 'New schedule') + '</h3>'
         + '<button class="sm-x" data-sched="close" title="Close">\\u00d7</button></div><div class="sm-bodyscroll">';
@@ -11581,7 +11584,8 @@ export function getWebappHtml(botUsername) {
 
       // Action: pick what to run.
       h += '<label class="sm-label">Action</label><div class="sm-seg">'
-        + schedSeg('kind', 'agent', 'Agent', a.kind) + schedSeg('kind', 'command', 'CLI command', a.kind) + schedSeg('kind', 'service', 'Service', a.kind) + '</div>';
+        + schedSeg('kind', 'agent', 'Agent', a.kind) + schedSeg('kind', 'chat', 'Background chat', a.kind)
+        + schedSeg('kind', 'command', 'CLI command', a.kind) + schedSeg('kind', 'service', 'Service', a.kind) + '</div>';
       if (a.kind === 'agent') {
         // Choose the agent, then that agent's specific options. (Claude only for now.)
         h += '<label class="sm-label">Agent</label><div class="sm-seg">' + schedSeg('agent', 'claude', 'Claude', a.agent || 'claude') + '</div>';
@@ -11595,6 +11599,34 @@ export function getWebappHtml(botUsername) {
           h += '<label class="sm-label">Prompt</label><textarea class="sm-input" id="sm-prompt" rows="3" placeholder="What should the agent do?">' + escHtml(a.prompt || '') + '</textarea>';
           h += '<p class="sm-note">Tip: you can include slash commands like <code>/frontend-design</code> or <code>/loop</code> right in the prompt — they run just like typing them in the terminal.</p>';
         }
+      } else if (a.kind === 'chat') {
+        // Unlike Agent, which opens a terminal panel and leaves it, this one
+        // closes itself once the work is genuinely finished.
+        h += '<p class="sm-note">Opens a chat, runs the prompt, and closes itself when the work finishes. '
+          + 'It stays open if it needs you or hits an error, and it will not close while it is waiting on a background command.</p>';
+        h += '<div class="sm-row2">'
+          + '<div><label class="sm-label">Model</label><select class="sm-input" id="sm-model">' + schedOpts(['', ...SCHED_MODELS], a.model, 'Default') + '</select></div>'
+          + '<div><label class="sm-label">Effort</label><select class="sm-input" id="sm-effort">' + schedOpts(['', ...SCHED_EFFORTS], a.effort, 'Default') + '</select></div></div>';
+        h += '<label class="sm-label">Mode</label><div class="sm-seg">' + schedSeg('mode', 'normal', 'Normal', a.mode) + schedSeg('mode', 'skip', 'Skip permissions', a.mode) + '</div>';
+        h += '<label class="sm-label">Folder <span class="sm-hint">(blank = the project root)</span></label>'
+          + '<input class="sm-input" id="sm-cwd" value="' + escHtml(a.cwd || '') + '" placeholder="' + escHtml(projPath || '/absolute/path') + '">';
+        h += '<label class="sm-label">Conversation</label><div class="sm-seg">'
+          + schedSeg('session', 'new', 'Fresh each run', a.session === 'resume' ? 'resume' : 'new')
+          + schedSeg('session', 'resume', 'One ongoing chat', a.session === 'resume' ? 'resume' : 'new') + '</div>';
+        if (a.session === 'resume') {
+          // The CLI only reveals a session id once it has started one, so the
+          // conversation is created here and its id kept — that is what makes
+          // "remember what you did last time" possible at all.
+          h += a.sessionId
+            ? '<p class="sm-note">Resuming <code>' + escHtml(a.sessionId.slice(0, 8)) + '…</code>'
+              + ' <button class="kanban-btn" data-sched="provision" type="button">Start a new one</button></p>'
+            : '<p class="sm-note">' + (d.id
+                ? 'No conversation yet. <button class="kanban-btn primary" data-sched="provision" type="button">Create it now</button>'
+                  + ' — this opens a chat, says hello, and keeps its id.'
+                : 'Save the schedule first, then create the conversation.') + '</p>';
+        }
+        h += '<label class="sm-label">Prompt</label><textarea class="sm-input" id="sm-prompt" rows="3" placeholder="What should it do each time?">' + escHtml(a.prompt || '') + '</textarea>';
+        h += '<p class="sm-note">The job can rewrite this prompt for its next run with the <code>schedule_update</code> tool, so it can leave notes for itself.</p>';
       } else if (a.kind === 'command') {
         h += '<label class="sm-label">Command</label><input class="sm-input" id="sm-command" value="' + escHtml(a.command || '') + '" placeholder="e.g. npm run build">';
       } else if (a.kind === 'service') {
@@ -11628,12 +11660,53 @@ export function getWebappHtml(botUsername) {
       if (val('sm-sessionId') !== undefined) a.sessionId = val('sm-sessionId');
       if (val('sm-prompt') !== undefined) a.prompt = val('sm-prompt');
       if (val('sm-command') !== undefined) a.command = val('sm-command');
+      if (val('sm-cwd') !== undefined) a.cwd = val('sm-cwd');
       if (val('sm-service') !== undefined) a.serviceKey = val('sm-service');
       card.querySelectorAll('.sm-cond').forEach(row => {
         const c = scheduleDraft.conditions[+row.dataset.ci]; if (!c) return;
         row.querySelectorAll('[data-f]').forEach(el => { c[el.dataset.f] = el.value; });
       });
     }
+    /**
+     * Create the conversation a resuming chat job comes back to.
+     *
+     * The CLI only reveals a session id once it has actually started one, so
+     * this opens the chat, says hello so a transcript exists, keeps the id and
+     * closes it again. Without it, "one ongoing chat" has nothing to resume.
+     */
+    async function provisionChatConversation(btn) {
+      if (!scheduleDraft || !scheduleDraft.id) { toast('Save the schedule first', 'error'); return; }
+      // Persist what is on screen before spawning: the server reads the saved
+      // schedule, so an unsaved folder or prompt would not be used.
+      captureSchedForm();
+      const label = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+      try {
+        const save = await apiFetch('/api/schedules', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update', id: scheduleDraft.id, schedule: {
+            name: scheduleDraft.name, project: scheduleDraft.project, enabled: scheduleDraft.enabled,
+            action: scheduleDraft.action, when: scheduleDraft.when, conditions: scheduleDraft.conditions,
+          } }),
+        });
+        const sd = await save.json();
+        if (!sd.ok) throw new Error(sd.error || 'Could not save first');
+        const r = await apiFetch('/api/schedules', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'provisionChat', id: scheduleDraft.id }),
+        });
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        scheduleDraft.action.session = 'resume';
+        scheduleDraft.action.sessionId = d.sessionId;
+        toast('Conversation created', 'success');
+        renderSchedModal();
+      } catch (err) {
+        toast(err.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+      }
+    }
+
     async function saveSchedule() {
       captureSchedForm();
       const d = scheduleDraft;
@@ -11643,6 +11716,7 @@ export function getWebappHtml(botUsername) {
       if (d.when.mode === 'once' && !d.when.date) { toast('Pick a date for the one-time run', 'error'); return; }
       if (d.when.mode === 'recurring' && !(d.when.days || []).length) { toast('Pick at least one day', 'error'); return; }
       if (d.action.kind === 'agent' && !d.action.prompt.trim()) { toast('Agent needs a prompt', 'error'); return; }
+      if (d.action.kind === 'chat' && !(d.action.prompt || '').trim()) { toast('The chat needs a prompt', 'error'); return; }
       if (d.action.kind === 'command' && !d.action.command.trim()) { toast('Enter a command', 'error'); return; }
       if (d.action.kind === 'service' && !d.action.serviceKey) { toast('Pick a service', 'error'); return; }
       // Send the zone this time was written in. The server may be in another
@@ -11688,6 +11762,9 @@ export function getWebappHtml(botUsername) {
           if (seg) {
             captureSchedForm();
             const g = seg.dataset.seg, v = seg.dataset.val;
+            // Capture first: switching a segment re-renders the form, and
+            // anything typed but not yet read back would be lost.
+            captureSchedForm();
             if (g === 'kind') scheduleDraft.action.kind = v;
             else if (g === 'whenmode') scheduleDraft.when.mode = v;
             else scheduleDraft.action[g] = v; // mode | session | op | agent
@@ -11698,6 +11775,7 @@ export function getWebappHtml(botUsername) {
           const act = b.dataset.sched;
           if (act === 'close') closeSchedModal();
           else if (act === 'save') saveSchedule();
+          else if (act === 'provision') provisionChatConversation(b);
           else if (act === 'add-cond') {
             captureSchedForm();
             const t = b.dataset.type;
