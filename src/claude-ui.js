@@ -671,17 +671,24 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   async function create(alias, {
     title = '', model = '', effort = '', permissionMode = '',
     skipPermissions = false, sessionMode = null, resumeId = '',
+    cwd = '', background = false,
   } = {}) {
     const key = String(alias || '').toLowerCase();
     const project = getProject(key);
     if (!project) return { ok: false, error: `Project "${alias}" not found` };
+    // Where the CLI actually runs. Everything below keys off this rather than
+    // project.path: Claude stores transcripts per working directory, so a
+    // session started elsewhere must look for its history there too, and the
+    // .mcp.json giving it the Crundi tools has to be in the SAME folder or the
+    // session comes up with none of them.
+    const workdir = String(cwd || '').trim() || project.path;
     // Refuse before spawning: the CLI exits 1 on this and the user would get a
     // chat cell that dies on arrival with no explanation.
     if (skipPermissions) {
       const blocked = skipPermissionsBlocker();
       if (blocked) return { ok: false, error: blocked };
     }
-    if (!existsSync(project.path)) return { ok: false, error: `Project path does not exist: ${project.path}` };
+    if (!existsSync(workdir)) return { ok: false, error: `Folder does not exist: ${workdir}` };
 
     const bin = resolveClaudeBin();
     if (!bin) return { ok: false, error: 'Could not find the `claude` executable. Install Claude Code and make sure it is on your PATH.' };
@@ -716,7 +723,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // project at boot, but chat mode did neither — so a project added AFTER
     // startup and only ever opened as a chat had no .mcp.json, and none of the
     // Crundi tools. Verified the tools do work once it exists. No-ops in dev.
-    try { writeMcpConfig(project.path, apiUrl, apiKey, key); } catch { /* non-fatal */ }
+    try { writeMcpConfig(workdir, apiUrl, apiKey, key); } catch { /* non-fatal */ }
 
     const aliasHasLive = entriesForAlias(key).some(x => x.proc);
     // 'compact' resumes and then immediately runs /compact, so the heavy context
@@ -740,16 +747,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // history the replay exists to show.
       if (compacting) continueUuid = String(resumeId);
     } else if (sessionMode === 'new') { /* explicit fresh session */ }
-    else if ((sessionMode === 'continue' || compacting || !aliasHasLive) && hasExistingConversation(project.path)) {
+    else if ((sessionMode === 'continue' || compacting || !aliasHasLive) && hasExistingConversation(workdir)) {
       args.push('--continue');
-      const t = latestTranscript(project.path);
+      const t = latestTranscript(workdir);
       if (t) continueUuid = t.id;
     }
 
     let proc;
     try {
       proc = spawn(bin, args, {
-        cwd: project.path,
+        cwd: workdir,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
@@ -785,7 +792,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       permissionMode: skipPermissions ? 'bypassPermissions' : (permissionMode || 'default'),
       skipPermissions: !!skipPermissions,
       slashCommands: [],
-      cwd: project.path,
+      cwd: workdir,
       stdoutBuf: '',
       blocks: new Map(),       // streaming block index -> entry (partial messages)
       waiting: new Map(),      // taskId -> { label, expiresAt } outstanding background triggers
@@ -860,7 +867,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // Fired as the first turn once the CLI reports ready (see handleControlResponse).
     if (compacting) s.pendingFirstMessage = '/compact';
 
-    console.log(`[claude-ui] Started chat "${s.title}" for "${key}" (${id}) in ${project.path}`);
+    console.log(`[claude-ui] Started chat "${s.title}" for "${key}" (${id}) in ${workdir}`);
     return { ok: true, id, project: key, title: s.title, order: s.order, kind: 'ui' };
   }
 

@@ -14,7 +14,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import * as tls from './tls.js';
 import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
-import { createHmac, randomBytes, createHash } from 'node:crypto';
+import { createHmac, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { basename, join, dirname, resolve, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,8 @@ import { getSystemStats, startStatsSampler, stopStatsSampler } from './stats.js'
 import { listTasks as listMaintenanceTasks, runTask as runMaintenanceTask } from './maintenance.js';
 import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
+import * as claudeUpdate from './claude-update.js';
+import { decodeImage } from './image-input.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -255,6 +257,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // renews on a 401 by itself, so this restores the login without putting a
   // long-lived bearer token on disk. 0600, same as the credentials themselves.
   const sessionFile = join(config.dataDir, 'sessions.json');
+  let forwardKey = '';   // signs the forward cookie; persisted with the sessions
+  const families = new Map();   // familyId -> { username, createdAt, lastSeenAt, userAgent, ip }
 
   /**
    * Would anything bring this process back if it stopped?
@@ -274,7 +278,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const out = [];
       for (const [t, e] of refreshTokens) if (now < e.expiresAt) out.push([t, e]);
       const tmp = sessionFile + '.tmp';
-      writeFileSync(tmp, JSON.stringify({ refreshTokens: out }), { mode: 0o600 });
+      writeFileSync(tmp, JSON.stringify({ refreshTokens: out, forwardKey, families: [...families] }), { mode: 0o600 });
       renameSync(tmp, sessionFile);
     } catch (err) {
       // Not fatal: the worst case is the old behaviour, a logout on restart.
@@ -286,6 +290,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     try {
       if (!existsSync(sessionFile)) return;
       const d = JSON.parse(readFileSync(sessionFile, 'utf-8'));
+      // Same key across restarts, or every forward cookie already out there
+      // would stop verifying — which is the bug this replaced.
+      if (typeof d.forwardKey === 'string' && /^[a-f0-9]{64}$/.test(d.forwardKey)) forwardKey = d.forwardKey;
+      for (const [fid, meta] of (d.families || [])) if (fid && meta) families.set(fid, meta);
       const now = Date.now();
       let restored = 0;
       for (const [t, e] of (d.refreshTokens || [])) {
@@ -370,7 +378,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   function revokeFamily(familyId) {
     for (const [t, e] of tokens) if (e.familyId === familyId) tokens.delete(t);
     for (const [t, e] of refreshTokens) if (e.familyId === familyId) refreshTokens.delete(t);
+    families.delete(familyId);
     saveSessions();   // a revoked login must not come back on restart
+  }
+
+  /** Every sign-in still able to authenticate, newest activity first. */
+  function listSessions(currentFamilyId) {
+    const live = new Set();
+    for (const [, e] of tokens) live.add(e.familyId);
+    for (const [, e] of refreshTokens) live.add(e.familyId);
+    const out = [];
+    for (const fid of live) {
+      const m = families.get(fid) || {};
+      out.push({
+        id: fid,
+        current: fid === currentFamilyId,
+        username: m.username || '',
+        createdAt: m.createdAt || 0,
+        lastSeenAt: m.lastSeenAt || 0,
+        userAgent: m.userAgent || '',
+        ip: m.ip || '',
+      });
+    }
+    out.sort((a, b) => (b.current - a.current) || (b.lastSeenAt - a.lastSeenAt));
+    return out;
   }
 
   /**
@@ -379,14 +410,31 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ token: string, refreshToken: string, expiresIn: number }}
    */
-  function createSession(username, familyId = randomBytes(16).toString('hex')) {
+  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null) {
     const now = Date.now();
     const token = randomBytes(32).toString('hex');
     const refreshToken = randomBytes(32).toString('hex');
     tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS });
     refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false });
+    // Remember enough about the sign-in to recognise it in a list later. "A
+    // session" tells you nothing; "Chrome on Android, from this address, last
+    // seen an hour ago" is something you can decide about.
+    const prev = families.get(familyId);
+    families.set(familyId, {
+      username,
+      createdAt: prev?.createdAt || now,
+      lastSeenAt: now,
+      userAgent: req ? String(req.headers['user-agent'] || '').slice(0, 200) : (prev?.userAgent || ''),
+      ip: req ? clientIp(req) : (prev?.ip || ''),
+    });
     saveSessions();
     return { token, refreshToken, expiresIn: Math.floor(ACCESS_TTL_MS / 1000) };
+  }
+
+  /** Best guess at who is calling, honouring the proxy header Crundi sits behind. */
+  function clientIp(req) {
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return (fwd || req.socket?.remoteAddress || '').replace(/^::ffff:/, '').slice(0, 45);
   }
 
   /** Back-compat shim: callers that only need an access token. */
@@ -397,7 +445,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ ok: true, token, refreshToken, expiresIn } | { ok: false, error: string }}
    */
-  function rotateRefresh(rt) {
+  function rotateRefresh(rt, req = null) {
     const entry = rt && refreshTokens.get(rt);
     if (!entry) return { ok: false, error: 'Invalid refresh token' };
     if (entry.used) {
@@ -416,7 +464,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     entry.used = true;
     // createSession saves, which also records this one as spent - so a replay
     // after a restart is still caught and still revokes the family.
-    return { ok: true, ...createSession(entry.username, entry.familyId) };
+    return { ok: true, ...createSession(entry.username, entry.familyId, req) };
   }
 
   /** Spent refresh tokens are retained for replay detection; drop them at expiry. */
@@ -433,6 +481,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const entry = tok && tokens.get(tok);
     if (!entry) return false;
     if (Date.now() >= entry.expiresAt) { tokens.delete(tok); return false; }
+    // In memory only. "Last seen" is worth having in the session list, but not
+    // worth a disk write per request; the periodic refresh persists it.
+    const fam = families.get(entry.familyId);
+    if (fam) fam.lastSeenAt = Date.now();
     return true;
   }
 
@@ -447,18 +499,38 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // query parameter and nothing else, so this cookie cannot be used to make an
   // authenticated Crundi API call from a forwarded page — which matters, since
   // those pages are running code we do not control.
-  const forwardTokens = new Map();   // token -> expiresAt
   const FORWARD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-  function mintForwardToken() {
-    const t = randomBytes(32).toString('hex');
-    forwardTokens.set(t, Date.now() + FORWARD_TTL_MS);
-    // Cheap sweep; this map only grows on sign-in.
-    if (forwardTokens.size > 200) {
-      const now = Date.now();
-      for (const [k, exp] of forwardTokens) if (exp <= now) forwardTokens.delete(k);
+  // The forward cookie used to be a random string looked up in an in-memory
+  // Map, minted only at sign-in. Two consequences, and between them they made
+  // private forwards look broken to someone who was plainly signed in:
+  //
+  //   A restart emptied the Map. Sign-ins now survive restarts, so nobody signs
+  //   in again — the browser kept sending a cookie the server no longer knew,
+  //   and every private forward answered "sign in first" to a signed-in user
+  //   with no way to fix it short of signing out and back in.
+  //
+  //   And it was never refreshed. Stay signed in past the 7 days and forwards
+  //   stopped working while the app carried on fine.
+  //
+  // It is now signed rather than remembered: "<expiry>.<hmac>", verified by
+  // recomputing. No server-side state, so a restart cannot invalidate it, and
+  // it is re-issued below on any authenticated request.
+  function forwardSecret() {
+    if (!forwardKey) {
+      forwardKey = randomBytes(32).toString('hex');
+      saveSessions();
     }
-    return t;
+    return forwardKey;
+  }
+
+  function signForward(expiresAt) {
+    return createHmac('sha256', forwardSecret()).update(String(expiresAt)).digest('hex');
+  }
+
+  function mintForwardToken() {
+    const exp = Date.now() + FORWARD_TTL_MS;
+    return `${exp}.${signForward(exp)}`;
   }
 
   /** Attach the forward cookie to a successful sign-in response. */
@@ -475,12 +547,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   function hasForwardCookie(req) {
     const raw = req.headers.cookie;
     if (!raw) return false;
-    const m = /(?:^|;\s*)crundi_fwd=([a-f0-9]+)/.exec(raw);
-    if (!m) return false;
-    const exp = forwardTokens.get(m[1]);
-    if (!exp) return false;
-    if (Date.now() >= exp) { forwardTokens.delete(m[1]); return false; }
-    return true;
+    const m = /(?:^|;\s*)crundi_fwd=(\d+)\.([a-f0-9]{64})/.exec(raw);
+    if (!m) return false;                       // absent, or the old opaque form
+    const exp = Number(m[1]);
+    if (!Number.isFinite(exp) || Date.now() >= exp) return false;
+    const want = Buffer.from(signForward(exp), 'utf8');
+    const got = Buffer.from(m[2], 'utf8');
+    // Compared in constant time: this is the check that decides whether a
+    // stranger reaches an app that never expected to be public.
+    return want.length === got.length && timingSafeEqual(want, got);
   }
 
   function validateToken(req) {
@@ -527,6 +602,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     mindmapAdd: 'never', mindmapDelete: 'never',
     browserLaunch: 'never', browserStop: 'never',
     secretRequest: 'always',
+    updateAvailable: 'away',
+    scheduledChat: 'always',
   };
   const notifyPrefs = { ...NOTIFY_DEFAULTS };
   try {
@@ -1009,6 +1086,81 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     });
   }
 
+  // ─── Scheduled chat jobs ───
+  //
+  // A job set to RESUME needs a conversation to resume into, and the CLI only
+  // reveals a session's id once it has actually started one. So the id is
+  // captured at setup: open the chat, say hello so a transcript exists, read
+  // the id the CLI reports, and close it again. Every later run reattaches to
+  // that same conversation and can therefore remember what it did last time.
+  async function provisionChatSession(id) {
+    const sch = schedule.getSchedule(id);
+    if (!sch) return { ok: false, error: 'No such schedule' };
+    const a = sch.action || {};
+    if (a.kind !== 'chat') return { ok: false, error: 'That schedule is not a chat job' };
+
+    const created = await claudeUi.create(sch.project, {
+      title: (sch.name || 'Scheduled chat') + ' (setup)',
+      cwd: a.cwd || '',
+      model: a.model || '',
+      skipPermissions: a.mode === 'skip',
+      sessionMode: 'new',
+      background: true,
+    });
+    if (!created.ok) return { ok: false, error: created.error };
+
+    claudeUi.sendMessage(created.id,
+      'hi — this conversation is the memory for a scheduled job. '
+      + 'Reply with one short line confirming that, and nothing else.');
+
+    // Poll for the id rather than racing it: system/init arrives on its own
+    // schedule and there is nothing to await.
+    let sessionId = '';
+    for (let i = 0; i < 60 && !sessionId; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const entry = claudeUi.list().find((x) => x.id === created.id);
+      sessionId = entry?.sessionId || '';
+      if (entry && entry.status !== 'running') break;
+    }
+    try { await claudeUi.close(created.id); } catch { /* fine */ }
+
+    if (!sessionId) return { ok: false, error: 'The chat never reported a session id, so there is nothing to resume.' };
+    const upd = schedule.updateSchedule(id, { action: { ...a, session: 'resume', sessionId } });
+    return upd.ok ? { ok: true, sessionId, schedule: upd.schedule } : upd;
+  }
+
+  // ─── Claude Code version watch ───
+  //
+  // Notifies once per version, not once per check: a six-hourly reminder about
+  // the same release is a reminder you learn to ignore, and then you also
+  // ignore the one that matters.
+  let lastNotifiedClaude = '';
+  let claudeWatchTimer = null;
+
+  async function checkClaudeVersion() {
+    try {
+      const c = await claudeUpdate.status({ force: true });
+      if (!c.available || !c.latest || c.latest === lastNotifiedClaude) return;
+      lastNotifiedClaude = c.latest;
+      const beyond = c.beyondTested
+        ? `\n\nThat is newer than ${c.tested}, the version this Crundi build was tested with, so it will ask before installing.`
+        : '';
+      const how = c.canUpdate
+        ? '\n\nUpdate it in Crundi → Settings.'
+        : `\n\nIt cannot be updated from here: ${c.blocker}`;
+      notifyEvent('updateAvailable',
+        `⬆️ Claude Code ${c.latest} is available (you have ${c.installed}).${beyond}${how}`);
+    } catch { /* a failed check is not worth waking anyone for */ }
+  }
+
+  function startClaudeVersionWatch() {
+    if (claudeWatchTimer) return;
+    // Not on the first tick — a server that has just started has enough to do.
+    setTimeout(() => { checkClaudeVersion(); }, 60000).unref?.();
+    claudeWatchTimer = setInterval(checkClaudeVersion, 6 * 60 * 60 * 1000);
+    claudeWatchTimer.unref?.();
+  }
+
   // ─── Request Handling ───
 
   function readBody(req) {
@@ -1191,7 +1343,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (parsed?.telegramLogin) {
         const result = validateTelegramLogin(parsed.telegramLogin);
         if (!result.valid) return json(res, { ok: false, error: result.error }, 403);
-        const session = createSession(result.user.username);
+        const session = createSession(result.user.username, undefined, req);
         return json(res, { ok: true, ...session, user: result.user });
       }
 
@@ -1212,7 +1364,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         res.end();
         return;
       }
-      const session = createSession(result.user.username);
+      const session = createSession(result.user.username, undefined, req);
       res.writeHead(302, {
         Location: '/#token=' + session.token + '&refresh=' + session.refreshToken,
       });
@@ -1253,7 +1405,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (username !== allowed) return json(res, { ok: false, error: 'Unauthorized user' }, 403);
 
       setForwardCookie(res);
-      return json(res, { ok: true, ...createSession(username), user });
+      return json(res, { ok: true, ...createSession(username, undefined, req), user });
     }
 
     // ─── Local auth (Electron / localhost only) ───
@@ -1266,7 +1418,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { parsed = JSON.parse(body); } catch { /* ignore */ }
       if (parsed?.key !== internalApiKey) return json(res, { ok: false, error: 'Invalid key' }, 403);
       setForwardCookie(res);
-      return json(res, { ok: true, ...createSession(config.allowedUsername || 'local') });
+      return json(res, { ok: true, ...createSession(config.allowedUsername || 'local', undefined, req) });
     }
 
     // ─── Password + TOTP login ───
@@ -1287,7 +1439,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       console.log('[crundi] Password login succeeded');
       setForwardCookie(res);
-      return json(res, { ok: true, ...createSession(config.localUsername) });
+      return json(res, { ok: true, ...createSession(config.localUsername, undefined, req) });
     }
 
     // Which sign-in methods this server offers. Read before login, so it is
@@ -1319,7 +1471,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         console.log('[crundi] Password sign-in configured');
         // Hand back a session so whoever just set it up is not locked out by
         // their own change, and the enrolment secret for their authenticator.
-        return json(res, { ...r, ...createSession(config.localUsername) });
+        return json(res, { ...r, ...createSession(config.localUsername, undefined, req) });
       }
 
       if (body.method === 'telegram') {
@@ -1338,11 +1490,65 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // ─── Refresh ───
     // Deliberately above the auth gate below: the access token is expected to
     // be expired here, so requiring one would defeat the purpose.
+    // Sign out. There was no way to do this at all: revokeFamily existed but
+    // nothing user-facing called it, so a session could not be ended from the
+    // browser — and since sign-ins now survive restarts, not even a restart
+    // would end one. A lost phone had no answer short of changing the auth
+    // config.
+    if (path === '/api/auth/logout' && req.method === 'POST') {
+      const tok = extractToken(req);
+      const entry = tok && tokens.get(tok);
+      // Revoke the whole family, not just this access token: the refresh token
+      // beside it would mint a new one seconds later otherwise.
+      if (entry?.familyId) revokeFamily(entry.familyId);
+      // And take the forward cookie with it. Leaving it behind would mean
+      // signing out of Crundi while every private forward stayed reachable
+      // from that browser for another week.
+      const base = forwards.baseDomain();
+      if (base) {
+        const secure = tls.enabled() ? '; Secure' : '';
+        res.setHeader('Set-Cookie',
+          `crundi_fwd=; Domain=.${base}; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`);
+      }
+      return json(res, { ok: true });
+    }
+
+    // Who is signed in. Needs the caller's own family so the list can mark
+    // which row is this device — revoking the wrong one is otherwise easy.
+    if (path === '/api/auth/sessions' && req.method === 'GET') {
+      if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      const mine = tokens.get(extractToken(req))?.familyId || '';
+      return json(res, { ok: true, sessions: listSessions(mine) });
+    }
+
+    // Revoke one session, or every session except this one.
+    if (path === '/api/auth/sessions/revoke' && req.method === 'POST') {
+      if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      const mine = tokens.get(extractToken(req))?.familyId || '';
+      const body = JSON.parse(await readBody(req));
+      let revoked = 0;
+      if (body.others === true) {
+        // Deliberately spares this device: "sign out everywhere else" that also
+        // signs YOU out is a good way to lock yourself out of a remote server.
+        for (const sess of listSessions(mine)) {
+          if (sess.id !== mine) { revokeFamily(sess.id); revoked++; }
+        }
+      } else {
+        const id = String(body.id || '');
+        if (!id) return json(res, { ok: false, error: 'No session given' }, 400);
+        if (id === mine) return json(res, { ok: false, error: 'That is this device — use Sign out instead.' }, 400);
+        if (!listSessions(mine).some((x) => x.id === id)) return json(res, { ok: false, error: 'No such session' }, 404);
+        revokeFamily(id);
+        revoked = 1;
+      }
+      return json(res, { ok: true, revoked });
+    }
+
     if (path === '/api/auth/refresh' && req.method === 'POST') {
       const body = await readBody(req);
       let parsed;
       try { parsed = JSON.parse(body); } catch { /* ignore */ }
-      const result = rotateRefresh(parsed?.refreshToken);
+      const result = rotateRefresh(parsed?.refreshToken, req);
       return json(res, result, result.ok ? 200 : 401);
     }
 
@@ -1396,6 +1602,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (!authConfig.isOpen()
         && path !== '/api/mcp/call' && path !== '/api/terminal-status'
         && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+
+    // Top the forward cookie up on any authenticated call. It used to be minted
+    // only at sign-in, so a session that outlived its cookie — or a restart in
+    // the old scheme — left private forwards refusing someone who was signed in
+    // and had no reason to suspect a cookie. Now simply using Crundi fixes it.
+    if (!authConfig.isOpen() && path.startsWith('/api/') && !hasForwardCookie(req)) {
+      try { setForwardCookie(res); } catch { /* never worth failing a request for */ }
+    }
 
     // Claude Code lifecycle hooks report a terminal's agent state here.
     if (path === '/api/terminal-status' && req.method === 'POST') {
@@ -1626,6 +1840,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       switch (action) {
         case 'add': result = schedule.addSchedule(body.schedule || {}); break;
         case 'update': result = schedule.updateSchedule(body.id, body.schedule || {}); break;
+        // Give a resuming chat job the conversation it will come back to.
+        case 'provisionChat': result = await provisionChatSession(body.id); break;
         case 'enable': result = schedule.setEnabled(body.id, body.enabled); break;
         case 'delete': result = schedule.deleteSchedule(body.id); break;
         default: return json(res, { ok: false, error: `Unknown schedule action: ${action}` }, 400);
@@ -1866,6 +2082,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         };
       }
       return json(res, { system, services: svc });
+    }
+
+    // Claude Code's own version. It cannot self-update when it is installed as
+    // root and Crundi runs unprivileged, which is how it silently falls behind.
+    if (path === '/api/claude-update/status' && req.method === 'GET') {
+      const force = url.searchParams.get('force') === '1';
+      return json(res, { ok: true, claude: await claudeUpdate.status({ force }) });
+    }
+    if (path === '/api/claude-update/apply' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const result = await claudeUpdate.apply({
+        version: String(body.version || ''),
+        // Going past the tested version is a separate decision, so it takes a
+        // separate flag that only the confirm step sets.
+        allowBeyondTested: body.allowBeyondTested === true,
+      });
+      return json(res, result, result.ok || result.needsConfirm ? 200 : 400);
     }
 
     // Docker containers. Every id is resolved against the live listing inside
@@ -3078,9 +3311,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         try {
           const chatId = getChatId ? getChatId() : null;
           if (!chatId) return json(res, { ok: false, error: 'No chat ID configured' });
+          // Path or bytes. Sending the bytes either way means one code path,
+          // and a bad path now fails with "no such file" rather than whatever
+          // the Telegram client makes of a missing stream.
+          const img = decodeImage({ path: body.args?.path, data: body.args?.data });
+          if (!img.ok) return json(res, { ok: false, error: img.error });
           const { InputFile } = await import('grammy');
-          await bot.api.sendPhoto(chatId, new InputFile(body.args?.path));
-          return json(res, { ok: true });
+          await bot.api.sendPhoto(chatId, new InputFile(img.buffer, img.filename),
+            body.args?.caption ? { caption: String(body.args.caption).slice(0, 1024) } : undefined);
+          return json(res, { ok: true, sent: img.ext, bytes: img.buffer.length });
         } catch (err) {
           return json(res, { ok: false, error: err.message });
         }
@@ -3505,6 +3744,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Only ever reports — applying is an explicit request from Settings.
       serverUpdate.start();
 
+      // Claude Code rides along on the same schedule. It normally updates
+      // itself, but it cannot when it is installed somewhere Crundi may not
+      // write, and it says so only in a terminal nobody is reading. Checking it
+      // here means a new version is something you are told about rather than
+      // something you find out from a stale CLI weeks later.
+      startClaudeVersionWatch();
+
       // Machine stats. CPU is a rate, so the sampler has to be running before
       // anyone asks — a cold /api/stats can only report memory and disk.
       startStatsSampler(2000);
@@ -3513,6 +3759,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     },
 
     stop() {
+      if (claudeWatchTimer) { clearInterval(claudeWatchTimer); claudeWatchTimer = null; }
       stopStatsSampler();
       for (const client of sseClients) {
         try { client.res.end(); } catch { /* ignore */ }

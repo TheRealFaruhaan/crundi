@@ -74,8 +74,8 @@ const TOOLS = [
   },
   {
     name: 'send_photo_to_user',
-    description: 'Send a photo/image to the user via Telegram.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the image file' } }, required: ['path'] },
+    description: 'Send a photo/image to the user via Telegram. Give EITHER path (a file on disk) OR data (the image bytes as base64, e.g. straight from browser_screenshot) — not both. PNG, JPEG, GIF or WebP, up to 10 MB.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the image file' }, data: { type: 'string', description: 'Image bytes as base64, with or without a data: URL prefix. Use this when you already have the image and would otherwise write a temp file.' }, caption: { type: 'string', description: 'Optional caption (max 1024 chars)' } },  },
   },
   {
     name: 'send_file_to_user',

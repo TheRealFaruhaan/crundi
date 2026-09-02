@@ -1,7 +1,8 @@
 {
   "name": "crundi",
-  "version": "1.9.6",
+  "version": "1.10.0",
   "chromeVersion": "152.0.7977.64",
+  "claudeTestedVersion": "2.1.250",
   "description": "Self-hosted remote workbench for your projects — agent terminals, files, git, kanban, mindmap and scheduling, reachable from anywhere.",
   "type": "module",
   "main": "app/main.js",

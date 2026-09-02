@@ -154,6 +154,12 @@ async function runAction(sch, deps) {
       effort: a.effort || '',
       title: label,
     });
+  } else if (a.kind === 'chat') {
+    // A chat that runs unattended and tidies itself up. Unlike 'agent', which
+    // opens a terminal panel and leaves it there, this one closes when the work
+    // is genuinely done — and stays open when it is not.
+    if (!deps.runScheduledChat) return;
+    await deps.runScheduledChat(sch);
   } else if (a.kind === 'command') {
     if (!deps.claudeTerminals || !a.command) return;
     await deps.claudeTerminals.create(sch.project, { command: a.command, title: label });

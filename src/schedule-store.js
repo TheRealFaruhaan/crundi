@@ -10,6 +10,8 @@
  *       id, project, name, enabled,
  *       action: { kind:'agent', agent:'claude', mode:'normal'|'skip',
  *                 prompt, session:'continue'|'new'|'resume', sessionId }
+ *             | { kind:'chat', prompt, session:'new'|'resume', sessionId,
+ *                 cwd, mode, model, effort }   — a chat that closes itself
  *             | { kind:'command', command }
  *             | { kind:'service', serviceKey, op:'start'|'stop'|'toggle' },
  *       conditions: [ { type:'time', at:'HH:MM' }
@@ -56,7 +58,20 @@ export function getSchedule(id) {
 }
 
 function sanitize(data = {}) {
-  const action = data.action || {};
+  const action = { ...(data.action || {}) };
+  // A chat job runs in a folder of its own choosing, defaulting to the project
+  // root. Kept as a plain string here and checked for existence at launch: a
+  // folder can be valid when the schedule is written and gone by the time it
+  // fires, so the only check that means anything happens then.
+  if (action.kind === 'chat') {
+    action.cwd = typeof action.cwd === 'string' ? action.cwd.trim() : '';
+    action.session = action.session === 'resume' ? 'resume' : 'new';
+    // A session id only means anything for a resuming job; carrying one on a
+    // 'new' job would be a lie waiting to confuse someone.
+    if (action.session !== 'resume') action.sessionId = '';
+    else action.sessionId = typeof action.sessionId === 'string' ? action.sessionId : '';
+    action.prompt = typeof action.prompt === 'string' ? action.prompt : '';
+  }
   // Time lives in `when` (singular, mandatory); only extra conditions stack.
   const conditions = (Array.isArray(data.conditions) ? data.conditions : []).filter(c => c && c.type !== 'time');
   const w = data.when && typeof data.when === 'object' ? data.when : {};

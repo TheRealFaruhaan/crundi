@@ -2015,6 +2015,16 @@ export function getWebappHtml(botUsername) {
     }
     .sreq-bind { font-size: 0.7rem; color: var(--text-muted); font-family: var(--mono); }
     .sreq-actions { display: flex; gap: 6px; margin-top: 2px; }
+    /* The PIN lives IN the card. It used to open the shared centre-screen modal,
+       which the card then covered on a phone — the Unlock button sat behind it. */
+    .sreq-pin { display: flex; gap: 6px; margin-top: 2px; }
+    .sreq-pin input {
+      flex: 1; min-width: 0; padding: 7px 10px; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary);
+      font-family: var(--mono); font-size: 0.9rem; letter-spacing: 0.3em; text-align: center;
+    }
+    .sreq-pin input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+    .sreq-err { font-size: 0.73rem; color: var(--red); }
     @media (max-width: 640px) {
       .sreq-dock { left: 12px; right: 12px; bottom: 12px; max-width: none; }
     }
@@ -2949,6 +2959,8 @@ export function getWebappHtml(botUsername) {
       kanbanTask: 'never', kanbanSubtask: 'never',
       scheduleRun: 'away',
       serviceDown: 'always', serviceUp: 'away',
+      updateAvailable: 'away',
+      scheduledChat: 'always',
       mindmapAdd: 'never', mindmapDelete: 'never',
       browserLaunch: 'never', browserStop: 'never',
       secretRequest: 'always',
@@ -2991,6 +3003,262 @@ export function getWebappHtml(botUsername) {
     // Settings was showing whatever the last six-hourly check found, with no way
     // to refresh once an update was available. Opening the panel now asks again.
     let srvUpdateCheckedAt = 0;
+    /**
+     * Claude Code's version row.
+     *
+     * It updates itself when it can write to its own install. Installed as root
+     * with Crundi running unprivileged it cannot, and it fails quietly in a
+     * terminal — "Auto-update failed: no write permission" — while falling
+     * further behind. This says so, and offers to do it with sudo.
+     */
+    // ─── Signed-in devices ───
+    //
+    // Hidden until asked for: most of the time there is one, and a list of one
+    // is noise. It matters when it is not one.
+
+    let sessOpen = false;
+
+    async function toggleSessions() {
+      sessOpen = !sessOpen;
+      const btn = $('#sess-toggle');
+      const body = $('#sess-body');
+      if (btn) btn.textContent = sessOpen ? 'Hide' : 'Show';
+      if (!body) return;
+      body.style.display = sessOpen ? '' : 'none';
+      if (sessOpen) await loadSessions();
+    }
+
+    async function loadSessions() {
+      const body = $('#sess-body');
+      if (!body) return;
+      body.innerHTML = '<div class="sys-quiet">Loading…</div>';
+      let list;
+      try {
+        const r = await apiFetch('/api/auth/sessions');
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        list = d.sessions || [];
+      } catch (err) {
+        body.innerHTML = '<div class="sys-quiet">Could not load sessions: ' + escHtml(err.message) + '</div>';
+        return;
+      }
+      if (!list.length) { body.innerHTML = '<div class="sys-quiet">No active sessions.</div>'; return; }
+      let h = '';
+      for (const x of list) {
+        h += '<div class="maint-row">'
+          + '<div class="maint-text">'
+          + '<div class="maint-label">' + escHtml(describeAgent(x.userAgent))
+          + (x.current ? '<span class="maint-root">this device</span>' : '') + '</div>'
+          + '<div class="maint-desc">'
+          + (x.ip ? escHtml(x.ip) + ' · ' : '')
+          + 'signed in ' + escHtml(relTime(x.createdAt))
+          + (x.lastSeenAt ? ' · last used ' + escHtml(relTime(x.lastSeenAt)) : '')
+          + '</div></div>'
+          + (x.current
+            ? '<span class="maint-size none">—</span>'
+            : '<button class="svc-btn danger" data-action="sess-revoke" data-id="' + escHtml(x.id) + '">Revoke</button>')
+          + '</div>';
+      }
+      const others = list.filter((x) => !x.current).length;
+      if (others) {
+        h += '<div style="margin-top:10px;display:flex;justify-content:flex-end;">'
+          + '<button class="svc-btn danger" data-action="sess-revoke-others">Sign out the other '
+          + (others === 1 ? 'device' : others + ' devices') + '</button></div>';
+      }
+      body.innerHTML = h;
+    }
+
+    /** A user-agent string is unreadable; the device and browser are the point. */
+    function describeAgent(ua) {
+      const s = String(ua || '');
+      if (!s) return 'Unknown device';
+      const os = /Android/i.test(s) ? 'Android'
+        : /iPhone|iPad|iOS/i.test(s) ? 'iOS'
+          : /Windows/i.test(s) ? 'Windows'
+            : /Mac OS X|Macintosh/i.test(s) ? 'macOS'
+              : /Linux/i.test(s) ? 'Linux' : '';
+      // Substring tests, not regexes: a literal slash inside a regex needs
+      // escaping, and this file is one big template literal that eats the
+      // backslash — /Edg\//i arrived in the browser as /Edg//i and threw.
+      // Order matters: Edge and Opera both contain "Chrome/", and Chrome
+      // contains "Safari/".
+      const has = (n) => s.indexOf(n) >= 0;
+      const browser = has('Edg/') ? 'Edge'
+        : has('OPR/') ? 'Opera'
+          : has('Electron/') ? 'Desktop app'
+            : has('Chrome/') ? 'Chrome'
+              : has('Firefox/') ? 'Firefox'
+                : has('Safari/') ? 'Safari' : '';
+      if (browser && os) return browser + ' on ' + os;
+      return browser || os || 'Unknown device';
+    }
+
+    async function revokeSession(id, btn) {
+      if (!id) return;
+      if (btn && btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.classList.add('confirming');
+        btn.textContent = 'Revoke?';
+        clearTimeout(btn._armTimer);
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = 'Revoke';
+        }, 5000);
+        return;
+      }
+      if (btn) { clearTimeout(btn._armTimer); btn.disabled = true; btn.textContent = 'Revoking…'; }
+      try {
+        const r = await apiFetch('/api/auth/sessions/revoke', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: id }),
+        });
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        toast('Session revoked', 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      loadSessions();
+    }
+
+    async function revokeOtherSessions(btn) {
+      if (btn && btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.classList.add('confirming');
+        btn.textContent = 'Sign them all out?';
+        clearTimeout(btn._armTimer);
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = ''; btn.classList.remove('confirming'); btn.textContent = 'Sign out the others';
+        }, 5000);
+        return;
+      }
+      if (btn) { clearTimeout(btn._armTimer); btn.disabled = true; btn.textContent = 'Signing out…'; }
+      try {
+        const r = await apiFetch('/api/auth/sessions/revoke', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ others: true }),
+        });
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        toast(d.revoked ? 'Signed out ' + d.revoked + ' other session(s)' : 'Nothing else was signed in', 'success');
+      } catch (err) { toast(err.message, 'error'); }
+      loadSessions();
+    }
+
+    /**
+     * End this sign-in. Two-step, because it is easy to hit by accident and the
+     * way back is the login screen.
+     */
+    async function signOut(btn) {
+      if (btn && btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Sign out?';
+        btn.classList.add('confirming');
+        clearTimeout(btn._armTimer);
+        btn._armTimer = setTimeout(() => {
+          btn.dataset.armed = '';
+          btn.classList.remove('confirming');
+          btn.textContent = 'Sign out';
+        }, 5000);
+        return;
+      }
+      if (btn) { clearTimeout(btn._armTimer); btn.disabled = true; btn.textContent = 'Signing out…'; }
+      // Tell the server first so the tokens are revoked even if the reload is
+      // interrupted; a local clear alone would leave a usable refresh token.
+      try {
+        await apiFetch('/api/auth/logout', { method: 'POST' });
+      } catch (err) { /* still clear locally — a stale token is worse than a failed call */ }
+      try { clearSession(); } catch (err) { /* ignore */ }
+      location.reload();
+    }
+
+    async function renderClaudeUpdate(force) {
+      const body = document.getElementById('cc-update-body');
+      if (!body) return;
+      let c;
+      try {
+        const r = await apiFetch('/api/claude-update/status' + (force ? '?force=1' : ''));
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'Failed');
+        c = d.claude;
+      } catch (err) {
+        body.innerHTML = '<span style="color:var(--text-muted);">Could not check: ' + escHtml(err.message) + '</span>';
+        return;
+      }
+      const btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);'
+        + 'background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12.5px;white-space:nowrap;';
+      const primary = 'padding:8px 18px;border-radius:6px;border:none;background:var(--accent);'
+        + 'color:#fff;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;';
+      const warn = 'padding:8px 18px;border-radius:6px;border:1px solid var(--yellow);'
+        + 'background:var(--yellow-dim,rgba(245,158,11,0.16));color:var(--yellow);cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;';
+
+      let sub;
+      if (c.applying) sub = 'Installing…';
+      else if (!c.installed) sub = 'Not installed, or not on the server\u2019s PATH.';
+      else if (c.error) sub = 'Last check failed: ' + escHtml(c.error);
+      else if (c.available) sub = 'Version ' + escHtml(c.latest) + ' is available.';
+      else sub = 'Up to date.';
+
+      let h = '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+        + '<div><div style="font-size:0.86rem;color:var(--text-primary);">Version ' + escHtml(c.installed || '—') + '</div>'
+        + '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">' + sub + '</div></div>';
+
+      if (c.applying) {
+        h += '<span style="font-size:0.75rem;color:var(--text-muted);">Working…</span>';
+      } else if (c.available && c.canUpdate) {
+        // Past the tested version is a different button in a different colour,
+        // so the two decisions never look like the same click.
+        h += '<span style="display:flex;gap:8px;align-items:center;">'
+          + '<button type="button" style="' + btn + '" data-action="cc-update-check">Check</button>'
+          + '<button type="button" style="' + (c.beyondTested ? warn : primary) + '" data-action="cc-update-apply"'
+          + ' data-beyond="' + (c.beyondTested ? '1' : '') + '" data-version="' + escHtml(c.latest) + '">'
+          + 'Update to ' + escHtml(c.latest) + '</button></span>';
+      } else {
+        h += '<button type="button" style="' + btn + '" data-action="cc-update-check">Check now</button>';
+      }
+      h += '</div>';
+
+      if (c.tested) {
+        h += '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;">'
+          + 'This Crundi build was tested with ' + escHtml(c.tested) + '.'
+          + (c.beyondTested && c.available
+              ? ' <span style="color:var(--yellow);">' + escHtml(c.latest) + ' is newer than that — it will ask first.</span>'
+              : '')
+          + (c.runningBeyondTested
+              ? ' <span style="color:var(--yellow);">You are already running ' + escHtml(c.installed) + ', past it.</span>'
+              : '')
+          + '</div>';
+      }
+      if (!c.canUpdate && c.blocker) {
+        h += '<div style="font-size:0.72rem;color:var(--yellow);margin-top:6px;">' + escHtml(c.blocker) + '</div>';
+      } else if (c.needsSudo) {
+        h += '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">'
+          + 'Installed system-wide, so updating uses sudo — which is also why Claude Code cannot update itself here.</div>';
+      }
+      if (c.lastResult) {
+        h += '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">' + escHtml(c.lastResult) + '</div>';
+      }
+      body.innerHTML = h;
+    }
+
+    async function applyClaudeUpdate(version, beyond) {
+      if (beyond && !confirm('Claude Code ' + version + ' is newer than the version this Crundi build was tested with.'
+        + String.fromCharCode(10) + String.fromCharCode(10)
+        + 'Claude Code is what every chat and terminal runs on, so a problem there affects all of them.'
+        + String.fromCharCode(10) + String.fromCharCode(10) + 'Install it anyway?')) return;
+      const body = document.getElementById('cc-update-body');
+      if (body) body.innerHTML = '<span style="color:var(--text-muted);">Installing… this can take a minute.</span>';
+      try {
+        const r = await apiFetch('/api/claude-update/apply', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version: version, allowBeyondTested: !!beyond }),
+        });
+        const d = await r.json();
+        if (!d.ok) toast(d.error || 'Update failed', 'error');
+        else toast('Claude Code updated to ' + d.installed, 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      renderClaudeUpdate(true);
+    }
+
     async function renderServerUpdate(force) {
       if (!force && Date.now() - srvUpdateCheckedAt > 60_000) force = true;
       if (force) srvUpdateCheckedAt = Date.now();
@@ -7786,6 +8054,8 @@ export function getWebappHtml(botUsername) {
     // rather than up front, because pulling ten log tails to show none of them
     // is work nobody asked for.
 
+    var sreqArmed = null;    // request id whose PIN field is open
+    var sreqError = '';      // inline PIN error for that card
     var ctrOpen = null;      // id whose logs are showing
     var ctrShown = false;
 
@@ -8877,11 +9147,12 @@ export function getWebappHtml(botUsername) {
         const NOTIFY_GROUPS = [
           ['Agent', [['finished', 'When agent finishes'], ['needsInput', 'When agent needs input']]],
           ['Kanban', [['kanbanTask', 'Main task status change'], ['kanbanSubtask', 'Sub task status change']]],
-          ['Schedule', [['scheduleRun', 'When a schedule executes']]],
+          ['Schedule', [['scheduleRun', 'When a schedule executes'], ['scheduledChat', 'Result of a scheduled chat']]],
           ['Services', [['serviceDown', 'When a service crashes / stops'], ['serviceUp', 'When a service starts']]],
           ['Mindmap', [['mindmapAdd', 'When a node is added'], ['mindmapDelete', 'When a node is deleted']]],
           ['MCP Browser', [['browserLaunch', 'When a browser launches'], ['browserStop', 'When a browser stops']]],
           ['Security', [['secretRequest', 'Secret access requested']]],
+          ['Updates', [['updateAvailable', 'When a new Claude Code version is out']]],
         ];
         const buildNotifyMatrix = () => {
           let m = '<div class="ntf-matrix"><div class="ntf-row head"><div class="ntf-h lbl">Event</div>'
@@ -9037,9 +9308,29 @@ export function getWebappHtml(botUsername) {
         // call and Settings should not wait on GitHub to draw.
         else html += '<div class="info-section" id="srv-update-section"><h4>Server</h4>'
           + '<div id="srv-update-body" style="font-size:0.8rem;color:var(--text-muted);">Checking for updates…</div></div>';
+        // Claude Code sits next to the server update because it is the other
+        // thing whose version decides what your sessions can do.
+        html += '<div class="info-section" id="cc-update-section"><h4>Claude Code</h4>'
+          + '<div id="cc-update-body" style="font-size:0.8rem;color:var(--text-muted);">Checking…</div></div>';
+        // Signing out had no button and no endpoint, so a session could not be
+        // ended from the browser at all — and sign-ins survive restarts now, so
+        // not even a restart ended one.
+        html += '<div class="info-section"><h4>Session</h4>'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+          + '<div style="font-size:0.72rem;color:var(--text-muted);max-width:60ch;">'
+          + 'Ends this sign-in on this device and revokes its tokens, so they cannot be refreshed. '
+          + 'Also clears the cookie that reaches private forwards.</div>'
+          + '<button type="button" class="kanban-btn" id="signout-btn" data-action="sign-out">Sign out</button>'
+          + '</div>'
+          + '<div class="ctr-head" style="margin-top:12px;">'
+          + '<span style="flex:1;font-size:0.78rem;color:var(--text-secondary);">Signed in devices</span>'
+          + '<button type="button" class="svc-btn" id="sess-toggle" data-action="sess-toggle">Show</button></div>'
+          + '<div id="sess-body" style="display:none"></div>'
+          + '</div>';
 
         panel.innerHTML = html;
         if (!(window.api && window.api.getUpdateState)) renderServerUpdate();
+        renderClaudeUpdate();
       } catch (err) {
         panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(err.message) + '</p></div>';
       }
@@ -9160,6 +9451,24 @@ export function getWebappHtml(botUsername) {
           break;
         case 'srv-update-apply':
           applyServerUpdate();
+          break;
+        case 'sign-out':
+          signOut(e.target.closest('button'));
+          break;
+        case 'sess-toggle':
+          toggleSessions();
+          break;
+        case 'sess-revoke':
+          revokeSession(d.id, e.target.closest('button'));
+          break;
+        case 'sess-revoke-others':
+          revokeOtherSessions(e.target.closest('button'));
+          break;
+        case 'cc-update-check':
+          renderClaudeUpdate(true);
+          break;
+        case 'cc-update-apply':
+          applyClaudeUpdate(d.version, d.beyond === '1');
           break;
         case 'update-toggle':
           if (window.api && window.api.setAutoUpdate) window.api.setAutoUpdate(!updateState.enabled).then(applyUpdateState).catch(() => {});
@@ -9926,35 +10235,75 @@ export function getWebappHtml(botUsername) {
               + '<div class="sreq-bind">the value is bound to $' + escHtml(r.envName)
               + ' and never shown to Claude</div>'
             : '<div class="sreq-why">Claude will be able to read this value.</div>')
-          + '<div class="sreq-actions">'
-          + '<button class="kanban-btn primary" data-sp-approve="' + escHtml(r.id) + '" data-sp-name="' + escHtml(r.secretName) + '">Approve</button>'
-          + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Deny</button>'
-          + '</div></div>';
+          + (sreqArmed === r.id
+            ? '<div class="sreq-pin">'
+              + '<input id="sreq-pin" inputmode="numeric" maxlength="6" placeholder="PIN" autocomplete="off" aria-label="6-digit PIN">'
+              + '<button class="kanban-btn primary" data-sp-confirm="' + escHtml(r.id) + '">Unlock</button>'
+              + '<button class="kanban-btn" data-sp-cancel="1">Cancel</button>'
+              + '</div>'
+              + (sreqError ? '<div class="sreq-err">' + escHtml(sreqError) + '</div>' : '')
+            : '<div class="sreq-actions">'
+              + '<button class="kanban-btn primary" data-sp-approve="' + escHtml(r.id) + '">Approve</button>'
+              + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Deny</button>'
+              + '</div>')
+          + '</div>';
       }
+      // An SSE push re-renders this dock. Rebuilding innerHTML underneath
+      // someone mid-PIN would silently eat their digits, so carry them over.
+      const typed = ($('#sreq-pin') || {}).value || '';
+      const hadFocus = document.activeElement && document.activeElement.id === 'sreq-pin';
       dock.innerHTML = h;
+      const pin = $('#sreq-pin');
+      if (pin) {
+        pin.value = typed;
+        if (hadFocus || sreqError) { pin.focus(); pin.select(); }
+        else setTimeout(() => pin.focus(), 30);
+        pin.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); confirmSecretPin(sreqArmed); }
+          if (ev.key === 'Escape') { sreqArmed = null; sreqError = ''; renderSecretPrompt(); }
+        });
+      }
+    }
+
+    async function confirmSecretPin(reqId) {
+      const el = $('#sreq-pin');
+      if (!el || !reqId) return;
+      const pin = String(el.value || '').trim();
+      if (!/^\\d{6}$/.test(pin)) { sreqError = 'Enter a 6-digit PIN'; renderSecretPrompt(); return; }
+      const btn = $('[data-sp-confirm]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Unlocking\\u2026'; }
+      let d;
+      try { d = await secretsPost({ action: 'approve', reqId: reqId, pin: pin }); }
+      catch (err) { d = { ok: false, error: err.message }; }
+      // A wrong PIN leaves the request pending on purpose, so the card stays up
+      // and says why rather than vanishing.
+      if (!d || !d.ok) {
+        sreqError = (d && d.error) || 'Wrong PIN';
+        renderSecretPrompt();
+        return;
+      }
+      sreqArmed = null;
+      sreqError = '';
+      toast('Approved', 'success');
+      renderSecretPrompt();
     }
 
     async function onSecretPromptClick(e) {
       const ok = e.target.closest('[data-sp-approve]');
       if (ok) {
-        const reqId = ok.dataset.spApprove;
-        openPinModal({
-          title: 'Approve',
-          subtitle: 'Enter the PIN for "' + ok.dataset.spName + '".',
-          submitLabel: 'Approve',
-          onSubmit: async (pin) => {
-            const d = await secretsPost({ action: 'approve', reqId, pin });
-            // A wrong PIN leaves the request pending on purpose, so the modal
-            // reports it and the card stays up to try again.
-            if (!d.ok) return d.error || 'Wrong PIN';
-            toast('Approved', 'success');
-            return null;
-          },
-        });
+        sreqArmed = ok.dataset.spApprove;
+        sreqError = '';
+        renderSecretPrompt();
         return;
       }
+      const confirm = e.target.closest('[data-sp-confirm]');
+      if (confirm) { await confirmSecretPin(confirm.dataset.spConfirm); return; }
+      const cancel = e.target.closest('[data-sp-cancel]');
+      if (cancel) { sreqArmed = null; sreqError = ''; renderSecretPrompt(); return; }
       const no = e.target.closest('[data-sp-deny]');
       if (no) {
+        sreqArmed = null;
+        sreqError = '';
         await secretsPost({ action: 'deny', reqId: no.dataset.spDeny });
         toast('Denied', 'info');
       }
