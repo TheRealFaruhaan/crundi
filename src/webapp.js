@@ -2079,6 +2079,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         projectPath: s.projectPath, status: s.status, pid: s.pid,
         memory: s.memoryBytes,
         cpuPct: s.cpuPct,
+        containers: s.containers || null,
         uptime: s.startedAt ? formatUptime(Date.now() - new Date(s.startedAt).getTime()) : null,
         tunnelPort: s.tunnelPort || 0,
         tunnelEnabled: !!s.tunnelEnabled,
@@ -2102,6 +2103,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           pid: s.pid,
           cpuPct: s.cpuPct,
           memory: s.memoryBytes,
+          // Compose services report the containers the numbers came from, so
+          // the card can say what it measured instead of showing a pid that
+          // owns none of it.
+          containers: s.containers || null,
           cpuHistory: h.cpu,
           memHistory: h.mem,
         };

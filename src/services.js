@@ -14,6 +14,7 @@ import {
   deleteRegistered,
 } from './service-registry.js';
 import { sampleProcessTrees, pushHistory } from './stats.js';
+import { parseComposeCommand, sampleComposeServices } from './compose-stats.js';
 import {
   startTunnel,
   stopTunnel,
@@ -30,6 +31,11 @@ const running = new Map();
 // pid -> bytes / percent, refreshed by sampleUsage() every 3s while services run
 const pidMemoryBytes = new Map();
 const pidCpuPct = new Map();
+// key -> stats, for services whose work happens in containers rather than in
+// the process tree Crundi spawned. See compose-stats.js: for `docker compose
+// up`, that tree is a log-relaying client and measuring it reports an idle
+// service no matter what the containers are doing.
+const composeStats = new Map();
 // key -> { cpu: number[], mem: number[] } — what the sparklines draw. Keyed by
 // service key, not pid, so a restart continues the same trace instead of
 // silently starting a new one under a new pid.
@@ -120,6 +126,7 @@ export function startService(key) {
     entry.exitCode = code;
     appendLog(`--- process exited with code ${code} ---`);
     if (entry.proc?.pid != null) pidMemoryBytes.delete(entry.proc.pid);
+    composeStats.delete(entry.key);
     stopMemorySamplerIfIdle();
     emitServiceUpdate();
   });
@@ -270,6 +277,7 @@ export async function killAllServices() {
   running.clear();
   if (memorySamplerTimer) { clearInterval(memorySamplerTimer); memorySamplerTimer = null; }
   pidMemoryBytes.clear();
+  composeStats.clear();
   emitServiceUpdate();
 }
 
@@ -326,6 +334,10 @@ export function getAllServiceStatus() {
 
 function toStatus(entry, registered) {
   const live = entry.status === 'running' && entry.proc?.pid != null;
+  // A compose service is measured by its containers, so its numbers are keyed
+  // by service key rather than by pid — the pid belongs to a client that is
+  // doing none of the work.
+  const comp = live ? composeStats.get(entry.key) : null;
   return {
     key: entry.key,
     alias: entry.alias,
@@ -342,8 +354,12 @@ function toStatus(entry, registered) {
     // the next tick up to 3s later, so a service stopped a moment ago went on
     // reporting the CPU and memory it had while alive — a stopped service that
     // looks like it is still working is worse than one showing nothing.
-    memoryBytes: live ? (pidMemoryBytes.get(entry.proc.pid) ?? null) : null,
-    cpuPct: live ? (pidCpuPct.get(entry.proc.pid) ?? null) : null,
+    memoryBytes: comp ? comp.rssBytes : (live ? (pidMemoryBytes.get(entry.proc.pid) ?? null) : null),
+    cpuPct: comp ? comp.cpuPct : (live ? (pidCpuPct.get(entry.proc.pid) ?? null) : null),
+    // Present only for compose services, and then even when it is empty: the
+    // difference between "no containers yet" and "not a compose service" is
+    // what tells the UI whether a blank reading is expected.
+    containers: comp ? comp.containers : null,
     registered,
   };
 }
@@ -356,16 +372,38 @@ function toStatus(entry, registered) {
 
 async function sampleUsage() {
   const pidToKey = new Map();
+  const composeSpecs = [];
   for (const entry of running.values()) {
-    if (entry.status === 'running' && entry.proc?.pid != null) pidToKey.set(entry.proc.pid, entry.key);
+    if (entry.status !== 'running' || entry.proc?.pid == null) continue;
+    // Which measurement is honest here depends on what the command does. A
+    // compose service's process tree contains none of its work, so walking it
+    // would report an idle service however busy the containers are.
+    const parsed = parseComposeCommand(entry.command);
+    if (parsed) {
+      composeSpecs.push({
+        key: entry.key,
+        cwd: entry.projectPath,
+        services: parsed.services,
+        projectName: parsed.projectName,
+      });
+    } else {
+      pidToKey.set(entry.proc.pid, entry.key);
+    }
   }
-  if (pidToKey.size === 0) {
+  if (pidToKey.size === 0 && composeSpecs.length === 0) {
     pidMemoryBytes.clear();
     pidCpuPct.clear();
+    composeStats.clear();
     return;
   }
 
-  const sample = await sampleProcessTrees([...pidToKey.keys()]);
+  // Both sides run together. The container read is a handful of file reads on
+  // Linux, so this stays as cheap as the tree walk it sits beside.
+  const [sample, compose] = await Promise.all([
+    pidToKey.size ? sampleProcessTrees([...pidToKey.keys()]) : new Map(),
+    composeSpecs.length ? sampleComposeServices(composeSpecs).catch(() => new Map()) : new Map(),
+  ]);
+
   pidMemoryBytes.clear();
   pidCpuPct.clear();
   for (const [pid, v] of sample) {
@@ -374,14 +412,24 @@ async function sampleUsage() {
     const key = pidToKey.get(pid);
     // CPU is a rate and is null until a second sample exists. Holding the whole
     // history back until then keeps the two traces aligned on one time axis.
-    if (key && v.cpuPct != null) {
-      let h = usageHistory.get(key);
-      if (!h) { h = { cpu: [], mem: [] }; usageHistory.set(key, h); }
-      pushHistory(h.cpu, Math.round(v.cpuPct * 10) / 10);
-      pushHistory(h.mem, v.rssBytes);
-    }
+    if (key && v.cpuPct != null) recordHistory(key, v.cpuPct, v.rssBytes);
   }
+
+  composeStats.clear();
+  for (const [key, v] of compose) {
+    composeStats.set(key, v);
+    if (v.cpuPct != null && v.rssBytes != null) recordHistory(key, v.cpuPct, v.rssBytes);
+  }
+
   emitServiceUpdate();
+}
+
+/** Append one aligned point to a service's sparkline history. */
+function recordHistory(key, cpuPct, rssBytes) {
+  let h = usageHistory.get(key);
+  if (!h) { h = { cpu: [], mem: [] }; usageHistory.set(key, h); }
+  pushHistory(h.cpu, Math.round(cpuPct * 10) / 10);
+  pushHistory(h.mem, rssBytes);
 }
 
 /** Rolling CPU/memory history for a service, for the sparklines. */
