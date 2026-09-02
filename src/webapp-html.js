@@ -7948,17 +7948,36 @@ export function getWebappHtml(botUsername) {
       var cpuMax = maxOf(cpuH, 100);
       var memMax = maxOf(memH, 0) * 1.25;
       var cpuC = lvlColor(st.cpuPct == null ? 0 : st.cpuPct);
+      // A compose service is measured by its containers, not by the process
+      // Crundi spawned, so the badge names what was actually read. Showing a
+      // pid there would point at the compose client, which owns none of it.
+      var badge = '';
+      var memTip = 'Resident memory across the whole process tree';
+      if (st.containers) {
+        var n = st.containers.length;
+        memTip = 'Total across the containers this service started';
+        if (!n) {
+          badge = '<span class="stat-pid" title="This service runs docker compose, but none of its containers are up">no containers</span>';
+        } else {
+          var names = [];
+          for (var ci = 0; ci < n; ci++) names.push(st.containers[ci].name);
+          badge = '<span class="stat-pid" title="' + escHtml(names.join(', ')) + '">'
+            + n + (n === 1 ? ' container' : ' containers') + '</span>';
+        }
+      } else if (st.pid) {
+        badge = '<span class="stat-pid">pid ' + st.pid + '</span>';
+      }
       return '<div class="stat-cell" title="Share of one CPU core, as top reports it">'
         + '<span class="stat-k">CPU</span>'
         + '<span class="stat-v">' + fmtPct(st.cpuPct) + '</span>'
         + sparkSvg(cpuH, cpuMax, cpuC)
         + '</div>'
-        + '<div class="stat-cell" title="Resident memory across the whole process tree">'
+        + '<div class="stat-cell" title="' + memTip + '">'
         + '<span class="stat-k">Memory</span>'
         + '<span class="stat-v">' + fmtBytes(st.memory) + '</span>'
         + sparkSvg(memH, memMax, 'var(--sky)')
         + '</div>'
-        + (st.pid ? '<span class="stat-pid">pid ' + st.pid + '</span>' : '');
+        + badge;
     }
 
     /** Patch the strips in place — a full re-render would close open logs. */
@@ -8416,9 +8435,11 @@ export function getWebappHtml(botUsername) {
           + '<div class="svc-meta">' + escHtml(s.command || '')
           + (s.uptime ? ' <span class="svc-up">&middot; up ' + escHtml(s.uptime) + '</span>' : '') + '</div>'
           + (running ? '<div class="stat-strip" id="svc-stat-' + k + '">'
-              + statStripInner({ cpuPct: s.cpuPct, memory: s.memory, pid: s.pid,
-                  cpuHistory: (lastStats && lastStats.services && lastStats.services[s.key] || {}).cpuHistory,
-                  memHistory: (lastStats && lastStats.services && lastStats.services[s.key] || {}).memHistory })
+              + statStripInner(Object.assign(
+                  { cpuPct: s.cpuPct, memory: s.memory, pid: s.pid, containers: s.containers },
+                  // The stats poll is both fresher and richer than the service
+                  // listing, so where it has an entry it wins outright.
+                  (lastStats && lastStats.services && lastStats.services[s.key]) || {}))
               + '</div>' : '')
           + '<div class="svc-actions">'
           + (running
