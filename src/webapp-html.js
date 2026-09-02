@@ -247,6 +247,15 @@ export function getWebappHtml(botUsername) {
     }
     .topbar .ub-time { background: rgba(125,170,255,0.16); }  /* time-to-reset (cool) */
     .topbar .ub-usage { background: rgba(99,102,241,0.22); overflow: hidden; }  /* usage (recoloured by level in JS) */
+    /* The slice between where the window has got to and where usage has got to
+       — drawn only when usage is running ahead of the clock. The base bar keeps
+       its default colour throughout: at 95% used with 96% of the window gone
+       there is nothing wrong, and colouring that was the old bar's mistake. */
+    .topbar .ub-over {
+      position: absolute; top: 0; bottom: 0; left: 0; width: 0%;
+      transition: left 0.6s ease, width 0.6s ease, background 0.4s ease;
+      pointer-events: none;
+    }
     /* a light streak sweeps across the usage bar when its value changes */
     .topbar .ub-usage::after {
       content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 55%;
@@ -2542,12 +2551,14 @@ export function getWebappHtml(botUsername) {
         <div class="urow" id="row-week">
           <div class="ub ub-time" id="wk-time"></div>
           <div class="ub ub-usage" id="wk-usage"></div>
+          <div class="ub-over" id="wk-over"></div>
           <div class="ublabel ublabel-usage" id="wk-usage-label"></div>
           <div class="ublabel ublabel-time" id="wk-time-label"></div>
         </div>
         <div class="urow" id="row-5h">
           <div class="ub ub-time" id="fh-time"></div>
           <div class="ub ub-usage" id="fh-usage"></div>
+          <div class="ub-over" id="fh-over"></div>
           <div class="ublabel ublabel-usage" id="fh-usage-label"></div>
           <div class="ublabel ublabel-time" id="fh-time-label"></div>
         </div>
@@ -3896,6 +3907,46 @@ export function getWebappHtml(botUsername) {
     }
 
     // Advance the time-to-reset bars (driven by wall-clock, not just data refresh)
+    // ─── Over-pace highlight ───
+    //
+    // The bar used to recolour itself wholesale on absolute usage: amber at
+    // 70%, red at 90%. That reads the wrong thing. 90% used with 90% of the
+    // window gone is exactly on pace and fine; 40% used an hour into a week is
+    // not, and stayed calm indigo. What matters is the GAP between the two, so
+    // only the gap is coloured and the rest of the bar keeps its default.
+    //
+    // Amber shades into red as the gap widens — continuously rather than in
+    // steps, so a bar creeping past pace warms up instead of flipping. Matched
+    // to the usage chart's over-band, including the fade: faintest against the
+    // pace line, strongest at the leading edge, so intensity grows with
+    // distance from target exactly as it does there.
+    const UB_OVER_FROM = [245, 158, 11];   // amber — just ahead
+    const UB_OVER_TO = [239, 68, 68];      // red — well ahead
+    const UB_OVER_FULL = 25;               // gap, in points, at which it is fully red
+    function overPaceFill(gap) {
+      const t = Math.max(0, Math.min(1, gap / UB_OVER_FULL));
+      const c = UB_OVER_FROM.map((v, i) => Math.round(v + (UB_OVER_TO[i] - v) * t));
+      const rgb = c[0] + ',' + c[1] + ',' + c[2];
+      return 'linear-gradient(90deg, rgba(' + rgb + ',0.10) 0%, rgba(' + rgb + ',0.30) 45%, rgba(' + rgb + ',0.58) 100%)';
+    }
+    // Usage and the clock arrive from different places — usage on fetch, the
+    // window on a ticker — so both are remembered per row and the slice is
+    // repainted from whichever moved.
+    const ubState = { wk: {}, fh: {} };
+    function paintOverPace(row) {
+      const el = $('#' + row + '-over');
+      const st = ubState[row];
+      if (!el || !st) return;
+      const usage = Math.min(100, st.usage || 0);
+      const time = Math.min(100, st.time || 0);
+      const gap = usage - time;
+      // Behind pace, or exactly on it, is the ordinary case and gets no mark.
+      if (!(gap > 0) || st.time == null) { el.style.width = '0%'; return; }
+      el.style.left = time + '%';
+      el.style.width = gap + '%';
+      el.style.background = overPaceFill(gap);
+      el.title = 'Running ' + Math.round(gap) + ' points ahead of the window';
+    }
     function tickResets() {
       if (!usageData || !usageData.ok) return;
       const wk = usageData.week && usageData.week.resetsAt;
@@ -3906,8 +3957,16 @@ export function getWebappHtml(botUsername) {
     function setTimeBar(barId, labelId, pct, resetsAtISO) {
       const bar = $('#' + barId), label = $('#' + labelId);
       if (!bar) return;
-      if (pct == null) { bar.style.width = '0%'; label.textContent = ''; return; }
+      const row = barId.split('-')[0];
+      if (pct == null) {
+        bar.style.width = '0%';
+        label.textContent = '';
+        // No clock means no pace to be ahead of; the slice must not linger.
+        if (ubState[row]) { ubState[row].time = null; paintOverPace(row); }
+        return;
+      }
       bar.style.width = pct + '%';
+      if (ubState[row]) { ubState[row].time = pct; paintOverPace(row); }
       label.innerHTML = ic('clock') + ' ' + escHtml(fmtRemaining(resetsAtISO));
       label.title = 'resets in ' + fmtRemaining(resetsAtISO);
       placeUsageLabel(label, pct);
@@ -3953,12 +4012,6 @@ export function getWebappHtml(botUsername) {
         el.style.transform = 'translateX(6px)';
       }
     }
-    // translucent fill colour per level (green → amber → red)
-    function ufColor(p, base) {
-      if (p >= 90) return 'rgba(239,68,68,0.28)';
-      if (p >= 70) return 'rgba(245,158,11,0.26)';
-      return base;
-    }
     function renderUsage(u) {
       const bg = $('#usage-bg');
       if (!bg) return;
@@ -3973,6 +4026,7 @@ export function getWebappHtml(botUsername) {
         }
         bars.forEach(i => { const e = $('#' + i); if (e) e.style.width = '0%'; });
         labels.forEach(i => { const e = $('#' + i); if (e) e.textContent = ''; });
+        ['wk-over', 'fh-over'].forEach(i => { const e = $('#' + i); if (e) e.style.width = '0%'; });
         bg.title = 'Claude usage unavailable: ' + ((u && u.error) || 'unknown');
         return;
       }
@@ -3995,7 +4049,10 @@ export function getWebappHtml(botUsername) {
       const bar = $('#' + barId), label = $('#' + labelId);
       if (!bar) return;
       bar.style.width = Math.min(100, pct) + '%';
-      bar.style.background = ufColor(pct, 'rgba(99,102,241,0.22)');
+      // Default throughout — the only thing that earns a colour is the gap.
+      bar.style.background = 'rgba(99,102,241,0.22)';
+      const row = barId.split('-')[0];
+      if (ubState[row]) { ubState[row].usage = pct; paintOverPace(row); }
       label.textContent = tag + ' ' + pct + '%';
       placeUsageLabel(label, pct);
       if (ubLast[barId] !== undefined && ubLast[barId] !== pct) {
