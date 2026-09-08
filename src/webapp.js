@@ -42,6 +42,7 @@ import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
 import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
 import { createLimitWarmer } from './limit-warmer.js';
+import { createLimitResetNotifier } from './limit-reset-notify.js';
 import * as authConfig from './auth-config.js';
 import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
@@ -623,6 +624,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     secretRequest: 'always',
     updateAvailable: 'away',
     scheduledChat: 'always',
+    limitReset: 'always',
   };
   const notifyPrefs = { ...NOTIFY_DEFAULTS };
   try {
@@ -889,6 +891,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const limitWarmer = createLimitWarmer({
     getUsage: (opts) => usage.getUsage(opts || {}),
     isBusy: () => [...agentStates.values()].some(v => v === 'working' || v === 'needs-input'),
+    // Declared below; only ever called from a ping, long after both exist.
+    onMessage: (kind, text) => limitResets.offer(kind, text),
+  });
+
+  // Say something when a usage window rolls over. Polled rather than pushed:
+  // nothing tells us a window reset, the timestamp simply passes.
+  const limitResets = createLimitResetNotifier({
+    getUsage: () => usage.getUsage({}),
+    notify: (text, meta) => notifyEvent('limitReset', text, meta),
+    // No point spending a usage request a minute on a message nobody has asked
+    // for and nowhere to send it.
+    enabled: () => notifyPrefs.limitReset !== 'never' && channels.anyEnabled(),
+    // When the warmer is on it is about to write a line; hold the announcement
+    // briefly for it. The ping can take up to 90s, so the wait has to cover
+    // that — but it always ends, with the list.
+    graceMs: () => (limitWarmer.status && limitWarmer.status().enabled ? 120_000 : 0),
   });
 
   // Deferred chat messages ("send this when the turn ends / the window resets").
@@ -3769,6 +3787,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Service start / crash-stop notifications (independent of SSE clients).
       checkServiceTransitions(); // baseline current statuses (no alerts on first pass)
       setInterval(checkServiceTransitions, 7000);
+      limitResets.start();        // likewise: the first tick only takes a baseline
 
       // Ask GitHub whether there is a newer release, now and every six hours.
       // Only ever reports — applying is an explicit request from Settings.

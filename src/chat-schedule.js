@@ -28,6 +28,8 @@ import { randomBytes } from 'crypto';
 import { config } from './config.js';
 
 const TICK_MS = 15_000;
+// How long an observed-but-undelivered rollover stays deliverable.
+const PENDING_RESET_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_ITEMS = 200;
 const MAX_TEXT = 20_000;
 export const TRIGGERS = ['time', 'turn-end', 'limit-reset'];
@@ -40,6 +42,15 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
   // The window reset we last observed, so a rollover is detectable as a CHANGE
   // rather than by watching the clock pass a boundary we might sleep through.
   let seenReset = null;
+  // A rollover that has been OBSERVED but not yet delivered.
+  //
+  // Observing one is an instant; delivering needs a live idle session, which
+  // may not exist in that instant. The two used to be the same tick — the
+  // rollover was noticed and the anchor cleared together — so a message had a
+  // single 15-second chance every five hours and otherwise waited forever.
+  // Latched here instead, and persisted, so the reset stays owed until it is
+  // actually used.
+  let pendingReset = null;
 
   function genId() { return randomBytes(8).toString('hex'); }
 
@@ -49,6 +60,7 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
       const d = JSON.parse(readFileSync(FILE(), 'utf-8'));
       if (d && Array.isArray(d.items)) items = d.items;
       if (d && d.seenReset) seenReset = d.seenReset;
+      if (d && d.pendingReset) pendingReset = d.pendingReset;
     } catch { /* start empty rather than crash the server */ }
   }
 
@@ -56,7 +68,7 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
     try {
       mkdirSync(config.dataDir, { recursive: true });
       const tmp = FILE() + '.tmp';
-      writeFileSync(tmp, JSON.stringify({ items, seenReset }));
+      writeFileSync(tmp, JSON.stringify({ items, seenReset, pendingReset }));
       renameSync(tmp, FILE());
     } catch { /* best effort */ }
   }
@@ -230,11 +242,26 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
     // sleeping process only delays this, because the condition stays true until
     // a newer window replaces it.
     const reset = currentReset();
-    const rolled = !!(seenReset && now >= seenReset);
-    // Track the newest value seen, so jitter downwards cannot rearm it.
-    if (reset === null || seenReset === null || reset > seenReset) {
-      if (reset !== seenReset) { seenReset = reset; save(); }
+
+    // The window we were watching has ended. Latch it and drop the anchor, so
+    // this is recognised once and then stays owed until something can take it.
+    if (seenReset && now >= seenReset) {
+      if (!pendingReset) pendingReset = now;
+      seenReset = null;
+      save();
     }
+    // Adopt the next window once one is actually open. A null reset is the
+    // NORMAL report immediately after a rollover — the rolling window does not
+    // exist again until the next message — so it must not be written over the
+    // anchor, which is what disarmed this entirely.
+    if (reset !== null && reset > now && (seenReset === null || reset > seenReset)) {
+      seenReset = reset;
+      save();
+    }
+    // Bounded: "when the limit resets" stops meaning that after long enough,
+    // and a message landing hours later out of nowhere is its own surprise.
+    if (pendingReset && now - pendingReset > PENDING_RESET_TTL_MS) { pendingReset = null; save(); }
+    const rolled = !!pendingReset;
 
     let changed = false;
     for (const it of items) {
@@ -244,7 +271,7 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
       if (t === 'time') due = Date.parse(it.trigger.at) <= now;
       else if (t === 'limit-reset') due = rolled;
       if (!due) continue;
-      if (deliver(it)) changed = true;
+      if (deliver(it)) { changed = true; if (t === 'limit-reset') pendingReset = null; }
     }
     if (changed) { save(); emit(); }
   }
