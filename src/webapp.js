@@ -893,6 +893,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     isBusy: () => [...agentStates.values()].some(v => v === 'working' || v === 'needs-input'),
     // Declared below; only ever called from a ping, long after both exist.
     onMessage: (kind, text) => limitResets.offer(kind, text),
+    onRollover: () => chatSchedule.onLimitReset(),
   });
 
   // Say something when a usage window rolls over. Polled rather than pushed:
@@ -902,11 +903,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     notify: (text, meta) => notifyEvent('limitReset', text, meta),
     // No point spending a usage request a minute on a message nobody has asked
     // for and nowhere to send it.
-    enabled: () => notifyPrefs.limitReset !== 'never' && channels.anyEnabled(),
+    // Detection is needed by more than the announcement now, so the poll is
+    // skipped only when nothing at all is waiting on a rollover.
+    enabled: () => (notifyPrefs.limitReset !== 'never' && channels.anyEnabled())
+      || chatSchedule.hasPendingLimitReset(),
     // When the warmer is on it is about to write a line; hold the announcement
     // briefly for it. The ping can take up to 90s, so the wait has to cover
     // that — but it always ends, with the list.
     graceMs: () => (limitWarmer.status && limitWarmer.status().enabled ? 120_000 : 0),
+    onRollover: (kind) => { if (kind === 'five') chatSchedule.onLimitReset(); },
   });
 
   // Deferred chat messages ("send this when the turn ends / the window resets").
@@ -1982,6 +1987,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         ok: true,
         items: chatSchedule.list(alias),
         recent: chatSchedule.recent(alias),
+        // The limit-reset trigger is only offered alongside the limit warmer,
+        // which is what reliably notices a rollover and opens the next window.
+        limitWarmup: !!(limitWarmer.status && limitWarmer.status().enabled),
       });
     }
 
@@ -1991,6 +1999,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
       const alias = String(body.project || '').toLowerCase();
       if (!getProject(alias)) return json(res, { ok: false, error: 'Unknown project' }, 400);
+      // Enforced here as well as in the UI: a greyed-out button is a hint, not
+      // a guarantee, and this endpoint is reachable without one.
+      const wantsReset = body.trigger && body.trigger.type === 'limit-reset';
+      if (wantsReset && !(limitWarmer.status && limitWarmer.status().enabled)) {
+        return json(res, { ok: false, error: 'Turn on the limit warmer in Settings to schedule a message for the limit reset.' }, 400);
+      }
       const r = chatSchedule.add({ project: alias, text: body.text, trigger: body.trigger });
       return json(res, r, r.ok ? 200 : 400);
     }

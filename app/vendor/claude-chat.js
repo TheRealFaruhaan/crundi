@@ -260,6 +260,8 @@
     '.cc-sched-trigs{display:flex;gap:6px;flex-wrap:wrap}',
     '.cc-sched-trig{flex:1;min-width:96px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-secondary);cursor:pointer;padding:6px 8px;font-size:11.5px}',
     '.cc-sched-trig.on{background:var(--accent-dim);border-color:var(--accent);color:var(--text-primary)}',
+    // Shown, not hidden: the trigger exists, it just needs the limit warmer on.
+    '.cc-sched-trig.off{opacity:0.45;cursor:not-allowed}',
     '.cc-sched-at{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:6px 8px}',
     '.cc-sched-note{color:var(--text-muted);font-size:11px}',
     '.cc-sched-note:empty{display:none}',
@@ -1990,6 +1992,9 @@
       schedPanel = null;
     }
 
+    var schedWarm = true;
+    var syncSchedNote = function () {};
+
     function loadSched() {
       if (!schedPanel || !project) return;
       var listEl = schedPanel.querySelector('.cc-sched-list');
@@ -1997,6 +2002,24 @@
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (!schedPanel || !listEl) return;
+          // The limit-reset trigger rides on the limit warmer, so it is shown
+          // but disabled when that is off — hiding it would just make the
+          // feature look like it does not exist.
+          var warm = !!(d && d.limitWarmup);
+          var rb = schedPanel.querySelector('.cc-sched-trig[data-trig="limit-reset"]');
+          if (rb) {
+            rb.disabled = !warm;
+            rb.classList.toggle('off', !warm);
+            rb.title = warm ? '' : 'Needs the limit warmer, which is off';
+            // If it was already selected and the warmer has since been turned
+            // off, fall back rather than leaving a dead selection armed.
+            if (!warm && rb.classList.contains('on')) {
+              var tb = schedPanel.querySelector('.cc-sched-trig[data-trig="time"]');
+              if (tb) tb.click();
+            }
+          }
+          schedWarm = warm;
+          syncSchedNote();
           var items = (d && d.items) || [];
           if (!items.length) {
             listEl.innerHTML = '<div class="cc-sched-empty">Nothing scheduled for this project.</div>';
@@ -2066,10 +2089,15 @@
             ? 'Sends when the rolling 5-hour usage window rolls over.'
             : '';
       }
+      syncSchedNote = syncTrig;
       syncTrig();
 
       schedPanel.querySelectorAll('.cc-sched-trig').forEach(function (b) {
         b.addEventListener('click', function () {
+          if (b.disabled) {
+            note.textContent = 'Turn on the limit warmer in Settings to use this — it is what notices the window rolling over.';
+            return;
+          }
           trig = b.dataset.trig;
           schedPanel.querySelectorAll('.cc-sched-trig').forEach(function (x) {
             x.classList.toggle('on', x === b);

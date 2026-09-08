@@ -55,6 +55,10 @@ export function createLimitResetNotifier({
   // How long to hold a five-hour announcement waiting for a line the warmer's
   // ping is generating. Zero when nothing is going to offer one.
   graceMs = () => 0,
+  // Called the moment a rollover is recognised, before and regardless of
+  // whether anything is announced. Other features hang off the reset itself,
+  // not off the notification.
+  onRollover = () => {},
   offerTtlMs = 10 * 60 * 1000,
   now = () => Date.now(),
   staleMs = STALE_MS,
@@ -122,6 +126,7 @@ export function createLimitResetNotifier({
         // writing a better line than anything in the list.
         s.due = t;
         save();
+        try { onRollover(kind, t); } catch { /* a subscriber must not stop the rest */ }
       }
       // Still open. If the API now reports a different future reset for this
       // window, follow it — the old anchor would otherwise never elapse.

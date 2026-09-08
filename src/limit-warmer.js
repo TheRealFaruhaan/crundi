@@ -36,7 +36,7 @@ const PING_TIMEOUT_MS = 90_000;
 // the fallback and covers the other 30% plus every failure.
 const GENERATE_CHANCE = 0.7;
 
-export function createLimitWarmer({ getUsage, isBusy, onChange, onMessage, rand = Math.random } = {}) {
+export function createLimitWarmer({ getUsage, isBusy, onChange, onMessage, onRollover, rand = Math.random } = {}) {
   const stateFile = () => join(config.dataDir, 'limit-warmer.json');
 
   let state = {
@@ -166,6 +166,9 @@ export function createLimitWarmer({ getUsage, isBusy, onChange, onMessage, rand 
     // two ticks would sit in the awaits together, both find the window shut and
     // both spend a message. Observed exactly that in testing.
     warming = true;
+    // Set once the rollover is recognised; fired at the very end, whichever
+    // path out of the body is taken.
+    let rolledOver = false;
     try {
       // Someone is mid-turn — their own work is opening the window.
       if (isBusy && isBusy()) { markActivity(); return; }
@@ -196,7 +199,13 @@ export function createLimitWarmer({ getUsage, isBusy, onChange, onMessage, rand 
         return;
       }
 
-      // No window open. Nothing to protect, so warming is the whole point -
+      // No window open, and we were watching one end: that IS the rollover.
+      // Noted here, but not announced until this whole pass is done - see the
+      // finally below. Anything waiting on the reset wants to run INTO an open
+      // window, so it has to come after the ping that opens one.
+      if (state.lastKnownReset && Date.parse(state.lastKnownReset) <= Date.now()) rolledOver = true;
+
+      // Nothing to protect, so warming is the whole point -
       // subject only to not doing it twice in quick succession.
       if (Date.now() - (state.lastWarmAt || 0) < MIN_GAP_MS) return;
 
@@ -237,6 +246,13 @@ export function createLimitWarmer({ getUsage, isBusy, onChange, onMessage, rand 
       console.warn('[limit-warmer] tick failed:', err?.message || err);
     } finally {
       warming = false;
+      // The last step, deliberately. By now the ping has been sent, the window
+      // it opened has been recorded and any line Claude wrote has been handed
+      // over — so whatever runs on the reset runs into a warm window with the
+      // message already available, rather than racing all three.
+      if (rolledOver && onRollover) {
+        try { onRollover('five', Date.now()); } catch { /* not ours to fix */ }
+      }
     }
   }
 

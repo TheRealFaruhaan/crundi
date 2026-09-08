@@ -277,6 +277,29 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
   }
 
   /**
+   * Something else saw the 5-hour window roll over.
+   *
+   * The limit warmer notices this reliably — it compares the window's end to
+   * the clock, which is why it was never subject to the bug that stranded these
+   * messages. The reset notifier sees it too. Both push here, and both may
+   * push for the same rollover: arming is idempotent, so the duplicate costs
+   * nothing and the two cover each other's blind spots (the warmer is opt-in
+   * and skips while a session is busy; the notifier needs a usage poll).
+   */
+  function onLimitReset() {
+    refresh();
+    if (!pendingReset) { pendingReset = Date.now(); save(); }
+    // Try immediately rather than waiting up to 15s for the next tick.
+    tick();
+  }
+
+  /** Is anything waiting on a limit reset? Lets callers skip needless polling. */
+  function hasPendingLimitReset() {
+    refresh();
+    return items.some(it => it.status === 'pending' && it.trigger.type === 'limit-reset');
+  }
+
+  /**
    * A session finished a turn. Anything waiting on turn-end for that project
    * goes now — this is the moment it was waiting for.
    */
@@ -307,5 +330,5 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
 
   start();
 
-  return { list, recent, add, remove, onTurnEnd, onChange, tick, stop, TRIGGERS };
+  return { list, recent, add, remove, onTurnEnd, onLimitReset, hasPendingLimitReset, onChange, tick, stop, TRIGGERS };
 }
