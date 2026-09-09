@@ -31,7 +31,9 @@ import { registerService, listRegisteredForProject, updateRegistered, getRegiste
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
-import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder } from './project-store.js';
+import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt } from './project-store.js';
+import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
+import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
 import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
@@ -1742,6 +1744,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result);
     }
 
+    // A project's own system-prompt layer. Separate from POST /api/projects so
+    // saving a prompt cannot accidentally re-register the project with a
+    // half-filled path from whatever the form happened to hold.
+    if (path === '/api/projects/system-prompt' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const alias = String(body.project || '').toLowerCase();
+      if (!alias) return json(res, { ok: false, error: 'project is required' }, 400);
+      const r = setProjectSystemPrompt(alias, clampLayer(body.text));
+      if (r.ok) broadcastState();
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
     // Remove a project reference (keeps files on disk). Closes its terminal and
     // stops + deletes all services registered to it. Only registered projects
     // can be removed — auto-discovered ones would just reappear.
@@ -2021,7 +2035,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const alias = String(url.searchParams.get('project') || '').toLowerCase();
       const project = alias ? getProject(alias) : null;
       if (!project) return json(res, { ok: false, error: 'Unknown project' }, 400);
-      return json(res, { ok: true, sessions: listResumable(project.path) });
+      // Mark the ones a live chat or terminal is already attached to. Resuming
+      // one of those is allowed — it forks rather than fights — but the picker
+      // should say so before the user picks it, not after.
+      const claimed = claimedSessionIds();
+      const sessions = listResumable(project.path).map(x => ({ ...x, inUse: claimed.has(x.id) }));
+      return json(res, { ok: true, sessions });
     }
 
     // What would auto-continue pick up, and is loading it expensive? Answered
@@ -2515,7 +2534,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           settings[key] = m ? m[1].trim() : '';
         }
         const chatId = getChatId ? getChatId() : '';
-        return json(res, { ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs, limitWarmup: limitWarmer.status() });
+        return json(res, {
+          ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs,
+          limitWarmup: limitWarmer.status(),
+          systemPrompt: globalPrompt(),
+          systemPromptMax: MAX_LAYER,
+        });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
@@ -2566,6 +2590,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             if (NOTIFY_MODES.includes(body.notifyPrefs[k])) notifyPrefs[k] = body.notifyPrefs[k];
           }
           persistNotifyPrefs();
+        }
+        // The system-wide system-prompt layer. Read fresh from disk on every
+        // spawn, so this takes effect without a restart — but only for NEW
+        // conversations; see the snapshot note in system-prompt.js.
+        if (body.systemPrompt !== undefined) {
+          const stateFile = join(config.dataDir, '.crundi-state.json');
+          let state = {};
+          try { if (existsSync(stateFile)) state = JSON.parse(readFileSync(stateFile, 'utf-8')) || {}; } catch { state = {}; }
+          const clean = clampLayer(body.systemPrompt);
+          if (clean) state.systemPrompt = clean; else delete state.systemPrompt;
+          writeFileSync(stateFile, JSON.stringify(state));
         }
         return json(res, { ok: true, restartRequired });
       } catch (err) { return json(res, { ok: false, error: err.message }); }

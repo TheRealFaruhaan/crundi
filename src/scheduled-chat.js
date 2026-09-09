@@ -69,12 +69,25 @@ export async function runScheduledChat({
     sessionMode: a.session === 'resume' && a.sessionId ? 'resume' : 'new',
     resumeId: a.session === 'resume' ? (a.sessionId || '') : '',
     background: true,
+    // Crundi's own framing only. What someone typed into Settings for their
+    // interactive use should not quietly change what a 07:00 job does.
+    userLayers: false,
+    // The briefing belongs in the system prompt, not in a fake user turn: it
+    // then survives compaction and is not something the job can mistake for
+    // the request it was actually given.
+    systemPromptExtra: jobPreamble(schedule),
+    // "Fresh each run" means the transcript is disposable. Without this every
+    // run leaves a .jsonl behind forever.
+    persistSession: a.session === 'resume' && a.sessionId ? true : false,
   });
   if (!created.ok) return { ok: false, outcome: 'start-failed', error: created.error };
 
   const id = created.id;
   const result = await watchToCompletion({ id, claudeUi, settleMs, maxRunMs, send: () => {
-    claudeUi.sendMessage(id, jobPreamble(schedule) + prompt);
+    // The preamble now rides in the system prompt, so the user turn is exactly
+    // the prompt the schedule was given — which is also what the transcript
+    // and any "what did it ask for?" review will show.
+    claudeUi.sendMessage(id, prompt);
   } });
 
   const output = (() => {

@@ -153,6 +153,10 @@ async function runAction(sch, deps) {
       model: a.model || '',
       effort: a.effort || '',
       title: label,
+      // Unattended, same rule as scheduled chats: Crundi's framing only, so a
+      // job's behaviour does not drift when someone edits their own Settings
+      // prompt for interactive use.
+      userLayers: false,
     });
   } else if (a.kind === 'chat') {
     // A chat that runs unattended and tidies itself up. Unlike 'agent', which

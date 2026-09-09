@@ -16,6 +16,8 @@ import { join, dirname, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { getProject } from './project-store.js';
+import { systemPromptArgs } from './system-prompt.js';
+import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -26,6 +28,17 @@ catch (err) { console.warn('[claude-terminals] node-pty unavailable:', err?.mess
 
 const MAX_SCROLLBACK = 100_000;    // characters of scrollback per terminal
 const isWin = process.platform === 'win32';
+
+/**
+ * Quote one token for `bash -c`. Bare words are left alone so the command still
+ * reads like something a person would type; anything else is single-quoted,
+ * which is the only POSIX quoting with no escapes active inside it — an
+ * embedded quote closes the run, appends an escaped one, and reopens.
+ */
+export function shQuote(tok) {
+  const s = String(tok);
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
+}
 
 /**
  * Comprehensive ANSI/VT escape code stripping.
@@ -131,11 +144,26 @@ function writeHooksConfig(projectPath) {
  */
 export function ensureGitignore(projectPath) {
   const gitignoreFile = join(projectPath, '.gitignore');
-  if (!existsSync(gitignoreFile)) return;
+  const wanted = ['.mcp.json', 'crundi_attachments/', '.claude/settings.local.json'];
   try {
+    if (!existsSync(gitignoreFile)) {
+      // No .gitignore at all used to mean "do nothing" — which left .mcp.json,
+      // and the API KEY inside it, untracked and unignored in a git repo. One
+      // `git add -A` and the key is in the history.
+      //
+      // Only for an actual repository: writing a .gitignore into a plain folder
+      // that has nothing to do with git would be Crundi leaving litter in
+      // somebody's directory for no benefit.
+      if (!existsSync(join(projectPath, '.git'))) return;
+      writeFileSync(gitignoreFile,
+        '# Added by Crundi: local machine config, not for committing.\n'
+        + '# .mcp.json holds this machine\'s Crundi API key.\n'
+        + wanted.join('\n') + '\n');
+      console.log(`[claude-terminals] Created .gitignore in ${projectPath} (.mcp.json holds an API key)`);
+      return;
+    }
     const content = readFileSync(gitignoreFile, 'utf-8');
     const lines = content.split('\n').map(l => l.trim());
-    const wanted = ['.mcp.json', 'crundi_attachments/', '.claude/settings.local.json'];
     const missing = wanted.filter(w => !lines.includes(w) && !lines.includes(w.replace(/\/$/, '')));
     if (!missing.length) return;
     const nl = content.endsWith('\n') ? '' : '\n';
@@ -196,6 +224,30 @@ function transcriptCwd(file) {
   } finally {
     if (fd !== undefined) { try { closeSync(fd); } catch { /* ignore */ } }
   }
+}
+
+/**
+ * The id of the newest transcript for this working directory — the conversation
+ * `--continue` will attach to. Terminal mode never learns its session id from
+ * the CLI (a PTY has no protocol channel to say so), so this is the only way to
+ * know which conversation a terminal is about to claim.
+ */
+export function newestTranscriptId(projectPath) {
+  try {
+    const target = resolvePath(projectPath);
+    const encoded = target.replace(/[^a-zA-Z0-9]/g, '-');
+    const dir = join(homedir(), '.claude', 'projects', encoded);
+    if (!existsSync(dir)) return '';
+    const files = readdirSync(dir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map((f) => {
+        try { const st = statSync(join(dir, f)); return { f, mtime: st.mtimeMs, size: st.size }; }
+        catch { return null; }
+      })
+      .filter(f => f && f.size > 0)
+      .sort((a, b) => b.mtime - a.mtime);
+    return files.length ? files[0].f.replace(/\.jsonl$/, '') : '';
+  } catch { return ''; }
 }
 
 export function hasExistingConversation(projectPath) {
@@ -315,6 +367,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     resumeId = '',
     model = '',                        // --model <name> (e.g. opus); '' = omit
     effort = '',                       // --effort <level>; '' = omit
+    userLayers = true,                 // false for unattended runs: Crundi's layer only
   } = {}) {
     if (!pty) return { ok: false, error: 'node-pty is not available. Install it with: npm install node-pty' };
     if (skipPermissions && !shellOnly) {
@@ -347,16 +400,28 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     // node-pty's Windows command-line quoting — cmd strips/mangles the quotes
     // and claude receives only the first word of the prompt.
     const flagList = [];
-    if (sessionMode === 'resume' && resumeId) flagList.push('--resume', resumeId);
-    else if (sessionMode === 'continue') flagList.push('--continue');
+    // Which conversation this terminal is about to attach to, so it can claim
+    // it — and so it can fork rather than fight if someone already has it.
+    let attachedTo = '';
+    if (sessionMode === 'resume' && resumeId) { flagList.push('--resume', resumeId); attachedTo = String(resumeId); }
+    else if (sessionMode === 'continue') { flagList.push('--continue'); attachedTo = newestTranscriptId(project.path); }
     else if (sessionMode === 'new') { /* explicit fresh session — no --continue */ }
     // Interactive default: resume a prior conversation only when one exists AND
     // no other live terminal is attached (avoids "No conversation found" and
     // two --continue clobbering the same session file).
-    else if (!aliasHasLive && hasExistingConversation(project.path)) flagList.push('--continue');
+    else if (!aliasHasLive && hasExistingConversation(project.path)) { flagList.push('--continue'); attachedTo = newestTranscriptId(project.path); }
+    // Two processes resuming one transcript both write to it and the loser's
+    // turns are silently lost. Forking copies the history into a new id and
+    // leaves the original with whoever already had it.
+    const forking = !!attachedTo && isSessionClaimed(attachedTo);
+    if (forking) flagList.push('--fork-session');
     if (model) flagList.push('--model', String(model));
     if (effort) flagList.push('--effort', String(effort));
     if (skipPermissions) flagList.push('--dangerously-skip-permissions');
+    // What this Claude is told about the machine it woke up on. See
+    // system-prompt.js. This is the one flag here whose value contains spaces,
+    // which is why the bash path below has to quote at all.
+    flagList.push(...systemPromptArgs({ project: key, userLayers }));
     const cleanPrompt = prompt ? String(prompt).replace(/[\r\n]+/g, ' ').trim() : '';
 
     const shell = isWin ? 'cmd.exe' : '/bin/bash';
@@ -375,8 +440,12 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
         return ['/c', ...tokens];
       }
       // bash -c takes ONE command string; double-quote the prompt and escape
-      // shell-special chars so it survives intact.
-      let cmd = 'claude' + (flags.length ? ' ' + flags.join(' ') : '');
+      // shell-special chars so it survives intact. Flag VALUES need the same
+      // care: joining them raw was fine while every value was a bare word like
+      // `opus`, but a value containing a space (the system prompt) would be
+      // split into separate argv entries by the shell, and the CLI would reject
+      // the leftovers rather than say anything about a prompt.
+      let cmd = 'claude' + (flags.length ? ' ' + flags.map(shQuote).join(' ') : '');
       if (cleanPrompt) cmd += ' "' + cleanPrompt.replace(/(["\\$`])/g, '\\$1') + '"';
       return ['-c', cmd];
     };
@@ -444,7 +513,10 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
         if (exitCode !== 0 && canRetryFresh && !retriedFresh
             && /No conversation found/i.test(stripAnsi(entry.scrollback))) {
           retriedFresh = true;
-          const fresh = flagList.filter(f => f !== '--continue');
+          // --fork-session is only meaningful next to --resume/--continue, so
+          // it has to go with it or the retry trades one startup failure for
+          // another.
+          const fresh = flagList.filter(f => f !== '--continue' && f !== '--fork-session');
           console.log(`[claude-terminals] "${key}" (${id}) had nothing to continue - starting a fresh session`);
           let next;
           try {
@@ -464,13 +536,18 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
         }
         console.log(`[claude-terminals] "${key}" (${id}) exited (code ${exitCode})`);
         entry.proc = null;
+        releaseSession('term:' + id);
         emitter.emit('data', `\r\n[Process exited with code ${exitCode}]\r\n`);
       });
     };
     wire(proc);
 
+    // A fork lands on an id we can never observe from a PTY, so it claims
+    // nothing — which is correct: it is not attached to the original either.
+    if (!forking && attachedTo) { entry.sessionId = attachedTo; claimSession('term:' + id, attachedTo); }
+
     console.log(`[claude-terminals] Spawned claude "${entry.title}" for "${key}" (${id}) in ${project.path} (${cols}x${rows})`);
-    return { ok: true, id, project: key, title: entry.title, order: entry.order };
+    return { ok: true, id, project: key, title: entry.title, order: entry.order, forked: forking };
   }
 
   /**
@@ -484,6 +561,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
       try { entry.proc.kill(); } catch { /* ignore */ }
     }
     entry.emitter.removeAllListeners();
+    releaseSession('term:' + id);
     terminals.delete(id);
     console.log(`[claude-terminals] Closed "${entry.alias}" (${id})`);
     return { ok: true };
