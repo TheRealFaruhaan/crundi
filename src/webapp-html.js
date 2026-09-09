@@ -2988,6 +2988,7 @@ export function getWebappHtml(botUsername) {
       mindmapAdd: 'never', mindmapDelete: 'never',
       browserLaunch: 'never', browserStop: 'never',
       secretRequest: 'always',
+      limitReset: 'always',
     };
     let notifyPrefs = { ...NOTIFY_DEFAULTS_CLIENT };
 
@@ -9244,6 +9245,7 @@ export function getWebappHtml(botUsername) {
           ['MCP Browser', [['browserLaunch', 'When a browser launches'], ['browserStop', 'When a browser stops']]],
           ['Security', [['secretRequest', 'Secret access requested']]],
           ['Updates', [['updateAvailable', 'When a new Claude Code version is out']]],
+          ['Usage', [['limitReset', 'When a usage limit resets']]],
         ];
         const buildNotifyMatrix = () => {
           let m = '<div class="ntf-matrix"><div class="ntf-row head"><div class="ntf-h lbl">Event</div>'

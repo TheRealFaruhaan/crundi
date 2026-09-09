@@ -26,12 +26,17 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { config } from './config.js';
 import { resolveClaudeBin } from './claude-ui.js';
+import { composePrompt, sanitiseGenerated, toneExamples } from './limit-reset-messages.js';
 
 const TICK_MS = 60_000;        // the user's "not checked for longer than a minute"
 const MIN_GAP_MS = 10 * 60_000; // floor between pings, whatever else happens
 const PING_TIMEOUT_MS = 90_000;
+// How often the warm ping asks Claude to write the reset announcement instead
+// of saying "hi". The ping is spent either way, so this is free; the list stays
+// the fallback and covers the other 30% plus every failure.
+const GENERATE_CHANCE = 0.7;
 
-export function createLimitWarmer({ getUsage, isBusy, onChange } = {}) {
+export function createLimitWarmer({ getUsage, isBusy, onChange, onMessage, onRollover, rand = Math.random } = {}) {
   const stateFile = () => join(config.dataDir, 'limit-warmer.json');
 
   let state = {
@@ -121,14 +126,14 @@ export function createLimitWarmer({ getUsage, isBusy, onChange } = {}) {
    * Runs in a temp dir with no settings so it cannot pick up project hooks,
    * MCP servers or CLAUDE.md and turn a one-word ping into real work.
    */
-  function ping() {
+  function ping(prompt = 'hi') {
     return new Promise((resolve) => {
       const bin = resolveClaudeBin();
       if (!bin) return resolve({ ok: false, error: 'claude binary not found' });
       const cwd = join(tmpdir(), 'crundi-warm');
       try { mkdirSync(cwd, { recursive: true }); } catch { /* ignore */ }
       const proc = spawn(bin, [
-        '-p', 'hi',
+        '-p', prompt,
         '--model', 'haiku',
         '--setting-sources=',          // no user/project settings: no hooks, no MCP
         '--output-format', 'text',
@@ -145,7 +150,7 @@ export function createLimitWarmer({ getUsage, isBusy, onChange } = {}) {
       proc.stderr.on('data', d => { err += d; });
       proc.on('error', e => finish({ ok: false, error: e.message }));
       proc.on('exit', code => finish(code === 0
-        ? { ok: true, reply: out.trim().slice(0, 200) }
+        ? { ok: true, reply: out.trim().slice(0, 600) }
         : { ok: false, error: (err.trim() || `exit ${code}`).slice(0, 200) }));
     });
   }
@@ -161,6 +166,9 @@ export function createLimitWarmer({ getUsage, isBusy, onChange } = {}) {
     // two ticks would sit in the awaits together, both find the window shut and
     // both spend a message. Observed exactly that in testing.
     warming = true;
+    // Set once the rollover is recognised; fired at the very end, whichever
+    // path out of the body is taken.
+    let rolledOver = false;
     try {
       // Someone is mid-turn — their own work is opening the window.
       if (isBusy && isBusy()) { markActivity(); return; }
@@ -191,13 +199,37 @@ export function createLimitWarmer({ getUsage, isBusy, onChange } = {}) {
         return;
       }
 
-      // No window open. Nothing to protect, so warming is the whole point -
+      // No window open, and we were watching one end: that IS the rollover.
+      // Noted here, but not announced until this whole pass is done - see the
+      // finally below. Anything waiting on the reset wants to run INTO an open
+      // window, so it has to come after the ping that opens one.
+      if (state.lastKnownReset && Date.parse(state.lastKnownReset) <= Date.now()) rolledOver = true;
+
+      // Nothing to protect, so warming is the whole point -
       // subject only to not doing it twice in quick succession.
       if (Date.now() - (state.lastWarmAt || 0) < MIN_GAP_MS) return;
 
-      const r = await ping();
+      // The window has just rolled over, so this ping is also the moment the
+      // user is told about it. Most of the time, spend it writing the line
+      // rather than on "hi" — same cost, and the announcement stops being a
+      // rerun of the same fifty.
+      const generating = rand() < GENERATE_CHANCE;
+      const prompt = generating
+        ? composePrompt('five', toneExamples('five', 4, rand))
+        : 'hi';
+      const r = await ping(prompt);
       state.lastWarmAt = Date.now();
       state.lastWarmResult = r.ok ? 'started a new window' : ('failed: ' + r.error);
+      if (generating && r.ok && onMessage) {
+        // One try only. A model that answered with a preamble or a list is not
+        // going to be argued into a better shape for a joke, and the list is
+        // right there.
+        const line = sanitiseGenerated(r.reply);
+        if (line) {
+          state.lastWarmResult += ' (wrote its own line)';
+          try { onMessage('five', line); } catch { /* the notifier will use the list */ }
+        }
+      }
       console.log(`[limit-warmer] ${state.lastWarmResult}`);
       // Try to record the new window's end straight away. The usage API often
       // lags a moment behind a window opening, so this can come back empty -
@@ -214,6 +246,13 @@ export function createLimitWarmer({ getUsage, isBusy, onChange } = {}) {
       console.warn('[limit-warmer] tick failed:', err?.message || err);
     } finally {
       warming = false;
+      // The last step, deliberately. By now the ping has been sent, the window
+      // it opened has been recorded and any line Claude wrote has been handed
+      // over — so whatever runs on the reset runs into a warm window with the
+      // message already available, rather than racing all three.
+      if (rolledOver && onRollover) {
+        try { onRollover('five', Date.now()); } catch { /* not ours to fix */ }
+      }
     }
   }
 
