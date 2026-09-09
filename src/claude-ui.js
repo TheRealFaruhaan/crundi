@@ -42,6 +42,7 @@ import { EventEmitter } from 'events';
 import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, readFileSync, renameSync, unlinkSync } from 'fs';
 import { join, delimiter, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
+import { randomUUID } from 'crypto';
 import { config } from './config.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from './claude-terminals.js';
@@ -863,6 +864,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // Messages written to the CLI's stdin mid-turn that it has not yet taken.
       // See takeInjectionAck: handed over is not the same as received.
       pendingInjections: [],
+      // requestId -> (response, error) => void, for control requests we await
+      pendingControls: new Map(),
       state: 'idle',
       sessionId: '',
       model,
@@ -970,6 +973,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       case 'result':      return handleResult(s, msg);
       case 'control_request':  return handleControlRequest(s, msg);
       case 'control_response': return handleControlResponse(s, msg);
+      case 'command_lifecycle': return handleCommandLifecycle(s, msg);
     }
   }
 
@@ -1107,6 +1111,36 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     emitEntry(s, { id: genId(), kind: 'user', text: p.text });
     s.emitter.emit('event', { type: 'injected', text: p.text });
     return true;
+  }
+
+  /**
+   * The CLI's own account of what happened to a message we queued.
+   *
+   * 'queued'  it is in the command queue and CAN still be recalled
+   * 'started' it has drained into a turn — too late, Claude has it
+   * terminal   cancelled / discarded / refused / completed
+   *
+   * This is the honest version of the drawer's state. It used to be inferred
+   * from the replay alone, which arrives only once Claude has already taken the
+   * message — so "can it still be taken back?" was never actually knowable and
+   * the UI answered "no" by default.
+   */
+  function handleCommandLifecycle(s, msg) {
+    const uuid = msg.command_uuid;
+    if (!uuid || !s.pendingInjections?.length) return;
+    const p = s.pendingInjections.find(x => x.uuid === uuid);
+    if (!p) return;
+    if (msg.state === 'queued' || msg.state === 'started') {
+      p.state = msg.state;
+      // Tell the UI the moment the recall window opens and the moment it shuts.
+      s.emitter.emit('event', { type: 'queued-state', uuid, state: p.state, text: p.text });
+      return;
+    }
+    if (msg.state === 'cancelled' || msg.state === 'discarded' || msg.state === 'refused') {
+      const i = s.pendingInjections.indexOf(p);
+      if (i >= 0) s.pendingInjections.splice(i, 1);
+      s.emitter.emit('event', { type: 'queued-state', uuid, state: msg.state, text: p.text });
+    }
   }
 
   /**
@@ -1339,6 +1373,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   function handleControlResponse(s, msg) {
     const r = msg.response;
+    // Anything explicitly waiting on this request answers first, whatever the
+    // outcome — a waiter that only hears about success hangs on every failure.
+    const waiter = r?.request_id && s.pendingControls?.get(r.request_id);
+    if (waiter) {
+      s.pendingControls.delete(r.request_id);
+      if (r.subtype === 'error') waiter(null, r.error || 'Request failed');
+      else waiter(r.response || {}, null);
+      return;
+    }
     if (r?.subtype === 'error') {
       console.warn(`[claude-ui] (${s.id}) control error: ${r.error}`);
       // A rejected mode change used to fail silently server-side while the
@@ -1415,12 +1458,18 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // still working through when it was written — and would tell the user it
     // had landed while it had not. It goes in when the CLI says it took it.
     const injected = s.state !== 'idle';
-    if (injected) s.pendingInjections.push({ text: body, at: Date.now() });
+    // Our own uuid on the way in. Without one the CLI emits no lifecycle events
+    // at all for the message ("commands enqueued without a uuid emit no
+    // lifecycle events"), which is why hand-over used to look irreversible:
+    // there was nothing to name when asking for it back.
+    const uuid = randomUUID();
+    if (injected) s.pendingInjections.push({ text: body, at: Date.now(), uuid, state: 'sent' });
     else emitEntry(s, { id: genId(), kind: 'user', text: body });
     const ok = send(s, {
       type: 'user',
       session_id: s.sessionId || '',
       parent_tool_use_id: null,
+      uuid,
       message: { role: 'user', content: [{ type: 'text', text: body }] },
     });
     if (!ok) return { ok: false, error: 'Failed to write to the session' };
@@ -1514,6 +1563,52 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   /** Stop the current turn without killing the session. */
+  /**
+   * Take back a message that has been handed over but not yet read.
+   *
+   * Race-safe by the CLI's own definition: cancelled=false means it was not in
+   * the queue any more (already dequeued for execution, or never enqueued), so
+   * there is no window where this could silently drop a message Claude was
+   * about to read. That boolean is passed straight through, because "too late"
+   * and "recalled" have to look different in the UI.
+   */
+  function cancelMessage(id, uuid) {
+    const s = sessions.get(id);
+    if (!s?.proc) return Promise.resolve({ ok: false, error: `No session "${id}"` });
+    if (!uuid) return Promise.resolve({ ok: false, error: 'No message id' });
+    const p = (s.pendingInjections || []).find(x => x.uuid === uuid);
+    if (!p) return Promise.resolve({ ok: false, error: 'That message is no longer pending' });
+    const requestId = 'cx-' + genId();
+    return new Promise((resolve) => {
+      // Never leave the caller hanging on a CLI that does not answer.
+      const timer = setTimeout(() => {
+        s.pendingControls?.delete(requestId);
+        resolve({ ok: false, error: 'The session did not answer in time' });
+      }, 10_000);
+      if (!s.pendingControls) s.pendingControls = new Map();
+      s.pendingControls.set(requestId, (response, error) => {
+        clearTimeout(timer);
+        if (error) return resolve({ ok: false, error });
+        const cancelled = !!(response && response.cancelled);
+        if (cancelled) {
+          const i = s.pendingInjections.indexOf(p);
+          if (i >= 0) s.pendingInjections.splice(i, 1);
+        }
+        resolve({ ok: true, cancelled });
+      });
+      const sent = send(s, {
+        type: 'control_request',
+        request_id: requestId,
+        request: { subtype: 'cancel_async_message', message_uuid: uuid },
+      });
+      if (!sent) {
+        clearTimeout(timer);
+        s.pendingControls.delete(requestId);
+        resolve({ ok: false, error: 'Failed to write to the session' });
+      }
+    });
+  }
+
   function interrupt(id) {
     const s = sessions.get(id);
     if (!s?.proc) return { ok: false, error: `No session "${id}"` };
@@ -1623,7 +1718,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       goal: goalSnapshot(s),
       // So a client that reloads mid-turn puts the drawer back rather than
       // losing sight of a message that has not landed yet.
-      pendingInjections: (s.pendingInjections || []).map(p => ({ text: p.text })),
+      pendingInjections: (s.pendingInjections || []).map(p => ({ text: p.text, uuid: p.uuid, state: p.state || 'sent' })),
     };
   }
 
@@ -1690,7 +1785,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
-    sendMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
+    sendMessage, cancelMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, lastTurnOutput, dismissAgents,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
