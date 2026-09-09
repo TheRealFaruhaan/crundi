@@ -269,7 +269,7 @@
     '.cc-sched-trig{flex:1;min-width:96px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-secondary);cursor:pointer;padding:6px 8px;font-size:11.5px}',
     '.cc-sched-trig.on{background:var(--accent-dim);border-color:var(--accent);color:var(--text-primary)}',
     // Shown, not hidden: the trigger exists, it just needs the limit warmer on.
-    '.cc-sched-trig.off{opacity:0.45;cursor:not-allowed}',
+    '.cc-sched-trig.off{opacity:0.45;cursor:not-allowed},.cc-queue.sent.recallable{cursor:pointer}',
     '.cc-sched-at{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:6px 8px}',
     '.cc-sched-note{color:var(--text-muted);font-size:11px}',
     '.cc-sched-note:empty{display:none}',
@@ -682,7 +682,7 @@
     // vanish at hand-over, so for those 14.8 seconds the UI showed nothing
     // pending while the message had, as far as Claude was concerned, not
     // arrived. It now stays until --replay-user-messages says otherwise.
-    var handedOver = [];       // batches written to stdin, oldest first
+    var handedOver = [];       // {text, uuid, state} written to stdin, oldest first
     var sentNode = null;       // the separate "handed over" drawer
     var lastTypeAt = 0;        // last keystroke, so we never send mid-thought
     var activityNode = null;   // in-log "working" row for turns that stream nothing
@@ -1248,6 +1248,42 @@
       }).catch(function (err) { appendLocal({ kind: 'error', text: String(err.message || err) }); });
     }
 
+    /**
+     * Ask the session to drop a handed-over message before Claude reads it.
+     *
+     * cancelled=false is not an error: it means the CLI had already dequeued it
+     * for execution. Saying so plainly beats a success toast for something that
+     * did not happen — the user is about to see their message answered.
+     */
+    function recallQueued() {
+      var slot = null;
+      for (var i = 0; i < handedOver.length; i++) {
+        if (handedOver[i].uuid && handedOver[i].state === 'queued') { slot = handedOver[i]; break; }
+      }
+      if (!slot) return;
+      apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/cancel-queued', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uuid: slot.uuid }),
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d || d.ok === false) {
+          appendLocal({ kind: 'error', text: (d && d.error) || 'Could not take it back' });
+          return;
+        }
+        if (d.cancelled) {
+          // Put the words back in the box rather than destroying them.
+          handedOver = handedOver.filter(function (h) { return h !== slot; });
+          renderQueue();
+          var cur = input.value.trim();
+          input.value = cur ? (slot.text + '\n' + cur) : slot.text;
+          input.focus();
+        } else {
+          slot.state = 'started';
+          renderQueue();
+        }
+      }).catch(function (err) { appendLocal({ kind: 'error', text: String(err.message || err) }); });
+    }
+
     // ─── Queued input ───
     // Typing while Claude is busy batches into ONE message, then goes out
     // mid-turn: the CLI picks stdin up at the next tool boundary and acts on it
@@ -1336,14 +1372,28 @@
       }
       if (!sentNode) {
         sentNode = el('div', 'cc-queue sent');
+        sentNode.addEventListener('click', recallQueued);
         sentNode.title = 'Already handed to Claude — it joins the conversation the moment Claude picks it up';
         wrap.insertBefore(sentNode, queueNode || inrow);
       }
+      // Recallable only while the CLI reports it QUEUED. Once it says
+      // 'started' the message has drained into a turn and is genuinely gone —
+      // that is a real signal now, not the assumption this used to make.
+      var recallable = handedOver.some(function (h) { return h.uuid && h.state === 'queued'; });
+      var hint = recallable
+        ? 'Click to take it back'
+        : (handedOver.some(function (h) { return h.state === 'started'; })
+          ? 'Claude has picked this up — too late to take back'
+          : 'Handed over — waiting for the session to confirm');
+      sentNode.classList.toggle('recallable', recallable);
+      sentNode.title = recallable
+        ? 'Still in the queue — click to recall it before Claude reads it'
+        : 'Already handed to Claude — it joins the conversation the moment Claude picks it up';
       sentNode.innerHTML = '<div class="cc-queue-head">'
         + '<span>Sent</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
-        + 'waiting for Claude to pick it up</span></div>'
-        + '<div class="cc-queue-body">' + esc(handedOver.join('\n')) + '</div>'
-        + '<div class="cc-queue-hint">Handed over — this one can no longer be taken back</div>';
+        + (recallable ? 'queued — not read yet' : 'waiting for Claude to pick it up') + '</span></div>'
+        + '<div class="cc-queue-body">' + esc(handedOver.map(function (h) { return h.text; }).join('\n')) + '</div>'
+        + '<div class="cc-queue-hint">' + hint + '</div>';
     }
 
     function flushQueue() {
@@ -1354,7 +1404,9 @@
       queued = [];
       // Stays on screen, now marked as handed over, until the server reports
       // that the CLI actually took it (the 'injected' event).
-      handedOver.push(text);
+      // uuid arrives with the CLI's 'queued' lifecycle frame; until then
+      // there is nothing to name in a recall request.
+      handedOver.push({ text: text, uuid: null, state: 'sent' });
       renderQueue();
       postMessage(text);
       // Go busy immediately, for the same reason doSend does. A message queued
@@ -2235,7 +2287,9 @@
       renderGoal();
       // A reload mid-turn must not lose sight of a message the CLI has been
       // handed but not yet taken — otherwise it is invisible until it lands.
-      handedOver = (session.pendingInjections || []).map(function (p) { return p.text; });
+      handedOver = (session.pendingInjections || []).map(function (p) {
+        return { text: p.text, uuid: p.uuid || null, state: p.state || 'sent' };
+      });
       renderQueue();
       slashCommands = session.slashCommands || [];
       buildModes(session.skipPermissions);
@@ -2286,6 +2340,26 @@
         // conversation proper, so the drawer's job is done. `assumed` means
         // the turn ended without an acknowledgement rather than with one;
         // either way it is no longer in flight.
+        // The CLI's own account of a handed-over message: 'queued' opens the
+        // recall window, 'started' shuts it, terminal states end it.
+        case 'queued-state': {
+          var slot = null;
+          for (var qi = 0; qi < handedOver.length; qi++) {
+            if (handedOver[qi].uuid === ev.uuid) { slot = handedOver[qi]; break; }
+          }
+          // First sighting: match by text, oldest first, and adopt the uuid.
+          if (!slot) {
+            for (var qj = 0; qj < handedOver.length; qj++) {
+              if (!handedOver[qj].uuid && handedOver[qj].text === ev.text) { slot = handedOver[qj]; slot.uuid = ev.uuid; break; }
+            }
+          }
+          if (!slot) break;
+          if (ev.state === 'cancelled' || ev.state === 'discarded' || ev.state === 'refused') {
+            handedOver = handedOver.filter(function (h) { return h !== slot; });
+          } else { slot.state = ev.state; }
+          renderQueue();
+          break;
+        }
         case 'injected':
           if (handedOver.length) { handedOver.shift(); renderQueue(); }
           break;

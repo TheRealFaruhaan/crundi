@@ -2108,6 +2108,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, claudeUi.dismissAgents(sid, body.all ? 'all' : (body.toolUseIds || [])));
       }
       if (action === 'send') return json(res, claudeUi.sendMessage(sid, body.text));
+      // Recall a message that was handed over but not yet read. The CLI answers
+      // with cancelled true/false, and that distinction is the whole point:
+      // "recalled" and "too late, Claude already has it" must not look alike.
+      if (action === 'cancel-queued') return json(res, await claudeUi.cancelMessage(sid, body.uuid));
       if (action === 'respond') return json(res, claudeUi.respond(sid, body));
       // Answering a question the CLI can no longer be told about directly.
       if (action === 'answer-closed') return json(res, claudeUi.answerClosed(sid, body));
