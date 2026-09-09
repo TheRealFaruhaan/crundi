@@ -174,6 +174,10 @@
     '.cc-queue-head{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent-hover);font-weight:700;margin-bottom:3px}',
     '.cc-queue-body{white-space:pre-wrap;word-break:break-word;color:var(--text-primary);font-size:12.5px}',
     '.cc-queue-hint{font-size:10.5px;color:var(--text-muted);margin-top:4px}',
+    '.cc-queue.sent{border-style:solid;border-color:rgba(148,163,184,.45);background:rgba(148,163,184,.09);cursor:default}',
+    '.cc-queue.sent:hover{border-color:rgba(148,163,184,.45);background:rgba(148,163,184,.09)}',
+    '.cc-queue.sent .cc-queue-head{color:var(--text-muted)}',
+    '.cc-queue.sent .cc-queue-body{color:var(--text-secondary)}',
     // In-log activity row: some turns (notably /compact) stream nothing at all,
     // so without this the log looks frozen while the header says "working".
     '.cc-activity{display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:12px;font-style:italic;padding:2px 0}',
@@ -218,10 +222,14 @@
 
     // Expanded transcript, anchored inside the chat cell.
     '.cc-agpanel{position:absolute;inset:8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);display:flex;flex-direction:column;z-index:25;animation:cc-in .16s ease}',
-    '.cc-agpanel-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border-subtle);flex:none}',
-    '.cc-agpanel-title{font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}',
-    '.cc-agpanel-sub{font-size:10.5px;color:var(--text-muted);font-family:var(--mono);flex:none}',
-    '.cc-agpanel-x{flex:none;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px}',
+    // The close button must survive any title. The subtitle carries free text
+    // (the agent's current step), and with flex:none it could not shrink — on a
+    // narrow screen it pushed the ✕ off the right edge, leaving the panel with
+    // no visible way out. Both text spans shrink; only the button does not.
+    '.cc-agpanel-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border-subtle);flex:none;min-width:0}',
+    '.cc-agpanel-title{font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0}',
+    '.cc-agpanel-sub{font-size:10.5px;color:var(--text-muted);font-family:var(--mono);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cc-agpanel-x{flex:0 0 auto;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:15px;line-height:1;padding:2px 4px;min-width:24px}',
     '.cc-agpanel-x:hover{color:var(--text-primary)}',
     '.cc-agpanel-body{flex:1;overflow-y:auto;padding:10px 12px}',
     '.cc-agpanel-prompt{background:var(--bg-secondary,#111119);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:7px 9px;margin-bottom:10px;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:150px;overflow:auto}',
@@ -668,6 +676,14 @@
     var queued = [];           // lines typed while busy; flushed as one message
     var queueNode = null;      // the single "Queued" bubble above the composer
     var queueTimer = null;     // ticker that decides when the batch goes out
+    // Written to the CLI's stdin but not yet taken into the turn. Measured on
+    // this machine: a message handed over mid-turn waited 14.8 SECONDS before
+    // the CLI picked it up, alongside the next tool result. The drawer used to
+    // vanish at hand-over, so for those 14.8 seconds the UI showed nothing
+    // pending while the message had, as far as Claude was concerned, not
+    // arrived. It now stays until --replay-user-messages says otherwise.
+    var handedOver = [];       // batches written to stdin, oldest first
+    var sentNode = null;       // the separate "handed over" drawer
     var lastTypeAt = 0;        // last keystroke, so we never send mid-thought
     var activityNode = null;   // in-log "working" row for turns that stream nothing
 
@@ -1290,6 +1306,7 @@
     }
 
     function renderQueue() {
+      renderSent();
       if (!queued.length) {
         if (queueNode) { queueNode.remove(); queueNode = null; }
         return;
@@ -1308,12 +1325,36 @@
         + '<div class="cc-queue-hint">Click to take it back</div>';
     }
 
+    // The second drawer: written to the CLI's stdin, not yet taken into the
+    // turn. Deliberately its own node rather than a mode of the first — a new
+    // batch being typed must not hide the one still in flight, which is the
+    // whole failure this exists to fix.
+    function renderSent() {
+      if (!handedOver.length) {
+        if (sentNode) { sentNode.remove(); sentNode = null; }
+        return;
+      }
+      if (!sentNode) {
+        sentNode = el('div', 'cc-queue sent');
+        sentNode.title = 'Already handed to Claude — it joins the conversation the moment Claude picks it up';
+        wrap.insertBefore(sentNode, queueNode || inrow);
+      }
+      sentNode.innerHTML = '<div class="cc-queue-head">'
+        + '<span>Sent</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
+        + 'waiting for Claude to pick it up</span></div>'
+        + '<div class="cc-queue-body">' + esc(handedOver.join('\n')) + '</div>'
+        + '<div class="cc-queue-hint">Handed over — this one can no longer be taken back</div>';
+    }
+
     function flushQueue() {
       stopTicker();
 
       if (!queued.length || destroyed) return;
       var text = queuedText();
       queued = [];
+      // Stays on screen, now marked as handed over, until the server reports
+      // that the CLI actually took it (the 'injected' event).
+      handedOver.push(text);
       renderQueue();
       postMessage(text);
       // Go busy immediately, for the same reason doSend does. A message queued
@@ -2192,6 +2233,10 @@
       });
       goal = session.goal || null;
       renderGoal();
+      // A reload mid-turn must not lose sight of a message the CLI has been
+      // handed but not yet taken — otherwise it is invisible until it lands.
+      handedOver = (session.pendingInjections || []).map(function (p) { return p.text; });
+      renderQueue();
       slashCommands = session.slashCommands || [];
       buildModes(session.skipPermissions);
       modeSel.value = session.permissionMode || 'default';
@@ -2237,6 +2282,13 @@
         // snapshot rather than trying to merge.
         case 'history': applyHistory(ev.session); break;
         case 'goal': goal = ev.goal; renderGoal(); break;
+        // The CLI has taken a message we handed over. It is now in the
+        // conversation proper, so the drawer's job is done. `assumed` means
+        // the turn ended without an acknowledgement rather than with one;
+        // either way it is no longer in flight.
+        case 'injected':
+          if (handedOver.length) { handedOver.shift(); renderQueue(); }
+          break;
         case 'agent': applyAgent(ev.agent); break;
         case 'agent-entry': addAgentEntry(ev.toolUseId, ev.entry); break;
         case 'agent-patch': patchAgentEntry(ev.toolUseId, ev.id, ev.patch); break;
@@ -2261,6 +2313,9 @@
           // Nothing will flush the queue now, so hand the text back rather than
           // silently dropping what the user typed.
           if (queued.length) unqueue();
+          // Anything already handed over is beyond recall and will never be
+          // acknowledged now, so stop implying it is still on its way.
+          if (handedOver.length) { handedOver = []; renderQueue(); }
           setState('idle');
           if (activityNode) { activityNode.remove(); activityNode = null; }
           input.disabled = true;

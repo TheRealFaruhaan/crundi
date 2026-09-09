@@ -45,6 +45,8 @@ import { homedir } from 'os';
 import { config } from './config.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from './claude-terminals.js';
+import { systemPromptArgs } from './system-prompt.js';
+import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
 
 const isWin = process.platform === 'win32';
 const MAX_MESSAGES = 2000;      // conversation entries kept per session
@@ -679,6 +681,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   function setState(s, state) {
     if (s.state === state) return;
+    if (state === 'idle') settleInjections(s);
     s.state = state;
     s.emitter.emit('event', { type: 'state', state });
     s.onStateChange?.(s.id, state);
@@ -705,11 +708,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * @param {boolean} opts.skipPermissions  launch with --dangerously-skip-permissions
    * @param {string} opts.sessionMode     'continue' | 'new' | 'resume'
    * @param {string} opts.resumeId        session id when sessionMode==='resume'
+   * @param {boolean} opts.userLayers     include the user's Settings/project system prompts
+   * @param {string} opts.systemPromptExtra  appended last (the scheduled-job briefing)
+   * @param {boolean} opts.persistSession false adds --no-session-persistence
    */
   async function create(alias, {
     title = '', model = '', effort = '', permissionMode = '',
     skipPermissions = false, sessionMode = null, resumeId = '',
     cwd = '', background = false,
+    userLayers = true, systemPromptExtra = '', persistSession = true,
   } = {}) {
     const key = String(alias || '').toLowerCase();
     const project = getProject(key);
@@ -737,6 +744,13 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       '--input-format', 'stream-json',
       '--permission-prompt-tool', 'stdio',
       '--include-partial-messages',
+      // Echo each stdin message back once the CLI has actually TAKEN it into
+      // the turn. Writing to stdin is not the same as being received: measured
+      // on this machine, a message written mid-turn sat in the CLI's buffer for
+      // 14.8 seconds and surfaced only alongside the next tool result. Without
+      // this the UI has no way to tell "handed over" from "picked up", and so
+      // used to claim the second while only the first had happened.
+      '--replay-user-messages',
       '--setting-sources=user,project,local',
     ];
     // bypassPermissions cannot be switched on later — the CLI rejects
@@ -750,6 +764,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     else if (permissionMode) args.push('--permission-mode', permissionMode);
     if (model) args.push('--model', String(model));
     if (effort) args.push('--effort', String(effort));
+    // What this Claude is told about the machine it woke up on. Unattended runs
+    // get Crundi's layer only — see system-prompt.js.
+    args.push(...systemPromptArgs({ project: key, userLayers, extra: systemPromptExtra }));
     // Same resume policy as terminal mode: only pass --continue when a prior
     // transcript exists, or the CLI exits immediately with "No conversation found".
     // Session continuity, mirroring claude-terminals.js: resume an explicit id,
@@ -773,6 +790,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // said. --resume names the uuid outright, and --continue attaches to the
     // newest transcript, which is exactly what latestTranscript() reports.
     let continueUuid = '';
+    // The conversation this process is expected to land on — the same thing as
+    // continueUuid for --continue, but also set for a plain --resume, which
+    // does not replay and so has no continueUuid of its own.
+    let attachedTo = '';
+    let forking = false;
     if ((sessionMode === 'resume' || compacting) && resumeId) {
       // Explicitly picking a session from the resume list is a deliberate jump
       // to a named conversation — deliberately NOT replayed, so it behaves the
@@ -784,12 +806,29 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // replayed — otherwise choosing to compact silently threw away the very
       // history the replay exists to show.
       if (compacting) continueUuid = String(resumeId);
+      attachedTo = String(resumeId);
+      // Somebody else is already attached to this conversation. Both processes
+      // would write to the same transcript and the loser's turns would simply
+      // be gone. Forking gives the user what they asked for — this history,
+      // continued — under a new id, and leaves the original alone.
+      if (isSessionClaimed(String(resumeId))) forking = true;
     } else if (sessionMode === 'new') { /* explicit fresh session */ }
     else if ((sessionMode === 'continue' || compacting || !aliasHasLive) && hasExistingConversation(workdir)) {
       args.push('--continue');
       const t = latestTranscript(workdir);
       if (t) continueUuid = t.id;
+      if (t) attachedTo = t.id;
+      if (t && isSessionClaimed(t.id)) forking = true;
     }
+    // --fork-session only means anything alongside --resume/--continue.
+    if (forking) args.push('--fork-session');
+
+    // A job told to start fresh every run has no use for the transcript it
+    // leaves behind, and those accumulate one file per run forever. Only safe
+    // when nothing is being resumed — the flag and --resume/--continue are
+    // contradictory, and the CLI would be right to reject the pair.
+    const resuming = args.includes('--resume') || args.includes('--continue');
+    if (!persistSession && !resuming) args.push('--no-session-persistence');
 
     let proc;
     try {
@@ -821,6 +860,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       emitter: new EventEmitter(),
       messages: [],
       pending: new Map(),      // requestId -> { entry, request }
+      // Messages written to the CLI's stdin mid-turn that it has not yet taken.
+      // See takeInjectionAck: handed over is not the same as received.
+      pendingInjections: [],
       state: 'idle',
       sessionId: '',
       model,
@@ -872,6 +914,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       s.pending.clear();
       setState(s, 'idle');
       s.emitter.emit('event', { type: 'exit', code });
+      // The transcript is nobody's now, so a later resume of it need not fork.
+      releaseSession('chat:' + id);
     });
 
     proc.on('error', (err) => {
@@ -901,6 +945,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // left off. handleSystem re-runs this with the CLI's authoritative uuid in
     // case --continue landed somewhere other than the newest transcript.
     if (continueUuid) { s.continueUuid = continueUuid; s.sessionId = continueUuid; replayForContinue(s, continueUuid); }
+    // Claim what we believe we attached to, without waiting for system/init —
+    // otherwise two launches a second apart both find the id unclaimed and
+    // neither forks, which is the exact collision this is here to prevent.
+    // A fork gets a brand-new id we cannot know yet, so it claims nothing now:
+    // the parent belongs to whoever already had it.
+    if (!forking) claimSession('chat:' + id, s.sessionId || attachedTo);
 
     // Fired as the first turn once the CLI reports ready (see handleControlResponse).
     if (compacting) s.pendingFirstMessage = '/compact';
@@ -937,6 +987,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       if (s.continueUuid && guessed && s.sessionId !== guessed) {
         replayForContinue(s, s.sessionId, true);
       }
+      // The CLI is authoritative — this is where a fork's real id first appears.
+      claimSession('chat:' + s.id, s.sessionId);
       if (msg.model) s.model = msg.model;
       s.slashCommands = msg.slash_commands || [];
       s.emitter.emit('event', {
@@ -1020,7 +1072,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function handleUser(s, msg) {
     if (msg.parent_tool_use_id) return handleAgentUser(s, msg, msg.parent_tool_use_id);
     for (const block of contentBlocks(msg)) {
-      if (block.type === 'text') { handleHookFeedback(s, block.text || ''); continue; }
+      if (block.type === 'text') {
+        // --replay-user-messages echoes our own stdin back at the moment the
+        // CLI takes it. That is the acknowledgement the queued-message drawer
+        // waits on; it must be claimed here, or handleHookFeedback would treat
+        // the user's own words as feedback from a hook.
+        if (takeInjectionAck(s, block.text || '')) continue;
+        handleHookFeedback(s, block.text || '');
+        continue;
+      }
       if (block.type !== 'tool_result') continue;
       const target = [...s.messages].reverse().find(e => e.kind === 'tool' && e.toolUseId === block.tool_use_id);
       const content = Array.isArray(block.content)
@@ -1028,6 +1088,42 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         : (typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''));
       if (target) patchEntry(s, target, { status: 'done', result: String(content).slice(0, MAX_TEXT), isError: !!block.is_error });
       noteTriggerLaunch(s, content);
+    }
+  }
+
+  /**
+   * Match a replayed user message to something we handed over, and mark it
+   * received. FIFO by text: the CLI takes messages in the order they were
+   * written, so the oldest identical one is the one being acknowledged.
+   *
+   * @returns true when the text was ours, and has now been accounted for
+   */
+  function takeInjectionAck(s, text) {
+    if (!s.pendingInjections?.length) return false;
+    const i = s.pendingInjections.findIndex(p => p.text === text);
+    if (i < 0) return false;
+    const [p] = s.pendingInjections.splice(i, 1);
+    // NOW it belongs in the conversation, at the point Claude actually read it.
+    emitEntry(s, { id: genId(), kind: 'user', text: p.text });
+    s.emitter.emit('event', { type: 'injected', text: p.text });
+    return true;
+  }
+
+  /**
+   * Give up waiting for acknowledgements.
+   *
+   * The turn is over, so anything still outstanding was either taken without a
+   * replay (an older CLI, or a build where the flag is a no-op) or will never
+   * be taken at all. Either way the drawer must not sit there forever claiming
+   * a message is still in flight — a UI that waits indefinitely for a signal
+   * that may not come is worse than the ambiguity it replaced.
+   */
+  function settleInjections(s) {
+    if (!s.pendingInjections?.length) return;
+    const pend = s.pendingInjections.splice(0, s.pendingInjections.length);
+    for (const p of pend) {
+      emitEntry(s, { id: genId(), kind: 'user', text: p.text });
+      s.emitter.emit('event', { type: 'injected', text: p.text, assumed: true });
     }
   }
 
@@ -1313,7 +1409,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     const body = String(text ?? '');
     if (!body.trim()) return { ok: false, error: 'Message is empty' };
     noteGoalCommand(s, body);
-    emitEntry(s, { id: genId(), kind: 'user', text: body });
+    // Sent into a turn already in progress: the CLI holds it until it reaches
+    // a pause, so it has NOT been received yet. Writing it into the transcript
+    // now would put it in the wrong place — above the tool results Claude was
+    // still working through when it was written — and would tell the user it
+    // had landed while it had not. It goes in when the CLI says it took it.
+    const injected = s.state !== 'idle';
+    if (injected) s.pendingInjections.push({ text: body, at: Date.now() });
+    else emitEntry(s, { id: genId(), kind: 'user', text: body });
     const ok = send(s, {
       type: 'user',
       session_id: s.sessionId || '',
@@ -1464,6 +1567,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // closed — and on a short exchange that is the entire conversation, which
     // is precisely what the stored transcript exists to keep.
     persistNow(s);
+    releaseSession('chat:' + id);
     sessions.delete(id);
     console.log(`[claude-ui] Closed "${s.alias}" (${id})`);
     return { ok: true };
@@ -1517,6 +1621,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       messages: s.messages,
       agents: [...s.agents.values()],
       goal: goalSnapshot(s),
+      // So a client that reloads mid-turn puts the drawer back rather than
+      // losing sight of a message that has not landed yet.
+      pendingInjections: (s.pendingInjections || []).map(p => ({ text: p.text })),
     };
   }
 

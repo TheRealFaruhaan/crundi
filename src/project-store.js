@@ -45,8 +45,11 @@ function save(map) {
 
 /** Normalize entry — old format was just a string path. */
 function normalize(alias, entry) {
-  if (typeof entry === 'string') return { alias, path: entry, name: alias };
-  return { alias, path: entry.path, name: entry.name || alias };
+  if (typeof entry === 'string') return { alias, path: entry, name: alias, systemPrompt: '' };
+  return {
+    alias, path: entry.path, name: entry.name || alias,
+    systemPrompt: typeof entry.systemPrompt === 'string' ? entry.systemPrompt : '',
+  };
 }
 
 /**
@@ -138,7 +141,38 @@ export function registerProject(alias, path, name, opts = {}) {
     }
   }
   const map = load();
-  map[key] = { path, name: name || key };
+  // Keep whatever else the entry carries. Editing a project's path or name
+  // through the UI re-registers it, and rebuilding the object from scratch here
+  // would silently drop the project's system prompt — with no error, and no
+  // sign of it until someone noticed the model had stopped following it.
+  const prev = typeof map[key] === 'object' && map[key] ? map[key] : {};
+  map[key] = { ...prev, path, name: name || key };
+  save(map);
+  return { ok: true };
+}
+
+/**
+ * Set (or clear, with '') a project's own system-prompt layer.
+ *
+ * Auto-discovered projects have no registry entry, so giving one a prompt
+ * registers it — otherwise the prompt would have nowhere to live and the save
+ * would appear to work and then vanish on the next read.
+ */
+export function setProjectSystemPrompt(alias, text) {
+  const key = String(alias || '').toLowerCase();
+  if (!key) return { ok: false, error: 'Alias is required' };
+  const map = load();
+  let entry = map[key];
+  if (typeof entry === 'string') entry = { path: entry, name: key };
+  if (!entry) {
+    const found = getProject(key);
+    if (!found) return { ok: false, error: `Project "${alias}" not found` };
+    entry = { path: found.path, name: found.name };
+  }
+  const clean = String(text == null ? '' : text).replace(/\r\n?/g, '\n').trim();
+  if (clean) entry.systemPrompt = clean;
+  else delete entry.systemPrompt;
+  map[key] = entry;
   save(map);
   return { ok: true };
 }

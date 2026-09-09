@@ -754,6 +754,15 @@ export function getWebappHtml(botUsername) {
     .cr-title { font-size: 0.86rem; font-weight: 600; }
     .cr-meta { font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono); }
     .cr-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 2px; }
+    /* Chat / terminal switch above the conversation list. Sticky so it stays
+       reachable while scrolling a long list of transcripts. */
+    .cr-modes { display: flex; gap: 6px; position: sticky; top: 0; z-index: 1;
+      background: var(--bg-secondary); padding-bottom: 6px; }
+    .cr-mode { flex: 1; padding: 7px 10px; border-radius: 6px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg-tertiary);
+      color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; }
+    .cr-mode:hover { border-color: var(--accent); }
+    .cr-mode.on { border-color: var(--accent); background: var(--accent-dim); color: var(--text-primary); }
     /* Resume-cost choice shown in the placeholder cell before any process spawns. */
     .cr-choice { gap: 7px !important; padding: 0 18px; text-align: center; }
     /* Launching: the pressed button gets a spinner, the rest grey out. */
@@ -4640,7 +4649,11 @@ export function getWebappHtml(botUsername) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(isChat
             ? chatBody
-            : { project: currentProject, skipPermissions: skipPerms, shell: shellOnly }),
+            : Object.assign(
+                { project: currentProject, skipPermissions: skipPerms, shell: shellOnly },
+                // A shell-only cell runs no Claude, so a conversation id would
+                // mean nothing there.
+                (!shellOnly && sessionMode) ? { sessionMode, resumeId: resumeId || '' } : {})),
         });
         const data = await r.json();
         if (!data.ok) { toast(data.error || 'Failed to launch', 'error'); done(); return; }
@@ -4663,34 +4676,56 @@ export function getWebappHtml(botUsername) {
     // and /resume are CLI START-UP flags, not runtime slash commands — they can
     // only be applied when the session is spawned, which is what this does.
     let crPendingLid = null;
+    let crList = [];
+    // Which kind of cell the chosen conversation opens in. Terminal mode can
+    // resume too: /api/terminals/create forwards its whole body to the terminal
+    // manager, which has accepted sessionMode/resumeId all along \u2014 only the UI
+    // never offered it.
+    let crMode = 'chat';
     async function openChatResume(localId) {
       if (!currentProject) { toast('Select a project first', 'error'); return; }
       crPendingLid = localId || null;
+      const last = lastLaunchMode();
+      crMode = (last === 'normal' || last === 'skip') ? 'terminal' : 'chat';
+      crList = [];
       const modal = $('#chat-resume-modal'); const body = $('#cr-body');
-      body.innerHTML = '<div class="cr-empty">Loading\\u2026</div>';
+      body.innerHTML = '<div class="cr-empty">Loading\u2026</div>';
       modal.classList.add('visible');
       try {
         const r = await apiFetch('/api/ui-sessions/resumable?project=' + encodeURIComponent(currentProject));
         const d = await r.json();
-        const list = (d && d.sessions) || [];
-        if (!list.length) {
-          body.innerHTML = '<div class="cr-empty">No previous conversations found for this project.</div>';
-          return;
-        }
-        body.innerHTML = list.map(s =>
-          '<button class="cr-item" data-action="chat-resume-pick" data-sid="' + escHtml(s.id) + '">'
-          + '<span class="cr-title">' + escHtml(s.title) + '</span>'
-          + '<span class="cr-meta">' + escHtml(s.id.slice(0, 8)) + ' \\u00b7 ' + escHtml(relTime(s.updatedAt))
-          + ' \\u00b7 ' + (s.tokens ? (s.tokens / 1000).toFixed(1) + 'k tokens' : Math.max(1, Math.round(s.sizeBytes / 1024)) + ' KB')
-          + (s.tokens >= 100000 ? ' \\u00b7 <b style="color:var(--yellow)">heavy</b>' : '') + '</span>'
-          + '</button>').join('');
+        crList = (d && d.sessions) || [];
+        renderChatResume();
       } catch (err) {
         body.innerHTML = '<div class="cr-empty">Failed to load: ' + escHtml(err.message) + '</div>';
       }
     }
+    function renderChatResume() {
+      const body = $('#cr-body');
+      if (!body) return;
+      const tab = (v, label) => '<button class="cr-mode' + (crMode === v ? ' on' : '') + '"'
+        + ' data-action="cr-mode" data-crmode="' + v + '">' + label + '</button>';
+      const head = '<div class="cr-modes">' + tab('chat', 'Open as chat') + tab('terminal', 'Open as terminal') + '</div>';
+      if (!crList.length) {
+        body.innerHTML = head + '<div class="cr-empty">No previous conversations found for this project.</div>';
+        return;
+      }
+      body.innerHTML = head + crList.map(s =>
+        '<button class="cr-item" data-action="chat-resume-pick" data-sid="' + escHtml(s.id) + '">'
+        + '<span class="cr-title">' + escHtml(s.title) + '</span>'
+        + '<span class="cr-meta">' + escHtml(s.id.slice(0, 8)) + ' \u00b7 ' + escHtml(relTime(s.updatedAt))
+        + ' \u00b7 ' + (s.tokens ? (s.tokens / 1000).toFixed(1) + 'k tokens' : Math.max(1, Math.round(s.sizeBytes / 1024)) + ' KB')
+        + (s.tokens >= 100000 ? ' \u00b7 <b style="color:var(--yellow)">heavy</b>' : '')
+        // Already open somewhere. Picking it is fine \u2014 the CLI is asked to fork,
+        // so both cells keep working and neither overwrites the other's turns \u2014
+        // but the user should know a copy is what they are getting.
+        + (s.inUse ? ' \u00b7 <b style="color:var(--accent)">open elsewhere \u2014 opens a copy</b>' : '')
+        + '</span></button>').join('');
+    }
     function closeChatResume() {
       $('#chat-resume-modal').classList.remove('visible');
       crPendingLid = null;
+      crList = [];
     }
     function relTime(iso) {
       const t = new Date(iso).getTime();
@@ -9223,6 +9258,7 @@ export function getWebappHtml(botUsername) {
         const labelStyle = 'display:block;color:var(--text-secondary);font-size:0.78rem;margin-bottom:4px;';
         const hintStyle = 'color:var(--text-muted);font-size:0.7rem;margin-top:2px;';
         const fieldStyle = 'margin-bottom:14px;';
+        const taStyle = inputStyle + 'min-height:96px;resize:vertical;line-height:1.45;font-family:inherit;';
         // Buttons in this panel are styled inline from the same variables as the
         // fields above, matching the existing Save button. There is no shared
         // .btn class in the stylesheet — a bare class="btn" renders as an
@@ -9264,6 +9300,16 @@ export function getWebappHtml(botUsername) {
           return m + '</div>';
         };
 
+        // The open project's own layer. Only offered when a project is open —
+        // there is otherwise no way to say which project it would belong to.
+        const spMax = Number(data.systemPromptMax) || 8000;
+        const spProj = projects.find(p => p.alias === currentProject);
+        const spProjField = spProj
+          ? ('<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Just ' + escHtml(spProj.name || spProj.alias) + '</label>'
+            + '<textarea id="set-proj-sysprompt" rows="5" spellcheck="false" maxlength="' + spMax + '" style="' + taStyle + '" placeholder="e.g. This repo deploys on merge to main. Never push directly.">' + escHtml(spProj.systemPrompt || '') + '</textarea>'
+            + '<p style="' + hintStyle + '">Read last, so it wins where it disagrees with the box above.</p></div>')
+          : ('<p style="' + hintStyle + ';margin-bottom:14px;">Open a project to give it its own additional prompt.</p>');
+
         let html = '<div class="info-section"><h4>Settings</h4>'
           + '<p style="color:var(--text-muted);font-size:0.78rem;margin-bottom:16px;">Changes are saved to <code style="font-family:var(--mono);font-size:0.72rem;background:var(--bg-tertiary);padding:2px 5px;border-radius:3px;">' + escHtml(data.envPath) + '</code></p>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Bot Token <span style="color:var(--red);">*</span></label>'
@@ -9293,6 +9339,20 @@ export function getWebappHtml(botUsername) {
           + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
           + '<button data-action="settings-save" style="' + btnStyle + '">Save</button>'
           + '<span id="settings-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
+          + '</div></div>'
+          // What every Crundi-started Claude is told before it reads anything
+          // else. Saved on its own button rather than with the fields above,
+          // because it applies live and must not claim a restart is needed.
+          + '<div class="info-section"><h4>System prompt</h4>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Added to every chat and terminal Crundi starts, after its own description of this machine and the tools available here. Scheduled jobs deliberately get only that description, so an edit here cannot change what an unattended job does.</p>'
+          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Everywhere</label>'
+          + '<textarea id="set-sysprompt" rows="5" spellcheck="false" maxlength="' + spMax + '" style="' + taStyle + '" placeholder="e.g. Prefer small commits. Ask before installing anything globally.">' + escHtml(data.systemPrompt || '') + '</textarea>'
+          + '<p style="' + hintStyle + '">Applies to every project.</p></div>'
+          + spProjField
+          + '<p style="' + hintStyle + ';margin-bottom:10px;">Takes effect for <strong>new</strong> conversations. Claude Code records a conversation\u2019s system prompt the first time it runs and replays that recording on every later turn and on resume, so a chat already open keeps the wording it started with.</p>'
+          + '<div style="display:flex;gap:8px;align-items:center;">'
+          + '<button data-action="sysprompt-save" style="' + btnStyle + '">Save prompts</button>'
+          + '<span id="sysprompt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div></div>'
           // Sign-in methods. At least one must stay on; the server refuses to
           // disable the last, so these toggles can fail and say why.
@@ -9467,6 +9527,40 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // Saved apart from the env fields above: these apply live, so telling the
+    // user a restart is required (as saveSettings does) would be wrong.
+    async function saveSystemPrompts() {
+      const status = $('#sysprompt-status');
+      const setMsg = (t, c) => { if (status) { status.textContent = t; status.style.color = c || 'var(--text-muted)'; } };
+      setMsg('Saving...');
+      try {
+        const r = await apiFetch('/api/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ systemPrompt: ($('#set-sysprompt') || {}).value || '' }),
+        });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Failed to save', 'error'); setMsg('Error', 'var(--red)'); return; }
+        const pt = $('#set-proj-sysprompt');
+        if (pt && currentProject) {
+          const pr = await apiFetch('/api/projects/system-prompt', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project: currentProject, text: pt.value || '' }),
+          });
+          const pd = await pr.json();
+          if (!pd.ok) { toast(pd.error || 'Could not save the project prompt', 'error'); setMsg('Error', 'var(--red)'); return; }
+          // Keep the cached list in step, or reopening Settings shows the old
+          // text and looks like the save silently failed.
+          const entry = projects.find(p => p.alias === currentProject);
+          if (entry) entry.systemPrompt = pt.value || '';
+        }
+        toast('System prompt saved');
+        setMsg('Saved \u2014 applies to new conversations');
+      } catch (err) {
+        toast('Failed to save: ' + err.message, 'error');
+        setMsg('Error', 'var(--red)');
+      }
+    }
+
     // Persist the notification policy on its own (applies live, no env rewrite).
     async function saveNotifyPrefs() {
       try {
@@ -9519,6 +9613,7 @@ export function getWebappHtml(botUsername) {
         case 'svc-reg-submit': submitRegisterService(); break;
         case 'svc-reg-cancel': cancelRegisterService(); break;
         case 'settings-save': saveSettings(); break;
+        case 'sysprompt-save': saveSystemPrompts(); break;
         case 'term-newline-key':
           setTermNewlineKey(d.val);
           $$('#set-newline-key button').forEach(b => b.classList.toggle('active', b.dataset.val === termNewlineKey));
@@ -9755,16 +9850,21 @@ export function getWebappHtml(botUsername) {
         }
         case 'chat-resume': openChatResume(d.lid); break;
         case 'chat-resume-cancel': closeChatResume(); break;
+        case 'cr-mode': crMode = d.crmode === 'terminal' ? 'terminal' : 'chat'; renderChatResume(); break;
         case 'chat-resume-pick': {
           const lid = crPendingLid;
           const rel = beginLaunch(e.target.closest('[data-action="chat-resume-pick"]'), lid);
           if (!rel) break;
+          const wantTerm = crMode === 'terminal';
           closeChatResume();
           // Resume in whichever chat variant this project used last. Terminal
           // modes can't be resumed — /api/terminals/create takes no resumeId,
           // so a transcript can only be replayed into a UI-mode session.
           const last = lastLaunchMode();
-          launchTerminal(last === 'chat-skip' ? 'chat-skip' : 'chat', lid, d.sid, undefined, rel);
+          const mode = wantTerm
+            ? (last === 'skip' ? 'skip' : 'normal')
+            : (last === 'chat-skip' ? 'chat-skip' : 'chat');
+          launchTerminal(mode, lid, d.sid, 'resume', rel);
           break;
         }
       }
