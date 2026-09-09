@@ -2082,7 +2082,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result);
     }
 
-    const uiMatch = path.match(/^\/api\/ui-sessions\/([^/]+)\/(send|respond|answer-closed|interrupt|close|rename|permission-mode|model|history|dismiss-agents)$/);
+    const uiMatch = path.match(/^\/api\/ui-sessions\/([^/]+)\/(send|cancel-queued|respond|answer-closed|interrupt|close|rename|permission-mode|model|history|dismiss-agents)$/);
     if (uiMatch) {
       const sid = decodeURIComponent(uiMatch[1]);
       const action = uiMatch[2];
