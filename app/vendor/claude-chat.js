@@ -1381,18 +1381,22 @@
       // that is a real signal now, not the assumption this used to make.
       var recallable = handedOver.some(function (h) { return h.uuid && h.state === 'queued'; });
       var started = handedOver.some(function (h) { return h.state === 'started'; });
+      // One action, worded exactly as the drawer above it: click, and the text
+      // comes back to the box to edit. Whether that needs a cancel on the wire
+      // is our problem — it is not a second concept for the user to learn, and
+      // the two drawers must not look like different features.
       var hint = recallable
         ? 'Click to take it back'
         : (started
-          ? 'Claude has picked this up — too late to take back'
-          : 'Handed over — waiting for the session to confirm');
+          ? 'Claude is reading this one — too late to edit'
+          : 'Waiting for the session to confirm');
       sentNode.classList.toggle('recallable', recallable);
       sentNode.title = recallable
-        ? 'Still in the queue — click to recall it before Claude reads it'
-        : 'Already handed to Claude — it joins the conversation the moment Claude picks it up';
+        ? 'Click to edit — brings it back to the message box'
+        : 'Claude has this one; it joins the conversation as it is read';
       sentNode.innerHTML = '<div class="cc-queue-head">'
-        + '<span>Sent</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
-        + (recallable ? 'queued — not read yet' : started ? 'picked up — on its way into the turn'
+        + '<span>' + (recallable ? 'Sending' : 'Sent') + '</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
+        + (recallable ? 'not read yet' : started ? 'Claude is reading it'
           : 'waiting for Claude to pick it up') + '</span></div>'
         + '<div class="cc-queue-body">' + esc(handedOver.map(function (h) { return h.text; }).join('\n')) + '</div>'
         + '<div class="cc-queue-hint">' + hint + '</div>';
