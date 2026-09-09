@@ -21,7 +21,7 @@
  * Run: node scripts/test-system-prompt.mjs
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -136,6 +136,23 @@ const viaBash = (tokens) => new Promise((resolve) => {
 });
 
 {
+  // What shQuote PRODUCES can be checked anywhere. Assert it before running
+  // anything, so the platform gate below can never quietly take the whole
+  // section with it.
+  check('a bare word is left alone', shQuote('opus') === 'opus', shQuote('opus'));
+  check('a spaced value is wrapped in single quotes',
+    shQuote('a b') === "'a b'", shQuote('a b'));
+  check('an embedded quote is closed, escaped and reopened',
+    shQuote("it's") === "'it'\\''s'", shQuote("it's"));
+  check('nothing is left unquoted that the shell would act on',
+    ['$x', '`x`', 'a;b', 'a b', 'a|b', 'a>b', 'a&b', '(a)', 'a\nb']
+      .every(t => shQuote(t).startsWith("'") && shQuote(t).endsWith("'")));
+
+  // The round trip needs a POSIX shell. Terminal mode only builds a `bash -c`
+  // string off Windows (there it passes discrete argv tokens and node-pty does
+  // the quoting), so there is nothing for this to prove on a Windows runner —
+  // which is exactly where it used to fail the release build.
+  const POSIX = process.platform !== 'win32' && existsSync('/bin/bash');
   const cases = [
     ['a bare word survives unquoted', ['--model', 'opus']],
     ['a value with spaces stays ONE argument', ['--append-system-prompt', 'You are inside Crundi. Use the tools.']],
@@ -147,6 +164,7 @@ const viaBash = (tokens) => new Promise((resolve) => {
     ['a newline stays inside the argument', ['--append-system-prompt', 'line one\nline two']],
   ];
   for (const [label, toks] of cases) {
+    if (!POSIX) { console.log(`SKIP  ${label} (no POSIX shell here)`); continue; }
     const got = await viaBash(toks);
     // printf puts each argv entry on its own line, so a value containing a
     // newline legitimately spans two — compare on the flattened form.
@@ -155,6 +173,9 @@ const viaBash = (tokens) => new Promise((resolve) => {
   }
 
   // Non-vacuous: the old unquoted join really does break these.
+  if (!POSIX) {
+    console.log('SKIP  the unquoted-join comparison (no POSIX shell here)');
+  } else {
   const naive = await new Promise((resolve) => {
     execFile('/bin/bash', ['-c', 'printf \'%s\\n\' ' + ['--append-system-prompt', 'You are inside Crundi. Use the tools.'].join(' ')],
       { timeout: 15000 }, (err, out) => resolve(err ? null : String(out).replace(/\n$/, '').split('\n')));
@@ -162,6 +183,7 @@ const viaBash = (tokens) => new Promise((resolve) => {
   check('the unquoted join this replaces really did shred the prompt',
     naive && naive.length > 2 && !naive.includes('You are inside Crundi. Use the tools.'),
     naive && naive.length + ' arguments: ' + JSON.stringify(naive));
+  }
 }
 
 rmSync(dir, { recursive: true, force: true });

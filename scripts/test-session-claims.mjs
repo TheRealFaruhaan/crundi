@@ -19,10 +19,13 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// newestTranscriptId reads ~/.claude/projects; os.homedir() honours $HOME on
-// POSIX, so point it at a scratch tree rather than the real one.
+// newestTranscriptId reads ~/.claude/projects, so point os.homedir() at a
+// scratch tree rather than the real one. It reads $HOME on POSIX and
+// %USERPROFILE% on Windows — setting only the first passed here and then had
+// the Windows release runner reading a real home directory instead.
 const home = mkdtempSync(join(tmpdir(), 'crundi-home-'));
 process.env.HOME = home;
+process.env.USERPROFILE = home;
 
 const { claimSession, releaseSession, isSessionClaimed, claimedSessionIds, _reset }
   = await import('../src/claude-sessions.js');
