@@ -1380,9 +1380,10 @@
       // 'started' the message has drained into a turn and is genuinely gone —
       // that is a real signal now, not the assumption this used to make.
       var recallable = handedOver.some(function (h) { return h.uuid && h.state === 'queued'; });
+      var started = handedOver.some(function (h) { return h.state === 'started'; });
       var hint = recallable
         ? 'Click to take it back'
-        : (handedOver.some(function (h) { return h.state === 'started'; })
+        : (started
           ? 'Claude has picked this up — too late to take back'
           : 'Handed over — waiting for the session to confirm');
       sentNode.classList.toggle('recallable', recallable);
@@ -1391,7 +1392,8 @@
         : 'Already handed to Claude — it joins the conversation the moment Claude picks it up';
       sentNode.innerHTML = '<div class="cc-queue-head">'
         + '<span>Sent</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
-        + (recallable ? 'queued — not read yet' : 'waiting for Claude to pick it up') + '</span></div>'
+        + (recallable ? 'queued — not read yet' : started ? 'picked up — on its way into the turn'
+          : 'waiting for Claude to pick it up') + '</span></div>'
         + '<div class="cc-queue-body">' + esc(handedOver.map(function (h) { return h.text; }).join('\n')) + '</div>'
         + '<div class="cc-queue-hint">' + hint + '</div>';
     }
