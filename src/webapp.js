@@ -920,6 +920,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const chatSchedule = createChatSchedule({
     claudeUi,
     getLatestUsage: () => usage.getLatestStored(),
+    // Declared above, so this is only ever called long after both exist.
+    // While the warmer is on it owns the limit-reset trigger and pushes through
+    // onLimitReset(); the schedule's own detection is just the backstop for the
+    // warmer being off or broken.
+    warmerActive: () => !!(limitWarmer.status && limitWarmer.status().enabled),
   });
 
   // Chat sessions push their agent state as it changes. These arrive in-order
@@ -2537,6 +2542,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, {
           ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs,
           limitWarmup: limitWarmer.status(),
+          // So the UI can warn before switching it off, not after.
+          queuedLimitReset: chatSchedule.countPendingLimitReset(),
           systemPrompt: globalPrompt(),
           systemPromptMax: MAX_LAYER,
         });
@@ -2550,6 +2557,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // lightweight callers (e.g. live notification-pref changes) POST without
         // wiping the env file with blanks.
         let restartRequired = false;
+        // Reported back so the UI can say what turning the warmer off cost.
+        let clearedLimitReset = 0;
         if (body.settings) {
           const settings = body.settings;
           // The keys this form owns. It does NOT own the file.
@@ -2584,7 +2593,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (setChatId) setChatId(newId);
         }
         // Live update (no restart): per-event notification policy.
-        if (body.limitWarmup !== undefined) limitWarmer.setEnabled(!!body.limitWarmup);
+        if (body.limitWarmup !== undefined) {
+          const wasOn = !!(limitWarmer.status && limitWarmer.status().enabled);
+          const nowOn = !!body.limitWarmup;
+          limitWarmer.setEnabled(nowOn);
+          // Turning the warmer off retires the limit-reset trigger with it: the
+          // warmer is what notices the rollover and opens the window these run
+          // into, so anything still queued on it would only look scheduled.
+          // Cleared here rather than left to expire silently two hours later.
+          if (wasOn && !nowOn) {
+            const cleared = chatSchedule.clearLimitReset();
+            if (cleared) {
+              clearedLimitReset = cleared;
+              console.log(`[chat-schedule] limit warmer off — cleared ${cleared} queued limit-reset message(s)`);
+            }
+          }
+        }
         if (body.notifyPrefs && typeof body.notifyPrefs === 'object') {
           for (const k of Object.keys(NOTIFY_DEFAULTS)) {
             if (NOTIFY_MODES.includes(body.notifyPrefs[k])) notifyPrefs[k] = body.notifyPrefs[k];
@@ -2602,7 +2626,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (clean) state.systemPrompt = clean; else delete state.systemPrompt;
           writeFileSync(stateFile, JSON.stringify(state));
         }
-        return json(res, { ok: true, restartRequired });
+        return json(res, { ok: true, restartRequired, clearedLimitReset });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 

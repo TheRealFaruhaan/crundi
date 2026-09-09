@@ -9752,23 +9752,49 @@ export function getWebappHtml(botUsername) {
           const btn = $('#set-limit-warmup');
           if (!btn) break;
           const on = !btn.classList.contains('on');
-          btn.classList.toggle('on', on);
-          btn.setAttribute('aria-checked', on ? 'true' : 'false');
-          apiFetch('/api/settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ limitWarmup: on }),
-          })
-            .then(r => r.json())
-            .then(dd => {
-              if (!dd.ok) throw new Error(dd.error || 'Failed');
-              toast(on ? 'Crundi will keep the 5-hour window warm' : 'Window warm-up off', 'success');
+          const apply = (queued) => {
+            // The warm-up is what notices the reset and opens the window these
+            // run into, so switching it off retires the trigger with it. Say so
+            // before it happens rather than reporting the loss afterwards.
+            if (!on && queued > 0) {
+              const subject = queued === 1
+                ? '1 scheduled message is'
+                : queued + ' scheduled messages are';
+              const them = queued === 1 ? 'it' : 'them';
+              if (!confirm('Turn off window warm-up?\\n\\n' + subject
+                + ' waiting to send when the limit resets. Warm-up is what notices'
+                + ' the reset, so turning it off clears ' + them + '.')) return;
+            }
+            btn.classList.toggle('on', on);
+            btn.setAttribute('aria-checked', on ? 'true' : 'false');
+            apiFetch('/api/settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ limitWarmup: on }),
             })
-            .catch(err => {
-              btn.classList.toggle('on', !on);
-              btn.setAttribute('aria-checked', !on ? 'true' : 'false');
-              toast('Could not change that: ' + err.message, 'error');
-            });
+              .then(r => r.json())
+              .then(dd => {
+                if (!dd.ok) throw new Error(dd.error || 'Failed');
+                const gone = (dd && dd.clearedLimitReset) || 0;
+                if (on) toast('Crundi will keep the 5-hour window warm', 'success');
+                else if (gone) toast('Window warm-up off - cleared ' + gone
+                  + (gone === 1 ? ' queued message' : ' queued messages'), 'success');
+                else toast('Window warm-up off', 'success');
+                if (typeof loadSched === 'function') { try { loadSched(); } catch (e) {} }
+              })
+              .catch(err => {
+                btn.classList.toggle('on', !on);
+                btn.setAttribute('aria-checked', !on ? 'true' : 'false');
+                toast('Could not change that: ' + err.message, 'error');
+              });
+          };
+          // Ask what is queued NOW rather than trusting the count this panel
+          // was rendered with, which may be minutes old.
+          if (on) { apply(0); break; }
+          apiFetch('/api/settings')
+            .then(r => r.json())
+            .then(dd => apply((dd && dd.queuedLimitReset) || 0))
+            .catch(() => apply(0));
           break;
         }
         case 'notify-pref': {

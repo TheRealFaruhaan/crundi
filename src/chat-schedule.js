@@ -30,11 +30,15 @@ import { config } from './config.js';
 const TICK_MS = 15_000;
 // How long an observed-but-undelivered rollover stays deliverable.
 const PENDING_RESET_TTL_MS = 2 * 60 * 60 * 1000;
+// How long to leave the rollover to the limit warmer before arming it here.
+// The warmer ticks every 60s and its ping may take up to 90s, so this has to
+// clear both with room to spare — see the note on lapsedAt.
+const WARMER_GRACE_MS = 5 * 60_000;
 const MAX_ITEMS = 200;
 const MAX_TEXT = 20_000;
 export const TRIGGERS = ['time', 'turn-end', 'limit-reset'];
 
-export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
+export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = () => false } = {}) {
   const FILE = () => join(config.dataDir, 'chat-schedule.json');
   let items = [];
   let timer = null;
@@ -51,6 +55,26 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
   // Latched here instead, and persisted, so the reset stays owed until it is
   // actually used.
   let pendingReset = null;
+  // A rollover this module spotted BY ITSELF, and the moment it spotted it.
+  //
+  // Not the same thing as pendingReset, and the distinction is the whole point:
+  // the limit warmer owns this trigger. Its rule is that a limit-reset message
+  // runs INTO an open window, after the ping that opens one and after any line
+  // Claude wrote — so it must be the last step, and it pushes here via
+  // onLimitReset().
+  //
+  // This module also detects the rollover on its own, and it is much faster at
+  // it: 15s tick versus the warmer's 60s tick plus a ping. Arming straight from
+  // that beat the warmer to it every single time, and the delivered message
+  // then opened the window itself — so the warmer's next tick saw a window
+  // already open, returned early, and never pinged or generated anything. The
+  // warmer trigger was dead code in practice. Measured at a real rollover:
+  // boundary 09:50:00.4, message delivered 09:50:07.8, warmer's last ping still
+  // five hours earlier.
+  //
+  // So self-detection is demoted to a safety net: it only arms once the warmer
+  // has plainly not taken it, or when there is no warmer running to wait for.
+  let lapsedAt = null;
 
   function genId() { return randomBytes(8).toString('hex'); }
 
@@ -61,6 +85,7 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
       if (d && Array.isArray(d.items)) items = d.items;
       if (d && d.seenReset) seenReset = d.seenReset;
       if (d && d.pendingReset) pendingReset = d.pendingReset;
+      if (d && d.lapsedAt) lapsedAt = d.lapsedAt;
     } catch { /* start empty rather than crash the server */ }
   }
 
@@ -68,7 +93,7 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
     try {
       mkdirSync(config.dataDir, { recursive: true });
       const tmp = FILE() + '.tmp';
-      writeFileSync(tmp, JSON.stringify({ items, seenReset, pendingReset }));
+      writeFileSync(tmp, JSON.stringify({ items, seenReset, pendingReset, lapsedAt }));
       renameSync(tmp, FILE());
     } catch { /* best effort */ }
   }
@@ -246,8 +271,16 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
     // The window we were watching has ended. Latch it and drop the anchor, so
     // this is recognised once and then stays owed until something can take it.
     if (seenReset && now >= seenReset) {
-      if (!pendingReset) pendingReset = now;
+      if (!pendingReset && !lapsedAt) lapsedAt = now;
       seenReset = null;
+      save();
+    }
+    // Hand the first few minutes to the warmer, which delivers this through
+    // onLimitReset() once it has finished its whole pass. Only step in if it
+    // is switched off, or if it has had its window and said nothing.
+    if (lapsedAt && !pendingReset && (!warmerActive() || now - lapsedAt >= WARMER_GRACE_MS)) {
+      pendingReset = now;
+      lapsedAt = null;
       save();
     }
     // Adopt the next window once one is actually open. A null reset is the
@@ -288,9 +321,42 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
    */
   function onLimitReset() {
     refresh();
-    if (!pendingReset) { pendingReset = Date.now(); save(); }
+    // The warmer has finished its pass, so this is the intended path. Clearing
+    // lapsedAt retires the safety net for this rollover — it exists only for
+    // the case where this call never comes.
+    if (!pendingReset) { pendingReset = Date.now(); }
+    lapsedAt = null;
+    save();
     // Try immediately rather than waiting up to 15s for the next tick.
     tick();
+  }
+
+  /**
+   * Drop everything waiting on a limit reset, and say how many there were.
+   *
+   * Called when the limit warmer is switched off. The warmer is what makes the
+   * trigger meaningful — it is the thing that notices the rollover and opens
+   * the window the message runs into — so leaving these queued would leave
+   * items that look scheduled and would sit there until the 2-hour TTL quietly
+   * expired them. Removed outright rather than marked failed: the user turned
+   * the feature off, which is not a delivery failure worth reporting later.
+   */
+  function clearLimitReset() {
+    load();
+    const before = items.length;
+    items = items.filter(it => !(it.status === 'pending' && it.trigger.type === 'limit-reset'));
+    const cleared = before - items.length;
+    // The rollover itself is no longer owed to anyone.
+    pendingReset = null;
+    lapsedAt = null;
+    if (cleared) { save(); emit(); } else { save(); }
+    return cleared;
+  }
+
+  /** How many messages are queued on the limit reset. For warning before clearing. */
+  function countPendingLimitReset() {
+    refresh();
+    return items.filter(it => it.status === 'pending' && it.trigger.type === 'limit-reset').length;
   }
 
   /** Is anything waiting on a limit reset? Lets callers skip needless polling. */
@@ -330,5 +396,5 @@ export function createChatSchedule({ claudeUi, getLatestUsage } = {}) {
 
   start();
 
-  return { list, recent, add, remove, onTurnEnd, onLimitReset, hasPendingLimitReset, onChange, tick, stop, TRIGGERS };
+  return { list, recent, add, remove, onTurnEnd, onLimitReset, hasPendingLimitReset, countPendingLimitReset, clearLimitReset, onChange, tick, stop, TRIGGERS };
 }
