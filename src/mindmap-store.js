@@ -102,6 +102,20 @@ function effectiveProject(store, node) {
 function scopeOf(project) { return project ? String(project).toLowerCase() : null; }
 
 /**
+ * Which project a node belongs to, by id.
+ *
+ * Nodes are addressable by id alone, so "which project is this in" is the only
+ * way a caller confined to some projects can be kept out of the others. A node
+ * that does not exist returns null, which the caller must not read as "mine".
+ */
+export function projectOfNode(id) {
+  if (!id) return null;
+  const store = load();
+  const node = store.nodes.find(n => n.id === id);
+  return node ? effectiveProject(store, node) : null;
+}
+
+/**
  * Return all nodes, each enriched with the linked task's live info.
  * Pass a `project` alias to return ONLY that project's nodes (used by MCP so a
  * project's agent sees just its own mindmap; the web UI passes nothing → all).

@@ -132,6 +132,57 @@ export function composeSystemPrompt({ project = '', userLayers = true, extra = '
  * The argv pair to append, or [] when there is nothing to add.
  * Kept separate so callers never have to remember the flag name.
  */
+/**
+ * What a collaborator's Claude is told about the situation it is in.
+ *
+ * This is ORIENTATION, not enforcement. Everything that actually matters is a
+ * flag — --restricted confines the file tools and refuses commands it cannot
+ * analyse, --tools is an exact allowlist, --settings carries deny rules the
+ * session cannot edit. A model can be talked out of an instruction; it cannot
+ * be talked out of a tool it was never given.
+ *
+ * So this says what is POSSIBLE and what to do instead, because a Claude that
+ * understands the shape of the sandbox stops trying to tunnel out of it and
+ * starts using the routes that exist.
+ */
+export function collaboratorPromptLayer({ name, project, branch, root } = {}) {
+  return [
+    `You are working with ${name || 'an outside collaborator'} on the "${project}" project.`,
+    'They are a guest on this machine, not its owner, and this session is deliberately confined.',
+    '',
+    `Your working directory is a git worktree at ${root}, on branch ${branch}.`,
+    'It is a real checkout and it is theirs to change. Everything outside it is off limits,',
+    'and the tools enforce that rather than relying on you to remember it.',
+    '',
+    'What this session cannot do, and what to do instead:',
+    '',
+    '- No dev servers from the shell. A process started with `npm run dev &` or `nohup` is',
+    '  invisible and dies with the turn. Register it as a Crundi service instead',
+    '  (register_service, then start_service) — it survives, it is named, and it can be',
+    '  stopped from the UI. Use get_service_logs to read its output.',
+    '- No git beyond this branch. Committing here is fine and encouraged. push, checkout,',
+    '  merge, rebase, reset and branch are denied. The collaborator has a Push button in',
+    '  the UI for their own branch, and can ask the owner to merge it.',
+    '- No sudo, systemctl, docker or package installs at the system level. These reach the',
+    '  whole machine, which is shared.',
+    '- No secrets. The credential tools are not available on this session.',
+    '- No schedules, no terminals, no access to other projects on this machine.',
+    '',
+    'What this session is good at, and should be used for:',
+    '',
+    '- The browser tools drive a real browser: open a page, click, type, read the console',
+    '  and the network log, take a snapshot. Use them to check that a change actually works',
+    '  rather than reasoning about whether it should.',
+    '- The services tools run and supervise long-lived processes properly.',
+    '- The kanban and mindmap tools are scoped to this project and are a good place to',
+    '  leave notes the owner will see.',
+    '',
+    'If something is genuinely blocked and the collaborator needs it, say so plainly and',
+    'tell them they can ask the owner through the UI. Do not attempt to work around the',
+    'restrictions, and do not speculate about what else is on this machine.',
+  ].join('\n');
+}
+
 export function systemPromptArgs(opts) {
   const text = composeSystemPrompt(opts);
   return text ? ['--append-system-prompt', text] : [];
