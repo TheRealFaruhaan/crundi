@@ -125,7 +125,10 @@ export function getWebappHtml(botUsername) {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      height: 100dvh;
+      min-height: 100dvh;
+      overflow-y: auto;
+      padding: 20px 12px;
+      box-sizing: border-box;
       gap: 32px;
     }
     #login-screen .login-logo {
@@ -176,6 +179,41 @@ export function getWebappHtml(botUsername) {
       align-items: center;
       justify-content: center;
     }
+
+    /* ─── The collaborator's way in ─── */
+
+    #collab-login-link a, #collab-login-back {
+      font-size: 0.78rem; color: var(--text-muted); text-decoration: none;
+    }
+    #collab-login-link a:hover, #collab-login-back:hover { color: var(--accent-hover); }
+    #collab-login-back { text-align: center; margin-top: 2px; }
+    #collab-login-head {
+      color: var(--text-primary); font-size: 0.95rem; font-weight: 600; text-align: center;
+    }
+    /* Shown INSTEAD of the owner's options, not underneath them. Overrides the
+       inline display the password form sets for itself. */
+    .login-box.collab-mode #login-prompt,
+    .login-box.collab-mode #telegram-login-container,
+    .login-box.collab-mode #login-or,
+    .login-box.collab-mode #password-login,
+    .login-box.collab-mode #collab-login-link { display: none !important; }
+
+    /* ─── Room for the on-screen keyboard ─── */
+    /*
+       The screen was height:100dvh and centred, so when a phone keyboard opened
+       the fields it was there to fill went under it with no way to scroll up.
+       Now it scrolls, and "safe" keeps the top reachable when the content is
+       taller than the viewport — plain centring clips both ends.
+    */
+    #login-screen {
+      justify-content: center;
+      justify-content: safe center;
+    }
+    #login-screen.compact { gap: 14px; }
+    #login-screen.compact .login-logo { display: none; }
+    #login-screen.compact h1 { font-size: 1.4rem; }
+    #login-screen.compact .subtitle { display: none; }
+    #login-screen.compact .login-box { padding: 20px 22px; gap: 14px; }
 
     /* ─── Import Dialog ─── */
     #import-dialog {
@@ -2684,18 +2722,20 @@ export function getWebappHtml(botUsername) {
       <!-- Outside collaborators. Their own door: no password, no authenticator,
            just the name they were given and a phrase that expires. Kept behind
            a link so the ordinary sign-in stays the obvious one. -->
-      <div id="collab-login-link" style="margin-top:4px;">
-        <a href="#" data-action="collab-login-show" style="font-size:0.76rem;color:var(--text-muted);">I was invited to a project</a>
+      <div id="collab-login-link">
+        <a href="#" data-action="collab-login-show">I was invited to a project</a>
       </div>
-      <form id="collab-login" style="display:none;flex-direction:column;gap:10px;width:300px;text-align:left;">
-        <div style="color:var(--text-secondary);font-size:0.8rem;line-height:1.5;">
-          Use the name and passcode you were given.
-        </div>
+      <!-- Replaces the owner's sign-in rather than sitting under it: a
+           collaborator has no Telegram account here and no password, so
+           showing them three ways in is three chances to try the wrong one. -->
+      <form id="collab-login" style="display:none;flex-direction:column;gap:10px;width:260px;">
+        <div id="collab-login-head">Invited to a project</div>
         <input type="text" id="collab-login-name" placeholder="Your name" autocomplete="username" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;">
         <input type="password" id="collab-login-pass" placeholder="Passcode" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;">
         <button type="submit" id="collab-login-submit"
                 style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Sign in</button>
         <div id="collab-login-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
+        <a href="#" data-action="collab-login-hide" id="collab-login-back">Back to the normal sign-in</a>
       </form>
     </div>
   </div>
@@ -12930,12 +12970,39 @@ export function getWebappHtml(botUsername) {
         $('#password-login').addEventListener('submit', submitPasswordLogin);
         const cf = $('#collab-login');
         if (cf) cf.addEventListener('submit', submitCollabLogin);
+        const box = document.querySelector('.login-box');
+        const showCollab = (on) => {
+          if (box) box.classList.toggle('collab-mode', on);
+          if (cf) cf.style.display = on ? 'flex' : 'none';
+          if (on) { const n = $('#collab-login-name'); if (n) n.focus(); }
+        };
         const cl = $('#collab-login-link');
-        if (cl) cl.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          cl.style.display = 'none';
-          if (cf) { cf.style.display = 'flex'; $('#collab-login-name').focus(); }
-        });
+        if (cl) cl.addEventListener('click', (ev) => { ev.preventDefault(); showCollab(true); });
+        const cb = $('#collab-login-back');
+        if (cb) cb.addEventListener('click', (ev) => { ev.preventDefault(); showCollab(false); });
+
+        // ─── Keep the focused field above the keyboard ───
+        //
+        // visualViewport shrinks when the on-screen keyboard opens, which is
+        // the only reliable signal for it. Below roughly a phone's keyboard-up
+        // height, the logo and tagline are dropped — they are decoration, and
+        // the field being typed into is not.
+        const screenEl = document.getElementById('login-screen');
+        const vv = window.visualViewport;
+        const fitKeyboard = () => {
+          if (!screenEl || !vv) return;
+          screenEl.classList.toggle('compact', vv.height < 520);
+        };
+        if (vv) { vv.addEventListener('resize', fitKeyboard); fitKeyboard(); }
+        // Belt and braces: even compacted, a field near the bottom can sit
+        // under the keyboard, and browsers disagree about scrolling it up.
+        for (const el of document.querySelectorAll('#login-screen input')) {
+          el.addEventListener('focus', () => {
+            setTimeout(() => {
+              try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { /* older browser */ }
+            }, 250);
+          });
+        }
         $('#setup-saved').addEventListener('change', (ev) => {
           const btn = $('#setup-done');
           btn.disabled = !ev.target.checked;
