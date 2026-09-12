@@ -67,6 +67,33 @@ function saveAll(list) {
   } catch { /* a failed write must not take the request with it */ }
 }
 
+// ─── How long access lasts ───
+//
+// Expressed in HOURS internally, because the useful range spans both ends:
+// "four hours to look at this" and "a fortnight to build it" are both normal
+// asks, and a days-only field cannot say the first at all.
+//
+// Clamped to 1 hour .. 365 days. The floor stops a zero or a stray minus sign
+// producing access that has already expired — which would look like the
+// feature is broken rather than like the input was wrong.
+
+const MIN_HOURS = 1;
+const MAX_HOURS = 365 * 24;
+
+/**
+ * Resolve a duration to hours, accepting either unit.
+ *
+ * `days` is still honoured so older callers and stored schedules keep working;
+ * `hours` wins when both are given.
+ */
+export function toHours({ hours, days } = {}) {
+  let h = null;
+  if (hours !== undefined && hours !== null && hours !== '') h = parseFloat(hours);
+  else if (days !== undefined && days !== null && days !== '') h = parseFloat(days) * 24;
+  if (!Number.isFinite(h) || h <= 0) h = 7 * 24;
+  return Math.max(MIN_HOURS, Math.min(MAX_HOURS, Math.round(h)));
+}
+
 // ─── Identity ───
 //
 // One record is one INVITATION: a person, a project, a worktree, an expiry.
@@ -309,11 +336,12 @@ export function get(id) {
  * @param {object} o
  * @param {string} o.name             display name, also the branch slug
  * @param {string} o.project          project alias to share
- * @param {number} o.days             how long access lasts
+ * @param {number} [o.hours]           how long access lasts, in hours
+ * @param {number} [o.days]            same, in days (hours wins if both given)
  * @param {string} [o.telegram]       @username, without the @
  * @param {boolean} [o.withPasscode]  also issue a passcode
  */
-export async function createMany({ name, projects = [], days = 7, telegram = '', withPasscode = true } = {}) {
+export async function createMany({ name, projects = [], days, hours, telegram = '', withPasscode = true } = {}) {
   const list = [...new Set((projects || []).map(p => String(p || '').toLowerCase()).filter(Boolean))];
   if (!list.length) return { ok: false, error: 'Pick at least one project' };
   const made = [];
@@ -323,7 +351,7 @@ export async function createMany({ name, projects = [], days = 7, telegram = '',
     // Sequential, not parallel: each create consults the records written by the
     // one before it to decide whether this person already has a passcode, and
     // running them together would issue several.
-    const r = await create({ name, project: p, days, telegram, withPasscode });
+    const r = await create({ name, project: p, days, hours, telegram, withPasscode });
     if (r.ok) { made.push(r.collaborator); if (r.passcode) passcode = r.passcode; }
     else failed.push(`${p}: ${r.error}`);
   }
@@ -331,14 +359,14 @@ export async function createMany({ name, projects = [], days = 7, telegram = '',
   return { ok: true, collaborators: made, passcode, failed };
 }
 
-export async function create({ name, project, days = 7, telegram = '', withPasscode = true } = {}) {
+export async function create({ name, project, days, hours, telegram = '', withPasscode = true } = {}) {
   const nm = String(name || '').trim();
   if (!nm) return { ok: false, error: 'A name is required' };
   if (!getProject(project)) return { ok: false, error: `Project "${project}" not found` };
   const tg = String(telegram || '').trim().replace(/^@/, '').toLowerCase();
   if (!tg && !withPasscode) return { ok: false, error: 'Give them a Telegram username, a passcode, or both — otherwise there is no way in.' };
 
-  const d = Math.max(1, Math.min(365, parseInt(days, 10) || 7));
+  const ttl = toHours({ hours, days });
 
   const wt = await provisionWorktree(project, nm);
   if (!wt.ok) return wt;
@@ -372,7 +400,9 @@ export async function create({ name, project, days = 7, telegram = '', withPassc
     branch: wt.branch,
     baseCommit: wt.baseCommit,
     createdAt: Date.now(),
-    expiresAt: Date.now() + d * 24 * 60 * 60 * 1000,
+    expiresAt: Date.now() + ttl * 60 * 60 * 1000,
+    ttlHours: ttl,           // what was asked for, for "extend by the same again"
+
     revoked: false,
     seenAt: 0,
     briefed: false,   // has the first-login orientation been delivered
@@ -400,9 +430,13 @@ export function update(id, patch = {}) {
   if (!c) return { ok: false, error: 'No such collaborator' };
   if (patch.name !== undefined) c.name = String(patch.name).trim() || c.name;
   if (patch.telegram !== undefined) c.telegram = String(patch.telegram).trim().replace(/^@/, '').toLowerCase();
-  if (patch.days !== undefined) {
-    const d = Math.max(1, Math.min(365, parseInt(patch.days, 10) || 7));
-    c.expiresAt = Date.now() + d * 24 * 60 * 60 * 1000;
+  if (patch.days !== undefined || patch.hours !== undefined) {
+    // Extending is measured from NOW, not from the old expiry: "give them
+    // another day" said on Tuesday means Wednesday, not a day after whenever
+    // the original happened to run out.
+    const ttl = toHours({ hours: patch.hours, days: patch.days });
+    c.expiresAt = Date.now() + ttl * 60 * 60 * 1000;
+    c.ttlHours = ttl;
   }
   if (patch.revoked !== undefined) c.revoked = !!patch.revoked;
   saveAll(all);

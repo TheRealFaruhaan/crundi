@@ -2397,7 +2397,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           const projects = Array.isArray(body.projects) && body.projects.length
             ? body.projects : [body.project].filter(Boolean);
           const r = await collaborators.createMany({
-            name: body.name, projects, days: body.days,
+            name: body.name, projects, days: body.days, hours: body.hours,
             telegram: body.telegram, withPasscode: body.withPasscode !== false,
           });
           broadcastState();
@@ -2407,7 +2407,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           // Adding a project to someone who already has access. They keep their
           // passcode; the new project gets its own worktree and expiry.
           const r = await collaborators.createMany({
-            name: body.name, projects: [body.project], days: body.days,
+            name: body.name, projects: [body.project], days: body.days, hours: body.hours,
             telegram: body.telegram, withPasscode: true,
           });
           broadcastState();
