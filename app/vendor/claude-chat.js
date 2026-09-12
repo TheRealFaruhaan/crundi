@@ -239,6 +239,19 @@
     '.cc-agentrow-go{margin-left:auto;color:var(--accent-hover);font-size:11px;flex:none}',
 
     // Goal mode. Present only while a goal is set, so a normal chat is unchanged.
+    // The plan overlays the log rather than sitting beside it: it is a
+    // reference you consult and dismiss, and the chat underneath keeps its
+    // scroll position while you read.
+    '.cc-plan{position:absolute;inset:0;z-index:20;background:var(--bg-primary);display:none;flex-direction:column}',
+    '.cc-plan.open{display:flex}',
+    '.cc-plan-hd{flex:none;display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border);background:var(--bg-secondary,#111119)}',
+    '.cc-plan-tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;font-weight:700;color:var(--accent-hover);flex:none}',
+    '.cc-plan-st{flex:1;color:var(--text-muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cc-plan-x{flex:none;background:none;border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-muted);cursor:pointer;font-size:10.5px;padding:1px 7px}',
+    '.cc-plan-x:hover{color:var(--text-primary);border-color:var(--accent)}',
+    '.cc-plan-body{flex:1;overflow-y:auto;padding:12px 14px}',
+    '.cc-plan-body h1,.cc-plan-body h2,.cc-plan-body h3{margin:14px 0 6px;font-size:13px}',
+    '.cc-plan-body h1:first-child,.cc-plan-body h2:first-child{margin-top:0}',
     '.cc-goalbar{flex:none;border-top:1px solid var(--border-subtle);background:var(--accent-dim);padding:6px 10px;font-size:11.5px}',
     '.cc-goal-head{display:flex;align-items:center;gap:8px}',
     '.cc-goal-tag{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;font-weight:700;color:var(--accent-hover);flex:none}',
@@ -652,6 +665,18 @@
     agentDock.appendChild(agentDockHd);
     logWrap.appendChild(log);
     logWrap.appendChild(agentDock);
+    // Hidden until there is a plan AND the header pill is clicked.
+    var planPanel = el('div', 'cc-plan');
+    var planHd = el('div', 'cc-plan-hd');
+    var planSt = el('span', 'cc-plan-st');
+    var planX = el('button', 'cc-plan-x', 'Close');
+    planHd.appendChild(el('span', 'cc-plan-tag', 'PLAN'));
+    planHd.appendChild(planSt);
+    planHd.appendChild(planX);
+    var planBody = el('div', 'cc-plan-body');
+    planPanel.appendChild(planHd);
+    planPanel.appendChild(planBody);
+    logWrap.appendChild(planPanel);
     // Goal mode is opt-in (`/goal <condition>`), so this stays out of the way
     // entirely until the user asks for it.
     var goalBar = el('div', 'cc-goalbar');
@@ -662,6 +687,8 @@
     host.appendChild(root);
 
     var entries = new Map();   // entry id -> { data, node }
+    var plan = null;           // { text, filePath, at, status } from ExitPlanMode
+    var planOpen = false;
     var state = 'idle';
     var slashCommands = [];
     var slashBox = null;
@@ -2246,6 +2273,48 @@
     // "why is it still going?", which is otherwise invisible.
     var goal = null;
 
+    /** What the plan's status means, in the reader's terms rather than ours. */
+    function planStatusLabel(st) {
+      if (st === 'executing') return 'approved \u2014 being worked through';
+      if (st === 'rejected') return 'sent back for revision';
+      return 'waiting for your approval';
+    }
+
+    function renderPlan() {
+      var has = !!(plan && plan.text);
+      if (!has) planOpen = false;
+      if (has) {
+        planSt.textContent = planStatusLabel(plan.status);
+        planBody.innerHTML = md(plan.text);
+      } else {
+        planBody.innerHTML = '';
+      }
+      if (planOpen) planPanel.classList.add('open');
+      else planPanel.classList.remove('open');
+    }
+
+    /**
+     * Tell the host that something the chat's title bar shows has changed.
+     *
+     * A plan change moves no agent state, so it triggers no state broadcast --
+     * without this the header pill would not appear until something unrelated
+     * happened to refresh it.
+     */
+    function notifyMeta(patch) {
+      if (!opts.onChatMeta) return;
+      try { opts.onChatMeta(patch); } catch (e) { /* host's problem, not ours */ }
+    }
+
+    /** Show/hide the plan. Returns the state it settled on, for the header pill. */
+    function togglePlan(force) {
+      var want = force == null ? !planOpen : !!force;
+      planOpen = want && !!(plan && plan.text);
+      renderPlan();
+      return planOpen;
+    }
+
+    planX.addEventListener('click', function () { togglePlan(false); });
+
     function renderGoal() {
       if (!goal) { goalBar.style.display = 'none'; goalBar.innerHTML = ''; return; }
       goalBar.style.display = '';
@@ -2291,6 +2360,9 @@
       });
       goal = session.goal || null;
       renderGoal();
+      plan = session.plan || null;
+      renderPlan();
+      notifyMeta({ plan: plan, permissionMode: session.permissionMode || 'default' });
       // A reload mid-turn must not lose sight of a message the CLI has been
       // handed but not yet taken — otherwise it is invisible until it lands.
       handedOver = (session.pendingInjections || []).map(function (p) {
@@ -2386,8 +2458,11 @@
           // selectedIndex to -1 and the picker renders EMPTY. The CLI can
           // report a mode this session's list does not carry (e.g. a
           // bypassPermissions default on a session not launched for it).
-          if (ev.permissionMode) setModeIfKnown(ev.permissionMode);
+          if (ev.permissionMode) { setModeIfKnown(ev.permissionMode); notifyMeta({ permissionMode: ev.permissionMode }); }
           if (ev.model) modelLbl.textContent = ev.model;
+          // Only plan-change metas carry the key at all, so an absent `plan`
+          // must not be read as "the plan went away".
+          if ('plan' in ev) { plan = ev.plan || null; renderPlan(); notifyMeta({ plan: plan }); }
           break;
         case 'exit':
           // Nothing will flush the queue now, so hand the text back rather than
@@ -2411,6 +2486,7 @@
     return {
       applyHistory: applyHistory,
       applyEvent: applyEvent,
+      togglePlan: togglePlan,
       focus: function () { try { input.focus(); } catch (e) {} },
       resubscribe: function () { wsSend({ type: 'subscribe-ui', id: sessionId }); },
       restoreScroll: restoreScroll,

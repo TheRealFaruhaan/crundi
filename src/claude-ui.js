@@ -286,6 +286,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         permissionMode: s.permissionMode,
         skipPermissions: !!s.skipPermissions,
         sessionId: s.sessionId || '',
+        // Status only — the header just needs to know whether to show the pill
+        // and what to call it. The markdown itself rides snapshot()/meta, so a
+        // long plan does not get copied into every state broadcast.
+        planStatus: s.plan ? s.plan.status : '',
         pending: [...s.pending.values()].map(p => p.entry),
       });
     }
@@ -680,6 +684,31 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     else schedulePersist(s); // streamed text lands via patch, not emitEntry
   }
 
+  /**
+   * The plan, as clients see it.
+   *
+   * `status` is the plan's own lifecycle, not the session's permission mode:
+   *   proposed  — Claude has put a plan up and is waiting on the approval card
+   *   executing — the plan was approved and is being worked through
+   *   rejected  — sent back for revision; a new proposal usually follows
+   */
+  function planSnapshot(s) {
+    if (!s.plan) return null;
+    return { text: s.plan.text, filePath: s.plan.filePath, at: s.plan.at, status: s.plan.status };
+  }
+
+  /**
+   * Record a plan change and tell subscribers, in one place.
+   *
+   * Deliberately not persisted: a plan describes what THIS process is partway
+   * through. Replaying "executing" into a chat that resumed the transcript
+   * later would claim work is underway when nothing is running.
+   */
+  function setPlan(s, plan) {
+    s.plan = plan;
+    s.emitter.emit('event', { type: 'meta', plan: planSnapshot(s) });
+  }
+
   function setState(s, state) {
     if (s.state === state) return;
     if (state === 'idle') settleInjections(s);
@@ -874,6 +903,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // effect (including one that came from the user's settings).
       permissionMode: skipPermissions ? 'bypassPermissions' : (permissionMode || 'default'),
       skipPermissions: !!skipPermissions,
+      // The plan Claude proposed via ExitPlanMode, kept so the header can show
+      // it during execution — long after the permission card scrolled away.
+      plan: null,
       slashCommands: [],
       cwd: workdir,
       stdoutBuf: '',
@@ -1012,8 +1044,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
                && msg.permissionMode !== s.permissionMode) {
       // The CLI changes mode on its own too — accepting a plan drops out of
       // plan mode. Without this the picker would keep showing the old one.
+      const leftPlanMode = s.permissionMode === 'plan' && msg.permissionMode !== 'plan';
       s.permissionMode = msg.permissionMode;
       s.emitter.emit('event', { type: 'meta', permissionMode: s.permissionMode });
+      // Dropping out of plan mode with a proposal outstanding means it was
+      // approved — possibly somewhere other than our own card, so respond()
+      // cannot be the only place that promotes it.
+      if (leftPlanMode && s.plan && s.plan.status === 'proposed') {
+        setPlan(s, { ...s.plan, status: 'executing' });
+      }
     }
   }
 
@@ -1337,6 +1376,21 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     const requestId = msg.request_id;
     if (req.subtype === 'can_use_tool') {
       const isQuestion = req.tool_name === 'AskUserQuestion';
+      // ExitPlanMode is how a plan reaches us at all: the CLI sends the full
+      // markdown as the tool input of its approval request (verified against
+      // 2.1.269 — `plan` and `planFilePath`). Nothing else in the stream ever
+      // carries it, so capture it here or lose it.
+      if (req.tool_name === 'ExitPlanMode') {
+        const text = String(req.input?.plan || '').slice(0, MAX_TEXT);
+        if (text) {
+          setPlan(s, {
+            text,
+            filePath: String(req.input?.planFilePath || ''),
+            at: Date.now(),
+            status: 'proposed',
+          });
+        }
+      }
       const entry = {
         id: genId(),
         kind: isQuestion ? 'question' : 'permission',
@@ -1520,6 +1574,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       answeredInput: response.updatedInput || null,
       always: !!always,
     });
+    // Approving ExitPlanMode is what turns a proposal into the plan being
+    // worked through; denying it sends Claude back to revise.
+    if (entry.toolName === 'ExitPlanMode' && s.plan) {
+      setPlan(s, { ...s.plan, status: behavior === 'deny' ? 'rejected' : 'executing' });
+    }
     if (!s.pending.size) setState(s, 'working');
     return { ok: true };
   }
@@ -1716,6 +1775,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       messages: s.messages,
       agents: [...s.agents.values()],
       goal: goalSnapshot(s),
+      plan: planSnapshot(s),
       // So a client that reloads mid-turn puts the drawer back rather than
       // losing sight of a message that has not landed yet.
       pendingInjections: (s.pendingInjections || []).map(p => ({ text: p.text, uuid: p.uuid, state: p.state || 'sent' })),
