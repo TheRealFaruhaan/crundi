@@ -828,7 +828,16 @@ export function getWebappHtml(botUsername) {
     .collab-exp { color: var(--text-muted); flex: 1; text-align: right; }
     .collab-acts { display: flex; gap: 4px; flex-wrap: wrap; }
     .collab-invite { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 6px; }
-    .collab-invite h5 { margin: 0 0 6px; font-size: 0.78rem; color: var(--text-secondary); }
+    .collab-invite h5 { margin: 0 0 8px; font-size: 0.78rem; color: var(--text-secondary); }
+    .collab-lab {
+      display: block; font-size: 0.72rem; font-weight: 600; color: var(--text-primary);
+      margin-bottom: 3px;
+    }
+    .collab-opt { font-weight: 400; color: var(--text-muted); }
+    .collab-hint { font-size: 0.68rem; color: var(--text-muted); margin: -2px 0 8px; line-height: 1.4; }
+    .collab-days-row { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+    .collab-days-row .collab-in { width: 84px; margin-bottom: 0; }
+    .collab-unit { font-size: 0.76rem; color: var(--text-secondary); }
     .collab-in {
       display: block; width: 100%; margin-bottom: 5px; background: var(--bg-primary);
       border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -8703,19 +8712,51 @@ export function getWebappHtml(botUsername) {
       // Invite form. Projects is a multi-select because access is usually
       // granted a repository at a time, and a second one later — each gets its
       // own worktree, branch and expiry.
+      // Every field labelled. A bare number box with "7" in it does not say
+      // whether it means days, minutes or projects — and the one control here
+      // that silently decides when someone loses access is the last one that
+      // should be guessed at.
+      var projCount = (projects || []).length;
       h += '<div class="collab-invite"><h5>Invite someone</h5>'
-        + '<input class="collab-in" id="collab-name" placeholder="Their name" />'
-        + '<input class="collab-in" id="collab-tg" placeholder="Telegram username (optional)" />'
-        + '<select class="collab-in" id="collab-projects" multiple size="4">'
+        + '<label class="collab-lab" for="collab-name">Their name</label>'
+        + '<input class="collab-in" id="collab-name" placeholder="e.g. Sam" />'
+        + '<div class="collab-hint">They type this to sign in.</div>'
+        + '<label class="collab-lab" for="collab-tg">Telegram username <span class="collab-opt">optional</span></label>'
+        + '<input class="collab-in" id="collab-tg" placeholder="without the @" />'
+        + '<div class="collab-hint">Lets them use the Telegram button instead of a passcode.</div>'
+        + '<label class="collab-lab" for="collab-projects">Projects <span class="collab-opt">pick one or more</span></label>'
+        // Sized to the list so a sixth project is not hidden behind a scroll
+        // inside a four-row box.
+        + '<select class="collab-in" id="collab-projects" multiple size="' + Math.min(8, Math.max(3, projCount)) + '">'
         + (projects || []).map(function (p) {
           return '<option value="' + escHtml(p.alias) + '">' + escHtml(p.name || p.alias) + '</option>';
         }).join('')
         + '</select>'
-        + '<input class="collab-in" id="collab-days" type="number" min="1" max="365" value="7" title="Days of access" />'
+        + '<div class="collab-hint">Ctrl or Cmd click for several. Each gets its own git worktree and branch.</div>'
+        + '<label class="collab-lab" for="collab-days">Access lasts</label>'
+        + '<div class="collab-days-row">'
+        + '<input class="collab-in" id="collab-days" type="number" min="1" max="365" value="7" />'
+        + '<span class="collab-unit">days</span>'
+        + '</div>'
+        + '<div class="collab-hint" id="collab-expiry"></div>'
         + '<button class="svc-btn" data-action="collab-create">Create access</button>'
-        + '<div class="sys-quiet" style="margin-top:4px">Pick one or more projects. They get a git worktree per project, and see nothing else on this machine.</div>'
+        + '<div class="sys-quiet" style="margin-top:6px">They see only the projects you pick, and nothing else on this machine.</div>'
         + '</div>';
       box.innerHTML = h;
+
+      // Say the actual date the access ends, not just the number of days.
+      // "7" is a quantity; "ends Sat 19 Sep" is a decision you can check.
+      var daysEl = document.getElementById('collab-days');
+      var expEl = document.getElementById('collab-expiry');
+      function showExpiry() {
+        var n = parseInt(daysEl.value, 10);
+        if (!n || n < 1) { expEl.textContent = 'Pick at least one day.'; return; }
+        var d = new Date(Date.now() + n * 86400000);
+        expEl.textContent = 'Ends ' + d.toLocaleDateString(undefined, {
+          weekday: 'short', day: 'numeric', month: 'short',
+        }) + '. You can extend or revoke it at any time.';
+      }
+      if (daysEl && expEl) { daysEl.addEventListener('input', showExpiry); showExpiry(); }
     }
 
     async function collabAction(action, id) {
