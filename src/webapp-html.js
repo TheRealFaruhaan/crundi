@@ -812,6 +812,18 @@ export function getWebappHtml(botUsername) {
       color: var(--accent-hover); border: 1px solid var(--border);
       border-radius: 99px; padding: 1px 7px; font-weight: 700;
     }
+    /* Plan state, in the chat's title bar next to the "chat" tag. */
+    .term-plan-tag {
+      font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em;
+      border: 1px solid var(--border); border-radius: 99px; padding: 1px 7px;
+      font-weight: 700; color: var(--text-muted); white-space: nowrap;
+    }
+    .term-plan-tag[data-action] { cursor: pointer; }
+    .term-plan-tag.planning { color: var(--sky); border-color: var(--sky); }
+    .term-plan-tag.proposed { color: var(--yellow); border-color: var(--yellow); }
+    .term-plan-tag.executing { color: var(--green); border-color: var(--green); }
+    .term-plan-tag.rejected { color: var(--text-muted); }
+    .term-plan-tag[data-action]:hover { background: var(--bg-hover); }
     /* Agent button group (Claude today; more agents can be added the same way). */
     .term-launch .term-agent-group {
       display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -5144,6 +5156,7 @@ export function getWebappHtml(botUsername) {
         apiUpload: uploadWithProgress,
         toast,
         wsSend: (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
+        onChatMeta: (patch) => applyChatMeta(t.id, patch),
       });
       chatViews.set(t.id, view);
     }
@@ -5166,6 +5179,30 @@ export function getWebappHtml(botUsername) {
         + '<button class="term-head-btn term-close" data-action="wb-close" data-wbid="' + cell.id + '" title="Close panel">\\u00d7</button>';
     }
 
+    /**
+     * The chat header's plan pill, or null when there is nothing to say.
+     *
+     * Two different facts, deliberately one pill: being IN plan mode (Claude is
+     * still working one out, nothing to read yet) and HAVING a plan (readable).
+     * Only the readable states get a data-action, so a dead click is impossible.
+     */
+    function planTagFor(t) {
+      const st = t.planStatus || '';
+      if (st === 'proposed') return { cls: 'proposed', label: 'plan', read: true, title: 'Plan awaiting your approval \u2014 click to read it' };
+      if (st === 'executing') return { cls: 'executing', label: 'plan', read: true, title: 'Approved plan \u2014 click to read it' };
+      if (st === 'rejected') return { cls: 'rejected', label: 'plan', read: true, title: 'Plan sent back for revision \u2014 click to read it' };
+      if (t.permissionMode === 'plan') return { cls: 'planning', label: 'planning', read: false, title: 'Plan mode \u2014 Claude is working one out' };
+      return null;
+    }
+
+    function planTagHtml(t) {
+      const p = planTagFor(t);
+      if (!p) return '';
+      return '<span class="term-plan-tag ' + p.cls + '"'
+        + (p.read ? ' data-action="chat-plan" data-tid="' + t.id + '"' : '')
+        + ' title="' + p.title + '">' + p.label + '</span>';
+    }
+
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
@@ -5177,7 +5214,7 @@ export function getWebappHtml(botUsername) {
       // Font-size controls only make sense for an xterm cell; a chat cell gets a
       // "chat" tag instead so the two kinds are distinguishable at a glance.
       const controls = isChat
-        ? '<span class="term-kind-tag">chat</span>'
+        ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>'
         : '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
           + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
           + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
@@ -5213,6 +5250,22 @@ export function getWebappHtml(botUsername) {
         if (!badge && titleEl) { badge = document.createElement('span'); titleEl.after(badge); }
         if (badge) { badge.className = 'term-agent-badge ' + want[0]; badge.textContent = want[1]; }
       }
+      // Plan pill. Rebuilt in place rather than via headHtmlLive so a state
+      // push does not wipe an in-progress rename or the armed close button.
+      if (t.kind === 'ui') {
+        const kindTag = el.querySelector('.term-kind-tag');
+        let ptag = el.querySelector('.term-plan-tag');
+        const p = planTagFor(t);
+        if (!p) { if (ptag) ptag.remove(); }
+        else if (kindTag) {
+          if (!ptag) { ptag = document.createElement('span'); kindTag.before(ptag); }
+          ptag.className = 'term-plan-tag ' + p.cls;
+          ptag.textContent = p.label;
+          ptag.title = p.title;
+          if (p.read) { ptag.dataset.action = 'chat-plan'; ptag.dataset.tid = t.id; }
+          else { delete ptag.dataset.action; delete ptag.dataset.tid; }
+        }
+      }
     }
 
     // Refresh just the status dot / badge of each live grid cell in place. Used on
@@ -5226,6 +5279,24 @@ export function getWebappHtml(botUsername) {
         const el = grid.querySelector('[data-cellkey="live:' + t.id + '"]');
         if (el) updateCellHead(el, t);
       }
+    }
+
+    /**
+     * Header-visible facts pushed straight from a chat cell.
+     *
+     * Plan state changes no agent state, so it rides no state broadcast. The
+     * cached record is patched too, so the next updateLiveCellHeads() agrees
+     * with what we just drew instead of reverting it.
+     */
+    function applyChatMeta(tid, patch) {
+      if (!patch) return;
+      const rec = terminals.find((x) => x.id === tid);
+      if (!rec) return;
+      if ('plan' in patch) rec.planStatus = patch.plan ? patch.plan.status : '';
+      if (patch.permissionMode) rec.permissionMode = patch.permissionMode;
+      const grid = document.getElementById('term-grid');
+      const el = grid && grid.querySelector('[data-cellkey="live:' + tid + '"]');
+      if (el) updateCellHead(el, rec);
     }
 
     function mountXterm(t, cellEl) {
@@ -9856,6 +9927,12 @@ export function getWebappHtml(botUsername) {
         case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
+        case 'chat-plan': {
+          e.stopPropagation();
+          const view = chatViews.get(d.tid);
+          if (view && view.togglePlan) view.togglePlan();
+          break;
+        }
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;
         case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
         case 'launch-terminal': {
