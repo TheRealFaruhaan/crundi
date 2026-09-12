@@ -812,6 +812,47 @@ export function getWebappHtml(botUsername) {
       color: var(--accent-hover); border: 1px solid var(--border);
       border-radius: 99px; padding: 1px 7px; font-weight: 700;
     }
+    /* The credentials handed over when access is created.
+       A browser alert() cannot be selected on a phone and cannot be copied at
+       all in some browsers — which made the one thing you have to pass on the
+       one thing you had to retype from memory. */
+    .inv-back {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 900;
+      display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+    .inv-box {
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+      width: min(460px, 100%); max-height: 86vh; overflow-y: auto; padding: 16px;
+    }
+    .inv-box h3 { margin: 0 0 3px; font-size: 0.95rem; color: var(--text-primary); }
+    .inv-sub { font-size: 0.76rem; color: var(--text-muted); margin-bottom: 12px; }
+    .inv-row { margin-bottom: 9px; }
+    .inv-lab { display: block; font-size: 0.7rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 3px; }
+    .inv-field { display: flex; gap: 6px; }
+    .inv-field input {
+      flex: 1; min-width: 0; background: var(--bg-primary); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text-primary);
+      font-family: var(--mono); font-size: 0.82rem; padding: 7px 9px;
+    }
+    .inv-field input.big { font-size: 0.95rem; letter-spacing: 0.02em; color: var(--yellow); }
+    .inv-copy {
+      flex: none; background: var(--bg-primary); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer;
+      font-size: 0.74rem; padding: 0 11px; white-space: nowrap;
+    }
+    .inv-copy:hover { color: var(--accent-hover); border-color: var(--accent); }
+    .inv-copy.done { color: var(--green); border-color: var(--green); }
+    .inv-warn {
+      background: var(--yellow-dim); border: 1px solid var(--yellow); border-radius: var(--radius-sm);
+      color: var(--text-primary); font-size: 0.74rem; padding: 7px 9px; margin: 10px 0; line-height: 1.45;
+    }
+    .inv-acts { display: flex; gap: 8px; margin-top: 12px; }
+    .inv-acts button { flex: 1; border-radius: var(--radius-sm); border: 1px solid var(--border);
+      background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; font-size: 0.8rem; padding: 8px; }
+    .inv-acts button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .inv-list { font-size: 0.74rem; color: var(--text-secondary); margin: 6px 0 0; line-height: 1.5; }
+
     /* Outside collaborators, in the Info tab. One block per person, one row
        per project they hold — that is how access is granted and revoked. */
     .collab-person { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 8px; margin-bottom: 7px; }
@@ -8674,6 +8715,101 @@ export function getWebappHtml(botUsername) {
       return m + (m === 1 ? ' minute left' : ' minutes left');
     }
 
+    /**
+     * Copy text, and say so on the button that was pressed.
+     *
+     * navigator.clipboard needs a secure context, which a plain-http LAN
+     * address is not — so there is a fallback, because "Copy" that silently
+     * does nothing is worse than no button.
+     */
+    function copyToClipboard(text, btn) {
+      const done = () => {
+        if (!btn) { toast('Copied'); return; }
+        const was = btn.textContent;
+        btn.textContent = 'Copied';
+        btn.classList.add('done');
+        setTimeout(() => { btn.textContent = was; btn.classList.remove('done'); }, 1400);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done, () => fallback());
+        return;
+      }
+      fallback();
+      function fallback() {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        if (ok) done();
+        else toast('Could not copy — select the text and copy it by hand', 'error');
+      }
+    }
+
+    /**
+     * Show the credentials for a new invitation.
+     *
+     * Every value is in a real input: selectable, copyable, and readable on a
+     * phone. The passcode exists exactly once, here — it is stored as a scrypt
+     * hash, so this dialog is the only time anyone will ever see it.
+     */
+    function showInviteModal(o) {
+      const url = location.origin;
+      const block = [
+        'Crundi access for ' + o.name,
+        '',
+        'Sign in: ' + url,
+        'Name: ' + o.name,
+        'Passcode: ' + o.passcode,
+        o.projects && o.projects.length ? 'Projects: ' + o.projects.join(', ') : '',
+        o.endsAt ? 'Access ends: ' + o.endsAt : '',
+        '',
+        'Open the link, choose "I was invited to a project", and use the name and passcode above.',
+      ].filter(Boolean).join('\\n');
+
+      const back = document.createElement('div');
+      back.className = 'inv-back';
+      const field = (lab, val, big, id) =>
+        '<div class="inv-row"><label class="inv-lab">' + escHtml(lab) + '</label>'
+        + '<div class="inv-field"><input id="' + id + '" readonly value="' + escHtml(val) + '"'
+        + (big ? ' class="big"' : '') + '>'
+        + '<button class="inv-copy" data-copy="' + id + '">Copy</button></div></div>';
+
+      back.innerHTML = '<div class="inv-box">'
+        + '<h3>' + escHtml(o.title || ('Access created for ' + o.name)) + '</h3>'
+        + '<div class="inv-sub">Send these three things to them however you like.</div>'
+        + field('Sign in at', url, false, 'inv-url')
+        + field('Name', o.name, false, 'inv-name')
+        + field('Passcode', o.passcode, true, 'inv-pass')
+        + '<div class="inv-warn">The passcode is shown only here. It is stored hashed, so it cannot be looked up later &mdash; only replaced with a new one.</div>'
+        + (o.projects && o.projects.length
+          ? '<div class="inv-list"><b>Projects:</b> ' + escHtml(o.projects.join(', '))
+            + (o.endsAt ? '<br><b>Access ends:</b> ' + escHtml(o.endsAt) : '') + '</div>'
+          : '')
+        + '<div class="inv-acts">'
+        + '<button data-copy-all="1">Copy everything</button>'
+        + '<button class="primary" data-close="1">Done</button>'
+        + '</div></div>';
+
+      back.addEventListener('click', (ev) => {
+        const c = ev.target.closest('[data-copy]');
+        if (c) { copyToClipboard(document.getElementById(c.dataset.copy).value, c); return; }
+        if (ev.target.closest('[data-copy-all]')) {
+          copyToClipboard(block, ev.target.closest('[data-copy-all]'));
+          return;
+        }
+        // Closing on the backdrop is deliberate, but only the backdrop: a
+        // stray click inside must not take the one copy of the passcode away.
+        if (ev.target === back || ev.target.closest('[data-close]')) back.remove();
+      });
+      document.body.appendChild(back);
+      const pass = document.getElementById('inv-pass');
+      if (pass) { pass.focus(); pass.select(); }
+    }
+
     async function loadCollaborators() {
       const box = document.getElementById('collab-body');
       if (!box) return;
@@ -8805,11 +8941,89 @@ export function getWebappHtml(botUsername) {
       try {
         const r = await apiFetch('/api/collaborators', { method: 'POST', body: JSON.stringify(body) }).then(x => x.json());
         if (!r.ok) { toast(r.error || 'That did not work', 'error'); return; }
-        if (r.passcode) alert('New passcode (shown once):\\n\\n' + r.passcode);
+        if (r.passcode) {
+          showInviteModal({
+            title: 'New passcode',
+            name: r.name || 'them',
+            passcode: r.passcode,
+          });
+        }
         if (body.action === 'merge') toast('Merged ' + r.merged + ' into ' + r.into, 'success');
         else toast('Done', 'success');
         loadCollaborators();
       } catch (e) { toast('That did not work', 'error'); }
+    }
+
+    /**
+     * Offer to make a project a repository, once you can see what that means.
+     *
+     * Never silently: this writes a .gitignore and makes a commit in a folder
+     * that is not currently under version control, and the only way to judge
+     * that is to be shown the file count and anything sensitive first.
+     */
+    async function offerGitInit(project, thenCreate) {
+      let p;
+      try {
+        p = await apiFetch('/api/collaborators', {
+          method: 'POST', body: JSON.stringify({ action: 'gitPreview', project }),
+        }).then(x => x.json());
+      } catch (e) { toast('Could not inspect that project', 'error'); return; }
+      if (!p.ok) { toast(p.error || 'Could not inspect that project', 'error'); return; }
+      if (p.alreadyGit) { thenCreate(); return; }
+
+      const mb = (p.bytes / 1048576).toFixed(1);
+      const back = document.createElement('div');
+      back.className = 'inv-back';
+      back.innerHTML = '<div class="inv-box">'
+        + '<h3>' + escHtml(project) + ' is not a git repository yet</h3>'
+        + '<div class="inv-sub">Sharing gives each person their own branch, so it needs one. '
+        + 'Setting it up makes a first commit of what is in the folder now.</div>'
+        + '<div class="inv-list"><b>Would commit:</b> ' + p.files + ' files, ' + mb + ' MB'
+        + (p.truncated ? ' (stopped counting at 20,000)' : '')
+        + (p.ignoring && p.ignoring.length
+          ? '<br><b>Skipping:</b> ' + escHtml(p.ignoring.join(', ')) : '')
+        + '</div>'
+        + (p.excluded && p.excluded.length
+          ? '<div class="inv-list" style="margin-top:6px"><b>Kept out of git:</b><br>'
+            + p.excluded.map(function (x) {
+              return '<span style="font-family:var(--mono);font-size:0.7rem">' + escHtml(x.path)
+                + '</span> <span style="color:var(--text-muted)">(' + escHtml(x.why) + ')</span>';
+            }).join('<br>') + '</div>'
+          : '')
+        + (p.risky && p.risky.length
+          ? '<div class="inv-warn"><b>These would be committed and look sensitive:</b><br>'
+            + p.risky.map(function (x) { return escHtml(x.path) + ' (' + escHtml(x.why) + ')'; }).join('<br>')
+            + '<br><br>Move or delete them first if that is not what you want.</div>'
+          : '')
+        + (p.wouldWriteIgnore
+          ? '<div class="inv-sub" style="margin-top:8px">A .gitignore will be written first, '
+            + 'keeping dependencies, build output and secrets out. You can edit it afterwards.</div>'
+          : '<div class="inv-sub" style="margin-top:8px">This project already has a .gitignore, so git decides what is included.</div>')
+        + '<div class="inv-acts">'
+        + '<button data-close="1">Cancel</button>'
+        + '<button class="primary" data-go="1">Set up git and share</button>'
+        + '</div></div>';
+
+      back.addEventListener('click', async (ev) => {
+        if (ev.target === back || ev.target.closest('[data-close]')) { back.remove(); return; }
+        const go = ev.target.closest('[data-go]');
+        if (!go) return;
+        go.disabled = true;
+        go.textContent = 'Setting up…';
+        try {
+          const r = await apiFetch('/api/collaborators', {
+            method: 'POST', body: JSON.stringify({ action: 'initGit', project }),
+          }).then(x => x.json());
+          if (!r.ok) { toast(r.error || 'git init failed', 'error'); go.disabled = false; go.textContent = 'Set up git and share'; return; }
+          back.remove();
+          toast('Set up git in ' + project, 'success');
+          thenCreate();
+        } catch (e) {
+          toast('git init failed', 'error');
+          go.disabled = false; go.textContent = 'Set up git and share';
+        }
+      });
+      document.body.appendChild(back);
     }
 
     async function collabCreate() {
@@ -8827,10 +9041,27 @@ export function getWebappHtml(botUsername) {
           method: 'POST',
           body: JSON.stringify({ action: 'create', name, telegram: tg, hours, projects: chosen }),
         }).then(x => x.json());
-        if (!r.ok) { toast(r.error || 'Could not create that', 'error'); return; }
+        if (!r.ok) {
+          // One project, not a repo yet: offer to fix it rather than stop.
+          if (r.needsGit && r.needsGit.length === 1) {
+            offerGitInit(r.needsGit[0], function () { collabCreate(); });
+            return;
+          }
+          toast(r.error || 'Could not create that', 'error');
+          return;
+        }
+        const made = (r.collaborators || []);
         if (r.passcode) {
-          alert('Access created.\\n\\nName: ' + name + '\\nPasscode: ' + r.passcode
-            + '\\n\\nThis is shown once. They sign in with the name and this passcode.');
+          showInviteModal({
+            name,
+            passcode: r.passcode,
+            projects: made.map(function (c) { return c.project; }),
+            endsAt: made[0] ? new Date(made[0].expiresAt).toLocaleString(undefined, {
+              weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+            }) : '',
+          });
+        } else if (r.sharesExisting) {
+          toast('Added to their existing access — their passcode is unchanged', 'success');
         }
         if (r.failed && r.failed.length) toast(r.failed.join('; '), 'error');
         loadCollaborators();

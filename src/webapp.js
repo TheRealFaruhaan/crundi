@@ -2427,6 +2427,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           broadcastState();
           return json(res, r);
         }
+        // Sharing a folder that is not a repository yet: say what setting one
+        // up would sweep into the first commit BEFORE doing it.
+        case 'gitPreview': return json(res, collaborators.gitPreview(body.project));
+        case 'initGit': {
+          const r = await collaborators.initGit(body.project);
+          if (r.ok) broadcastState();
+          return json(res, r, r.ok ? 200 : 400);
+        }
         case 'mergePreview': return json(res, await collaborators.mergePreview(body.id));
         case 'merge': {
           const r = await collaborators.mergeBranch(body.id);

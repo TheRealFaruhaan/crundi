@@ -158,6 +158,178 @@ function slug(s) {
     || 'collab';
 }
 
+// ─── Projects that are not repositories yet ───
+//
+// A worktree needs a commit to branch from, so a folder with no git in it
+// cannot be shared as-is. Initialising one is not a neutral act: it creates a
+// commit containing whatever is currently in the folder, which on a working
+// project may include an .env, a private key, or a 300 MB node_modules.
+//
+// So this reports first and acts second. The preview is the whole point —
+// "set up git" is a fine button to press once you can see what it would
+// sweep up, and a bad one before.
+
+/**
+ * Files that must not reach a shared repository.
+ *
+ * `.env.example` and friends are deliberately NOT here: committing the example
+ * is the whole point of having one, and flagging it would teach you to ignore
+ * the warnings that matter.
+ */
+const RISKY = [
+  { re: /(^|\/)\.env(\.(?!example|sample|template|dist)[^/]*)?$/i, why: 'environment file' },
+  { re: /(^|\/)id_(rsa|ed25519|ecdsa)$/i, why: 'private SSH key' },
+  { re: /\.(pem|key|p12|pfx|keystore)$/i, why: 'key or certificate' },
+  { re: /(^|\/)(credentials|secrets?|service-account)[^/]*\.(json|ya?ml|ini)$/i, why: 'credentials file' },
+  { re: /(^|\/)\.npmrc$/i, why: 'may hold an auth token' },
+  { re: /(^|\/)\.git-credentials$/i, why: 'stored git passwords' },
+];
+
+/** Directories kept out of the first commit, when we are writing the .gitignore. */
+const IGNORE_DIRS = ['node_modules', '.venv', 'venv', '__pycache__', 'dist', 'build',
+  '.next', '.cache', 'target', 'vendor'];
+
+/**
+ * The .gitignore written for a project that had none.
+ *
+ * Secrets are EXCLUDED rather than merely warned about. A warning you have to
+ * act on is one you will eventually click past, and the cost of clicking past
+ * this one is handing an outsider your credentials. The collaborator gets a
+ * checkout without them, which is the right default — their Claude can ask you
+ * for whatever it actually needs.
+ */
+const DEFAULT_IGNORE = [
+  '# Written by Crundi when this project was first shared.',
+  '# Edit freely \u2014 this is your file now.',
+  '',
+  '# Dependencies and build output',
+  ...IGNORE_DIRS,
+  '',
+  '# Noise',
+  '.DS_Store',
+  '*.log',
+  '',
+  '# Secrets. Kept out on purpose: this repository gets shared.',
+  '.env',
+  '.env.*',
+  '!.env.example',
+  '!.env.sample',
+  '!.env.template',
+  '*.pem',
+  '*.key',
+  '*.p12',
+  '*.pfx',
+  '.npmrc',
+  '.git-credentials',
+  'id_rsa',
+  'id_ed25519',
+  '',
+];
+
+/**
+ * Does the generated .gitignore cover this path?
+ *
+ * Shared by the preview and the commit so the two cannot disagree. A preview
+ * saying "12 files" followed by a commit of 4000 would be worse than showing
+ * no preview at all.
+ */
+function wouldIgnore(rel) {
+  const name = rel.split('/').pop();
+  if (rel.split('/').some(seg => IGNORE_DIRS.includes(seg))) return true;
+  if (name === '.DS_Store' || name.endsWith('.log')) return true;
+  if (/^\.env($|\.)/i.test(name) && !/^\.env\.(example|sample|template)$/i.test(name)) return true;
+  if (/\.(pem|key|p12|pfx)$/i.test(name)) return true;
+  if (['.npmrc', '.git-credentials', 'id_rsa', 'id_ed25519'].includes(name)) return true;
+  return false;
+}
+
+/**
+ * What initialising git here would sweep into the first commit.
+ *
+ * Walks the folder rather than trusting a guess, skipping the directories the
+ * generated .gitignore would exclude — so the count is what would ACTUALLY be
+ * committed, not what is on disk.
+ */
+export function gitPreview(projectAlias) {
+  const project = getProject(projectAlias);
+  if (!project) return { ok: false, error: `Project "${projectAlias}" not found` };
+  if (existsSync(join(project.path, '.git'))) {
+    return { ok: true, alreadyGit: true };
+  }
+  const hasIgnore = existsSync(join(project.path, '.gitignore'));
+  let files = 0;
+  let bytes = 0;
+  const risky = [];      // would be committed AND looks sensitive
+  const excluded = [];   // looks sensitive, but the .gitignore keeps it out
+  let truncated = false;
+  const walk = (dir, rel) => {
+    if (files > 20000) { truncated = true; return; }
+    let ents = [];
+    try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (e.name === '.git') continue;
+      const full = join(dir, e.name);
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isSymbolicLink()) continue;
+      // Only OUR .gitignore can be predicted. If the project already has one,
+      // git decides, so the walk counts everything and the caller is told.
+      const ignored = !hasIgnore && wouldIgnore(r);
+      if (e.isDirectory()) { if (!ignored) walk(full, r); continue; }
+      const hit = RISKY.find(x => x.re.test(r));
+      if (ignored) {
+        if (hit && excluded.length < 25) excluded.push({ path: r, why: hit.why });
+        continue;
+      }
+      files++;
+      try { bytes += statSync(full).size; } catch { /* vanished */ }
+      if (hit && risky.length < 25) risky.push({ path: r, why: hit.why });
+    }
+  };
+  walk(project.path, '');
+  // The .gitignore we are about to write is itself committed, and did not
+  // exist to be counted. Without this the preview says 2 and the commit says
+  // 3 — a small gap, but the whole value of a preview is that it matches.
+  if (!hasIgnore) files += 1;
+  return {
+    ok: true, alreadyGit: false, files, bytes, risky, excluded, truncated,
+    hasIgnore, wouldWriteIgnore: !hasIgnore,
+    // Only the ones actually present, so the list describes this project
+    // rather than reciting a template.
+    ignoring: hasIgnore ? [] : IGNORE_DIRS.filter(d => existsSync(join(project.path, d))),
+  };
+}
+
+/**
+ * Make a project a repository so it can be shared.
+ *
+ * Writes a .gitignore first when there is none — committing node_modules is
+ * not a mistake worth making on someone's behalf — then commits everything
+ * else as a starting point.
+ */
+export async function initGit(projectAlias) {
+  const project = getProject(projectAlias);
+  if (!project) return { ok: false, error: `Project "${projectAlias}" not found` };
+  if (existsSync(join(project.path, '.git'))) return { ok: true, alreadyGit: true };
+
+  const wroteIgnore = !existsSync(join(project.path, '.gitignore'));
+  if (wroteIgnore) {
+    try {
+      writeFileSync(join(project.path, '.gitignore'), DEFAULT_IGNORE.join('\n'));
+    } catch (err) {
+      return { ok: false, error: `Could not write .gitignore: ${err.message}` };
+    }
+  }
+  const init = await git(['init'], project.path);
+  if (!init.ok) return { ok: false, error: `git init failed: ${init.stderr || init.error}` };
+  await git(['add', '-A'], project.path);
+  const commit = await git(['commit', '-m', 'Initial commit'], project.path);
+  if (!commit.ok) {
+    // An empty folder, or a machine with no user.name/user.email configured.
+    return { ok: false, error: (commit.stderr || commit.error || 'git commit failed').split('\n')[0].slice(0, 300) };
+  }
+  return { ok: true, wroteIgnore, output: commit.stdout.split('\n')[0] };
+}
+
 /**
  * Give a collaborator their own checkout.
  *
@@ -172,7 +344,14 @@ export async function provisionWorktree(projectAlias, name) {
 
   const inside = await git(['rev-parse', '--is-inside-work-tree'], project.path);
   if (!inside.ok || inside.stdout.trim() !== 'true') {
-    return { ok: false, error: `"${projectAlias}" is not a git repository, so it cannot be shared as a worktree.` };
+    // needsGit lets the caller offer to set it up, instead of dead-ending on
+    // advice the owner may not be anywhere near a terminal to act on.
+    return {
+      ok: false,
+      needsGit: true,
+      project: projectAlias,
+      error: `"${projectAlias}" is not a git repository yet. Sharing gives each person their own branch, so it needs one.`,
+    };
   }
 
   const base = await git(['rev-parse', 'HEAD'], project.path);
@@ -346,6 +525,7 @@ export async function createMany({ name, projects = [], days, hours, telegram = 
   if (!list.length) return { ok: false, error: 'Pick at least one project' };
   const made = [];
   const failed = [];
+  const needsGit = [];
   let passcode = '';
   for (const p of list) {
     // Sequential, not parallel: each create consults the records written by the
@@ -353,10 +533,10 @@ export async function createMany({ name, projects = [], days, hours, telegram = 
     // running them together would issue several.
     const r = await create({ name, project: p, days, hours, telegram, withPasscode });
     if (r.ok) { made.push(r.collaborator); if (r.passcode) passcode = r.passcode; }
-    else failed.push(`${p}: ${r.error}`);
+    else { failed.push(`${p}: ${r.error}`); if (r.needsGit) needsGit.push(p); }
   }
-  if (!made.length) return { ok: false, error: failed.join('; ') };
-  return { ok: true, collaborators: made, passcode, failed };
+  if (!made.length) return { ok: false, error: failed.join('; '), needsGit };
+  return { ok: true, collaborators: made, passcode, failed, needsGit };
 }
 
 export async function create({ name, project, days, hours, telegram = '', withPasscode = true } = {}) {
@@ -450,9 +630,15 @@ export function reissuePasscode(id) {
   if (!c) return { ok: false, error: 'No such collaborator' };
   const passcode = generatePasscode();
   const p = hashPasscode(passcode);
-  c.passSalt = p.salt; c.passHash = p.hash;
+  // One passcode per PERSON, so re-issuing has to move every invitation they
+  // hold — otherwise the new phrase would open one project and the old one
+  // would still open the rest, which is the opposite of what re-issuing is for.
+  const key = identityOf(c);
+  for (const x of all) {
+    if (identityOf(x) === key) { x.passSalt = p.salt; x.passHash = p.hash; }
+  }
   saveAll(all);
-  return { ok: true, passcode };
+  return { ok: true, passcode, name: c.name };
 }
 
 export async function remove(id) {
