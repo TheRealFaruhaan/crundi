@@ -838,6 +838,7 @@ export function getWebappHtml(botUsername) {
     .collab-days-row { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
     .collab-days-row .collab-in { width: 84px; margin-bottom: 0; }
     .collab-unit { font-size: 0.76rem; color: var(--text-secondary); }
+    .collab-unit-sel { width: auto; margin-bottom: 0; padding: 5px 6px; }
     .collab-in {
       display: block; width: 100%; margin-bottom: 5px; background: var(--bg-primary);
       border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -8665,8 +8666,12 @@ export function getWebappHtml(botUsername) {
       if (left <= 0) return 'expired';
       const d = Math.floor(left / 86400000);
       if (d >= 1) return d + (d === 1 ? ' day left' : ' days left');
-      const h = Math.max(1, Math.round(left / 3600000));
-      return h + (h === 1 ? ' hour left' : ' hours left');
+      const h = Math.floor(left / 3600000);
+      if (h >= 1) return h + (h === 1 ? ' hour left' : ' hours left');
+      // Rounding up to "1 hour left" with four minutes to go is the kind of
+      // small lie that gets someone locked out mid-sentence.
+      const m = Math.max(1, Math.round(left / 60000));
+      return m + (m === 1 ? ' minute left' : ' minutes left');
     }
 
     async function loadCollaborators() {
@@ -8735,8 +8740,13 @@ export function getWebappHtml(botUsername) {
         + '<div class="collab-hint">Ctrl or Cmd click for several. Each gets its own git worktree and branch.</div>'
         + '<label class="collab-lab" for="collab-days">Access lasts</label>'
         + '<div class="collab-days-row">'
-        + '<input class="collab-in" id="collab-days" type="number" min="1" max="365" value="7" />'
-        + '<span class="collab-unit">days</span>'
+        + '<input class="collab-in" id="collab-days" type="number" min="1" max="8760" value="7" />'
+        // Hours as well as days: "four hours to look at this" is as ordinary a
+        // request as "a fortnight to build it", and days alone cannot say it.
+        + '<select class="collab-in collab-unit-sel" id="collab-unit">'
+        + '<option value="days" selected>days</option>'
+        + '<option value="hours">hours</option>'
+        + '</select>'
         + '</div>'
         + '<div class="collab-hint" id="collab-expiry"></div>'
         + '<button class="svc-btn" data-action="collab-create">Create access</button>'
@@ -8747,24 +8757,42 @@ export function getWebappHtml(botUsername) {
       // Say the actual date the access ends, not just the number of days.
       // "7" is a quantity; "ends Sat 19 Sep" is a decision you can check.
       var daysEl = document.getElementById('collab-days');
+      var unitEl = document.getElementById('collab-unit');
       var expEl = document.getElementById('collab-expiry');
       function showExpiry() {
         var n = parseInt(daysEl.value, 10);
-        if (!n || n < 1) { expEl.textContent = 'Pick at least one day.'; return; }
-        var d = new Date(Date.now() + n * 86400000);
-        expEl.textContent = 'Ends ' + d.toLocaleDateString(undefined, {
-          weekday: 'short', day: 'numeric', month: 'short',
-        }) + '. You can extend or revoke it at any time.';
+        var unit = unitEl.value;
+        if (!n || n < 1) { expEl.textContent = 'Enter how long, at least 1 ' + unit.replace(/s$/, '') + '.'; return; }
+        var hours = unit === 'hours' ? n : n * 24;
+        if (hours > 8760) { expEl.textContent = 'That is over a year. The most is 365 days.'; return; }
+        var d = new Date(Date.now() + hours * 3600000);
+        // Short windows need the clock time to be checkable at all: "ends
+        // Sat" is useless when the whole grant is four hours long.
+        var txt = hours < 48
+          ? d.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+          : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+        expEl.textContent = 'Ends ' + txt + '. You can extend or revoke it at any time.';
       }
-      if (daysEl && expEl) { daysEl.addEventListener('input', showExpiry); showExpiry(); }
+      if (daysEl && expEl && unitEl) {
+        daysEl.addEventListener('input', showExpiry);
+        unitEl.addEventListener('change', showExpiry);
+        showExpiry();
+      }
     }
 
     async function collabAction(action, id) {
       const body = { id };
       if (action === 'collab-extend') {
-        const days = prompt('Extend access by how many days?', '7');
-        if (days === null) return;
-        body.action = 'update'; body.days = parseInt(days, 10) || 7;
+        // Accepts "6h", "3d" or a bare number (days), because the grant it is
+        // extending could have been either.
+        const raw = prompt('Extend access by how long?\\n\\ne.g. 6h, 3d, or 7 for seven days', '7d');
+        if (raw === null) return;
+        const m = String(raw).trim().match(/^(\\d+(?:\\.\\d+)?)\\s*([hd]?)/i);
+        if (!m) { toast('Try something like 6h or 3d', 'error'); return; }
+        const n = parseFloat(m[1]);
+        if (!n || n <= 0) { toast('Try something like 6h or 3d', 'error'); return; }
+        body.action = 'update';
+        body.hours = (m[2] || 'd').toLowerCase() === 'h' ? n : n * 24;
       } else if (action === 'collab-revoke') { body.action = 'revoke'; }
       else if (action === 'collab-unrevoke') { body.action = 'update'; body.revoked = false; }
       else if (action === 'collab-reissue') { body.action = 'reissue'; }
@@ -8787,7 +8815,9 @@ export function getWebappHtml(botUsername) {
     async function collabCreate() {
       const name = (document.getElementById('collab-name') || {}).value || '';
       const tg = (document.getElementById('collab-tg') || {}).value || '';
-      const days = parseInt((document.getElementById('collab-days') || {}).value, 10) || 7;
+      const amount = parseInt((document.getElementById('collab-days') || {}).value, 10) || 7;
+      const unit = (document.getElementById('collab-unit') || {}).value || 'days';
+      const hours = unit === 'hours' ? amount : amount * 24;
       const sel = document.getElementById('collab-projects');
       const chosen = sel ? Array.from(sel.selectedOptions).map(function (o) { return o.value; }) : [];
       if (!name.trim()) { toast('Give them a name', 'error'); return; }
@@ -8795,7 +8825,7 @@ export function getWebappHtml(botUsername) {
       try {
         const r = await apiFetch('/api/collaborators', {
           method: 'POST',
-          body: JSON.stringify({ action: 'create', name, telegram: tg, days, projects: chosen }),
+          body: JSON.stringify({ action: 'create', name, telegram: tg, hours, projects: chosen }),
         }).then(x => x.json());
         if (!r.ok) { toast(r.error || 'Could not create that', 'error'); return; }
         if (r.passcode) {
