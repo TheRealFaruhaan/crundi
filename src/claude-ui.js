@@ -43,10 +43,11 @@ import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdir
 import { join, delimiter, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
+import { COLLABORATOR_CLAUDE_TOOLS, collaboratorSettings } from './access-policy.js';
 import { config } from './config.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from './claude-terminals.js';
-import { systemPromptArgs } from './system-prompt.js';
+import { systemPromptArgs, collaboratorPromptLayer } from './system-prompt.js';
 import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
 
 const isWin = process.platform === 'win32';
@@ -747,6 +748,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     skipPermissions = false, sessionMode = null, resumeId = '',
     cwd = '', background = false,
     userLayers = true, systemPromptExtra = '', persistSession = true,
+    collaborator = null,
   } = {}) {
     const key = String(alias || '').toLowerCase();
     const project = getProject(key);
@@ -783,20 +785,61 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       '--replay-user-messages',
       '--setting-sources=user,project,local',
     ];
+    // --restricted ignores these three anyway; leaving the flag on would imply
+    // a collaborator's project-level settings still counted, and they do not.
+    if (collaborator) args.splice(args.indexOf('--setting-sources=user,project,local'), 1);
     // bypassPermissions cannot be switched on later — the CLI rejects
     // set_permission_mode for it unless the session was LAUNCHED this way
     // ("Cannot set permission mode to bypassPermissions because the session was
     // not launched with --dangerously-skip-permissions"). So it is a launch
     // choice, mirroring terminal mode's Skip Permissions option.
-    if (skipPermissions) args.push('--dangerously-skip-permissions');
+    if (skipPermissions && !collaborator) args.push('--dangerously-skip-permissions');
     // Only pin a mode when one was actually chosen; otherwise let the CLI apply
     // the user's own permissions.defaultMode from settings.
-    else if (permissionMode) args.push('--permission-mode', permissionMode);
+    else if (permissionMode && !collaborator) args.push('--permission-mode', permissionMode);
+
+    // ─── Outside collaborator ───
+    //
+    // The boundary is these flags, not the system prompt. Verified against
+    // 2.1.269 on this machine:
+    //
+    //   Read /etc/passwd  -> "outside <cwd>; --restricted confines the file
+    //                         tools to the working directory"
+    //   Bash head /etc/passwd -> blocked, same reason
+    //   Bash eval $(...)      -> "Contains command_substitution" — REFUSED
+    //                            rather than escalated, i.e. it fails closed
+    //
+    // --restricted also ignores user/project/local settings files, so a
+    // collaborator cannot write themselves an allow-rule; --settings still
+    // applies, which is why the deny list below is the one they cannot edit.
+    // --tools under --restricted is an EXACT allowlist, not an addition, so
+    // everything wanted has to be named.
+    if (collaborator) {
+      args.push('--restricted');
+      args.push('--tools', COLLABORATOR_CLAUDE_TOOLS.join(','));
+      args.push('--settings', JSON.stringify(collaboratorSettings()));
+      // Only the .mcp.json written below, carrying their scoped key — not the
+      // user-level MCP servers, which are the owner's connected accounts.
+      args.push('--strict-mcp-config');
+      args.push('--permission-mode', 'default');
+    }
     if (model) args.push('--model', String(model));
     if (effort) args.push('--effort', String(effort));
     // What this Claude is told about the machine it woke up on. Unattended runs
     // get Crundi's layer only — see system-prompt.js.
-    args.push(...systemPromptArgs({ project: key, userLayers, extra: systemPromptExtra }));
+    // userLayers is forced off for a collaborator: the owner's global prompt is
+    // their own notes about their own machine, and a guest has no business
+    // reading it. They get Crundi's base layer plus the collaborator layer.
+    args.push(...systemPromptArgs({
+      project: key,
+      userLayers: collaborator ? false : userLayers,
+      extra: collaborator
+        ? collaboratorPromptLayer({
+          name: collaborator.name, project: collaborator.project,
+          branch: collaborator.branch, root: workdir,
+        })
+        : systemPromptExtra,
+    }));
     // Same resume policy as terminal mode: only pass --continue when a prior
     // transcript exists, or the CLI exits immediately with "No conversation found".
     // Session continuity, mirroring claude-terminals.js: resume an explicit id,
@@ -808,7 +851,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // project at boot, but chat mode did neither — so a project added AFTER
     // startup and only ever opened as a chat had no .mcp.json, and none of the
     // Crundi tools. Verified the tools do work once it exists. No-ops in dev.
-    try { writeMcpConfig(workdir, apiUrl, apiKey, key); } catch { /* non-fatal */ }
+    // A collaborator's worktree gets THEIR key, never the internal one: their
+    // Claude can read files in its own working directory, and .mcp.json is one
+    // of them. The internal key reaches secret_get; theirs does not.
+    try {
+      writeMcpConfig(workdir, apiUrl, collaborator ? (collaborator.apiKey || apiKey) : apiKey, key);
+    } catch { /* non-fatal */ }
 
     const aliasHasLive = entriesForAlias(key).some(x => x.proc);
     // 'compact' resumes and then immediately runs /compact, so the heavy context
@@ -906,6 +954,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // The plan Claude proposed via ExitPlanMode, kept so the header can show
       // it during execution — long after the permission card scrolled away.
       plan: null,
+      // Set when this chat belongs to an outside collaborator. Drives where
+      // permission requests go: they cannot approve their own escalations.
+      collaborator: collaborator || null,
       slashCommands: [],
       cwd: workdir,
       stdoutBuf: '',
@@ -947,6 +998,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // Fail-closed: nothing can answer a parked prompt once the CLI is gone.
       for (const [, p] of s.pending) patchEntry(s, p.entry, { status: 'cancelled' });
       s.pending.clear();
+      // And the owner's inbox must not keep offering buttons that would answer
+      // a process that has exited.
+      if (s.collaborator) sessionGoneCb?.(s.id);
       setState(s, 'idle');
       s.emitter.emit('event', { type: 'exit', code });
       // The transcript is nobody's now, so a later resume of it need not fork.
@@ -974,6 +1028,42 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // never read as an operation still in progress, because the CLI does no
     // work at all until the first message is sent.
     s.startupNotice = emitEntry(s, { id: genId(), kind: 'notice', text: 'Starting Claude…' });
+
+    // ─── First-run orientation ───
+    //
+    // A collaborator arrives knowing nothing about this machine, and the most
+    // useful thing to tell them is not what is forbidden but what to ASK FOR.
+    // Someone who does not know the browser tools exist will describe a bug
+    // instead of having Claude go and look at it.
+    //
+    // Once per person, not once per chat: repeating it every time they open a
+    // window would train them to scroll past it.
+    if (collaborator && onFirstChat) {
+      const shown = onFirstChat(collaborator);
+      if (shown) {
+        emitEntry(s, {
+          id: genId(),
+          kind: 'notice',
+          text: [
+            `You are working on ${collaborator.project}, in your own git worktree on branch ${collaborator.branch}.`,
+            'Commit as you go — the Push button at the top sends your branch up, and you can ask the owner to merge it.',
+            '',
+            'Two things worth knowing, because they are easy to miss:',
+            '',
+            '• Ask Claude to run things as a SERVICE, not in the background. "Start the dev server as a service"',
+            '  gives you something named and supervised that you can stop from the UI and read logs from. A plain',
+            '  `npm run dev &` is blocked here, because it would vanish the moment the turn ended.',
+            '',
+            '• Ask Claude to USE THE BROWSER. It drives a real one: "open the app and click through checkout, tell me',
+            '  what the console says". That is usually faster and more reliable than describing a bug in words.',
+            '',
+            'Claude can also read and write files in your worktree, run tests, and use the project board and mind map.',
+            'It cannot reach anything outside your worktree, and it has no access to secrets or other projects.',
+            'If you hit something that needs the owner, ask and it will be sent to them.',
+          ].join('\n'),
+        });
+      }
+    }
 
     // Show what was already said BEFORE the user types anything — the whole
     // point is to walk into a resumed conversation already knowing where it
@@ -1371,6 +1461,30 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * prompts and AskUserQuestion) plus MCP elicitation / blocking dialogs.
    * Each becomes a pending entry the UI renders and the user answers.
    */
+  /**
+   * Where a collaborator's permission requests go.
+   *
+   * Set by webapp.js. Returns an approval id, or '' if it could not be
+   * recorded — in which case the card stays visible and unanswerable rather
+   * than silently granting anything.
+   */
+  let escalateCb = null;
+  function onEscalation(cb) { escalateCb = cb; }
+
+  /**
+   * Asked once per collaborator: should the orientation be shown?
+   *
+   * Returns true exactly once per person — the record that answers it lives in
+   * collaborators.json, so it survives restarts and is not re-shown to someone
+   * who has already read it.
+   */
+  let onFirstChat = null;
+  function setFirstChatHandler(cb) { onFirstChat = cb; }
+
+  /** Told when a collaborator's chat dies, so its escalations can be dropped. */
+  let sessionGoneCb = null;
+  function onSessionGone(cb) { sessionGoneCb = cb; }
+
   function handleControlRequest(s, msg) {
     const req = msg.request || {};
     const requestId = msg.request_id;
@@ -1410,6 +1524,30 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         suppressAlwaysAllow: !!req.suppress_always_allow_rule,
         status: 'pending',
       };
+      // ─── Collaborator escalation ───
+      //
+      // A collaborator cannot answer their own permission prompt. --restricted
+      // refuses the dangerous classes outright, so what reaches here is what
+      // the CLI wanted a human for — and on a box with passwordless sudo, that
+      // human is the owner. The card still appears in their chat, but as
+      // "waiting", with a Cancel that withdraws it so they can carry on
+      // without whatever it was.
+      //
+      // AskUserQuestion is exempt: that is Claude asking the person doing the
+      // work a question about the work, not asking for permission.
+      if (s.collaborator && !isQuestion) {
+        entry.escalated = true;
+        entry.approvalId = escalateCb?.({
+          sessionId: s.id,
+          collaborator: s.collaborator,
+          requestId,
+          toolName: req.tool_name,
+          displayName: entry.displayName,
+          description: entry.description || entry.title || '',
+          input: req.input || {},
+        }) || '';
+      }
+
       // Register and flip to needs-input BEFORE emitting: a subscriber may answer
       // re-entrantly inside the emit, and a later setState here would then
       // clobber the 'working' that respond() correctly set.
@@ -1846,7 +1984,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, lastTurnOutput, dismissAgents,
+    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, lastTurnOutput, dismissAgents,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },

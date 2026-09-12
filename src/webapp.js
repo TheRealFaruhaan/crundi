@@ -23,6 +23,12 @@ import { getWebappHtml } from './webapp-html.js';
 import { getAllServiceStatus, startService, stopService, restartService, getServiceLogs, deleteService, getServiceHistory } from './services.js';
 import { getSystemStats, startStatsSampler, stopStatsSampler } from './stats.js';
 import { listTasks as listMaintenanceTasks, runTask as runMaintenanceTask } from './maintenance.js';
+import * as collaborators from './collaborators.js';
+import * as approvals from './approvals.js';
+import {
+  mayAccess, isConfined, ROLE_OWNER, ROLE_COLLABORATOR,
+  COLLABORATOR_MCP_TOOLS,
+} from './access-policy.js';
 import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
 import * as claudeUpdate from './claude-update.js';
@@ -31,7 +37,7 @@ import { registerService, listRegisteredForProject, updateRegistered, getRegiste
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
-import { listProjects, getProject, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt } from './project-store.js';
+import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt } from './project-store.js';
 import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
@@ -368,13 +374,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return { valid: false, error: 'Auth data expired' };
     }
 
-    // Check authorized user
+    // Check authorized user.
+    //
+    // The signature above proves Telegram vouched for this username; this
+    // decides what the username is worth here. Two answers now: the owner, or
+    // a current collaborator. A lapsed collaborator falls through to the same
+    // refusal a stranger gets, which is the point of checking the record
+    // rather than a list of names.
+    const who = data.username?.toLowerCase();
     const allowed = config.allowedUsername.replace(/^@/, '').toLowerCase();
-    if (data.username?.toLowerCase() !== allowed) {
-      return { valid: false, error: 'Unauthorized user' };
-    }
+    if (who && who === allowed) return { valid: true, user: data, collab: null };
 
-    return { valid: true, user: data };
+    const collabKey = who ? collaborators.identityByTelegram(who) : null;
+    if (collabKey) return { valid: true, user: data, collabKey };
+
+    return { valid: false, error: 'Unauthorized user' };
   }
 
   /** Drop every token belonging to one login. Used on logout and on reuse detection. */
@@ -417,12 +431,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ token: string, refreshToken: string, expiresIn: number }}
    */
-  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null) {
+  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '') {
     const now = Date.now();
     const token = randomBytes(32).toString('hex');
     const refreshToken = randomBytes(32).toString('hex');
-    tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS });
-    refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false });
+    // collabKey rides on BOTH tokens so a refresh cannot quietly promote a
+    // collaborator to an owner session: the new access token is minted from
+    // the refresh record, and the record remembers which it was.
+    tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS, collabKey });
+    refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false, collabKey });
     // Remember enough about the sign-in to recognise it in a list later. "A
     // session" tells you nothing; "Chrome on Android, from this address, last
     // seen an hour ago" is something you can decide about.
@@ -467,7 +484,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // later — the shape an actually-stolen token has — still cuts the login.
       const age = Date.now() - (entry.usedAt || 0);
       if (entry.usedAt && age <= REPLAY_GRACE_MS) {
-        return { ok: true, ...createSession(entry.username, entry.familyId, req) };
+        return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '') };
       }
       revokeFamily(entry.familyId);
       return { ok: false, error: 'Refresh token reused' };
@@ -483,7 +500,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     entry.usedAt = Date.now();   // how the grace above tells a race from a theft
     // createSession saves, which also records this one as spent - so a replay
     // after a restart is still caught and still revokes the family.
-    return { ok: true, ...createSession(entry.username, entry.familyId, req) };
+    // A collaborator whose time ran out must not be able to refresh their way
+    // into another 15 minutes; active() is the same check the request gate makes.
+    if (entry.collabKey && !collaborators.liveByIdentity(entry.collabKey).length) {
+      revokeFamily(entry.familyId);
+      return { ok: false, error: 'That collaborator access has ended' };
+    }
+    return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '') };
   }
 
   /** Spent refresh tokens are retained for replay detection; drop them at expiry. */
@@ -496,15 +519,54 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const tokenSweepTimer = setInterval(sweepTokens, 60 * 60 * 1000);
   if (tokenSweepTimer.unref) tokenSweepTimer.unref();
 
+  /**
+   * Resolve a bearer token to a PRINCIPAL, or null.
+   *
+   * This used to return a boolean, which is why nothing downstream could tell
+   * one caller from another. It now returns who is calling, because outside
+   * collaborators need a different answer to "may I" than the owner does.
+   */
   function checkAccess(tok) {
     const entry = tok && tokens.get(tok);
-    if (!entry) return false;
-    if (Date.now() >= entry.expiresAt) { tokens.delete(tok); return false; }
+    if (!entry) return null;
+    if (Date.now() >= entry.expiresAt) { tokens.delete(tok); return null; }
+    // A collaborator's access is time-boxed, and the box is checked HERE —
+    // every request — rather than only at login. Otherwise revoking someone
+    // would not take effect until their 15-minute access token happened to
+    // lapse, and "revoked" has to mean now.
+    //
+    // The session is bound to the PERSON, not to one invitation, and their
+    // invitations are re-read on every request. So a project granted after
+    // they signed in appears without a new login, and one revoked disappears
+    // without waiting for anything.
+    let invitations = [];
+    if (entry.collabKey) {
+      invitations = collaborators.liveByIdentity(entry.collabKey);
+      if (!invitations.length) { tokens.delete(tok); return null; }
+    }
     // In memory only. "Last seen" is worth having in the session list, but not
     // worth a disk write per request; the periodic refresh persists it.
     const fam = families.get(entry.familyId);
     if (fam) fam.lastSeenAt = Date.now();
-    return true;
+    if (!invitations.length) {
+      return { username: entry.username, role: ROLE_OWNER, collabKey: '', projects: [], roots: {} };
+    }
+    const roots = {};
+    for (const c of invitations) roots[c.project] = c.worktreePath;
+    return {
+      username: entry.username,
+      role: ROLE_COLLABORATOR,
+      collabKey: entry.collabKey,
+      name: invitations[0].name,
+      projects: invitations.map(c => c.project),
+      roots,
+      // Soonest expiry across their invitations — what the UI counts down to.
+      expiresAt: Math.min(...invitations.map(c => c.expiresAt || Infinity)),
+      invitations: invitations.map(c => ({
+        id: c.id, project: c.project, branch: c.branch,
+        root: c.worktreePath, expiresAt: c.expiresAt,
+      })),
+    };
   }
 
   // ─── Forward cookie ───
@@ -580,10 +642,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return want.length === got.length && timingSafeEqual(want, got);
   }
 
+  /**
+   * The caller behind a request, or null.
+   *
+   * Returns a principal rather than a boolean. Every existing `!validateToken(req)`
+   * still reads correctly, and the gate now has something to authorise against.
+   */
   function validateToken(req) {
     // Authorization header (normal API calls)
     const auth = req.headers['authorization'];
-    if (auth?.startsWith('Bearer ') && checkAccess(auth.slice(7))) return true;
+    if (auth?.startsWith('Bearer ')) {
+      const p = checkAccess(auth.slice(7));
+      if (p) return p;
+    }
     // Query param (WebSocket/SSE, which can't set headers). Long-lived sockets
     // are only authorized at connect; the client reconnects with a fresh token.
     const url = new URL(req.url, 'http://localhost');
@@ -931,6 +1002,55 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // from a single process, so no timestamp reordering guard is needed.
   if (claudeUi) claudeUi.onAnyStateChange((id, state) => handleAgentState(id, state, Date.now()));
 
+  if (claudeUi) claudeUi.setFirstChatHandler((c) => collaborators.markBriefed(c.id));
+  if (claudeUi) claudeUi.onSessionGone((sid) => { approvals.dropSession(sid); broadcastApprovals(); });
+
+  // Permission prompts from a collaborator's chat become approvals for the
+  // owner. The resolver closes the loop back to the CLI, which is still
+  // blocked waiting on a control_response.
+  if (claudeUi) claudeUi.onEscalation((e) => {
+    const rec = approvals.add({
+      kind: 'tool',
+      collabId: e.collaborator?.id || '',
+      collabKey: e.collaborator?.key || '',
+      name: e.collaborator?.name || '',
+      project: e.collaborator?.project || '',
+      sessionId: e.sessionId,
+      requestId: e.requestId,
+      title: `${e.displayName || e.toolName} in ${e.collaborator?.project || 'a project'}`,
+      detail: [e.description, '', '```json', JSON.stringify(e.input, null, 2).slice(0, 4000), '```']
+        .filter(x => x !== undefined).join('\n'),
+      resolve: (approved, r) => {
+        // Withdrawn by the collaborator reads differently from refused by the
+        // owner: the first is "never mind", the second is a decision Claude
+        // should take seriously and not simply retry.
+        const withdrawn = r.decidedBy === 'collaborator';
+        claudeUi.respond(e.sessionId, {
+          requestId: e.requestId,
+          behavior: approved ? 'allow' : 'deny',
+          message: withdrawn
+            ? 'The collaborator withdrew this request. Carry on without it, and do not ask again for the same thing.'
+            : 'The project owner declined this. Do not retry it; find another way or say what you are blocked on.',
+        });
+      },
+    });
+    return rec.id;
+  });
+
+  // A collaborator asking for something is exactly the case where the owner is
+  // not looking at the screen — that is why it needed asking rather than doing.
+  approvals.onRequest((rec) => {
+    broadcastApprovals();
+    if (rec.kind === 'tool') return;   // the chat already shows these
+    // Delivered unconditionally rather than through notifyEvent: this is a
+    // person sitting blocked, not an event about the machine, and "away" is
+    // exactly when it matters most.
+    channels.deliver(
+      `${rec.name} asks: ${rec.title}${rec.project ? ` (${rec.project})` : ''}`,
+      { tag: 'collabRequest' },
+    ).catch(() => { /* a dead channel must not fail the request */ });
+  });
+
   function broadcastSSE(event, data) {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of sseClients) {
@@ -938,9 +1058,61 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
   }
 
+  /**
+   * Narrow a built state to what one principal may know about.
+   *
+   * Crundi pushed the whole machine to every connected client: all projects,
+   * all services, every terminal and chat. For an owner that is the point. For
+   * a collaborator it would disclose the existence of work they were never
+   * given, before they touched a single route — so the filtering has to happen
+   * on the way out, not in the browser.
+   */
+  function filterStateFor(principal, state) {
+    if (!isConfined(principal)) return { ...state, role: ROLE_OWNER };
+    const mine = new Set(principal.projects);
+    const projects = (state.projects || [])
+      .filter(p => mine.has(String(p.alias || '').toLowerCase()))
+      // Their checkout, not the original: every path the UI shows them should
+      // be one they can actually reach.
+      .map(p => ({ ...p, path: principal.roots[String(p.alias || '').toLowerCase()] || p.path }));
+    return {
+      ...state,
+      role: ROLE_COLLABORATOR,
+      collab: {
+        name: principal.name,
+        projects: principal.projects,
+        invitations: principal.invitations || [],
+        expiresAt: Number.isFinite(principal.expiresAt) ? principal.expiresAt : 0,
+      },
+      projects,
+      services: (state.services || []).filter(x => mine.has(String(x.alias || '').toLowerCase())),
+      // Chats belonging to them. Terminal cells are refused at the route level
+      // anyway, but a collaborator must not even see that others are running.
+      terminals: (state.terminals || []).filter(t =>
+        t.kind === 'ui' && mine.has(String(t.project || '').toLowerCase())),
+      userTerminals: [],
+      scheduled: [],
+    };
+  }
+
   function broadcastState() {
     if (!sseClients.size) return;
-    broadcastSSE('state', buildState());
+    // Built once for the owner, then narrowed per collaborator. Memoised by id
+    // so ten tabs of the same collaborator cost one filter, not ten.
+    const full = buildState();
+    const ownerPayload = `event: state\ndata: ${JSON.stringify(filterStateFor(null, full))}\n\n`;
+    const perCollab = new Map();
+    for (const client of sseClients) {
+      let payload = ownerPayload;
+      const p = client.principal;
+      if (isConfined(p)) {
+        if (!perCollab.has(p.collabId)) {
+          perCollab.set(p.collabId, `event: state\ndata: ${JSON.stringify(filterStateFor(p, full))}\n\n`);
+        }
+        payload = perCollab.get(p.collabId);
+      }
+      try { client.res.write(payload); } catch { sseClients.delete(client); }
+    }
   }
 
   /**
@@ -1015,7 +1187,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * task / subtask / node is gone). projectName is added for display.
    */
   function enrichMedia(item) {
-    const proj = item.project ? getProject(item.project) : null;
+    const proj = item.project ? getProjectUnscoped(item.project) : null;
     let linkStatus = 'none', linkLabel = null;
     const l = item.link;
     if (l) {
@@ -1088,6 +1260,53 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   function broadcastSecretRequests() {
     broadcastSSE('secret-requests', { requests: publicSecretRequests() });
+    // The indicator counts secrets too, so a new secret request has to move it.
+    broadcastApprovals();
+  }
+
+  /**
+   * Everything waiting on the owner, from all three sources at once.
+   *
+   * Assembled on read rather than maintained as a list: secrets and chat cards
+   * are owned elsewhere and already know their own state, and a copy here
+   * would eventually disagree with them about what is still pending.
+   */
+  function approvalsSnapshot() {
+    const secrets = publicSecretRequests().map(r => ({
+      id: r.id, source: 'secret', title: r.secretName || 'A secret',
+      detail: r.reason || '', project: r.projectAlias || '', createdAt: r.createdAt || 0,
+      kind: r.kind || 'get', command: r.command || '',
+    }));
+    // A chat card is answered in the chat; the inbox exists so you can SEE it
+    // from elsewhere, which is why each carries the session it belongs to.
+    const chat = [];
+    for (const sess of (claudeUi ? claudeUi.list() : [])) {
+      for (const p of (sess.pending || [])) {
+        chat.push({
+          id: p.requestId, source: 'chat', sessionId: sess.id,
+          title: p.displayName || p.toolName || 'Permission',
+          detail: p.description || p.title || '',
+          project: sess.project || '', createdAt: p.at || 0,
+          isQuestion: p.kind === 'question',
+        });
+      }
+    }
+    const collab = approvals.pending().map(r => ({
+      id: r.id, source: 'collab', kind: r.kind, title: r.title, detail: r.detail,
+      project: r.project, name: r.name, sessionId: r.sessionId || '', createdAt: r.createdAt,
+    }));
+    const items = [...secrets, ...chat, ...collab].sort((a, b) => a.createdAt - b.createdAt);
+    return { items, count: items.length };
+  }
+
+  function broadcastApprovals() {
+    // Owners only: a collaborator's own pending requests reach them through
+    // /api/collab/me, and this list names other people's work.
+    const payload = `event: approvals\ndata: ${JSON.stringify(approvalsSnapshot())}\n\n`;
+    for (const client of sseClients) {
+      if (isConfined(client.principal)) continue;
+      try { client.res.write(payload); } catch { sseClients.delete(client); }
+    }
   }
 
   /**
@@ -1392,7 +1611,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (parsed?.telegramLogin) {
         const result = validateTelegramLogin(parsed.telegramLogin);
         if (!result.valid) return json(res, { ok: false, error: result.error }, 403);
-        const session = createSession(result.user.username, undefined, req);
+        if (result.collabKey) collaborators.markSeen(result.collabKey);
+        const session = createSession(result.user.username, undefined, req, result.collabKey || '');
         return json(res, { ok: true, ...session, user: result.user });
       }
 
@@ -1413,7 +1633,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         res.end();
         return;
       }
-      const session = createSession(result.user.username, undefined, req);
+      if (result.collabKey) collaborators.markSeen(result.collabKey);
+      const session = createSession(result.user.username, undefined, req, result.collabKey || '');
       res.writeHead(302, {
         Location: '/#token=' + session.token + '&refresh=' + session.refreshToken,
       });
@@ -1451,10 +1672,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { user = JSON.parse(params.get('user')); } catch { /* ignore */ }
       const username = user?.username?.toLowerCase() || '';
       const allowed = config.allowedUsername.replace(/^@/, '').toLowerCase();
-      if (username !== allowed) return json(res, { ok: false, error: 'Unauthorized user' }, 403);
+      // Same two answers as the widget path: the owner, or a live
+      // collaborator. Kept in step with validateTelegramLogin deliberately —
+      // a check that exists in one Telegram entry point and not the others is
+      // how the Mini App becomes the way in.
+      const miniCollab = username && username !== allowed ? collaborators.identityByTelegram(username) : null;
+      if (username !== allowed && !miniCollab) return json(res, { ok: false, error: 'Unauthorized user' }, 403);
 
-      setForwardCookie(res);
-      return json(res, { ok: true, ...createSession(username, undefined, req), user });
+      if (miniCollab) collaborators.markSeen(miniCollab);
+      // The forward cookie reaches proxied apps on other hostnames, which is
+      // not part of what a collaborator was given.
+      if (!miniCollab) setForwardCookie(res);
+      return json(res, { ok: true, ...createSession(username, undefined, req, miniCollab || ''), user });
     }
 
     // ─── Local auth (Electron / localhost only) ───
@@ -1489,6 +1718,40 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       console.log('[crundi] Password login succeeded');
       setForwardCookie(res);
       return json(res, { ok: true, ...createSession(config.localUsername, undefined, req) });
+    }
+
+    // ─── Collaborator sign-in ───
+    //
+    // Their own door, deliberately separate from the owner's. It grants a
+    // session whose principal is confined, and it never reaches
+    // authConfig — a collaborator has no password and no TOTP on this server,
+    // only a name and a phrase that expires.
+    if (path === '/api/auth/collab' && req.method === 'POST') {
+      let parsed;
+      try { parsed = JSON.parse(await readBody(req)); } catch { /* ignore */ }
+      const key = collaborators.identityByPasscode(parsed?.name, parsed?.passcode);
+      if (!key) {
+        // Same shape of answer whether the name is unknown, the phrase is
+        // wrong, or the access simply ran out: otherwise this endpoint
+        // enumerates who has been given access and when it lapsed.
+        await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 300)));
+        console.warn(`[crundi] Failed collaborator login from ${clientIp(req)}`);
+        return json(res, { ok: false, error: 'That name and passcode do not match, or the access has ended' }, 401);
+      }
+      collaborators.markSeen(key);
+      const invites = collaborators.liveByIdentity(key);
+      console.log(`[crundi] Collaborator "${invites[0].name}" signed in for ${invites.map(i => `"${i.project}"`).join(', ')}`);
+      // No forward cookie: that credential exists to reach proxied apps on
+      // other hostnames, which is not part of what is being shared.
+      return json(res, {
+        ok: true,
+        ...createSession(`collab:${invites[0].name}`, undefined, req, key),
+        collaborator: {
+          name: invites[0].name,
+          projects: invites.map(i => i.project),
+          expiresAt: Math.min(...invites.map(i => i.expiresAt)),
+        },
+      });
     }
 
     // Which sign-in methods this server offers. Read before login, so it is
@@ -1620,11 +1883,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Flush through Cloudflare buffering
       const padding = ':' + ' '.repeat(2048) + '\n';
       for (let i = 0; i < 24; i++) res.write(padding);
-      const client = { res };
+      // Captured at connect: a long-lived socket is authorised once, and the
+      // filtering below has to know whose socket this is for its whole life.
+      const client = { res, principal: validateToken(req) };
       sseClients.add(client);
       req.on('close', () => sseClients.delete(client));
       broadcastState();
       broadcastUsage();
+      broadcastApprovals();
       // A request that was already pending must reach a client that connects
       // afterwards. Without this, refreshing the page while Claude is blocked
       // waiting for approval loses the prompt and the call just times out.
@@ -1652,15 +1918,87 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // MCP call + hook status endpoints use their own X-Api-Key auth (not tokens)
-    if (!authConfig.isOpen()
-        && path !== '/api/mcp/call' && path !== '/api/terminal-status'
-        && !validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+    const keyAuthed = path === '/api/mcp/call' || path === '/api/terminal-status';
+    let principal = null;
+    if (!authConfig.isOpen() && !keyAuthed) {
+      principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+    } else if (!keyAuthed) {
+      // Open (unconfigured) install: there is one notional owner and no way to
+      // tell anyone apart yet. Nothing reaches here anyway — setup mode above
+      // refuses every path but two — but the rest of the file expects a
+      // principal to exist, so it gets the only one that makes sense.
+      principal = { username: '', role: ROLE_OWNER, collabId: '', project: '', root: '' };
+    }
+
+    // ─── Authorisation ───
+    //
+    // Authentication said WHO. This says WHAT, and for a collaborator it is an
+    // allowlist: a route nobody thought about is refused rather than exposed.
+    // Owners are unaffected — mayAccess returns true for them without
+    // consulting anything, so this cannot change the single-user install.
+    if (principal && !mayAccess(principal, req.method, path)) {
+      return json(res, {
+        error: 'Not available to collaborator access.',
+        collaborator: true,
+      }, 403);
+    }
+
+    // ─── Project scoping ───
+    //
+    // Deliberately SHADOWS the imported getProject for the rest of this
+    // function. Narrowing 26 call sites by hand would work until someone adds
+    // the 27th, and that one would be the hole. Here a new route inherits the
+    // scope by default and has to work to escape it.
+    //
+    // For a collaborator this also swaps project.path for their WORKTREE, so
+    // everything downstream that runs in "the project directory" — git,
+    // chat cwd, file resolution — lands in their checkout instead.
+    //
+    // principal is null on the key-authenticated paths (/api/mcp/call,
+    // /api/terminal-status); isConfined(null) is false, so those are unchanged
+    // and are scoped separately where the collaborator key is recognised.
+    /**
+     * May this caller act on this project alias?
+     *
+     * getProject() narrows the routes that RESOLVE a project, but several take
+     * the alias straight through to a store — kanban and mindmap never touch
+     * project-store at all. Those were reachable for any alias a caller cared
+     * to name, which is how a collaborator read a board they had never been
+     * given. This is the check for that shape of route.
+     */
+    const aliasDenied = (alias) => isConfined(principal)
+      && !principal.projects.includes(String(alias || '').toLowerCase());
+
+    // Applied to QUERY parameters here, once, so a GET route added later
+    // inherits it. Body parameters are checked in the handlers, because the
+    // body has not been read yet at this point.
+    if (isConfined(principal)) {
+      for (const k of ['project', 'alias']) {
+        const v = url.searchParams.get(k);
+        if (v && aliasDenied(v)) return json(res, { ok: false, error: 'Unknown project' }, 403);
+      }
+    }
+
+    const getProject = (alias) => {
+      const p = getProjectUnscoped(alias);
+      if (!p) return null;
+      if (!isConfined(principal)) return p;
+      const key = String(p.alias || alias || '').toLowerCase();
+      if (!principal.projects.includes(key)) return null;
+      return { ...p, path: principal.roots[key] || p.path };
+    };
 
     // Top the forward cookie up on any authenticated call. It used to be minted
     // only at sign-in, so a session that outlived its cookie — or a restart in
     // the old scheme — left private forwards refusing someone who was signed in
     // and had no reason to suspect a cookie. Now simply using Crundi fixes it.
-    if (!authConfig.isOpen() && path.startsWith('/api/') && !hasForwardCookie(req)) {
+    // Not for collaborators: this cookie is what reaches private forwards on
+    // other hostnames — proxied apps that are nothing to do with the project
+    // they were given. The login paths already withhold it; this is the other
+    // place it is handed out, and it would have quietly undone that.
+    if (!authConfig.isOpen() && path.startsWith('/api/') && !hasForwardCookie(req)
+        && !isConfined(principal)) {
       try { setForwardCookie(res); } catch { /* never worth failing a request for */ }
     }
 
@@ -1721,6 +2059,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     if (path === '/api/projects' && req.method === 'GET') {
+      // A collaborator is shown one project, pointed at their own checkout.
+      // The sidebar is built from this, so anything else here is a disclosure.
+      if (isConfined(principal)) {
+        const mine = listProjects()
+          .filter(p => principal.projects.includes(String(p.alias || '').toLowerCase()))
+          .map(p => ({ ...p, path: principal.roots[String(p.alias || '').toLowerCase()] || p.path }));
+        return json(res, { projects: mine });
+      }
       return json(res, { projects: listProjects() });
     }
 
@@ -1805,6 +2151,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       const { action, project } = body;
       if (!project) return json(res, { ok: false, error: 'project is required' }, 400);
+      if (aliasDenied(project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
       let result;
       switch (action) {
         case 'addTask': result = kanban.addTask(project, { title: body.title, description: body.description, status: body.status, todos: body.todos }); break;
@@ -1870,12 +2217,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Mindmap (global) ───
     if (path === '/api/mindmap' && req.method === 'GET') {
+      // The web route passes no project, so the owner sees every project's
+      // nodes — which is the point of a mind map. A collaborator gets theirs,
+      // assembled per project because the store scopes one at a time.
+      if (isConfined(principal)) {
+        const maps = principal.projects.map(p => mindmap.getMindmap(p));
+        const nodes = maps.flatMap(m => m.nodes || []);
+        return json(res, { ok: true, mindmap: { ...(maps[0] || {}), nodes } });
+      }
       return json(res, { ok: true, mindmap: mindmap.getMindmap() });
     }
 
     if (path === '/api/mindmap' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req));
       const { action } = body;
+      if (aliasDenied(body.project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
+      // A node is reachable by id alone, so membership has to be checked
+      // against the node, not just against whatever project the body names.
+      if (isConfined(principal) && body.id) {
+        const owner = mindmap.projectOfNode(body.id);
+        if (aliasDenied(owner || '')) return json(res, { ok: false, error: 'Unknown node' }, 403);
+      }
       let result;
       switch (action) {
         case 'addNode': result = mindmap.addNode({ text: body.text, parentId: body.parentId, note: body.note, notes: body.notes, project: body.project, taskId: body.taskId, todoId: body.todoId }); break;
@@ -1934,8 +2296,168 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Claude Terminals ───
     // What SSE would push, fetched once at startup so the first paint is right.
+    // ─── Outside collaborators ───
+
+    /** What a collaborator is allowed to know about their own access. */
+    if (path === '/api/collab/me' && req.method === 'GET') {
+      if (!isConfined(principal)) return json(res, { ok: false, error: 'Not a collaborator session' }, 400);
+      return json(res, {
+        ok: true,
+        name: principal.name,
+        invitations: principal.invitations || [],
+        expiresAt: Number.isFinite(principal.expiresAt) ? principal.expiresAt : 0,
+        requests: approvals.pendingForKey(principal.collabKey),
+      });
+    }
+
+    /** Which invitation a request is about, or null if it is not theirs. */
+    const invitationFor = (want) => (principal?.invitations || [])
+      .find(i => i.project === String(want || '').toLowerCase()
+        || i.id === String(want || '')) || null;
+
+    /** Push their branch. The refspec is built from the record, never the body. */
+    if (path === '/api/collab/push' && req.method === 'POST') {
+      if (!isConfined(principal)) return json(res, { ok: false, error: 'Not a collaborator session' }, 400);
+      const body = JSON.parse(await readBody(req));
+      const inv = invitationFor(body.project || body.id);
+      if (!inv) return json(res, { ok: false, error: 'Unknown project' }, 403);
+      const r = await collaborators.pushBranch(inv.id);
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
+    /** Ask the owner for something the policy refuses to do unilaterally. */
+    if (path === '/api/collab/request' && req.method === 'POST') {
+      if (!isConfined(principal)) return json(res, { ok: false, error: 'Not a collaborator session' }, 400);
+      const body = JSON.parse(await readBody(req));
+      const kind = body.kind === 'merge' ? 'merge' : 'note';
+      const inv = invitationFor(body.project || body.id);
+      if (!inv) return json(res, { ok: false, error: 'Unknown project' }, 403);
+      const rec = collaborators.get(inv.id);
+      if (!rec) return json(res, { ok: false, error: 'That access has ended' }, 401);
+
+      let detail = String(body.message || '').slice(0, 4000);
+      let title = kind === 'merge' ? `Merge ${rec.branch} into the project` : 'A question';
+      if (kind === 'merge') {
+        // Checked at request time so the collaborator is told about conflicts
+        // immediately, rather than after a round trip through someone's
+        // evening. Checked AGAIN on approval, because the tree moves.
+        const pre = await collaborators.mergePreview(rec.id);
+        if (pre.ok && !pre.clean) {
+          return json(res, {
+            ok: false, conflicts: pre.conflicts,
+            error: `This would conflict in ${pre.conflicts.length} file(s). Rebase onto ${pre.target} and resolve them first, then ask again.`,
+          }, 409);
+        }
+        if (pre.ok && !pre.commits) return json(res, { ok: false, error: 'Nothing to merge yet — commit something first.' }, 400);
+        if (pre.ok) detail = `${pre.commits} commit(s) into ${pre.target}, no conflicts.\n\n${detail}`;
+      }
+      const added = approvals.add({
+        kind, collabId: rec.id, collabKey: principal.collabKey,
+        name: rec.name, project: rec.project, title, detail,
+      });
+      broadcastApprovals();
+      return json(res, { ok: true, request: added });
+    }
+
+    /**
+     * Withdraw a request.
+     *
+     * A collaborator blocked on an approval should not have to wait for an
+     * answer they have decided they no longer need — taking it back lets them
+     * carry on without it, which is usually what they wanted.
+     */
+    if (path === '/api/collab/cancel' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const rec = approvals.get(String(body.id || ''));
+      if (!rec) return json(res, { ok: false, error: 'No such request' }, 404);
+      if (isConfined(principal) && rec.collabKey !== principal.collabKey) {
+        return json(res, { ok: false, error: 'No such request' }, 404);
+      }
+      const r = approvals.resolve(rec.id, false, isConfined(principal) ? 'collaborator' : 'owner');
+      broadcastApprovals();
+      return json(res, r);
+    }
+
+    // ─── Managing collaborators (owner only; the gate refuses these already) ───
+
+    if (path === '/api/collaborators' && req.method === 'GET') {
+      return json(res, {
+        ok: true,
+        collaborators: collaborators.list(),
+        staleWorktrees: collaborators.staleWorktrees(),
+      });
+    }
+
+    if (path === '/api/collaborators' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      switch (body.action) {
+        case 'create': {
+          // Several projects at once, one invitation record each — so each
+          // carries its own worktree, its own branch, and its own expiry.
+          const projects = Array.isArray(body.projects) && body.projects.length
+            ? body.projects : [body.project].filter(Boolean);
+          const r = await collaborators.createMany({
+            name: body.name, projects, days: body.days,
+            telegram: body.telegram, withPasscode: body.withPasscode !== false,
+          });
+          broadcastState();
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        case 'grant': {
+          // Adding a project to someone who already has access. They keep their
+          // passcode; the new project gets its own worktree and expiry.
+          const r = await collaborators.createMany({
+            name: body.name, projects: [body.project], days: body.days,
+            telegram: body.telegram, withPasscode: true,
+          });
+          broadcastState();
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        case 'update': return json(res, collaborators.update(body.id, body));
+        case 'reissue': return json(res, collaborators.reissuePasscode(body.id));
+        case 'revoke': {
+          const r = collaborators.update(body.id, { revoked: true });
+          // Their live sessions die with the record: checkAccess consults it on
+          // every request, so nothing further is needed to cut them off.
+          broadcastState();
+          return json(res, r);
+        }
+        case 'remove': {
+          const r = await collaborators.remove(body.id);
+          broadcastState();
+          return json(res, r);
+        }
+        case 'mergePreview': return json(res, await collaborators.mergePreview(body.id));
+        case 'merge': {
+          const r = await collaborators.mergeBranch(body.id);
+          return json(res, r, r.ok ? 200 : 409);
+        }
+        default: return json(res, { ok: false, error: 'Unknown action' }, 400);
+      }
+    }
+
+    // ─── The approvals inbox ───
+
+    if (path === '/api/approvals' && req.method === 'GET') {
+      return json(res, { ok: true, ...approvalsSnapshot() });
+    }
+
+    if (path === '/api/approvals' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const r = approvals.resolve(String(body.id || ''), !!body.approve, 'owner', body.note);
+      // A merge is approved here and performed here: approving it and then
+      // having to go and do it would be two steps for one decision.
+      if (r.ok && body.approve && r.request.kind === 'merge') {
+        const m = await collaborators.mergeBranch(r.request.collabId);
+        broadcastApprovals();
+        return json(res, { ...r, merge: m }, m.ok ? 200 : 409);
+      }
+      broadcastApprovals();
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
     if (path === '/api/state' && req.method === 'GET') {
-      return json(res, buildState());
+      return json(res, filterStateFor(principal, buildState()));
     }
 
     if (path === '/api/terminals' && req.method === 'GET') {
@@ -2069,6 +2591,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!claudeUi) return json(res, { ok: false, error: 'Chat manager not available' });
       const body = JSON.parse(await readBody(req));
       if (!body.project) return json(res, { ok: false, error: 'project is required' }, 400);
+      // Everything a collaborator could otherwise choose here is decided for
+      // them: which project, which folder, and the restricted launch. A create
+      // body is user input, and this one reaches a process spawn.
+      if (isConfined(principal)) {
+        const want = String(body.project).toLowerCase();
+        const inv = (principal.invitations || []).find(i => i.project === want);
+        if (!inv) return json(res, { ok: false, error: 'Unknown project' }, 403);
+        body.cwd = inv.root;
+        body.skipPermissions = false;
+        body.collaborator = {
+          id: inv.id,
+          key: principal.collabKey,
+          name: principal.name,
+          project: want,
+          root: inv.root,
+          branch: inv.branch,
+          apiKey: (collaborators.get(inv.id) && collaborators.apiKeyOf(inv.id)) || '',
+        };
+      }
       const result = await claudeUi.create(body.project, body);
       broadcastState();
       return json(res, result);
@@ -2087,6 +2628,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const sid = decodeURIComponent(uiMatch[1]);
       const action = uiMatch[2];
       if (!claudeUi) return json(res, { ok: false, error: 'Chat manager not available' });
+
+      // A session id names a conversation, not a permission. Without this a
+      // collaborator could read or drive somebody else's chat simply by
+      // holding its id — including its whole transcript, via `history`.
+      if (isConfined(principal)) {
+        const sess = claudeUi.list().find(x => x.id === sid);
+        if (!sess || !principal.projects.includes(String(sess.project || '').toLowerCase())) {
+          return json(res, { ok: false, error: 'No such session' }, 404);
+        }
+      }
 
       if (action === 'history' && req.method === 'GET') {
         const h = claudeUi.history(sid);
@@ -2232,6 +2783,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       if (!body.name || !body.command) return json(res, { ok: false, error: 'name and command are required' }, 400);
       const alias = body.alias || currentProject || '';
+      // A collaborator registering a service must attach it to a project they
+      // hold, and its working directory must be inside their worktree —
+      // otherwise "register a service" is a way to run a command anywhere.
+      if (aliasDenied(alias)) return json(res, { ok: false, error: 'Unknown project' }, 403);
+      if (isConfined(principal)) {
+        const home = principal.roots[String(alias).toLowerCase()] || '';
+        const want = body.cwd ? resolve(String(body.cwd)) : home;
+        if (!home || !(want === resolve(home) || want.startsWith(resolve(home) + sep))) {
+          return json(res, { ok: false, error: 'A service must run inside your own working folder.' }, 403);
+        }
+        body.cwd = want;
+      }
       const result = registerService({
         alias,
         name: body.name,
@@ -2709,29 +3272,60 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── File Browser ───
 
+    /**
+     * The folder a caller's file operations are relative to, and confined to.
+     *
+     * For the owner this is the project, and "confined" is loose by design —
+     * absolute paths are honoured so the browser can go above the root, which
+     * the README documents as intended.
+     *
+     * For a collaborator it is their WORKTREE, and confinement is absolute.
+     * Their project folder is not the boundary: that one holds .git, .env and
+     * whatever else sits beside the code.
+     */
+    function fsRootFor(principal, project) {
+      if (!isConfined(principal)) return project.path;
+      const key = String(project.alias || '').toLowerCase();
+      // getProject has already swapped project.path for the worktree, so that
+      // is the fallback rather than a way out: a project they do not hold
+      // never gets this far.
+      return principal.roots[key] || project.path;
+    }
+
     // Resolve a browse path: absolute paths are used as-is (lets the file
     // browser go above the project root); relative paths resolve under the
     // project. Used for read-only ops (list/read/download). Write & delete stay
     // jailed to the project (see those handlers).
-    function resolveFsPath(project, p) {
-      if (!p || p === '.') return project.path;
-      return isAbsolute(p) ? resolve(p) : resolve(project.path, p);
+    //
+    // For a confined caller the absolute-path branch is REMOVED, not merely
+    // checked afterwards: `?dir=/etc` must not resolve to /etc and then be
+    // rejected, because every caller of this has to remember to reject it.
+    // Resolving it under their root means forgetting the check is harmless.
+    function resolveFsPath(project, p, principal = null) {
+      const root = fsRootFor(principal, project);
+      if (!p || p === '.') return root;
+      if (isConfined(principal)) return resolve(root, '.' + sep + String(p).replace(/^[/\\]+/, ''));
+      return isAbsolute(p) ? resolve(p) : resolve(root, p);
     }
-    function isInsideProject(project, fullPath) {
-      // Normalise BOTH sides. project.path is whatever was registered, which may
-      // use forward slashes on Windows, while resolve() always returns
-      // backslashes — comparing them raw silently reports "outside the project"
-      // for paths that are plainly inside it.
-      const root = resolve(project.path);
-      const p = resolve(fullPath);
-      return p === root || p.startsWith(root + sep);
+
+    /**
+     * Containment against whichever root applies to this caller.
+     *
+     * Normalises BOTH sides. A registered project path may use forward slashes
+     * on Windows while resolve() returns backslashes — comparing them raw
+     * silently reports "outside" for paths that are plainly inside.
+     */
+    function isInsideRoot(principal, project, fullPath) {
+      const root = resolve(fsRootFor(principal, project));
+      const pth = resolve(fullPath);
+      return pth === root || pth.startsWith(root + sep);
     }
 
     if (path === '/api/files/list' && req.method === 'GET') {
       const alias = url.searchParams.get('project');
       const project = getProject(alias);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
-      const fullPath = resolveFsPath(project, url.searchParams.get('dir') || '');
+      const fullPath = resolveFsPath(project, url.searchParams.get('dir') || '', principal);
       if (!existsSync(fullPath)) return json(res, { ok: false, error: 'Directory not found' }, 404);
       try {
         const entries = readdirSync(fullPath, { withFileTypes: true })
@@ -2757,7 +3351,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, {
           ok: true, entries, crumbs, path: fullPath, root: project.path,
           parent: parent === fullPath ? null : parent,
-          inside: isInsideProject(project, fullPath),
+          inside: isInsideRoot(principal, project, fullPath),
         });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
@@ -2824,7 +3418,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const relFile = url.searchParams.get('file') || '';
       const project = getProject(alias);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
-      const fullPath = resolveFsPath(project, relFile);
+      const fullPath = resolveFsPath(project, relFile, principal);
       if (!existsSync(fullPath)) return json(res, { ok: false, error: 'File not found' }, 404);
       try {
         const st = statSync(fullPath);
@@ -2843,8 +3437,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // forward slashes, so saving failed outright; and a bare startsWith()
       // has no separator boundary, so a sibling directory sharing the project's
       // name as a prefix would pass.
-      const fullPath = resolveFsPath(project, body.file || '');
-      if (!isInsideProject(project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      const fullPath = resolveFsPath(project, body.file || '', principal);
+      if (!isInsideRoot(principal, project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
       try {
         writeFileSync(fullPath, body.content || '', 'utf-8');
         return json(res, { ok: true });
@@ -2856,7 +3450,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const relFile = url.searchParams.get('file') || '';
       const project = getProject(alias);
       if (!project) { res.writeHead(404); res.end('Project not found'); return; }
-      const fullPath = resolveFsPath(project, relFile);
+      const fullPath = resolveFsPath(project, relFile, principal);
       if (!existsSync(fullPath)) { res.writeHead(404); res.end('File not found'); return; }
       try {
         const st = statSync(fullPath);
@@ -2876,7 +3470,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' });
-      const fullPath = resolveFsPath(project, body.file || '');
+      const fullPath = resolveFsPath(project, body.file || '', principal);
       if (!existsSync(fullPath)) return json(res, { ok: false, error: 'File not found' });
       const tok = shareFile(fullPath, 5); // 5 min expiry
       const dlUrl = '/dl/' + tok;
@@ -2888,13 +3482,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
       const relDir = body.dir || '.';
-      const targetDir = resolveFsPath(project, relDir);
-      if (!isInsideProject(project, targetDir)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      const targetDir = resolveFsPath(project, relDir, principal);
+      if (!isInsideRoot(principal, project, targetDir)) return json(res, { ok: false, error: 'Invalid path' }, 403);
       if (!body.name || !body.data) return json(res, { ok: false, error: 'Missing name or data' }, 400);
       try {
         if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
         const filePath = join(targetDir, basename(body.name));
-        if (!isInsideProject(project, filePath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+        if (!isInsideRoot(principal, project, filePath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
         const buf = Buffer.from(body.data, 'base64');
         writeFileSync(filePath, buf);
         return json(res, { ok: true, size: buf.length });
@@ -2905,8 +3499,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       const project = getProject(body.project);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
-      const fullPath = resolveFsPath(project, body.file || '');
-      if (!isInsideProject(project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      const fullPath = resolveFsPath(project, body.file || '', principal);
+      if (!isInsideRoot(principal, project, fullPath)) return json(res, { ok: false, error: 'Invalid path' }, 403);
       if (fullPath === resolve(project.path)) return json(res, { ok: false, error: 'Cannot delete project root' }, 403);
       if (!existsSync(fullPath)) return json(res, { ok: false, error: 'Not found' }, 404);
       try {
@@ -3179,12 +3773,39 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Internal MCP dispatch (from stdio MCP servers) ───
     if (path === '/api/mcp/call' && req.method === 'POST') {
-      // Auth via internal API key (not user token)
+      // Auth via internal API key (not user token) — or a collaborator's own.
+      //
+      // The internal key reaches every tool here, including secret_get and
+      // secret_run, and it is written into each project's .mcp.json. A
+      // collaborator's Claude has file access to its own working directory, so
+      // handing it that key would hand it the secrets too. It gets a separate
+      // key, and that key answers to a narrower list.
       const apiKey = req.headers['x-api-key'];
-      if (apiKey !== internalApiKey) return json(res, { error: 'Invalid API key' }, 403);
+      const mcpCollabKey = apiKey && apiKey !== internalApiKey
+        ? collaborators.identityByApiKey(apiKey) : null;
+      if (apiKey !== internalApiKey && !mcpCollabKey) return json(res, { error: 'Invalid API key' }, 403);
       const body = JSON.parse(await readBody(req));
       if (!body.tool) return json(res, { ok: false, error: 'Missing tool name' }, 400);
       const a = body.args || {};
+
+      if (mcpCollabKey) {
+        if (!COLLABORATOR_MCP_TOOLS.has(body.tool)) {
+          return json(res, { ok: false, error: `"${body.tool}" is not available on this project.` }, 403);
+        }
+        // Their own projects, whatever alias the caller put in the args. The
+        // alias is a client-supplied default from .mcp.json, never a check.
+        const allowed = collaborators.liveByIdentity(mcpCollabKey).map(c => c.project);
+        const want = String(a.alias || '').toLowerCase();
+        if (!want) a.alias = allowed[0];
+        else if (!allowed.includes(want)) {
+          return json(res, { ok: false, error: 'Unknown project' }, 403);
+        }
+        // Services they register must belong to the project too, or a
+        // collaborator could attach a process to somebody else's.
+        if (a.project && !allowed.includes(String(a.project).toLowerCase())) {
+          return json(res, { ok: false, error: 'Unknown project' }, 403);
+        }
+      }
 
       // ─── Kanban tools (project-scoped via args.alias) ───
       if (body.tool.startsWith('kanban_')) {
@@ -3588,7 +4209,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       });
     }
 
-    wss.on('connection', (ws) => {
+    wss.on('connection', (ws, req) => {
+      // Who opened this socket. Long-lived sockets are authorised once at
+      // connect, and everything below has to keep asking — the HTTP route
+      // policy does not run here, so without this the socket is a way around
+      // it: `input` writes to ANY terminal id, and subscribe-logs streams the
+      // whole server log.
+      const principal = req ? validateToken(req) : null;
+      const confined = isConfined(principal);
+      /** A chat this caller is allowed to watch. */
+      const ownsUiSession = (sid) => {
+        if (!confined) return true;
+        const sess = claudeUi ? claudeUi.list().find(x => x.id === sid) : null;
+        return !!sess && principal.projects.includes(String(sess.project || '').toLowerCase());
+      };
       // One socket can watch several terminals at once: id → output handler.
       const subs = new Map();
       // …and several chat sessions: id → event handler.
@@ -3607,6 +4241,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // install); browser.js prefers the parent channel when there is one, so
         // this cannot hijack an all-in-one desktop install.
         if (msg.type === 'register-native-host') {
+          if (confined) return;                         // not a collaborator's to offer
           if (detachHost) return;                       // already registered
           detachHost = browserMod.setRemoteHost({
             send: (m) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'native-host', payload: m })); },
@@ -3626,6 +4261,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
         // Server log subscription
         if (msg.type === 'subscribe-logs') {
+          // The server log is every project's business scrolling past, which
+          // is precisely what a collaborator must not be shown.
+          if (confined) return;
           logSubscribers.add(ws);
           return;
         }
@@ -3646,6 +4284,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (!sid) return;
           if (uiSubs.has(sid)) { claudeUi.off(sid, uiSubs.get(sid)); uiSubs.delete(sid); }
           if (msg.type === 'unsubscribe-ui') return;
+          // A chat id is guessable in a way a project alias is not, and this
+          // socket replays the whole conversation to whoever asks.
+          if (!ownsUiSession(sid)) return;
           // Replay the conversation so a reconnecting client re-renders it, and
           // so any prompt parked while the client was away is re-armed.
           const h = claudeUi.history(sid);
@@ -3660,6 +4301,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
         if (!claudeTerminals) return;
         const id = msg.id;
+
+        // Collaborators get chat and nothing else. Terminal traffic is not
+        // merely hidden from their UI, it is refused at the socket.
+        if (confined && (msg.type === 'subscribe' || msg.type === 'unsubscribe'
+            || msg.type === 'input' || msg.type === 'resize')) return;
 
         switch (msg.type) {
           case 'subscribe': {

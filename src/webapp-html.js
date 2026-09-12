@@ -812,6 +812,86 @@ export function getWebappHtml(botUsername) {
       color: var(--accent-hover); border: 1px solid var(--border);
       border-radius: 99px; padding: 1px 7px; font-weight: 700;
     }
+    /* Outside collaborators, in the Info tab. One block per person, one row
+       per project they hold — that is how access is granted and revoked. */
+    .collab-person { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 8px; margin-bottom: 7px; }
+    .collab-who { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+    .collab-name { font-weight: 600; font-size: 0.82rem; color: var(--text-primary); }
+    .collab-tg { font-size: 0.7rem; color: var(--text-muted); flex: 1; }
+    .collab-row {
+      display: flex; align-items: center; gap: 7px; padding: 4px 0;
+      border-top: 1px solid var(--border-subtle); font-size: 0.75rem; flex-wrap: wrap;
+    }
+    .collab-row.gone { opacity: 0.5; }
+    .collab-proj { color: var(--text-primary); font-weight: 600; min-width: 90px; }
+    .collab-branch { font-family: var(--mono); font-size: 0.68rem; color: var(--sky); }
+    .collab-exp { color: var(--text-muted); flex: 1; text-align: right; }
+    .collab-acts { display: flex; gap: 4px; flex-wrap: wrap; }
+    .collab-invite { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 6px; }
+    .collab-invite h5 { margin: 0 0 6px; font-size: 0.78rem; color: var(--text-secondary); }
+    .collab-in {
+      display: block; width: 100%; margin-bottom: 5px; background: var(--bg-primary);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-primary); font-size: 0.78rem; padding: 5px 7px;
+    }
+    .svc-btn.danger:hover { color: var(--red); border-color: var(--red); }
+
+    /* Topbar actions: approvals, and a collaborator's Push. Both sit beside the
+       connection badge so "something needs you" is in the same place as
+       "something is wrong", which is where the eye already goes. */
+    .topbar-act {
+      display: none; align-items: center; gap: 5px; position: relative;
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: 99px; color: var(--text-secondary); cursor: pointer;
+      font-size: 0.7rem; padding: 3px 9px; font-weight: 600; white-space: nowrap;
+    }
+    .topbar-act.on { display: inline-flex; }
+    .topbar-act:hover { color: var(--text-primary); border-color: var(--accent); }
+    .topbar-act .ic { width: 13px; height: 13px; }
+    .topbar-act.busy { opacity: 0.55; pointer-events: none; }
+    #approvals-btn.has { color: var(--yellow); border-color: var(--yellow); }
+    .appr-count {
+      background: var(--yellow); color: #1a1a1a; border-radius: 99px;
+      font-size: 0.62rem; padding: 0 5px; font-weight: 700; min-width: 15px; text-align: center;
+    }
+    .appr-panel {
+      position: fixed; top: calc(var(--topbar-height) + 4px); right: 8px; z-index: 400;
+      width: min(420px, calc(100vw - 16px)); max-height: 70vh; overflow-y: auto;
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: var(--radius-md); box-shadow: var(--shadow-md); padding: 6px; display: none;
+    }
+    .appr-panel.open { display: block; }
+    .appr-empty { color: var(--text-muted); font-size: 0.78rem; padding: 12px; text-align: center; }
+    .appr-item { border-bottom: 1px solid var(--border-subtle); padding: 9px 8px; }
+    .appr-item:last-child { border-bottom: none; }
+    .appr-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+    .appr-src {
+      font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700;
+      border-radius: 99px; padding: 1px 6px; border: 1px solid var(--border); color: var(--text-muted);
+    }
+    .appr-src.secret { color: var(--yellow); border-color: var(--yellow); }
+    .appr-src.collab { color: var(--sky); border-color: var(--sky); }
+    .appr-src.chat { color: var(--accent-hover); border-color: var(--accent); }
+    .appr-title { flex: 1; font-size: 0.8rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; }
+    .appr-detail {
+      font-family: var(--mono); font-size: 0.68rem; color: var(--text-secondary);
+      white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow-y: auto;
+      background: var(--bg-primary); border-radius: var(--radius-sm); padding: 5px 7px; margin: 4px 0;
+    }
+    .appr-acts { display: flex; gap: 6px; }
+    .appr-acts button {
+      flex: 1; border-radius: var(--radius-sm); border: 1px solid var(--border);
+      background: var(--bg-primary); color: var(--text-secondary); cursor: pointer;
+      font-size: 0.72rem; padding: 4px 8px;
+    }
+    .appr-acts button.yes:hover { color: var(--green); border-color: var(--green); }
+    .appr-acts button.no:hover { color: var(--red); border-color: var(--red); }
+    .appr-acts button.go:hover { color: var(--accent-hover); border-color: var(--accent); }
+    /* Collaborator: everything the owner has that they must not. Hidden with a
+       class rather than removed, so one place decides and nothing else has to
+       remember. Presentation only — the server refuses these regardless. */
+    body.is-collab .collab-hide { display: none !important; }
+
     /* Plan state, in the chat's title bar next to the "chat" tag. */
     .term-plan-tag {
       font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em;
@@ -2549,6 +2629,23 @@ export function getWebappHtml(botUsername) {
                 style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Sign in</button>
         <div id="login-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
       </form>
+
+      <!-- Outside collaborators. Their own door: no password, no authenticator,
+           just the name they were given and a phrase that expires. Kept behind
+           a link so the ordinary sign-in stays the obvious one. -->
+      <div id="collab-login-link" style="margin-top:4px;">
+        <a href="#" data-action="collab-login-show" style="font-size:0.76rem;color:var(--text-muted);">I was invited to a project</a>
+      </div>
+      <form id="collab-login" style="display:none;flex-direction:column;gap:10px;width:300px;text-align:left;">
+        <div style="color:var(--text-secondary);font-size:0.8rem;line-height:1.5;">
+          Use the name and passcode you were given.
+        </div>
+        <input type="text" id="collab-login-name" placeholder="Your name" autocomplete="username" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;">
+        <input type="password" id="collab-login-pass" placeholder="Passcode" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:0.9rem;">
+        <button type="submit" id="collab-login-submit"
+                style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Sign in</button>
+        <div id="collab-login-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
+      </form>
     </div>
   </div>
 
@@ -2567,6 +2664,7 @@ export function getWebappHtml(botUsername) {
 
   <!-- ─── Main App ─── -->
   <div id="app">
+    <div class="appr-panel" id="appr-panel"></div>
     <div class="topbar" id="topbar">
       <div class="usage-bg" id="usage-bg" title="Claude usage — loading…">
         <div class="urow" id="row-week">
@@ -2591,6 +2689,9 @@ export function getWebappHtml(botUsername) {
       <span class="spacer"></span>
       <span class="status-badge usage-updated" id="usage-updated" title="Claude usage — click for history chart" style="display:none"></span>
       <span class="status-badge disconnected" id="tg-badge" title="Telegram bot" style="display:none">tg: offline</span>
+      <button class="topbar-act" id="collab-push" data-action="collab-push" title="Push your branch so the owner can see it"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span>Push</span></button>
+      <button class="topbar-act" id="collab-merge" data-action="collab-merge" title="Ask the owner to merge your branch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span>Ask to merge</span></button>
+      <button class="topbar-act" id="approvals-btn" data-action="approvals-toggle" title="Things waiting on you"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12.5"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span class="appr-count" id="approvals-count">0</span></button>
       <span class="status-badge disconnected" id="conn-badge">disconnected</span>
       <div class="win-controls" id="win-controls">
         <button onclick="window.api?.minimize()" title="Minimize">&#x2013;</button>
@@ -3661,6 +3762,40 @@ export function getWebappHtml(botUsername) {
           return;
         }
         if (storeSession(d)) { $('#login-password').value = ''; $('#login-code').value = ''; showApp(); }
+      } catch (ex) {
+        err.textContent = 'Could not reach the server: ' + ex.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function submitCollabLogin(e) {
+      if (e) e.preventDefault();
+      const btn = $('#collab-login-submit');
+      const err = $('#collab-login-error');
+      if (!btn || btn.disabled) return;
+      btn.disabled = true;
+      err.textContent = '';
+      try {
+        const r = await fetch('/api/auth/collab', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: $('#collab-login-name').value.trim(),
+            passcode: $('#collab-login-pass').value,
+          }),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+          // The server deliberately does not say which part was wrong, or
+          // whether the access has simply run out — repeating that here keeps
+          // the endpoint from becoming a way to enumerate who has access.
+          err.textContent = d.error || 'Sign-in failed';
+          $('#collab-login-pass').value = '';
+          $('#collab-login-pass').focus();
+          return;
+        }
+        if (storeSession(d)) { $('#collab-login-pass').value = ''; showApp(); }
       } catch (ex) {
         err.textContent = 'Could not reach the server: ' + ex.message;
       } finally {
@@ -6592,8 +6727,135 @@ export function getWebappHtml(botUsername) {
     // ─── SSE for state updates ───
     // One place both the SSE push and the startup fetch land, so a browser's
     // first paint and its later updates cannot disagree about what is running.
+    // What this browser is allowed to be. Server-enforced either way; this
+    // only decides what is worth showing.
+    let userRole = 'owner';
+    let collabInfo = null;
+
+    /**
+     * Hide what a collaborator has no route to.
+     *
+     * Presentation only. Every one of these is refused server-side as well, and
+     * that is the control — this exists so they are not shown doors that open
+     * onto a 403.
+     */
+    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'terminals', 'info', 'settings'];
+    const COLLAB_HIDDEN_WB = ['git', 'terminal'];
+
+    function applyRoleToUi() {
+      const collab = userRole === 'collaborator';
+      document.body.classList.toggle('is-collab', collab);
+      for (const b of $$('.tab-btn')) {
+        const hide = collab && COLLAB_HIDDEN_TABS.indexOf(b.dataset.tab) >= 0;
+        b.classList.toggle('collab-hide', hide);
+      }
+      // The workbench add menu and the empty-leaf chips both offer panels; a
+      // collaborator gets no terminal cell and no git panel.
+      for (const el of $$('[data-action="wb-add"]')) {
+        el.classList.toggle('collab-hide', collab && COLLAB_HIDDEN_WB.indexOf(el.dataset.kind) >= 0);
+      }
+      // Standing on a tab that has just been taken away.
+      if (collab && COLLAB_HIDDEN_TABS.indexOf(currentTab) >= 0) switchTab('workbench');
+      const push = document.getElementById('collab-push');
+      const merge = document.getElementById('collab-merge');
+      if (push) push.classList.toggle('on', collab);
+      if (merge) merge.classList.toggle('on', collab);
+      const appr = document.getElementById('approvals-btn');
+      if (appr && collab) appr.classList.remove('on');   // the inbox is the owner's
+    }
+
+    // ─── Approvals inbox ───
+    //
+    // Secrets, chat permission cards and collaborator requests in one list. It
+    // deliberately does not replace any of them: a chat card still works in
+    // the chat, which is why "Open" here jumps to it rather than answering.
+    let approvalItems = [];
+
+    function renderApprovals() {
+      const btn = document.getElementById('approvals-btn');
+      const cnt = document.getElementById('approvals-count');
+      const panel = document.getElementById('appr-panel');
+      if (!btn || !cnt || !panel) return;
+      const n = approvalItems.length;
+      // Hidden entirely at zero: a permanent icon that is usually grey teaches
+      // you to stop looking at it.
+      btn.classList.toggle('on', n > 0 && userRole !== 'collaborator');
+      btn.classList.toggle('has', n > 0);
+      cnt.textContent = String(n);
+      if (!n) panel.classList.remove('open');
+      let h = '';
+      if (!n) h = '<div class="appr-empty">Nothing is waiting.</div>';
+      for (const it of approvalItems) {
+        const who = it.name ? escHtml(it.name) + ' \u2014 ' : '';
+        h += '<div class="appr-item" data-appr="' + escHtml(it.id) + '">'
+          + '<div class="appr-head"><span class="appr-src ' + escHtml(it.source) + '">' + escHtml(it.source) + '</span>'
+          + '<span class="appr-title">' + who + escHtml(it.title || '') + '</span></div>';
+        if (it.project) h += '<div class="appr-detail" style="opacity:.7">' + escHtml(it.project) + '</div>';
+        if (it.detail) h += '<div class="appr-detail">' + escHtml(String(it.detail).slice(0, 1200)) + '</div>';
+        h += '<div class="appr-acts">';
+        if (it.source === 'collab') {
+          h += '<button class="yes" data-action="appr-yes" data-id="' + escHtml(it.id) + '">Approve</button>'
+            + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
+        } else if (it.source === 'chat') {
+          // Answered in the chat, where the full input and the always-allow
+          // choice live. Duplicating that here would mean two half-answers.
+          h += '<button class="go" data-action="appr-goto" data-sid="' + escHtml(it.sessionId || '') + '">Open the chat</button>';
+        } else {
+          h += '<button class="go" data-action="appr-goto-secrets">Open secrets</button>';
+        }
+        h += '</div></div>';
+      }
+      panel.innerHTML = h;
+    }
+
+    async function decideApproval(id, approve) {
+      try {
+        const r = await apiFetch('/api/approvals', {
+          method: 'POST', body: JSON.stringify({ id, approve }),
+        }).then(x => x.json());
+        if (!r.ok) toast(r.error || 'That could not be applied', 'error');
+        else if (r.merge && !r.merge.ok) toast(r.merge.error || 'The merge failed', 'error');
+        else if (r.merge) toast('Merged ' + r.merge.merged + ' into ' + r.merge.into, 'success');
+        else toast(approve ? 'Approved' : 'Declined', 'success');
+      } catch (e) { toast('That could not be applied', 'error'); }
+    }
+
+    // ─── A collaborator's own actions ───
+
+    async function collabPush(btn) {
+      if (!collabInfo) return;
+      const proj = (collabInfo.projects && collabInfo.projects[0]) || currentProject;
+      btn.classList.add('busy');
+      try {
+        const r = await apiFetch('/api/collab/push', {
+          method: 'POST', body: JSON.stringify({ project: currentProject || proj }),
+        }).then(x => x.json());
+        if (r.ok) toast('Pushed ' + r.branch, 'success');
+        else toast(r.error || 'Push failed', 'error');
+      } catch (e) { toast('Push failed', 'error'); }
+      btn.classList.remove('busy');
+    }
+
+    async function collabAskMerge(btn) {
+      if (!collabInfo) return;
+      const msg = prompt('Anything the owner should know before merging?') ;
+      if (msg === null) return;   // cancelled, as opposed to deliberately blank
+      btn.classList.add('busy');
+      try {
+        const r = await apiFetch('/api/collab/request', {
+          method: 'POST',
+          body: JSON.stringify({ kind: 'merge', project: currentProject, message: msg }),
+        }).then(x => x.json());
+        if (r.ok) toast('Sent to the owner', 'success');
+        else toast(r.error || 'Could not send that', 'error');
+      } catch (e) { toast('Could not send that', 'error'); }
+      btn.classList.remove('busy');
+    }
+
     function applyState(state) {
       if (!state) return;
+      if (state.role && state.role !== userRole) { userRole = state.role; applyRoleToUi(); }
+      collabInfo = state.collab || null;
       terminals = state.terminals || [];
       userTerminals = state.userTerminals || [];
       if (state.services) services = state.services;   // keep sidebar heartbeat fresh
@@ -6628,6 +6890,13 @@ export function getWebappHtml(botUsername) {
             loadKanban();
           }
         } catch { /* ignore */ }
+      });
+      es.addEventListener('approvals', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          approvalItems = d.items || [];
+          renderApprovals();
+        } catch (err) { /* a malformed frame must not stop the stream */ }
       });
       es.addEventListener('secret-requests', (e) => {
         try {
@@ -8377,6 +8646,126 @@ export function getWebappHtml(botUsername) {
     // Probing costs real work (a directory walk, a docker query), so this loads
     // when Info opens and after a task runs, never on the 2s stats tick.
 
+    // ─── Outside collaborators (Info tab) ───
+    //
+    // One row per PERSON, with their projects underneath — because that is how
+    // you think about it ("who has access to what"), not one row per
+    // invitation, which is how it is stored.
+    function collabTimeLeft(ms) {
+      const left = ms - Date.now();
+      if (left <= 0) return 'expired';
+      const d = Math.floor(left / 86400000);
+      if (d >= 1) return d + (d === 1 ? ' day left' : ' days left');
+      const h = Math.max(1, Math.round(left / 3600000));
+      return h + (h === 1 ? ' hour left' : ' hours left');
+    }
+
+    async function loadCollaborators() {
+      const box = document.getElementById('collab-body');
+      if (!box) return;
+      let d;
+      try { d = await apiFetch('/api/collaborators').then(r => r.json()); }
+      catch (e) { box.innerHTML = '<div class="sys-quiet">Could not load collaborators.</div>'; return; }
+      if (!d.ok) { box.innerHTML = '<div class="sys-quiet">Could not load collaborators.</div>'; return; }
+
+      const people = new Map();
+      for (const c of (d.collaborators || [])) {
+        const key = c.telegram ? 'tg:' + c.telegram : 'pc:' + c.name.toLowerCase();
+        if (!people.has(key)) people.set(key, { name: c.name, telegram: c.telegram, rows: [] });
+        people.get(key).rows.push(c);
+      }
+
+      let h = '';
+      if (!people.size) h += '<div class="sys-quiet">Nobody outside has access right now.</div>';
+      for (const p of people.values()) {
+        h += '<div class="collab-person"><div class="collab-who">'
+          + '<span class="collab-name">' + escHtml(p.name) + '</span>'
+          + (p.telegram ? '<span class="collab-tg">@' + escHtml(p.telegram) + '</span>' : '<span class="collab-tg">passcode only</span>')
+          + '<button class="svc-btn" data-action="collab-reissue" data-id="' + escHtml(p.rows[0].id) + '">New passcode</button>'
+          + '</div>';
+        for (const r of p.rows) {
+          h += '<div class="collab-row' + (r.expired ? ' gone' : '') + '">'
+            + '<span class="collab-proj">' + escHtml(r.project) + '</span>'
+            + '<span class="collab-branch" title="Their branch in that project">' + escHtml(r.branch || '') + '</span>'
+            + '<span class="collab-exp">' + escHtml(r.revoked ? 'revoked' : collabTimeLeft(r.expiresAt)) + '</span>'
+            + '<span class="collab-acts">'
+            + '<button class="svc-btn" data-action="collab-extend" data-id="' + escHtml(r.id) + '">Extend</button>'
+            + '<button class="svc-btn" data-action="collab-merge-owner" data-id="' + escHtml(r.id) + '">Merge</button>'
+            + (r.revoked
+              ? '<button class="svc-btn" data-action="collab-unrevoke" data-id="' + escHtml(r.id) + '">Restore</button>'
+              : '<button class="svc-btn" data-action="collab-revoke" data-id="' + escHtml(r.id) + '">Revoke</button>')
+            + '<button class="svc-btn danger" data-action="collab-remove" data-id="' + escHtml(r.id) + '">Remove</button>'
+            + '</span></div>';
+        }
+        h += '</div>';
+      }
+
+      // Invite form. Projects is a multi-select because access is usually
+      // granted a repository at a time, and a second one later — each gets its
+      // own worktree, branch and expiry.
+      h += '<div class="collab-invite"><h5>Invite someone</h5>'
+        + '<input class="collab-in" id="collab-name" placeholder="Their name" />'
+        + '<input class="collab-in" id="collab-tg" placeholder="Telegram username (optional)" />'
+        + '<select class="collab-in" id="collab-projects" multiple size="4">'
+        + (projects || []).map(function (p) {
+          return '<option value="' + escHtml(p.alias) + '">' + escHtml(p.name || p.alias) + '</option>';
+        }).join('')
+        + '</select>'
+        + '<input class="collab-in" id="collab-days" type="number" min="1" max="365" value="7" title="Days of access" />'
+        + '<button class="svc-btn" data-action="collab-create">Create access</button>'
+        + '<div class="sys-quiet" style="margin-top:4px">Pick one or more projects. They get a git worktree per project, and see nothing else on this machine.</div>'
+        + '</div>';
+      box.innerHTML = h;
+    }
+
+    async function collabAction(action, id) {
+      const body = { id };
+      if (action === 'collab-extend') {
+        const days = prompt('Extend access by how many days?', '7');
+        if (days === null) return;
+        body.action = 'update'; body.days = parseInt(days, 10) || 7;
+      } else if (action === 'collab-revoke') { body.action = 'revoke'; }
+      else if (action === 'collab-unrevoke') { body.action = 'update'; body.revoked = false; }
+      else if (action === 'collab-reissue') { body.action = 'reissue'; }
+      else if (action === 'collab-merge-owner') { body.action = 'merge'; }
+      else if (action === 'collab-remove') {
+        if (!confirm('Remove this access?\\n\\nTheir working copy is deleted. Their branch and commits are kept.')) return;
+        body.action = 'remove';
+      } else return;
+
+      try {
+        const r = await apiFetch('/api/collaborators', { method: 'POST', body: JSON.stringify(body) }).then(x => x.json());
+        if (!r.ok) { toast(r.error || 'That did not work', 'error'); return; }
+        if (r.passcode) alert('New passcode (shown once):\\n\\n' + r.passcode);
+        if (body.action === 'merge') toast('Merged ' + r.merged + ' into ' + r.into, 'success');
+        else toast('Done', 'success');
+        loadCollaborators();
+      } catch (e) { toast('That did not work', 'error'); }
+    }
+
+    async function collabCreate() {
+      const name = (document.getElementById('collab-name') || {}).value || '';
+      const tg = (document.getElementById('collab-tg') || {}).value || '';
+      const days = parseInt((document.getElementById('collab-days') || {}).value, 10) || 7;
+      const sel = document.getElementById('collab-projects');
+      const chosen = sel ? Array.from(sel.selectedOptions).map(function (o) { return o.value; }) : [];
+      if (!name.trim()) { toast('Give them a name', 'error'); return; }
+      if (!chosen.length) { toast('Pick at least one project', 'error'); return; }
+      try {
+        const r = await apiFetch('/api/collaborators', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'create', name, telegram: tg, days, projects: chosen }),
+        }).then(x => x.json());
+        if (!r.ok) { toast(r.error || 'Could not create that', 'error'); return; }
+        if (r.passcode) {
+          alert('Access created.\\n\\nName: ' + name + '\\nPasscode: ' + r.passcode
+            + '\\n\\nThis is shown once. They sign in with the name and this passcode.');
+        }
+        if (r.failed && r.failed.length) toast(r.failed.join('; '), 'error');
+        loadCollaborators();
+      } catch (e) { toast('Could not create that', 'error'); }
+    }
+
     async function loadMaintenance() {
       const el = $('#maint-body');
       if (!el) return;
@@ -9224,13 +9613,16 @@ export function getWebappHtml(botUsername) {
         + '<button class="svc-btn" id="ctr-toggle" data-action="ctr-toggle">Show</button></div>'
         + '<div id="ctr-body" style="display:none"></div></div>'
         + '<div class="info-section"><h4>Reclaim disk space</h4>'
-        + '<div id="maint-body"><div class="sys-quiet">Measuring\\u2026</div></div></div>';
+        + '<div id="maint-body"><div class="sys-quiet">Measuring\\u2026</div></div></div>'
+        + '<div class="info-section"><h4>Outside collaborators</h4>'
+        + '<div id="collab-body"><div class="sys-quiet">Loading\\u2026</div></div></div>';
 
       $('#info-panel').innerHTML = projectHtml + sysHtml + tunnelHtml + logsHtml;
       // Paint immediately from the last poll so the panel is not blank on open.
       if (lastStats) renderSystemStats(lastStats.system);
       ensureStatsPolling();
       loadMaintenance();
+      loadCollaborators();
       // The Containers section only appears on a machine that has Docker; the
       // listing doubles as the availability check, so it costs one call.
       ctrShown = false;
@@ -9927,6 +10319,42 @@ export function getWebappHtml(botUsername) {
         case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
+        case 'approvals-toggle': {
+          e.stopPropagation();
+          const p = document.getElementById('appr-panel');
+          if (p) p.classList.toggle('open');
+          break;
+        }
+        case 'appr-yes': if (d.id) decideApproval(d.id, true); break;
+        case 'appr-no': if (d.id) decideApproval(d.id, false); break;
+        case 'appr-goto': {
+          // The card is answered where it has all its context. This just takes
+          // you to it, and closes the panel so the chat is not behind it.
+          const p = document.getElementById('appr-panel'); if (p) p.classList.remove('open');
+          if (d.sid) {
+            switchTab('workbench');
+            // Scroll it into view rather than assuming it is on screen: the
+            // whole point of the inbox is that you were looking elsewhere.
+            const cell = document.querySelector('[data-cellkey="live:' + d.sid + '"]');
+            if (cell) {
+              cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              const v = chatViews.get(d.sid); if (v && v.focus) v.focus();
+            }
+          }
+          break;
+        }
+        case 'appr-goto-secrets': {
+          const p2 = document.getElementById('appr-panel'); if (p2) p2.classList.remove('open');
+          switchTab('secrets');
+          break;
+        }
+        case 'collab-push': collabPush(e.target.closest('.topbar-act')); break;
+        case 'collab-create': collabCreate(); break;
+        case 'collab-extend': case 'collab-revoke': case 'collab-unrevoke':
+        case 'collab-reissue': case 'collab-remove': case 'collab-merge-owner':
+          if (d.id) collabAction(d.action, d.id);
+          break;
+        case 'collab-merge': collabAskMerge(e.target.closest('.topbar-act')); break;
         case 'chat-plan': {
           e.stopPropagation();
           const view = chatViews.get(d.tid);
@@ -12198,6 +12626,14 @@ export function getWebappHtml(botUsername) {
         $('#login-screen').style.display = '';
         initLogin();
         $('#password-login').addEventListener('submit', submitPasswordLogin);
+        const cf = $('#collab-login');
+        if (cf) cf.addEventListener('submit', submitCollabLogin);
+        const cl = $('#collab-login-link');
+        if (cl) cl.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          cl.style.display = 'none';
+          if (cf) { cf.style.display = 'flex'; $('#collab-login-name').focus(); }
+        });
         $('#setup-saved').addEventListener('change', (ev) => {
           const btn = $('#setup-done');
           btn.disabled = !ev.target.checked;

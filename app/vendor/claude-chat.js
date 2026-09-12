@@ -1036,6 +1036,32 @@
       if (e.decisionReason) box.appendChild(el('div', 'cc-ask-reason', esc(stripAnsi(e.decisionReason))));
       box.appendChild(el('div', 'cc-ask-pre', esc(truncate(JSON.stringify(e.input, null, 2), 2500))));
 
+      // ─── Escalated to the project owner ───
+      //
+      // An outside collaborator cannot answer their own permission prompt: on
+      // a machine with passwordless sudo, one approval is the whole machine.
+      // The card still appears here so they can SEE what was asked and why
+      // they are stuck, but the only button is the one that unsticks them.
+      if (e.escalated) {
+        box.appendChild(el('div', 'cc-ask-reason',
+          'Sent to the project owner. You will see the answer here.'));
+        var ebtns = el('div', 'cc-btns');
+        var drop = el('button', 'cc-btn', 'Carry on without this');
+        drop.addEventListener('click', function () {
+          drop.disabled = true;
+          // Withdrawing is not denying: the server tells Claude the
+          // collaborator took it back and to stop asking, rather than that the
+          // owner refused, which Claude should treat far more seriously.
+          apiFetch('/api/collab/cancel', {
+            method: 'POST',
+            body: JSON.stringify({ id: e.approvalId }),
+          }).catch(function () { drop.disabled = false; });
+        });
+        ebtns.appendChild(drop);
+        box.appendChild(ebtns);
+        return box;
+      }
+
       var btns = el('div', 'cc-btns');
       var allow = el('button', 'cc-btn primary', 'Allow');
       allow.addEventListener('click', function () { respond(e, { behavior: 'allow' }); });

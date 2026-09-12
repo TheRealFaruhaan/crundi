@@ -238,11 +238,25 @@ const webapp = createWebApp({
 // and never start Cloudflare, so a dev instance can't collide with a production
 // instance (default port 8888 + tunnel).
 const isDev = process.env.CRUNDI_DEV === '1' || process.argv.includes('--dev');
+// Read before the dev block may switch it off, so the log can say what changed.
+const tlsWasEnabled = String(config.tlsMode || 'off').toLowerCase() !== 'off';
 if (isDev) {
   config.webPort = parseInt(process.env.DEV_WEB_PORT || '8889', 10);
   process.env.DISABLE_TUNNEL = '1';
   process.env.CRUNDI_DEV = '1'; // so modules loaded later can see it too
-  console.log(`[crundi] DEV mode: port ${config.webPort}, Cloudflare disabled`);
+  // Moving the HTTP port is not enough: TLS binds config.tlsPort (443) on its
+  // own listener, so a dev instance on a machine with a certificate still
+  // reached for the production port and only lost the race because the real
+  // server already held it. With production stopped — a restart window, say —
+  // dev would take 443 instead. Off unless TLS_PORT is set deliberately.
+  let tlsNote = '';
+  if (tlsWasEnabled && !process.env.TLS_PORT) {
+    config.tlsMode = 'off';
+    tlsNote = ', TLS off (set TLS_PORT to test it on a non-production port)';
+  } else if (tlsWasEnabled) {
+    tlsNote = `, TLS on ${config.tlsPort}`;
+  }
+  console.log(`[crundi] DEV mode: port ${config.webPort}, Cloudflare disabled${tlsNote}`);
 }
 
 // ─── Start everything ───

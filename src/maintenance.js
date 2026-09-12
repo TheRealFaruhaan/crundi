@@ -19,7 +19,8 @@
 
 import { execFile } from 'child_process';
 import os from 'os';
-import { join } from 'path';
+import { join, basename } from 'path';
+import * as collaborators from './collaborators.js';
 import { existsSync } from 'fs';
 
 const HOME = os.homedir();
@@ -269,6 +270,24 @@ const TASKS = [
     elevated: true,
     probe: () => dirSize('/var/cache/apt/archives', true),
     exec: () => run('sudo', ['-n', 'apt-get', 'clean'], 120000),
+  },
+  {
+    id: 'collab-worktrees',
+    label: 'Lapsed collaborator worktrees',
+    // Say what survives, because the instinct is that this deletes their work.
+    description: 'Full checkouts belonging to collaborators whose access expired or was revoked, plus any left orphaned. Their branches and commits are kept — only the working copy goes.',
+    windows: true,
+    probe: async () => {
+      const stale = collaborators.staleWorktrees();
+      return stale.length ? stale.reduce((n, s) => n + s.bytes, 0) : null;
+    },
+    // Strings, not objects: the UI joins these into "Will remove: \u2026".
+    details: async () => collaborators.staleWorktrees().map((s) =>
+      (s.name ? `${s.name} (${s.project}, ${s.reason})` : `orphaned checkout ${basename(s.path)}`)),
+    exec: async () => {
+      const r = await collaborators.reclaimStale();
+      return { ok: true, stdout: 'Reclaimed ' + r.count + ' worktree(s)', stderr: '', error: '' };
+    },
   },
 ];
 
