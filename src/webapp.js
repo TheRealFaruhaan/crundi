@@ -54,6 +54,7 @@ import { createLimitResetNotifier } from './limit-reset-notify.js';
 import * as authConfig from './auth-config.js';
 import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
+import { sandboxStatus, setupSandbox } from './collab-sandbox.js';
 import * as serverUpdate from './server-update.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
@@ -565,6 +566,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       invitations: invitations.map(c => ({
         id: c.id, project: c.project, branch: c.branch,
         root: c.worktreePath, expiresAt: c.expiresAt,
+        // When the access began, so their topbar can show how much of the
+        // window has gone.
+        createdAt: c.createdAt || 0,
       })),
     };
   }
@@ -698,6 +702,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     updateAvailable: 'away',
     scheduledChat: 'always',
     limitReset: 'always',
+    // A collaborator's Claude waiting on the owner to allow something. "away"
+    // by default: if the owner is looking at Crundi the inbox badge already
+    // says so; if not, the collaborator is sitting blocked.
+    collabPermission: 'away',
   };
   const notifyPrefs = { ...NOTIFY_DEFAULTS };
   try {
@@ -943,7 +951,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (cur === 'idle' && pv === 'working' && term.project) {
       chatSchedule.onTurnEnd(term.project);
     }
-    if (cur !== pv && (cur === 'idle' || cur === 'needs-input')) {
+    // A scheduled job reports through its own runner (scheduled-chat.js), which
+    // already sends Claude's last reply when the run ends. Pinging here too sent
+    // that same reply a second time. The runner clears the flag when it hands a
+    // chat over to you, so a job left open pings normally from then on.
+    // A collaborator's chat is their conversation, not the owner's: its turns
+    // ending or waiting are not the owner's to be pinged about. What the owner
+    // IS needed for arrives as its own message (collabPermission).
+    if (cur !== pv && (cur === 'idle' || cur === 'needs-input') && !term.background && !term.collaborator) {
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
       if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
@@ -1003,7 +1018,73 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   if (claudeUi) claudeUi.onAnyStateChange((id, state) => handleAgentState(id, state, Date.now()));
 
   if (claudeUi) claudeUi.setFirstChatHandler((c) => collaborators.markBriefed(c.id));
+
+  /**
+   * Close collaborator chats whose invitation has been removed, revoked or has
+   * expired. `alsoId` closes that invitation's chats even though its record
+   * still exists — used just before removing it.
+   */
+  function closeLapsedCollaboratorChats(alsoId = '') {
+    if (!claudeUi || !claudeUi.closeCollaboratorSessions) return 0;
+    const closed = claudeUi.closeCollaboratorSessions(
+      (c) => c.id !== alsoId && !!collaborators.active(c.id));
+    if (closed.length) {
+      console.log(`[crundi] Closed ${closed.length} chat(s) belonging to collaborator access that has ended`);
+      broadcastState();
+    }
+    return closed.length;
+  }
+
+  // Expiry is a moment, not an event — nothing happens when a timestamp passes.
+  // Checked each minute, so an open chat outlives its access by at most that.
+  const collabChatSweep = setInterval(() => {
+    try { closeLapsedCollaboratorChats(); } catch { /* next minute */ }
+  }, 60_000);
+  if (collabChatSweep.unref) collabChatSweep.unref();
   if (claudeUi) claudeUi.onSessionGone((sid) => { approvals.dropSession(sid); broadcastApprovals(); });
+
+  // A card answered in the chat must leave the inbox at once, not whenever the
+  // page next reconnects. Coalesced: one answer can clear several cards.
+  // The chat abandoned a question it had escalated (its turn ended first).
+  // Withdraw it from the inbox so a late Approve cannot wake a finished chat.
+  if (claudeUi && claudeUi.onEscalationGone) claudeUi.onEscalationGone((approvalId) => {
+    if (approvals.cancel(approvalId, 'system')) broadcastApprovals();
+  });
+  let apprBroadcastTimer = null;
+  if (claudeUi && claudeUi.onPendingChange) claudeUi.onPendingChange(() => {
+    if (apprBroadcastTimer) return;
+    apprBroadcastTimer = setTimeout(() => { apprBroadcastTimer = null; broadcastApprovals(); }, 150);
+  });
+
+  // Token usage from collaborator chats. claude-ui stops the chat itself when
+  // this reports "over"; here the count is recorded and the owner told once
+  // per crossing (again only after the limit is raised or reset and crossed
+  // again).
+  const collabLimitNotified = new Set();
+  let collabUsageStateTimer = null;
+  const fmtTok = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
+  if (claudeUi && claudeUi.onCollaboratorUsage) claudeUi.onCollaboratorUsage((collab, tokens) => {
+    const u = tokens > 0 ? collaborators.addUsage(collab.id, tokens) : collaborators.usageOf(collab.id);
+    if (!u) return null;
+    // Their topbar bar reads usage from state. Re-sent at most every 5s, not
+    // on every message of a busy turn.
+    if (tokens > 0 && !collabUsageStateTimer) {
+      collabUsageStateTimer = setTimeout(() => { collabUsageStateTimer = null; broadcastState(); }, 5000);
+      if (collabUsageStateTimer.unref) collabUsageStateTimer.unref();
+    }
+    if (u.over && !collabLimitNotified.has(u.identity)) {
+      collabLimitNotified.add(u.identity);
+      console.log(`[crundi] Collaborator ${u.name} reached their token limit (${u.used}/${u.limit})`);
+      channels.deliver(
+        `${u.name || 'A collaborator'} reached their token limit on ${collab.project} (${fmtTok(u.used)} of ${fmtTok(u.limit)}). Their chat was stopped. Raise it in Info → Outside collaborators.`,
+        { tag: 'collab-limit' },
+      ).catch(() => { /* non-fatal */ });
+      broadcastState();
+    } else if (!u.over) {
+      collabLimitNotified.delete(u.identity);
+    }
+    return u;
+  });
 
   // Permission prompts from a collaborator's chat become approvals for the
   // owner. The resolver closes the loop back to the CLI, which is still
@@ -1017,7 +1098,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       project: e.collaborator?.project || '',
       sessionId: e.sessionId,
       requestId: e.requestId,
-      title: `${e.displayName || e.toolName} in ${e.collaborator?.project || 'a project'}`,
+      // A website request carries its host, so the inbox can offer to allow
+      // it for the session or always, not just this once.
+      payload: e.toolName === 'SandboxNetworkAccess' && e.input?.host ? { host: String(e.input.host).toLowerCase() } : null,
+      title: e.toolName === 'SandboxNetworkAccess' && e.input?.host
+        ? `Reach ${e.input.host} from ${e.collaborator?.project || 'a project'}`
+        : `${e.displayName || e.toolName} in ${e.collaborator?.project || 'a project'}`,
       detail: [e.description, '', '```json', JSON.stringify(e.input, null, 2).slice(0, 4000), '```']
         .filter(x => x !== undefined).join('\n'),
       resolve: (approved, r) => {
@@ -1028,6 +1114,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         claudeUi.respond(e.sessionId, {
           requestId: e.requestId,
           behavior: approved ? 'allow' : 'deny',
+          // "This session" / "Always" in the inbox: the CLI's own rule, kept for
+          // this chat, so the same kind of command does not ask again.
+          always: approved && (r.scope === 'session' || r.scope === 'always') ? 'session' : false,
           message: withdrawn
             ? 'The collaborator withdrew this request. Carry on without it, and do not ask again for the same thing.'
             : 'The project owner declined this. Do not retry it; find another way or say what you are blocked on.',
@@ -1041,7 +1130,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // not looking at the screen — that is why it needed asking rather than doing.
   approvals.onRequest((rec) => {
     broadcastApprovals();
-    if (rec.kind === 'tool') return;   // the chat already shows these
+    if (rec.kind === 'tool') {
+      // A permission prompt from a collaborator's chat. It is answered only by
+      // the owner, so the owner has to hear about it — governed by its own
+      // setting (Settings → Notifications → Collaborators), default when away.
+      const firstLine = String(rec.detail || '').split('\n').find(l => l.trim() && !l.startsWith('```')) || '';
+      notifyEvent('collabPermission',
+        `${rec.name || 'A collaborator'} needs your approval: ${rec.title}${firstLine ? `\n${firstLine.slice(0, 200)}` : ''}`);
+      return;
+    }
     // Delivered unconditionally rather than through notifyEvent: this is a
     // person sitting blocked, not an event about the machine, and "away" is
     // exactly when it matters most.
@@ -1083,13 +1180,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         projects: principal.projects,
         invitations: principal.invitations || [],
         expiresAt: Number.isFinite(principal.expiresAt) ? principal.expiresAt : 0,
+        // Their own token count against their own limit — the only usage a
+        // collaborator sees. The account's 5-hour and weekly figures are the
+        // owner's business.
+        usage: (principal.invitations || [])[0] ? collaborators.usageOf(principal.invitations[0].id) : null,
       },
       projects,
       services: (state.services || []).filter(x => mine.has(String(x.alias || '').toLowerCase())),
       // Chats belonging to them. Terminal cells are refused at the route level
       // anyway, but a collaborator must not even see that others are running.
+      // Only THEIR OWN chats. Filtering by project alone showed them the
+      // owner's chats on a shared project, and any other collaborator's.
       terminals: (state.terminals || []).filter(t =>
-        t.kind === 'ui' && mine.has(String(t.project || '').toLowerCase())),
+        t.kind === 'ui' && mine.has(String(t.project || '').toLowerCase())
+        && !!t.collaborator && t.collaborator.key === principal.collabKey),
       userTerminals: [],
       scheduled: [],
     };
@@ -1224,7 +1328,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   async function broadcastUsage(force = false) {
     try {
       const u = await usage.getUsage({ force });
-      if (sseClients.size) broadcastSSE('usage', u);
+      // Owners only. This is the ACCOUNT's 5-hour and weekly usage, and it was
+      // reaching collaborators' topbars too.
+      if (sseClients.size) {
+        const payload = `event: usage\ndata: ${JSON.stringify(u)}\n\n`;
+        for (const client of sseClients) {
+          if (isConfined(client.principal)) continue;
+          try { client.res.write(payload); } catch { sseClients.delete(client); }
+        }
+      }
     } catch { /* non-fatal */ }
   }
 
@@ -1280,8 +1392,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // A chat card is answered in the chat; the inbox exists so you can SEE it
     // from elsewhere, which is why each carries the session it belongs to.
     const chat = [];
+    const liveChatIds = new Set();
     for (const sess of (claudeUi ? claudeUi.list() : [])) {
       for (const p of (sess.pending || [])) {
+        // An escalated card is a collaborator's prompt, and it is already in
+        // the list below as a collab request with Approve/Decline. Listing it
+        // here too showed one decision twice — once with no detail at all.
+        if (p.escalated) continue;
+        liveChatIds.add(p.requestId);
+        // Dismissed from the inbox; still waiting, and answerable, in its chat.
+        if (dismissedChatCards.has(p.requestId)) continue;
         chat.push({
           id: p.requestId, source: 'chat', sessionId: sess.id,
           title: p.displayName || p.toolName || 'Permission',
@@ -1294,10 +1414,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const collab = approvals.pending().map(r => ({
       id: r.id, source: 'collab', kind: r.kind, title: r.title, detail: r.detail,
       project: r.project, name: r.name, sessionId: r.sessionId || '', createdAt: r.createdAt,
+      host: (r.payload && r.payload.host) || '',
     }));
+    // Forget dismissals for cards that no longer exist, so the set cannot grow.
+    for (const id of dismissedChatCards) if (!liveChatIds.has(id)) dismissedChatCards.delete(id);
     const items = [...secrets, ...chat, ...collab].sort((a, b) => a.createdAt - b.createdAt);
     return { items, count: items.length };
   }
+  const dismissedChatCards = new Set();
 
   function broadcastApprovals() {
     // Owners only: a collaborator's own pending requests reach them through
@@ -1970,6 +2094,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const aliasDenied = (alias) => isConfined(principal)
       && !principal.projects.includes(String(alias || '').toLowerCase());
 
+    /** The project a service key belongs to. Keys are `alias:name` (makeKey). */
+    const serviceAlias = (key) => String(key || '').split(':')[0].toLowerCase();
+
+    /**
+     * Commands mentioning a port this machine reserves. Not a block — a command
+     * string cannot be parsed reliably — but the owner approving it should see
+     * the warning rather than spot "80" themselves.
+     */
+    const reservedPortNote = (cmd) => (/(^|[^0-9])(80|443|8888|22|53)([^0-9]|$)/.test(String(cmd || ''))
+      ? 'Note: this command mentions a port this machine reserves (80, 443, 8888, 22 or 53).\n\n' : '');
+
     // Applied to QUERY parameters here, once, so a GET route added later
     // inherits it. Body parameters are checked in the handlers, because the
     // body has not been read yet at this point.
@@ -2307,6 +2442,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         invitations: principal.invitations || [],
         expiresAt: Number.isFinite(principal.expiresAt) ? principal.expiresAt : 0,
         requests: approvals.pendingForKey(principal.collabKey),
+        usage: (principal.invitations || [])[0] ? collaborators.usageOf(principal.invitations[0].id) : null,
       });
     }
 
@@ -2385,6 +2521,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         ok: true,
         collaborators: collaborators.list(),
         staleWorktrees: collaborators.staleWorktrees(),
+        sandbox: sandboxStatus(),
       });
     }
 
@@ -2392,6 +2529,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const body = JSON.parse(await readBody(req));
       switch (body.action) {
         case 'create': {
+          // No access is handed out that could not be used safely: without the
+          // sandbox a collaborator's shell reaches the whole machine.
+          if (!sandboxStatus().ok) {
+            return json(res, { ok: false, needsSandbox: true, error: 'Set up the collaborator sandbox first (Info → Outside collaborators).' }, 400);
+          }
           // Several projects at once, one invitation record each — so each
           // carries its own worktree, its own branch, and its own expiry.
           const projects = Array.isArray(body.projects) && body.projects.length
@@ -2399,11 +2541,34 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           const r = await collaborators.createMany({
             name: body.name, projects, days: body.days, hours: body.hours,
             telegram: body.telegram, withPasscode: body.withPasscode !== false,
+            tokenLimit: body.tokenLimit,
           });
           broadcastState();
           return json(res, r, r.ok ? 200 : 400);
         }
+        case 'sandboxStatus': return json(res, { ok: true, sandbox: sandboxStatus({ force: true }) });
+        case 'sandboxSetup': {
+          const r = await setupSandbox();
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        case 'setLimit': {
+          const r = collaborators.update(body.id, { tokenLimit: body.tokenLimit });
+          broadcastState();
+          return json(res, r);
+        }
+        case 'removeDomain': {
+          const r = collaborators.removeAllowedDomain(body.id, body.host);
+          return json(res, r, r.ok ? 200 : 400);
+        }
+        case 'resetUsage': {
+          const r = collaborators.resetUsage(body.id);
+          broadcastState();
+          return json(res, r);
+        }
         case 'grant': {
+          if (!sandboxStatus().ok) {
+            return json(res, { ok: false, needsSandbox: true, error: 'Set up the collaborator sandbox first (Info → Outside collaborators).' }, 400);
+          }
           // Adding a project to someone who already has access. They keep their
           // passcode; the new project gets its own worktree and expiry.
           const r = await collaborators.createMany({
@@ -2417,12 +2582,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'reissue': return json(res, collaborators.reissuePasscode(body.id));
         case 'revoke': {
           const r = collaborators.update(body.id, { revoked: true });
-          // Their live sessions die with the record: checkAccess consults it on
-          // every request, so nothing further is needed to cut them off.
+          // Their REQUESTS stop at once — checkAccess consults the record every
+          // time — but a chat they already had open is a running process that no
+          // request touches. Close it too.
+          closeLapsedCollaboratorChats();
           broadcastState();
           return json(res, r);
         }
         case 'remove': {
+          // Close their chats BEFORE the worktree goes: removing a folder out
+          // from under a running Claude leaves it working in nothing.
+          closeLapsedCollaboratorChats(body.id);
           const r = await collaborators.remove(body.id);
           broadcastState();
           return json(res, r);
@@ -2452,9 +2622,50 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     if (path === '/api/approvals' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req));
+      // Dismiss one item or many (Clear all). Nothing may be left waiting on an
+      // answer that can no longer be given, so what lives only in the inbox is
+      // declined; a chat card is just hidden here and stays answerable in chat.
+      if (body.action === 'dismiss') {
+        const list = Array.isArray(body.items) ? body.items.slice(0, 500) : [];
+        let done = 0;
+        for (const it of list) {
+          const id = String((it && it.id) || '');
+          if (!id) continue;
+          const src = String((it && it.source) || '');
+          if (src === 'chat') { dismissedChatCards.add(id); done++; continue; }
+          if (src === 'secret') {
+            const entry = pendingSecretRequests.get(id);
+            if (entry) { entry.reject('The owner dismissed this secret access request.'); done++; }
+            continue;
+          }
+          const r = approvals.resolve(id, false, 'owner', 'Dismissed');
+          if (r.ok) done++;
+        }
+        broadcastApprovals();
+        return json(res, { ok: true, dismissed: done });
+      }
+      // A website request approved beyond "once": remember the host BEFORE
+      // answering, so a retry in the same turn already goes straight through.
+      {
+        const pre = approvals.get(String(body.id || ''));
+        // The scope rides on the record to the resolver, which answers the CLI.
+        if (pre && pre.status === 'pending') pre.scope = body.approve ? String(body.scope || 'once') : 'once';
+        const host = pre && pre.status === 'pending' && pre.payload && pre.payload.host;
+        if (body.approve && host && (body.scope === 'session' || body.scope === 'always')) {
+          if (claudeUi && pre.sessionId) claudeUi.allowHostForSession(pre.sessionId, host);
+          if (body.scope === 'always' && pre.collabId) collaborators.addAllowedDomain(pre.collabId, host);
+        }
+      }
       const r = approvals.resolve(String(body.id || ''), !!body.approve, 'owner', body.note);
       // A merge is approved here and performed here: approving it and then
       // having to go and do it would be two steps for one decision.
+      if (r.ok && body.approve && r.request.kind === 'service' && r.request.payload) {
+        const p = r.request.payload;
+        const reg = registerService({ alias: p.alias, name: p.name, command: p.command, cwd: p.cwd, stopCommand: p.stopCommand || '' });
+        broadcastApprovals();
+        broadcastState();
+        return json(res, { ...r, service: reg }, reg.ok ? 200 : 409);
+      }
       if (r.ok && body.approve && r.request.kind === 'merge') {
         const m = await collaborators.mergeBranch(r.request.collabId);
         broadcastApprovals();
@@ -2606,8 +2817,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const want = String(body.project).toLowerCase();
         const inv = (principal.invitations || []).find(i => i.project === want);
         if (!inv) return json(res, { ok: false, error: 'Unknown project' }, 403);
+        const lim = collaborators.usageOf(inv.id);
+        if (lim && lim.over) {
+          return json(res, { ok: false, error: 'Your token limit has been reached. Ask the owner to raise it.' }, 403);
+        }
         body.cwd = inv.root;
         body.skipPermissions = false;
+        // The launcher names a skip-permissions chat "Chat (skip perms)". The
+        // flag is refused above, so the name would be a lie on the tab.
+        if (!body.title || /skip perms/i.test(String(body.title))) body.title = 'Chat';
         body.collaborator = {
           id: inv.id,
           key: principal.collabKey,
@@ -2616,6 +2834,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           root: inv.root,
           branch: inv.branch,
           apiKey: (collaborators.get(inv.id) && collaborators.apiKeyOf(inv.id)) || '',
+          // Sandbox layout: their own package cache, and the roots holding
+          // everyone else's worktrees and caches, which their shell may not read.
+          cacheDir: collaborators.cacheDirOf(inv.id),
+          worktreesRoot: collaborators.worktreesRoot(),
+          cacheRoot: collaborators.cacheRoot(),
+          // Websites the owner allowed "always" for this person.
+          allowedDomains: collaborators.allowedDomainsOf(inv.id),
         };
       }
       const result = await claudeUi.create(body.project, body);
@@ -2705,6 +2930,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         tunnelStatus: s.tunnel?.status || null,
         tunnelUrl: s.tunnel?.url || null,
       }));
+      // Every project's services, commands included, went to every caller.
+      if (isConfined(principal)) {
+        return json(res, { services: all.filter(x => principal.projects.includes(String(x.alias || '').toLowerCase())) });
+      }
       return json(res, { services: all });
     }
 
@@ -2802,6 +3031,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           return json(res, { ok: false, error: 'A service must run inside your own working folder.' }, 403);
         }
         body.cwd = want;
+        // A service's command runs as this server's user, OUTSIDE --restricted
+        // and outside every deny rule their Claude has — it is simply the
+        // server running a shell command. On a machine with passwordless sudo,
+        // registering one is the whole machine. So it is asked, not done.
+        const rec = approvals.add({
+          kind: 'service',
+          collabKey: principal.collabKey,
+          name: principal.name,
+          project: String(alias).toLowerCase(),
+          title: `Run a service in ${alias}: ${body.name}`,
+          detail: `${reservedPortNote(body.command)}command: ${body.command}\ncwd: ${want}`,
+          payload: { alias: String(alias).toLowerCase(), name: body.name, command: body.command, cwd: want, stopCommand: body.stopCommand || '' },
+        });
+        broadcastApprovals();
+        return json(res, {
+          ok: false, pendingApproval: true, requestId: rec.id,
+          error: 'Sent to the project owner. The service is registered once they approve it.',
+        }, 202);
       }
       const result = registerService({
         alias,
@@ -2819,6 +3066,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (svcMatch) {
       const key = decodeURIComponent(svcMatch[1]);
       const action = svcMatch[2];
+      // A key names ANY service on the machine. Without this a collaborator
+      // could stop or restart the owner's services in other projects just by
+      // naming them.
+      if (aliasDenied(serviceAlias(key))) return json(res, { ok: false, error: 'No such service' }, 404);
       if (action === 'logs' && req.method === 'GET') {
         return json(res, { logs: getServiceLogs(key, 100) });
       }
@@ -3796,6 +4047,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!body.tool) return json(res, { ok: false, error: 'Missing tool name' }, 400);
       const a = body.args || {};
 
+      let mcpAllowedProjects = null;
       if (mcpCollabKey) {
         if (!COLLABORATOR_MCP_TOOLS.has(body.tool)) {
           return json(res, { ok: false, error: `"${body.tool}" is not available on this project.` }, 403);
@@ -3812,6 +4064,36 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // collaborator could attach a process to somebody else's.
         if (a.project && !allowed.includes(String(a.project).toLowerCase())) {
           return json(res, { ok: false, error: 'Unknown project' }, 403);
+        }
+        mcpAllowedProjects = allowed;
+        // Service keys are `alias:name` and can name any project's service.
+        if (['start_service', 'stop_service', 'restart_service', 'get_service_logs'].includes(body.tool)
+            && !allowed.includes(String(a.key || '').split(':')[0].toLowerCase())) {
+          return json(res, { ok: false, error: 'No such service' }, 403);
+        }
+        // Registering runs a command outside every sandbox this session has.
+        if (body.tool === 'register_service') {
+          const inv = collaborators.liveByIdentity(mcpCollabKey).find(c => c.project === String(a.alias).toLowerCase());
+          const home = inv ? resolve(inv.worktreePath) : '';
+          const want = a.cwd ? resolve(String(a.cwd)) : home;
+          if (!home || !(want === home || want.startsWith(home + sep))) {
+            return json(res, { ok: false, error: 'A service must run inside your own working folder.' }, 403);
+          }
+          if (!a.name || !a.command) return json(res, { ok: false, error: 'name and command are required' }, 400);
+          const rec = approvals.add({
+            kind: 'service',
+            collabKey: mcpCollabKey,
+            name: inv.name,
+            project: inv.project,
+            title: `Run a service in ${inv.project}: ${a.name}`,
+            detail: `${reservedPortNote(a.command)}command: ${a.command}\ncwd: ${want}`,
+            payload: { alias: inv.project, name: a.name, command: a.command, cwd: want, stopCommand: a.stopCommand || '' },
+          });
+          broadcastApprovals();
+          return json(res, {
+            ok: false, pendingApproval: true, requestId: rec.id,
+            error: 'Sent to the project owner for approval. The service will be registered once they approve it; nothing runs until then. Tell the user this is waiting on the owner.',
+          });
         }
       }
 
@@ -4089,7 +4371,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       // Service tools
       if (body.tool === 'list_services') {
-        return json(res, { ok: true, services: getAllServiceStatus() });
+        const svcs = getAllServiceStatus();
+        return json(res, { ok: true, services: mcpAllowedProjects
+          ? svcs.filter(x => mcpAllowedProjects.includes(String(x.alias || '').toLowerCase()))
+          : svcs });
       }
       if (body.tool === 'start_service') {
         return json(res, startService(body.args?.key));
@@ -4279,6 +4564,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // Presence: is the user actively at this window right now? Gates the
         // agent-status Telegram ping (see anyClientPresent / handleAgentState).
         if (msg.type === 'presence') {
+          // Only the OWNER being here means "no need to ping the owner". A
+          // collaborator's focused page counted too, so their being active
+          // silenced the owner's "when away" notifications — including the
+          // one telling the owner that collaborator is waiting on them.
+          if (confined) return;
           if (msg.active) presentClients.set(ws, Date.now() + PRESENCE_TTL);
           else presentClients.delete(ws);
           return;

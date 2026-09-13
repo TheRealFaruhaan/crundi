@@ -103,6 +103,11 @@ const COLLABORATOR_ROUTES = [
   // mediated by Claude Code's own permission checks.
   ['POST', '/api/ui-sessions/create'],
   ['GET', '/api/ui-sessions/resumable'],
+  // Asked before every launch ("is there a heavy transcript to resume?"). It
+  // resolves the project through the scoped getProject, so it only ever
+  // describes the caller's own worktree. Refused, the launcher silently fell
+  // back to a plain launch and a collaborator never saw the resume choice.
+  ['GET', '/api/ui-sessions/preflight'],
   [/^(GET|POST)$/, /^\/api\/ui-sessions\/[^/]+\/(send|cancel-queued|respond|answer-closed|interrupt|close|rename|model|history|dismiss-agents)$/],
 
   // ─── Services and browsers: the sanctioned way to run things ───
@@ -237,9 +242,80 @@ export const COLLABORATOR_CLAUDE_TOOLS = [
  * that are perfectly analysable and perfectly legitimate-looking, which the
  * path confinement therefore has no reason to stop.
  */
-export function collaboratorSettings() {
+/**
+ * Package registries a collaborator's sandboxed shell may reach without asking.
+ * Anything else becomes a network permission prompt, which goes to the owner.
+ */
+export const COLLABORATOR_ALLOWED_DOMAINS = [
+  'registry.npmjs.org', 'registry.yarnpkg.com', 'registry.npmmirror.com',
+  'pypi.org', 'files.pythonhosted.org',
+  'github.com', 'codeload.github.com', 'objects.githubusercontent.com', 'raw.githubusercontent.com',
+  'crates.io', 'index.crates.io', 'static.crates.io',
+  'proxy.golang.org', 'sum.golang.org',
+  'rubygems.org', 'repo.maven.apache.org', 'jsr.io', 'deno.land',
+  'cdn.jsdelivr.net', 'unpkg.com',
+];
+
+const uniq = (xs) => [...new Set(xs.filter(Boolean))];
+const pjoin = (...parts) => parts.join('/').replace(/\/+/g, '/');
+
+/**
+ * The sandbox block for a collaborator's chat.
+ *
+ * Writes default to the working directory only. Git in a worktree also writes
+ * into the MAIN repository, so exactly those paths are opened: the shared
+ * object store, this worktree's own metadata folder, and the ref (and reflog)
+ * directory of their own branch. Never the main repo's hooks or config — a
+ * hook written there would run the next time the owner used git.
+ */
+export function collaboratorSandbox({
+  root = '', gitDir = '', commonDir = '', branch = '', cacheDir = '',
+  worktreesRoot = '', projectsDir = '', dataDir = '', home = '', extraDenyRead = [],
+  extraDomains = [],
+} = {}) {
+  const branchDir = branch.includes('/') ? branch.slice(0, branch.lastIndexOf('/')) : '';
+  const refDir = commonDir ? pjoin(commonDir, 'refs', 'heads', branchDir) : '';
+  const logDir = commonDir ? pjoin(commonDir, 'logs', 'refs', 'heads', branchDir) : '';
   return {
+    enabled: true,
+    // Exit rather than run the shell unsandboxed if the sandbox cannot start.
+    failIfUnavailable: true,
+    autoAllowBashIfSandboxed: true,
+    // No dangerouslyDisableSandbox escape hatch.
+    allowUnsandboxedCommands: false,
+    // Plus whatever the owner chose "Always" for, for this person.
+    network: { allowedDomains: uniq([...COLLABORATOR_ALLOWED_DOMAINS, ...(extraDomains || [])]) },
+    filesystem: {
+      denyRead: uniq([
+        projectsDir, worktreesRoot, dataDir,
+        home && pjoin(home, '.claude'), home && pjoin(home, '.ssh'), home && pjoin(home, '.config'),
+        home && pjoin(home, '.npm'), home && pjoin(home, '.cache'),
+        '/root',
+        ...(extraDenyRead || []),
+      ]),
+      allowRead: uniq([root, commonDir, gitDir, cacheDir]),
+      allowWrite: uniq([
+        commonDir && pjoin(commonDir, 'objects'),
+        gitDir,
+        refDir, logDir,
+        cacheDir,
+      ]),
+    },
+  };
+}
+
+export function collaboratorSettings(sandboxOpts = null) {
+  return {
+    ...(sandboxOpts ? { sandbox: collaboratorSandbox(sandboxOpts) } : {}),
     permissions: {
+      // Pre-allowed, or every one of these prompts — and a collaborator's
+      // prompts go to the OWNER. Seen in a real turn: register_service sat on
+      // "PERMISSION pending escalated=True", and list_services and every
+      // browser_* call would have done the same. The server already scopes
+      // each tool to the caller's key (other projects 403, secrets 403,
+      // register_service becomes an owner approval), so the prompt only ever
+      // added a wait.
+      allow: [...COLLABORATOR_MCP_TOOLS].map(t => `mcp__crundi__${t}`),
       deny: [
         // This box has passwordless sudo. Nothing else on the list matters if
         // this one is reachable.
@@ -251,7 +327,15 @@ export function collaboratorSettings() {
         'Bash(apt:*)', 'Bash(apt-get:*)', 'Bash(dpkg:*)', 'Bash(snap:*)',
         // Crundi's own control surfaces.
         'Bash(crundi:*)', 'Bash(pm2:*)',
-        // Credentials and other people's work live under these.
+        // Credentials and other people's work live under these. Crundi's own
+        // data folder holds the API key, every sign-in and the secrets store.
+        //
+        // No worktree may live under a path denied here. They once did
+        // (<dataDir>/worktrees), and this rule then stopped a collaborator's
+        // Claude reading its own working folder — "File is in a directory that
+        // is denied by your permission settings". The rule is worth keeping, so
+        // the worktrees moved: collaborators.js refuses a root inside Crundi's
+        // data folder, and the access test checks the two never overlap.
         'Read(//home/crundi/.claude/**)', 'Read(//home/crundi/.config/crundi/**)',
         'Read(//home/crundi/.ssh/**)', 'Read(//root/**)', 'Read(//etc/shadow)',
         'Edit(//home/crundi/.claude/**)', 'Edit(//home/crundi/.config/crundi/**)',

@@ -58,7 +58,7 @@ const { handleMessage } = new Function(`
   const MAX_TEXT = 4000, MAX_MESSAGES = 500;
   let n = 0; const nextSeq = () => ++n; const genId = () => 'i' + (++n);
   function handleAgentAssistant(){} function handleAgentUser(){} function handleHookFeedback(){}
-  function patchEntry(){} function emitGoal(){} function emitEntry(){}
+  function patchEntry(){} function emitGoal(){} function emitEntry(){} function noteUsage(){} function expireStalePending(){}
   ${setStateFn}
   ${seg(iAssist, iBlocks)}
   ${seg(iBlocks, iUser)}

@@ -34,16 +34,81 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, dirname, basename, resolve, sep } from 'path';
+import { homedir } from 'os';
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
 import { config } from './config.js';
 import { getProject } from './project-store.js';
+import { collaboratorSettings } from './access-policy.js';
 
 const FILE = () => join(config.dataDir, 'collaborators.json');
 
-/** Where worktrees live. Outside every project, so none of them can see it. */
-const ROOT = () => join(config.dataDir, 'worktrees');
+/**
+ * Where worktrees live.
+ *
+ * OUTSIDE Crundi's data folder, deliberately. They used to be created under
+ * <dataDir>/worktrees, which put every collaborator's working folder inside
+ * the directory their Claude is denied — the rule protecting Crundi's API key
+ * and sign-ins matched the worktrees too, and their Claude could not read its
+ * own files. Moving the worktrees out lets that rule stand.
+ *
+ * Also outside PROJECTS_DIR, or each worktree would be auto-discovered and
+ * listed as a project of its own. rootProblem() refuses both.
+ */
+const ROOT = () => process.env.COLLAB_WORKTREES_DIR || join(homedir(), 'crundi-worktrees');
+
+/**
+ * Per-collaborator package caches (npm, pip, …). Their sandbox cannot write
+ * the shared caches in the owner's home — and must not: a writable shared
+ * cache is a way to plant a package the owner later installs. Kept BESIDE the
+ * worktrees root rather than inside it, so the stale-worktree scan never
+ * mistakes a cache for an abandoned checkout. Deleted with the collaborator.
+ */
+const CACHE_ROOT = () => `${ROOT().replace(/[\\/]+$/, '')}-cache`;
+export function worktreesRoot() { return ROOT(); }
+export function cacheRoot() { return CACHE_ROOT(); }
+export function cacheDirOf(id) { return join(CACHE_ROOT(), String(id || '').replace(/[^a-zA-Z0-9_-]/g, '')); }
+
+/** Where 1.17 and 1.18 created them. Kept only so they can be found and moved. */
+const LEGACY_ROOT = () => join(config.dataDir, 'worktrees');
+
+/** Is `child` the same folder as `parent`, or inside it? */
+function isWithin(parent, child) {
+  if (!parent || !child) return false;
+  const p = resolve(parent);
+  const c = resolve(child);
+  return c === p || c.startsWith(p + sep);
+}
+
+/** Folders a collaborator's Claude may not read, taken from the real deny list. */
+function deniedFolders() {
+  return collaboratorSettings().permissions.deny
+    .map(r => (String(r).match(/^Read\(\/(\/.*)\/\*\*\)$/) || [])[1])
+    .filter(Boolean);
+}
+
+/**
+ * Why a worktree root would reintroduce a known problem, or ''.
+ *
+ * Checked against the ACTUAL deny list rather than a guess about where
+ * Crundi's data lives. The failure this exists to prevent is precisely "a
+ * worktree inside a folder their Claude may not read", so that is the question
+ * asked — and a rule added to the list later is covered without touching this.
+ */
+function rootProblem(root) {
+  const denied = deniedFolders().find(d => isWithin(d, root));
+  if (denied) {
+    return `Worktrees cannot live inside ${denied}: collaborators are denied that folder, so they could not read their own files.`;
+  }
+  if (isWithin(config.dataDir, root)) {
+    return `Worktrees cannot live inside Crundi's data folder (${config.dataDir}).`;
+  }
+  if (config.projectsDir && isWithin(config.projectsDir, root)) {
+    return `Worktrees cannot live inside PROJECTS_DIR (${config.projectsDir}): each one would show up as a project.`;
+  }
+  return '';
+}
 
 const genId = () => randomBytes(8).toString('hex');
 
@@ -359,6 +424,8 @@ export async function provisionWorktree(projectAlias, name) {
 
   const branch = `collab/${slug(name)}-${randomBytes(3).toString('hex')}`;
   const dir = join(ROOT(), `${slug(projectAlias)}--${slug(name)}-${randomBytes(3).toString('hex')}`);
+  const problem = rootProblem(ROOT());
+  if (problem) return { ok: false, error: problem };
   mkdirSync(ROOT(), { recursive: true });
 
   const add = await git(['worktree', 'add', '-b', branch, dir, 'HEAD'], project.path);
@@ -489,6 +556,7 @@ export function isExpired(c) {
 }
 
 export function list() {
+  flushUsage();
   return loadAll().map(publicView);
 }
 
@@ -520,7 +588,7 @@ export function get(id) {
  * @param {string} [o.telegram]       @username, without the @
  * @param {boolean} [o.withPasscode]  also issue a passcode
  */
-export async function createMany({ name, projects = [], days, hours, telegram = '', withPasscode = true } = {}) {
+export async function createMany({ name, projects = [], days, hours, telegram = '', withPasscode = true, tokenLimit } = {}) {
   const list = [...new Set((projects || []).map(p => String(p || '').toLowerCase()).filter(Boolean))];
   if (!list.length) return { ok: false, error: 'Pick at least one project' };
   const made = [];
@@ -531,7 +599,7 @@ export async function createMany({ name, projects = [], days, hours, telegram = 
     // Sequential, not parallel: each create consults the records written by the
     // one before it to decide whether this person already has a passcode, and
     // running them together would issue several.
-    const r = await create({ name, project: p, days, hours, telegram, withPasscode });
+    const r = await create({ name, project: p, days, hours, telegram, withPasscode, tokenLimit });
     if (r.ok) { made.push(r.collaborator); if (r.passcode) passcode = r.passcode; }
     else { failed.push(`${p}: ${r.error}`); if (r.needsGit) needsGit.push(p); }
   }
@@ -539,7 +607,7 @@ export async function createMany({ name, projects = [], days, hours, telegram = 
   return { ok: true, collaborators: made, passcode, failed, needsGit };
 }
 
-export async function create({ name, project, days, hours, telegram = '', withPasscode = true } = {}) {
+export async function create({ name, project, days, hours, telegram = '', withPasscode = true, tokenLimit } = {}) {
   const nm = String(name || '').trim();
   if (!nm) return { ok: false, error: 'A name is required' };
   if (!getProject(project)) return { ok: false, error: `Project "${project}" not found` };
@@ -582,6 +650,14 @@ export async function create({ name, project, days, hours, telegram = '', withPa
     createdAt: Date.now(),
     expiresAt: Date.now() + ttl * 60 * 60 * 1000,
     ttlHours: ttl,           // what was asked for, for "extend by the same again"
+    // Token cap for the PERSON, stored on each of their invitations and
+    // enforced on the sum. 0 = no limit. A new project for someone who already
+    // has one inherits it unless a new value was given.
+    tokenLimit: tokenLimit !== undefined && tokenLimit !== null && tokenLimit !== ''
+      ? Math.max(0, Math.round(Number(tokenLimit) || 0))
+      : (loadAll().filter(x => identityOf(x) === identity).reduce((m, x) => Math.max(m, x.tokenLimit || 0), 0)),
+    tokensUsed: 0,
+    usageAt: 0,
 
     revoked: false,
     seenAt: 0,
@@ -619,6 +695,12 @@ export function update(id, patch = {}) {
     c.ttlHours = ttl;
   }
   if (patch.revoked !== undefined) c.revoked = !!patch.revoked;
+  if (patch.tokenLimit !== undefined) {
+    // The limit belongs to the person, so it moves on every invitation they hold.
+    const lim = Math.max(0, Math.round(Number(patch.tokenLimit) || 0));
+    const key = identityOf(c);
+    for (const x of all) if (identityOf(x) === key) x.tokenLimit = lim;
+  }
   saveAll(all);
   return { ok: true, collaborator: publicView(c) };
 }
@@ -647,9 +729,127 @@ export async function remove(id) {
   if (i < 0) return { ok: false, error: 'No such collaborator' };
   const c = all[i];
   const cleanup = await removeWorktree(c.project, c);
+  // Everything else that exists only for this invitation goes with it: the
+  // package cache their sandbox wrote, and the tools config holding their key.
+  try { rmSync(cacheDirOf(c.id), { recursive: true, force: true }); } catch { /* ignore */ }
+  try { rmSync(join(config.dataDir, 'collab-mcp', `${c.id}.json`), { force: true }); } catch { /* ignore */ }
+  pendingUsage.delete(c.id);
   all.splice(i, 1);
   saveAll(all);
   return { ok: true, notes: cleanup.notes || [] };
+}
+
+// ─── Token usage ───
+//
+// Counted from the API usage Claude reports on each message of a collaborator's
+// chats: input + output + cache creation. Cache READS are left out; they are
+// re-reads of context already paid for, and counting them would make a long
+// conversation look many times more expensive than it is.
+//
+// Deltas arrive per message, so they are held in memory and written every few
+// seconds rather than rewriting collaborators.json on every token.
+
+const pendingUsage = new Map();
+let usageTimer = null;
+
+function flushUsage() {
+  clearTimeout(usageTimer);
+  usageTimer = null;
+  if (!pendingUsage.size) return;
+  const all = loadAll();
+  const now = Date.now();
+  for (const [id, n] of pendingUsage) {
+    const c = all.find(x => x.id === id);
+    if (c) { c.tokensUsed = (c.tokensUsed || 0) + n; c.usageAt = now; }
+  }
+  pendingUsage.clear();
+  saveAll(all);
+}
+export function flushUsageNow() { flushUsage(); }
+
+/** A person's usage against their limit, summed over every invitation they hold. */
+export function usageOf(id) {
+  const all = loadAll();
+  const c = all.find(x => x.id === id);
+  if (!c) return null;
+  const key = identityOf(c);
+  const mine = all.filter(x => identityOf(x) === key);
+  const used = mine.reduce((t, x) => t + (x.tokensUsed || 0) + (pendingUsage.get(x.id) || 0), 0);
+  const limit = mine.reduce((m, x) => Math.max(m, x.tokenLimit || 0), 0);
+  return { used, limit, over: limit > 0 && used >= limit, identity: key, name: c.name };
+}
+
+/** Record tokens spent by one invitation's chats. Returns the person's usage. */
+export function addUsage(id, tokens) {
+  const n = Math.max(0, Math.round(Number(tokens) || 0));
+  if (n) {
+    pendingUsage.set(id, (pendingUsage.get(id) || 0) + n);
+    if (!usageTimer) {
+      usageTimer = setTimeout(flushUsage, 5000);
+      if (usageTimer.unref) usageTimer.unref();
+    }
+  }
+  return usageOf(id);
+}
+
+/** Start a person's count again from zero. */
+export function resetUsage(id) {
+  flushUsage();
+  const all = loadAll();
+  const c = all.find(x => x.id === id);
+  if (!c) return { ok: false, error: 'No such collaborator' };
+  const key = identityOf(c);
+  for (const x of all) if (identityOf(x) === key) { x.tokensUsed = 0; x.usageAt = Date.now(); }
+  saveAll(all);
+  return { ok: true, usage: usageOf(id) };
+}
+
+// ─── Websites the owner allowed "always" ───
+//
+// Per person, like the token limit: stored on each of their invitations and
+// fed into their sandbox's network allowlist when a chat starts.
+
+const HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+export function normalizeHost(host) {
+  const h = String(host || '').trim().toLowerCase().replace(/\.$/, '');
+  return HOST_RE.test(h) ? h : '';
+}
+
+export function allowedDomainsOf(id) {
+  const all = loadAll();
+  const c = all.find(x => x.id === id);
+  if (!c) return [];
+  const key = identityOf(c);
+  return [...new Set(all.filter(x => identityOf(x) === key).flatMap(x => x.allowedDomains || []))].sort();
+}
+
+export function addAllowedDomain(id, host) {
+  const h = normalizeHost(host);
+  if (!h) return { ok: false, error: 'Not a valid host name' };
+  const all = loadAll();
+  const c = all.find(x => x.id === id);
+  if (!c) return { ok: false, error: 'No such collaborator' };
+  const key = identityOf(c);
+  for (const x of all) {
+    if (identityOf(x) !== key) continue;
+    x.allowedDomains = [...new Set([...(x.allowedDomains || []), h])].sort();
+  }
+  saveAll(all);
+  return { ok: true, host: h, allowedDomains: allowedDomainsOf(id) };
+}
+
+export function removeAllowedDomain(id, host) {
+  const h = String(host || '').trim().toLowerCase();
+  const all = loadAll();
+  const c = all.find(x => x.id === id);
+  if (!c) return { ok: false, error: 'No such collaborator' };
+  const key = identityOf(c);
+  for (const x of all) {
+    if (identityOf(x) !== key) continue;
+    x.allowedDomains = (x.allowedDomains || []).filter(d => d !== h);
+  }
+  saveAll(all);
+  return { ok: true, allowedDomains: allowedDomainsOf(id) };
 }
 
 export function markSeen(idOrIdentity) {
@@ -732,12 +932,16 @@ export function identityByApiKey(key) {
 export function staleWorktrees() {
   const all = loadAll();
   const byPath = new Map(all.filter(c => c.worktreePath).map(c => [c.worktreePath, c]));
+  // Both roots: a worktree left at the old location — its record gone, or
+  // its move having failed — is still disk worth reclaiming.
   let dirs = [];
-  try {
-    dirs = readdirSync(ROOT(), { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .map(d => join(ROOT(), d.name));
-  } catch { return []; }
+  for (const root of [ROOT(), LEGACY_ROOT()]) {
+    try {
+      dirs.push(...readdirSync(root, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => join(root, d.name)));
+    } catch { /* a root that does not exist has nothing to reclaim */ }
+  }
 
   const out = [];
   for (const path of dirs) {
@@ -802,4 +1006,43 @@ export async function reclaimStale() {
   return { ok: true, freed, count: stale.length, notes };
 }
 
+/**
+ * Move worktrees created at the old location to the new one.
+ *
+ * Run at startup, before the server accepts requests. No chat can be using a
+ * worktree then, because chats do not survive a restart — and moving a folder
+ * out from under a running Claude would leave it working in a directory that
+ * no longer exists.
+ *
+ * Uses `git worktree move`, so the project's own record of its worktrees is
+ * updated too. A plain rename would leave git pointing at the old path.
+ */
+export async function migrateLegacyWorktrees() {
+  const moved = [];
+  const failed = [];
+  const problem = rootProblem(ROOT());
+  if (problem) return { ok: false, error: problem, moved, failed };
+
+  const all = loadAll();
+  const legacy = LEGACY_ROOT();
+  let dirty = false;
+  for (const c of all) {
+    if (!c.worktreePath || !isWithin(legacy, c.worktreePath)) continue;
+    if (!existsSync(c.worktreePath)) continue;     // stale; maintenance can have it
+    const project = getProject(c.project);
+    if (!project) { failed.push(`${c.name}/${c.project}: project not found`); continue; }
+    mkdirSync(ROOT(), { recursive: true });
+    const target = join(ROOT(), basename(c.worktreePath));
+    if (existsSync(target)) { failed.push(`${c.name}/${c.project}: ${target} already exists`); continue; }
+    const r = await git(['worktree', 'move', c.worktreePath, target], project.path);
+    if (!r.ok) { failed.push(`${c.name}/${c.project}: ${(r.stderr || r.error).split('\n')[0]}`); continue; }
+    moved.push({ name: c.name, project: c.project, from: c.worktreePath, to: target });
+    c.worktreePath = target;
+    dirty = true;
+  }
+  if (dirty) saveAll(all);
+  return { ok: failed.length === 0, moved, failed };
+}
+
 export const worktreeRoot = ROOT;
+export const legacyWorktreeRoot = LEGACY_ROOT;

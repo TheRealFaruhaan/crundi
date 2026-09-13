@@ -2048,6 +2048,22 @@
       }
     }
 
+    // The chat row for a tool call, by the CLI's tool_use id. A background
+    // task's output lives there, not on the task itself.
+    function findToolEntry(toolUseId) {
+      var found = null;
+      entries.forEach(function (r) {
+        if (r && r.data && r.data.kind === 'tool' && r.data.toolUseId === toolUseId) found = r.data;
+      });
+      return found;
+    }
+
+    function taskToolNode(e) {
+      var n = toolNode(e);
+      n.classList.remove('cc-collapsed');
+      return n;
+    }
+
     function toggleAgentPanel(toolUseId) {
       if (openAgent === toolUseId) { closeAgentPanel(); return; }
       closeAgentPanel();
@@ -2069,7 +2085,17 @@
         sw.appendChild(sum);
         body.appendChild(sw);
       }
-      if (!rec.messages.length) {
+      // A background command is a task, not an agent: it has no transcript,
+      // but it does have output, on its tool row in the chat. Show that row
+      // here, expanded. The panel used to say only "This task has finished.",
+      // which read as if the command had produced nothing at all.
+      var taskTool = rec.meta.kind === 'task' ? findToolEntry(toolUseId) : null;
+      if (taskTool) {
+        var tw = el('div', 'cc-entry cc-agpanel-tasktool');
+        tw.appendChild(taskToolNode(taskTool));
+        body.appendChild(tw);
+      }
+      if (!rec.messages.length && !taskTool) {
         body.appendChild(el('div', 'cc-agpanel-empty',
           rec.meta.kind === 'task'
             ? (rec.meta.status && rec.meta.status !== 'running'
@@ -2422,6 +2448,13 @@
           var stick = atBottom();
           paint(rec.node, rec.data);
           scrollDown(stick);
+          // An open task panel shows this same command: keep it current, so a
+          // command still running when the bubble was opened fills in its
+          // output as it arrives.
+          if (agentPanel && openAgent && rec.data.kind === 'tool' && rec.data.toolUseId === openAgent) {
+            var tt = agentPanel.querySelector('.cc-agpanel-tasktool');
+            if (tt) { tt.innerHTML = ''; tt.appendChild(taskToolNode(rec.data)); }
+          }
           break;
         }
         case 'delta': {

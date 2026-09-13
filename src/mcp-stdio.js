@@ -15,6 +15,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { COLLABORATOR_MCP_TOOLS } from './access-policy.js';
 import { readFileSync, existsSync } from 'node:fs';
 import http from 'node:http';
 import { createRequire } from 'module';
@@ -315,8 +316,17 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
+// A collaborator's session is told only about the tools it may call. The
+// server refuses the rest regardless (COLLABORATOR_MCP_TOOLS is checked on
+// every call); this is so their Claude does not see secret_get and
+// spawn_terminal listed, try them, and report a wall of 403s as "blockers".
+const TOOL_SCOPE = process.env.CRUNDI_TOOL_SCOPE || '';
+const LISTED_TOOLS = TOOL_SCOPE === 'collaborator'
+  ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
+  : TOOLS;
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools: TOOLS };
+  return { tools: LISTED_TOOLS };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {

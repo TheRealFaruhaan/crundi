@@ -262,6 +262,27 @@ if (isDev) {
 // ─── Start everything ───
 console.log('[crundi] Starting...');
 
+// Move collaborator worktrees out of the data folder, where 1.17 and 1.18 put
+// them and where their Claude is denied. Before webapp.start on purpose: no
+// chat can exist yet, and moving a folder out from under a running Claude
+// would leave it working in a directory that is no longer there.
+//
+// Skipped in dev. A dev instance shares the live data folder by default, and
+// the live server may have a collaborator chat running in exactly the worktree
+// this would move.
+if (!isDev) {
+  try {
+    const { migrateLegacyWorktrees } = await import('./collaborators.js');
+    const m = await migrateLegacyWorktrees();
+    for (const x of m.moved) console.log(`[crundi] Moved ${x.name}'s worktree for ${x.project} to ${x.to}`);
+    for (const f of m.failed) console.warn(`[crundi] Could not move a worktree: ${f}`);
+    if (m.error) console.warn(`[crundi] Worktree migration skipped: ${m.error}`);
+  } catch (err) {
+    // Never worth failing startup over: the worst case is the old behaviour.
+    console.warn(`[crundi] Worktree migration failed: ${err.message}`);
+  }
+}
+
 // Start webapp (HTTP + WebSocket + tunnel)
 let port, tunnelUrl, localPort;
 try {
@@ -305,12 +326,18 @@ try {
           const head = outcome === 'finished' ? `✅ "${label}" finished${proj}.`
             : outcome === 'needs-input' ? `⏳ "${label}" is waiting for you${proj} — the chat is still open.`
               : outcome === 'overran' ? `⌛ "${label}" is still running${proj} — left open.`
-                : `⚠️ "${label}" did not finish${proj} (${outcome}) — left open.`;
+                : outcome === 'start-failed' || outcome === 'no-prompt'
+                  ? `⚠️ "${label}" could not start${proj}.`
+                  : `⚠️ "${label}" did not finish${proj} (${outcome}) — left open.`;
           webapp.notifyEvent('scheduledChat', body ? `${head}\n\n${body}` : head);
         } catch { /* non-fatal */ }
       },
     }),
     onFire: (sch) => {
+      // A chat schedule sends its own report when the run ends (or when it
+      // could not start), so "Schedule ran" was a second message about the
+      // same run.
+      if (sch.action && sch.action.kind === 'chat') return;
       try {
         const proj = sch.project ? ` (${sch.project})` : '';
         webapp.notifyEvent('scheduleRun', `⏰ Schedule "${sch.name || 'task'}" ran${proj}.`);
