@@ -41,6 +41,7 @@ import {
   mayAccess, isConfined, ROLE_OWNER, ROLE_COLLABORATOR,
   COLLABORATOR_MCP_TOOLS, COLLABORATOR_CLAUDE_TOOLS, collaboratorSettings,
 } from '../src/access-policy.js';
+import * as collaborators from '../src/collaborators.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...p) => readFileSync(join(root, ...p), 'utf8');
@@ -106,6 +107,7 @@ const ALLOWED = [
   ['POST', '/api/collab/push'], ['POST', '/api/collab/request'], ['GET', '/api/collab/me'],
   ['GET', '/api/kanban'], ['POST', '/api/kanban'], ['GET', '/api/mindmap'],
   ['POST', '/api/ui-sessions/create'], ['POST', '/api/ui-sessions/abc/send'],
+  ['GET', '/api/ui-sessions/preflight'],
   ['GET', '/api/services'], ['POST', '/api/services'],
   ['GET', '/api/browsers'],
 ];
@@ -189,15 +191,48 @@ check('their chat launches --restricted', /args\.push\('--restricted'\)/.test(ui
 check('their chat gets an exact tool allowlist',
   /args\.push\('--tools', COLLABORATOR_CLAUDE_TOOLS\.join\(','\)\)/.test(ui));
 check('their chat gets settings it cannot override',
-  /args\.push\('--settings', JSON\.stringify\(collaboratorSettings\(\)\)\)/.test(ui));
+  /args\.push\('--settings', JSON\.stringify\(collaboratorSettings\(\{/.test(ui));
 check('their chat cannot be launched with skip-permissions',
   /if \(skipPermissions && !collaborator\)/.test(ui));
 check('their chat gets its own MCP key, not the internal one',
-  /collaborator \? \(collaborator\.apiKey \|\| apiKey\) : apiKey/.test(ui));
+  /CRUNDI_API_KEY: collaborator\.apiKey \|\| ''/.test(ui));
+// --strict-mcp-config ALONE loads zero servers: it means "only what
+// --mcp-config names". Shipped that way once, and every collaborator session
+// had no Crundi tools at all (verified 0 vs 93 against the real CLI).
+check('--strict-mcp-config is never passed without --mcp-config',
+  /args\.push\('--strict-mcp-config'\);\s*\n\s*args\.push\('--mcp-config', collabMcpFile\);/.test(ui));
+check('the collaborator key is not written into their worktree',
+  /if \(!collaborator\) \{\s*\n\s*try \{ writeMcpConfig\(workdir/.test(ui));
+check('the bridge lists only the collaborator tools for a collaborator',
+  /TOOL_SCOPE === 'collaborator'[\s\S]{0,80}?COLLABORATOR_MCP_TOOLS\.has\(t\.name\)/.test(read('src', 'mcp-stdio.js')));
+check('service keys are checked against the caller\u2019s projects',
+  /if \(aliasDenied\(serviceAlias\(key\)\)\)/.test(webapp));
+check('a collaborator registering a service goes to the owner, over HTTP and MCP',
+  (webapp.match(/kind: 'service',/g) || []).length >= 2);
+// Worktrees once lived under <dataDir>/worktrees — inside the folder this deny
+// list protects — so a collaborator's Claude could not read its own files. The
+// rule covers Crundi's API key and every sign-in, so it stays; the worktrees
+// moved. These two checks are the invariant that would have caught it.
+check('Crundi\u2019s data folder is denied to collaborators',
+  collaboratorSettings().permissions.deny.includes('Read(//home/crundi/.config/crundi/**)'));
+const deniedFolders = collaboratorSettings().permissions.deny
+  .map(r => (r.match(/^Read\(\/(\/.*)\/\*\*\)$/) || [])[1]).filter(Boolean);
+const wtRoot = collaborators.worktreeRoot();
+check('the worktree root is not inside any folder their Claude is denied',
+  !deniedFolders.some(d => wtRoot === d || wtRoot.startsWith(d + '/')), wtRoot);
 check('the owner’s private prompt layers are withheld',
   /userLayers: collaborator \? false : userLayers/.test(ui));
 check('they cannot answer their own permission prompts',
   /if \(s\.collaborator && !isQuestion\)[\s\S]{0,260}?escalateCb/.test(ui));
+
+// ── Prompts that only ever waited on the owner ────────────────────────────
+const allow = collaboratorSettings().permissions.allow || [];
+check('collaborator MCP tools are pre-allowed, so they do not each wait on the owner',
+  [...COLLABORATOR_MCP_TOOLS].every(t => allow.includes(`mcp__crundi__${t}`)));
+check('nothing outside the collaborator tool set is pre-allowed',
+  allow.every(r => COLLABORATOR_MCP_TOOLS.has(r.replace(/^mcp__crundi__/, ''))));
+check('the approvals inbox does not list an escalated chat card twice',
+  /if \(p\.escalated\) continue;/.test(webapp));
 
 console.log(failures ? `\n${failures} failure(s)` : '\nAll collaborator-access checks passed.');
 process.exit(failures ? 1 : 0);

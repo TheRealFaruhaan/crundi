@@ -81,6 +81,11 @@ export function add(o) {
     detail: String(o.detail || '').slice(0, 8000),
     sessionId: o.sessionId || '',
     requestId: o.requestId || '',
+    // Structured data for requests the SERVER carries out on approval (a
+    // service to register, say). Stored on the record rather than in a
+    // closure, so approving still works after a restart has dropped every
+    // resolver function.
+    payload: o.payload || null,
     createdAt: Date.now(),
     status: 'pending',
   };
@@ -121,6 +126,22 @@ export function resolve(id, approved, by = 'owner', note = '') {
   save();
   if (fn) { try { fn(approved, rec); } catch { /* the caller's problem */ } }
   return { ok: true, request: rec };
+}
+
+/**
+ * Withdraw one request because the thing it asked about no longer exists —
+ * e.g. the CLI finished the turn while a permission question was still open.
+ * The resolver is NOT called: there is nobody left to answer.
+ */
+export function cancel(id, by = 'system') {
+  const rec = requests.get(id);
+  if (!rec || rec.status !== 'pending') return false;
+  rec.status = 'cancelled';
+  rec.decidedAt = Date.now();
+  rec.decidedBy = by;
+  resolvers.delete(id);
+  save();
+  return true;
 }
 
 /** Drop a session's outstanding escalations — its process is gone. */

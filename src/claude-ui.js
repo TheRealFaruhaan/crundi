@@ -43,7 +43,39 @@ import { existsSync, readdirSync, statSync, openSync, readSync, closeSync, mkdir
 import { join, delimiter, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { randomUUID } from 'crypto';
+import { fileURLToPath } from 'url';
 import { COLLABORATOR_CLAUDE_TOOLS, collaboratorSettings } from './access-policy.js';
+import { sandboxStatus, capDropLauncher, worktreeGitPaths } from './collab-sandbox.js';
+
+/**
+ * The environment a collaborator's Claude — and so their shell — starts with.
+ *
+ * NOT process.env. Crundi's own environment carries its internal API key and
+ * whatever the owner configured it with (bot token, sign-in secrets), and a
+ * collaborator's `env` would print all of it. Only what a shell and the CLI
+ * need is passed through, and package caches point at their own folder.
+ */
+function collaboratorEnv(collaborator) {
+  const keep = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE',
+    'TERM', 'TZ', 'TMPDIR', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CLAUDE_CONFIG_DIR'];
+  const env = {};
+  for (const k of keep) if (process.env[k] !== undefined) env[k] = process.env[k];
+  env.CRUNDI_UI_SESSION = '1';
+  const c = collaborator && collaborator.cacheDir;
+  if (c) {
+    Object.assign(env, {
+      XDG_CACHE_HOME: c,
+      npm_config_cache: join(c, 'npm'),
+      YARN_CACHE_FOLDER: join(c, 'yarn'),
+      PIP_CACHE_DIR: join(c, 'pip'),
+      GOCACHE: join(c, 'go-build'),
+      GOMODCACHE: join(c, 'go-mod'),
+      CARGO_HOME: join(c, 'cargo'),
+      BUN_INSTALL_CACHE_DIR: join(c, 'bun'),
+    });
+  }
+  return env;
+}
 import { config } from './config.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from './claude-terminals.js';
@@ -82,6 +114,121 @@ export function resolveClaudeBin() {
 function transcriptDir(projectPath) {
   const encoded = resolvePath(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
   return join(homedir(), '.claude', 'projects', encoded);
+}
+
+// Only the tail of a huge transcript is read: replay shows the last few hundred
+// entries anyway, and parsing a 100 MB file would stall the launch.
+const TRANSCRIPT_REPLAY_TAIL_BYTES = 16 * 1024 * 1024;
+
+/** A user turn's text, or '' when it is not something the user typed. */
+function transcriptUserText(rec) {
+  if (rec.isMeta || rec.isCompactSummary || rec.isVisibleInTranscriptOnly) return '';
+  const c = rec.message && rec.message.content;
+  let text = '';
+  if (typeof c === 'string') text = c;
+  else if (Array.isArray(c)) {
+    if (c.some(b => b && b.type === 'tool_result')) return '';
+    text = c.map(b => (b && b.type === 'text' ? b.text : (b && b.type === 'image' ? '[image]' : ''))).filter(Boolean).join('\n');
+  }
+  text = String(text || '').trim();
+  // Slash-command plumbing and injected reminders are the CLI talking to
+  // itself, not the user.
+  if (!text || /^<(command-name|command-message|local-command-stdout|local-command-stderr|system-reminder)>/.test(text)) return '';
+  return text;
+}
+
+/**
+ * Rebuild chat entries for one conversation from Claude's own transcript.
+ *
+ * Crundi stores only the latest conversation per project, so picking any other
+ * one from the session chooser had nothing to show. The transcript is the
+ * source of truth and always exists for a resumable conversation. Entries come
+ * back in the same shapes the live stream produces, so they render identically.
+ *
+ * @returns {{uuid:string, messages:object[], agents:object[]}|null}
+ */
+export function readTranscriptHistory(projectPath, uuid, {
+  maxMessages = 200, maxBytes = 256 * 1024, genId = () => randomUUID(),
+} = {}) {
+  if (!projectPath || !/^[0-9a-f-]{8,}$/i.test(String(uuid || ''))) return null;
+  const file = join(transcriptDir(projectPath), `${uuid}.jsonl`);
+  let raw = '';
+  try {
+    const size = statSync(file).size;
+    if (size <= TRANSCRIPT_REPLAY_TAIL_BYTES) raw = readFileSync(file, 'utf8');
+    else {
+      const fd = openSync(file, 'r');
+      try {
+        const buf = Buffer.alloc(TRANSCRIPT_REPLAY_TAIL_BYTES);
+        readSync(fd, buf, 0, buf.length, size - buf.length);
+        raw = buf.toString('utf8');
+        raw = raw.slice(raw.indexOf('\n') + 1); // drop the partial first line
+      } finally { closeSync(fd); }
+    }
+  } catch { return null; }
+
+  const messages = [];
+  const tools = new Map();
+  const seenBlocks = new Set();
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch { continue; }
+    if (!rec || rec.isSidechain) continue;
+    if (rec.type === 'system' && rec.subtype === 'compact_boundary') {
+      messages.push({ id: genId(), kind: 'notice', text: 'Conversation compacted' });
+      continue;
+    }
+    if (rec.type === 'user') {
+      const text = transcriptUserText(rec);
+      if (text) { messages.push({ id: genId(), kind: 'user', text: text.slice(0, MAX_TEXT) }); continue; }
+      const c = rec.message && rec.message.content;
+      if (!Array.isArray(c)) continue;
+      for (const block of c) {
+        if (!block || block.type !== 'tool_result') continue;
+        const target = tools.get(block.tool_use_id);
+        if (!target) continue;
+        const content = Array.isArray(block.content)
+          ? block.content.map(x => (x.type === 'text' ? x.text : `[${x.type}]`)).join('\n')
+          : (typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''));
+        Object.assign(target, { status: 'done', result: String(content).slice(0, MAX_TEXT), isError: !!block.is_error });
+      }
+      continue;
+    }
+    if (rec.type !== 'assistant') continue;
+    const c = rec.message && rec.message.content;
+    if (!Array.isArray(c)) continue;
+    for (const block of c) {
+      if (!block) continue;
+      // The CLI writes one record per content block and can repeat a block
+      // when a message is re-emitted; the tool id or text dedupes it.
+      if (block.type === 'tool_use') {
+        if (!block.id || tools.has(block.id)) continue;
+        const entry = { id: genId(), kind: 'tool', toolUseId: block.id, name: block.name,
+          input: block.input || {}, status: 'unanswered', result: null, isError: false };
+        tools.set(block.id, entry);
+        messages.push(entry);
+      } else if (block.type === 'text' || block.type === 'thinking') {
+        const text = String((block.type === 'text' ? block.text : block.thinking) || '');
+        // Thinking is often stored redacted: an empty body plus a signature.
+        if (!text.trim()) continue;
+        const k = `${rec.message.id || ''}:${block.type}:${text.length}:${text.slice(0, 64)}`;
+        if (seenBlocks.has(k)) continue;
+        seenBlocks.add(k);
+        messages.push({ id: genId(), kind: block.type === 'text' ? 'assistant-text' : 'thinking', text: text.slice(0, MAX_TEXT), tokens: 0 });
+      }
+    }
+  }
+  // A tool with no result in the transcript never finished; 'running' would
+  // spin forever on a process that is gone.
+  for (const t of tools.values()) if (t.status === 'unanswered') t.status = 'done';
+
+  let msgs = messages.slice(-maxMessages);
+  while (msgs.length > 1 && JSON.stringify(msgs).length > maxBytes) {
+    msgs = msgs.slice(Math.max(1, Math.floor(msgs.length * 0.25)));
+  }
+  if (!msgs.some(m => m.kind !== 'notice')) return null;
+  return { uuid: String(uuid), messages: msgs, agents: [] };
 }
 
 /**
@@ -287,11 +434,18 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         permissionMode: s.permissionMode,
         skipPermissions: !!s.skipPermissions,
         sessionId: s.sessionId || '',
+        background: !!s.background,
         // Status only — the header just needs to know whether to show the pill
         // and what to call it. The markdown itself rides snapshot()/meta, so a
         // long plan does not get copied into every state broadcast.
         planStatus: s.plan ? s.plan.status : '',
         pending: [...s.pending.values()].map(p => p.entry),
+        // Whose chat this is, when it is a collaborator's: the owner's tab is
+        // labelled with it, and a collaborator is shown only chats carrying
+        // their own key. Never the whole record — it holds their API key.
+        collaborator: s.collaborator
+          ? { id: s.collaborator.id, name: s.collaborator.name || '', key: s.collaborator.key || '' }
+          : null,
       });
     }
     out.sort((a, b) => a.project === b.project ? (a.order - b.order) : a.project.localeCompare(b.project));
@@ -333,6 +487,20 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   function historyFile(alias) { return join(HISTORY_DIR, encodeURIComponent(alias) + '.json'); }
 
+  /**
+   * The stored-transcript key for a session.
+   *
+   * One file per PROJECT was fine with one person. A collaborator's chat on the
+   * same project wrote into that same file, so the owner's stored history was
+   * overwritten by the collaborator's (seen on sam-cv: its cwd became the
+   * worktree). The uuid check stopped either side being replayed into the
+   * other, so nothing leaked — but the owner lost their history. Collaborator
+   * sessions now get a file of their own.
+   */
+  function historyKeyFor(s) {
+    return s.collaborator ? `${s.alias}@collab-${s.collaborator.id}` : s.alias;
+  }
+
   function persistNow(s) {
     clearTimeout(s.persistTimer);
     s.persistTimer = null;
@@ -362,9 +530,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         msgs = msgs.slice(Math.max(1, Math.floor(msgs.length * 0.25)));
         json = JSON.stringify({ ...head, messages: msgs, agents });
       }
-      const tmp = historyFile(s.alias) + '.tmp';
+      const tmp = historyFile(historyKeyFor(s)) + '.tmp';
       writeFileSync(tmp, json);
-      renameSync(tmp, historyFile(s.alias));
+      renameSync(tmp, historyFile(historyKeyFor(s)));
     } catch { /* disk full / permissions — history is best-effort, never fatal */ }
   }
 
@@ -418,17 +586,28 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // copy if the first one landed.
     if (s.replaySpliced || s.replayTriedFor === uuid) return;
     s.replayTriedFor = uuid;
-    const d = loadPersisted(s.alias);
-    if (!d || !d.messages.length) return;
-    if (d.uuid !== uuid) {
+    let d = loadPersisted(historyKeyFor(s));
+    let source = 'stored';
+    if (d && d.uuid !== uuid) {
       // A mismatch against a GUESS proves nothing — the guess is just "the
       // newest transcript on disk", and --continue may well have attached
       // somewhere else. Deleting here destroyed the stored transcript AND left
       // the post-init retry nothing to find, so the retry could never succeed.
       // Only the uuid the CLI itself reports is grounds for discarding it.
-      if (authoritative) clearPersisted(s.alias);
-      return;
+      if (authoritative) clearPersisted(historyKeyFor(s));
+      d = null;
     }
+    // Crundi keeps one conversation per project, and even that copy only holds
+    // what happened in its own chat UI — a conversation also worked on from a
+    // terminal, or before Crundi recorded it, is a short tail there (seen: 4
+    // stored entries against 10 in the transcript). Claude's transcript is
+    // complete, so use it unless the stored copy genuinely has more; the stored
+    // copy still wins when it does, since it also carries question cards and
+    // subagent bubbles.
+    const fromTranscript = readTranscriptHistory(s.cwd, uuid, { maxMessages: PERSIST_MAX_MESSAGES, maxBytes: PERSIST_MAX_BYTES, genId });
+    const talk = (x) => (x && x.messages ? x.messages.filter(m => m.kind === 'user' || m.kind === 'assistant-text' || m.kind === 'tool').length : 0);
+    if (fromTranscript && talk(fromTranscript) > talk(d)) { d = fromTranscript; source = 'transcript'; }
+    if (!d || !d.messages.length) return;
     // A replayed ask can never be answered: the request id belonged to a
     // process that has exited. Showing live Allow/Deny buttons would be a lie,
     // so it comes back marked unanswered — visible, and honest about being
@@ -460,7 +639,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
     s.replaySpliced = true;
     s.emitter.emit('event', { type: 'history', session: snapshot(s) });
-    console.log(`[claude-ui] Replayed ${d.messages.length} stored entries for "${s.alias}"`);
+    console.log(`[claude-ui] Replayed ${d.messages.length} ${source} entries for "${s.alias}"`);
   }
 
   // ─── Subagents ───
@@ -817,11 +996,70 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (collaborator) {
       args.push('--restricted');
       args.push('--tools', COLLABORATOR_CLAUDE_TOOLS.join(','));
-      args.push('--settings', JSON.stringify(collaboratorSettings()));
-      // Only the .mcp.json written below, carrying their scoped key — not the
-      // user-level MCP servers, which are the owner's connected accounts.
+      // The shell is confined by the OS sandbox, not by rules — rules alone let
+      // Bash read and write other folders (verified). No sandbox, no chat.
+      const sb = sandboxStatus();
+      if (!sb.ok) {
+        return {
+          ok: false,
+          error: `The collaborator sandbox is not ready on this machine (${(sb.problems || []).join('; ') || 'unknown problem'}). The owner can set it up in Info → Outside collaborators.`,
+        };
+      }
+      const gitPaths = worktreeGitPaths(workdir) || {};
+      if (collaborator.cacheDir) {
+        try { mkdirSync(collaborator.cacheDir, { recursive: true }); } catch { /* the sandbox will say */ }
+      }
+      args.push('--settings', JSON.stringify(collaboratorSettings({
+        root: resolvePath(workdir),
+        gitDir: gitPaths.gitDir || '',
+        commonDir: gitPaths.commonDir || '',
+        branch: collaborator.branch || '',
+        cacheDir: collaborator.cacheDir || '',
+        worktreesRoot: collaborator.worktreesRoot || '',
+        extraDenyRead: collaborator.cacheRoot ? [collaborator.cacheRoot] : [],
+        extraDomains: collaborator.allowedDomains || [],
+        projectsDir: config.projectsDir || '',
+        dataDir: config.dataDir || '',
+        home: homedir(),
+      })));
+      // --strict-mcp-config means "ONLY servers named by --mcp-config". It was
+      // passed alone, so every collaborator session started with ZERO MCP
+      // servers — verified: 0 crundi tools, and 93 once --mcp-config was added.
+      // Their Claude reported the service tools as simply not connected.
+      //
+      // The config lives in the data dir, not in their worktree: a file in the
+      // worktree is readable by their Claude and, if a project does not ignore
+      // it, committable and pushable with their key inside. The owner's
+      // user-level servers (connected accounts) stay excluded by --strict.
+      const collabMcpDir = join(config.dataDir, 'collab-mcp');
+      const collabMcpFile = join(collabMcpDir, `${collaborator.id}.json`);
+      try {
+        mkdirSync(collabMcpDir, { recursive: true });
+        writeFileSync(collabMcpFile, JSON.stringify({
+          mcpServers: {
+            crundi: {
+              command: 'node',
+              args: [resolvePath(fileURLToPath(new URL('./mcp-stdio.js', import.meta.url)))],
+              env: {
+                CRUNDI_API_URL: apiUrl,
+                CRUNDI_API_KEY: collaborator.apiKey || '',
+                CRUNDI_PROJECT: key,
+                // Lets the bridge list only the tools this key may call.
+                CRUNDI_TOOL_SCOPE: 'collaborator',
+              },
+            },
+          },
+        }, null, 2), { mode: 0o600 });
+      } catch (err) {
+        return { ok: false, error: `Could not prepare the collaborator's tools: ${err.message}` };
+      }
       args.push('--strict-mcp-config');
-      args.push('--permission-mode', 'default');
+      args.push('--mcp-config', collabMcpFile);
+      // Edits inside the worktree need nobody's approval: --restricted keeps the
+      // file tools in it and the sandbox keeps the shell in it. In 'default'
+      // mode every single edit was escalated to the owner (verified), which
+      // left a collaborator unable to do anything on their own.
+      args.push('--permission-mode', 'acceptEdits');
     }
     if (model) args.push('--model', String(model));
     if (effort) args.push('--effort', String(effort));
@@ -854,9 +1092,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // A collaborator's worktree gets THEIR key, never the internal one: their
     // Claude can read files in its own working directory, and .mcp.json is one
     // of them. The internal key reaches secret_get; theirs does not.
-    try {
-      writeMcpConfig(workdir, apiUrl, collaborator ? (collaborator.apiKey || apiKey) : apiKey, key);
-    } catch { /* non-fatal */ }
+    // Collaborators get their config via --mcp-config above; nothing is written
+    // into their worktree, so no key sits where their Claude or git can reach it.
+    if (!collaborator) {
+      try { writeMcpConfig(workdir, apiUrl, apiKey, key); } catch { /* non-fatal */ }
+    }
 
     const aliasHasLive = entriesForAlias(key).some(x => x.proc);
     // 'compact' resumes and then immediately runs /compact, so the heavy context
@@ -874,16 +1114,13 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     let attachedTo = '';
     let forking = false;
     if ((sessionMode === 'resume' || compacting) && resumeId) {
-      // Explicitly picking a session from the resume list is a deliberate jump
-      // to a named conversation — deliberately NOT replayed, so it behaves the
-      // way it always has.
+      // Every chat launch now goes through the session chooser, so picking a
+      // conversation IS how you continue one. It is replayed like --continue
+      // was: from Crundi's stored copy when that is this conversation, else
+      // from Claude's transcript. (Not replaying it left every resumed chat
+      // blank, even the most recent one.)
       args.push('--resume', String(resumeId));
-      // Compacting is the exception. It is not a jump elsewhere: it is THIS
-      // conversation, summarised, reached from the launch prompt's "compact
-      // first" button. So the stored transcript still describes it and must be
-      // replayed — otherwise choosing to compact silently threw away the very
-      // history the replay exists to show.
-      if (compacting) continueUuid = String(resumeId);
+      continueUuid = String(resumeId);
       attachedTo = String(resumeId);
       // Somebody else is already attached to this conversation. Both processes
       // would write to the same transcript and the loser's turns would simply
@@ -910,10 +1147,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
     let proc;
     try {
-      proc = spawn(bin, args, {
+      // A collaborator's Claude starts without Crundi's inherited capability
+      // to bind low ports: bubblewrap refuses to run with capabilities it did
+      // not get from setuid, and the sandbox would never start.
+      const launcher = collaborator ? capDropLauncher() : null;
+      proc = spawn(launcher ? launcher.bin : bin, launcher ? [...launcher.prefix, bin, ...args] : args, {
         cwd: workdir,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
+        env: collaborator ? collaboratorEnv(collaborator) : {
           ...process.env,
           // Marks the session as Crundi-managed without giving the lifecycle
           // hooks a terminal id to report against — UI mode derives agent state
@@ -957,6 +1198,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // Set when this chat belongs to an outside collaborator. Drives where
       // permission requests go: they cannot approve their own escalations.
       collaborator: collaborator || null,
+      // An unattended job the scheduler is running. Its runner reports the
+      // outcome, so the generic "Claude finished" ping skips it (see
+      // handleAgentState in webapp.js). Cleared by setBackground on handover.
+      background: !!background,
       slashCommands: [],
       cwd: workdir,
       stdoutBuf: '',
@@ -998,6 +1243,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // Fail-closed: nothing can answer a parked prompt once the CLI is gone.
       for (const [, p] of s.pending) patchEntry(s, p.entry, { status: 'cancelled' });
       s.pending.clear();
+      pendingChanged(s);
       // And the owner's inbox must not keep offering buttons that would answer
       // a process that has exited.
       if (s.collaborator) sessionGoneCb?.(s.id);
@@ -1045,21 +1291,27 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
           id: genId(),
           kind: 'notice',
           text: [
-            `You are working on ${collaborator.project}, in your own git worktree on branch ${collaborator.branch}.`,
-            'Commit as you go — the Push button at the top sends your branch up, and you can ask the owner to merge it.',
+            `You are working on ${collaborator.project}, in your own copy of the project (a git worktree) on branch ${collaborator.branch}.`,
+            'Claude edits files and runs commands here without waiting for approval. Commit as you go: the Push button at the top sends your branch up, and the merge button next to it asks the owner to merge it.',
             '',
-            'Two things worth knowing, because they are easy to miss:',
+            'Worth knowing:',
             '',
-            '• Ask Claude to run things as a SERVICE, not in the background. "Start the dev server as a service"',
-            '  gives you something named and supervised that you can stop from the UI and read logs from. A plain',
-            '  `npm run dev &` is blocked here, because it would vanish the moment the turn ended.',
+            '• Ask Claude to run things as a SERVICE. "Start the dev server as a service" gives you something named and',
+            '  supervised that keeps running, which you can stop from the UI and read logs from. Anything started in the',
+            '  background from the shell stops when Claude finishes its turn.',
             '',
             '• Ask Claude to USE THE BROWSER. It drives a real one: "open the app and click through checkout, tell me',
             '  what the console says". That is usually faster and more reliable than describing a bug in words.',
             '',
-            'Claude can also read and write files in your worktree, run tests, and use the project board and mind map.',
-            'It cannot reach anything outside your worktree, and it has no access to secrets or other projects.',
-            'If you hit something that needs the owner, ask and it will be sent to them.',
+            '• Installing packages into the project works (npm install, pip into a virtualenv). Internet access is',
+            '  limited to package registries and GitHub.',
+            '',
+            'Claude runs in a sandbox limited to this folder. It cannot read or change anything else on the machine, and',
+            'has no access to secrets or other projects. It can also use the project board and mind map.',
+            'Anything that needs special permission, such as reaching another website, is sent to the owner to approve;',
+            'you can cancel the request if you would rather carry on without it.',
+            'Your access has a time limit, and may have a token limit. Both show in the bar at the top. If the token',
+            'limit is reached the chat stops until the owner raises it.',
           ].join('\n'),
         });
       }
@@ -1069,6 +1321,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // point is to walk into a resumed conversation already knowing where it
     // left off. handleSystem re-runs this with the CLI's authoritative uuid in
     // case --continue landed somewhere other than the newest transcript.
+    // A fork replays its PARENT's history; the new id init reports is expected,
+    // not a sign --continue landed elsewhere, so it must not trigger the retry
+    // (which would discard the parent's stored copy).
+    s.forking = forking;
     if (continueUuid) { s.continueUuid = continueUuid; s.sessionId = continueUuid; replayForContinue(s, continueUuid); }
     // Claim what we believe we attached to, without waiting for system/init —
     // otherwise two launches a second apart both find the id unclaimed and
@@ -1110,7 +1366,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       s.sessionId = msg.session_id || s.sessionId;
       // Pre-spawn we can only infer which conversation --continue lands on. If
       // it went elsewhere, redo the replay against the real uuid.
-      if (s.continueUuid && guessed && s.sessionId !== guessed) {
+      if (s.continueUuid && guessed && s.sessionId !== guessed && !s.forking) {
         replayForContinue(s, s.sessionId, true);
       }
       // The CLI is authoritative — this is where a fork's real id first appears.
@@ -1154,7 +1410,99 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * second copy. Anything not streamed (partial messages off, or a block that
    * produced no deltas) falls through to a fresh entry.
    */
+  // ─── Pending cards ───
+  //
+  // The owner's approvals inbox lists every chat's open permission and question
+  // cards, but it was only re-sent on unrelated events — answering a card in
+  // the chat left it in the inbox until the page reconnected. Anything that
+  // adds, answers or clears a card now says so.
+  let pendingChangeCb = null;
+  function onPendingChange(cb) { pendingChangeCb = cb; }
+  function pendingChanged(s) {
+    try { pendingChangeCb?.(s.id); } catch { /* the inbox is a view, never fatal */ }
+  }
+
+  let escalationGoneCb = null;
+  function onEscalationGone(cb) { escalationGoneCb = cb; }
+
+  /** Let this chat reach a host without asking again, until it closes. */
+  function allowHostForSession(id, host) {
+    const s = sessions.get(id);
+    const h = String(host || '').trim().toLowerCase();
+    if (!s || !h) return false;
+    if (!s.allowedHosts) s.allowedHosts = new Set();
+    s.allowedHosts.add(h);
+    return true;
+  }
+
+  /**
+   * Close permission questions the CLI has abandoned.
+   *
+   * The CLI does not withdraw a question when the thing waiting on it ends.
+   * Verified: a sandbox network request (SandboxNetworkAccess) for a curl with
+   * -m 8 stayed open after curl timed out and the turn produced its result —
+   * no control_cancel_request, nothing. The card sat there, the owner approved
+   * it later, respond() set the chat to 'working', and with no turn left to
+   * run it stayed 'working' forever. A turn that has ended cannot be waiting
+   * on anything, so whatever is still open at that point is stale.
+   */
+  function expireStalePending(s) {
+    if (!s.pending || !s.pending.size) return;
+    for (const [, p] of s.pending) {
+      patchEntry(s, p.entry, { status: 'cancelled' });
+      if (p.entry && p.entry.approvalId) {
+        try { escalationGoneCb?.(p.entry.approvalId); } catch { /* never fatal */ }
+      }
+    }
+    s.pending.clear();
+    pendingChanged(s);
+  }
+
+  // ─── Collaborator token usage ───
+  //
+  // Each API message reports its usage, and the CLI emits one assistant message
+  // per content block with the same message id — so usage is tracked per id and
+  // only the growth is counted. Subagent messages count too; they are spent on
+  // the collaborator's behalf.
+  let usageCb = null;
+  function onCollaboratorUsage(cb) { usageCb = cb; }
+
+  function noteUsage(s, msg) {
+    if (!s.collaborator || !usageCb) return;
+    const m = msg && msg.message;
+    const u = m && m.usage;
+    if (!u || !m.id) return;
+    const total = (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    if (!s.usageSeen) s.usageSeen = new Map();
+    const prev = s.usageSeen.get(m.id) || 0;
+    if (total <= prev) return;
+    s.usageSeen.set(m.id, total);
+    if (s.usageSeen.size > 1000) s.usageSeen.delete(s.usageSeen.keys().next().value);
+    let verdict = null;
+    try { verdict = usageCb(s.collaborator, total - prev, s.id); } catch { return; }
+    if (verdict && verdict.over) stopForLimit(s, verdict);
+  }
+
+  function fmtTokens(n) {
+    n = Number(n) || 0;
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M';
+    if (n >= 1e3) return Math.round(n / 1e3) + 'k';
+    return String(n);
+  }
+
+  /** Over the limit: stop the turn now, and say why where they will see it. */
+  function stopForLimit(s, v) {
+    if (s.limitStopped) return;
+    s.limitStopped = true;
+    try { if (s.proc && s.state !== 'idle') interrupt(s.id); } catch { /* already stopped */ }
+    emitEntry(s, {
+      id: genId(), kind: 'error',
+      text: `Token limit reached: ${fmtTokens(v.used)} of ${fmtTokens(v.limit)} used. This session has been stopped. Ask the owner to raise the limit.`,
+    });
+  }
+
   function handleAssistant(s, msg) {
+    noteUsage(s, msg);
     // A subagent's own turn — never the main transcript, and crucially never
     // allowed near streamedQueue (see the Subagents section above).
     if (msg.parent_tool_use_id) return handleAgentAssistant(s, msg, msg.parent_tool_use_id);
@@ -1436,6 +1784,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   function handleResult(s, msg) {
+    // The turn is over, so nothing can still be waiting on an answer.
+    expireStalePending(s);
     s.blocks.clear();
     s.streamedQueue.length = 0;
     // The whole goal loop lives inside ONE result, so a result means the loop
@@ -1535,6 +1885,17 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       //
       // AskUserQuestion is exempt: that is Claude asking the person doing the
       // work a question about the work, not asking for permission.
+      // A website the owner already allowed for this chat ("This session", or
+      // "Always" while it was running): answer it here. The card still shows,
+      // marked allowed, so nothing happens out of sight.
+      const sameAsAllowed = s.sessionAllowed && s.sessionAllowed.has(`${req.tool_name}:${JSON.stringify(req.input || {})}`);
+      if ((s.collaborator && req.tool_name === 'SandboxNetworkAccess'
+        && s.allowedHosts && s.allowedHosts.has(String(req.input?.host || '').toLowerCase())) || sameAsAllowed) {
+        s.pending.set(requestId, { entry, request: req });
+        emitEntry(s, entry);
+        respond(s.id, { requestId, behavior: 'allow' });
+        return;
+      }
       if (s.collaborator && !isQuestion) {
         entry.escalated = true;
         entry.approvalId = escalateCb?.({
@@ -1554,6 +1915,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       s.pending.set(requestId, { entry, request: req });
       setState(s, 'needs-input');
       emitEntry(s, entry);
+      pendingChanged(s);
       return;
     }
     // Anything else we cannot render: decline so the CLI is never left parked.
@@ -1643,6 +2005,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (!s.proc) return { ok: false, error: 'Session is not running' };
     const body = String(text ?? '');
     if (!body.trim()) return { ok: false, error: 'Message is empty' };
+    if (s.collaborator && usageCb) {
+      let v = null;
+      try { v = usageCb(s.collaborator, 0, s.id); } catch { v = null; }
+      if (v && v.over) {
+        return { ok: false, error: `Token limit reached (${fmtTokens(v.used)} of ${fmtTokens(v.limit)}). Ask the owner to raise it.` };
+      }
+      // Raised since it tripped: the next crossing should stop it again.
+      s.limitStopped = false;
+    }
     noteGoalCommand(s, body);
     // Sent into a turn already in progress: the CLI holds it until it reaches
     // a pause, so it has NOT been received yet. Writing it into the transcript
@@ -1699,7 +2070,20 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // "Always allow" replays the CLI's own suggestions verbatim, which is how
       // it wants the rule written (allow-rule, mode switch, or added directory).
       if (always && Array.isArray(request.permission_suggestions) && request.permission_suggestions.length) {
-        response.updatedPermissions = request.permission_suggestions;
+        // 'session' keeps the rule in this CLI process only. A collaborator's
+        // chat is ALWAYS session-scoped: --restricted ignores their settings
+        // files, and a rule written into the worktree would be a file they
+        // could commit.
+        const sessionOnly = always === 'session' || !!s.collaborator;
+        response.updatedPermissions = sessionOnly
+          ? request.permission_suggestions.map(p => ({ ...p, destination: 'session' }))
+          : request.permission_suggestions;
+      }
+      // Nothing the CLI could write as a rule: remember this exact request so
+      // the same thing is allowed without asking for the rest of the chat.
+      if (always === 'session' && !(Array.isArray(request.permission_suggestions) && request.permission_suggestions.length)) {
+        if (!s.sessionAllowed) s.sessionAllowed = new Set();
+        s.sessionAllowed.add(`${request.tool_name}:${JSON.stringify(request.input || {})}`);
       }
     }
 
@@ -1707,6 +2091,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (!ok) return { ok: false, error: 'Failed to write to the session' };
 
     s.pending.delete(requestId);
+    pendingChanged(s);
     patchEntry(s, entry, {
       status: behavior === 'deny' ? 'denied' : 'allowed',
       answeredInput: response.updatedInput || null,
@@ -1944,6 +2329,36 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     return '';
   }
 
+  /** Mark a session as an unattended job, or hand it back as an ordinary chat. */
+  function setBackground(id, on) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: `No session "${id}"` };
+    s.background = !!on;
+    return { ok: true };
+  }
+
+  /**
+   * Close every running collaborator chat whose access no longer holds.
+   *
+   * Expiry and revocation stop a collaborator's REQUESTS at once, but a chat
+   * they already had open is a process no request touches, and it kept
+   * running — one was found open three hours after its access expired.
+   * `stillAllowed(collaborator)` decides. If it throws, the chat is closed:
+   * unsure is not a reason to leave access running.
+   */
+  function closeCollaboratorSessions(stillAllowed) {
+    const closed = [];
+    for (const s of [...sessions.values()]) {
+      if (!s.collaborator || !s.proc) continue;
+      let allowed = false;
+      try { allowed = !!stillAllowed(s.collaborator); } catch { allowed = false; }
+      if (allowed) continue;
+      close(s.id);
+      closed.push(s.id);
+    }
+    return closed;
+  }
+
   const has = (id) => sessions.has(id);
   const on = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.on('event', handler); };
   const off = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.off('event', handler); };
@@ -1984,7 +2399,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, lastTurnOutput, dismissAgents,
+    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents,
+    onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },

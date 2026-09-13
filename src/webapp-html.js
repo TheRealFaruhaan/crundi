@@ -792,6 +792,9 @@ export function getWebappHtml(botUsername) {
     .cr-title { font-size: 0.86rem; font-weight: 600; }
     .cr-meta { font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono); }
     .cr-empty { color: var(--text-muted); font-size: 0.85rem; padding: 10px 2px; }
+    .cr-new { border-color: var(--accent); }
+    .cr-new .cr-title { color: var(--accent-hover); }
+    .cr-intro { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding: 2px 2px 6px; }
     /* Chat / terminal switch above the conversation list. Sticky so it stays
        reachable while scrolling a long list of transcripts. */
     .cr-modes { display: flex; gap: 6px; position: sticky; top: 0; z-index: 1;
@@ -906,6 +909,17 @@ export function getWebappHtml(botUsername) {
     .collab-branch { font-family: var(--mono); font-size: 0.68rem; color: var(--sky); }
     .collab-exp { color: var(--text-muted); flex: 1; text-align: right; }
     .collab-acts { display: flex; gap: 4px; flex-wrap: wrap; }
+    .collab-usage { font-size: 0.7rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px; margin: -2px 0 5px; flex-wrap: wrap; }
+    .collab-usage.over { color: var(--red); }
+    .collab-meter { flex: 1; min-width: 60px; max-width: 160px; height: 4px; border-radius: 2px; background: var(--bg-primary); overflow: hidden; }
+    .collab-meter > span { display: block; height: 100%; background: var(--accent); }
+    .collab-usage.over .collab-meter > span { background: var(--red); }
+    .collab-sb {
+      border: 1px solid var(--yellow); background: var(--yellow-dim); border-radius: var(--radius-sm);
+      padding: 7px 9px; margin-bottom: 8px; font-size: 0.74rem; line-height: 1.45; color: var(--text-primary);
+    }
+    .collab-sb.ok { border-color: var(--border); background: transparent; color: var(--text-muted); }
+    .collab-sb ul { margin: 4px 0 6px 16px; padding: 0; }
     .collab-invite { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 6px; }
     .collab-invite h5 { margin: 0 0 8px; font-size: 0.78rem; color: var(--text-secondary); }
     .collab-lab {
@@ -967,7 +981,19 @@ export function getWebappHtml(botUsername) {
       white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow-y: auto;
       background: var(--bg-primary); border-radius: var(--radius-sm); padding: 5px 7px; margin: 4px 0;
     }
-    .appr-acts { display: flex; gap: 6px; }
+    .appr-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+    .collab-sites { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 0.7rem; color: var(--text-muted); margin: -2px 0 5px; }
+    .collab-site {
+      display: inline-flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 0.66rem;
+      border: 1px solid var(--border); border-radius: 99px; padding: 1px 3px 1px 7px; color: var(--text-secondary);
+    }
+    .collab-site button { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0 3px; }
+    .collab-site button:hover { color: var(--red); }
+    .term-collab-tag {
+      flex: none; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
+      max-width: 110px; overflow: hidden; text-overflow: ellipsis;
+      color: var(--sky); border: 1px solid var(--sky); border-radius: 99px; padding: 1px 7px; margin-right: 4px;
+    }
     .appr-acts button {
       flex: 1; border-radius: var(--radius-sm); border: 1px solid var(--border);
       background: var(--bg-primary); color: var(--text-secondary); cursor: pointer;
@@ -976,10 +1002,27 @@ export function getWebappHtml(botUsername) {
     .appr-acts button.yes:hover { color: var(--green); border-color: var(--green); }
     .appr-acts button.no:hover { color: var(--red); border-color: var(--red); }
     .appr-acts button.go:hover { color: var(--accent-hover); border-color: var(--accent); }
+    .appr-acts button.dismiss { flex: 0 0 auto; color: var(--text-muted); }
+    .appr-acts button.dismiss:hover { color: var(--text-primary); border-color: var(--text-muted); }
+    .appr-bar { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px 6px; border-bottom: 1px solid var(--border-subtle); }
+    .appr-bar span { font-size: 0.72rem; color: var(--text-muted); }
+    .appr-bar button {
+      border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-primary);
+      color: var(--text-secondary); cursor: pointer; font-size: 0.7rem; padding: 3px 9px;
+    }
+    .appr-bar button:hover { color: var(--red); border-color: var(--red); }
     /* Collaborator: everything the owner has that they must not. Hidden with a
        class rather than removed, so one place decides and nothing else has to
        remember. Presentation only — the server refuses these regardless. */
     body.is-collab .collab-hide { display: none !important; }
+    /* A collaborator's only way into the CLI is UI Mode. The shell and terminal
+       launchers hit routes that refuse them, and the skip-permissions shields
+       are ignored server-side — offering either is offering a dead end. */
+    body.is-collab .term-launch .btn-shell,
+    body.is-collab .term-launch [data-mode="normal"],
+    body.is-collab .term-launch [data-mode="skip"],
+    body.is-collab .term-launch [data-mode="chat-skip"],
+    body.is-collab .term-launch [data-tl-row="2"] { display: none !important; }
 
     /* Plan state, in the chat's title bar next to the "chat" tag. */
     .term-plan-tag {
@@ -1789,6 +1832,12 @@ export function getWebappHtml(botUsername) {
       .topbar .status-badge.connected, .topbar .status-badge.disconnected {
         font-size: 0; padding: 6px; gap: 0 !important; border-radius: 50%;
       }
+      /* A collaborator's Push and Ask to merge carried text labels that ran
+         off the edge of a phone. Icon-only there, like approvals; the title
+         still names them. */
+      .topbar-act { padding: 6px; flex-shrink: 0; }
+      .topbar-act > span:not(.appr-count) { display: none; }
+      .topbar-act .ic { width: 15px; height: 15px; }
       .tab-btn { padding: 8px 12px; font-size: 0.76rem; }
       .svc-card { padding: 12px; }
       .stat-strip { gap: 8px 12px; padding: 8px; }
@@ -2945,7 +2994,7 @@ export function getWebappHtml(botUsername) {
   <!-- ─── Resume Claude conversation Modal ─── -->
   <div id="chat-resume-modal">
     <div class="modal">
-      <h3>Resume a conversation</h3>
+      <h3 id="cr-heading">Open a session</h3>
       <div id="cr-body" class="cr-list"></div>
       <div class="modal-buttons">
         <button data-action="chat-resume-cancel">Cancel</button>
@@ -3202,6 +3251,7 @@ export function getWebappHtml(botUsername) {
       browserLaunch: 'never', browserStop: 'never',
       secretRequest: 'always',
       limitReset: 'always',
+      collabPermission: 'away',
     };
     let notifyPrefs = { ...NOTIFY_DEFAULTS_CLIENT };
 
@@ -4196,6 +4246,7 @@ export function getWebappHtml(botUsername) {
       el.title = 'Running ' + Math.round(gap) + ' points ahead of the window';
     }
     function tickResets() {
+      if (userRole === 'collaborator') { renderCollabBar(); return; }
       if (!usageData || !usageData.ok) return;
       const wk = usageData.week && usageData.week.resetsAt;
       const fh = usageData.fiveHour && usageData.fiveHour.resetsAt;
@@ -4260,7 +4311,52 @@ export function getWebappHtml(botUsername) {
         el.style.transform = 'translateX(6px)';
       }
     }
+    // A collaborator's topbar shows THEIR limits, not the account's: one bar
+    // whose base layer is how much of their access window has gone, overlaid
+    // by how much of their token limit is spent (when they have one).
+    function renderCollabBar() {
+      if (userRole !== 'collaborator' || !collabInfo) return;
+      const r5 = $('#row-5h'); if (r5) r5.style.display = 'none';
+      const badge = $('#usage-updated'); if (badge) badge.style.display = 'none';
+      const modal = $('#usage-modal'); if (modal) modal.classList.remove('visible');
+      const over = $('#wk-over'); if (over) over.style.width = '0%';
+      const invs = (collabInfo.invitations || []).slice().sort(function (a, b) { return (a.expiresAt || 0) - (b.expiresAt || 0); });
+      const inv = invs[0] || {};
+      const end = inv.expiresAt || collabInfo.expiresAt || 0;
+      const start = inv.createdAt || 0;
+      const now = Date.now();
+      const tp = (end > start && start) ? Math.max(0, Math.min(100, (now - start) / (end - start) * 100)) : 0;
+      const tBar = $('#wk-time'), tLab = $('#wk-time-label');
+      if (tBar) tBar.style.width = tp + '%';
+      if (tLab) {
+        tLab.innerHTML = end ? ic('clock') + ' ' + escHtml(fmtRemaining(new Date(end).toISOString())) + ' left' : '';
+        tLab.title = end ? 'Your access ends ' + new Date(end).toLocaleString() : '';
+        placeUsageLabel(tLab, tp);
+      }
+      const u = collabInfo.usage || null;
+      const hasLimit = !!(u && u.limit);
+      const up = hasLimit ? Math.min(100, Math.round(u.used / u.limit * 100)) : 0;
+      const uBar = $('#wk-usage'), uLab = $('#wk-usage-label');
+      if (uBar) {
+        uBar.style.width = up + '%';
+        uBar.style.background = up >= 100 ? 'rgba(239,68,68,0.38)' : up >= 80 ? 'rgba(234,179,8,0.30)' : 'rgba(99,102,241,0.22)';
+      }
+      if (uLab) {
+        uLab.textContent = hasLimit ? 'tokens ' + up + '%' : '';
+        uLab.title = hasLimit ? fmtTok(u.used) + ' of ' + fmtTok(u.limit) + ' tokens used' : '';
+        placeUsageLabel(uLab, up);
+      }
+      const bg = $('#usage-bg');
+      if (bg) {
+        bg.title = (end ? 'Access: ' + Math.round(tp) + '% of your time used, ends ' + new Date(end).toLocaleString() : 'Access')
+          + (hasLimit ? '\\nTokens: ' + fmtTok(u.used) + ' of ' + fmtTok(u.limit) + ' (' + up + '%)' : '\\nNo token limit');
+      }
+    }
+
     function renderUsage(u) {
+      // The account's usage is not a collaborator's to see (the server no
+      // longer sends it to them; this covers anything already in flight).
+      if (userRole === 'collaborator') { renderCollabBar(); return; }
       const bg = $('#usage-bg');
       if (!bg) return;
       const bars = ['wk-usage', 'fh-usage', 'wk-time', 'fh-time'];
@@ -4338,6 +4434,9 @@ export function getWebappHtml(botUsername) {
     };
 
     function openUsageModal() {
+      // The chart is the account's usage history. Collaborators get their own
+      // bar and nothing else (the server refuses /api/usage to them as well).
+      if (userRole === 'collaborator') return;
       $('#usage-modal').classList.add('visible');
       loadUsageChart(usageChartRange);
     }
@@ -4767,49 +4866,6 @@ export function getWebappHtml(botUsername) {
     // the placeholder for the live terminal (SSE state will reconcile shortly).
     // mode: 'shell' (plain shell), 'normal' / 'skip' (Claude in a PTY),
     // 'chat' (Claude driven over stream-json, rendered as a UI chat).
-    // Claude's interactive "this session is old and large — resume from a
-    // summary?" prompt does not exist over the stream-json protocol UI mode
-    // uses, so a resume there always loads the whole transcript. Ask before
-    // spawning, which is the last moment the choice is still free.
-    async function launchChatWithPreflight(localId, mode, release) {
-      const done = release || (() => {});
-      const m = mode || 'chat';
-      let info = null;
-      try {
-        const r = await apiFetch('/api/ui-sessions/preflight?project=' + encodeURIComponent(currentProject));
-        info = await r.json();
-      } catch { /* fall through to a plain launch */ }
-      // Hand the lock straight to launchTerminal rather than releasing between
-      // the two, which would open a window for a second click to slip through.
-      if (!info || !info.ok || !info.heavy || !info.latest) { launchTerminal(m, localId, undefined, undefined, done); return; }
-      // The choice panel replaces the launcher, so the lock is spent here — the
-      // user now has to pick, and those buttons take their own.
-      done();
-      showResumeChoice(localId, info.latest, m);
-    }
-
-    function showResumeChoice(localId, t, mode) {
-      const cell = document.querySelector('.term-cell[data-lid="' + localId + '"]');
-      const body = cell && cell.querySelector('.term-body');
-      const m = mode || 'chat';
-      if (!body) { launchTerminal(m, localId); return; }
-      const tok = t.tokens ? (t.tokens / 1000).toFixed(1) + 'k tokens' : 'a large transcript';
-      const age = t.ageHours < 1 ? 'under an hour old'
-        : t.ageHours < 24 ? Math.round(t.ageHours) + 'h old'
-        : Math.round(t.ageHours / 24) + 'd old';
-      body.innerHTML = '<div class="term-launch cr-choice">'
-        + '<div class="cr-choice-title">Continuing will load your whole last conversation</div>'
-        + '<div class="cr-choice-sub">' + escHtml(t.title) + '</div>'
-        + '<div class="cr-choice-meta">' + escHtml(tok) + ' \\u00b7 ' + escHtml(age) + '</div>'
-        + '<div class="cr-choice-note">Claude\\u2019s \\u201cresume from summary\\u201d option isn\\u2019t offered over this protocol. '
-        + 'Compacting still loads the transcript once, then summarises it so later turns stay small. '
-        + 'Continuing keeps the full context on every turn. Starting fresh loads nothing.</div>'
-        + '<button class="btn-chat" data-action="chat-launch-mode" data-cmode="compact" data-lmode="' + m + '" data-sid="' + escHtml(t.id) + '" data-lid="' + localId + '">Compact first (recommended)</button>'
-        + '<button class="btn-normal" data-action="chat-launch-mode" data-cmode="continue" data-lmode="' + m + '" data-lid="' + localId + '">Continue anyway</button>'
-        + '<button class="btn-chat-resume" data-action="chat-launch-mode" data-cmode="new" data-lmode="' + m + '" data-lid="' + localId + '">Start a fresh conversation</button>'
-        + '</div>';
-    }
-
     // Which launcher button this project used last, so the next visit can lead
     // with it. 'shell' is deliberately not recorded — it is not a Claude mode.
     const LAUNCH_MODES = ['chat', 'chat-skip', 'normal', 'skip'];
@@ -4915,50 +4971,80 @@ export function getWebappHtml(botUsername) {
     // only be applied when the session is spawned, which is what this does.
     let crPendingLid = null;
     let crList = [];
-    // Which kind of cell the chosen conversation opens in. Terminal mode can
-    // resume too: /api/terminals/create forwards its whole body to the terminal
-    // manager, which has accepted sessionMode/resumeId all along \u2014 only the UI
-    // never offered it.
-    let crMode = 'chat';
-    async function openChatResume(localId) {
+    // ─── Choosing a conversation ───
+    //
+    // Every Claude launch asks first: a new session, or an earlier one in this
+    // project. The mode is whichever button was pressed, so chat-or-terminal and
+    // skip-permissions survive the choice rather than being guessed afterwards.
+    // A conversation already open elsewhere still opens: the server passes
+    // --fork-session, so it arrives as a copy and neither cell overwrites the
+    // other's turns.
+    let crLaunchMode = 'chat';
+    let crOpening = false;
+    const CR_MODE_LABEL = {
+      'chat': 'UI Mode', 'chat-skip': 'UI Mode \\u2014 Skip Permissions',
+      'normal': 'Terminal', 'skip': 'Terminal \\u2014 Skip Permissions',
+    };
+    async function openSessionChooser(localId, mode, btn) {
       if (!currentProject) { toast('Select a project first', 'error'); return; }
+      if (crOpening) return;
+      crOpening = true;
       crPendingLid = localId || null;
-      const last = lastLaunchMode();
-      crMode = (last === 'normal' || last === 'skip') ? 'terminal' : 'chat';
+      crLaunchMode = CR_MODE_LABEL[mode] ? mode : 'chat';
       crList = [];
-      const modal = $('#chat-resume-modal'); const body = $('#cr-body');
-      body.innerHTML = '<div class="cr-empty">Loading\u2026</div>';
-      modal.classList.add('visible');
+      let failed = '';
       try {
         const r = await apiFetch('/api/ui-sessions/resumable?project=' + encodeURIComponent(currentProject));
         const d = await r.json();
         crList = (d && d.sessions) || [];
-        renderChatResume();
-      } catch (err) {
-        body.innerHTML = '<div class="cr-empty">Failed to load: ' + escHtml(err.message) + '</div>';
-      }
-    }
-    function renderChatResume() {
-      const body = $('#cr-body');
-      if (!body) return;
-      const tab = (v, label) => '<button class="cr-mode' + (crMode === v ? ' on' : '') + '"'
-        + ' data-action="cr-mode" data-crmode="' + v + '">' + label + '</button>';
-      const head = '<div class="cr-modes">' + tab('chat', 'Open as chat') + tab('terminal', 'Open as terminal') + '</div>';
-      if (!crList.length) {
-        body.innerHTML = head + '<div class="cr-empty">No previous conversations found for this project.</div>';
+      } catch (err) { failed = (err && err.message) || 'unknown error'; }
+      crOpening = false;
+      // Nothing earlier to pick: the dialog would hold a single button.
+      if (!failed && !crList.length) {
+        const rel = beginLaunch(btn, localId);
+        if (rel) launchTerminal(crLaunchMode, localId, '', 'new', rel);
+        crPendingLid = null;
         return;
       }
-      body.innerHTML = head + crList.map(s =>
+      const h = $('#cr-heading');
+      if (h) h.textContent = 'Open ' + CR_MODE_LABEL[crLaunchMode];
+      $('#chat-resume-modal').classList.add('visible');
+      renderChatResume(failed);
+    }
+    function renderChatResume(failed) {
+      const body = $('#cr-body');
+      if (!body) return;
+      let h = '<button class="cr-item cr-new" data-action="cr-new">'
+        + '<span class="cr-title">New session</span>'
+        + '<span class="cr-meta">Start a fresh conversation</span></button>';
+      if (failed) h += '<div class="cr-empty">Could not load earlier conversations: ' + escHtml(failed) + '</div>';
+      h += crList.map(s =>
         '<button class="cr-item" data-action="chat-resume-pick" data-sid="' + escHtml(s.id) + '">'
         + '<span class="cr-title">' + escHtml(s.title) + '</span>'
-        + '<span class="cr-meta">' + escHtml(s.id.slice(0, 8)) + ' \u00b7 ' + escHtml(relTime(s.updatedAt))
-        + ' \u00b7 ' + (s.tokens ? (s.tokens / 1000).toFixed(1) + 'k tokens' : Math.max(1, Math.round(s.sizeBytes / 1024)) + ' KB')
-        + (s.tokens >= 100000 ? ' \u00b7 <b style="color:var(--yellow)">heavy</b>' : '')
-        // Already open somewhere. Picking it is fine \u2014 the CLI is asked to fork,
-        // so both cells keep working and neither overwrites the other's turns \u2014
-        // but the user should know a copy is what they are getting.
-        + (s.inUse ? ' \u00b7 <b style="color:var(--accent)">open elsewhere \u2014 opens a copy</b>' : '')
+        + '<span class="cr-meta">' + escHtml(s.id.slice(0, 8)) + ' \\u00b7 ' + escHtml(relTime(s.updatedAt))
+        + ' \\u00b7 ' + (s.tokens ? (s.tokens / 1000).toFixed(1) + 'k tokens' : Math.max(1, Math.round(s.sizeBytes / 1024)) + ' KB')
+        + (s.tokens >= 100000 ? ' \\u00b7 <b style="color:var(--yellow)">heavy</b>' : '')
+        + (s.inUse ? ' \\u00b7 <b style="color:var(--accent)">open elsewhere \\u2014 opens a copy</b>' : '')
         + '</span></button>').join('');
+      body.innerHTML = h;
+    }
+    // A heavy conversation in UI Mode resends its whole transcript on every
+    // turn, and the CLI's own "resume from a summary" prompt does not exist over
+    // stream-json. Offer compacting first. Both options resume the conversation
+    // that was PICKED, never "whichever is newest".
+    function renderHeavyChoice(s) {
+      const body = $('#cr-body');
+      if (!body) return;
+      body.innerHTML = '<div class="cr-intro"><b>' + escHtml(s.title) + '</b><br>'
+        + escHtml((s.tokens / 1000).toFixed(1) + 'k tokens') + ' \\u2014 continuing loads all of it into every turn. '
+        + 'Compacting loads it once, then summarises it so later turns stay small.'
+        + (s.inUse ? '<br><b style="color:var(--accent)">It is open elsewhere, so this opens a copy.</b>' : '')
+        + '</div>'
+        + '<button class="cr-item cr-new" data-action="cr-resume" data-how="compact" data-sid="' + escHtml(s.id) + '">'
+        + '<span class="cr-title">Compact first (recommended)</span></button>'
+        + '<button class="cr-item" data-action="cr-resume" data-how="resume" data-sid="' + escHtml(s.id) + '">'
+        + '<span class="cr-title">Load the full conversation</span></button>'
+        + '<button class="cr-item" data-action="cr-back"><span class="cr-meta">\\u2190 Back to the list</span></button>';
     }
     function closeChatResume() {
       $('#chat-resume-modal').classList.remove('visible');
@@ -5295,7 +5381,6 @@ export function getWebappHtml(botUsername) {
           + ' title="Terminal \\u2014 Skip Permissions" aria-label="Terminal \\u2014 Skip Permissions">'
           + ic('shield-alert') + '<span class="tl-txt">Skip Permissions</span></button>'
           + '</div>'
-          + '<button class="btn-chat-resume" data-action="chat-resume" data-lid="' + d.localId + '">Resume a conversation\\u2026</button>'
           + '</div>'
           + '</div>';
         peekShields(body);
@@ -5480,6 +5565,17 @@ export function getWebappHtml(botUsername) {
       // push does not wipe an in-progress rename or the armed close button.
       if (t.kind === 'ui') {
         const kindTag = el.querySelector('.term-kind-tag');
+        // A collaborator's chat, on the owner's screen: say whose it is. The
+        // owner can still type into it; what they send runs in the
+        // collaborator's sandbox and counts toward the collaborator's tokens.
+        let ctag = el.querySelector('.term-collab-tag');
+        const whose = userRole !== 'collaborator' && t.collaborator ? (t.collaborator.name || 'Collaborator') : '';
+        if (!whose) { if (ctag) ctag.remove(); }
+        else if (kindTag) {
+          if (!ctag) { ctag = document.createElement('span'); ctag.className = 'term-collab-tag'; kindTag.before(ctag); }
+          ctag.textContent = whose;
+          ctag.title = whose + '\\u2019s chat (outside collaborator). You can type here; it runs in their sandbox and counts toward their tokens.';
+        }
         let ptag = el.querySelector('.term-plan-tag');
         const p = planTagFor(t);
         if (!p) { if (ptag) ptag.remove(); }
@@ -6822,6 +6918,7 @@ export function getWebappHtml(botUsername) {
     // only decides what is worth showing.
     let userRole = 'owner';
     let collabInfo = null;
+    let collabAutoPicked = false;   // once per page load, so choosing "none" later sticks
 
     /**
      * Hide what a collaborator has no route to.
@@ -6831,7 +6928,7 @@ export function getWebappHtml(botUsername) {
      * onto a 403.
      */
     const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'terminals', 'info', 'settings'];
-    const COLLAB_HIDDEN_WB = ['git', 'terminal'];
+    const COLLAB_HIDDEN_WB = ['git'];
 
     function applyRoleToUi() {
       const collab = userRole === 'collaborator';
@@ -6876,6 +6973,8 @@ export function getWebappHtml(botUsername) {
       if (!n) panel.classList.remove('open');
       let h = '';
       if (!n) h = '<div class="appr-empty">Nothing is waiting.</div>';
+      else h = '<div class="appr-bar"><span>' + n + ' waiting</span>'
+        + '<button data-action="appr-clear-all" title="Dismiss everything in this list">Clear all</button></div>';
       for (const it of approvalItems) {
         const who = it.name ? escHtml(it.name) + ' \u2014 ' : '';
         h += '<div class="appr-item" data-appr="' + escHtml(it.id) + '">'
@@ -6884,7 +6983,20 @@ export function getWebappHtml(botUsername) {
         if (it.project) h += '<div class="appr-detail" style="opacity:.7">' + escHtml(it.project) + '</div>';
         if (it.detail) h += '<div class="appr-detail">' + escHtml(String(it.detail).slice(0, 1200)) + '</div>';
         h += '<div class="appr-acts">';
-        if (it.source === 'collab') {
+        if (it.source === 'collab' && it.host) {
+          // A website. Once is often not what you mean: allowing it for the
+          // chat, or for this person from now on, saves the next wait.
+          h += '<button class="yes" data-action="appr-yes" data-id="' + escHtml(it.id) + '" title="Only this request">Allow once</button>'
+            + '<button class="yes" data-action="appr-yes-session" data-id="' + escHtml(it.id) + '" title="Until this chat closes">This session</button>'
+            + '<button class="yes" data-action="appr-yes-always" data-id="' + escHtml(it.id) + '" title="Add ' + escHtml(it.host) + ' to their allowed sites">Always</button>'
+            + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
+        } else if (it.source === 'collab' && it.kind === 'tool') {
+          // Any other permission from a collaborator's chat: once, or for the
+          // rest of that chat (the CLI keeps the rule until the chat closes).
+          h += '<button class="yes" data-action="appr-yes" data-id="' + escHtml(it.id) + '" title="Only this request">Allow once</button>'
+            + '<button class="yes" data-action="appr-yes-session" data-id="' + escHtml(it.id) + '" title="Allow this kind of request until the chat closes">This session</button>'
+            + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
+        } else if (it.source === 'collab') {
           h += '<button class="yes" data-action="appr-yes" data-id="' + escHtml(it.id) + '">Approve</button>'
             + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
         } else if (it.source === 'chat') {
@@ -6894,15 +7006,35 @@ export function getWebappHtml(botUsername) {
         } else {
           h += '<button class="go" data-action="appr-goto-secrets">Open secrets</button>';
         }
+        // Everything can be dismissed. A chat card only leaves this list (it is
+        // still answerable in its chat); anything that exists only here — a
+        // secret request, a collaborator request — is declined, so nothing is
+        // left waiting on an answer that can no longer be given.
+        h += '<button class="dismiss" data-action="appr-dismiss" data-id="' + escHtml(it.id) + '" data-src="' + escHtml(it.source) + '"'
+          + ' title="' + (it.source === 'chat' ? 'Hide here; still answerable in the chat' : 'Decline and remove') + '">Dismiss</button>';
         h += '</div></div>';
       }
       panel.innerHTML = h;
     }
 
-    async function decideApproval(id, approve) {
+    async function dismissApprovals(list) {
+      if (!list.length) return;
+      // Take them out straight away; the server's broadcast confirms it.
+      const ids = new Set(list.map(function (x) { return x.id; }));
+      approvalItems = approvalItems.filter(function (it) { return !ids.has(it.id); });
+      renderApprovals();
       try {
         const r = await apiFetch('/api/approvals', {
-          method: 'POST', body: JSON.stringify({ id, approve }),
+          method: 'POST', body: JSON.stringify({ action: 'dismiss', items: list }),
+        }).then(x => x.json());
+        if (!r.ok) toast(r.error || 'Could not dismiss that', 'error');
+      } catch (e) { toast('Could not dismiss that', 'error'); }
+    }
+
+    async function decideApproval(id, approve, scope) {
+      try {
+        const r = await apiFetch('/api/approvals', {
+          method: 'POST', body: JSON.stringify({ id, approve, scope: scope || 'once' }),
         }).then(x => x.json());
         if (!r.ok) toast(r.error || 'That could not be applied', 'error');
         else if (r.merge && !r.merge.ok) toast(r.merge.error || 'The merge failed', 'error');
@@ -6947,11 +7079,19 @@ export function getWebappHtml(botUsername) {
       if (!state) return;
       if (state.role && state.role !== userRole) { userRole = state.role; applyRoleToUi(); }
       collabInfo = state.collab || null;
+      renderCollabBar();
       terminals = state.terminals || [];
       userTerminals = state.userTerminals || [];
       if (state.services) services = state.services;   // keep sidebar heartbeat fresh
       if (state.scheduled) scheduledProjects = state.scheduled;
       if (state.projects) projects = state.projects;
+      // A collaborator signing in landed on "No project" with only Mindmap and
+      // Media showing, and had to discover the sidebar before anything worked.
+      // They hold a known, short list — open the first one for them.
+      if (userRole === 'collaborator' && !currentProject && projects && projects.length && !collabAutoPicked) {
+        collabAutoPicked = true;
+        selectProject(projects[0].alias);
+      }
       autoPickProject();
       renderProjects();
       renderTerminals();
@@ -8850,6 +8990,31 @@ export function getWebappHtml(botUsername) {
       if (pass) { pass.focus(); pass.select(); }
     }
 
+    var collabSandboxOk = true;
+    function fmtTok(n) {
+      n = Number(n) || 0;
+      if (n >= 1e6) return (Math.round(n / 1e5) / 10) + 'M';
+      if (n >= 1e3) return Math.round(n / 1e3) + 'k';
+      return String(n);
+    }
+    // "2M", "500k", "1,500,000" -> tokens. null when it is not a number.
+    function parseTok(raw) {
+      var m = String(raw || '').trim().toLowerCase().replace(/,/g, '').match(/^(\\d+(?:\\.\\d+)?)\\s*([km]?)$/);
+      if (!m) return null;
+      return Math.round(parseFloat(m[1]) * (m[2] === 'm' ? 1e6 : m[2] === 'k' ? 1e3 : 1));
+    }
+
+    async function collabSandboxSetup(btn) {
+      if (!confirm('Set up the collaborator sandbox?\\n\\nThis uses sudo on the server to install bubblewrap and socat, and adds an AppArmor profile that lets bubblewrap create sandboxes.')) return;
+      if (btn) { btn.disabled = true; btn.textContent = 'Setting up\\u2026'; }
+      try {
+        const r = await apiFetch('/api/collaborators', { method: 'POST', body: JSON.stringify({ action: 'sandboxSetup' }) }).then(x => x.json());
+        if (r.ok) toast('Sandbox ready', 'success');
+        else toast(r.error || 'Setup failed', 'error');
+      } catch (e) { toast('Setup failed', 'error'); }
+      loadCollaborators();
+    }
+
     async function loadCollaborators() {
       const box = document.getElementById('collab-body');
       if (!box) return;
@@ -8866,6 +9031,20 @@ export function getWebappHtml(botUsername) {
       }
 
       let h = '';
+      // The sandbox is what keeps a collaborator's shell inside their worktree.
+      // Without it nothing is handed out, so say so first and offer the fix.
+      const sb = d.sandbox || { ok: false, problems: ['Could not check the sandbox'] };
+      collabSandboxOk = !!sb.ok;
+      if (sb.ok) {
+        h += '<div class="collab-sb ok">Sandbox ready. Collaborators\\u2019 shells are confined to their own worktree.</div>';
+      } else {
+        h += '<div class="collab-sb"><b>Sandbox not set up.</b> Invites are disabled and collaborator chats will not start until it is.'
+          + '<ul>' + (sb.problems || []).map(function (p) { return '<li>' + escHtml(p) + '</li>'; }).join('') + '</ul>'
+          + (sb.canAutoFix
+            ? '<button class="svc-btn" data-action="collab-sandbox-setup">Set up sandbox</button>'
+            : '<div>On the server run: <code>sudo apt-get install -y bubblewrap socat</code></div>')
+          + '</div>';
+      }
       if (!people.size) h += '<div class="sys-quiet">Nobody outside has access right now.</div>';
       for (const p of people.values()) {
         h += '<div class="collab-person"><div class="collab-who">'
@@ -8873,6 +9052,28 @@ export function getWebappHtml(botUsername) {
           + (p.telegram ? '<span class="collab-tg">@' + escHtml(p.telegram) + '</span>' : '<span class="collab-tg">passcode only</span>')
           + '<button class="svc-btn" data-action="collab-reissue" data-id="' + escHtml(p.rows[0].id) + '">New passcode</button>'
           + '</div>';
+        // Usage is per person, summed over every project they hold.
+        var used = 0, lim = 0;
+        p.rows.forEach(function (r) { used += (r.tokensUsed || 0); lim = Math.max(lim, r.tokenLimit || 0); });
+        var over = lim > 0 && used >= lim;
+        h += '<div class="collab-usage' + (over ? ' over' : '') + '">'
+          + '<span>' + escHtml(fmtTok(used)) + ' tokens' + (lim ? ' of ' + escHtml(fmtTok(lim)) : ' \\u00b7 no limit') + (over ? ' \\u00b7 limit reached' : '') + '</span>'
+          + (lim ? '<span class="collab-meter"><span style="width:' + Math.min(100, Math.round(used / lim * 100)) + '%"></span></span>' : '')
+          + '<button class="svc-btn" data-action="collab-limit" data-id="' + escHtml(p.rows[0].id) + '" data-limit="' + lim + '">' + (lim ? 'Change limit' : 'Set limit') + '</button>'
+          + (used ? '<button class="svc-btn" data-action="collab-reset-usage" data-id="' + escHtml(p.rows[0].id) + '">Reset</button>' : '')
+          + '</div>';
+        // Websites you chose "Always" for. Removing one takes effect in their
+        // next chat (a running chat keeps what it started with).
+        var sites = [];
+        p.rows.forEach(function (r) { (r.allowedDomains || []).forEach(function (x) { if (sites.indexOf(x) < 0) sites.push(x); }); });
+        if (sites.length) {
+          h += '<div class="collab-sites"><span>Allowed sites:</span>'
+            + sites.sort().map(function (x) {
+              return '<span class="collab-site">' + escHtml(x)
+                + '<button data-action="collab-domain-remove" data-id="' + escHtml(p.rows[0].id) + '" data-host="' + escHtml(x) + '" title="Remove">\\u00d7</button></span>';
+            }).join('')
+            + '</div>';
+        }
         for (const r of p.rows) {
           h += '<div class="collab-row' + (r.expired ? ' gone' : '') + '">'
             + '<span class="collab-proj">' + escHtml(r.project) + '</span>'
@@ -8925,7 +9126,10 @@ export function getWebappHtml(botUsername) {
         + '</select>'
         + '</div>'
         + '<div class="collab-hint" id="collab-expiry"></div>'
-        + '<button class="svc-btn" data-action="collab-create">Create access</button>'
+        + '<label class="collab-lab" for="collab-limit">Token limit <span class="collab-opt">optional</span></label>'
+        + '<input class="collab-in" id="collab-limit" placeholder="e.g. 2M or 500k \\u2014 blank for no limit" />'
+        + '<div class="collab-hint">Counted across all their projects. Their chat stops the moment it is reached, and you can change it later.</div>'
+        + '<button class="svc-btn" data-action="collab-create"' + (collabSandboxOk ? '' : ' disabled title="Set up the sandbox first"') + '>Create access</button>'
         + '<div class="sys-quiet" style="margin-top:6px">They see only the projects you pick, and nothing else on this machine.</div>'
         + '</div>';
       box.innerHTML = h;
@@ -8956,7 +9160,7 @@ export function getWebappHtml(botUsername) {
       }
     }
 
-    async function collabAction(action, id) {
+    async function collabAction(action, id, extra) {
       const body = { id };
       if (action === 'collab-extend') {
         // Accepts "6h", "3d" or a bare number (days), because the grant it is
@@ -8971,6 +9175,25 @@ export function getWebappHtml(botUsername) {
         body.hours = (m[2] || 'd').toLowerCase() === 'h' ? n : n * 24;
       } else if (action === 'collab-revoke') { body.action = 'revoke'; }
       else if (action === 'collab-unrevoke') { body.action = 'update'; body.revoked = false; }
+      else if (action === 'collab-limit') {
+        const btn = document.querySelector('[data-action="collab-limit"][data-id="' + id + '"]');
+        const cur = btn ? Number(btn.getAttribute('data-limit')) || 0 : 0;
+        const raw = prompt('Token limit for this person, across all their projects.\\n\\ne.g. 2M or 500k. Leave empty for no limit.', cur ? fmtTok(cur) : '');
+        if (raw === null) return;
+        const n = raw.trim() ? parseTok(raw) : 0;
+        if (raw.trim() && !n) { toast('Try something like 2M or 500k', 'error'); return; }
+        body.action = 'setLimit';
+        body.tokenLimit = n;
+      }
+      else if (action === 'collab-domain-remove') {
+        const hb = document.querySelector('[data-action="collab-domain-remove"][data-id="' + id + '"]');
+        body.action = 'removeDomain';
+        body.host = (extra && extra.host) || (hb ? hb.getAttribute('data-host') : '');
+      }
+      else if (action === 'collab-reset-usage') {
+        if (!confirm('Reset their token count to zero?')) return;
+        body.action = 'resetUsage';
+      }
       else if (action === 'collab-reissue') { body.action = 'reissue'; }
       else if (action === 'collab-merge-owner') { body.action = 'merge'; }
       else if (action === 'collab-remove') {
@@ -9076,10 +9299,13 @@ export function getWebappHtml(botUsername) {
       const chosen = sel ? Array.from(sel.selectedOptions).map(function (o) { return o.value; }) : [];
       if (!name.trim()) { toast('Give them a name', 'error'); return; }
       if (!chosen.length) { toast('Pick at least one project', 'error'); return; }
+      const limRaw = (document.getElementById('collab-limit') || {}).value || '';
+      const tokenLimit = limRaw.trim() ? parseTok(limRaw) : 0;
+      if (limRaw.trim() && !tokenLimit) { toast('Token limit: try something like 2M or 500k', 'error'); return; }
       try {
         const r = await apiFetch('/api/collaborators', {
           method: 'POST',
-          body: JSON.stringify({ action: 'create', name, telegram: tg, hours, projects: chosen }),
+          body: JSON.stringify({ action: 'create', name, telegram: tg, hours, projects: chosen, tokenLimit }),
         }).then(x => x.json());
         if (!r.ok) {
           // One project, not a repo yet: offer to fix it rather than stop.
@@ -10085,6 +10311,7 @@ export function getWebappHtml(botUsername) {
           ['Mindmap', [['mindmapAdd', 'When a node is added'], ['mindmapDelete', 'When a node is deleted']]],
           ['MCP Browser', [['browserLaunch', 'When a browser launches'], ['browserStop', 'When a browser stops']]],
           ['Security', [['secretRequest', 'Secret access requested']]],
+          ['Collaborators', [['collabPermission', 'When a collaborator\\u2019s Claude asks for permission']]],
           ['Updates', [['updateAvailable', 'When a new Claude Code version is out']]],
           ['Usage', [['limitReset', 'When a usage limit resets']]],
         ];
@@ -10667,7 +10894,17 @@ export function getWebappHtml(botUsername) {
           if (p) p.classList.toggle('open');
           break;
         }
+        case 'appr-dismiss': if (d.id) dismissApprovals([{ id: d.id, source: d.src || '' }]); break;
+        case 'appr-clear-all': {
+          const all = approvalItems.map(function (it) { return { id: it.id, source: it.source }; });
+          const declines = all.filter(function (x) { return x.source !== 'chat'; }).length;
+          if (declines && !confirm('Clear all ' + all.length + '?\\n\\n' + declines + ' of them will be declined. Chat cards are only hidden and stay answerable in their chats.')) break;
+          dismissApprovals(all);
+          break;
+        }
         case 'appr-yes': if (d.id) decideApproval(d.id, true); break;
+        case 'appr-yes-session': if (d.id) decideApproval(d.id, true, 'session'); break;
+        case 'appr-yes-always': if (d.id) decideApproval(d.id, true, 'always'); break;
         case 'appr-no': if (d.id) decideApproval(d.id, false); break;
         case 'appr-goto': {
           // The card is answered where it has all its context. This just takes
@@ -10692,6 +10929,11 @@ export function getWebappHtml(botUsername) {
         }
         case 'collab-push': collabPush(e.target.closest('.topbar-act')); break;
         case 'collab-create': collabCreate(); break;
+        case 'collab-sandbox-setup': collabSandboxSetup(e.target.closest('button')); break;
+        case 'collab-domain-remove':
+          if (d.id) collabAction(d.action, d.id, { host: d.host || '' });
+          break;
+        case 'collab-limit': case 'collab-reset-usage':
         case 'collab-extend': case 'collab-revoke': case 'collab-unrevoke':
         case 'collab-reissue': case 'collab-remove': case 'collab-merge-owner':
           if (d.id) collabAction(d.action, d.id);
@@ -10707,37 +10949,52 @@ export function getWebappHtml(botUsername) {
         case 'term-font-reset': if (d.tid) resetTermFont(d.tid); break;
         case 'launch-terminal': {
           const btn = e.target.closest('[data-action="launch-terminal"]');
-          const rel = beginLaunch(btn, d.lid);
-          if (!rel) break;   // a launch is already running for this cell
-          // Chat launches check the resume cost first; other modes go straight through.
-          if (d.mode === 'chat' || d.mode === 'chat-skip') launchChatWithPreflight(d.lid, d.mode, rel);
-          else launchTerminal(d.mode, d.lid, undefined, undefined, rel);
+          // An empty shell runs no Claude, so there is no conversation to choose.
+          if (d.mode === 'shell') {
+            const rel = beginLaunch(btn, d.lid);
+            if (!rel) break;
+            launchTerminal('shell', d.lid, undefined, undefined, rel);
+            break;
+          }
+          // Every Claude launch asks which conversation first: a new one, or an
+          // earlier one in this project. See openSessionChooser.
+          if (launchInFlight.has(d.lid || '_global')) break;
+          openSessionChooser(d.lid, d.mode, btn);
           break;
         }
-        case 'chat-launch-mode': {
-          const btn = e.target.closest('[data-action="chat-launch-mode"]');
-          const rel = beginLaunch(btn, d.lid);
+        case 'cr-new': {
+          const lid = crPendingLid;
+          const rel = beginLaunch(e.target.closest('[data-action="cr-new"]'), lid);
           if (!rel) break;
-          launchTerminal(d.lmode || 'chat', d.lid, d.sid, d.cmode, rel);
+          const mode = crLaunchMode;
+          closeChatResume();
+          launchTerminal(mode, lid, '', 'new', rel);
           break;
         }
-        case 'chat-resume': openChatResume(d.lid); break;
         case 'chat-resume-cancel': closeChatResume(); break;
-        case 'cr-mode': crMode = d.crmode === 'terminal' ? 'terminal' : 'chat'; renderChatResume(); break;
+        case 'cr-back': renderChatResume(''); break;
         case 'chat-resume-pick': {
+          const s = crList.find(x => x.id === d.sid);
+          if (!s) break;
+          const isChatMode = crLaunchMode === 'chat' || crLaunchMode === 'chat-skip';
+          // Terminal mode resumes directly: the interactive CLI asks its own
+          // "resume from a summary?" question for a large session.
+          if (isChatMode && s.tokens >= 100000) { renderHeavyChoice(s); break; }
           const lid = crPendingLid;
           const rel = beginLaunch(e.target.closest('[data-action="chat-resume-pick"]'), lid);
           if (!rel) break;
-          const wantTerm = crMode === 'terminal';
+          const mode = crLaunchMode;
           closeChatResume();
-          // Resume in whichever chat variant this project used last. Terminal
-          // modes can't be resumed — /api/terminals/create takes no resumeId,
-          // so a transcript can only be replayed into a UI-mode session.
-          const last = lastLaunchMode();
-          const mode = wantTerm
-            ? (last === 'skip' ? 'skip' : 'normal')
-            : (last === 'chat-skip' ? 'chat-skip' : 'chat');
-          launchTerminal(mode, lid, d.sid, 'resume', rel);
+          launchTerminal(mode, lid, s.id, 'resume', rel);
+          break;
+        }
+        case 'cr-resume': {
+          const lid = crPendingLid;
+          const rel = beginLaunch(e.target.closest('[data-action="cr-resume"]'), lid);
+          if (!rel) break;
+          const mode = crLaunchMode;
+          closeChatResume();
+          launchTerminal(mode, lid, d.sid, d.how === 'compact' ? 'compact' : 'resume', rel);
           break;
         }
       }

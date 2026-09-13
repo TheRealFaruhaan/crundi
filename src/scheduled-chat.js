@@ -56,7 +56,12 @@ export async function runScheduledChat({
   const a = schedule.action || {};
   const label = schedule.name || 'Scheduled chat';
   const prompt = String(a.prompt || '').trim();
-  if (!prompt) return { ok: false, outcome: 'no-prompt', error: 'This schedule has no prompt' };
+  if (!prompt) {
+    // Reported, not silently returned: this runner is now the only thing that
+    // says anything about a chat schedule's run.
+    notify('no-prompt', label, 'This schedule has no prompt');
+    return { ok: false, outcome: 'no-prompt', error: 'This schedule has no prompt' };
+  }
 
   const created = await claudeUi.create(schedule.project, {
     title: label,
@@ -80,7 +85,10 @@ export async function runScheduledChat({
     // run leaves a .jsonl behind forever.
     persistSession: a.session === 'resume' && a.sessionId ? true : false,
   });
-  if (!created.ok) return { ok: false, outcome: 'start-failed', error: created.error };
+  if (!created.ok) {
+    notify('start-failed', label, created.error || '');
+    return { ok: false, outcome: 'start-failed', error: created.error };
+  }
 
   const id = created.id;
   const result = await watchToCompletion({ id, claudeUi, settleMs, maxRunMs, send: () => {
@@ -100,7 +108,11 @@ export async function runScheduledChat({
     return { ok: true, outcome: 'finished', sessionId: id, output };
   }
 
-  // Everything else stays open on purpose.
+  // Everything else stays open on purpose — and is yours from here. Clear the
+  // background flag so this chat gets the normal "Claude finished" alerts as
+  // you carry on with it; while the runner was watching, those were
+  // suppressed because this report covers them.
+  try { claudeUi.setBackground && claudeUi.setBackground(id, false); } catch { /* non-fatal */ }
   notify(result.outcome, label, output || result.error || '');
   return { ok: false, outcome: result.outcome, sessionId: id, output, error: result.error || '' };
 }
