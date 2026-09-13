@@ -53,23 +53,44 @@ files:
   - app/index.html
   - package.json
   - "!**/.env"
-  # Server-only dependencies. The client speaks to a server over a websocket and
-  # answers browser-panel requests; it never opens a tunnel, drives Telegram,
-  # serves MCP or grabs the screen, and handleNativeHostMessage only dispatches
-  # browserIpcHandlers, so the terminal tools are unreachable here too. Together
-  # these are the bulk of the payload (node-pty 64M, cloudflared 52M), and the
-  # two the app requires are already inside try/catch.
-  - "!node_modules/node-pty/**/*"
-  - "!node_modules/cloudflared/**/*"
-  - "!node_modules/node-screenshots/**/*"
-  - "!node_modules/@modelcontextprotocol/**/*"
-  - "!node_modules/grammy/**/*"
-  - "!node_modules/@grammyjs/**/*"
-  - "!node_modules/acme-client/**/*"
-  - "!node_modules/telegramify-markdown/**/*"
-  - "!node_modules/express/**/*"
-  - "!node_modules/@hono/**/*"
-  - "!node_modules/hono/**/*"
+  # node_modules is an ALLOWLIST. The client speaks to a server over a websocket
+  # and answers browser-panel requests; app/main.js loads only electron-updater
+  # and ws (node-pty is inside try/catch and unreachable here). Excluding
+  # server packages by name used to leave their dependencies behind - zod, ajv,
+  # axios, node-forge, @peculiar, micromark - 27 MB nobody loads.
+  # scripts/test-client-build-files.mjs fails `npm run check` if electron-updater
+  # grows a dependency this list does not cover, so an update cannot ship a
+  # client that dies on "Cannot find module".
+  #
+  # List every package BY NAME at the top level, even ones npm installs nested
+  # (electron-updater/node_modules/fs-extra). electron-builder re-hoists the
+  # tree when it packages, so a nested package lands at node_modules/<name> and
+  # is filtered out unless named here - a build without these five loaded fine
+  # from the source tree and failed on "Cannot find module 'fs-extra'" packaged.
+  - "!node_modules/**/*"
+  - node_modules/electron-updater/**/*
+  - node_modules/ws/**/*
+  - node_modules/builder-util-runtime/**/*
+  - node_modules/fs-extra/**/*
+  - node_modules/jsonfile/**/*
+  - node_modules/semver/**/*
+  - node_modules/universalify/**/*
+  - node_modules/argparse/**/*
+  - node_modules/debug/**/*
+  - node_modules/graceful-fs/**/*
+  - node_modules/js-yaml/**/*
+  - node_modules/lazy-val/**/*
+  - node_modules/lodash.escaperegexp/**/*
+  - node_modules/lodash.isequal/**/*
+  - node_modules/ms/**/*
+  - node_modules/sax/**/*
+  - node_modules/tiny-typed-emitter/**/*
+
+# Chromium ships ~55 UI locales (47 MB unpacked). The app's own UI is English,
+# and the locale only affects Chromium's built-in strings (context menus,
+# dialogs), which fall back to English anyway.
+electronLanguages:
+  - en-US
 
 # app/vendor is deliberately absent: xterm, CodeMirror and the chat renderer are
 # served by whichever server this connects to, so shipping a second copy here
