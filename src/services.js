@@ -7,6 +7,67 @@
  */
 
 import { spawn, exec } from 'child_process';
+import { readdirSync as readProcDir, readFileSync as readProcFile, mkdirSync as mkdirSyncFs } from 'fs';
+import { resolve as resolvePath, sep as pathSep, join as joinPath } from 'path';
+import { homedir } from 'os';
+import { config as crundiConfig } from './config.js';
+import { liveByIdentity, worktreesRoot, cacheRoot, cacheDirOf } from './collaborators.js';
+import { sandboxStatus, serviceSandboxArgs } from './collab-sandbox.js';
+
+/**
+ * A process and every descendant, from /proc. A service runs through a shell
+ * (`shell: true`), so its pid is `sh -c …` and the real work — a dev server,
+ * `sleep`, a compose client — is a child or grandchild of it.
+ */
+function processTree(rootPid) {
+  const children = new Map();
+  let names = [];
+  try { names = readProcDir('/proc'); } catch { return [rootPid]; }
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    let stat;
+    try { stat = readProcFile(`/proc/${name}/stat`, 'utf8'); } catch { continue; }
+    // "pid (comm) state ppid …" — comm may contain spaces or parens.
+    const after = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    const ppid = Number(after[1]);
+    if (!children.has(ppid)) children.set(ppid, []);
+    children.get(ppid).push(Number(name));
+  }
+  const out = [];
+  const queue = [rootPid];
+  while (queue.length) {
+    const pid = queue.shift();
+    if (out.includes(pid)) continue;
+    out.push(pid);
+    for (const c of children.get(pid) || []) queue.push(c);
+  }
+  return out;
+}
+
+function isAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/**
+ * Stop a process tree: SIGTERM to all of it, SIGKILL to whatever is still
+ * there five seconds later. Collected up front, because once the shell dies
+ * its children are re-parented and no longer findable from its pid.
+ */
+function killTree(rootPid) {
+  if (!rootPid) return;
+  const pids = processTree(rootPid);
+  for (const pid of pids) { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } }
+  const t = setTimeout(() => {
+    for (const pid of pids) { if (isAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } } }
+  }, 5000);
+  if (t.unref) t.unref();
+}
+
+/** Is this entry's process still actually running, whatever its status says? */
+function procAlive(entry) {
+  const p = entry && entry.proc;
+  return !!(p && p.pid != null && p.exitCode === null && p.signalCode === null && isAlive(p.pid));
+}
 import { promisify } from 'util';
 import {
   listAllRegistered,
@@ -57,6 +118,39 @@ let memorySamplerTimer = null;
  * @property {number|null} exitCode
  */
 
+/**
+ * How a service a collaborator registered is launched: inside a sandbox
+ * confined to their worktree (see serviceSandboxArgs in collab-sandbox.js).
+ * Refused when their access has ended or the sandbox is not working.
+ */
+function collaboratorServiceLaunch(reg) {
+  if (process.platform !== 'linux') return { ok: false, error: 'Services created by collaborators need the Linux sandbox.' };
+  const st = sandboxStatus();
+  if (!st.ok) return { ok: false, error: `The collaborator sandbox is not ready: ${(st.problems || []).join('; ') || 'unknown problem'}` };
+  const cwd = resolvePath(reg.cwd);
+  const inv = liveByIdentity(reg.createdBy).find(c => c.project === reg.alias
+    && (cwd === resolvePath(c.worktreePath) || cwd.startsWith(resolvePath(c.worktreePath) + pathSep)));
+  if (!inv) return { ok: false, error: 'The collaborator who created this service no longer has access to this project, so it cannot run.' };
+  const cacheDir = cacheDirOf(inv.id);
+  try { mkdirSyncFs(cacheDir, { recursive: true }); } catch { /* the sandbox will say */ }
+  const home = homedir();
+  const hide = [
+    crundiConfig.projectsDir, worktreesRoot(), cacheRoot(), crundiConfig.dataDir,
+    ...['.ssh', '.config', '.claude', '.docker', '.gnupg', '.aws', '.kube', '.npm', '.cache'].map(d => joinPath(home, d)),
+  ];
+  const launch = serviceSandboxArgs({ worktree: resolvePath(inv.worktreePath), cacheDir, hide, cwd, command: reg.command });
+  if (!launch) return { ok: false, error: 'bubblewrap or setpriv is missing' };
+  const env = scrubbedEnv();
+  for (const k of Object.keys(env)) if (/^(CRUNDI_|TELEGRAM_|CLOUDFLARE_)/.test(k)) delete env[k];
+  Object.assign(env, {
+    XDG_CACHE_HOME: cacheDir,
+    npm_config_cache: joinPath(cacheDir, 'npm'),
+    YARN_CACHE_FOLDER: joinPath(cacheDir, 'yarn'),
+    PIP_CACHE_DIR: joinPath(cacheDir, 'pip'),
+  });
+  return { ok: true, ...launch, env };
+}
+
 function scrubbedEnv() {
   const e = { ...process.env };
   // Strip bot-only vars so the child service uses its own .env
@@ -66,8 +160,15 @@ function scrubbedEnv() {
     'ANTHROPIC_API_KEY', 'CLAUDE_MODEL', 'DEFAULT_MODE',
     'CLAUDE_TIMEOUT', 'PROJECTS_DIR', 'DATA_DIR',
     'CLAUDE_PROJECTS_DIR', 'DOTENV_PATH',
+    // Crundi's own credentials: its internal API key, sign-in secrets and the
+    // Cloudflare tunnel token. A service is somebody's app (possibly a
+    // collaborator's); none of these are its business.
+    'CRUNDI_API_KEY', 'CRUNDI_PASSWORD_HASH', 'CRUNDI_TOTP_SECRET', 'CLOUDFLARE_TUNNEL_TOKEN',
   ];
   for (const k of strip) delete e[k];
+  // Python buffers stdout when it is not a terminal, so a service like
+  // `python3 -m http.server` showed "(no logs)" for as long as it ran.
+  if (e.PYTHONUNBUFFERED === undefined) e.PYTHONUNBUFFERED = '1';
   return e;
 }
 
@@ -83,17 +184,25 @@ export function startService(key) {
   if (existing && existing.status === 'running') {
     return { ok: false, error: `${reg.name} is already running` };
   }
+  // Marked stopped but still alive (a stop that never took): clear it first,
+  // or the new one fights the old one for its port.
+  if (existing && process.platform !== 'win32' && procAlive(existing)) killTree(existing.proc.pid);
   running.delete(key);
 
   const logs = [];
   let proc;
+  // Registered by a collaborator: runs in their sandbox, or not at all.
+  const sandboxed = reg.createdBy ? collaboratorServiceLaunch(reg) : null;
+  if (sandboxed && !sandboxed.ok) return { ok: false, error: sandboxed.error };
   try {
-    proc = spawn(reg.command, [], {
-      cwd: reg.cwd,
-      env: scrubbedEnv(),
-      windowsHide: true,
-      shell: true,
-    });
+    proc = sandboxed
+      ? spawn(sandboxed.bin, sandboxed.args, { cwd: reg.cwd, env: sandboxed.env, windowsHide: true })
+      : spawn(reg.command, [], {
+        cwd: reg.cwd,
+        env: scrubbedEnv(),
+        windowsHide: true,
+        shell: true,
+      });
   } catch (err) {
     return { ok: false, error: `Failed to spawn: ${err.message}` };
   }
@@ -106,6 +215,9 @@ export function startService(key) {
     projectPath: reg.cwd,
     command: reg.command,
     stopCommand: reg.stopCommand || '',
+    // Registered by a collaborator: sandboxed, and never stopped by running
+    // their stop command (which would run outside the sandbox).
+    createdBy: reg.createdBy || '',
     proc,
     logs,
     startedAt: new Date(),
@@ -122,7 +234,8 @@ export function startService(key) {
   proc.stderr?.on('data', (d) => String(d).split('\n').filter(Boolean).forEach(l => appendLog(`[err] ${l}`)));
 
   proc.on('exit', (code) => {
-    entry.status = code === 0 ? 'stopped' : 'crashed';
+    // Stopped on request exits by signal (code null); that is not a crash.
+    entry.status = code === 0 || entry.stopRequested ? 'stopped' : 'crashed';
     entry.exitCode = code;
     appendLog(`--- process exited with code ${code} ---`);
     if (entry.proc?.pid != null) pidMemoryBytes.delete(entry.proc.pid);
@@ -163,14 +276,20 @@ export function stopService(key) {
   stopTunnel(key);
 
   try {
-    if (entry.stopCommand) {
+    entry.stopRequested = true;
+    if (entry.stopCommand && !entry.createdBy) {
       spawn(entry.stopCommand, [], {
         cwd: entry.projectPath,
         shell: true,
         windowsHide: true,
       });
-    } else {
+    } else if (process.platform === 'win32') {
       spawn('taskkill', ['/F', '/T', '/PID', String(entry.proc.pid)], { shell: true, windowsHide: true });
+    } else {
+      // taskkill does not exist here. Spawning it failed silently, so on Linux
+      // Stop marked a service stopped while every process of it kept running —
+      // and Delete then removed the registration of a service still alive.
+      killTree(entry.proc.pid);
     }
     entry.status = 'stopped';
     entry.exitCode = null;
@@ -197,6 +316,12 @@ export function deleteService(key) {
   const entry = running.get(key);
   if (entry && entry.status === 'running') {
     return { ok: false, error: 'Service is running — stop it before deleting' };
+  }
+  // Never delete a service out from under a process that is still alive: it
+  // would keep running with nothing left in Crundi to stop it.
+  if (entry && process.platform !== 'win32' && procAlive(entry)) {
+    entry.stopRequested = true;
+    killTree(entry.proc.pid);
   }
   running.delete(key);
   const res = deleteRegistered(key);

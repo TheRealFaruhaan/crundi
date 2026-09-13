@@ -115,8 +115,16 @@ const COLLABORATOR_ROUTES = [
   // service. That is the point: it is visible, named, stoppable, and it does
   // not die with their chat.
   ['GET', '/api/services'],                 // scoped: their project's only
+  ['GET', '/api/stats'],                    // scoped: their projects' services, no machine stats
+  // Forwards: listed for their projects only; created and removed only for
+  // services they registered; public ones go to the owner (all in the routes).
+  ['GET', '/api/forwards'],
+  ['GET', '/api/forwards/options'],
+  ['POST', '/api/forwards'],
+  ['DELETE', /^\/api\/forwards\/[a-z0-9-]+$/i],
   ['POST', '/api/services'],                // scoped: forced onto their project
-  [/^(GET|POST)$/, /^\/api\/services\/[^/]+\/(start|stop|restart|logs)$/],
+  // delete and tunnel: only on services they created (checked in the route).
+  [/^(GET|POST)$/, /^\/api\/services\/[^/]+\/(start|stop|restart|logs|delete|tunnel)$/],
   ['GET', '/api/browsers'],
   [/^(GET|POST)$/, /^\/api\/browsers\//],
 
@@ -151,10 +159,8 @@ const COLLABORATOR_NEVER = [
   /^\/api\/claude-update/,
   /^\/api\/import/,
   /^\/api\/tunnel/,         // exposing a port to the public internet
-  /^\/api\/forwards/,
   /^\/api\/containers/,     // shared docker daemon: other projects' containers
   /^\/api\/mcp\/call/,      // has its own key; collaborators get a scoped one
-  /^\/api\/stats/,          // host-level machine detail
   /^\/api\/usage/,          // the owner's account spend
   /^\/api\/notify/,
   /^\/api\/clipboard/,      // reads the host machine's clipboard
@@ -197,6 +203,10 @@ export function isConfined(principal) {
 export const COLLABORATOR_MCP_TOOLS = new Set([
   // Services: the sanctioned way to run a dev server.
   'list_services', 'register_service', 'start_service', 'stop_service', 'restart_service', 'get_service_logs',
+  'delete_service',   // their own services only — enforced in the /api/mcp/call handler
+  // Ask the owner to run a command outside the sandbox. Nothing runs until the
+  // owner has read the exact command and approved it (see webapp.js).
+  'request_owner_command',
   // Browser automation against a real browser.
   'browser_open', 'browser_navigate', 'browser_click', 'browser_type', 'browser_fill',
   'browser_select', 'browser_eval', 'browser_snapshot', 'browser_elements', 'browser_console',

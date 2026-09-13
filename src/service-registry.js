@@ -57,7 +57,29 @@ export function getRegistered(key) {
  * @param {{ alias: string, name: string, cwd: string, command: string, stopCommand?: string, tunnelPort?: number }} entry
  * @returns {{ ok: boolean, key?: string, error?: string }}
  */
-export function registerService({ alias, name, cwd, command, stopCommand = '', tunnelPort = 0, tunnelEnabled }) {
+/**
+ * Would registerService accept this? Same rules, nothing saved.
+ *
+ * Checked when a collaborator ASKS for a service, and again just before the
+ * owner's approval is recorded. A name the registry refuses (an apostrophe,
+ * brackets) used to be discovered only after approval: the request was marked
+ * approved, registration failed, and nobody was told.
+ */
+export function checkRegistration({ alias, name, cwd, command }) {
+  const a = String(alias || '').toLowerCase().trim();
+  const n = String(name || '').trim();
+  if (!a) return { ok: false, error: 'Project alias is required' };
+  if (!n) return { ok: false, error: 'Service name is required' };
+  if (!/^[\w .-]+$/.test(n)) {
+    return { ok: false, error: `"${n}" is not a valid service name: use only letters, numbers, spaces, dot, dash and underscore` };
+  }
+  if (!String(cwd || '').trim()) return { ok: false, error: 'Working directory is required' };
+  if (!String(command || '').trim()) return { ok: false, error: 'Start command is required' };
+  if (loadAll()[makeKey(a, n)]) return { ok: false, error: `A service named "${n}" is already registered for ${a}` };
+  return { ok: true, key: makeKey(a, n) };
+}
+
+export function registerService({ alias, name, cwd, command, stopCommand = '', tunnelPort = 0, tunnelEnabled, createdBy = '' }) {
   const a = String(alias || '').toLowerCase().trim();
   const n = String(name || '').trim();
   const c = String(cwd || '').trim();
@@ -83,6 +105,9 @@ export function registerService({ alias, name, cwd, command, stopCommand = '', t
     // Tunnel on/off is separate from the port. Default: on when a port was given.
     tunnelEnabled: tunnelEnabled !== undefined ? !!tunnelEnabled : (Number(tunnelPort) || 0) > 0,
     createdAt: new Date().toISOString(),
+    // Who registered it: '' for the owner, a collaborator's person key for one
+    // of theirs. A collaborator may change or delete only their own.
+    createdBy: String(createdBy || ''),
   };
   saveAll(map);
   return { ok: true, key };

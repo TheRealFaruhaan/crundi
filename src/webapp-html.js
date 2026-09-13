@@ -1467,6 +1467,12 @@ export function getWebappHtml(botUsername) {
     .svc-tunnel .svc-tunnel-badge { font-size: 0.72rem; font-family: var(--mono); color: var(--text-muted); }
     .svc-tunnel .tunnel-link { color: var(--accent); text-decoration: none; }
     .svc-tunnel .tunnel-link:hover { text-decoration: underline; }
+    .svc-other-fwd { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+    .svc-other-head { font-size: 0.74rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
+    .svc-other-hint { font-size: 0.68rem; color: var(--text-muted); margin-bottom: 6px; line-height: 1.4; }
+    .svc-other-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 5px 0; border-top: 1px dashed var(--border-subtle); font-size: 0.74rem; }
+    .svc-other-row .tunnel-link { color: var(--accent); text-decoration: none; word-break: break-all; }
+    .svc-fwd-proj { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-size: 0.72rem; padding: 3px 5px; }
     /* Register-service form — matches the card + input system. */
     .svc-register-form { padding: 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin: 0 0 12px; display: flex; flex-direction: column; gap: 9px; }
     .svc-register-form .srf-title { font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
@@ -6990,6 +6996,11 @@ export function getWebappHtml(botUsername) {
             + '<button class="yes" data-action="appr-yes-session" data-id="' + escHtml(it.id) + '" title="Until this chat closes">This session</button>'
             + '<button class="yes" data-action="appr-yes-always" data-id="' + escHtml(it.id) + '" title="Add ' + escHtml(it.host) + ' to their allowed sites">Always</button>'
             + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
+        } else if (it.source === 'collab' && it.kind === 'command') {
+          // A command you asked for in a collaborator's chat. Runs outside the
+          // sandbox; the output goes to their chat.
+          h += '<button class="yes" data-action="appr-yes" data-id="' + escHtml(it.id) + '" title="Runs outside the sandbox as the server user; the output goes to their chat">Run</button>'
+            + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
         } else if (it.source === 'collab' && it.kind === 'tool') {
           // Any other permission from a collaborator's chat: once, or for the
           // rest of that chat (the CLI keeps the rule until the chat closes).
@@ -7039,6 +7050,13 @@ export function getWebappHtml(botUsername) {
         if (!r.ok) toast(r.error || 'That could not be applied', 'error');
         else if (r.merge && !r.merge.ok) toast(r.merge.error || 'The merge failed', 'error');
         else if (r.merge) toast('Merged ' + r.merge.merged + ' into ' + r.merge.into, 'success');
+        else if (r.running) toast('Running. The output will go to their chat.', 'success');
+        else if (r.service && !r.service.ok) toast('Approved, but it could not be registered: ' + (r.service.error || 'unknown error'), 'error');
+        else if (r.service) toast('Service registered', 'success');
+        else if (r.forward && !r.forward.ok) toast('Approved, but the forward could not be created: ' + (r.forward.error || 'unknown error'), 'error');
+        else if (r.forward) toast('Published ' + (r.forward.forward && r.forward.forward.url ? r.forward.forward.url : ''), 'success');
+        else if (r.tunnel && !r.tunnel.ok) toast('Approved, but the tunnel could not be turned on: ' + (r.tunnel.error || 'unknown error'), 'error');
+        else if (r.tunnel) toast(r.tunnel.running ? 'Tunnel starting' : 'Tunnel on: it starts when the service runs', 'success');
         else toast(approve ? 'Approved' : 'Declined', 'success');
       } catch (e) { toast('That could not be applied', 'error'); }
     }
@@ -8519,6 +8537,51 @@ export function getWebappHtml(botUsername) {
       } catch { /* the card falls back to tunnel-only */ }
     }
 
+    // Forwards no service card shows: made directly (by Claude, say) on a port
+    // no service records. Listed so the owner can see them, say which project
+    // each serves (outside collaborators on that project may open it while it
+    // is private), or remove them.
+    function otherForwardsHtml() {
+      if (userRole === 'collaborator') return '';
+      const shownPorts = new Set((services || []).map(function (s) { return Number(s.tunnelPort || 0); }).filter(Boolean));
+      const loose = (forwards || []).filter(function (f) {
+        return !shownPorts.has(Number(f.port)) && (!currentProject || !f.project || f.project === currentProject);
+      });
+      if (!loose.length) return '';
+      const aliases = (projects || []).map(function (p) { return p.alias; });
+      return '<div class="svc-other-fwd"><div class="svc-other-head">Other forwards</div>'
+        + '<div class="svc-other-hint">Not linked to a service. Pick the project each one serves: outside collaborators on that project can open it.</div>'
+        + loose.map(function (f) {
+          return '<div class="svc-other-row">'
+            + '<a class="tunnel-link" href="' + escHtml(f.url || '') + '" target="_blank">' + escHtml(f.url || f.host) + '</a>'
+            + (f.public ? '<span class="svc-pub-tag" title="Reachable without signing in to Crundi">public</span>' : '')
+            + '<span class="svc-tunnel-badge">port ' + escHtml(String(f.port)) + '</span>'
+            + '<select class="svc-fwd-proj" data-fwd-project="1" data-host="' + escHtml(f.host) + '" title="Outside collaborators on this project may open it">'
+            + '<option value="">No project</option>'
+            + aliases.map(function (a) { return '<option value="' + escHtml(a) + '"' + (f.project === a ? ' selected' : '') + '>' + escHtml(a) + '</option>'; }).join('')
+            + '</select>'
+            + '<button class="svc-btn danger" data-action="fwd-remove" data-host="' + escHtml(f.host) + '" title="Remove this forward">' + ic('trash') + '</button>'
+            + '</div>';
+        }).join('')
+        + '</div>';
+    }
+
+    async function setForwardProject(host, project) {
+      try {
+        const r = await apiFetch('/api/forwards/' + encodeURIComponent(host), {
+          method: 'PATCH', body: JSON.stringify({ project: project }),
+        }).then(function (x) { return x.json(); });
+        if (!r.ok) toast(r.error || 'Could not save that', 'error');
+        else toast(project ? host + ' now serves ' + project : host + ' is not linked to a project', 'success');
+      } catch (e) { toast('Could not save that', 'error'); }
+      await loadServices();
+    }
+
+    document.addEventListener('change', function (e) {
+      const sel = e.target && e.target.closest ? e.target.closest('select[data-fwd-project]') : null;
+      if (sel) setForwardProject(sel.getAttribute('data-host'), sel.value);
+    });
+
     function forwardForPort(port) {
       return forwards.find(f => Number(f.port) === Number(port)) || null;
     }
@@ -9434,7 +9497,12 @@ export function getWebappHtml(botUsername) {
     async function pollStats() {
       try {
         const res = await apiFetch('/api/stats');
+        // A refused or failed poll says nothing about the services. Treating
+        // it as "no stats" blanked every card's strip, which then came back on
+        // the next render — the status flickering a collaborator saw.
+        if (!res.ok) return;
         const d = await res.json();
+        if (!d || typeof d !== 'object' || d.error) return;
         lastStats = d;
         if (currentTab === 'services') applyServiceStats(d.services);
         if (currentTab === 'info') renderSystemStats(d.system);
@@ -9470,12 +9538,17 @@ export function getWebappHtml(botUsername) {
         panel.innerHTML = toolbar + '<div class="services-empty">'
           + '<div class="icon">' + ic('server') + '</div>'
           + '<p>No services registered' + (currentProject ? ' for this project' : '') + '</p>'
-          + '</div>';
+          + '</div>' + otherForwardsHtml();
         return;
       }
 
       panel.innerHTML = toolbar + projectServices.map(s => {
         const k = escHtml(s.key);
+        // A collaborator may change or delete only services they registered;
+        // exposing a port (forwards, tunnels) is the owner's alone. The server
+        // enforces both — this just does not offer buttons that would refuse.
+        const isCollab = userRole === 'collaborator';
+        const canEdit = !isCollab || !!s.mine;
         const running = s.status === 'running';
         const statusClass = running ? 'running' : (s.status === 'error' ? 'error' : 'stopped');
         // Tunnel port and on/off are independent. The runtime badge reflects the
@@ -9512,17 +9585,19 @@ export function getWebappHtml(botUsername) {
 
           tunnelRow = '<div class="svc-tunnel">'
             + '<span class="svc-tunnel-ic">' + ic('globe') + '</span>'
-            + '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '">' + (tPort > 0 ? 'Port ' + tPort : 'Set port') + '</button>'
-            + '<div class="seg-pref seg-expose">'
-            + seg('off', 'Off', !mode, 'Not reachable from outside')
-            + seg('tunnel', 'Tunnel', mode === 'tunnel', 'A cloudflared process with a random trycloudflare.com hostname')
-            + seg('subdomain', 'Subdomain', mode === 'subdomain',
-                subAvailable ? 'name.' + subDomain + ' — served by this server on its own certificate'
-                             : 'Needs a domain: set TLS_DOMAIN or FORWARD_DOMAIN')
-            + seg('path', 'Path', mode === 'path', 'A path on this server: /tunnel/name/')
-            + '</div>'
+            + (canEdit
+              ? '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '">' + (tPort > 0 ? 'Port ' + tPort : 'Set port') + '</button>'
+              : (tPort > 0 ? '<span class="svc-tunnel-badge">port ' + tPort + '</span>' : ''))
+            + (isCollab && !canEdit ? '' : '<div class="seg-pref seg-expose">'
+              + seg('off', 'Off', !mode, 'Not reachable from outside')
+              + seg('tunnel', 'Tunnel', mode === 'tunnel', 'A cloudflared process with a random trycloudflare.com hostname')
+              + seg('subdomain', 'Subdomain', mode === 'subdomain',
+                  subAvailable ? 'name.' + subDomain + ' — served by this server on its own certificate'
+                               : 'Needs a domain: set TLS_DOMAIN or FORWARD_DOMAIN')
+              + seg('path', 'Path', mode === 'path', 'A path on this server: /tunnel/name/')
+              + '</div>')
             + badge
-            + (fwd ? '<button class="svc-btn danger" data-action="fwd-remove" data-host="' + escHtml(fwd.host) + '" title="Remove this forward">' + ic('trash') + '</button>' : '')
+            + (fwd && canEdit ? '<button class="svc-btn danger" data-action="fwd-remove" data-host="' + escHtml(fwd.host) + '" title="Remove this forward">' + ic('trash') + '</button>' : '')
             + '</div>';
 
           if (exposeEdit && exposeEdit.key === s.key) {
@@ -9568,13 +9643,13 @@ export function getWebappHtml(botUsername) {
               + '<button class="svc-btn" data-action="svc-restart" data-key="' + k + '">' + ic('refresh') + 'Restart</button>'
             : '<button class="svc-btn primary" data-action="svc-start" data-key="' + k + '">' + ic('play') + 'Start</button>')
           + '<button class="svc-btn" data-action="svc-logs" data-key="' + k + '">' + ic('file-text') + 'Logs</button>'
-          + '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '"' + (tPort > 0 || tEnabled ? ' style="display:none"' : '') + '>' + ic('globe') + 'Tunnel</button>'
-          + '<button class="svc-btn danger" data-action="svc-delete" data-key="' + k + '">' + ic('trash') + 'Delete</button>'
+          + (canEdit ? '<button class="svc-btn" data-action="svc-tunnel-port" data-key="' + k + '" data-port="' + tPort + '"' + (tPort > 0 || tEnabled ? ' style="display:none"' : '') + '>' + ic('globe') + 'Tunnel</button>' : '')
+          + (canEdit ? '<button class="svc-btn danger" data-action="svc-delete" data-key="' + k + '">' + ic('trash') + 'Delete</button>' : '')
           + '</div>'
           + tunnelRow
           + '<div class="svc-logs" id="svc-logs-' + k + '"></div>'
           + '</div>';
-      }).join('');
+      }).join('') + otherForwardsHtml();
     }
 
     // Switching how a port is exposed. Only one route at a time: leaving two
@@ -9610,6 +9685,8 @@ export function getWebappHtml(botUsername) {
             body: JSON.stringify({ enabled: true, port }),
           });
           const d = await r.json();
+          // A collaborator's tunnel is public, so it goes to the owner first.
+          if (d.pendingApproval) { toast('Sent to the owner to approve', 'success'); await loadServices(); return; }
           if (!d.ok) { toast(d.error || 'Could not start the tunnel', 'error'); return; }
           toast('Starting a tunnel', 'success');
         }
@@ -9672,9 +9749,12 @@ export function getWebappHtml(botUsername) {
         const r = await apiFetch('/api/forwards', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, port, mode, public: isPublic }),
+          // The service's project, so collaborators on it can open the forward.
+          body: JSON.stringify({ name, port, mode, public: isPublic, project: String(key).split(':')[0] }),
         });
         const d = await r.json();
+        // A collaborator publishing a forward: the owner approves it first.
+        if (d.pendingApproval) { exposeEdit = null; toast('Sent to the owner to approve', 'success'); await loadServices(); return; }
         if (!d.ok) { toast(d.error || 'Could not create the forward', 'error'); return; }
         exposeEdit = null;
         toast('Reachable at ' + (d.forward && d.forward.url ? d.forward.url : name), 'success');

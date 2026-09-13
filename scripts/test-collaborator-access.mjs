@@ -86,8 +86,12 @@ const FORBIDDEN = [
   ['POST', '/api/terminals/create'], ['POST', '/api/terminals/spawn'], ['GET', '/api/terminals'],
   ['GET', '/api/server-logs'], ['POST', '/api/maintenance'], ['POST', '/api/update'],
   ['POST', '/api/claude-update'], ['POST', '/api/import'], ['POST', '/api/tunnel'],
-  ['GET', '/api/forwards'], ['GET', '/api/containers'], ['POST', '/api/mcp/call'],
-  ['GET', '/api/stats'], ['GET', '/api/usage'], ['GET', '/api/clipboard'],
+  // /api/forwards is open to collaborators but scoped in the routes to their
+  // own projects and services (see test-forward-access.mjs).
+  ['GET', '/api/containers'], ['POST', '/api/mcp/call'],
+  // /api/stats is open to collaborators but scoped to their projects' services
+  // with no machine stats (see test-service-stop.mjs).
+  ['GET', '/api/usage'], ['GET', '/api/clipboard'],
   ['POST', '/api/collaborators'], ['GET', '/api/collaborators'], ['GET', '/api/approvals'],
   // Git operations that reach past their own branch, or destroy work.
   ['POST', '/api/git/push'], ['POST', '/api/git/pull'],
@@ -117,11 +121,13 @@ for (const [m, p] of ALLOWED) {
 
 // ── Tool surfaces ─────────────────────────────────────────────────────────
 for (const t of ['secret_get', 'secret_run', 'secret_search', 'schedule_add', 'schedule_delete',
-  'spawn_terminal', 'terminal_input', 'enable_tunnel', 'delete_service', 'get_usage',
+  'spawn_terminal', 'terminal_input', 'enable_tunnel', 'get_usage',
   'capture_display', 'send_file_to_user']) {
   check(`MCP tool withheld: ${t}`, !COLLABORATOR_MCP_TOOLS.has(t));
 }
-for (const t of ['register_service', 'start_service', 'get_service_logs', 'browser_navigate', 'kanban_add_task']) {
+// delete_service is available, but only for services the collaborator created
+// (enforced in /api/mcp/call; see test-forward-access.mjs).
+for (const t of ['register_service', 'start_service', 'get_service_logs', 'delete_service', 'browser_navigate', 'kanban_add_task']) {
   check(`MCP tool available: ${t}`, COLLABORATOR_MCP_TOOLS.has(t));
 }
 // --tools under --restricted is an exact allowlist, so an omission here is a

@@ -148,7 +148,7 @@ const mkSession = () => {
 // Without it the CLI emits no lifecycle events, the drawer never learns it is
 // recallable, and the feature silently does not exist.
 {
-  const a = at('  function sendMessage(id, text) {');
+  const a = at('  function sendMessage(id, text, opts = {}) {');
   const body = lines.slice(a, endOf(a) + 1).join('\n');
   check('sendMessage mints a uuid', /randomUUID\(\)/.test(body));
   check('and puts it on the outbound envelope', /\n\s*uuid,/.test(body));

@@ -993,6 +993,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // applies, which is why the deny list below is the one they cannot edit.
     // --tools under --restricted is an EXACT allowlist, not an addition, so
     // everything wanted has to be named.
+    // A collaborator chat's id is needed BEFORE launch: it goes into that
+    // chat's own tool config, so a request made from it (request_owner_command)
+    // can be answered in the right chat.
+    const collabChatId = collaborator ? genId() : '';
+    let collabMcpFileForChat = '';
     if (collaborator) {
       args.push('--restricted');
       args.push('--tools', COLLABORATOR_CLAUDE_TOOLS.join(','));
@@ -1032,7 +1037,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // it, committable and pushable with their key inside. The owner's
       // user-level servers (connected accounts) stay excluded by --strict.
       const collabMcpDir = join(config.dataDir, 'collab-mcp');
-      const collabMcpFile = join(collabMcpDir, `${collaborator.id}.json`);
+      // One file per chat: it carries the chat's id. Removed when the chat
+      // closes, and all of a collaborator's are removed with them.
+      const collabMcpFile = join(collabMcpDir, `${collaborator.id}-${collabChatId}.json`);
+      collabMcpFileForChat = collabMcpFile;
       try {
         mkdirSync(collabMcpDir, { recursive: true });
         writeFileSync(collabMcpFile, JSON.stringify({
@@ -1046,6 +1054,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
                 CRUNDI_PROJECT: key,
                 // Lets the bridge list only the tools this key may call.
                 CRUNDI_TOOL_SCOPE: 'collaborator',
+                // Which chat this bridge belongs to (see request_owner_command).
+                CRUNDI_CHAT_ID: collabChatId,
               },
             },
           },
@@ -1165,10 +1175,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         },
       });
     } catch (err) {
+      if (collabMcpFileForChat) { try { unlinkSync(collabMcpFileForChat); } catch { /* never written */ } }
       return { ok: false, error: `Failed to start claude: ${err.message}` };
     }
 
-    const id = genId();
+    // A collaborator chat already has its id: it is in that chat's tool config.
+    const id = collabChatId || genId();
     const siblings = entriesForAlias(key);
     const s = {
       id,
@@ -1212,6 +1224,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       agentsByTask: new Map(), // CLI task_id -> tool_use_id (task_updated only carries task_id)
       onStateChange: stateChangeCb,
       totalCostUsd: 0,
+      collabMcpFile: collabMcpFileForChat,   // deleted when the chat closes
     };
     s.emitter.setMaxListeners(50);
     sessions.set(id, s);
@@ -1309,7 +1322,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
             'Claude runs in a sandbox limited to this folder. It cannot read or change anything else on the machine, and',
             'has no access to secrets or other projects. It can also use the project board and mind map.',
             'Anything that needs special permission, such as reaching another website, is sent to the owner to approve;',
-            'you can cancel the request if you would rather carry on without it.',
+            'you can cancel the request if you would rather carry on without it. If a job needs a lot of approvals, ask the',
+            'owner to send the message in this chat: while their message is the latest, nothing waits for approval. Your',
+            'next message puts approvals back to normal.',
             'Your access has a time limit, and may have a token limit. Both show in the bar at the top. If the token',
             'limit is reached the chat stops until the owner raises it.',
           ].join('\n'),
@@ -1424,6 +1439,22 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   let escalationGoneCb = null;
   function onEscalationGone(cb) { escalationGoneCb = cb; }
+
+  /**
+   * The collaborator chat a request belongs to. The chat id its tool bridge
+   * reports wins when that chat really is this person's; otherwise their chat
+   * on that project that is doing something, then their most recent one.
+   */
+  function collaboratorSessionFor(key, hint, project) {
+    const mine = (x) => x && x.collaborator && x.collaborator.key === key;
+    const h = hint ? sessions.get(hint) : null;
+    if (mine(h) && h.proc) return h.id;
+    const list = [...sessions.values()]
+      .filter(x => mine(x) && x.proc && (!project || x.alias === String(project).toLowerCase()));
+    const busy = list.find(x => x.state === 'working' || x.state === 'needs-input');
+    if (busy) return busy.id;
+    return list.length ? list[list.length - 1].id : '';
+  }
 
   /** Let this chat reach a host without asking again, until it closes. */
   function allowHostForSession(id, host) {
@@ -1585,7 +1616,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (i < 0) return false;
     const [p] = s.pendingInjections.splice(i, 1);
     // NOW it belongs in the conversation, at the point Claude actually read it.
-    emitEntry(s, { id: genId(), kind: 'user', text: p.text });
+    emitEntry(s, { id: genId(), kind: 'user', text: p.text, ...(p.by ? { by: p.by } : {}) });
     s.emitter.emit('event', { type: 'injected', text: p.text });
     return true;
   }
@@ -1633,7 +1664,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (!s.pendingInjections?.length) return;
     const pend = s.pendingInjections.splice(0, s.pendingInjections.length);
     for (const p of pend) {
-      emitEntry(s, { id: genId(), kind: 'user', text: p.text });
+      emitEntry(s, { id: genId(), kind: 'user', text: p.text, ...(p.by ? { by: p.by } : {}) });
       s.emitter.emit('event', { type: 'injected', text: p.text, assumed: true });
     }
   }
@@ -1888,7 +1919,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // A website the owner already allowed for this chat ("This session", or
       // "Always" while it was running): answer it here. The card still shows,
       // marked allowed, so nothing happens out of sight.
-      const sameAsAllowed = s.sessionAllowed && s.sessionAllowed.has(`${req.tool_name}:${JSON.stringify(req.input || {})}`);
+      // The owner typed the latest message in this collaborator's chat, so the
+      // owner is the one asking: nothing to escalate to themselves. Approved on
+      // the spot (the card shows as allowed). The sandbox and --restricted were
+      // fixed at launch and still apply. The moment the collaborator sends a
+      // message, prompts go back to the owner.
+      const ownerTurn = !!s.collaborator && s.lastSender === 'owner' && !isQuestion;
+      const sameAsAllowed = ownerTurn
+        || (s.sessionAllowed && s.sessionAllowed.has(`${req.tool_name}:${JSON.stringify(req.input || {})}`));
       if ((s.collaborator && req.tool_name === 'SandboxNetworkAccess'
         && s.allowedHosts && s.allowedHosts.has(String(req.input?.host || '').toLowerCase())) || sameAsAllowed) {
         s.pending.set(requestId, { entry, request: req });
@@ -1999,7 +2037,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // ─── Outbound actions ───
 
   /** Send a user turn. */
-  function sendMessage(id, text) {
+  function sendMessage(id, text, opts = {}) {
     const s = sessions.get(id);
     if (!s) return { ok: false, error: `No session "${id}"` };
     if (!s.proc) return { ok: false, error: 'Session is not running' };
@@ -2015,6 +2053,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       s.limitStopped = false;
     }
     noteGoalCommand(s, body);
+    // Who is speaking, in a collaborator's chat. The owner's message lifts the
+    // permission prompts (see ownerTurn); ANY collaborator input restores them
+    // at once — set here, at send time, so even a message still queued behind
+    // the running turn switches approvals back to the owner immediately. A send
+    // that does not say who (a scheduled message) counts as the collaborator.
+    // Crundi itself (the output of a command the owner ran) is labelled as such
+    // and changes nobody's turn.
+    const by = opts.by === 'system' ? 'system'
+      : s.collaborator ? (opts.by === 'owner' ? 'owner' : 'collaborator') : '';
+    if (s.collaborator && by !== 'system') s.lastSender = by;
     // Sent into a turn already in progress: the CLI holds it until it reaches
     // a pause, so it has NOT been received yet. Writing it into the transcript
     // now would put it in the wrong place — above the tool results Claude was
@@ -2026,8 +2074,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // lifecycle events"), which is why hand-over used to look irreversible:
     // there was nothing to name when asking for it back.
     const uuid = randomUUID();
-    if (injected) s.pendingInjections.push({ text: body, at: Date.now(), uuid, state: 'sent' });
-    else emitEntry(s, { id: genId(), kind: 'user', text: body });
+    if (injected) s.pendingInjections.push({ text: body, at: Date.now(), uuid, state: 'sent', ...(by ? { by } : {}) });
+    else emitEntry(s, { id: genId(), kind: 'user', text: body, ...(by ? { by } : {}) });
     const ok = send(s, {
       type: 'user',
       session_id: s.sessionId || '',
@@ -2238,6 +2286,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       try { s.proc.stdin.end(); } catch { /* ignore */ }
       try { s.proc.kill(); } catch { /* ignore */ }
     }
+    // A collaborator chat's own tool config holds their scoped key.
+    if (s.collabMcpFile) { try { unlinkSync(s.collabMcpFile); } catch { /* already gone */ } }
     s.emitter.removeAllListeners();
     // FLUSH, don't cancel. Writes are debounced by 1.5s, so cancelling here
     // threw away everything said in the last moment before the cell was
@@ -2400,7 +2450,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents,
-    onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession,
+    onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },
