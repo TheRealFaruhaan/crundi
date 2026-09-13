@@ -33,7 +33,7 @@ import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
 import * as claudeUpdate from './claude-update.js';
 import { decodeImage } from './image-input.js';
-import { registerService, listRegisteredForProject, updateRegistered, getRegistered } from './service-registry.js';
+import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
@@ -55,6 +55,8 @@ import * as authConfig from './auth-config.js';
 import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
 import { sandboxStatus, setupSandbox } from './collab-sandbox.js';
+import { COLLAB_FORWARD_COOKIE, mintCollabForwardToken, readCollabForwardToken, collabMayReachForward } from './forward-access.js';
+import { spawn as spawnOwnerCommand } from 'node:child_process';
 import * as serverUpdate from './server-update.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
@@ -646,6 +648,79 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return want.length === got.length && timingSafeEqual(want, got);
   }
 
+  /** Add a Set-Cookie without clobbering one already on the response. */
+  function appendSetCookie(res, cookie) {
+    const prev = res.getHeader('Set-Cookie');
+    const list = prev ? (Array.isArray(prev) ? prev : [String(prev)]) : [];
+    res.setHeader('Set-Cookie', [...list, cookie]);
+  }
+
+  /**
+   * A collaborator's forward cookie. Names the person and is signed; what it
+   * opens is decided per request from their live invitations (see
+   * forward-access.js), so it is safe to hand out for as long as the owner's.
+   */
+  function setCollabForwardCookie(res, collabKey) {
+    const base = forwards.baseDomain();
+    if (!base || !collabKey) return;
+    const token = mintCollabForwardToken(forwardSecret(), collabKey, FORWARD_TTL_MS);
+    const secure = tls.enabled() ? '; Secure' : '';
+    appendSetCookie(res,
+      `${COLLAB_FORWARD_COOKIE}=${token}; Domain=.${base}; Path=/; Max-Age=${Math.floor(FORWARD_TTL_MS / 1000)}`
+      + `; HttpOnly; SameSite=Lax${secure}`);
+  }
+
+  // Forward requests come in bursts (a dev server's page pulls dozens of
+  // assets), so a collaborator's projects and the service ports are looked up
+  // at most every few seconds rather than per request. Short enough that a
+  // revocation still takes effect almost at once.
+  const FORWARD_LOOKUP_TTL_MS = 5000;
+  const collabProjectsCache = new Map();   // person key -> { at, projects }
+  let forwardServicesCache = { at: 0, list: [] };
+
+  function projectsForCollab(key) {
+    const hit = collabProjectsCache.get(key);
+    if (hit && Date.now() - hit.at < FORWARD_LOOKUP_TTL_MS) return hit.projects;
+    let projects = [];
+    try { projects = collaborators.liveByIdentity(key).map(c => String(c.project || '').toLowerCase()); } catch { projects = []; }
+    collabProjectsCache.set(key, { at: Date.now(), projects });
+    if (collabProjectsCache.size > 200) collabProjectsCache.delete(collabProjectsCache.keys().next().value);
+    return projects;
+  }
+
+  function servicesForForwards() {
+    if (Date.now() - forwardServicesCache.at < FORWARD_LOOKUP_TTL_MS) return forwardServicesCache.list;
+    let list = [];
+    try { list = getAllServiceStatus().map(s => ({ alias: s.alias, tunnelPort: s.tunnelPort })); } catch { list = []; }
+    forwardServicesCache = { at: Date.now(), list };
+    return list;
+  }
+
+  /**
+   * May this request open this forward?
+   *
+   * The owner — by their forward cookie or any owner token — reaches every
+   * forward, as before. A collaborator, whether by their own cookie or by
+   * their access token, reaches only private forwards of their own projects.
+   * The token case matters as much as the cookie: the old check accepted ANY
+   * valid token, so a collaborator appending ?token= to a forward URL reached
+   * every private forward on the machine.
+   */
+  function mayReachForward(req, fwd) {
+    if (!fwd) return false;
+    if (fwd.public) return true;
+    if (hasForwardCookie(req)) return true;
+    const p = validateToken(req);
+    if (p && !isConfined(p)) return true;
+    let projects = p && isConfined(p) ? (p.projects || []) : null;
+    if (!projects) {
+      const key = readCollabForwardToken(forwardSecret(), req.headers.cookie || '');
+      if (key) projects = projectsForCollab(key);
+    }
+    if (!projects || !projects.length) return false;
+    return collabMayReachForward({ fwd, projects, services: servicesForForwards() });
+  }
+
   /**
    * The caller behind a request, or null.
    *
@@ -1037,8 +1112,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   // Expiry is a moment, not an event — nothing happens when a timestamp passes.
   // Checked each minute, so an open chat outlives its access by at most that.
+  // A collaborator's services stop when their access does, like their chats.
+  function stopLapsedCollaboratorServices() {
+    for (const s of getAllServiceStatus()) {
+      if (s.status !== 'running') continue;
+      const reg = getRegistered(s.key);
+      if (!reg || !reg.createdBy) continue;
+      const stillIn = collaborators.liveByIdentity(reg.createdBy).some(c => c.project === reg.alias);
+      if (stillIn) continue;
+      console.log(`[crundi] Stopping ${s.key}: the collaborator who created it no longer has access`);
+      try { stopService(s.key); } catch { /* next minute */ }
+    }
+  }
+
   const collabChatSweep = setInterval(() => {
     try { closeLapsedCollaboratorChats(); } catch { /* next minute */ }
+    try { stopLapsedCollaboratorServices(); } catch { /* next minute */ }
   }, 60_000);
   if (collabChatSweep.unref) collabChatSweep.unref();
   if (claudeUi) claudeUi.onSessionGone((sid) => { approvals.dropSession(sid); broadcastApprovals(); });
@@ -1186,7 +1275,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         usage: (principal.invitations || [])[0] ? collaborators.usageOf(principal.invitations[0].id) : null,
       },
       projects,
-      services: (state.services || []).filter(x => mine.has(String(x.alias || '').toLowerCase())),
+      // Their projects' services, with "mine" in place of who created each.
+      services: (state.services || [])
+        .filter(x => mine.has(String(x.alias || '').toLowerCase()))
+        .map(({ createdBy, byCollaborator, ...x }) => ({ ...x, mine: !!createdBy && createdBy === principal.collabKey })),
       // Chats belonging to them. Terminal cells are refused at the route level
       // anyway, but a collaborator must not even see that others are running.
       // Only THEIR OWN chats. Filtering by project alone showed them the
@@ -1238,7 +1330,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       tunnelEnabled: !!s.tunnelEnabled,
       tunnelStatus: s.tunnel?.status || null,
       tunnelUrl: s.tunnel?.url || null,
-    }));
+      // Same ownership facts /api/services gives. Without them every state
+      // push replaced the list with one that had none, and a collaborator's
+      // buttons flickered on and off.
+      createdBy: (() => { try { return (getRegistered(s.key) || {}).createdBy || ''; } catch { return ''; } })(),
+    })).map(x => ({ ...x, byCollaborator: !!x.createdBy }));
     const liveTerms = claudeTerminals ? claudeTerminals.list() : [];
     // Chat sessions carry their own kind/agentState (derived from the message
     // stream), so they need no hook-state bookkeeping — only inclusion.
@@ -1383,6 +1479,56 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * are owned elsewhere and already know their own state, and a copy here
    * would eventually disagree with them about what is still pending.
    */
+  /**
+   * Tell a collaborator's chat how the owner answered one of their requests —
+   * sent AS the collaborator, so their Claude simply carries on with it instead
+   * of anyone having to check back. The chat that asked when known, otherwise
+   * their chat on that project.
+   */
+  function postToCollaboratorChat(rec, text) {
+    if (!claudeUi || !claudeUi.collaboratorSessionFor || !rec || !rec.collabKey) return;
+    const hint = (rec.payload && rec.payload.sessionId) || rec.sessionId || '';
+    const sid = claudeUi.collaboratorSessionFor(rec.collabKey, hint, rec.project || '');
+    if (!sid) return;
+    const sent = claudeUi.sendMessage(sid, text, { by: 'collaborator' });
+    if (!sent.ok) console.warn(`[crundi] Could not post the owner's answer to the chat: ${sent.error}`);
+  }
+
+  // A command the owner approved for a collaborator's chat. It runs OUTSIDE the
+  // sandbox, as the server user, with a time limit — that is the point of it.
+  // Crundi's own credentials are taken out of its environment, because the
+  // output goes back into the collaborator's chat.
+  const OWNER_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
+  const OWNER_COMMAND_MAX_OUTPUT = 20000;
+  function runOwnerCommand({ command, cwd }) {
+    return new Promise((done) => {
+      const env = { ...process.env };
+      for (const k of Object.keys(env)) {
+        if (/^(CRUNDI_|TELEGRAM_BOT_TOKEN$|CLOUDFLARE_TUNNEL_TOKEN$)/.test(k)) delete env[k];
+      }
+      let output = '';
+      let truncated = false;
+      let timedOut = false;
+      let child;
+      try {
+        child = spawnOwnerCommand('bash', ['-lc', command], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (err) {
+        done({ code: -1, output: err.message, truncated: false, timedOut: false });
+        return;
+      }
+      const add = (d) => {
+        if (output.length >= OWNER_COMMAND_MAX_OUTPUT) { truncated = true; return; }
+        output += d;
+        if (output.length > OWNER_COMMAND_MAX_OUTPUT) { output = output.slice(0, OWNER_COMMAND_MAX_OUTPUT); truncated = true; }
+      };
+      child.stdout.on('data', add);
+      child.stderr.on('data', add);
+      child.on('error', (err) => add(`\n${err.message}`));
+      const timer = setTimeout(() => { timedOut = true; try { child.kill('SIGKILL'); } catch { /* gone */ } }, OWNER_COMMAND_TIMEOUT_MS);
+      child.on('close', (code) => { clearTimeout(timer); done({ code, output, truncated, timedOut }); });
+    });
+  }
+
   function approvalsSnapshot() {
     const secrets = publicSecretRequests().map(r => ({
       id: r.id, source: 'secret', title: r.secretName || 'A secret',
@@ -1588,7 +1734,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // reason as the subdomain case — this request belongs to another app.
     const pathFwd = forwards.matchPath(req.url);
     if (pathFwd) {
-      if (!pathFwd.forward.public && !validateToken(req) && !hasForwardCookie(req)) {
+      if (!mayReachForward(req, pathFwd.forward)) {
         res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('This forward is private. Sign in to Crundi first, or recreate it as public.\n');
         return;
@@ -1602,7 +1748,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Private by default. A quick tunnel is public by construction; a forward
       // is not, because "let me look at this on my phone" is the common case and
       // quietly publishing a dev database is not a default worth having.
-      if (!fwd.public && !validateToken(req) && !hasForwardCookie(req)) {
+      if (!mayReachForward(req, fwd)) {
         res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('This forward is private. Sign in to Crundi first, or recreate it as public.\n');
         return;
@@ -1943,8 +2089,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const base = forwards.baseDomain();
       if (base) {
         const secure = tls.enabled() ? '; Secure' : '';
-        res.setHeader('Set-Cookie',
-          `crundi_fwd=; Domain=.${base}; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`);
+        res.setHeader('Set-Cookie', [
+          `crundi_fwd=; Domain=.${base}; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`,
+          `${COLLAB_FORWARD_COOKIE}=; Domain=.${base}; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`,
+        ]);
       }
       return json(res, { ok: true });
     }
@@ -2135,6 +2283,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (!authConfig.isOpen() && path.startsWith('/api/') && !hasForwardCookie(req)
         && !isConfined(principal)) {
       try { setForwardCookie(res); } catch { /* never worth failing a request for */ }
+    }
+    // A collaborator gets THEIR forward cookie the same way — the first call
+    // after signing in hands it out — which opens only their own projects'
+    // private forwards, checked live on each request.
+    if (!authConfig.isOpen() && path.startsWith('/api/') && isConfined(principal)
+        && readCollabForwardToken(forwardSecret(), req.headers.cookie || '') !== principal.collabKey) {
+      try { setCollabForwardCookie(res, principal.collabKey); } catch { /* never worth failing a request for */ }
     }
 
     // Claude Code lifecycle hooks report a terminal's agent state here.
@@ -2648,6 +2803,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // answering, so a retry in the same turn already goes straight through.
       {
         const pre = approvals.get(String(body.id || ''));
+        // A service that can no longer be registered (its name is invalid, or
+        // one by that name appeared meanwhile) is refused BEFORE the approval is
+        // recorded, and stays pending so it can be declined — it used to be
+        // marked approved and then fail with nobody told.
+        if (body.approve && pre && pre.status === 'pending' && pre.kind === 'service' && pre.payload) {
+          const chk = checkRegistration(pre.payload);
+          if (!chk.ok) return json(res, { ok: false, error: `Cannot register this service: ${chk.error}. Decline it and ask them to request it again.` }, 409);
+        }
         // The scope rides on the record to the resolver, which answers the CLI.
         if (pre && pre.status === 'pending') pre.scope = body.approve ? String(body.scope || 'once') : 'once';
         const host = pre && pre.status === 'pending' && pre.payload && pre.payload.host;
@@ -2661,13 +2824,81 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // having to go and do it would be two steps for one decision.
       if (r.ok && body.approve && r.request.kind === 'service' && r.request.payload) {
         const p = r.request.payload;
-        const reg = registerService({ alias: p.alias, name: p.name, command: p.command, cwd: p.cwd, stopCommand: p.stopCommand || '' });
+        const reg = registerService({
+          alias: p.alias, name: p.name, command: p.command, cwd: p.cwd, stopCommand: p.stopCommand || '',
+          // Recorded so the collaborator can later change or delete THIS one.
+          createdBy: r.request.collabKey || '',
+        });
+        // Tell their chat: its Claude is waiting on this answer.
+        postToCollaboratorChat(r.request, reg.ok
+          ? `(from Crundi) The owner approved the service "${p.name}". It is registered as ${reg.key} but not started yet: start it with start_service.`
+          : `(from Crundi) The owner approved the service "${p.name}", but it could not be registered: ${reg.error}`);
         broadcastApprovals();
         broadcastState();
         return json(res, { ...r, service: reg }, reg.ok ? 200 : 409);
       }
+      // A decline reaches their chat too, whatever was asked for.
+      if (r.ok && !body.approve && ['service', 'forward', 'tunnel', 'merge'].includes(r.request.kind)) {
+        postToCollaboratorChat(r.request, `(from Crundi) The owner declined: ${r.request.title}`);
+      }
+      // A command the owner asked for in a collaborator's chat. Approving runs
+      // it outside the sandbox and posts the output back into that chat.
+      if (r.ok && r.request.kind === 'command' && r.request.payload) {
+        const p = r.request.payload;
+        if (!body.approve) {
+          postToCollaboratorChat(r.request, `(from Crundi) The owner declined to run:\n$ ${p.command}`);
+          broadcastApprovals();
+          return json(res, r);
+        }
+        console.log(`[crundi] Owner approved a command for ${r.request.project || 'a collaborator chat'}: ${p.command}`);
+        runOwnerCommand(p).then((out) => {
+          const status = out.timedOut ? 'stopped after 10 minutes' : `exit code ${out.code}`;
+          const text = `(from Crundi) The owner ran this command (${status}):\n$ ${p.command}\n(in ${p.cwd})\n\n`
+            + (String(out.output || '').trim() || '(no output)')
+            + (out.truncated ? '\n\n(output truncated)' : '');
+          postToCollaboratorChat(r.request, text);
+        });
+        broadcastApprovals();
+        return json(res, { ...r, running: true });
+      }
+      // A collaborator's public forward or tunnel for their own service.
+      if (r.ok && body.approve && r.request.kind === 'forward' && r.request.payload) {
+        const p = r.request.payload;
+        const f = forwards.add({ name: p.name, port: p.port, mode: p.mode, isPublic: true, project: p.project });
+        postToCollaboratorChat(r.request, f.ok
+          ? `(from Crundi) The owner approved publishing port ${p.port}: it is now public at ${f.forward && f.forward.url}`
+          : `(from Crundi) The owner approved publishing port ${p.port}, but it could not be created: ${f.error}`);
+        broadcastApprovals();
+        broadcastState();
+        return json(res, { ...r, forward: f }, f.ok ? 200 : 409);
+      }
+      if (r.ok && body.approve && r.request.kind === 'tunnel' && r.request.payload) {
+        const p = r.request.payload;
+        const treg = getRegistered(p.key);
+        let tunnelResult;
+        if (!treg) tunnelResult = { ok: false, error: 'That service no longer exists' };
+        else {
+          const upd = updateRegistered(p.key, { tunnelPort: p.port, tunnelEnabled: true });
+          if (!upd.ok) tunnelResult = upd;
+          else {
+            const isRunning = getAllServiceStatus().some(s => s.key === p.key && s.status === 'running');
+            stopTunnel(p.key);
+            if (isRunning) startTunnel(p.key, p.port);
+            tunnelResult = { ok: true, enabled: true, port: p.port, running: isRunning };
+          }
+        }
+        postToCollaboratorChat(r.request, tunnelResult.ok
+          ? `(from Crundi) The owner approved a public tunnel for ${p.key} on port ${p.port}. ${tunnelResult.running ? 'It is starting; the address shows in the Services tab shortly.' : 'It starts when the service runs.'}`
+          : `(from Crundi) The owner approved a public tunnel for ${p.key}, but it could not be turned on: ${tunnelResult.error}`);
+        broadcastApprovals();
+        setTimeout(broadcastState, 500);
+        return json(res, { ...r, tunnel: tunnelResult }, tunnelResult.ok ? 200 : 409);
+      }
       if (r.ok && body.approve && r.request.kind === 'merge') {
         const m = await collaborators.mergeBranch(r.request.collabId);
+        postToCollaboratorChat(r.request, m.ok
+          ? `(from Crundi) The owner merged ${m.merged || 'the branch'} into ${m.into || 'the project'}.`
+          : `(from Crundi) The owner approved the merge, but it failed: ${m.error || 'unknown error'}`);
         broadcastApprovals();
         return json(res, { ...r, merge: m }, m.ok ? 200 : 409);
       }
@@ -2891,7 +3122,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (action === 'dismiss-agents') {
         return json(res, claudeUi.dismissAgents(sid, body.all ? 'all' : (body.toolUseIds || [])));
       }
-      if (action === 'send') return json(res, claudeUi.sendMessage(sid, body.text));
+      // Who sent it matters in a collaborator's chat: while the OWNER's message
+      // is the latest, their permission prompts are approved without asking.
+      if (action === 'send') {
+        return json(res, claudeUi.sendMessage(sid, body.text, { by: isConfined(principal) ? 'collaborator' : 'owner' }));
+      }
       // Recall a message that was handed over but not yet read. The CLI answers
       // with cancelled true/false, and that distinction is the whole point:
       // "recalled" and "too late, Claude already has it" must not look alike.
@@ -2930,21 +3165,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         tunnelStatus: s.tunnel?.status || null,
         tunnelUrl: s.tunnel?.url || null,
       }));
+      // Who registered each one. Collaborators get only "is it mine" — never
+      // anyone's identity; the owner gets whether a collaborator created it.
+      const createdByOf = (k) => { try { return (getRegistered(k) || {}).createdBy || ''; } catch { return ''; } };
       // Every project's services, commands included, went to every caller.
       if (isConfined(principal)) {
-        return json(res, { services: all.filter(x => principal.projects.includes(String(x.alias || '').toLowerCase())) });
+        return json(res, {
+          services: all
+            .filter(x => principal.projects.includes(String(x.alias || '').toLowerCase()))
+            .map(x => ({ ...x, mine: !!createdByOf(x.key) && createdByOf(x.key) === principal.collabKey })),
+        });
       }
-      return json(res, { services: all });
+      return json(res, { services: all.map(x => ({ ...x, byCollaborator: !!createdByOf(x.key) })) });
     }
 
     // Machine + per-service usage, polled by whichever tab is open. Kept apart
     // from /api/services so a 2s poll carries only numbers, not the tunnel and
     // forward config that never changes between ticks.
     if (path === '/api/stats' && req.method === 'GET') {
-      const system = await getSystemStats();
+      // A collaborator gets the numbers for their own projects' services and
+      // nothing about the machine. Refusing them outright made their Services
+      // tab blank every card's stats strip on each poll — the flicker.
+      const confinedStats = isConfined(principal);
+      const system = confinedStats ? null : await getSystemStats();
       const svc = {};
       for (const s of getAllServiceStatus()) {
         if (s.status !== 'running') continue;
+        if (confinedStats && !principal.projects.includes(String(s.alias || '').toLowerCase())) continue;
         const h = getServiceHistory(s.key);
         svc[s.key] = {
           status: s.status,
@@ -3026,11 +3273,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (aliasDenied(alias)) return json(res, { ok: false, error: 'Unknown project' }, 403);
       if (isConfined(principal)) {
         const home = principal.roots[String(alias).toLowerCase()] || '';
-        const want = body.cwd ? resolve(String(body.cwd)) : home;
+        // Relative to THEIR worktree: "frontend" means <worktree>/frontend.
+        // Resolved against the server's own directory, a subfolder was always
+        // refused as "outside your working folder". `..` still cannot climb out.
+        const want = body.cwd ? (home ? resolve(home, String(body.cwd)) : '') : home;
         if (!home || !(want === resolve(home) || want.startsWith(resolve(home) + sep))) {
           return json(res, { ok: false, error: 'A service must run inside your own working folder.' }, 403);
         }
         body.cwd = want;
+        // Refuse now what the registry would refuse after approval.
+        const chk = checkRegistration({ alias, name: body.name, cwd: want, command: body.command });
+        if (!chk.ok) return json(res, { ok: false, error: chk.error }, 400);
         // A service's command runs as this server's user, OUTSIDE --restricted
         // and outside every deny rule their Claude has — it is simply the
         // server running a shell command. On a machine with passwordless sudo,
@@ -3070,6 +3323,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // could stop or restart the owner's services in other projects just by
       // naming them.
       if (aliasDenied(serviceAlias(key))) return json(res, { ok: false, error: 'No such service' }, 404);
+      // Changing or deleting a service: a collaborator only for services they
+      // registered themselves; the owner for any. Starting, stopping and logs
+      // stay open for every service in their projects.
+      if ((action === 'delete' || action === 'tunnel') && isConfined(principal)) {
+        const owned = getRegistered(key);
+        if (!owned || !owned.createdBy || owned.createdBy !== principal.collabKey) {
+          return json(res, { ok: false, error: 'You can only change services you created.' }, 403);
+        }
+      }
       if (action === 'logs' && req.method === 'GET') {
         return json(res, { logs: getServiceLogs(key, 100) });
       }
@@ -3085,6 +3347,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           // service is running; the enabled flag persists and auto-applies on start.
           const body = JSON.parse(await readBody(req));
           const reg = getRegistered(key);
+          // A tunnel publishes the service to the internet. Setting its port is
+          // an edit of their own service; switching it on is the owner's call.
+          // A tunnel is public. A collaborator asking for one on their own
+          // service sends it to the owner to approve.
+          if (isConfined(principal) && body.enabled) {
+            const port = body.port !== undefined ? (parseInt(body.port, 10) || 0) : ((reg && reg.tunnelPort) || 0);
+            if (!reg || port <= 0) return json(res, { ok: false, error: 'Set a port before asking for a tunnel' }, 400);
+            const rec = approvals.add({
+              kind: 'tunnel',
+              collabKey: principal.collabKey,
+              name: principal.name,
+              project: serviceAlias(key),
+              title: `Open a public tunnel for ${reg.name} (${serviceAlias(key)})`,
+              detail: `A trycloudflare.com address for port ${port}, reachable by anyone with the link, without signing in to Crundi.`,
+              payload: { key, port },
+            });
+            broadcastApprovals();
+            return json(res, { ok: false, pendingApproval: true, requestId: rec.id, error: 'Sent to the owner to approve: public tunnels need their OK.' }, 202);
+          }
           if (!reg) { result = { ok: false, error: 'Not registered' }; }
           else {
             const updates = {};
@@ -3203,6 +3484,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Subdomain forwards ───
     if (path === '/api/forwards' && req.method === 'GET') {
+      // A collaborator sees the forwards that belong to their projects (their
+      // Services tab shows those links), never anyone else's.
+      if (isConfined(principal)) {
+        const svcs = servicesForForwards();
+        const mineFwd = forwards.list().filter(f =>
+          collabMayReachForward({ fwd: { ...f, public: false }, projects: principal.projects, services: svcs }));
+        return json(res, { ok: true, forwards: mineFwd, domain: forwards.baseDomain() });
+      }
       return json(res, { ok: true, forwards: forwards.list(), domain: forwards.baseDomain() });
     }
 
@@ -3224,16 +3513,64 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           error: 'No domain is configured for subdomain forwards. Use mode "path", or set TLS_DOMAIN / FORWARD_DOMAIN.',
         }, 400);
       }
+      // A collaborator may expose only a service they created, on its own port,
+      // in their project. Private: straight away (reachable by the owner and
+      // that project's collaborators). Public: the owner approves it first.
+      if (isConfined(principal)) {
+        const proj = String(body.project || '').toLowerCase();
+        const port = Number(body.port);
+        const ownsIt = !!proj && principal.projects.includes(proj)
+          && listRegisteredForProject(proj).some(sv => Number(sv.tunnelPort) === port && sv.createdBy === principal.collabKey);
+        if (!ownsIt) return json(res, { ok: false, error: 'You can only expose a service you created, on its port.' }, 403);
+        if (body.public) {
+          const where = body.mode === 'path'
+            ? `/tunnel/${body.name || ''}/`
+            : `${body.name || ''}.${forwards.baseDomain() || ''}`;
+          const rec = approvals.add({
+            kind: 'forward',
+            collabKey: principal.collabKey,
+            name: principal.name,
+            project: proj,
+            title: `Publish port ${port} for ${proj} as ${where}`,
+            detail: `Makes it reachable WITHOUT signing in to Crundi. Anyone with the address can open it.`,
+            payload: { name: body.name, port, mode: body.mode === 'path' ? 'path' : 'subdomain', project: proj },
+          });
+          broadcastApprovals();
+          return json(res, { ok: false, pendingApproval: true, requestId: rec.id, error: 'Sent to the owner to approve: public forwards need their OK.' }, 202);
+        }
+        const rc = forwards.add({ name: body.name, port, mode: body.mode, isPublic: false, description: body.description, project: proj });
+        return json(res, rc, rc.ok ? 200 : 400);
+      }
       const r = forwards.add({
         name: body.name, port: body.port, mode: body.mode,
         isPublic: !!body.public, description: body.description,
+        project: body.project && getProjectUnscoped(String(body.project)) ? String(body.project) : '',
       });
       return json(res, r, r.ok ? 200 : 400);
     }
 
     const fwdDel = path.match(/^\/api\/forwards\/([a-z0-9-]+)$/i);
     if (fwdDel && req.method === 'DELETE') {
+      // A collaborator removes only forwards of services they created.
+      if (isConfined(principal)) {
+        const f = forwards.list().find(x => x.host === fwdDel[1]);
+        const ownsIt = !!f && principal.projects.some(pj =>
+          listRegisteredForProject(pj).some(sv => Number(sv.tunnelPort) === Number(f.port) && sv.createdBy === principal.collabKey));
+        if (!ownsIt) return json(res, { ok: false, error: 'You can only remove forwards for services you created.' }, 403);
+      }
       const r = forwards.remove(fwdDel[1]);
+      return json(res, r, r.ok ? 200 : 404);
+    }
+    // Which project a forward serves — decides which collaborators may open it.
+    // Owner only: every /api/forwards route is closed to collaborators.
+    if (fwdDel && req.method === 'PATCH') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Only the owner can change which project a forward serves.' }, 403);
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+      const want = String(body.project || '').toLowerCase().trim();
+      if (want && !getProjectUnscoped(want)) return json(res, { ok: false, error: 'Unknown project' }, 400);
+      const r = forwards.setProject(fwdDel[1], want);
       return json(res, r, r.ok ? 200 : 404);
     }
 
@@ -4067,19 +4404,35 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         }
         mcpAllowedProjects = allowed;
         // Service keys are `alias:name` and can name any project's service.
-        if (['start_service', 'stop_service', 'restart_service', 'get_service_logs'].includes(body.tool)
+        if (['start_service', 'stop_service', 'restart_service', 'get_service_logs', 'delete_service'].includes(body.tool)
             && !allowed.includes(String(a.key || '').split(':')[0].toLowerCase())) {
           return json(res, { ok: false, error: 'No such service' }, 403);
+        }
+        // Deleting: only a service this person registered.
+        if (body.tool === 'delete_service') {
+          const owned = getRegistered(String(a.key || ''));
+          if (!owned || !owned.createdBy || owned.createdBy !== mcpCollabKey) {
+            return json(res, { ok: false, error: 'You can only delete services you created.' }, 403);
+          }
         }
         // Registering runs a command outside every sandbox this session has.
         if (body.tool === 'register_service') {
           const inv = collaborators.liveByIdentity(mcpCollabKey).find(c => c.project === String(a.alias).toLowerCase());
           const home = inv ? resolve(inv.worktreePath) : '';
-          const want = a.cwd ? resolve(String(a.cwd)) : home;
+          // Their worktree or any folder inside it; a relative cwd ("frontend")
+          // is taken from the worktree, not from the server's directory.
+          const want = a.cwd ? (home ? resolve(home, String(a.cwd)) : '') : home;
           if (!home || !(want === home || want.startsWith(home + sep))) {
             return json(res, { ok: false, error: 'A service must run inside your own working folder.' }, 403);
           }
           if (!a.name || !a.command) return json(res, { ok: false, error: 'name and command are required' }, 400);
+          // Refuse now, with the reason, what the registry would refuse after
+          // the owner had already approved — so Claude can fix it and ask again.
+          const chk = checkRegistration({ alias: inv.project, name: a.name, cwd: want, command: a.command });
+          if (!chk.ok) return json(res, { ok: false, error: `${chk.error}. Nothing was sent to the owner; fix it and try again.` }, 400);
+          // The chat that asked, so it hears the owner's answer.
+          const askingChat = claudeUi && claudeUi.collaboratorSessionFor
+            ? claudeUi.collaboratorSessionFor(mcpCollabKey, String(a.sessionId || ''), inv.project) : '';
           const rec = approvals.add({
             kind: 'service',
             collabKey: mcpCollabKey,
@@ -4087,12 +4440,51 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             project: inv.project,
             title: `Run a service in ${inv.project}: ${a.name}`,
             detail: `${reservedPortNote(a.command)}command: ${a.command}\ncwd: ${want}`,
-            payload: { alias: inv.project, name: a.name, command: a.command, cwd: want, stopCommand: a.stopCommand || '' },
+            payload: { alias: inv.project, name: a.name, command: a.command, cwd: want, stopCommand: a.stopCommand || '', sessionId: askingChat },
           });
           broadcastApprovals();
           return json(res, {
             ok: false, pendingApproval: true, requestId: rec.id,
             error: 'Sent to the project owner for approval. The service will be registered once they approve it; nothing runs until then. Tell the user this is waiting on the owner.',
+          });
+        }
+
+        // ─── Ask the owner to run a command ───
+        //
+        // For the things the sandbox rightly refuses (sudo, system packages,
+        // anything outside the worktree). Nothing runs here: it becomes an
+        // approval showing the exact command and folder, and only the owner's
+        // "Run" executes it. The owner reading the command is the safeguard, so
+        // the request itself needs no further proof of who asked.
+        if (body.tool === 'request_owner_command') {
+          const command = String(a.command || '').trim();
+          if (!command) return json(res, { ok: false, error: 'command is required' }, 400);
+          const invs = collaborators.liveByIdentity(mcpCollabKey);
+          const inv = invs.find(c => c.project === String(a.alias || '').toLowerCase()) || invs[0] || null;
+          if (!inv) return json(res, { ok: false, error: 'Unknown project' }, 403);
+          // The chat to post the output into: the one this request came from.
+          const sessionId = claudeUi && claudeUi.collaboratorSessionFor
+            ? claudeUi.collaboratorSessionFor(mcpCollabKey, String(a.sessionId || ''), inv.project) : '';
+          if (!sessionId) return json(res, { ok: false, error: 'Could not tell which chat this came from.' }, 400);
+          const base = resolve(inv.worktreePath);
+          const cwd = a.cwd ? resolve(base, String(a.cwd)) : base;
+          if (!existsSync(cwd)) return json(res, { ok: false, error: `No such folder: ${cwd}` }, 400);
+          const reason = String(a.reason || '').slice(0, 500);
+          const rec = approvals.add({
+            kind: 'command',
+            collabId: inv.id,
+            collabKey: mcpCollabKey,
+            name: inv.name,
+            project: inv.project,
+            sessionId,
+            title: `Run a command for ${inv.project}`,
+            detail: `$ ${command}\nin ${cwd}\n${reason ? `why: ${reason}\n` : ''}\nRuns OUTSIDE the sandbox as the server user (sudo works), for up to 10 minutes. Its output is posted into the collaborator's chat, so they will see it.`,
+            payload: { command, cwd, sessionId },
+          });
+          broadcastApprovals();
+          return json(res, {
+            ok: true, pendingApproval: true, requestId: rec.id,
+            message: 'Sent to the owner to review. If they run it, the output arrives in this chat as a new message starting with "[Crundi]". Tell the user it is waiting on the owner.',
           });
         }
       }
@@ -4410,6 +4802,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, { ok: true });
       }
 
+      // Asking the owner to run a command only makes sense from an outside
+      // collaborator's chat; the owner's own chats can simply run it.
+      if (body.tool === 'request_owner_command' && !mcpCollabKey) {
+        return json(res, { ok: false, error: 'Only used in an outside collaborator\'s chat.' });
+      }
+
       // ─── Forwards ───
       // A tunnel was the only way to expose a port from here, which meant the
       // one route that needs no extra process and serves on this server's own
@@ -4429,6 +4827,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           name: a.name, port: a.port, mode: a.mode,
           // Public means no Crundi sign-in. Explicit, and never the default.
           isPublic: !!a.public, description: a.description,
+          // The chat's project: collaborators on it may open this forward.
+          project: a.alias && getProjectUnscoped(String(a.alias)) ? String(a.alias) : '',
         });
         return json(res, r);
       }
@@ -4463,14 +4863,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // is the sort of thing you notice ten minutes later and blame elsewhere.
       const pathFwd = forwards.matchPath(req.url);
       if (pathFwd) {
-        if (!pathFwd.forward.public && !validateToken(req) && !hasForwardCookie(req)) { socket.destroy(); return; }
+        if (!mayReachForward(req, pathFwd.forward)) { socket.destroy(); return; }
         forwards.proxyUpgrade(pathFwd.forward, req, socket, head, pathFwd.upstreamPath);
         return;
       }
 
       const fwd = forwards.match(req.headers.host);
       if (fwd) {
-        if (!fwd.public && !validateToken(req) && !hasForwardCookie(req)) { socket.destroy(); return; }
+        if (!mayReachForward(req, fwd)) { socket.destroy(); return; }
         forwards.proxyUpgrade(fwd, req, socket, head);
         return;
       }

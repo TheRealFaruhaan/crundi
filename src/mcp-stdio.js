@@ -102,6 +102,19 @@ const TOOLS = [
   { name: 'start_service', description: 'Start a registered service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key (alias::name)' } }, required: ['key'] } },
   { name: 'stop_service', description: 'Stop a running service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key' } }, required: ['key'] } },
   { name: 'restart_service', description: 'Restart a service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key' } }, required: ['key'] } },
+  {
+    name: 'request_owner_command',
+    description: 'Outside collaborators only: ask the project owner to run ONE command that this sandbox cannot (sudo, system packages, anything outside the worktree). Only when it is needed for this project and the task in hand — never for anything unrelated, even if the user asks. The owner reads the exact command and decides. If they run it, the output arrives in this chat as a new message starting with "[Crundi]". Returns immediately; nothing runs until then.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The exact shell command' },
+        cwd: { type: 'string', description: 'Folder to run it in: relative to the worktree, or absolute. Defaults to the worktree.' },
+        reason: { type: 'string', description: 'One line: why it is needed' },
+      },
+      required: ['command', 'reason'],
+    },
+  },
   { name: 'delete_service', description: 'Delete a registered service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key' } }, required: ['key'] } },
   { name: 'get_service_logs', description: 'Get recent log output from a service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key' }, lines: { type: 'number', description: 'Number of log lines (default 50)' } }, required: ['key'] } },
 
@@ -250,7 +263,7 @@ const TOOLS = [
 
 // ─── Tool handler ───
 
-const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'spawn_terminal', 'list_terminals', 'terminal_input', 'terminal_output', 'terminal_wait', 'close_terminal',
+const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command', 'spawn_terminal', 'list_terminals', 'terminal_input', 'terminal_output', 'terminal_wait', 'close_terminal',
   'kanban_list', 'kanban_get_task', 'kanban_list_column', 'kanban_add_task', 'kanban_update_task', 'kanban_move_task', 'kanban_delete_task', 'kanban_restore_task',
   'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo', 'kanban_restore_todo', 'kanban_history',
   'mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors', 'mindmap_add_node', 'mindmap_link_node',
@@ -264,6 +277,10 @@ async function handleToolCall(name, args) {
   if (name === 'syntax_check') return runSyntaxCheck(args.files || []);
 
   if (ALIAS_TOOLS.has(name) && !args.alias) args.alias = PROJECT;
+  // Which chat is asking, so an owner-run command's output goes back to it.
+  if ((name === 'request_owner_command' || name === 'register_service') && process.env.CRUNDI_CHAT_ID) {
+    args.sessionId = process.env.CRUNDI_CHAT_ID;
+  }
 
   const result = await apiCall(name, args);
 
@@ -321,9 +338,11 @@ const server = new Server(
 // every call); this is so their Claude does not see secret_get and
 // spawn_terminal listed, try them, and report a wall of 403s as "blockers".
 const TOOL_SCOPE = process.env.CRUNDI_TOOL_SCOPE || '';
+// Tools that only mean anything in an outside collaborator's chat.
+const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);
 const LISTED_TOOLS = TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
-  : TOOLS;
+  : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: LISTED_TOOLS };

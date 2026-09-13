@@ -732,7 +732,13 @@ export async function remove(id) {
   // Everything else that exists only for this invitation goes with it: the
   // package cache their sandbox wrote, and the tools config holding their key.
   try { rmSync(cacheDirOf(c.id), { recursive: true, force: true }); } catch { /* ignore */ }
-  try { rmSync(join(config.dataDir, 'collab-mcp', `${c.id}.json`), { force: true }); } catch { /* ignore */ }
+  // Tool configs are one per chat (<id>-<chat>.json; older ones <id>.json).
+  try {
+    const dir = join(config.dataDir, 'collab-mcp');
+    for (const f of readdirSync(dir)) {
+      if (f === `${c.id}.json` || f.startsWith(`${c.id}-`)) rmSync(join(dir, f), { force: true });
+    }
+  } catch { /* no folder yet */ }
   pendingUsage.delete(c.id);
   all.splice(i, 1);
   saveAll(all);

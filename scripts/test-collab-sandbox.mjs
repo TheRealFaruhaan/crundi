@@ -110,9 +110,13 @@ try {
   const mcpDir = join(process.env.DATA_DIR, 'collab-mcp');
   mkdirSync(mcpDir, { recursive: true });
   writeFileSync(join(mcpDir, `${a.id}.json`), '{}');
+  writeFileSync(join(mcpDir, `${a.id}-chat1.json`), '{}');
+  writeFileSync(join(mcpDir, `someone-else-chat1.json`), '{}');
   const rm = await col.remove(a.id);
   check('remove succeeds', rm.ok);
-  check('remove deletes their cache and tools config', !existsSync(cache) && !existsSync(join(mcpDir, `${a.id}.json`)));
+  check('remove deletes their cache and every tools config of theirs',
+    !existsSync(cache) && !existsSync(join(mcpDir, `${a.id}.json`)) && !existsSync(join(mcpDir, `${a.id}-chat1.json`)));
+  check('and leaves other people\'s tools configs alone', existsSync(join(mcpDir, 'someone-else-chat1.json')));
   check('remove deletes their worktree', !existsSync(a.worktreePath));
   await col.remove(r2.collaborator.id);
 

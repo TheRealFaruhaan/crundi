@@ -205,5 +205,44 @@ export function worktreeGitPaths(root) {
   } catch { return null; }
 }
 
+/**
+ * Launch arguments for a service a collaborator registered.
+ *
+ * A service runs as the server user, outside their chat's sandbox — and
+ * approving `npm run dev` really approves whatever their package.json and
+ * dependencies run. So it gets a sandbox of its own:
+ *
+ *   - everything read-only; their worktree and package cache writable; a
+ *     private /tmp
+ *   - the owner's projects, every worktree and cache, Crundi's data and the
+ *     usual credential folders replaced by empty directories
+ *   - its own pid namespace, so it cannot read other processes' environments
+ *     (Crundi's included) through /proc
+ *   - the NETWORK IS SHARED on purpose: a dev server must bind a local port
+ *     that forwards and tunnels can reach
+ *
+ * @returns {{bin:string, args:string[]}|null} null when bwrap/setpriv are missing
+ */
+export function serviceSandboxArgs({ worktree, cacheDir = '', hide = [], cwd, command }) {
+  const setpriv = which('setpriv');
+  const bwrap = which('bwrap');
+  if (!setpriv || !bwrap || !worktree || !cwd) return null;
+  const args = [...CAP_DROP, bwrap,
+    '--ro-bind', '/', '/',
+    '--dev', '/dev',
+    '--unshare-pid', '--unshare-ipc', '--unshare-uts',
+    '--proc', '/proc',
+    '--tmpfs', '/tmp',
+    '--die-with-parent',
+    '--new-session',
+  ];
+  for (const d of hide) if (d && existsSync(d)) args.push('--tmpfs', d);
+  // Their own folders come back, writable, after anything above them was hidden.
+  args.push('--bind', worktree, worktree);
+  if (cacheDir && existsSync(cacheDir)) args.push('--bind', cacheDir, cacheDir);
+  args.push('--chdir', cwd, 'sh', '-c', command);
+  return { bin: setpriv, args };
+}
+
 /** For tests. */
 export function _resetSandboxStatusCache() { cached = null; }

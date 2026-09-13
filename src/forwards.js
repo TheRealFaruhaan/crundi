@@ -211,7 +211,7 @@ function scheme() {
   return 'http';
 }
 
-export function add({ name, port, mode = '', isPublic = false, description = '' } = {}) {
+export function add({ name, port, mode = '', isPublic = false, description = '', project = '' } = {}) {
   const p = Number(port);
   if (!Number.isInteger(p) || p < 1 || p > 65535) return { ok: false, error: `Not a usable port: ${port}` };
 
@@ -244,6 +244,9 @@ export function add({ name, port, mode = '', isPublic = false, description = '' 
     // Private is still the default, and publishing is still an explicit choice.
     public: !!isPublic,
     description: String(description || '').slice(0, 200),
+    // The project this forward serves. Outside collaborators on that project
+    // may open it while private; nobody else outside can.
+    project: String(project || '').toLowerCase().trim(),
     createdAt: Date.now(),
   };
   s.forwards.push(f);
@@ -259,6 +262,20 @@ export function remove(host) {
   if (s.forwards.length === before) return { ok: false, error: 'Not found' };
   save();
   return { ok: true };
+}
+
+/**
+ * Say which project a forward serves ('' for none). Outside collaborators on
+ * that project may open it while it is private. Forwards made before projects
+ * were recorded have none, and only match by service port until assigned.
+ */
+export function setProject(host, project) {
+  const s = load();
+  const f = s.forwards.find(x => x.host === host);
+  if (!f) return { ok: false, error: 'Not found' };
+  f.project = String(project || '').toLowerCase().trim();
+  if (!save()) return { ok: false, error: 'Could not save' };
+  return { ok: true, forward: { ...f, url: urlFor(f) } };
 }
 
 export const PATH_PREFIX = '/tunnel';

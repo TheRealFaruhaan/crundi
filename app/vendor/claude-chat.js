@@ -35,6 +35,8 @@
     '@keyframes cc-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}',
 
     '.cc-user{display:flex;justify-content:flex-end}',
+    '.cc-user.by-owner{flex-direction:column;align-items:flex-end}',
+    '.cc-user-by{font-size:11px;font-weight:600;color:var(--sky,#38bdf8);margin:0 4px 2px 0}',
     '.cc-user-body{max-width:86%;background:var(--accent-dim);border:1px solid rgba(99,102,241,.35);color:var(--text-primary);padding:7px 11px;border-radius:12px 12px 3px 12px;white-space:pre-wrap;word-break:break-word}',
 
     '.cc-assistant{color:var(--text-primary);word-break:break-word}',
@@ -910,7 +912,14 @@
       node.innerHTML = '';
       switch (e.kind) {
         case 'user': {
-          var w = el('div', 'cc-user');
+          // In a collaborator's chat the owner can type too. Their messages are
+          // labelled: while one is the latest, Claude's prompts are approved
+          // without asking, so both people should be able to see whose turn it is.
+          var labelled = e.by === 'owner' || e.by === 'system';
+          var w = el('div', 'cc-user' + (labelled ? ' by-owner' : ''));
+          if (e.by === 'owner') w.appendChild(el('div', 'cc-user-by', 'Owner'));
+          // Crundi posting the output of a command the owner ran.
+          if (e.by === 'system') w.appendChild(el('div', 'cc-user-by', 'Crundi'));
           w.appendChild(el('div', 'cc-user-body', esc(e.text)));
           node.appendChild(w);
           break;
