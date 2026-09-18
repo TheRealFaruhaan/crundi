@@ -7013,7 +7013,8 @@ export function getWebappHtml(botUsername) {
         } else if (it.source === 'chat') {
           // Answered in the chat, where the full input and the always-allow
           // choice live. Duplicating that here would mean two half-answers.
-          h += '<button class="go" data-action="appr-goto" data-sid="' + escHtml(it.sessionId || '') + '">Open the chat</button>';
+          h += '<button class="go" data-action="appr-goto" data-sid="' + escHtml(it.sessionId || '')
+            + '" data-proj="' + escHtml(it.project || '') + '">Open the chat</button>';
         } else {
           h += '<button class="go" data-action="appr-goto-secrets">Open secrets</button>';
         }
@@ -10991,13 +10992,29 @@ export function getWebappHtml(botUsername) {
           // you to it, and closes the panel so the chat is not behind it.
           const p = document.getElementById('appr-panel'); if (p) p.classList.remove('open');
           if (d.sid) {
-            switchTab('workbench');
-            // Scroll it into view rather than assuming it is on screen: the
-            // whole point of the inbox is that you were looking elsewhere.
-            const cell = document.querySelector('[data-cellkey="live:' + d.sid + '"]');
-            if (cell) {
-              cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              const v = chatViews.get(d.sid); if (v && v.focus) v.focus();
+            // The chat is usually in ANOTHER project — that is the whole point
+            // of the inbox. Without switching to it first, the cell simply does
+            // not exist in this project's grid and the click did nothing at all.
+            // Prefer the live session's own project over the one recorded on the
+            // card, which can be stale if the chat outlived the request.
+            const goTerm = terminals.find(t => String(t.id) === String(d.sid));
+            const goProj = (goTerm && goTerm.project) || d.proj || '';
+            const reveal = () => {
+              // Scroll it into view rather than assuming it is on screen: the
+              // whole point of the inbox is that you were looking elsewhere.
+              const cell = document.querySelector('[data-cellkey="live:' + d.sid + '"]');
+              if (cell) {
+                cell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                const v = chatViews.get(d.sid); if (v && v.focus) v.focus();
+              }
+            };
+            if (goProj && String(goProj).toLowerCase() !== String(currentProject || '').toLowerCase()) {
+              // selectProject rebuilds the grid; the chat cell mounts with it,
+              // so wait a frame before reaching for it.
+              Promise.resolve(selectProject(goProj)).then(() => requestAnimationFrame(reveal));
+            } else {
+              switchTab('workbench');
+              reveal();
             }
           }
           break;
