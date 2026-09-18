@@ -174,7 +174,9 @@
     '.cc-queue{margin-bottom:7px;border:1px dashed rgba(99,102,241,.55);background:rgba(99,102,241,.08);border-radius:10px;padding:7px 11px;cursor:pointer;transition:.14s}',
     '.cc-queue:hover{border-color:var(--accent);background:var(--accent-dim)}',
     '.cc-queue-head{display:flex;align-items:center;gap:6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent-hover);font-weight:700;margin-bottom:3px}',
-    '.cc-queue-body{white-space:pre-wrap;word-break:break-word;color:var(--text-primary);font-size:12.5px}',
+    // Clamped: a long queued message used to push the transcript and the
+    // composer off a phone screen entirely. The hint says when it is trimmed.
+    '.cc-queue-body{white-space:pre-wrap;word-break:break-word;color:var(--text-primary);font-size:12.5px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;line-clamp:4;overflow:hidden}',
     '.cc-queue-hint{font-size:10.5px;color:var(--text-muted);margin-top:4px}',
     '.cc-queue.sent{border-style:solid;border-color:rgba(148,163,184,.45);background:rgba(148,163,184,.09);cursor:default}',
     '.cc-queue.sent:hover{border-color:rgba(148,163,184,.45);background:rgba(148,163,184,.09)}',
@@ -284,7 +286,8 @@
     '.cc-sched-trig{flex:1;min-width:96px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-secondary);cursor:pointer;padding:6px 8px;font-size:11.5px}',
     '.cc-sched-trig.on{background:var(--accent-dim);border-color:var(--accent);color:var(--text-primary)}',
     // Shown, not hidden: the trigger exists, it just needs the limit warmer on.
-    '.cc-sched-trig.off{opacity:0.45;cursor:not-allowed},.cc-queue.sent.recallable{cursor:pointer}',
+    '.cc-sched-trig.off{opacity:0.45;cursor:not-allowed}',
+    '.cc-queue.sent.recallable{cursor:pointer}',
     '.cc-sched-at{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:6px 8px}',
     '.cc-sched-note{color:var(--text-muted);font-size:11px}',
     '.cc-sched-note:empty{display:none}',
@@ -1403,6 +1406,18 @@
       try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
     }
 
+    // The drawer body is clamped to a few lines in CSS, so a long message can
+    // no longer take the whole pane. Say when that happened: text that is
+    // silently cut off reads as text that was lost.
+    function markTrimmed(node) {
+      var body = node.querySelector('.cc-queue-body');
+      var hint = node.querySelector('.cc-queue-hint');
+      if (!body || !hint) return;
+      var trimmed = body.scrollHeight - body.clientHeight > 2;
+      node.classList.toggle('trimmed', trimmed);
+      if (trimmed) hint.textContent = 'Shown trimmed \u00b7 ' + hint.textContent;
+    }
+
     function renderQueue() {
       renderSent();
       if (!queued.length) {
@@ -1421,6 +1436,7 @@
         + (n === 1 ? '1 line' : n + ' lines') + ' · as one message, at the next tool call</span></div>'
         + '<div class="cc-queue-body">' + esc(queuedText()) + '</div>'
         + '<div class="cc-queue-hint">Click to take it back</div>';
+      markTrimmed(queueNode);
     }
 
     // The second drawer: written to the CLI's stdin, not yet taken into the
@@ -1462,6 +1478,7 @@
           : 'waiting for Claude to pick it up') + '</span></div>'
         + '<div class="cc-queue-body">' + esc(handedOver.map(function (h) { return h.text; }).join('\n')) + '</div>'
         + '<div class="cc-queue-hint">' + hint + '</div>';
+      markTrimmed(sentNode);
     }
 
     function flushQueue() {
