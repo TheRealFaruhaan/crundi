@@ -21,7 +21,11 @@ const check = (name, ok, extra = '') => {
   if (!ok) failed++;
 };
 
-const read = (p) => readFileSync(join(root, p), 'utf8');
+// Normalise line endings. Half of these jobs run on windows-latest, where git
+// checks out with core.autocrlf and every file arrives CRLF - a pattern with a
+// literal \n in it then matches on Linux and fails on Windows, which is exactly
+// how this file took down a release build while passing locally.
+const read = (p) => readFileSync(join(root, p), 'utf8').replace(/\r\n/g, '\n');
 
 // ─── The source of truth ───
 const pkg = JSON.parse(read('package.json'));
