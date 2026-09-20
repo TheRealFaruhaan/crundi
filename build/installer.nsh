@@ -16,6 +16,25 @@
   ${If} $0 != 0
     nsExec::ExecToLog 'schtasks /create /tn "DisconnectRDP" /tr "\"$INSTDIR\resources\app.asar.unpacked\scripts\disconnect-rdp.bat\"" /sc once /sd 01/01/2099 /st 00:00 /rl highest /f'
   ${EndIf}
+
+  ; Crundi ships a skill telling Claude how to drive this machine: the MCP
+  ; tools, and how to run, expose, test and hand over work on a Crundi host. It
+  ; belongs to the USER's Claude config, not to the install directory, so every
+  ; project on the box picks it up. Mirrors what scripts/install.sh does on Linux.
+  ;
+  ; Overwritten on every install on purpose: the repo copy is canonical, so an
+  ; upgrade must be able to correct it. Anything hand-edited in place is lost,
+  ; which is why the skill itself says to edit the repo copy.
+  ;
+  ; Guarded: the client-only build ships no skills, and a missing directory here
+  ; must not fail the install. Add a RMDir line per new skill directory shipped,
+  ; so a rename cannot leave the old copy behind.
+  IfFileExists "$INSTDIR\resources\skills\*.*" 0 crundiSkillsDone
+    RMDir /r "$PROFILE\.claude\skills\crundi"
+    CreateDirectory "$PROFILE\.claude\skills"
+    CopyFiles /SILENT "$INSTDIR\resources\skills\*.*" "$PROFILE\.claude\skills"
+    DetailPrint "Installed Crundi skills to $PROFILE\.claude\skills"
+  crundiSkillsDone:
 !macroend
 
 !macro customUnInstall
@@ -32,6 +51,7 @@
 
   removeConfig:
     RMDir /r "$APPDATA\${PRODUCT_NAME}"
+    RMDir /r "$PROFILE\.claude\skills\crundi"
     Goto doneConfig
   keepConfig:
   doneConfig:
