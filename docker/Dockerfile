@@ -54,6 +54,9 @@ COPY package.json ./
 COPY src ./src
 COPY app/vendor ./app/vendor
 COPY scripts ./scripts
+# install.sh copies these into the user's Claude config; without them the
+# skill block is a silent no-op.
+COPY skills ./skills
 # Logo, favicons and PWA icons. Without these every /assets/* is a 404 and
 # the app cannot be installed to a home screen.
 COPY assets ./assets
