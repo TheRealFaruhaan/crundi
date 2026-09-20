@@ -214,7 +214,7 @@ mkdir -p "$PREFIX" "$CONFIG_DIR"
 # Copy rather than symlink: an upgrade should not break a running server by
 # swapping files under it, and the source directory may well be a git checkout
 # you keep working in.
-for item in src scripts assets package.json package-lock.json; do
+for item in src scripts assets skills package.json package-lock.json; do
   [ -e "$SRC/$item" ] && cp -r "$SRC/$item" "$PREFIX/"
 done
 mkdir -p "$PREFIX/app"
@@ -367,6 +367,28 @@ if [ "$WITH_SERVICE" -eq 1 ]; then
   fi
 fi
 
+# ─── Skills ───
+#
+# Crundi ships a skill telling Claude how to drive this machine: the MCP tools,
+# and how to run, expose, test and hand over work on a Crundi host. It belongs to
+# the USER's Claude config, not to the prefix, so every project on the box picks
+# it up.
+#
+# Overwritten on every install on purpose: the repo copy is the canonical one, so
+# an upgrade must be able to correct it. Anything hand-edited in place is lost,
+# which is why the skill itself says to edit the repo copy.
+if [ -d "$SRC/skills" ]; then
+  SKILL_DIR="${TARGET_HOME}/.claude/skills"
+  mkdir -p "$SKILL_DIR"
+  for skill in "$SRC"/skills/*/; do
+    [ -d "$skill" ] || continue
+    name="$(basename "$skill")"
+    rm -rf "${SKILL_DIR:?}/${name}"
+    cp -r "$skill" "$SKILL_DIR/"
+    say "Installed the '${name}' skill to ${SKILL_DIR}/${name}"
+  done
+fi
+
 # Everything under the prefix and the config dir was written by root; hand it
 # to the user that will actually run it, or the service cannot read its own
 # certificate, let alone write history.
@@ -374,6 +396,8 @@ if [ -n "$SERVICE_USER" ]; then
   say "Handing ${PREFIX} and ${CONFIG_DIR} to ${SERVICE_USER}"
   mkdir -p "$CONFIG_DIR"
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "$PREFIX" "$CONFIG_DIR"
+  # Written by root a moment ago, and unreadable to the service user otherwise.
+  [ -d "${TARGET_HOME}/.claude/skills" ] && chown -R "${SERVICE_USER}:${SERVICE_USER}" "${TARGET_HOME}/.claude"
 fi
 
 # A system unit running as the service user. Not a user unit: those need

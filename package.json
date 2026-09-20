@@ -73,6 +73,10 @@
       {
         "from": "assets",
         "to": "assets"
+      },
+      {
+        "from": "skills",
+        "to": "skills"
       }
     ]
   },
