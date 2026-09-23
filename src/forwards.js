@@ -374,7 +374,16 @@ export function proxyUpgrade(forward, req, socket, head, upstreamPath) {
       for (const one of [].concat(v)) lines.push(`${k}: ${one}`);
     }
     socket.write(lines.join('\r\n') + '\r\n\r\n');
-    if (upHead?.length) socket.unshift(upHead);
+    // upHead is the UPSTREAM's own first bytes — whatever arrived in the same
+    // read as its 101. They belong to the client, so write them there. It was
+    // socket.unshift(upHead), which put them on the client socket's READABLE
+    // side: the pipe below then reflected the server's first packet straight
+    // back at the server, and the client never saw it. A WebSocket server
+    // rejects its own unmasked frame — "bad MASK" — and the failure reads as
+    // an application bug. Only servers that speak immediately on upgrade hit
+    // it (chisel, SSH-over-WS, WS-RPC, terminals); HMR stays silent until
+    // spoken to, so this sat here looking fine.
+    if (upHead?.length) socket.write(upHead);
     upSocket.pipe(socket);
     socket.pipe(upSocket);
     upSocket.on('error', () => socket.destroy());
