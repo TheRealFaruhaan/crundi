@@ -231,6 +231,9 @@ export const COLLABORATOR_MCP_TOOLS = new Set([
  * exactly five. So everything wanted has to appear here, including the ones
  * that are normally implicit.
  *
+ * TaskOutput is deliberately absent: Claude Code removed the tool in 2.1.277,
+ * and a background task's output is now read with Read, which is already here.
+ *
  * Bash is present because development is not possible without it, and because
  * --restricted confines its read and write paths to the working directories
  * and refuses commands it cannot analyse (command substitution is rejected
@@ -238,7 +241,7 @@ export const COLLABORATOR_MCP_TOOLS = new Set([
  */
 export const COLLABORATOR_CLAUDE_TOOLS = [
   'Bash', 'Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep',
-  'Task', 'TaskOutput', 'TaskStop', 'Skill', 'ToolSearch', 'WebSearch',
+  'Task', 'TaskStop', 'Skill', 'ToolSearch', 'WebSearch',
 ];
 
 /**
