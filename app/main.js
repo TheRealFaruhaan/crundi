@@ -40,6 +40,10 @@ let botProcess = null;
 let botStatus = 'stopped';
 let botLogs = [];
 let userStopped = false;
+// The server asked to be started again (a restored backup is applied as it starts).
+let restartRequested = false;
+// First run chose "Restore from a backup": open the web page on its restore form.
+let openRestoreForm = false;
 let webappPort = null;
 let webappApiKey = null;
 const MAX_LOGS = 1000;
@@ -424,7 +428,9 @@ function startBot() {
         setBotStatus('running');
         if (webappPort && mainWindow && !mainWindow.isDestroyed()) {
           const authParam = webappApiKey ? `?key=${webappApiKey}` : '';
-          const url = `http://localhost:${webappPort}${authParam}`;
+          const restoreParam = openRestoreForm ? (authParam ? '&' : '?') + 'restore=1' : '';
+          openRestoreForm = false;
+          const url = `http://localhost:${webappPort}${authParam}${restoreParam}`;
           appendLog(`[lifecycle] Navigating to ${url}`);
           mainWindow.loadURL(url);
         }
@@ -443,6 +449,12 @@ function startBot() {
     botProcess = null;
     webappPort = null;
     if (app.isQuitting) return;
+    if (restartRequested) {
+      restartRequested = false;
+      appendLog('[electron] Restarting the server as it asked...');
+      setTimeout(() => startBot(), 400);
+      return;
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.loadFile(join(__dirname, 'index.html'));
     }
@@ -853,6 +865,9 @@ ipcMain.handle('setup:save', (_e, config) => {
   ];
   try { mkdirSync(dirname(envPath), { recursive: true }); } catch { /* ignore */ }
   writeFileSync(envPath, lines.join('\n'), 'utf8');
+  // Restoring: the server starts with nothing set up, which is exactly when
+  // its page offers to restore; the backup brings its own settings.
+  if (config.restore) openRestoreForm = true;
   // First-run consent: update checks + launch-at-startup (both default on).
   writeAutoUpdate(config.autoUpdate !== false);
   updateState.enabled = config.autoUpdate !== false;
@@ -1287,6 +1302,14 @@ function handleBotMessage(msg, reply) {
 
   // Fire-and-forget: no requestId, nothing to reply to.
   if (msg.type === 'notify') { showServerNotification(msg); return; }
+  // The server wants a fresh start (to apply a restored backup). Stopping it
+  // and starting it again from here is the only way it can get one.
+  if (msg.type === 'restart-server') {
+    if (!botProcess) return;
+    restartRequested = true;
+    try { botProcess.kill(); } catch { restartRequested = false; }
+    return;
+  }
 
   // Terminal IPC
   const termHandler = terminalIpcHandlers[msg.type];

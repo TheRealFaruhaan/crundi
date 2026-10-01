@@ -56,6 +56,7 @@ import { createLimitResetNotifier } from './limit-reset-notify.js';
 import * as authConfig from './auth-config.js';
 import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
+import { createBackups } from './backup.js';
 import { sandboxStatus, setupSandbox } from './collab-sandbox.js';
 import { COLLAB_FORWARD_COOKIE, mintCollabForwardToken, readCollabForwardToken, collabMayReachForward } from './forward-access.js';
 import { spawn as spawnOwnerCommand } from 'node:child_process';
@@ -864,6 +865,52 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   });
   panes.start();
 
+  // ─── Backups (backup.js) ───
+  // A scheduled backup that falls due while you are here waits (and says so)
+  // until you have left; progress and results go to the owner's open pages.
+  const backups = createBackups({
+    isPresent: () => anyClientPresent(),
+    awayFor: (ms) => {
+      if (anyClientPresent()) { lastPresentAt = Date.now(); return false; }
+      return Date.now() - lastPresentAt >= ms;
+    },
+    broadcast: (st) => broadcastOwnerSSE('backup', st),
+    notify: (text) => { channels.deliver(text).catch(() => {}); },
+  });
+  backups.start();
+
+  /**
+   * How this process gets started again, if anything will: systemd, pm2, or
+   * the desktop app (which restarts its server when asked over IPC). Wider
+   * than canRestart(), which predates the desktop app's support for it.
+   */
+  function restartMode() {
+    if (process.env.INVOCATION_ID && !process.versions.electron) return 'systemd';
+    if (process.env.ELECTRON_RUN && typeof process.send === 'function') return 'desktop';
+    if (process.env.pm_id !== undefined) return 'pm2';
+    return '';
+  }
+  function restartSelf(why) {
+    const mode = restartMode();
+    if (!mode) return false;
+    setTimeout(() => {
+      console.log('[crundi] Restarting: ' + why);
+      if (mode === 'desktop') { try { process.send({ type: 'restart-server' }); } catch { /* ignore */ } return; }
+      if (mode === 'pm2') { process.kill(process.pid, 'SIGTERM'); return; }
+      const child = spawn('sh', ['-c',
+        'systemctl restart crundi 2>/dev/null || systemctl --user restart crundi 2>/dev/null || kill -TERM ' + process.pid],
+        { detached: true, stdio: 'ignore' });
+      child.unref();
+    }, 1200);
+    return true;
+  }
+  /** Start a restore in the background; once staged, restart to apply it. */
+  function startRestore(args) {
+    backups.restore(args).then((r) => {
+      if (r.ok && restartSelf('applying a restored backup')) broadcastOwnerSSE('backup', { ...backups.status(), restarting: true });
+    }).catch((err) => console.warn('[backup] Restore failed:', err.message));
+  }
+
   // Telegram's hard limit. MarkdownV2 escaping ADDS characters, so a body that
   // fit before conversion can overflow after it.
   const TG_HARD_MAX = 4096;
@@ -1267,6 +1314,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       { tag: 'collabRequest' },
     ).catch(() => { /* a dead channel must not fail the request */ });
   });
+
+  /** Like broadcastSSE, to the owner's pages only (never a collaborator's). */
+  function broadcastOwnerSSE(event, data) {
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of sseClients) {
+      if (isConfined(client.principal)) continue;
+      try { client.res.write(payload); } catch { sseClients.delete(client); }
+    }
+  }
 
   function broadcastSSE(event, data) {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -2108,6 +2164,32 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, { ok: false, error: 'Unknown method' }, 400);
     }
 
+    // ─── Restore on first run ───
+    // A new install can come back from a backup instead of being set up from
+    // scratch. Like /api/auth/setup, reachable without signing in ONLY while
+    // nothing is configured: the storage keys and the backup passphrase are
+    // what stand in for a sign-in here, and the restore brings the backup's own
+    // sign-in with it.
+    if (path.startsWith('/api/backup/setup/')) {
+      if (!authConfig.isOpen()) return json(res, { ok: false, error: 'This is only for a new install. Use Settings → Backup & restore.' }, 403);
+      let body = {};
+      if (req.method === 'POST') { try { body = JSON.parse(await readBody(req)) || {}; } catch { body = {}; } }
+      if (path === '/api/backup/setup/status' && req.method === 'GET') {
+        const st = backups.status();
+        return json(res, { ok: true, running: st.running, restoreAttempt: st.restoreAttempt, staged: st.staged, restartMode: restartMode() });
+      }
+      if (path === '/api/backup/setup/list' && req.method === 'POST') {
+        try { return json(res, { ok: true, items: await backups.list(body.storage || {}) }); }
+        catch (err) { return json(res, { ok: false, error: err.message }, 400); }
+      }
+      if (path === '/api/backup/setup/restore' && req.method === 'POST') {
+        if (!body.passphrase) return json(res, { ok: false, error: 'Enter the passphrase the backup was made with' }, 400);
+        startRestore({ key: body.key, passphrase: body.passphrase, storage: body.storage || {} });
+        return json(res, { ok: true, started: true, restartMode: restartMode() });
+      }
+      return json(res, { ok: false, error: 'Not found' }, 404);
+    }
+
     // ─── Refresh ───
     // Deliberately above the auth gate below: the access token is expected to
     // be expired here, so requiring one would defeat the purpose.
@@ -2219,7 +2301,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // would be a fully open shell on the host, which is not a state worth
     // having however briefly.
     if (authConfig.isOpen()) {
-      const setupAllowed = path === '/api/auth/methods' || path === '/api/auth/setup';
+      const setupAllowed = path === '/api/auth/methods' || path === '/api/auth/setup' || path.startsWith('/api/backup/setup/');
       if (!setupAllowed) {
         return json(res, {
           error: 'Set up a sign-in method first — nothing else is available until then.',
@@ -3699,6 +3781,43 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // `embedded`: this server runs inside the desktop app, which updates them
       // both, so a desktop client talking to it has no separate server update.
       return json(res, { ok: true, update: serverUpdate.status(), log: serverUpdate.readLog(), canRestart: canRestart(), embedded: !!process.versions.electron });
+    }
+
+    // ─── Backup & restore ───
+    if (path.startsWith('/api/backup')) {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
+      let body = {};
+      if (req.method === 'POST') { try { body = JSON.parse(await readBody(req)) || {}; } catch { body = {}; } }
+      if (path === '/api/backup' && req.method === 'GET') return json(res, { ok: true, ...backups.status(), restartMode: restartMode() });
+      if (path === '/api/backup/settings' && req.method === 'POST') { const r = backups.update(body); return json(res, r, r.ok ? 200 : 400); }
+      if (path === '/api/backup/test' && req.method === 'POST') {
+        try { return json(res, await backups.test(body.storage)); } catch (err) { return json(res, { ok: false, error: err.message }, 400); }
+      }
+      if (path === '/api/backup/run' && req.method === 'POST') {
+        const st = backups.status();
+        if (st.running) return json(res, { ok: false, error: 'A backup is already running' }, 409);
+        if (!st.configured) return json(res, { ok: false, error: 'Set up the storage and a passphrase first' }, 400);
+        (st.waiting ? backups.runWaitingNow() : backups.run('manual')).catch(() => {});
+        return json(res, { ok: true, started: true });
+      }
+      if (path === '/api/backup/skip' && req.method === 'POST') return json(res, backups.skip());
+      if (path === '/api/backup/list' && req.method === 'GET') {
+        try { return json(res, { ok: true, items: await backups.list() }); } catch (err) { return json(res, { ok: false, error: err.message }, 400); }
+      }
+      if (path === '/api/backup/delete' && req.method === 'POST') {
+        try { return json(res, await backups.remove(body.key)); } catch (err) { return json(res, { ok: false, error: err.message }, 400); }
+      }
+      if (path === '/api/backup/restore' && req.method === 'POST') {
+        if (backups.status().running) return json(res, { ok: false, error: 'A backup is running; try again when it is done' }, 409);
+        startRestore({ key: body.key, passphrase: body.passphrase || '' });
+        return json(res, { ok: true, started: true, restartMode: restartMode() });
+      }
+      if (path === '/api/backup/cancel-restore' && req.method === 'POST') return json(res, backups.cancelStaged());
+      if (path === '/api/backup/restart' && req.method === 'POST') {
+        if (!restartSelf('applying a restored backup')) return json(res, { ok: false, error: 'Nothing here will start Crundi again on its own. Restart it the way you started it; the restore finishes as it starts.' }, 400);
+        return json(res, { ok: true });
+      }
+      return json(res, { ok: false, error: 'Not found' }, 404);
     }
 
     // ─── Restart ───
