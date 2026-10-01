@@ -54,7 +54,15 @@
 
     '.cc-think{border-left:2px solid var(--border);padding-left:9px;color:var(--text-muted);font-size:calc(12px*var(--cc-fs,1));font-style:italic}',
     '.cc-think-head{cursor:pointer;user-select:none;color:var(--text-secondary);font-style:normal;display:flex;align-items:center;gap:5px}',
-    '.cc-think-body{margin-top:4px;white-space:pre-wrap;max-height:260px;overflow-y:auto}',
+    '.cc-think-body{margin-top:4px;white-space:pre-wrap;max-height:260px;overflow-y:auto;transition:max-height .28s ease,opacity .2s ease,margin-top .28s ease}',
+    // Thinking folds away with a short slide instead of vanishing.
+    '.cc-think.cc-collapsed .cc-think-body{display:block;max-height:0;opacity:0;margin-top:0;overflow:hidden}',
+    // While it is thinking: the label shimmers and a caret blinks at the end.
+    '.cc-think.live .cc-think-head span:last-child{background:linear-gradient(90deg,var(--text-secondary) 0%,var(--text-primary) 45%,var(--text-secondary) 90%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:cc-shimmer 1.6s linear infinite}',
+    '@keyframes cc-shimmer{from{background-position:120% 0}to{background-position:-120% 0}}',
+    '.cc-think-caret{display:inline-block;width:2px;height:1em;margin-left:2px;vertical-align:-2px;background:var(--text-muted);animation:cc-blink 1s steps(1) infinite}',
+    '@keyframes cc-blink{50%{opacity:0}}',
+    '@media (prefers-reduced-motion: reduce){.cc-think.live .cc-think-head span:last-child{animation:none;color:var(--text-secondary);background:none}.cc-think-caret{animation:none}.cc-think-body{transition:none}}',
     '.cc-collapsed .cc-think-body,.cc-collapsed .cc-tool-body{display:none}',
     '.cc-thought{display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:calc(12px*var(--cc-fs,1));font-style:italic;user-select:none}',
     '.cc-thought-dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);opacity:.55;flex:0 0 auto}',
@@ -825,8 +833,19 @@
     function atBottom() {
       return log.scrollHeight - log.scrollTop - log.clientHeight < 60;
     }
+    // Following the newest message is the reader's choice, kept in
+    // stickBottom (set when they scroll). Asking "are we within 60px of the
+    // bottom?" mid-stream failed: the smooth scroll was still catching up when
+    // the next chunk landed, so a growing thinking block shook it off the end.
+    function followingBottom() { return stickBottom || atBottom(); }
     function scrollDown(force) {
-      if (force || atBottom()) log.scrollTop = log.scrollHeight;
+      if (!(force || atBottom())) return;
+      // Instant, not smooth: streaming text adds a line every few ms and an
+      // animation always lags behind it.
+      var prev = log.style.scrollBehavior;
+      log.style.scrollBehavior = 'auto';
+      log.scrollTop = log.scrollHeight;
+      log.style.scrollBehavior = prev;
     }
 
     // ─── Scroll retention across re-parenting ───
@@ -989,7 +1008,37 @@
       }
     }
 
-    var thinkClosed = new Set();   // thinking blocks the user collapsed
+    var thinkUser = new Map();     // id -> 'open' | 'closed', set by the user
+    var thinkAuto = new Map();     // id -> 'open' | 'closed', set by the rules
+    var thinkTimers = new Map();   // id -> timer that folds it after it finishes
+    var THINK_LINGER_MS = 5000;
+    function thinkCollapsed(e) {
+      var u = thinkUser.get(e.id);
+      if (u) return u === 'closed';
+      var a = thinkAuto.get(e.id);
+      if (a) return a === 'closed';
+      return !e.streaming;          // from history, or already finished: closed
+    }
+    // Fold a block now (unless the user has chosen for it), animating in place.
+    function autoCloseThinking(id) {
+      clearTimeout(thinkTimers.get(id)); thinkTimers.delete(id);
+      if (thinkUser.has(id)) return;
+      thinkAuto.set(id, 'closed');
+      var rec = entries.get(id);
+      var box = rec && rec.node.querySelector('.cc-think');
+      if (box) box.classList.add('cc-collapsed');
+    }
+    // Called whenever a thinking entry is added or changes.
+    function thinkingChanged(e, isNew) {
+      if (isNew && e.streaming) {
+        // A newer thought folds the earlier ones away.
+        thinkAuto.forEach(function (v, id) { if (id !== e.id && v === 'open') autoCloseThinking(id); });
+        thinkAuto.set(e.id, 'open');
+      }
+      if (!e.streaming && thinkAuto.get(e.id) === 'open' && !thinkTimers.has(e.id)) {
+        thinkTimers.set(e.id, setTimeout(function () { autoCloseThinking(e.id); }, THINK_LINGER_MS));
+      }
+    }
     function thinkingNode(e) {
       // Models from Opus 4.7 on return thinking blocks with no text (see
       // handleStreamEvent in claude-ui.js). An expander over an empty body
@@ -1002,14 +1051,16 @@
           + (n ? ' for ~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + ' tokens' : '')
           + '</span>');
       }
-      // Open by default. One you close stays closed: streaming repaints the
-      // node, so the choice is kept by entry id rather than on the element.
-      var box = el('div', 'cc-think' + (thinkClosed.has(e.id) ? ' cc-collapsed' : ''));
+      // Open while it is thinking, folded away a little after it finishes or
+      // as soon as a newer one starts, and closed when loaded from history.
+      // Once you open or close one yourself, that wins and it stays put.
+      // Kept by entry id, since streaming repaints the node.
+      var box = el('div', 'cc-think' + (thinkCollapsed(e) ? ' cc-collapsed' : '') + (e.streaming ? ' live' : ''));
       var head = el('div', 'cc-think-head', '<span class="cc-caret">▾</span><span>Thinking</span>');
-      var body = el('div', 'cc-think-body', esc(e.text));
+      var body = el('div', 'cc-think-body', esc(e.text) + (e.streaming ? '<span class="cc-think-caret"></span>' : ''));
       head.addEventListener('click', function () {
         var closed = box.classList.toggle('cc-collapsed');
-        if (closed) thinkClosed.add(e.id); else thinkClosed.delete(e.id);
+        thinkUser.set(e.id, closed ? 'closed' : 'open');
       });
       box.appendChild(head);
       box.appendChild(body);
@@ -2420,9 +2471,10 @@
     }
 
     function addEntry(data) {
+      if (data.kind === 'thinking') thinkingChanged(data, true);
       var node = renderEntry(data);
       entries.set(data.id, { data: data, node: node });
-      var stick = atBottom();
+      var stick = followingBottom();
       log.appendChild(node);
       // The activity row is not a conversation entry; keep it last.
       if (activityNode && activityNode.parentNode === log) log.appendChild(activityNode);
@@ -2788,7 +2840,8 @@
           var rec = entries.get(ev.id);
           if (!rec) break;
           Object.assign(rec.data, ev.patch);
-          var stick = atBottom();
+          if (rec.data.kind === 'thinking') thinkingChanged(rec.data, false);
+          var stick = followingBottom();
           paint(rec.node, rec.data);
           scrollDown(stick);
           // An open task panel shows this same command: keep it current, so a
@@ -2806,8 +2859,11 @@
           r.data.text = (r.data.text || '') + ev.text;
           // Repaint just the text node; markdown is cheap enough per delta and
           // keeps fences/lists correct as they stream in.
-          var stick2 = atBottom();
+          var stick2 = followingBottom();
           paint(r.node, r.data);
+          // A long thought scrolls inside its own box: keep its newest line in view.
+          var tb = r.data.kind === 'thinking' && r.node.querySelector('.cc-think-body');
+          if (tb) tb.scrollTop = tb.scrollHeight;
           scrollDown(stick2);
           break;
         }

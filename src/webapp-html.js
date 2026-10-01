@@ -2288,13 +2288,26 @@ export function getWebappHtml(botUsername) {
     .kanban-card.menu-open .card-actions { display: flex; animation: kc-open 0.14s ease; }
     .kanban-card.deleted .card-actions { display: flex; border-top: none; padding-top: 0; }
     @keyframes kc-open { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
-    .kanban-card .card-actions button, .kanban-card .card-actions select {
+    .kanban-card .card-actions button {
       height: 26px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.74rem; cursor: pointer;
       background: var(--bg-primary); color: var(--text-secondary);
     }
     .kanban-card .card-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; background: transparent; }
     .kanban-card .card-actions button .ic { width: 13px; height: 13px; }
-    .kanban-card .card-actions select { padding: 0 6px; }
+    .kanban-card .card-actions .kc-icon { width: 28px; padding: 0; justify-content: center; }
+    /* One row when it fits: a card too narrow for every label shows Edit and
+       Delete as icons (tooltips keep the names); a wider one keeps the words. */
+    .kanban-card { container-type: inline-size; }
+    /* A card's menu holds Brainstorm, Edit, Delete — and Subtask too when the
+       card has none yet, which needs more room. */
+    @container (max-width: 220px) {
+      .kanban-card .card-actions .kc-lb { width: 28px; padding: 0; justify-content: center; flex-shrink: 0; }
+      .kanban-card .card-actions .kc-lb span { display: none; }
+    }
+    @container (max-width: 320px) {
+      .kanban-card.compact .card-actions .kc-lb { width: 28px; padding: 0; justify-content: center; flex-shrink: 0; }
+      .kanban-card.compact .card-actions .kc-lb span { display: none; }
+    }
     .kanban-card .card-actions button:hover { color: var(--text-primary); border-color: #3c3c58; background: var(--bg-tertiary); }
     .kanban-card .card-actions .danger { margin-left: auto; }
     .kanban-card .card-actions .danger:hover { color: var(--red); border-color: var(--red); background: var(--red-dim); }
@@ -11748,7 +11761,7 @@ export function getWebappHtml(botUsername) {
           + '</div></div>';
       }
       // Safety net: surface any task whose status isn't a known column so it can
-      // never silently disappear (move it back via the card's status dropdown).
+      // never silently disappear (move it back by dragging, or in Edit).
       const orphans = kanbanBoard.tasks.filter(t => !kanbanBoard.statuses.includes(t.status));
       if (orphans.length) {
         h += '<div class="kanban-col" data-status="backlog" style="border-color:var(--yellow)">'
@@ -11842,16 +11855,12 @@ export function getWebappHtml(botUsername) {
           + '<button data-kact="add-subtask" data-task="' + t.id + '" title="Add a subtask">' + ic('plus') + 'Subtask</button>'
           + '</div>';
       }
-      let opts = '';
-      for (const st of kanbanBoard.statuses) {
-        opts += '<option value="' + st + '"' + (st === t.status ? ' selected' : '') + '>' + KANBAN_STATUS_LABELS[st] + '</option>';
-      }
+      // Moving between columns is a drag, or the Edit dialog's Column row.
       h += '<div class="card-actions">'
         + (compact ? '<button data-kact="add-subtask" data-task="' + t.id + '" title="Add a subtask">' + ic('plus') + 'Subtask</button>' : '')
-        + '<select data-kmove="' + t.id + '" title="Move to column">' + opts + '</select>'
-        + '<button data-kact="brainstorm" data-task="' + t.id + '" title="Brainstorm this task in the Mindmap">' + ic('mindmap') + 'Brainstorm</button>'
-        + '<button data-kact="edit-task" data-task="' + t.id + '">' + ic('pencil') + 'Edit</button>'
-        + '<button class="danger" data-kact="del-task" data-task="' + t.id + '">' + ic('trash') + 'Delete</button>'
+        + '<button class="kc-icon" data-kact="brainstorm" data-task="' + t.id + '" title="Brainstorm this task in the Mindmap" aria-label="Brainstorm in the Mindmap">' + ic('mindmap') + '</button>'
+        + '<button class="kc-lb" data-kact="edit-task" data-task="' + t.id + '" title="Edit task" aria-label="Edit task">' + ic('pencil') + '<span>Edit</span></button>'
+        + '<button class="kc-lb danger" data-kact="del-task" data-task="' + t.id + '" title="Delete task" aria-label="Delete task">' + ic('trash') + '<span>Delete</span></button>'
         + '</div></div>';
       return h;
     }
@@ -12288,11 +12297,15 @@ export function getWebappHtml(botUsername) {
         } else if (act === 'edit-task') {
           const task = (kanbanBoard.tasks || []).find(t => t.id === taskId);
           if (!task) return;
-          const title = await askText({ title: 'Edit task', label: 'Task title', value: task.title });
-          if (title === null) return;
-          const description = await askText({ title: 'Edit task', label: 'Description', value: task.description || '', multiline: true });
+          const sts = kanbanBoard.statuses || Object.keys(KANBAN_STATUS_LABELS);
+          const r = await askText({ title: 'Edit task', label: 'Task title', value: task.title, okLabel: 'Next',
+            choice: { label: 'Column', value: task.status, options: sts.map(st => [st, KANBAN_STATUS_LABELS[st] || st]) } });
+          if (r === null) return;
+          const description = await askText({ title: 'Edit task', label: 'Description', value: task.description || '', multiline: true, okLabel: 'Save' });
           if (description === null) return;
-          await kanbanPost({ action: 'updateTask', taskId, title: title.trim(), description }); loadKanban();
+          await kanbanPost({ action: 'updateTask', taskId, title: r.value.trim(), description });
+          if (r.choice && r.choice !== task.status) await kanbanPost({ action: 'moveTask', taskId, status: r.choice });
+          loadKanban();
         } else if (act === 'del-task') {
           await kanbanPost({ action: 'deleteTask', taskId }); loadKanban();
         } else if (act === 'restore-task') {

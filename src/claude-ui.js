@@ -1520,14 +1520,25 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    */
   function expireStalePending(s) {
     if (!s.pending || !s.pending.size) return;
-    for (const [, p] of s.pending) {
+    // Since 2.1.285 a BACKGROUND subagent's permission request reaches us too
+    // (it used to be auto-denied), and that agent keeps running after the turn
+    // ends, still waiting on the answer. Such a request is not stale: leave it
+    // while a background task is running and the request is not one of the
+    // main thread's own tool calls. Everything else is as before.
+    const bgRunning = [...(s.agents?.values() || [])].some(a => a.status === 'running');
+    const mainTools = new Set(s.messages.filter(e => e.kind === 'tool' && e.toolUseId).map(e => e.toolUseId));
+    let changed = false;
+    for (const [key, p] of [...s.pending]) {
+      const tid = p.entry && p.entry.toolUseId;
+      if (bgRunning && tid && !mainTools.has(tid)) continue;
       patchEntry(s, p.entry, { status: 'cancelled' });
       if (p.entry && p.entry.approvalId) {
         try { escalationGoneCb?.(p.entry.approvalId); } catch { /* never fatal */ }
       }
+      s.pending.delete(key);
+      changed = true;
     }
-    s.pending.clear();
-    pendingChanged(s);
+    if (changed) pendingChanged(s);
   }
 
   // ─── Collaborator token usage ───
