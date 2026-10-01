@@ -5960,14 +5960,21 @@ export function getWebappHtml(botUsername) {
       if (t) t.textContent = cell && cell.pageId ? (title || 'Untitled') : 'Notes';
     }
     // Dragging a block's grip onto a chat or terminal sends it as Markdown.
-    function notesDragBlock(blockEl, grip, getMarkdown) {
+    // Over its own page the drag rearranges blocks (local); anywhere else it
+    // drops as Markdown, like any other dragged item.
+    function notesDragBlock(blockEl, grip, getMarkdown, local) {
       let target = null;
       makeDraggable(blockEl, {
         handle: grip,
-        onMove: (x, y) => { target = wbDropTargetAt(x, y); document.body.classList.toggle('wb-drag-armed', !!target); },
+        onMove: (x, y) => {
+          if (local && local.preview(x, y)) target = { kind: 'local' };
+          else target = wbDropTargetAt(x, y);
+          document.body.classList.toggle('wb-drag-armed', !!target);
+        },
         onEnd: (commit) => {
           document.body.classList.remove('wb-drag-armed');
-          if (commit && target) insertRefToTarget(target, getMarkdown());
+          if (commit && target && target.kind === 'local') local.drop();
+          else { if (local) local.clear(); if (commit && target) insertRefToTarget(target, getMarkdown()); }
           target = null;
         },
       });
@@ -7294,6 +7301,8 @@ export function getWebappHtml(botUsername) {
     function wbDropTargetAt(x, y) {
       const el = document.elementFromPoint(x, y);
       if (!el || !el.closest) return null;
+      // A notes page takes text too; the caret follows the pointer there.
+      if (el.closest('.nt-root') && window.CrundiNotes && window.CrundiNotes.dropPreview(x, y)) return { kind: 'notes', x, y };
       if (el.closest('#term-input')) return { kind: 'input' };
       const cell = el.closest('.term-cell[data-tid]');
       if (cell) return { kind: 'term', id: cell.dataset.tid };
@@ -7301,6 +7310,10 @@ export function getWebappHtml(botUsername) {
     }
     function insertRefToTarget(target, ref) {
       if (!ref || !target) return;
+      if (target.kind === 'notes') {
+        if (window.CrundiNotes && window.CrundiNotes.dropText(target.x, target.y, ref)) toast('Added to the note');
+        return;
+      }
       // A chat cell shares the .term-cell[data-tid] shape that wbDropTargetAt
       // matches, but it has no PTY — sending 'input' would silently go nowhere.
       // Drop it into that chat's composer instead.
@@ -7340,7 +7353,9 @@ export function getWebappHtml(botUsername) {
           if (commit && target) {
             let v = el.dataset.dragRef || '';
             if (el.dataset.dragAbs === '1') v = absProjectPath(v);
-            insertRefToTarget(target, formatDragRef(el.dataset.dragKind, v));
+            // A note gets the plain value (a path reads as a path); an agent
+            // gets it labelled with its kind.
+            insertRefToTarget(target, target.kind === 'notes' && /^(file|folder|media)$/.test(el.dataset.dragKind || 'file') ? v : formatDragRef(el.dataset.dragKind, v));
           }
           target = null;
         },

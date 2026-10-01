@@ -27,7 +27,8 @@
   var CSS = [
     // One quiet column of prose (~72 characters a line); the block controls
     // live in the margin to its left and only show on hover.
-    '.nt-root{position:relative;height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;background:var(--bg-primary);color:var(--text-primary);font-size:' + F(15) + ';line-height:1.65}',
+    '.nt-root{position:relative;height:100%;min-height:0;overflow:hidden;background:var(--bg-primary);color:var(--text-primary);font-size:' + F(15) + ';line-height:1.65}',
+    '.nt-scroll{height:100%;overflow-y:auto;overflow-x:hidden}',
     '.nt-page{max-width:calc(72ch + 72px);margin:0 auto;padding:30px 28px 160px 56px;box-sizing:border-box}',
     '.nt-bar{position:absolute;top:10px;right:14px;z-index:5;display:flex;align-items:center;gap:8px;font-size:' + F(11.5) + ';color:var(--text-muted);pointer-events:none}',
     '.nt-bar .sp{display:none}',
@@ -37,7 +38,7 @@
     '.nt-save.err i{background:var(--red,#ef4444)}',
     '.nt-title{font-size:' + F(28) + ';font-weight:700;letter-spacing:-.01em;line-height:1.22;margin:2px 0 18px;outline:none;word-break:break-word}',
     '.nt-title:empty::before{content:"Untitled";color:var(--text-muted)}',
-    '.nt-block{position:relative;display:flex;align-items:flex-start;gap:6px;margin:1px 0;border-radius:6px}',
+    '.nt-block{position:relative;display:flex;align-items:flex-start;gap:6px;margin:0;padding:1px 0;border-radius:0}',
     '.nt-gutter{position:absolute;left:-40px;top:2px;display:flex;gap:1px;opacity:0;transition:opacity .12s}',
     '.nt-block:hover > .nt-gutter,.nt-block.menu-open > .nt-gutter{opacity:1}',
     '.nt-gutter button{width:19px;height:22px;display:flex;align-items:center;justify-content:center;border:none;background:none;border-radius:4px;color:var(--text-muted);cursor:pointer;padding:0;font-size:' + F(14) + ';line-height:1}',
@@ -61,8 +62,22 @@
     '.nt-check:checked::after{transform:rotate(-45deg) scale(1)}',
     '.nt-block.t-todo.done .nt-text{color:var(--text-muted);text-decoration:line-through}',
     '.nt-code{flex:1;min-width:0;margin:4px 0;padding:12px 14px;background:var(--bg-secondary,#12121a);border:1px solid var(--border-subtle,#1e1e30);border-radius:8px;font-family:var(--mono,monospace);font-size:' + F(12.5) + ';line-height:1.55;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;outline:none;tab-size:2}',
-    '.nt-code-wrap{flex:1;min-width:0;position:relative}',
-    '.nt-lang{position:absolute;top:8px;right:10px;font-size:' + F(10.5) + ';color:var(--text-muted);font-family:var(--mono,monospace)}',
+    '.nt-code-wrap{flex:1;min-width:0;position:relative;margin:4px 0;background:var(--bg-secondary,#12121a);border:1px solid var(--border-subtle,#1e1e30);border-radius:8px;overflow:hidden}',
+    '.nt-code-wrap:focus-within{border-color:rgba(99,102,241,.45)}',
+    // Header strip: the language (with its icon) and copy, top right, clear of the code.
+    '.nt-code-head{display:flex;justify-content:flex-end;align-items:center;gap:2px;padding:4px 6px 0}',
+    '.nt-code-head button{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 7px;border:none;border-radius:5px;background:none;color:var(--text-muted);cursor:pointer;font-size:' + F(11) + ';font-family:inherit}',
+    '.nt-code-head button:hover,.nt-code-head button.open{background:var(--bg-hover,#22223a);color:var(--text-primary)}',
+    '.nt-code-head svg{width:13px;height:13px}',
+    '.nt-code-wrap .nt-code{margin:0;border:none;background:none;border-radius:0;padding:4px 14px 12px}',
+    '.nt-cm .cm-editor{background:transparent}',
+    '.nt-cm .cm-editor.cm-focused{outline:none}',
+    '.nt-cm .cm-scroller{font-family:var(--mono,monospace);font-size:' + F(12.5) + ';line-height:1.55}',
+    '.nt-cm .cm-content{padding:2px 0 12px}',
+    '.nt-cm .cm-line{padding:0 14px}',
+    '.nt-cm .cm-placeholder{color:var(--text-muted)}',
+    '.nt-menu input.nt-menu-q{width:100%;box-sizing:border-box;margin:2px 0 4px;padding:6px 9px;border:1px solid var(--border,#2a2a3d);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);font-size:12.5px;outline:none}',
+    '.nt-menu button .chk{margin-left:auto;color:var(--accent-hover,#818cf8)}',
     '.nt-hr{flex:1;border:none;border-top:1px solid var(--border,#2a2a3d);margin:14px 0;cursor:pointer}',
     '.nt-block.t-divider.sel .nt-hr{border-top-color:var(--accent,#6366f1)}',
     '.nt-table-wrap{flex:1;min-width:0;margin:6px 0}',
@@ -77,6 +92,26 @@
     '.nt-root a{color:var(--accent-hover,#818cf8);text-decoration:underline;text-underline-offset:2px;cursor:text}',
     '.nt-root code{font-family:var(--mono,monospace);font-size:.88em;background:var(--bg-tertiary,#1a1a28);border:1px solid var(--border-subtle,#1e1e30);border-radius:4px;padding:0 4px}',
     '.nt-add-end{display:block;width:100%;min-height:80px;cursor:text}',
+    '.nt-page{position:relative}',
+    '.nt-dropline{position:absolute;left:44px;right:0;height:3px;margin-top:-2px;border-radius:2px;background:var(--accent,#6366f1);box-shadow:0 0 0 3px rgba(99,102,241,.18);pointer-events:none;display:none;z-index:4}',
+    // Selection: blocks tinted; a bar pinned to the top of the page with what is selected.
+    // One continuous tint over the selected run, rounded only at its ends.
+    '.nt-block.bsel{background:rgba(99,102,241,.16)}',
+    '.nt-block.bsel:not(.bsel + .bsel){border-top-left-radius:6px;border-top-right-radius:6px}',
+    '.nt-block.bsel:not(:has(+ .bsel)){border-bottom-left-radius:6px;border-bottom-right-radius:6px}',
+    '.nt-root.nt-blockmode .nt-text,.nt-root.nt-dragsel .nt-text{user-select:none;-webkit-user-select:none}',
+    '.nt-root:focus{outline:none}',
+    // Over the page, not in it: showing it must not push the blocks down
+    // (a drag-select in progress would land on the wrong block).
+    '.nt-selbar{position:absolute;top:0;left:0;right:0;z-index:7;display:none;align-items:center;gap:4px;padding:6px 12px 6px 14px;background:var(--bg-secondary,#12121a);border-bottom:1px solid var(--border,#2a2a3d);box-shadow:0 6px 18px rgba(0,0,0,.35);font-size:' + F(12.5) + '}',
+    '.nt-selbar.on{display:flex}',
+    '.nt-selbar .cnt{color:var(--text-secondary);margin:0 6px 0 4px}',
+    '.nt-selbar .sp{flex:1}',
+    '.nt-selbar button{height:26px;padding:0 9px;border:1px solid var(--border,#2a2a3d);border-radius:6px;background:none;color:var(--text-primary);cursor:pointer;font-size:' + F(12) + ';font-family:inherit}',
+    '.nt-selbar button:hover{background:var(--bg-hover,#22223a)}',
+    '.nt-selbar button.x{border:none;color:var(--text-muted);width:26px;padding:0}',
+    '.nt-selbar button.danger:hover{color:var(--red,#ef4444);border-color:var(--red,#ef4444);background:rgba(239,68,68,.12)}',
+    '.nt-selbar .nt-grip{flex:none}',
     // floating format toolbar
     '.nt-fmt{position:fixed;z-index:800;display:flex;align-items:center;gap:2px;padding:4px;background:var(--bg-secondary,#12121a);border:1px solid var(--border,#2a2a3d);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
     '.nt-fmt button{min-width:28px;height:26px;padding:0 6px;border:none;border-radius:5px;background:none;color:var(--text-primary);cursor:pointer;font-size:13px}',
@@ -269,6 +304,21 @@
     return e.bottom - c.bottom < lh * 0.9;
   }
 
+  var MOD = /Mac|iPhone|iPad/.test(navigator.platform || '') ? 'Cmd' : 'Ctrl';
+  var CODE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+  var COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  /** A language id from whatever was written ('sh', 'ts', 'Python'…); '' stays plain. */
+  function normLang(name) {
+    var n = String(name || '').trim();
+    if (!n) return 'plain';
+    var l = window.CM && window.CM.findLang ? window.CM.findLang(n) : null;
+    return l ? l.id : n.toLowerCase().replace(/[^a-z0-9+#._-]/g, '').slice(0, 24) || 'plain';
+  }
+  function langName(id) {
+    var l = window.CM && window.CM.findLang ? window.CM.findLang(id) : null;
+    return l ? l.name : (id && id !== 'plain' ? id : 'Plain text');
+  }
+
   var TYPES = [
     { t: 'p', k: 'T', name: 'Text', d: '' },
     { t: 'h1', k: 'H1', name: 'Heading 1', d: '#' },
@@ -373,9 +423,25 @@
     var list = el('div', 'nt-blocks');
     var tail = el('div', 'nt-add-end');
     page.appendChild(title); page.appendChild(list); page.appendChild(tail);
-    root.appendChild(bar); root.appendChild(page);
+    // The selection bar: what is selected, copy, select all, delete, and a
+    // handle to drag it (as Markdown) onto a chat or terminal.
+    var selbar = el('div', 'nt-selbar');
+    var selGripWrap = el('span', '');
+    var selGrip = el('span', 'nt-grip', '⋮⋮'); selGrip.title = 'Drag the selection onto a chat or terminal';
+    selGripWrap.appendChild(selGrip);
+    var selCnt = el('span', 'cnt', '');
+    var bCopy = el('button', '', 'Copy'); bCopy.type = 'button'; bCopy.title = 'Copy as Markdown (Ctrl+C)';
+    var bAll = el('button', '', 'Select all'); bAll.type = 'button'; bAll.title = 'Select every block (' + MOD + '+Shift+A)';
+    var bDel = el('button', 'danger', 'Delete'); bDel.type = 'button'; bDel.title = 'Delete the selected blocks';
+    var bClr = el('button', 'x', '✕'); bClr.type = 'button'; bClr.title = 'Clear the selection (Esc)';
+    [selGripWrap, selCnt, el('span', 'sp'), bCopy, bAll, bDel, bClr].forEach(function (x) { selbar.appendChild(x); });
+    [bCopy, bAll, bDel, bClr].forEach(function (b) { b.addEventListener('mousedown', function (e) { e.preventDefault(); }); });
+    root.tabIndex = -1;
+    var scroller = el('div', 'nt-scroll');
+    scroller.appendChild(page);
+    root.appendChild(selbar); root.appendChild(bar); root.appendChild(scroller);
     host.appendChild(root);
-    root.addEventListener('scroll', function () { if (floating && floating.kind !== 'item') closeFloating(); });
+    scroller.addEventListener('scroll', function () { if (floating && floating.kind !== 'item') closeFloating(); });
 
     var version = 0, dirty = false, saving = false, saveTimer = null, destroyed = false, loaded = false;
 
@@ -397,7 +463,9 @@
       grip.title = 'Click: turn into, move, duplicate, delete. Drag: onto a chat or terminal to send it as Markdown';
       g.appendChild(add); g.appendChild(grip);
       w.appendChild(g);
-      if (opts.dragBlock) opts.dragBlock(w, grip, function () { return toMarkdown([readBlock(w)]); });
+      if (opts.dragBlock) opts.dragBlock(w, grip, function () {
+        return w.classList.contains('bsel') && selectedBlocks().length > 1 ? toMarkdown(selectedBlocks().map(readBlock)) : toMarkdown([readBlock(w)]);
+      }, reorderer(function () { return w.classList.contains('bsel') ? selectedBlocks() : [w]; }));
       add.addEventListener('mousedown', function (e) { e.preventDefault(); });
       add.addEventListener('click', function () { var nb = insertAfter(w, { type: 'p', text: '' }); openSlash(nb, true); });
       grip.addEventListener('mousedown', function (e) { e.preventDefault(); });
@@ -418,10 +486,30 @@
       }
       if (b.type === 'code') {
         var cw = el('div', 'nt-code-wrap');
+        var lang = normLang(b.lang);
+        w.dataset.lang = lang;
+        var head = el('div', 'nt-code-head');
+        var langBtn = el('button', 'nt-langbtn', CODE_SVG + '<span>' + esc(langName(lang)) + '</span>'); langBtn.type = 'button'; langBtn.title = 'Code language';
+        var copyBtn = el('button', '', COPY_SVG); copyBtn.type = 'button'; copyBtn.title = 'Copy code';
+        head.appendChild(langBtn); head.appendChild(copyBtn);
+        cw.appendChild(head);
+        langBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        langBtn.addEventListener('click', function () { openLangMenu(w, langBtn); });
+        copyBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        copyBtn.addEventListener('click', function () {
+          var txt = readBlock(w).text || '';
+          (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast('Code copied'); }, function () { toast('Could not copy', 'error'); });
+        });
+        if (window.CM && window.CM.notesSetup) {
+          var hostEl = el('div', 'nt-cm');
+          cw.appendChild(hostEl);
+          w.appendChild(cw);
+          mountCode(w, hostEl, b.text || '', lang);
+          return w;
+        }
+        // Without the editor bundle: plain, unhighlighted, still editable.
         var pre = el('pre', 'nt-code'); pre.contentEditable = 'true'; pre.spellcheck = false;
         pre.textContent = b.text || '';
-        if (b.lang) cw.appendChild(el('span', 'nt-lang', esc(b.lang)));
-        w.dataset.lang = b.lang || '';
         cw.appendChild(pre);
         w.appendChild(cw);
         pre.addEventListener('keydown', function (e) { codeKey(e, w, pre); });
@@ -459,6 +547,76 @@
       w.appendChild(t);
       wireText(t, w);
       return w;
+    }
+
+    // ─── code blocks (CodeMirror from /vendor/codemirror.js) ───
+    var cmTheme = null;
+    function mountCode(w, hostEl, text, lang) {
+      var CM = window.CM;
+      if (!cmTheme) cmTheme = CM.EditorView.theme({ '&': { color: 'var(--text-primary)' }, '.cm-cursor': { borderLeftColor: 'var(--text-primary)' } }, { dark: true });
+      var comp = new CM.Compartment();
+      // Leaving the block by keyboard, as from any other block.
+      var leave = CM.keymap.of([
+        { key: 'Shift-Enter', run: function () { focusBlock(insertAfter(w, { type: 'p', text: '' }), 'start'); return true; } },
+        { key: 'Mod-Enter', run: function () { focusBlock(insertAfter(w, { type: 'p', text: '' }), 'start'); return true; } },
+        { key: 'ArrowUp', run: function (v) { var sel = v.state.selection.main; if (!sel.empty || v.state.doc.lineAt(sel.head).number !== 1) return false; var p = prevBlock(w); if (!p) return false; focusBlock(p, 'end'); return true; } },
+        { key: 'ArrowDown', run: function (v) { var sel = v.state.selection.main; if (!sel.empty || v.state.doc.lineAt(sel.head).number !== v.state.doc.lines) return false; var n = nextBlock(w); focusBlock(n || insertAfter(w, { type: 'p', text: '' }), 'start'); return true; } },
+        { key: 'Backspace', run: function (v) { if (v.state.doc.length) return false; focusBlock(convert(w, 'p'), 'start'); return true; } },
+      ]);
+      var view = new CM.EditorView({
+        parent: hostEl,
+        doc: text,
+        extensions: [CM.Prec.highest(leave)].concat(CM.notesSetup, [comp.of(CM.langExtension(lang)), cmTheme, CM.placeholder('Code'),
+          CM.EditorView.updateListener.of(function (u) { if (u.docChanged) changed(); })]),
+      });
+      w._cm = { view: view, comp: comp };
+    }
+    function destroyCode(w) { if (w && w._cm) { try { w._cm.view.destroy(); } catch (e) {} w._cm = null; } }
+    function destroyCodeIn(scope) { Array.prototype.forEach.call(scope.querySelectorAll('.nt-block.t-code'), destroyCode); }
+    function setLang(w, id) {
+      w.dataset.lang = id;
+      var lbl = w.querySelector('.nt-langbtn span'); if (lbl) lbl.textContent = langName(id);
+      if (w._cm) w._cm.view.dispatch({ effects: w._cm.comp.reconfigure(window.CM.langExtension(id)) });
+      changed();
+    }
+    function openLangMenu(w, anchor) {
+      closeFloating();
+      var langs = (window.CM && window.CM.langs) || [{ id: 'plain', name: 'Plain text' }];
+      var menu = el('div', 'nt-menu');
+      var q = el('input', 'nt-menu-q'); q.placeholder = 'Search languages';
+      menu.appendChild(q);
+      var listBox = el('div', '');
+      menu.appendChild(listBox);
+      var act = Math.max(0, langs.map(function (l) { return l.id; }).indexOf(w.dataset.lang || 'plain')), shown = [];
+      function draw() {
+        var t = q.value.trim().toLowerCase();
+        shown = langs.filter(function (l) { return !t || l.name.toLowerCase().indexOf(t) >= 0 || l.id.indexOf(t) === 0; });
+        if (act >= shown.length) act = Math.max(0, shown.length - 1);
+        listBox.innerHTML = '';
+        if (!shown.length) { listBox.appendChild(el('div', 'nt-empty', 'No such language')); return; }
+        shown.forEach(function (l, i) {
+          var b = el('button', i === act ? 'act' : '', esc(l.name) + (l.id === w.dataset.lang ? '<span class="chk">\u2713</span>' : '')); b.type = 'button';
+          b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+          b.addEventListener('click', function () { closeFloating(); setLang(w, l.id); focusBlock(w, 'end'); });
+          listBox.appendChild(b);
+        });
+        var a = listBox.querySelector('.act'); if (a && a.scrollIntoView) a.scrollIntoView({ block: 'center' });
+      }
+      q.addEventListener('input', function () { act = 0; draw(); });
+      q.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); act = Math.min(shown.length - 1, act + 1); draw(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); act = Math.max(0, act - 1); draw(); }
+        else if (e.key === 'Enter') { e.preventDefault(); if (shown[act]) { var id = shown[act].id; closeFloating(); setLang(w, id); focusBlock(w, 'end'); } }
+        else if (e.key === 'Escape') { e.preventDefault(); closeFloating(); focusBlock(w, 'end'); }
+      });
+      draw();
+      document.body.appendChild(menu);
+      var r = anchor.getBoundingClientRect();
+      var top = r.bottom + 4; if (top + 330 > window.innerHeight) top = Math.max(8, r.top - 330);
+      menu.style.top = top + 'px'; menu.style.left = Math.max(8, Math.min(r.right - 220, window.innerWidth - 240)) + 'px';
+      anchor.classList.add('open');
+      floating = { kind: 'lang', node: menu, close: function () { menu.remove(); anchor.classList.remove('open'); } };
+      q.focus();
     }
 
     function cellEl(html) {
@@ -517,6 +675,7 @@
     }
 
     function render(blocks) {
+      destroyCodeIn(list);
       list.innerHTML = '';
       (blocks && blocks.length ? blocks : [{ id: genId(), type: 'p', text: '' }]).forEach(function (b) { list.appendChild(blockEl(b)); });
       renumber();
@@ -528,6 +687,12 @@
     function editable(w) { return w && (w.querySelector('.nt-text') || w.querySelector('.nt-code') || w.querySelector('td') || w.querySelector('.nt-hr')); }
     function focusBlock(w, where) {
       if (!w) return;
+      if (w._cm) {
+        var v = w._cm.view;
+        v.focus();
+        v.dispatch({ selection: { anchor: where === 'start' ? 0 : v.state.doc.length } });
+        return;
+      }
       var e = editable(w); if (!e) return;
       if (e.tagName === 'HR') { e.focus(); return; }
       if (e.tagName === 'TD' && where === 'end') { var cells = w.querySelectorAll('td'); e = cells[cells.length - 1]; }
@@ -540,16 +705,17 @@
       renumber(); changed();
       return nb;
     }
-    function removeBlock(w) { w.remove(); if (!list.children.length) list.appendChild(blockEl({ id: genId(), type: 'p', text: '' })); renumber(); }
+    function removeBlock(w) { destroyCode(w); w.remove(); if (!list.children.length) list.appendChild(blockEl({ id: genId(), type: 'p', text: '' })); renumber(); }
     /** Change a block's type, keeping its text where both kinds have text. */
     function convert(w, type, extra) {
       var b = readBlock(w);
       var nb = { id: b.id, type: type };
-      if (type === 'code') nb.text = b.type === 'code' ? b.text : plainOf(b.text || '');
+      if (type === 'code') { nb.text = b.type === 'code' ? b.text : plainOf(b.text || ''); nb.lang = b.lang || ''; }
       else if (type === 'table') nb.rows = [['', '', ''], ['', '', ''], ['', '', '']];
       else if (type !== 'divider') nb.text = b.type === 'code' ? esc(b.text || '').replace(/\n/g, '<br>') : (b.text || '');
       if (extra) for (var k in extra) nb[k] = extra[k];
       var fresh = blockEl(nb);
+      destroyCode(w);
       list.replaceChild(fresh, w);
       renumber(); changed();
       return fresh;
@@ -559,7 +725,11 @@
     function readBlock(w) {
       var type = w.dataset.type, b = { id: w.dataset.id, type: type };
       if (type === 'divider') return b;
-      if (type === 'code') { b.text = (w.querySelector('.nt-code') || {}).textContent || ''; b.lang = w.dataset.lang || ''; return b; }
+      if (type === 'code') {
+        b.text = w._cm ? w._cm.view.state.doc.toString() : ((w.querySelector('.nt-code') || {}).textContent || '');
+        b.lang = w.dataset.lang && w.dataset.lang !== 'plain' ? w.dataset.lang : '';
+        return b;
+      }
       if (type === 'table') {
         var tbl = w.querySelector('table');
         b.rows = Array.prototype.map.call(tbl.rows, function (tr) { return Array.prototype.map.call(tr.cells, function (td) { return sanitize(td.innerHTML); }); });
@@ -590,6 +760,10 @@
     function textKey(e, t, w) {
       if (floating && floating.kind === 'slash' && floating.key(e)) return;
       var type = w.dataset.type;
+      // Ctrl+A stays within the block (the browser's own); say how to take the page.
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'a') { hintSelectAll(); return; }
+      if (e.shiftKey && e.key === 'ArrowUp' && onFirstLine(t) && prevBlock(w) && window.getSelection().isCollapsed) { e.preventDefault(); setBlockSel(w, prevBlock(w)); return; }
+      if (e.shiftKey && e.key === 'ArrowDown' && onLastLine(t) && nextBlock(w) && window.getSelection().isCollapsed) { e.preventDefault(); setBlockSel(w, nextBlock(w)); return; }
       if ((e.ctrlKey || e.metaKey) && fmtKey(e)) return;
       if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); document.execCommand('insertLineBreak'); return; }
       if (e.key === 'Enter') {
@@ -660,7 +834,7 @@
         return;
       }
       if (/^```([a-zA-Z0-9+#._-]*) $/.test(txt) && w.dataset.type === 'p') {
-        var lang = txt.slice(3).trim();
+        var lang = normLang(txt.slice(3).trim());
         var cb = convert(w, 'code', { text: '', lang: lang });
         focusBlock(cb, 'start');
       }
@@ -888,6 +1062,186 @@
       floating = { kind: 'block', node: menu, close: function () { menu.remove(); w.classList.remove('menu-open'); } };
     }
 
+    // ─── rearranging by drag (within this page) ───
+    var dropLine = el('div', 'nt-dropline');
+    page.appendChild(dropLine);
+    /**
+     * For the host's drag: while the pointer is over this page's blocks, show
+     * where the dragged blocks would land; dropping moves them there. Over
+     * anything else the host takes over (chat, terminal, another page).
+     */
+    function reorderer(getMoving) {
+      var spot = null;
+      function clear() { spot = null; dropLine.style.display = 'none'; }
+      return {
+        preview: function (x, y) {
+          var hit = document.elementFromPoint(x, y);
+          if (!hit || !page.contains(hit)) { clear(); return false; }
+          var moving = getMoving();
+          var arr = blocksArr().filter(function (b) { return moving.indexOf(b) < 0; });
+          if (!arr.length) { clear(); return false; }
+          var ref = null, before = true;
+          for (var i = 0; i < arr.length; i++) {
+            var r = arr[i].getBoundingClientRect();
+            if (y < r.top + r.height / 2) { ref = arr[i]; before = true; break; }
+            ref = arr[i]; before = false;
+          }
+          spot = { ref: ref, before: before };
+          var rr = ref.getBoundingClientRect(), pr = page.getBoundingClientRect();
+          dropLine.style.top = ((before ? rr.top : rr.bottom) - pr.top) + 'px';
+          dropLine.style.display = 'block';
+          return true;
+        },
+        drop: function () {
+          if (!spot) return;
+          var moving = getMoving(), anchor = spot.before ? spot.ref : spot.ref.nextSibling;
+          moving.forEach(function (b) {
+            // CodeMirror survives being moved; nothing to rebuild.
+            if (anchor && anchor !== dropLine) list.insertBefore(b, anchor); else list.appendChild(b);
+          });
+          clear(); renumber(); changed();
+        },
+        clear: clear,
+      };
+    }
+
+    // ─── selection across blocks ───
+    var selAnchor = null, selFocus = null;       // blocks at the two ends of a block selection
+    function blocksArr() { return Array.prototype.slice.call(list.children); }
+    function selectedBlocks() { return blocksArr().filter(function (b) { return b.classList.contains('bsel'); }); }
+    function setBlockSel(a, f) {
+      selAnchor = a; selFocus = f;
+      var arr = blocksArr(), i = arr.indexOf(a), j = arr.indexOf(f);
+      if (i < 0 || j < 0) { clearBlockSel(); return; }
+      var lo = Math.min(i, j), hi = Math.max(i, j);
+      arr.forEach(function (b, k) { b.classList.toggle('bsel', k >= lo && k <= hi); });
+      var s = window.getSelection(); if (s.rangeCount) s.removeAllRanges();
+      if (document.activeElement && root.contains(document.activeElement) && document.activeElement !== root) document.activeElement.blur();
+      root.classList.add('nt-blockmode');
+      root.focus({ preventScroll: true });
+      closeFloating();
+      showSelbar();
+    }
+    function clearBlockSel() {
+      selAnchor = selFocus = null;
+      blocksArr().forEach(function (b) { b.classList.remove('bsel'); });
+      root.classList.remove('nt-blockmode');
+      showSelbar();
+    }
+    function textSelection() {
+      var s = window.getSelection();
+      if (!s.rangeCount || s.isCollapsed) return null;
+      var r = s.getRangeAt(0);
+      return page.contains(r.commonAncestorContainer) ? r : null;
+    }
+    function showSelbar() {
+      var n = selectedBlocks().length;
+      var r = n ? null : textSelection();
+      if (!n && !r) { selbar.classList.remove('on'); return; }
+      selCnt.textContent = n ? (n === 1 ? '1 block selected' : n + ' blocks selected') : 'Text selected';
+      bDel.style.display = n ? '' : 'none';
+      selbar.classList.add('on');
+    }
+    /** Markdown of whatever is selected: whole blocks, or the selected text. */
+    function selectionMarkdown() {
+      var bs = selectedBlocks();
+      if (bs.length) return toMarkdown(bs.map(readBlock));
+      var r = textSelection();
+      if (!r) return '';
+      var box = el('div'); box.appendChild(r.cloneContents());
+      return inlineMd(box.innerHTML).trim();
+    }
+    function copySelection() {
+      var md = selectionMarkdown();
+      if (!md) return;
+      (navigator.clipboard ? navigator.clipboard.writeText(md) : Promise.reject()).then(function () { toast('Copied as Markdown'); }, function () { toast('Could not copy', 'error'); });
+    }
+    function selectAllBlocks() { var arr = blocksArr(); if (arr.length) setBlockSel(arr[0], arr[arr.length - 1]); }
+    function deleteSelected() {
+      var bs = selectedBlocks(); if (!bs.length) return;
+      var before = bs[0].previousElementSibling, after = bs[bs.length - 1].nextElementSibling;
+      bs.forEach(function (b) { destroyCode(b); b.remove(); });
+      clearBlockSel();
+      if (!list.children.length) list.appendChild(blockEl({ id: genId(), type: 'p', text: '' }));
+      renumber(); changed();
+      focusBlock(before || after || list.firstElementChild, before ? 'end' : 'start');
+    }
+    // Ctrl+Shift+A anywhere in the panel (text, title, code, or with blocks
+    // selected) takes the whole page. Captured before CodeMirror sees it.
+    root.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); e.stopPropagation(); selectAllBlocks(); }
+    }, true);
+    var hintAt = 0;
+    function hintSelectAll() {
+      if (Date.now() - hintAt < 8000) return;
+      hintAt = Date.now();
+      toast(MOD + '+A selects this block\u2019s text. ' + MOD + '+Shift+A selects the whole page.');
+    }
+    title.addEventListener('keydown', function (e) { if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'a') hintSelectAll(); });
+    bCopy.addEventListener('click', copySelection);
+    bAll.addEventListener('click', selectAllBlocks);
+    bDel.addEventListener('click', deleteSelected);
+    bClr.addEventListener('click', function () { clearBlockSel(); var s = window.getSelection(); if (s.rangeCount) s.removeAllRanges(); showSelbar(); });
+    if (opts.dragBlock) opts.dragBlock(selGripWrap, selGrip, selectionMarkdown, {
+      // Only whole blocks can be moved; selected text just goes out as Markdown.
+      preview: function (x, y) { return selectedBlocks().length ? selReorder.preview(x, y) : false; },
+      drop: function () { selReorder.drop(); }, clear: function () { selReorder.clear(); },
+    });
+    var selReorder = reorderer(selectedBlocks);
+
+    // Dragging from one block into another selects blocks, not text.
+    var press = null;
+    list.addEventListener('mousedown', function (e) {
+      if (e.button !== 0 || (e.target.closest && e.target.closest('.nt-gutter'))) return;
+      var b = e.target.closest && e.target.closest('.nt-block');
+      if (!b) return;
+      if (e.shiftKey) {
+        var from = selAnchor || (document.activeElement && document.activeElement.closest && document.activeElement.closest('.nt-block'));
+        if (from && from !== b && list.contains(from)) { e.preventDefault(); setBlockSel(from, b); return; }
+      }
+      if (selectedBlocks().length) clearBlockSel();
+      press = { block: b, moved: false };
+    });
+    function onMove(e) {
+      if (!press || !(e.buttons & 1)) return;
+      var under = document.elementFromPoint(e.clientX, e.clientY);
+      var b = under && under.closest && under.closest('.nt-block');
+      if (!b || !list.contains(b)) return;
+      if (b !== press.block || press.moved) {
+        press.moved = true;
+        root.classList.add('nt-dragsel');
+        setBlockSel(press.block, b);
+      }
+    }
+    function onUp() { press = null; root.classList.remove('nt-dragsel'); }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    function onSelChange() { if (!selectedBlocks().length) showSelbar(); }
+    document.addEventListener('selectionchange', onSelChange);
+    // Back to typing in a block (by any means) ends a block selection.
+    list.addEventListener('focusin', function () { if (selectedBlocks().length && !press) clearBlockSel(); });
+
+    // Keys while blocks are selected (focus sits on the root then).
+    root.addEventListener('keydown', function (e) {
+      if (e.target !== root || !selectedBlocks().length) return;
+      var arr = blocksArr();
+      if (e.key === 'Escape') { e.preventDefault(); var f = selFocus; clearBlockSel(); focusBlock(f, 'end'); }
+      else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); deleteSelected(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); selectAllBlocks(); }   // nothing narrower to select here
+      else if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        var k = arr.indexOf(selFocus) + (e.key === 'ArrowUp' ? -1 : 1);
+        if (k >= 0 && k < arr.length) setBlockSel(selAnchor, arr[k]);
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        var tgt = e.key === 'ArrowUp' ? selectedBlocks()[0] : selectedBlocks().slice(-1)[0];
+        clearBlockSel(); focusBlock(tgt, e.key === 'ArrowUp' ? 'start' : 'end');
+      } else if (e.key === 'Enter') { e.preventDefault(); var t2 = selFocus; clearBlockSel(); focusBlock(t2, 'end'); }
+    });
+    document.addEventListener('mousedown', onDocDown, true);
+    function onDocDown(e) { if (selectedBlocks().length && !root.contains(e.target) && !(floating && floating.node && floating.node.contains(e.target))) clearBlockSel(); }
+
     // ─── title ───
     title.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); focusBlock(list.firstElementChild, 'start'); }
@@ -988,6 +1342,11 @@
         flush();
         destroyed = true;
         closeFloating();
+        destroyCodeIn(list);
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('selectionchange', onSelChange);
+        document.removeEventListener('mousedown', onDocDown, true);
         window.removeEventListener('beforeunload', flush);
         clearTimeout(saveTimer);
         root.remove();
@@ -1164,5 +1523,52 @@
     };
   }
 
-  window.CrundiNotes = { mountEditor: mountEditor, mountPicker: mountPicker, mountManager: mountManager, sanitize: sanitize, toMarkdown: toMarkdown };
+  // ─── Dropping text from elsewhere (a file path, a subtask, a block) ───
+  // While something is dragged over a page, the caret follows the pointer, so
+  // you can see where it will land; dropping types it in there.
+  function dropSpot(x, y) {
+    var hit = document.elementFromPoint(x, y);
+    if (!hit || !hit.closest || !hit.closest('.nt-root')) return null;
+    var cm = hit.closest('.cm-editor');
+    if (cm) {
+      var w = cm.closest('.nt-block');
+      var view = w && w._cm && w._cm.view;
+      if (!view) return null;
+      var pos = view.posAtCoords({ x: x, y: y });
+      return { cm: view, pos: pos == null ? view.state.doc.length : pos };
+    }
+    var ce = hit.closest('[contenteditable="true"]');
+    if (!ce) return null;
+    var r = null;
+    if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(x, y);
+    else if (document.caretPositionFromPoint) { var cp = document.caretPositionFromPoint(x, y); if (cp) { r = document.createRange(); r.setStart(cp.offsetNode, cp.offset); r.collapse(true); } }
+    if (!r || !ce.contains(r.startContainer)) { r = document.createRange(); r.selectNodeContents(ce); r.collapse(false); }
+    return { ce: ce, range: r };
+  }
+  function dropPreview(x, y) {
+    var spot = dropSpot(x, y);
+    if (!spot) return false;
+    if (spot.cm) { spot.cm.focus(); spot.cm.dispatch({ selection: { anchor: spot.pos } }); return true; }
+    spot.ce.focus({ preventScroll: true });
+    var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(spot.range);
+    return true;
+  }
+  function dropText(x, y, text) {
+    var spot = dropSpot(x, y);
+    if (!spot || !text) return false;
+    if (spot.cm) {
+      spot.cm.focus();
+      spot.cm.dispatch({ changes: { from: spot.pos, insert: text }, selection: { anchor: spot.pos + text.length } });
+      return true;
+    }
+    spot.ce.focus({ preventScroll: true });
+    var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(spot.range);
+    // Typed like keyboard input: the page's own input handling saves it.
+    var before = spot.range.startContainer.nodeType === 3 ? spot.range.startContainer.nodeValue.charAt(spot.range.startOffset - 1) : '';
+    var pad = before && !/\s/.test(before) ? ' ' : '';
+    document.execCommand('insertText', false, pad + text + ' ');
+    return true;
+  }
+
+  window.CrundiNotes = { mountEditor: mountEditor, mountPicker: mountPicker, mountManager: mountManager, sanitize: sanitize, toMarkdown: toMarkdown, dropPreview: dropPreview, dropText: dropText };
 })();
