@@ -1309,6 +1309,12 @@ export function getWebappHtml(botUsername) {
 
     /* ─── Tab Panels ─── */
     .tab-panel { display: none; flex: 1; overflow: auto; }
+    /* Notes: the tab and the panes host crundi-notes.js, which scrolls itself. */
+    .notes-tab { overflow: hidden; }
+    .nt-tabbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex: none; }
+    .nt-tabbar-t { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); }
+    .nt-tabhost { flex: 1; min-height: 0; }
+    .wb-cell-body.nt-cell-body { overflow: hidden; }
     .tab-panel.visible { display: flex; flex-direction: column; }
 
     /* ─── Services Panel ─── */
@@ -3096,6 +3102,7 @@ export function getWebappHtml(botUsername) {
           <button class="tab-btn" data-tab="git" title="Git"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span class="tab-label">Git</span></button>
           <button class="tab-btn" data-tab="files" title="Files"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="tab-label">Files</span></button>
           <button class="tab-btn" data-tab="kanban" title="Kanban"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg><span class="tab-label">Kanban</span></button>
+          <button class="tab-btn" data-tab="notes" title="Notes"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg><span class="tab-label">Notes</span></button>
           <button class="tab-btn" data-tab="mindmap" title="Mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span class="tab-label">Mindmap</span></button>
           <button class="tab-btn" data-tab="media" title="Media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg><span class="tab-label">Media</span></button>
           <button class="tab-btn" data-tab="schedule" title="Schedule"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg><span class="tab-label">Schedule</span></button>
@@ -3111,6 +3118,7 @@ export function getWebappHtml(botUsername) {
           <button data-action="wb-add" data-kind="files"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg> Files</button>
           <button data-action="wb-add" data-kind="git"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg> Git</button>
           <button data-action="wb-add" data-kind="kanban"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Kanban</button>
+          <button data-action="wb-add" data-kind="notes"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg> Notes</button>
           <button data-action="wb-add" data-kind="mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Mindmap</button>
           <button data-action="wb-add" data-kind="media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg> Media</button>
           <button data-action="wb-add" data-kind="browser"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Browser</button>
@@ -3173,6 +3181,7 @@ export function getWebappHtml(botUsername) {
         <div class="git-panel tab-panel" id="git-panel" data-panel="git"></div>
         <div class="files-panel tab-panel" id="files-panel" data-panel="files"></div>
         <div class="kanban-panel tab-panel" id="kanban-panel" data-panel="kanban"></div>
+        <div class="notes-tab tab-panel" id="notes-panel" data-panel="notes"></div>
         <div class="secrets-panel tab-panel" id="secrets-panel" data-panel="secrets"></div>
         <div class="mindmap-panel tab-panel" id="mindmap-panel" data-panel="mindmap"></div>
         <div class="media-panel tab-panel" id="media-panel" data-panel="media"></div>
@@ -3365,6 +3374,7 @@ export function getWebappHtml(botUsername) {
   <script src="/vendor/addon-fit.js?v=${vendorTag('addon-fit.js')}"><\/script>
   <script src="/vendor/codemirror.js?v=${vendorTag('codemirror.js')}"><\/script>
   <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
+  <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script>
   (function() {
     'use strict';
@@ -4030,6 +4040,7 @@ export function getWebappHtml(botUsername) {
 
     // ─── Flat icon set (stroke icons, inherit currentColor) ───
     const ICON_PATHS = {
+      note: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
       more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
       pin: '<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24z"/>',
       menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
@@ -5559,6 +5570,7 @@ export function getWebappHtml(botUsername) {
 
       // Mount xterm / the chat view for newly built live cells AFTER they're
       // attached to the DOM (both measure their container on mount).
+      mountNotesCells();
       for (const [d, el] of newLive) {
         if (d.type === 'chat') mountChat(d.t, el);
         else if (d.type === 'parked') mountParked(d.t, el);
@@ -5713,7 +5725,7 @@ export function getWebappHtml(botUsername) {
       const chip = (kind, icon, label) =>
         '<button class="me-chip" data-action="wb-add" data-kind="' + kind + '" title="Add ' + label + '">'
         + ic(icon) + '<span>' + label + '</span></button>';
-      const chips = Object.keys(WB_KIND_META).filter(k => !open.has(k))
+      const chips = Object.keys(WB_KIND_META).filter(k => !open.has(k) || k === 'notes')
         .map(k => chip(k, WB_KIND_META[k].icon, WB_KIND_META[k].label)).join('');
       return '<div class="mosaic-empty" data-leaf-drop="' + id + '">'
         + '<div class="me-msg">Drop a panel here or launch a new one</div>'
@@ -5789,8 +5801,9 @@ export function getWebappHtml(botUsername) {
       } else if (d.type === 'panel') {
         el.classList.add('wb-cell');
         el.dataset.wbid = d.cell.id;
-        head.innerHTML = headHtmlPanel(d.cell);
+        head.innerHTML = d.cell.kind === 'notes' ? headHtmlNotes(d.cell) : headHtmlPanel(d.cell);
         body.classList.add('wb-cell-body');
+        if (d.cell.kind === 'notes') body.classList.add('nt-cell-body');
         body.dataset.wb = d.cell.id;
         // The real tab-panel node is moved in by embedWbPanels().
       } else {
@@ -5847,6 +5860,23 @@ export function getWebappHtml(botUsername) {
       });
     }
 
+    // A path clicked in a chat opens in the file viewer, the same as from the
+    // Files panel. Absolute paths open in the project that holds them (or as an
+    // absolute path, which the owner may read anywhere); relative ones are
+    // relative to the chat's project. A trailing :line(:col) is dropped.
+    function openPathFromChat(chatProject, raw) {
+      const p = String(raw || '').trim().replace(/:\\d+(:\\d+)?$/, '').replace(/^\\.\\//, '');
+      if (!p) return;
+      if (p.startsWith('/')) {
+        const owner = projects
+          .filter(x => x.path && (p === x.path || p.startsWith(String(x.path).replace(/\\/+$/, '') + '/')))
+          .sort((a, b) => b.path.length - a.path.length)[0];
+        if (owner) return feOpen(owner.alias, p.slice(String(owner.path).replace(/\\/+$/, '').length + 1));
+        return feOpen(chatProject || currentProject, p);
+      }
+      return feOpen(chatProject || currentProject, p);
+    }
+
     // Mount the Claude chat renderer (served from /vendor/claude-chat.js) into a
     // freshly built cell. The view owns everything below the header; we only
     // hand it the auth-aware fetch and the shared WebSocket.
@@ -5865,6 +5895,7 @@ export function getWebappHtml(botUsername) {
         toast,
         wsSend: (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
         onChatMeta: (patch) => applyChatMeta(t.id, patch),
+        openPath: (p) => openPathFromChat(t.project, p),
       });
       chatViews.set(t.id, view);
       cellEl.style.setProperty('--cc-fs', String(cellFont(t.id, 'chat') / CHAT_FONT_BASE));
@@ -5874,6 +5905,7 @@ export function getWebappHtml(botUsername) {
       files: { icon: 'folder', label: 'Files' },
       git: { icon: 'git-branch', label: 'Git' },
       kanban: { icon: 'kanban', label: 'Kanban' },
+      notes: { icon: 'note', label: 'Notes' },
       mindmap: { icon: 'mindmap', label: 'Mindmap' },
       media: { icon: 'images', label: 'Media' },
       browser: { icon: 'globe', label: 'Browser' },
@@ -5883,6 +5915,142 @@ export function getWebappHtml(botUsername) {
     function pinBtnHtml() {
       return '<button class="term-font-btn pane-pin" data-action="pane-pin" title="Pin size and position">' + ic('pin') + '</button>';
     }
+    function headHtmlNotes(cell) {
+      return '<span class="term-drag" title="Drag to reorder">\u22ee\u22ee</span>'
+        + '<span class="wb-head-ic">' + ic('note') + '</span>'
+        + '<span class="term-title" style="cursor:default;" data-nt-title="' + cell.id + '">' + escHtml(cell.pageId ? (cell.title || 'Untitled') : 'Notes') + '</span>'
+        + '<span class="term-head-spacer"></span>'
+        + (cell.pageId ? '<button class="term-font-btn" data-action="notes-switch" data-wbid="' + cell.id + '" title="Open another page here">Pages</button>' : '')
+        + '<button class="term-font-btn" data-action="notes-font" data-dir="-1" title="Smaller text (all notes)">A-</button>'
+        + '<button class="term-font-btn" data-action="notes-font" data-dir="0" title="Reset text size">' + ic('rotate-ccw') + '</button>'
+        + '<button class="term-font-btn" data-action="notes-font" data-dir="1" title="Larger text (all notes)">A+</button>'
+        + pinBtnHtml()
+        + '<button class="term-head-btn term-close" data-action="wb-close" data-wbid="' + cell.id + '" title="Close panel">\u00d7</button>';
+    }
+
+    // ─── Notes (app/vendor/crundi-notes.js) ───
+    // Panes in the workbench (one page each) and the Notes tab (every page).
+    // A page is open in one place at a time; the text size is shared by all.
+    const NOTES_FONT_BASE = 15;
+    let notesFont = parseInt(localStorage.getItem('crundi_notes_font') || '', 10) || NOTES_FONT_BASE;
+    function applyNotesFont() { document.documentElement.style.setProperty('--nt-fs', String(notesFont / NOTES_FONT_BASE)); }
+    applyNotesFont();
+    function setNotesFont(dir) {
+      notesFont = dir === 0 ? NOTES_FONT_BASE : Math.max(11, Math.min(26, notesFont + (dir < 0 ? -1 : 1)));
+      if (notesFont === NOTES_FONT_BASE) localStorage.removeItem('crundi_notes_font');
+      else localStorage.setItem('crundi_notes_font', String(notesFont));
+      applyNotesFont();
+    }
+    const notesClientId = Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    const notesViews = new Map();      // wbid -> { kind: 'picker'|'editor', view, body, pageId }
+    const notesFresh = new Set();      // wbids whose page was just created: put the caret in the title
+    let notesTab = null;               // { project, mgr } while the Notes tab is showing
+
+    /** Pages open somewhere else, keyed by id. */
+    function notesBusyIds(exceptWbid, includeTab) {
+      const out = {};
+      for (const c of wbCells) if (c.kind === 'notes' && c.pageId && c.id !== exceptWbid) out[c.pageId] = true;
+      if (includeTab && notesTab && notesTab.mgr && notesTab.mgr.currentId) out[notesTab.mgr.currentId] = true;
+      return out;
+    }
+    function setNotesCellTitle(wbid, title) {
+      const cell = wbCells.find(c => c.id === wbid);
+      if (cell) { cell.title = title || ''; persistWbState(); }
+      const t = document.querySelector('[data-nt-title="' + wbid + '"]');
+      if (t) t.textContent = cell && cell.pageId ? (title || 'Untitled') : 'Notes';
+    }
+    // Dragging a block's grip onto a chat or terminal sends it as Markdown.
+    function notesDragBlock(blockEl, grip, getMarkdown) {
+      let target = null;
+      makeDraggable(blockEl, {
+        handle: grip,
+        onMove: (x, y) => { target = wbDropTargetAt(x, y); document.body.classList.toggle('wb-drag-armed', !!target); },
+        onEnd: (commit) => {
+          document.body.classList.remove('wb-drag-armed');
+          if (commit && target) insertRefToTarget(target, getMarkdown());
+          target = null;
+        },
+      });
+    }
+    function notesCommon() { return { project: currentProject, apiFetch, toast, clientId: notesClientId, dragBlock: notesDragBlock }; }
+    function mountNotesCell(cell, body) {
+      const prev = notesViews.get(cell.id);
+      if (prev && prev.body === body && prev.pageId === (cell.pageId || null)) return;
+      if (prev) { try { prev.view.destroy(); } catch { /* ignore */ } notesViews.delete(cell.id); }
+      body.innerHTML = '';
+      if (!window.CrundiNotes) { body.innerHTML = '<div class="kanban-empty">Notes did not load. Reload the page.</div>'; return; }
+      if (cell.pageId) {
+        const view = window.CrundiNotes.mountEditor(body, Object.assign(notesCommon(), {
+          pageId: cell.pageId, focus: notesFresh.delete(cell.id),
+          onTitle: (t) => setNotesCellTitle(cell.id, t),
+          onMissing: () => { cell.pageId = null; persistWbState(); renderNotesCellHead(cell); mountNotesCell(cell, body); },
+        }));
+        notesViews.set(cell.id, { kind: 'editor', view, body, pageId: cell.pageId });
+      } else {
+        const view = window.CrundiNotes.mountPicker(body, Object.assign(notesCommon(), {
+          busyIds: () => notesBusyIds(cell.id, true),
+          onPick: (id, title, fresh) => {
+            if (notesBusyIds(cell.id, true)[id]) { toast('That page is open in another pane', 'error'); return; }
+            cell.pageId = id; cell.title = title || '';
+            if (fresh) notesFresh.add(cell.id);
+            persistWbState(); renderNotesCellHead(cell); mountNotesCell(cell, body); refreshNotesPickers();
+          },
+        }));
+        notesViews.set(cell.id, { kind: 'picker', view, body, pageId: null });
+      }
+    }
+    function renderNotesCellHead(cell) {
+      const head = document.querySelector('.term-cell[data-wbid="' + cell.id + '"] .term-head');
+      if (head) head.innerHTML = headHtmlNotes(cell);
+    }
+    function mountNotesCells() {
+      for (const c of wbCells) {
+        if (c.kind !== 'notes') continue;
+        const body = document.querySelector('.wb-cell-body[data-wb="' + c.id + '"]');
+        if (body) mountNotesCell(c, body);
+      }
+    }
+    function refreshNotesPickers() {
+      notesViews.forEach(v => { if (v.kind === 'picker') { try { v.view.redraw(); } catch { /* ignore */ } } });
+      if (notesTab && notesTab.mgr) notesTab.mgr.redraw();
+    }
+    // "Pages" in a pane's header: back to the picker (the page stays as it is).
+    function notesSwitchPage(wbid) {
+      const cell = wbCells.find(c => c.id === wbid); if (!cell) return;
+      cell.pageId = null; cell.title = '';
+      persistWbState(); renderNotesCellHead(cell);
+      const body = document.querySelector('.wb-cell-body[data-wb="' + wbid + '"]');
+      if (body) mountNotesCell(cell, body);
+      refreshNotesPickers();
+    }
+    function loadNotesTab() {
+      const panel = document.getElementById('notes-panel');
+      if (!panel) return;
+      if (!currentProject) { closeNotesTab(); panel.innerHTML = '<div class="kanban-empty">Select a project to see its notes.</div>'; return; }
+      if (notesTab && notesTab.project === currentProject) return;
+      closeNotesTab();
+      if (!window.CrundiNotes) { panel.innerHTML = '<div class="kanban-empty">Notes did not load. Reload the page.</div>'; return; }
+      panel.innerHTML = '<div class="nt-tabbar"><span class="nt-tabbar-t">Notes</span><span class="term-head-spacer"></span>'
+        + '<button class="term-font-btn" data-action="notes-font" data-dir="-1" title="Smaller text (all notes)">A-</button>'
+        + '<button class="term-font-btn" data-action="notes-font" data-dir="0" title="Reset text size">' + ic('rotate-ccw') + '</button>'
+        + '<button class="term-font-btn" data-action="notes-font" data-dir="1" title="Larger text (all notes)">A+</button></div>'
+        + '<div class="nt-tabhost"></div>';
+      const key = 'crundi_notes_last_' + currentProject;
+      const mgr = window.CrundiNotes.mountManager(panel.querySelector('.nt-tabhost'), Object.assign(notesCommon(), {
+        initialPageId: (() => { const id = localStorage.getItem(key); return id && !notesBusyIds(null, false)[id] ? id : null; })(),
+        busyIds: () => notesBusyIds(null, false),
+        onCurrent: (id) => { try { localStorage.setItem(key, id); } catch { /* ignore */ } },
+      }));
+      notesTab = { project: currentProject, mgr };
+    }
+    // Leaving the tab closes its page (saving it first), so the tab never
+    // holds a page out of a workbench pane while it is not even on screen.
+    function closeNotesTab() {
+      if (notesTab && notesTab.mgr) { try { notesTab.mgr.destroy(); } catch { /* ignore */ } }
+      notesTab = null;
+      refreshNotesPickers();
+    }
+
     function headHtmlPanel(cell) {
       const m = WB_KIND_META[cell.kind] || { icon: 'file', label: cell.kind };
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
@@ -6203,6 +6371,8 @@ export function getWebappHtml(botUsername) {
 
     function destroyCell(cellEl) {
       const tid = cellEl.dataset.tid;
+      const nwb = cellEl.dataset.wbid;
+      if (nwb && notesViews.has(nwb)) { try { notesViews.get(nwb).view.destroy(); } catch { /* ignore */ } notesViews.delete(nwb); }
       if (tid && cellEl.dataset.ctype === 'parked' && parkedViews.has(tid)) {
         parkedViews.get(tid).dispose();
         parkedViews.delete(tid);
@@ -6250,6 +6420,7 @@ export function getWebappHtml(botUsername) {
       // panel node out of the tab the user is currently viewing.
       if (currentTab !== 'workbench') return;
       for (const c of wbCells) {
+        if (c.kind === 'notes') continue;   // its own editor: see mountNotesCells
         const body = document.querySelector('.wb-cell-body[data-wb="' + c.id + '"]');
         const node = document.getElementById(c.kind + '-panel');
         if (!body || !node) continue;
@@ -6265,9 +6436,10 @@ export function getWebappHtml(botUsername) {
       if (!WB_KIND_META[kind]) return;
       if (currentTab !== 'workbench') switchTab('workbench');
       syncWbStateProject();
-      const existing = wbCells.find(c => c.kind === kind);
+      // Notes panes are many (one page each); the other panels are one-offs.
+      const existing = kind !== 'notes' && wbCells.find(c => c.kind === kind);
       if (existing) { toast(WB_KIND_META[kind].label + ' is already in the workbench', ''); return; }
-      wbCells.push({ id: genLocalId(), kind });
+      wbCells.push(kind === 'notes' ? { id: genLocalId(), kind, pageId: null } : { id: genLocalId(), kind });
       persistWbState();
       renderTermGrid();
     }
@@ -6275,7 +6447,7 @@ export function getWebappHtml(botUsername) {
       const cell = wbCells.find(c => c.id === wbid);
       if (cell) {
         if (cell.kind === 'browser') brzPost('close');
-        const node = document.getElementById(cell.kind + '-panel');
+        const node = cell.kind === 'notes' ? null : document.getElementById(cell.kind + '-panel');
         const body = document.querySelector('.wb-cell-body[data-wb="' + wbid + '"]');
         if (node && body && node.parentNode === body) parkPanelNode(node);
       }
@@ -7142,7 +7314,10 @@ export function getWebappHtml(botUsername) {
       if (target.kind === 'term' && ws && ws.readyState === 1) {
         // Trailing space so the next token doesn't fuse onto the ref, then focus
         // the terminal so the user can keep typing right away.
-        ws.send(JSON.stringify({ type: 'input', id: target.id, data: ref + ' ' }));
+        // Several lines (a notes block) go as one bracketed paste, or the
+        // terminal would submit at the first newline.
+        const data = /\\n/.test(ref) ? '\\x1b[200~' + ref + '\\x1b[201~' : ref + ' ';
+        ws.send(JSON.stringify({ type: 'input', id: target.id, data }));
         focusedTermId = target.id;
         const v = termViews.get(target.id);
         if (v && v.term) { try { v.term.focus(); } catch { /* ignore */ } }
@@ -7628,6 +7803,12 @@ export function getWebappHtml(botUsername) {
         } catch { /* ignore */ }
       });
 
+      es.addEventListener('notes', (e) => {
+        let d; try { d = JSON.parse(e.data); } catch { return; }
+        if (!currentProject || d.project !== currentProject.toLowerCase()) return;
+        notesViews.forEach(v => { try { if (v.kind === 'editor') v.view.remoteChange(d); else v.view.reload(); } catch { /* ignore */ } });
+        if (notesTab && notesTab.mgr) notesTab.mgr.remoteChange(d);
+      });
       es.addEventListener('kanban', (e) => {
         try {
           const d = JSON.parse(e.data);
@@ -7908,6 +8089,7 @@ export function getWebappHtml(botUsername) {
       // toggle tab visibility (so the destination tab can show its panel). When
       // re-entering the Workbench tab, renderTermGrid() re-embeds them.
       parkWbPanels();
+      if (currentTab === 'notes' && tab !== 'notes') closeNotesTab();
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.tab-panel').forEach(p => p.classList.toggle('visible', p.dataset.panel === tab));
@@ -7918,6 +8100,7 @@ export function getWebappHtml(botUsername) {
       if (tab === 'git') loadGitInfo();
       if (tab === 'files') loadFiles();
       if (tab === 'kanban') loadKanban();
+      if (tab === 'notes') loadNotesTab();
       if (tab === 'secrets') loadSecrets();
       if (tab === 'mindmap') loadMindmap();
       if (tab === 'media') loadMedia();
@@ -11499,6 +11682,8 @@ export function getWebappHtml(botUsername) {
         case 'wb-add': { e.stopPropagation(); hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
         case 'wb-layout': { hideWbAddMenu(); mosaicApplyPreset(d.mlayout); break; }
         case 'wb-fit': { hideWbAddMenu(); mosaicFitToScreen(); break; }
+        case 'notes-font': { setNotesFont(parseInt(d.dir, 10) || 0); break; }
+        case 'notes-switch': { if (d.wbid) notesSwitchPage(d.wbid); break; }
         case 'pane-resume': { if (d.tid) resumePane(d.tid, actionEl); break; }
         case 'pane-pin': { if (actionEl) togglePanePin(actionEl); break; }
         case 'leaf-split': { e.stopPropagation(); const [id, dir] = (d.leaf || '').split('|'); setMosaic(mosaicSplitLeaf(currentMosaic(), id, dir)); renderTermGrid(); break; }

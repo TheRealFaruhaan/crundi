@@ -8,7 +8,7 @@
  *   4. Setup wizard for first-time .env configuration
  */
 
-import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification } from 'electron';
+import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell } from 'electron';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
@@ -133,6 +133,13 @@ function createWindow() {
       webviewTag: true, // interactive browser panel embeds <webview> overlays
     },
     show: false,
+  });
+
+  // Links that open a new window (chat, notes, release notes) go to the
+  // system browser, not a bare Electron window with none of its controls.
+  mainWindow.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (/^https?:\/\//i.test(u)) { shell.openExternal(u).catch(() => {}); }
+    return { action: 'deny' };
   });
 
   const htmlPath = join(__dirname, 'index.html');

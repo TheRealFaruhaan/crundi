@@ -44,7 +44,11 @@
     '.cc-assistant ul,.cc-assistant ol{margin:0 0 8px;padding-left:20px}',
     '.cc-assistant li{margin:2px 0}',
     '.cc-assistant h1,.cc-assistant h2,.cc-assistant h3{margin:12px 0 6px;font-size:calc(14px*var(--cc-fs,1));font-weight:650;color:var(--text-primary)}',
-    '.cc-assistant a{color:var(--accent-hover)}',
+    '.cc-assistant a,.cc-user-body a{color:var(--accent-hover);text-decoration:underline;text-underline-offset:2px;word-break:break-all}',
+    '.cc-user-body a{color:inherit}',
+    // A path the host can open: dotted underline, so it reads as a file, not a web link.
+    '.cc-path{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;word-break:break-all}',
+    '.cc-path:hover{color:var(--accent-hover);text-decoration-style:solid}',
     '.cc-assistant code{font-family:var(--mono);font-size:calc(12px*var(--cc-fs,1));background:var(--bg-tertiary,rgba(255,255,255,.06));padding:1px 5px;border-radius:4px}',
     '.cc-assistant pre{margin:0 0 8px;background:var(--bg-secondary,#111119);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:9px 11px;overflow-x:auto}',
     '.cc-assistant pre code{background:none;padding:0;font-size:calc(12px*var(--cc-fs,1));line-height:1.5}',
@@ -419,11 +423,48 @@
   }
 
   function inline(s) {
-    return s
-      .replace(/`([^`]+)`/g, function (m, c) { return '<code>' + c + '</code>'; })
+    // Code spans and [text](url) links are set aside first, so a URL inside
+    // either is not linked a second time; bare URLs are linked after.
+    var held = [];
+    var hold = function (html) { held.push(html); return '\u0001' + (held.length - 1) + '\u0001'; };
+    s = s
+      .replace(/`([^`]+)`/g, function (m, c) { return hold(looksLikePath(c) ? '<code class="cc-path" data-path="' + c + '" title="Open ' + c + '">' + c + '</code>' : '<code>' + c + '</code>'); })
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, function (m, t, u) { return hold('<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + t + '</a>'); })
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    s = linkify(s);
+    return s.replace(/\u0001(\d+)\u0001/g, function (m, i) { return held[+i]; });
+  }
+
+  /**
+   * In already-escaped text: absolute file paths become openable links (the
+   * host opens them in its file viewer), and bare http(s) URLs become links.
+   * Trailing punctuation stays outside either, so "see https://x.com." links
+   * x.com and "in /a/b.js:12," opens /a/b.js.
+   */
+  function linkify(escaped) {
+    var held = [];
+    var hold = function (html) { held.push(html); return '\u0002' + (held.length - 1) + '\u0002'; };
+    var trim = function (u) { var m = u.match(/(?:[.,;:!?)\]'"]|&#39;|&quot;|&gt;)+$/); return m ? [u.slice(0, -m[0].length), m[0]] : [u, '']; };
+    var out = String(escaped).replace(/\bhttps?:\/\/[^\s<\u0001\u0002]+/g, function (u) {
+      var t = trim(u);
+      if (!t[0]) return t[1];
+      return hold('<a href="' + t[0] + '" target="_blank" rel="noopener noreferrer">' + t[0] + '</a>') + t[1];
+    });
+    out = out.replace(/(^|[\s(\[>]|&quot;|&#39;)(\/(?:[\w.@+~%,=-]+\/)+[\w.@+~%,=-]+(?::\d+(?::\d+)?)?)/g, function (m, pre, pth) {
+      var t = trim(pth);
+      return pre + hold('<a class="cc-path" data-path="' + t[0] + '" title="Open ' + t[0] + '">' + t[0] + '</a>') + t[1];
+    });
+    return out.replace(/\u0002(\d+)\u0002/g, function (m, i) { return held[+i]; });
+  }
+
+  /** A code span that is just a file path (src/a.js, ./x/y.md, /etc/z) is openable. */
+  function looksLikePath(c) {
+    if (!c || c.length > 260 || /\s/.test(c) || /^https?:/.test(c) || /[<>&*|$`]/.test(c)) return false;
+    var bare = c.replace(/:\d+(:\d+)?$/, '');
+    if (/^(\.{0,2}\/)?[\w.@+~-]+(\/[\w.@+~-]+)+$/.test(bare)) return true;
+    // A bare name only with a real file extension, so obj.prop is left alone.
+    return /^[\w-][\w.@+~-]*\.(js|mjs|cjs|ts|tsx|jsx|json|md|txt|log|py|sh|bash|yml|yaml|toml|ini|conf|cfg|env|html|htm|css|scss|xml|svg|png|jpe?g|gif|webp|pdf|csv|sql|go|rs|rb|php|java|kt|swift|c|h|cc|cpp|hpp|vue|lock|dockerfile|service)$/i.test(bare);
   }
 
   function shortPath(p) {
@@ -587,6 +628,7 @@
     var project = opts.project || '';
     var apiFetch = opts.apiFetch;
     var apiUpload = opts.apiUpload || null;   // absent in older hosts
+    var openPath = opts.openPath || null;      // host opens a file path in its viewer
     var wsSend = opts.wsSend || function () {};
 
     var root = el('div', 'cc-root');
@@ -720,6 +762,13 @@
     root.appendChild(goalBar);
     root.appendChild(composer);
     host.appendChild(root);
+    // A file path in any message opens in the host's file viewer.
+    root.addEventListener('click', function (e) {
+      var pth = e.target.closest && e.target.closest('.cc-path');
+      if (!pth || !openPath) return;
+      e.preventDefault();
+      openPath(pth.getAttribute('data-path'));
+    });
 
     var entries = new Map();   // entry id -> { data, node }
     var plan = null;           // { text, filePath, at, status } from ExitPlanMode
@@ -968,7 +1017,7 @@
           if (e.by === 'owner') w.appendChild(el('div', 'cc-user-by', 'Owner'));
           // Crundi posting the output of a command the owner ran.
           if (e.by === 'system') w.appendChild(el('div', 'cc-user-by', 'Crundi'));
-          w.appendChild(el('div', 'cc-user-body', esc(e.text)));
+          w.appendChild(el('div', 'cc-user-body', linkify(esc(e.text))));
           node.appendChild(w);
           break;
         }
@@ -1814,10 +1863,17 @@
       return btoa(bin);
     }
 
+    // An attachment's path goes in where the caret is (or replaces a
+    // selection), spaced from its neighbours — not on the end of the message.
     function insertPath(p) {
       var v = input.value;
-      var pad = (!v || /\s$/.test(v)) ? '' : ' ';
-      input.value = v + pad + p + ' ';
+      var a = typeof input.selectionStart === 'number' ? input.selectionStart : v.length;
+      var b = typeof input.selectionEnd === 'number' ? input.selectionEnd : v.length;
+      var before = v.slice(0, a), after = v.slice(b);
+      var ins = ((before && !/\s$/.test(before)) ? ' ' : '') + p + ((after && /^\s/.test(after)) ? '' : ' ');
+      input.value = before + ins + after;
+      var caret = before.length + ins.length;
+      try { input.setSelectionRange(caret, caret); } catch (e) {}
       saveDraft();
       autoGrow();
       input.focus();

@@ -41,6 +41,7 @@ import { listProjects, getProject as getProjectUnscoped, registerProject, remove
 import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
+import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
 import * as media from './media-store.js';
@@ -1403,6 +1404,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     broadcastSSE('kanban', { project: String(projectAlias || '').toLowerCase() });
   }
 
+  // Notes: lists refresh, and an editor on another device can reload a page it
+  // has not touched since. `by` lets the saving client ignore its own echo.
+  function broadcastNotes(projectAlias, info = {}) {
+    broadcastSSE('notes', { project: String(projectAlias || '').toLowerCase(), ...info });
+  }
+
   // ─── Mindmap live updates ───
   function broadcastMindmap() {
     broadcastSSE('mindmap', {});
@@ -2491,6 +2498,35 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         default: return json(res, { ok: false, error: `Unknown kanban action: ${action}` }, 400);
       }
       if (result.ok) broadcastKanban(project);
+      return json(res, result);
+    }
+
+    // ─── Notes (per project) ───
+    if (path === '/api/notes' && req.method === 'GET') {
+      const project = url.searchParams.get('project');
+      if (!project) return json(res, { ok: false, error: 'project is required' }, 400);
+      return json(res, { ok: true, pages: notes.listPages(project, { includeDeleted: url.searchParams.get('includeDeleted') === '1' }) });
+    }
+    if (path === '/api/notes/page' && req.method === 'GET') {
+      const project = url.searchParams.get('project');
+      if (!project) return json(res, { ok: false, error: 'project is required' }, 400);
+      return json(res, notes.getPage(project, url.searchParams.get('id')));
+    }
+    if (path === '/api/notes' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const { action, project, id } = body;
+      if (!project) return json(res, { ok: false, error: 'project is required' }, 400);
+      if (aliasDenied(project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
+      let result;
+      switch (action) {
+        case 'create': result = notes.createPage(project, { title: body.title, blocks: body.blocks }); break;
+        case 'save': result = notes.savePage(project, id, { title: body.title, blocks: body.blocks, baseVersion: body.baseVersion }); break;
+        case 'delete': result = notes.deletePage(project, id); break;
+        case 'restore': result = notes.restorePage(project, id); break;
+        case 'purge': result = notes.purgePage(project, id); break;
+        default: return json(res, { ok: false, error: `Unknown notes action: ${action}` }, 400);
+      }
+      if (result.ok) broadcastNotes(project, { id: id || (result.page && result.page.id), action, version: result.version || (result.page && result.page.version) || null, by: String(body.clientId || '') });
       return json(res, result);
     }
 
