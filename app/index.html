@@ -374,6 +374,11 @@
           <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
         </div>
         <p id="setup-import-hint" style="display:none;font-size:0.82rem;color:var(--green);margin-bottom:14px;">Found a previous config — values are pre-filled. Step through and Save to continue.</p>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin:-4px 0 16px;line-height:1.5;">
+          Moving from another Crundi?
+          <a href="#" id="setup-restore" style="color:var(--accent-hover,#818cf8);">Restore from a backup</a> instead &mdash;
+          it brings back the settings, sign-in, projects and everything else.
+        </p>
 
         <!-- Step 1: Bot token -->
         <div class="setup-step" data-step="1">
@@ -677,6 +682,15 @@
       const path = await api.browseDir();
       if (path) document.getElementById('setup-projects').value = path;
     }
+
+    // Restore instead of setting up: start the server with nothing configured;
+    // its page then opens on the restore form.
+    document.getElementById('setup-restore').addEventListener('click', async (e) => {
+      e.preventDefault();
+      setupScreen.classList.remove('visible');
+      statusScreen.style.display = '';
+      await api.saveSetup({ restore: true, autoUpdate: true, autoLaunch: true });
+    });
 
     async function saveSetup() {
       const mode = document.querySelector('input[name="setup-mode"]:checked').value;

@@ -3,29 +3,17 @@ import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
+import { defaultAppDir, resolveEnvPath } from './paths.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ─── Platform-specific app data directory ───
 // Crundi uses its own data dir, separate from the old "Claude Telegram Bot" app.
-// Electron overrides these via DOTENV_PATH / DATA_DIR env vars.
-function defaultAppDir() {
-  const home = homedir();
-  if (process.platform === 'win32') return join(process.env.APPDATA || join(home, 'AppData', 'Roaming'), 'Crundi');
-  if (process.platform === 'darwin') return join(home, 'Library', 'Application Support', 'Crundi');
-  return join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'crundi');
-}
-
+// Electron overrides these via DOTENV_PATH / DATA_DIR env vars. The rules are
+// in paths.js, shared with restore-apply.js.
 const appDir = defaultAppDir();
 
-// .env: DOTENV_PATH > <appDir>/.env > <projectRoot>/.env (dev fallback)
-const envCandidates = [
-  process.env.DOTENV_PATH,
-  join(appDir, '.env'),
-  join(__dirname, '..', '.env'),
-].filter(Boolean);
-
-export const envPath = envCandidates.find(p => existsSync(p)) || envCandidates[0];
+export const envPath = resolveEnvPath(appDir);
 dotenv.config({ path: envPath });
 
 function required(key) {

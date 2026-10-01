@@ -2947,6 +2947,59 @@ export function getWebappHtml(botUsername) {
       100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
     }
 
+    /* ─── Backup & restore ─── */
+    .bk-status { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); }
+    .bk-line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 0.8rem; color: var(--text-secondary); }
+    .bk-line b { color: var(--text-primary); font-weight: 600; }
+    .bk-line .bk-k { min-width: 92px; color: var(--text-muted); }
+    .bk-line.bad b, .bk-err { color: var(--red); }
+    .bk-line.good b { color: var(--green); }
+    .bk-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+    .bk-bar { height: 4px; border-radius: 2px; background: var(--bg-tertiary); overflow: hidden; margin-top: 4px; }
+    .bk-bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s ease; }
+    .bk-bar.indet > i { width: 30%; animation: bkSlide 1.2s ease-in-out infinite; }
+    @keyframes bkSlide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+    .bk-group { margin: 4px 0 18px; }
+    .bk-group > h5 { margin: 0 0 10px; font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
+    .bk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+    .bk-grid .full { grid-column: 1 / -1; }
+    @media (max-width: 640px) { .bk-grid { grid-template-columns: 1fr; } }
+    .bk-grid label, .bk-field label { display: block; color: var(--text-secondary); font-size: 0.76rem; margin-bottom: 4px; }
+    .bk-in { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-size: 13px; box-sizing: border-box; font-family: inherit; }
+    .bk-in:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .bk-hint { color: var(--text-muted); font-size: 0.72rem; margin-top: 4px; line-height: 1.5; max-width: 70ch; }
+    .bk-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .bk-check { display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--text-primary); cursor: pointer; }
+    .bk-check input { accent-color: var(--accent); width: 15px; height: 15px; }
+    .bk-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .bk-item { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--border-subtle, var(--border)); }
+    .bk-item:first-child { border-top: none; }
+    .bk-item .bk-when { font-size: 0.84rem; color: var(--text-primary); }
+    .bk-item .bk-meta { display: flex; gap: 10px; font-size: 0.72rem; color: var(--text-muted); }
+    .bk-item .bk-tag { padding: 0 6px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
+    .bk-item .bk-btns { display: flex; gap: 6px; grid-row: 1 / span 2; grid-column: 2; }
+    .bk-item .bk-btns .svc-btn .ic { width: 13px; height: 13px; }
+    .bk-confirm { grid-column: 1 / -1; margin-top: 8px; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.06); }
+    .bk-confirm p { margin: 0 0 8px; font-size: 0.76rem; color: var(--text-secondary); line-height: 1.5; }
+    .bk-empty { padding: 14px; font-size: 0.8rem; color: var(--text-muted); }
+    /* The "waiting for you to leave" notice: the toast's sibling, with actions. */
+    #bk-notice { position: fixed; left: 16px; bottom: 16px; z-index: 950; display: none; max-width: 360px; padding: 12px 14px; border-radius: 10px; background: var(--bg-secondary); border: 1px solid var(--border); border-left: 3px solid var(--accent); box-shadow: var(--shadow-md); font-size: 0.8rem; color: var(--text-secondary); line-height: 1.45; }
+    #bk-notice.visible { display: block; }
+    #bk-notice b { color: var(--text-primary); display: block; margin-bottom: 2px; font-size: 0.84rem; }
+    #bk-notice .bk-actions { margin-top: 10px; }
+    #bk-notice .bk-x { position: absolute; top: 6px; right: 6px; border: none; background: none; color: var(--text-muted); cursor: pointer; width: 24px; height: 24px; border-radius: 5px; }
+    #bk-notice .bk-x:hover { background: var(--bg-hover); color: var(--text-primary); }
+    /* First-run restore form on the sign-in screen */
+    #login-restore { display: none; flex-direction: column; gap: 8px; width: 340px; max-width: 100%; text-align: left; }
+    #login-restore .bk-in { padding: 8px 10px; }
+    #login-restore .lr-pick { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+    #login-restore .lr-pick label { display: flex; gap: 8px; align-items: center; padding: 8px 10px; font-size: 0.8rem; color: var(--text-primary); border-top: 1px solid var(--border); cursor: pointer; }
+    #login-restore .lr-pick label:first-child { border-top: none; }
+    #login-restore .lr-pick input, #login-restore input[type=checkbox] { accent-color: var(--accent); }
+    #login-restore .lr-pick small { color: var(--text-muted); margin-left: auto; }
+    .login-box.restore-mode #telegram-login-container, .login-box.restore-mode #login-or, .login-box.restore-mode #collab-login-link { display: none !important; }
+    .lr-link { background: none; border: none; color: var(--accent-hover); font-size: 0.8rem; cursor: pointer; padding: 4px; text-decoration: underline; text-underline-offset: 3px; }
+
     /* toast: depth + accent edge */
     .toast { box-shadow: var(--shadow-md); border-left: 3px solid var(--accent); }
     .toast.error { border-left-color: var(--red); }
@@ -2981,6 +3034,31 @@ export function getWebappHtml(botUsername) {
         <button type="submit" id="setup-submit"
                 style="padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Set password</button>
         <div id="setup-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
+      </form>
+      <button type="button" class="lr-link" id="setup-restore-link" style="display:none;">Restore from a backup instead</button>
+
+      <!-- First run, the other way: bring back a whole Crundi from a backup in
+           S3-compatible storage. Only offered while nothing is set up. -->
+      <form id="login-restore" autocomplete="off">
+        <div style="color:var(--text-secondary);font-size:0.78rem;line-height:1.5;">
+          Enter the storage your backups are in. The restore brings back the settings and sign-in they were made with.
+        </div>
+        <input class="bk-in" id="lr-endpoint" placeholder="Endpoint, e.g. https://ACCOUNT.r2.cloudflarestorage.com">
+        <div style="display:flex;gap:8px;">
+          <input class="bk-in" id="lr-bucket" placeholder="Bucket">
+          <input class="bk-in" id="lr-region" placeholder="Region (auto)" style="max-width:120px;">
+        </div>
+        <input class="bk-in" id="lr-prefix" placeholder="Folder (crundi/)" value="crundi/">
+        <input class="bk-in" id="lr-key" placeholder="Access key ID">
+        <input class="bk-in" id="lr-secret" type="password" placeholder="Secret access key" autocomplete="new-password">
+        <label class="bk-check" style="font-size:0.76rem;color:var(--text-secondary);"><input type="checkbox" id="lr-vhost"> Virtual-hosted addresses (bucket in the hostname)</label>
+        <button type="button" class="kanban-btn" id="lr-find">Find backups</button>
+        <div id="lr-pick" class="lr-pick" style="display:none;"></div>
+        <input class="bk-in" id="lr-pass" type="password" placeholder="Backup passphrase" style="display:none;" autocomplete="off">
+        <button type="submit" id="lr-go" style="display:none;padding:9px 11px;border-radius:8px;border:0;background:var(--accent);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;">Restore</button>
+        <div id="lr-progress" style="display:none;"><div id="lr-phase" style="font-size:0.78rem;color:var(--text-secondary);"></div><div class="bk-bar"><i></i></div></div>
+        <div id="lr-error" style="color:var(--red);font-size:0.78rem;min-height:1em;"></div>
+        <button type="button" class="lr-link" id="lr-back">Set up a new password instead</button>
       </form>
 
       <!-- Shown once, right after the password is set: the code source must be
@@ -3369,6 +3447,7 @@ export function getWebappHtml(botUsername) {
 
   <!-- ─── Toast ─── -->
   <div class="toast" id="toast"></div>
+  <div id="bk-notice" role="status" aria-live="polite"></div>
 
   <script src="/vendor/xterm.js?v=${vendorTag('xterm.js')}"><\/script>
   <script src="/vendor/addon-fit.js?v=${vendorTag('addon-fit.js')}"><\/script>
@@ -4133,7 +4212,9 @@ export function getWebappHtml(botUsername) {
         prompt.textContent = 'Set up a way to sign in';
         $('#login-setup').style.display = 'flex';
         $('#login-setup').addEventListener('submit', submitSetup);
-        setTimeout(() => { try { $('#setup-pw').focus(); } catch {} }, 60);
+        initLoginRestore();
+        if (/[?&]restore=1/.test(location.search)) showLoginRestore(true);
+        else setTimeout(() => { try { $('#setup-pw').focus(); } catch {} }, 60);
         return;
       }
 
@@ -7819,6 +7900,11 @@ export function getWebappHtml(botUsername) {
         } catch { /* ignore */ }
       });
 
+      es.addEventListener('backup', (e) => {
+        let d; try { d = JSON.parse(e.data); } catch { return; }
+        onBackupStatus(d);
+      });
+      refreshBackupNotice();
       es.addEventListener('notes', (e) => {
         let d; try { d = JSON.parse(e.data); } catch { return; }
         if (!currentProject || d.project !== currentProject.toLowerCase()) return;
@@ -11035,6 +11121,345 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Settings Panel ───
+    // ─── First-run restore (sign-in screen, nothing set up yet) ───
+    let lrBound = false;
+    function lrStorage() {
+      return {
+        endpoint: $('#lr-endpoint').value.trim(), bucket: $('#lr-bucket').value.trim(),
+        region: $('#lr-region').value.trim() || 'auto', prefix: $('#lr-prefix').value.trim(),
+        accessKeyId: $('#lr-key').value.trim(), secretAccessKey: $('#lr-secret').value.trim(),
+        pathStyle: !$('#lr-vhost').checked,
+      };
+    }
+    function showLoginRestore(on) {
+      $('#login-setup').style.display = on ? 'none' : 'flex';
+      $('#setup-restore-link').style.display = on ? 'none' : '';
+      $('#login-restore').style.display = on ? 'flex' : 'none';
+      $('#login-prompt').textContent = on ? 'Restore from a backup' : 'Set up a way to sign in';
+      $('#login-screen .login-box').classList.toggle('restore-mode', on);
+      setTimeout(() => { try { (on ? $('#lr-endpoint') : $('#setup-pw')).focus(); } catch {} }, 60);
+    }
+    function initLoginRestore() {
+      $('#setup-restore-link').style.display = '';
+      if (lrBound) return;
+      lrBound = true;
+      $('#setup-restore-link').addEventListener('click', () => showLoginRestore(true));
+      $('#lr-back').addEventListener('click', () => showLoginRestore(false));
+      $('#lr-find').addEventListener('click', async () => {
+        const err = $('#lr-error'), btn = $('#lr-find');
+        err.textContent = ''; btn.disabled = true; btn.textContent = 'Looking…';
+        try {
+          const d = await (await fetch('/api/backup/setup/list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ storage: lrStorage() }) })).json();
+          if (!d.ok) { err.textContent = d.error || 'Could not list the bucket'; return; }
+          const pick = $('#lr-pick');
+          if (!d.items.length) { pick.style.display = ''; pick.innerHTML = '<div class="bk-empty">No backups in this folder. Check the folder name.</div>'; return; }
+          pick.innerHTML = d.items.map((it, i) => '<label><input type="radio" name="lr-item" value="' + escHtml(it.key) + '"' + (i === 0 ? ' checked' : '') + '>'
+            + escHtml(new Date(it.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })) + (it.host ? ' <small>' + escHtml(it.host) + '</small>' : '')
+            + '<small>' + escHtml(fmtBytes(it.size)) + '</small></label>').join('');
+          pick.style.display = ''; $('#lr-pass').style.display = ''; $('#lr-go').style.display = '';
+          $('#lr-pass').focus();
+        } catch (ex) { err.textContent = 'Could not reach the server: ' + ex.message; }
+        finally { btn.disabled = false; btn.textContent = 'Find backups'; }
+      });
+      $('#login-restore').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = $('#lr-error'), go = $('#lr-go');
+        const sel = document.querySelector('input[name="lr-item"]:checked');
+        if (!sel) { err.textContent = 'Choose a backup'; return; }
+        if (!$('#lr-pass').value) { err.textContent = 'Enter the passphrase the backup was made with'; return; }
+        err.textContent = ''; go.disabled = true;
+        try {
+          const d = await (await fetch('/api/backup/setup/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ storage: lrStorage(), key: sel.value, passphrase: $('#lr-pass').value }) })).json();
+          if (!d.ok) { err.textContent = d.error || 'Could not start the restore'; go.disabled = false; return; }
+          $('#lr-progress').style.display = '';
+          lrPoll(d.restartMode);
+        } catch (ex) { err.textContent = 'Could not reach the server: ' + ex.message; go.disabled = false; }
+      });
+    }
+    function bkPhaseText(r) {
+      const pct = r.total ? ' ' + Math.round(100 * r.done / r.total) + '%' : '';
+      return ({ collecting: 'Gathering files…', packing: 'Packing and encrypting…' + pct, uploading: 'Uploading…' + pct,
+        tidying: 'Removing old backups…', downloading: 'Downloading…' + pct, unpacking: 'Decrypting and unpacking…' })[r.phase] || 'Working…';
+    }
+    function bkBar(el, r) {
+      const bar = el.querySelector('.bk-bar');
+      if (!bar) return;
+      const known = r && r.total && r.phase !== 'unpacking' && r.phase !== 'collecting' && r.phase !== 'tidying';
+      bar.classList.toggle('indet', !known);
+      bar.firstElementChild.style.width = known ? Math.min(100, Math.round(100 * r.done / r.total)) + '%' : '';
+    }
+    async function lrPoll(mode) {
+      let d = null;
+      try { d = await (await fetch('/api/backup/setup/status')).json(); } catch { d = null; }
+      const phase = $('#lr-phase');
+      if (d && d.running) { phase.textContent = bkPhaseText(d.running); bkBar($('#lr-progress'), d.running); setTimeout(() => lrPoll(mode), 800); return; }
+      const a = d && d.restoreAttempt;
+      if (a && !a.ok) { $('#lr-progress').style.display = 'none'; $('#lr-error').textContent = a.error; $('#lr-go').disabled = false; return; }
+      if (a && a.ok) {
+        if (!mode) { phase.textContent = 'The backup is ready. Restart Crundi to finish restoring it.'; bkBar($('#lr-progress'), null); return; }
+        phase.textContent = 'Restored. Crundi is restarting; sign in with the backup’s password when it is back.';
+        bkBar($('#lr-progress'), null);
+        lrWaitBack(Date.now());
+        return;
+      }
+      // Not started yet, or the server is already restarting.
+      setTimeout(() => lrPoll(mode), 800);
+    }
+    async function lrWaitBack(since) {
+      await new Promise(r => setTimeout(r, 2500));
+      try {
+        const m = await (await fetch('/api/auth/methods', { cache: 'no-store' })).json();
+        if (m && m.ok && !m.setupRequired) { location.href = location.pathname; return; }
+      } catch { /* still restarting */ }
+      if (Date.now() - since < 180000) lrWaitBack(since);
+      else $('#lr-phase').textContent = 'Crundi has not come back yet. Reload this page in a moment.';
+    }
+
+    // ─── Backup & restore (Settings) ───
+    let backupState = null;
+    let backupItems = null;     // the bucket listing, once asked for
+    let bkConfirmKey = '';      // the backup whose restore is being confirmed
+    let bkNoticeHidden = 0;     // slot the notice was closed for
+    function bkWhen(ms) {
+      if (!ms) return '';
+      const d = new Date(ms), now = new Date();
+      const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+      const diff = Math.round((day(d) - day(now)) / 86400000);
+      const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (diff === 0) return 'today at ' + t;
+      if (diff === 1) return 'tomorrow at ' + t;
+      if (diff === -1) return 'yesterday at ' + t;
+      return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ' at ' + t;
+    }
+    async function renderBackupSection() {
+      const body = $('#backup-body');
+      if (!body) return;
+      try {
+        const d = await (await apiFetch('/api/backup')).json();
+        if (!d.ok) throw new Error(d.error || 'Could not load the backup settings');
+        backupState = d;
+      } catch (e) { body.innerHTML = '<p class="bk-err" style="font-size:0.8rem;">' + escHtml(e.message) + '</p>'; return; }
+      drawBackupForm();
+    }
+    function bkStatusHtml() {
+      const d = backupState;
+      const out = [];
+      if (d.running) {
+        out.push('<div class="bk-line"><b>' + escHtml(d.running.reason === 'restore' ? 'Restoring' : 'Backing up') + '</b><span>' + escHtml(bkPhaseText(d.running)) + '</span></div><div class="bk-bar"><i></i></div>');
+      } else if (d.waiting) {
+        out.push('<div class="bk-line"><b>A scheduled backup is due.</b><span>It starts once you have left Crundi.</span></div>'
+          + '<div class="bk-actions"><button type="button" class="kanban-btn" data-bk="run">Back up now</button><button type="button" class="svc-btn" data-bk="skip">Skip this one</button></div>');
+      }
+      if (d.staged) {
+        out.push('<div class="bk-line"><b>A restore is ready.</b><span>It finishes when Crundi restarts.</span></div>'
+          + '<div class="bk-actions">' + (d.restartMode ? '<button type="button" class="kanban-btn" data-bk="restart">Restart now</button>' : '<span class="bk-hint">Restart Crundi the way you started it.</span>')
+          + '<button type="button" class="svc-btn" data-bk="cancel-restore">Cancel the restore</button></div>');
+      }
+      const a = d.restoreAttempt;
+      if (a && !a.ok && !d.running) out.push('<div class="bk-line bad"><span class="bk-k">Restore</span><b>' + escHtml(a.error) + '</b></div>');
+      const l = d.last;
+      if (l) {
+        out.push(l.ok
+          ? '<div class="bk-line good"><span class="bk-k">Last backup</span><b>' + escHtml(bkWhen(l.at)) + '</b><span>' + escHtml(fmtBytes(l.size)) + ', ' + escHtml(String(l.files)) + ' files, ' + (l.reason === 'scheduled' ? 'scheduled' : 'made by hand') + '</span></div>'
+          : '<div class="bk-line bad"><span class="bk-k">Last backup</span><b>Failed ' + escHtml(bkWhen(l.at)) + '</b><span>' + escHtml(l.error || '') + '</span></div>');
+      } else if (d.configured) out.push('<div class="bk-line"><span class="bk-k">Last backup</span><span>None yet</span></div>');
+      out.push('<div class="bk-line"><span class="bk-k">Next backup</span>' + (d.nextAt ? '<b>' + escHtml(bkWhen(d.nextAt)) + '</b><span>' + escHtml(d.timezone || '') + ' time</span>' : '<span>' + (d.configured ? 'Scheduled backups are off' : 'Set up the storage and a passphrase below') + '</span>') + '</div>');
+      if (d.restored && Date.now() - d.restored.at < 7 * 86400000) {
+        out.push('<div class="bk-line"><span class="bk-k">Restored</span><span>' + escHtml(bkWhen(d.restored.at)) + ' from the backup made ' + escHtml(bkWhen(Date.parse(d.restored.backupCreatedAt))) + (d.restored.fromHost ? ' on ' + escHtml(d.restored.fromHost) : '') + '. What it replaced is in ' + escHtml(d.restored.safetyCopy) + '.</span></div>');
+      }
+      if (!d.running && !d.waiting) out.push('<div class="bk-actions"><button type="button" class="kanban-btn" data-bk="run"' + (d.configured ? '' : ' disabled') + '>' + ic('upload') + ' Back up now</button></div>');
+      return out.join('');
+    }
+    function drawBackupStatus() {
+      const el = $('#bk-status');
+      if (!el || !backupState) return;
+      el.innerHTML = bkStatusHtml();
+      if (backupState.running) bkBar(el, backupState.running);
+    }
+    function drawBackupForm() {
+      const body = $('#backup-body');
+      if (!body || !backupState) return;
+      const d = backupState, st = d.storage, sch = d.schedule;
+      const v = (x) => escHtml(x == null ? '' : String(x));
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      body.innerHTML = '<div class="bk-status" id="bk-status"></div>'
+        + '<div class="bk-group"><h5>Storage</h5><div class="bk-grid">'
+        + '<div class="full"><label for="bk-endpoint">Endpoint</label><input class="bk-in" id="bk-endpoint" value="' + v(st.endpoint) + '" placeholder="https://ACCOUNT.r2.cloudflarestorage.com">'
+        + '<div class="bk-hint">Any S3-compatible storage: Cloudflare R2, AWS S3, Backblaze B2, MinIO, Wasabi…</div></div>'
+        + '<div><label for="bk-bucket">Bucket</label><input class="bk-in" id="bk-bucket" value="' + v(st.bucket) + '"></div>'
+        + '<div><label for="bk-region">Region</label><input class="bk-in" id="bk-region" value="' + v(st.region) + '" placeholder="auto"><div class="bk-hint">R2 uses <b>auto</b>; AWS needs the bucket’s region.</div></div>'
+        + '<div><label for="bk-prefix">Folder</label><input class="bk-in" id="bk-prefix" value="' + v(st.prefix) + '" placeholder="crundi/"></div>'
+        + '<div><label>Addresses</label><div class="seg-pref" id="bk-style"><button type="button" data-v="path"' + (st.pathStyle !== false ? ' class="active"' : '') + '>Path</button><button type="button" data-v="vhost"' + (st.pathStyle === false ? ' class="active"' : '') + '>Virtual-hosted</button></div></div>'
+        + '<div><label for="bk-keyid">Access key ID</label><input class="bk-in" id="bk-keyid" value="' + v(st.accessKeyId) + '" autocomplete="off"></div>'
+        + '<div><label for="bk-secret">Secret access key</label><input class="bk-in" id="bk-secret" type="password" autocomplete="new-password" placeholder="' + (st.hasSecret ? 'Saved. Type to replace it' : '') + '"></div>'
+        + '</div><div class="bk-actions"><button type="button" class="svc-btn" data-bk="test">Test the connection</button><span id="bk-test-out" class="bk-hint" style="margin:0;"></span></div></div>'
+        + '<div class="bk-group"><h5>Passphrase</h5><div class="bk-grid">'
+        + '<div><label for="bk-pass">' + (d.hasPassphrase ? 'New passphrase' : 'Passphrase') + '</label><input class="bk-in" id="bk-pass" type="password" autocomplete="new-password" placeholder="' + (d.hasPassphrase ? 'Set. Type to change it' : 'At least 8 characters') + '"></div>'
+        + '<div><label for="bk-pass2">Again</label><input class="bk-in" id="bk-pass2" type="password" autocomplete="new-password"></div>'
+        + '</div><div class="bk-hint">Backups hold your sign-in and settings, so they are encrypted with this. You need it to restore; without it a backup cannot be opened. Keep it somewhere other than this server.</div></div>'
+        + '<div class="bk-group"><h5>Schedule</h5>'
+        + '<label class="bk-check"><input type="checkbox" id="bk-on"' + (sch.enabled ? ' checked' : '') + '> Back up automatically</label>'
+        + '<div class="bk-row" style="margin-top:10px;">'
+        + '<div class="seg-pref" id="bk-freq"><button type="button" data-v="daily"' + (sch.frequency === 'daily' ? ' class="active"' : '') + '>Daily</button><button type="button" data-v="weekly"' + (sch.frequency === 'weekly' ? ' class="active"' : '') + '>Weekly</button><button type="button" data-v="hours"' + (sch.frequency === 'hours' ? ' class="active"' : '') + '>Every few hours</button></div>'
+        + '<select class="bk-in" id="bk-weekday" style="width:auto;">' + days.map((n, i) => '<option value="' + i + '"' + (Number(sch.weekday) === i ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>'
+        + '<span id="bk-every-wrap" class="bk-row" style="gap:6px;font-size:0.8rem;color:var(--text-secondary);">every <input class="bk-in" id="bk-hours" type="number" min="1" max="168" value="' + v(sch.everyHours) + '" style="width:70px;"> hours from</span>'
+        + '<span id="bk-at" style="font-size:0.8rem;color:var(--text-secondary);">at</span><input class="bk-in" id="bk-time" type="time" value="' + v(sch.time) + '" style="width:auto;">'
+        + '<span class="bk-hint" style="margin:0;">' + escHtml(d.timezone || '') + ' time</span></div>'
+        + '<div class="bk-field" style="margin-top:12px;"><label for="bk-keep">Keep the last</label><div class="bk-row"><input class="bk-in" id="bk-keep" type="number" min="0" max="1000" value="' + v(d.keep) + '" style="width:90px;"><span style="font-size:0.8rem;color:var(--text-secondary);">scheduled backups</span></div>'
+        + '<div class="bk-hint">Older scheduled backups of this machine are deleted after each new one. 0 keeps them all. Backups you make by hand are kept until you delete them.</div></div>'
+        + '<div class="bk-hint">If you are using Crundi when a backup is due, it tells you and waits until you have left.</div></div>'
+        + '<div class="bk-actions" style="margin-bottom:18px;"><button type="button" class="kanban-btn" data-bk="save">Save</button><span id="bk-save-out" class="bk-hint" style="margin:0;"></span></div>'
+        + '<div class="bk-group"><div class="bk-row" style="justify-content:space-between;"><h5 style="margin:0;">Backups in storage</h5><button type="button" class="svc-btn" data-bk="list">' + (backupItems ? 'Refresh' : 'Show') + '</button></div>'
+        + '<div id="bk-items" style="margin-top:10px;"></div></div>';
+      drawBackupStatus();
+      drawBackupItems();
+      bkSyncScheduleUi();
+      body.querySelectorAll('.seg-pref button').forEach(b => b.addEventListener('click', () => {
+        b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+        bkSyncScheduleUi();
+      }));
+      if (!body.dataset.bound) {
+        body.dataset.bound = '1';
+        body.addEventListener('click', onBackupClick);
+      }
+    }
+    function bkSyncScheduleUi() {
+      const f = (document.querySelector('#bk-freq button.active') || {}).dataset;
+      const freq = f ? f.v : 'daily';
+      const wd = $('#bk-weekday'), ev = $('#bk-every-wrap'), at = $('#bk-at');
+      if (!wd) return;
+      wd.style.display = freq === 'weekly' ? '' : 'none';
+      ev.style.display = freq === 'hours' ? '' : 'none';
+      at.style.display = freq === 'hours' ? 'none' : '';
+    }
+    function bkFormStorage() {
+      return {
+        endpoint: $('#bk-endpoint').value.trim(), bucket: $('#bk-bucket').value.trim(), region: $('#bk-region').value.trim() || 'auto',
+        prefix: $('#bk-prefix').value.trim(), accessKeyId: $('#bk-keyid').value.trim(), secretAccessKey: $('#bk-secret').value.trim(),
+        pathStyle: (document.querySelector('#bk-style button.active') || {}).dataset.v !== 'vhost',
+      };
+    }
+    function drawBackupItems() {
+      const box = $('#bk-items');
+      if (!box) return;
+      if (!backupItems) { box.innerHTML = ''; return; }
+      if (backupItems.error) { box.innerHTML = '<p class="bk-err" style="font-size:0.8rem;">' + escHtml(backupItems.error) + '</p>'; return; }
+      if (!backupItems.length) { box.innerHTML = '<div class="bk-list"><div class="bk-empty">No backups in this folder yet. Back up now to make the first.</div></div>'; return; }
+      box.innerHTML = '<div class="bk-list">' + backupItems.map(it => {
+        const k = escHtml(it.key);
+        return '<div class="bk-item"><div class="bk-when">' + escHtml(new Date(it.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })) + '</div>'
+          + '<div class="bk-btns"><button type="button" class="svc-btn" data-bk="restore-ask" data-key="' + k + '">' + ic('download') + ' Restore</button>'
+          + '<button type="button" class="svc-btn" data-bk="delete" data-key="' + k + '" title="Delete this backup" aria-label="Delete this backup">' + ic('trash') + '</button></div>'
+          + '<div class="bk-meta"><span class="bk-tag">' + (it.reason === 'scheduled' ? 'Scheduled' : 'By hand') + '</span><span>' + escHtml(fmtBytes(it.size)) + '</span>' + (it.host ? '<span>' + escHtml(it.host) + '</span>' : '') + '</div>'
+          + (bkConfirmKey === it.key ? '<div class="bk-confirm"><p>This replaces this Crundi’s settings, sign-in, projects, layouts, kanban, notes, mindmap, media, schedules and services with the backup’s, and adds back its Claude transcripts. What it replaces is kept in a pre-restore folder. Crundi restarts to finish.</p>'
+            + '<div class="bk-row"><input class="bk-in" id="bk-restore-pass" type="password" placeholder="Passphrase (blank: the saved one)" style="flex:1;min-width:180px;" autocomplete="off">'
+            + '<button type="button" class="kanban-btn" data-bk="restore-go" data-key="' + k + '">Restore and restart</button><button type="button" class="svc-btn" data-bk="restore-cancel">Cancel</button></div></div>' : '')
+          + '</div>';
+      }).join('') + '</div>';
+      const rp = $('#bk-restore-pass'); if (rp) rp.focus();
+    }
+    async function bkPost(path, body) {
+      return (await apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })).json();
+    }
+    async function bkLoadItems() {
+      try { const d = await (await apiFetch('/api/backup/list')).json(); backupItems = d.ok ? d.items : { error: d.error }; }
+      catch (e) { backupItems = { error: e.message }; }
+      drawBackupItems();
+    }
+    async function onBackupClick(e) {
+      const b = e.target.closest('[data-bk]');
+      if (!b || b.disabled) return;
+      const act = b.dataset.bk;
+      if (act === 'run') {
+        b.disabled = true;
+        const d = await bkPost('/api/backup/run');
+        if (!d.ok) { toast(d.error, 'error'); b.disabled = false; }
+        return;
+      }
+      if (act === 'skip') { await bkPost('/api/backup/skip'); return; }
+      if (act === 'restart') { const d = await bkPost('/api/backup/restart'); if (!d.ok) toast(d.error, 'error'); else toast('Restarting to finish the restore'); return; }
+      if (act === 'cancel-restore') { await bkPost('/api/backup/cancel-restore'); renderBackupSection(); return; }
+      if (act === 'test') {
+        const out = $('#bk-test-out');
+        out.textContent = 'Checking…'; out.style.color = '';
+        const d = await bkPost('/api/backup/test', { storage: bkFormStorage() });
+        out.textContent = d.ok ? 'Connected. The bucket can be listed.' : d.error;
+        out.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+        return;
+      }
+      if (act === 'save') {
+        const out = $('#bk-save-out');
+        const p1 = $('#bk-pass').value, p2 = $('#bk-pass2').value;
+        if (p1 !== p2) { out.textContent = 'The two passphrases differ'; out.style.color = 'var(--red)'; return; }
+        const freq = (document.querySelector('#bk-freq button.active') || {}).dataset;
+        const d = await bkPost('/api/backup/settings', {
+          storage: bkFormStorage(), passphrase: p1,
+          schedule: { enabled: $('#bk-on').checked, frequency: freq ? freq.v : 'daily', time: $('#bk-time').value || '03:00', weekday: Number($('#bk-weekday').value), everyHours: Number($('#bk-hours').value) },
+          keep: Number($('#bk-keep').value),
+        });
+        if (!d.ok) { out.textContent = d.error; out.style.color = 'var(--red)'; return; }
+        toast('Backup settings saved', 'success');
+        backupState = Object.assign(backupState, d.config);
+        renderBackupSection();
+        return;
+      }
+      if (act === 'list') { b.textContent = 'Loading…'; await bkLoadItems(); b.textContent = 'Refresh'; return; }
+      if (act === 'restore-ask') { bkConfirmKey = b.dataset.key; drawBackupItems(); return; }
+      if (act === 'restore-cancel') { bkConfirmKey = ''; drawBackupItems(); return; }
+      if (act === 'restore-go') {
+        b.disabled = true;
+        const d = await bkPost('/api/backup/restore', { key: b.dataset.key, passphrase: ($('#bk-restore-pass') || {}).value || '' });
+        if (!d.ok) { toast(d.error, 'error'); b.disabled = false; return; }
+        bkConfirmKey = ''; drawBackupItems();
+        toast('Restoring. Crundi restarts when the backup is unpacked.');
+        return;
+      }
+      if (act === 'delete') {
+        if (!confirm('Delete this backup from storage? This cannot be undone.')) return;
+        const d = await bkPost('/api/backup/delete', { key: b.dataset.key });
+        if (!d.ok) { toast(d.error, 'error'); return; }
+        toast('Backup deleted');
+        bkLoadItems();
+      }
+    }
+    /** A status push from the server: Settings, and the waiting notice. */
+    function onBackupStatus(st) {
+      const prevRunning = backupState && backupState.running;
+      backupState = Object.assign(backupState || {}, st);
+      drawBackupStatus();
+      if (prevRunning && !st.running && st.last && $('#bk-items') && backupItems) bkLoadItems();
+      if (prevRunning && prevRunning.reason !== 'restore' && !st.running && st.last) {
+        toast(st.last.ok ? 'Backup uploaded' : 'Backup failed: ' + st.last.error, st.last.ok ? 'success' : 'error');
+      }
+      if (st.restarting) toast('Restore ready. Crundi is restarting…');
+      if (st.restoreAttempt && !st.restoreAttempt.ok && prevRunning && prevRunning.reason === 'restore') toast('Restore failed: ' + st.restoreAttempt.error, 'error');
+      drawBackupNotice();
+    }
+    function drawBackupNotice() {
+      const n = $('#bk-notice');
+      if (!n) return;
+      const w = backupState && backupState.waiting;
+      if (!w || bkNoticeHidden === w.slot) { n.classList.remove('visible'); return; }
+      n.innerHTML = '<button type="button" class="bk-x" data-bkn="hide" aria-label="Hide">' + ic('x') + '</button>'
+        + '<b>Scheduled backup waiting</b>It starts once you have left Crundi, so it does not slow down your work.'
+        + '<div class="bk-actions"><button type="button" class="kanban-btn" data-bkn="run">Back up now</button><button type="button" class="svc-btn" data-bkn="skip">Skip this one</button></div>';
+      n.classList.add('visible');
+    }
+    document.addEventListener('click', async (e) => {
+      const b = e.target.closest && e.target.closest('[data-bkn]');
+      if (!b) return;
+      const act = b.dataset.bkn;
+      if (act === 'hide') { bkNoticeHidden = backupState && backupState.waiting ? backupState.waiting.slot : 0; drawBackupNotice(); return; }
+      b.disabled = true;
+      const d = await bkPost(act === 'run' ? '/api/backup/run' : '/api/backup/skip');
+      if (!d.ok) toast(d.error, 'error');
+      else if (act === 'skip') toast('Skipped. The next backup runs on schedule.');
+    });
+    async function refreshBackupNotice() {
+      if (userRole !== 'owner') return;
+      try { const d = await (await apiFetch('/api/backup')).json(); if (d.ok) { backupState = Object.assign(backupState || {}, d); drawBackupNotice(); } } catch { /* ignore */ }
+    }
+
     async function renderSettings() {
       const panel = $('#settings-panel');
       panel.innerHTML = '<div class="info-section"><h4>Loading...</h4></div>';
@@ -11265,6 +11690,9 @@ export function getWebappHtml(botUsername) {
           + '<input type="number" id="set-autopark" min="0" step="5" value="' + escHtml(String(data.autoParkMinutes != null ? data.autoParkMinutes : 60)) + '" style="' + inputStyle + 'width:110px;">'
           + '<p style="' + hintStyle + '">A chat or Claude terminal with nothing going on closes once you have also been away this long. It keeps its place, shows what it was, and Resume picks the conversation back up. 0 turns it off; otherwise at least ' + (data.autoParkMin || 10) + '. Shells are never closed for being idle. After a restart, every pane that was open comes back the same way.</p></div></div>';
 
+        // Backups of the whole of Crundi to S3-compatible storage, and restoring them.
+        html += '<div class="info-section" id="backup-section"><h4>Backup &amp; restore</h4><div id="backup-body" style="font-size:0.8rem;color:var(--text-muted);">Loading…</div></div>';
+
         // Desktop app update (Electron's auto-updater) — the app itself.
         if (window.api && window.api.getUpdateState) html += buildUpdatesSection();
         // Server update — the server this page is talking to, which asks GitHub.
@@ -11296,6 +11724,7 @@ export function getWebappHtml(botUsername) {
           + '</div>';
 
         panel.innerHTML = html;
+        renderBackupSection();
         renderServerUpdate();
         renderClaudeUpdate();
         const ap = document.getElementById('set-autopark');

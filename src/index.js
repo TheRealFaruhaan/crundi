@@ -7,6 +7,9 @@
  * Replaces the old bot-centric entry point.
  */
 
+// First: a restore staged by Settings or the first-run screen is swapped in
+// before config.js reads the .env and the stores read their files.
+import './restore-apply.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
