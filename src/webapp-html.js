@@ -3244,6 +3244,14 @@ export function getWebappHtml(botUsername) {
       persistWbState();
     }
     const termFont = JSON.parse(localStorage.getItem('crundi_term_font') || '{}'); // termId → px
+    // Text size: every terminal and chat keeps its own size in termFont. A new
+    // one starts at its kind's default and is pinned to it on first mount, so a
+    // later default change does not move it. Changing any cell's size (reset
+    // included) also makes that size the default for its kind.
+    const TERM_FONT_BASE = 14;
+    const CHAT_FONT_BASE = 13; // claude-chat.js root font-size
+    const fontDefaults = Object.assign({ term: TERM_FONT_BASE, chat: CHAT_FONT_BASE },
+      JSON.parse(localStorage.getItem('crundi_font_default') || '{}'));
     // Per-event Telegram notification policy ('always' | 'away' | 'never'),
     // mirrored from the server in renderSettings and applied instantly on change.
     const NOTIFY_DEFAULTS_CLIENT = {
@@ -5081,6 +5089,7 @@ export function getWebappHtml(botUsername) {
         terminals = terminals.filter(t => t.id !== id);
         if (focusedTermId === id) focusedTermId = null;
         delete termFont[id];
+        localStorage.setItem('crundi_term_font', JSON.stringify(termFont));
         renderTermGrid();
         renderProjects();
       } catch (err) {
@@ -5476,6 +5485,7 @@ export function getWebappHtml(botUsername) {
         onChatMeta: (patch) => applyChatMeta(t.id, patch),
       });
       chatViews.set(t.id, view);
+      cellEl.style.setProperty('--cc-fs', String(cellFont(t.id, 'chat') / CHAT_FONT_BASE));
     }
 
     const WB_KIND_META = {
@@ -5528,13 +5538,12 @@ export function getWebappHtml(botUsername) {
       const badge = (!exited && as === 'working') ? '<span class="term-agent-badge working">working</span>'
         : (!exited && as === 'needs-input') ? '<span class="term-agent-badge input">needs input</span>'
         : (!exited && as === 'waiting') ? '<span class="term-agent-badge waiting">waiting</span>' : '';
-      // Font-size controls only make sense for an xterm cell; a chat cell gets a
-      // "chat" tag instead so the two kinds are distinguishable at a glance.
-      const controls = isChat
-        ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>'
-        : '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
-          + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
-          + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
+      // Both kinds get A-/reset/A+. A chat cell also carries a "chat" tag so the
+      // two kinds are distinguishable at a glance.
+      const fontBtns = '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
+        + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
+        + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
+      const controls = isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns : fontBtns;
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
         + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
@@ -5633,7 +5642,7 @@ export function getWebappHtml(botUsername) {
       if (!mount) return;
       const xterm = new Terminal({
         cursorBlink: true,
-        fontSize: termFont[t.id] || 14,
+        fontSize: cellFont(t.id, 'term'),
         fontFamily: TERM_FONT_FAMILY,
         theme: TERM_THEME,
         allowProposedApi: true,
@@ -6204,22 +6213,45 @@ export function getWebappHtml(botUsername) {
     }
     function fitAllTerms() { for (const id of termViews.keys()) fitTerm(id); }
 
-    function setTermFont(id, dir) {
-      const v = termViews.get(id); if (!v) return;
-      const cur = termFont[id] || 14;
-      const next = Math.max(8, Math.min(28, cur + (dir < 0 ? -1 : 1)));
-      termFont[id] = next;
-      try { v.term.options.fontSize = next; } catch { /* ignore */ }
+    // A cell's own size, pinning the current default for its kind the first
+    // time it is asked for.
+    function cellFont(id, kind) {
+      if (!termFont[id]) {
+        termFont[id] = fontDefaults[kind];
+        localStorage.setItem('crundi_term_font', JSON.stringify(termFont));
+      }
+      return termFont[id];
+    }
+
+    // Store a cell's new size, make it its kind's default, and apply it. Chat
+    // text scales via --cc-fs, which every font-size in claude-chat.js
+    // multiplies by; a terminal sets xterm's fontSize and refits.
+    function applyCellFont(id, px) {
+      const isChat = chatViews.has(id);
+      if (!isChat && !termViews.has(id)) return;
+      termFont[id] = px;
+      fontDefaults[isChat ? 'chat' : 'term'] = px;
       localStorage.setItem('crundi_term_font', JSON.stringify(termFont));
+      localStorage.setItem('crundi_font_default', JSON.stringify(fontDefaults));
+      if (isChat) {
+        const el = document.querySelector('.term-cell[data-tid="' + id + '"][data-chat="1"]');
+        if (el) el.style.setProperty('--cc-fs', String(px / CHAT_FONT_BASE));
+        return;
+      }
+      try { termViews.get(id).term.options.fontSize = px; } catch { /* ignore */ }
       fitTerm(id);
     }
 
+    function setTermFont(id, dir) {
+      const isChat = chatViews.has(id);
+      const cur = cellFont(id, isChat ? 'chat' : 'term');
+      const next = isChat ? Math.max(9, Math.min(24, cur + (dir < 0 ? -1 : 1)))
+        : Math.max(8, Math.min(28, cur + (dir < 0 ? -1 : 1)));
+      applyCellFont(id, next);
+    }
+
     function resetTermFont(id) {
-      const v = termViews.get(id); if (!v) return;
-      delete termFont[id];
-      try { v.term.options.fontSize = 14; } catch { /* ignore */ }
-      localStorage.setItem('crundi_term_font', JSON.stringify(termFont));
-      fitTerm(id);
+      applyCellFont(id, chatViews.has(id) ? CHAT_FONT_BASE : TERM_FONT_BASE);
     }
 
     function renameTerminal(id) {
