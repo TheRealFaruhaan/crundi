@@ -4,7 +4,7 @@
  * One file per page under <dataDir>/notes/<alias>/<id>.json, so typing in one
  * page rewrites that page only. A page is a title and a list of blocks:
  *
- *   { id, type, text?, checked?, lang?, rows? }
+ *   { id, type, text?, checked?, lang?, wrap?, rows? }
  *     type: p | h1 | h2 | h3 | todo | bullet | number | quote | code | table | divider
  *     text: inline HTML for text blocks (sanitised: b/strong/i/em/u/s/code/a/br)
  *           plain text for code blocks
@@ -71,6 +71,7 @@ function cleanBlock(b) {
   if (type === 'code') {
     out.text = String(b.text == null ? '' : b.text).slice(0, 500_000);
     out.lang = String(b.lang || '').replace(/[^a-zA-Z0-9+#._-]/g, '').slice(0, 24);
+    if (b.wrap) out.wrap = true;      // wrap long lines (default: scroll sideways)
     return out;
   }
   if (type === 'table') {

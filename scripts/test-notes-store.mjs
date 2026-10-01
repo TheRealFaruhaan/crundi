@@ -40,6 +40,7 @@ const c = ns.createPage('proj', { title: 'First page', blocks: [
   { type: 'h1', text: 'Hello <script>x</script>' },
   { type: 'todo', text: 'do it', checked: 1 },
   { type: 'code', text: '<b>raw</b> stays text', lang: 'js;rm' },
+  { type: 'code', text: 'long', lang: 'sh', wrap: 1 },
   { type: 'table', rows: [['a', 'b', 'c'], ['d']] },
   { type: 'weird', text: 'becomes a paragraph' },
 ] });
@@ -48,6 +49,8 @@ const b = c.page.blocks;
 ok(b[0].type === 'h1' && !/script/.test(b[0].text), 'block text is sanitised on save');
 ok(b[1].checked === true, 'a todo keeps its checked state');
 ok(b[2].text === '<b>raw</b> stays text' && b[2].lang === 'jsrm', 'code stays raw text; its language is reduced to safe characters');
+ok(b[3].wrap === true && b[2].wrap === undefined, 'a code block keeps its wrap setting (off unless set)');
+b.splice(3, 1);
 ok(b[3].rows.length === 2 && b[3].rows.every(r => r.length === 3), 'table rows are padded to the widest row');
 ok(b[4].type === 'p', 'an unknown block type becomes a paragraph');
 

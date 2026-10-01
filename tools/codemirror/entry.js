@@ -88,13 +88,14 @@ function getLangExtension(path) {
   return ext ? langExtension(ext) : [];
 }
 
-// A code block in a note: highlighted and wrapped, with undo, bracket help and
-// Tab to indent — no line numbers, gutters or search, which a note does not need.
+// A code block in a note: highlighted, with undo, bracket help and Tab to
+// indent — no line numbers, gutters or search, which a note does not need.
+// Lines do not wrap (the block scrolls sideways); a note adds
+// EditorView.lineWrapping per block when its wrap button is on.
 const notesSetup = [
   highlightSpecialChars(), history(), drawSelection(), indentOnInput(), bracketMatching(), closeBrackets(),
   indentUnit.of('  '), EditorState.tabSize.of(2),
   syntaxHighlighting(oneDarkHighlightStyle), syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-  EditorView.lineWrapping,
   keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
 ];
 
@@ -103,5 +104,5 @@ window.CM = {
   getLangExtension, basicSetup, oneDark,
   langs: LANGS.map(({ id, name }) => ({ id, name })),
   findLang: (n) => { const l = findLang(n); return l ? { id: l.id, name: l.name } : null; },
-  langExtension, notesSetup,
+  langExtension, notesSetup, lineWrapping: EditorView.lineWrapping,
 };

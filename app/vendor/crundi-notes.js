@@ -61,19 +61,24 @@
     '.nt-check:checked{background:var(--accent,#6366f1);border-color:var(--accent,#6366f1)}',
     '.nt-check:checked::after{transform:rotate(-45deg) scale(1)}',
     '.nt-block.t-todo.done .nt-text{color:var(--text-muted);text-decoration:line-through}',
-    '.nt-code{flex:1;min-width:0;margin:4px 0;padding:12px 14px;background:var(--bg-secondary,#12121a);border:1px solid var(--border-subtle,#1e1e30);border-radius:8px;font-family:var(--mono,monospace);font-size:' + F(12.5) + ';line-height:1.55;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;outline:none;tab-size:2}',
-    '.nt-code-wrap{flex:1;min-width:0;position:relative;margin:4px 0;background:var(--bg-secondary,#12121a);border:1px solid var(--border-subtle,#1e1e30);border-radius:8px;overflow:hidden}',
+    '.nt-code{flex:1;min-width:0;margin:4px 0;padding:12px 14px;background:var(--bg-secondary,#12121a);border:1px solid var(--border-subtle,#1e1e30);border-radius:8px;font-family:var(--mono,monospace);font-size:' + F(12.5) + ';line-height:1.55;white-space:pre;overflow-x:auto;outline:none;tab-size:2}',
+    '.nt-block.wrap .nt-code{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}',
+    '.nt-code-wrap{flex:1;min-width:0;position:relative;margin:4px 0;background:var(--bg-secondary,#12121a);border:1px solid var(--border-subtle,#1e1e30);border-radius:8px}',
     '.nt-code-wrap:focus-within{border-color:rgba(99,102,241,.45)}',
-    // Header strip: the language (with its icon) and copy, top right, clear of the code.
-    '.nt-code-head{display:flex;justify-content:flex-end;align-items:center;gap:2px;padding:4px 6px 0}',
+    // The language / wrap / copy row floats just above the block, and only
+    // while it is hovered or being edited, so the code itself stays clean.
+    '.nt-code-head{position:absolute;right:6px;bottom:calc(100% - 1px);z-index:3;display:flex;align-items:center;gap:2px;padding:2px;background:var(--bg-secondary,#12121a);border:1px solid var(--border-subtle,#1e1e30);border-bottom:none;border-radius:7px 7px 0 0;opacity:0;visibility:hidden;transition:opacity .12s,visibility 0s .12s}',
+    '.nt-block.t-code:hover .nt-code-head,.nt-code-wrap:focus-within .nt-code-head,.nt-code-head:has(button.open){opacity:1;visibility:visible;transition:opacity .12s}',
     '.nt-code-head button{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 7px;border:none;border-radius:5px;background:none;color:var(--text-muted);cursor:pointer;font-size:' + F(11) + ';font-family:inherit}',
     '.nt-code-head button:hover,.nt-code-head button.open{background:var(--bg-hover,#22223a);color:var(--text-primary)}',
     '.nt-code-head svg{width:13px;height:13px}',
-    '.nt-code-wrap .nt-code{margin:0;border:none;background:none;border-radius:0;padding:4px 14px 12px}',
+    '.nt-code-head button.nt-wrapbtn.on{color:var(--accent-hover,#818cf8);background:rgba(99,102,241,.14)}',
+    '.nt-code-wrap .nt-code{margin:0;border:none;background:none;border-radius:0;padding:12px 14px}',
     '.nt-cm .cm-editor{background:transparent}',
     '.nt-cm .cm-editor.cm-focused{outline:none}',
     '.nt-cm .cm-scroller{font-family:var(--mono,monospace);font-size:' + F(12.5) + ';line-height:1.55}',
-    '.nt-cm .cm-content{padding:2px 0 12px}',
+    '.nt-cm .cm-content{padding:12px 0}',
+    '.nt-cm .cm-editor,.nt-cm .cm-scroller{border-radius:7px}',
     '.nt-cm .cm-line{padding:0 14px}',
     '.nt-cm .cm-placeholder{color:var(--text-muted)}',
     '.nt-menu input.nt-menu-q{width:100%;box-sizing:border-box;margin:2px 0 4px;padding:6px 9px;border:1px solid var(--border,#2a2a3d);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);font-size:12.5px;outline:none}',
@@ -309,6 +314,7 @@
 
   var MOD = /Mac|iPhone|iPad/.test(navigator.platform || '') ? 'Cmd' : 'Ctrl';
   var CODE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+  var WRAP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><path d="M3 12h15a3 3 0 1 1 0 6h-4"/><polyline points="16 16 14 18 16 20"/><line x1="3" y1="18" x2="10" y2="18"/></svg>';
   var COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   /** A language id from whatever was written ('sh', 'ts', 'Python'…); '' stays plain. */
   function normLang(name) {
@@ -491,10 +497,17 @@
         var cw = el('div', 'nt-code-wrap');
         var lang = normLang(b.lang);
         w.dataset.lang = lang;
+        if (b.wrap) w.classList.add('wrap');
         var head = el('div', 'nt-code-head');
         var langBtn = el('button', 'nt-langbtn', CODE_SVG + '<span>' + esc(langName(lang)) + '</span>'); langBtn.type = 'button'; langBtn.title = 'Code language';
         var copyBtn = el('button', '', COPY_SVG); copyBtn.type = 'button'; copyBtn.title = 'Copy code';
-        head.appendChild(langBtn); head.appendChild(copyBtn);
+        // Code scrolls sideways by default; this wraps long lines for this block.
+        var wrapBtn = el('button', 'nt-wrapbtn' + (b.wrap ? ' on' : ''), WRAP_SVG); wrapBtn.type = 'button';
+        function wrapTitle() { var on = w.classList.contains('wrap'); wrapBtn.title = on ? 'Wrapping long lines (click to scroll instead)' : 'Wrap long lines'; wrapBtn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+        wrapTitle();
+        wrapBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        wrapBtn.addEventListener('click', function () { setWrap(w, !w.classList.contains('wrap')); wrapTitle(); });
+        head.appendChild(langBtn); head.appendChild(wrapBtn); head.appendChild(copyBtn);
         cw.appendChild(head);
         langBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
         langBtn.addEventListener('click', function () { openLangMenu(w, langBtn); });
@@ -557,7 +570,7 @@
     function mountCode(w, hostEl, text, lang) {
       var CM = window.CM;
       if (!cmTheme) cmTheme = CM.EditorView.theme({ '&': { color: 'var(--text-primary)' }, '.cm-cursor': { borderLeftColor: 'var(--text-primary)' } }, { dark: true });
-      var comp = new CM.Compartment();
+      var comp = new CM.Compartment(), wrapComp = new CM.Compartment();
       // Leaving the block by keyboard, as from any other block.
       var leave = CM.keymap.of([
         { key: 'Shift-Enter', run: function () { focusBlock(insertAfter(w, { type: 'p', text: '' }), 'start'); return true; } },
@@ -569,10 +582,10 @@
       var view = new CM.EditorView({
         parent: hostEl,
         doc: text,
-        extensions: [CM.Prec.highest(leave)].concat(CM.notesSetup, [comp.of(CM.langExtension(lang)), cmTheme, CM.placeholder('Code'),
+        extensions: [CM.Prec.highest(leave)].concat(CM.notesSetup, [comp.of(CM.langExtension(lang)), wrapComp.of(w.classList.contains('wrap') && CM.lineWrapping ? CM.lineWrapping : []), cmTheme, CM.placeholder('Code'),
           CM.EditorView.updateListener.of(function (u) { if (u.docChanged) changed(); })]),
       });
-      w._cm = { view: view, comp: comp };
+      w._cm = { view: view, comp: comp, wrapComp: wrapComp };
     }
     function destroyCode(w) { if (w && w._cm) { try { w._cm.view.destroy(); } catch (e) {} w._cm = null; } }
     function destroyCodeIn(scope) { Array.prototype.forEach.call(scope.querySelectorAll('.nt-block.t-code'), destroyCode); }
@@ -580,6 +593,12 @@
       w.dataset.lang = id;
       var lbl = w.querySelector('.nt-langbtn span'); if (lbl) lbl.textContent = langName(id);
       if (w._cm) w._cm.view.dispatch({ effects: w._cm.comp.reconfigure(window.CM.langExtension(id)) });
+      changed();
+    }
+    function setWrap(w, on) {
+      w.classList.toggle('wrap', on);
+      var btn = w.querySelector('.nt-wrapbtn'); if (btn) btn.classList.toggle('on', on);
+      if (w._cm && window.CM.lineWrapping) w._cm.view.dispatch({ effects: w._cm.wrapComp.reconfigure(on ? window.CM.lineWrapping : []) });
       changed();
     }
     function openLangMenu(w, anchor) {
@@ -713,7 +732,7 @@
     function convert(w, type, extra) {
       var b = readBlock(w);
       var nb = { id: b.id, type: type };
-      if (type === 'code') { nb.text = b.type === 'code' ? b.text : plainOf(b.text || ''); nb.lang = b.lang || ''; }
+      if (type === 'code') { nb.text = b.type === 'code' ? b.text : plainOf(b.text || ''); nb.lang = b.lang || ''; if (b.wrap) nb.wrap = true; }
       else if (type === 'table') nb.rows = [['', '', ''], ['', '', ''], ['', '', '']];
       else if (type !== 'divider') nb.text = b.type === 'code' ? esc(b.text || '').replace(/\n/g, '<br>') : (b.text || '');
       if (extra) for (var k in extra) nb[k] = extra[k];
@@ -731,6 +750,7 @@
       if (type === 'code') {
         b.text = w._cm ? w._cm.view.state.doc.toString() : ((w.querySelector('.nt-code') || {}).textContent || '');
         b.lang = w.dataset.lang && w.dataset.lang !== 'plain' ? w.dataset.lang : '';
+        if (w.classList.contains('wrap')) b.wrap = true;
         return b;
       }
       if (type === 'table') {

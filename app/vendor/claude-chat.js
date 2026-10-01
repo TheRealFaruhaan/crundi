@@ -49,6 +49,12 @@
     // A path the host can open: dotted underline, so it reads as a file, not a web link.
     '.cc-path{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;word-break:break-all}',
     '.cc-path:hover{color:var(--accent-hover);text-decoration-style:solid}',
+    // Hover copy button for code, links and paths in Claude's replies.
+    '.cc-copyhint{position:fixed;z-index:60;display:none;align-items:center;justify-content:center;width:24px;height:22px;padding:0;border:1px solid var(--border,#2a2a3d);border-radius:6px;background:var(--bg-secondary,#12121a);color:var(--text-secondary);cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.35)}',
+    '.cc-copyhint.on{display:inline-flex}',
+    '.cc-copyhint:hover{color:var(--text-primary);background:var(--bg-hover,#22223a)}',
+    '.cc-copyhint.done{color:var(--green,#22c55e)}',
+    '.cc-copyhint svg{width:13px;height:13px}',
     '.cc-assistant code{font-family:var(--mono);font-size:calc(12px*var(--cc-fs,1));background:var(--bg-tertiary,rgba(255,255,255,.06));padding:1px 5px;border-radius:4px}',
     '.cc-assistant pre{margin:0 0 8px;background:var(--bg-secondary,#111119);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:9px 11px;overflow-x:auto}',
     '.cc-assistant pre code{background:none;padding:0;font-size:calc(12px*var(--cc-fs,1));line-height:1.5}',
@@ -768,6 +774,65 @@
       if (!pth || !openPath) return;
       e.preventDefault();
       openPath(pth.getAttribute('data-path'));
+    });
+
+    // Hovering a code block, a code span or a link in Claude's reply shows a
+    // small copy button by it. One button, moved to whatever is hovered.
+    var COPY_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    var DONE_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    var copyHint = el('button', 'cc-copyhint', COPY_IC);
+    copyHint.type = 'button';
+    root.appendChild(copyHint);
+    var copyFor = null, copyHideT = null;
+    function copyTargetOf(t) {
+      var n = t && t.closest && t.closest('.cc-assistant pre, .cc-assistant code, .cc-assistant a, .cc-user-body a');
+      if (!n || !root.contains(n)) return null;
+      var pre = n.closest('pre');
+      return pre && root.contains(pre) ? pre : n;
+    }
+    function copyTextOf(n) {
+      if (n.tagName === 'PRE') return n.textContent;
+      if (n.tagName === 'A') return n.getAttribute('data-path') || n.getAttribute('href') || n.textContent;
+      return n.getAttribute('data-path') || n.textContent;
+    }
+    function placeCopyHint(n) {
+      clearTimeout(copyHideT);
+      if (copyFor !== n) { copyHint.classList.remove('done'); copyHint.innerHTML = COPY_IC; }
+      copyFor = n;
+      var what = n.tagName === 'PRE' ? 'code' : n.getAttribute('data-path') ? 'path' : n.tagName === 'A' ? 'link' : 'code';
+      copyHint.title = 'Copy ' + what;
+      copyHint.classList.add('on');
+      var bw = copyHint.offsetWidth || 24, bh = copyHint.offsetHeight || 22, x, y;
+      if (n.tagName === 'PRE') {
+        var r = n.getBoundingClientRect();
+        x = r.right - bw - 6; y = r.top + 6;
+      } else {
+        // Just after the end of the span (its last line, if it wraps).
+        var rs = n.getClientRects(), last = rs[rs.length - 1] || n.getBoundingClientRect();
+        x = last.right + 3; y = last.top + last.height / 2 - bh / 2;
+        if (x + bw > window.innerWidth - 4) x = last.right - bw;
+      }
+      copyHint.style.left = Math.round(x) + 'px';
+      copyHint.style.top = Math.round(y) + 'px';
+    }
+    function hideCopyHint() { copyHint.classList.remove('on'); copyFor = null; }
+    log.addEventListener('mouseover', function (e) {
+      if (e.target === copyHint || copyHint.contains(e.target)) return;
+      var n = copyTargetOf(e.target);
+      if (n) placeCopyHint(n);
+      else if (copyFor) { clearTimeout(copyHideT); copyHideT = setTimeout(hideCopyHint, 250); }
+    });
+    log.addEventListener('mouseleave', function () { clearTimeout(copyHideT); copyHideT = setTimeout(hideCopyHint, 250); });
+    copyHint.addEventListener('mouseenter', function () { clearTimeout(copyHideT); });
+    copyHint.addEventListener('mouseleave', function () { clearTimeout(copyHideT); copyHideT = setTimeout(hideCopyHint, 250); });
+    log.addEventListener('scroll', function () { if (copyFor) hideCopyHint(); }, { passive: true });
+    copyHint.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    copyHint.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (!copyFor) return;
+      var txt = copyTextOf(copyFor), n = copyFor;
+      var ok = function () { if (copyFor === n) { copyHint.classList.add('done'); copyHint.innerHTML = DONE_IC; } toast('Copied'); };
+      (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject()).then(ok, function () { toast('Could not copy', 'error'); });
     });
 
     var entries = new Map();   // entry id -> { data, node }
