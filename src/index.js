@@ -460,6 +460,9 @@ async function shutdown(signal) {
 
   // Save state
   if (getChatId()) saveState({ ...loadState(), chatId: getChatId() });
+  // Every open pane, written down before anything closes it, so it comes back
+  // parked in place after the restart.
+  try { webapp.savePanes(); } catch { /* ignore */ }
 
   // Stop all running services + their Cloudflare tunnels (await so
   // `docker compose down` / taskkill actually finish before we exit).

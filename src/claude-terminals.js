@@ -368,6 +368,8 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     model = '',                        // --model <name> (e.g. opus); '' = omit
     effort = '',                       // --effort <level>; '' = omit
     userLayers = true,                 // false for unattended runs: Crundi's layer only
+    id: wantId = '',                   // a parked pane coming back keeps its id...
+    order: wantOrder = null,           // ...and its order, so its layout slot holds
   } = {}) {
     if (!pty) return { ok: false, error: 'node-pty is not available. Install it with: npm install node-pty' };
     if (skipPermissions && !shellOnly) {
@@ -389,7 +391,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
 
     // Terminal id is generated up-front so it can be injected into the PTY env —
     // the hooks read CRUNDI_TERMINAL_ID to attribute events to THIS terminal.
-    const id = genTermId();
+    const id = /^[0-9a-f]{16}$/.test(String(wantId)) && !terminals.has(wantId) ? String(wantId) : genTermId();
 
     const siblings = entriesForAlias(key);
     const aliasHasLive = siblings.some(t => t.proc);
@@ -476,7 +478,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     const emitter = new EventEmitter();
     emitter.setMaxListeners(50);
 
-    const nextOrder = siblings.length ? Math.max(...siblings.map(t => t.order)) + 1 : 0;
+    const nextOrder = Number.isFinite(wantOrder) ? wantOrder : (siblings.length ? Math.max(...siblings.map(t => t.order)) + 1 : 0);
     const entry = {
       id,
       alias: key,
@@ -487,6 +489,11 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
       emitter,
       cols,
       rows,
+      // How it was launched, so a parked pane can be started the same way.
+      // Scheduler runs (a command or a one-shot prompt) are not panes to restore.
+      opts: { shellOnly: !!shellOnly, skipPermissions: !!skipPermissions, model: model || '', effort: effort || '',
+        restorable: !rawCommand && !cleanPrompt },
+      createdAt: Date.now(),
     };
     terminals.set(id, entry);
 
@@ -669,8 +676,33 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     return { id, alias: entry.alias, title: entry.title, scrollback: entry.scrollback };
   }
 
+  /**
+   * The conversation a Claude terminal is really on. A PTY cannot say, but its
+   * lifecycle hooks carry session_id on every event, which covers fresh
+   * sessions and forks that the launch flags could only guess at.
+   */
+  function setSessionId(id, sid) {
+    const entry = terminals.get(id);
+    if (!entry || !sid || entry.opts?.shellOnly || entry.sessionId === sid) return;
+    if (entry.sessionId) releaseSession('term:' + id);
+    entry.sessionId = String(sid);
+    claimSession('term:' + id, entry.sessionId);
+  }
+
+  /** Launch options and conversation, for parking and bringing back. */
+  function meta(id) {
+    const e = terminals.get(id);
+    if (!e) return null;
+    return {
+      id: e.id, alias: e.alias, title: e.title, order: e.order,
+      sessionId: e.sessionId || '', running: !!e.proc, createdAt: e.createdAt || 0,
+      ...(e.opts || { shellOnly: false, skipPermissions: false, model: '', effort: '', restorable: false }),
+    };
+  }
+
   const self = {
     list, create, close, closeProject, write, resize, rename, setOrder, getScrollback, on, off, closeAll, info,
+    setSessionId, meta,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },

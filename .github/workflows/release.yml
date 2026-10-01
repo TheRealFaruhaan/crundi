@@ -2,6 +2,10 @@ name: Release
 
 # Cut a release by tagging main's top commit and pushing the tag:
 #   git tag v1.2.0 && git push origin v1.2.0
+# A dev release is a prerelease version tagged on dev's top commit:
+#   git tag v1.2.1-dev.1 && git push origin v1.2.1-dev.1
+# Any tag with a "-" is published as a GitHub PRERELEASE from the start, so
+# "latest release" (what production installs follow) never points at it.
 # electron-builder builds the Windows installer and publishes it to the matching
 # GitHub Release together with the .blockmap and latest.yml — the full set the
 # in-app auto-updater needs. Building on a clean runner also avoids the flaky
@@ -70,4 +74,8 @@ jobs:
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # electron-builder creates the release; this makes it a prerelease
+          # for dev tags. Set here, before it exists, so there is no window in
+          # which a dev build is the latest release.
+          EP_PRE_RELEASE: ${{ contains(github.ref_name, '-') && 'true' || 'false' }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

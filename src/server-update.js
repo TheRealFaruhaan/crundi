@@ -25,6 +25,8 @@ const ROOT = join(__dirname, '..');
 
 const REPO = process.env.CRUNDI_REPO || 'TheRealFaruhaan/crundi';
 const API = `https://api.github.com/repos/${REPO}/releases/latest`;
+// Dev channel: the recent releases of either kind, to pick the highest version.
+const API_LIST = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
 
 // GitHub allows 60 unauthenticated calls an hour per IP. Six hours is far
 // inside that even with several servers behind one address, and a release is
@@ -36,7 +38,7 @@ const RETRY_WHILE_PUBLISHING_MS = 3 * 60 * 1000;
 
 let state = {
   checkedAt: 0,
-  latest: null,          // { version, tag, url, asset }
+  latest: null,          // { version, tag, url, asset, prerelease }
   error: '',
   applying: false,
   log: '',
@@ -59,9 +61,9 @@ export function currentVersion() {
  */
 export function isNewer(a, b) {
   const parse = (v) => {
-    const m = String(v).match(/^v?(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
+    const m = String(v).match(/^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
     if (!m) return null;
-    return { nums: [+m[1], +m[2], +m[3]], pre: m[4] || '' };
+    return { nums: [+m[1], +m[2], +m[3]], pre: m[4] ? m[4].split('.') : [] };
   };
   const x = parse(a), y = parse(b);
   if (!x || !y) return false;
@@ -69,9 +71,39 @@ export function isNewer(a, b) {
     if (x.nums[i] !== y.nums[i]) return x.nums[i] > y.nums[i];
   }
   // Same numbers: a release beats a prerelease, and neither beats itself.
-  if (!x.pre && y.pre) return true;
-  if (x.pre && !y.pre) return false;
+  if (!x.pre.length && y.pre.length) return true;
+  if (x.pre.length && !y.pre.length) return false;
+  if (!x.pre.length) return false;
+  // Both prereleases: compare part by part, numbers as numbers, so dev.10 is
+  // newer than dev.9 (and dev.2 newer than dev.1, which used to tie).
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i], q = y.pre[i];
+    if (p === undefined) return false;
+    if (q === undefined) return true;
+    const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
+    if (pn && qn && +p !== +q) return +p > +q;
+    if (pn !== qn) return !pn;
+    if (p !== q) return p > q;
+  }
   return false;
+}
+
+// ─── Channel ───
+// production: GitHub's latest release, which never includes a prerelease.
+// dev: the highest version of either kind, so a newer production release is
+// still offered over a dev build. Neither ever offers an older version, so
+// leaving dev waits for a production release newer than the build installed.
+const CHANNEL_FILE = () => join(config.dataDir, 'update-channel.json');
+export function getChannel() {
+  try { return JSON.parse(readFileSync(CHANNEL_FILE(), 'utf-8')).channel === 'dev' ? 'dev' : 'production'; }
+  catch { return 'production'; }
+}
+export function setChannel(ch) {
+  const next = ch === 'dev' ? 'dev' : 'production';
+  mkdirSync(config.dataDir, { recursive: true });
+  writeFileSync(CHANNEL_FILE(), JSON.stringify({ channel: next }));
+  state.latest = null; state.checkedAt = 0; state.error = '';
+  return next;
 }
 
 /** The release asset this platform could actually install. */
@@ -127,12 +159,25 @@ export async function check({ force = false } = {}) {
   if (force && age < MIN_RECHECK_MS && state.latest) return state.latest;
 
   try {
-    const res = await fetch(API, {
+    const dev = getChannel() === 'dev';
+    const res = await fetch(dev ? API_LIST : API, {
       headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'crundi' },
       signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
-    const body = await res.json();
+    let body = await res.json();
+    if (dev) {
+      // Highest version of either kind. A release whose Linux package is not
+      // attached yet still wins: the blocker says it is publishing.
+      let best = null;
+      for (const r of Array.isArray(body) ? body : []) {
+        if (r.draft) continue;
+        const v = String(r.tag_name || '').replace(/^v/, '');
+        if (!best || isNewer(v, String(best.tag_name || '').replace(/^v/, ''))) best = r;
+      }
+      if (!best) throw new Error('No releases found');
+      body = best;
+    }
     const version = String(body.tag_name || '').replace(/^v/, '');
     state.latest = {
       version,
@@ -140,6 +185,7 @@ export async function check({ force = false } = {}) {
       url: body.html_url,
       notes: String(body.body || '').slice(0, 4000),
       asset: assetFor(body.assets),
+      prerelease: !!body.prerelease,
     };
     state.error = '';
   } catch (err) {
@@ -170,6 +216,9 @@ export function status() {
     applying: state.applying,
     log: state.log.slice(-4000),
     blocker: available ? updateBlocker(latest) : '',
+    channel: getChannel(),
+    latestKind: latest ? (latest.prerelease ? 'dev' : 'production') : '',
+    currentIsDev: /-/.test(current),
   };
 }
 

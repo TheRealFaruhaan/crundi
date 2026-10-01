@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
   setAutoUpdate: (enabled) => ipcRenderer.invoke('update:setEnabled', !!enabled),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  setUpdateChannel: (ch) => ipcRenderer.invoke('update:setChannel', ch === 'dev' ? 'dev' : 'production'),
   setStartup: (enabled) => ipcRenderer.invoke('startup:set', !!enabled),
   onUpdateStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('update:status', h); return () => ipcRenderer.removeListener('update:status', h); },
 
