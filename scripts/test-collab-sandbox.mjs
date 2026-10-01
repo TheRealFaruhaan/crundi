@@ -142,7 +142,9 @@ try {
     /function openUsageModal\(\) \{[\s\S]{0,200}if \(userRole === 'collaborator'\) return;/.test(html));
   check('a finished turn closes questions it left open',
     /function handleResult\(s, msg\) \{\s*\/\/[^\n]*\n\s*expireStalePending\(s\);/.test(ui)
-    && /function expireStalePending\(s\)[\s\S]{0,500}escalationGoneCb\?\.\(p\.entry\.approvalId\)[\s\S]{0,200}s\.pending\.clear\(\);/.test(ui));
+    // Since 2.1.285 a running background agent's request is kept; every other
+    // one is still withdrawn (and its escalation dropped) when the turn ends.
+    && /function expireStalePending\(s\)[\s\S]{0,1500}escalationGoneCb\?\.\(p\.entry\.approvalId\)[\s\S]{0,200}s\.pending\.delete\(key\);/.test(ui));
   check('an abandoned escalation is withdrawn from the inbox',
     /onEscalationGone\(\(approvalId\) => \{\s*if \(approvals\.cancel\(approvalId, 'system'\)\) broadcastApprovals\(\);/.test(web));
   {

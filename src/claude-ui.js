@@ -130,7 +130,8 @@ function transcriptUserText(rec) {
     if (c.some(b => b && b.type === 'tool_result')) return '';
     text = c.map(b => (b && b.type === 'text' ? b.text : (b && b.type === 'image' ? '[image]' : ''))).filter(Boolean).join('\n');
   }
-  text = String(text || '').trim();
+  // trim() keeps a leading zero-width space (sendMessage's path guard).
+  text = String(text || '').replace(/^\u200b/, '').trim();
   // Slash-command plumbing and injected reminders are the CLI talking to
   // itself, not the user.
   if (!text || /^<(command-name|command-message|local-command-stdout|local-command-stderr|system-reminder)>/.test(text)) return '';
@@ -1519,14 +1520,25 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    */
   function expireStalePending(s) {
     if (!s.pending || !s.pending.size) return;
-    for (const [, p] of s.pending) {
+    // Since 2.1.285 a BACKGROUND subagent's permission request reaches us too
+    // (it used to be auto-denied), and that agent keeps running after the turn
+    // ends, still waiting on the answer. Such a request is not stale: leave it
+    // while a background task is running and the request is not one of the
+    // main thread's own tool calls. Everything else is as before.
+    const bgRunning = [...(s.agents?.values() || [])].some(a => a.status === 'running');
+    const mainTools = new Set(s.messages.filter(e => e.kind === 'tool' && e.toolUseId).map(e => e.toolUseId));
+    let changed = false;
+    for (const [key, p] of [...s.pending]) {
+      const tid = p.entry && p.entry.toolUseId;
+      if (bgRunning && tid && !mainTools.has(tid)) continue;
       patchEntry(s, p.entry, { status: 'cancelled' });
       if (p.entry && p.entry.approvalId) {
         try { escalationGoneCb?.(p.entry.approvalId); } catch { /* never fatal */ }
       }
+      s.pending.delete(key);
+      changed = true;
     }
-    s.pending.clear();
-    pendingChanged(s);
+    if (changed) pendingChanged(s);
   }
 
   // ─── Collaborator token usage ───
@@ -1652,6 +1664,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    */
   function takeInjectionAck(s, text) {
     if (!s.pendingInjections?.length) return false;
+    text = String(text).replace(/^\u200b/, '');   // see sendMessage: the path guard
     const i = s.pendingInjections.findIndex(p => p.text === text);
     if (i < 0) return false;
     const [p] = s.pendingInjections.splice(i, 1);
@@ -2116,6 +2129,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // lifecycle events"), which is why hand-over used to look irreversible:
     // there was nothing to name when asking for it back.
     const uuid = randomUUID();
+    // The CLI reads a message whose first word starts with "/" as a slash
+    // command, and holds commands until the turn ends — so a message that
+    // began with a file path (an attachment) sat in the queue while anything
+    // sent after it was read first. A zero-width space in front keeps it plain
+    // text (ordinary spaces are trimmed off). Only a first word with a second
+    // "/" in it, i.e. a path: /compact, /goal …, /plugin:cmd stay commands.
+    // Tested on the trimmed text, as the CLI sees it: a message opening with a
+    // blank line and then a path is held the same way. Later lines never count.
+    const wire = /^\/[^\s/]*\/\S*/.test(body.replace(/^\s+/, '')) ? '\u200b' + body : body;
     if (injected) s.pendingInjections.push({ text: body, at: Date.now(), uuid, state: 'sent', ...(by ? { by } : {}) });
     else emitEntry(s, { id: genId(), kind: 'user', text: body, ...(by ? { by } : {}) });
     const ok = send(s, {
@@ -2123,7 +2145,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       session_id: s.sessionId || '',
       parent_tool_use_id: null,
       uuid,
-      message: { role: 'user', content: [{ type: 'text', text: body }] },
+      message: { role: 'user', content: [{ type: 'text', text: wire }] },
     });
     if (!ok) return { ok: false, error: 'Failed to write to the session' };
     setState(s, 'working');

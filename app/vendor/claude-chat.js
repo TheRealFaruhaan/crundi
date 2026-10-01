@@ -44,7 +44,17 @@
     '.cc-assistant ul,.cc-assistant ol{margin:0 0 8px;padding-left:20px}',
     '.cc-assistant li{margin:2px 0}',
     '.cc-assistant h1,.cc-assistant h2,.cc-assistant h3{margin:12px 0 6px;font-size:calc(14px*var(--cc-fs,1));font-weight:650;color:var(--text-primary)}',
-    '.cc-assistant a{color:var(--accent-hover)}',
+    '.cc-assistant a,.cc-user-body a{color:var(--accent-hover);text-decoration:underline;text-underline-offset:2px;word-break:break-all}',
+    '.cc-user-body a{color:inherit}',
+    // A path the host can open: dotted underline, so it reads as a file, not a web link.
+    '.cc-path{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;word-break:break-all}',
+    '.cc-path:hover{color:var(--accent-hover);text-decoration-style:solid}',
+    // Hover copy button for code, links and paths in Claude's replies.
+    '.cc-copyhint{position:fixed;z-index:60;display:none;align-items:center;justify-content:center;width:24px;height:22px;padding:0;border:1px solid var(--border,#2a2a3d);border-radius:6px;background:var(--bg-secondary,#12121a);color:var(--text-secondary);cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.35)}',
+    '.cc-copyhint.on{display:inline-flex}',
+    '.cc-copyhint:hover{color:var(--text-primary);background:var(--bg-hover,#22223a)}',
+    '.cc-copyhint.done{color:var(--green,#22c55e)}',
+    '.cc-copyhint svg{width:13px;height:13px}',
     '.cc-assistant code{font-family:var(--mono);font-size:calc(12px*var(--cc-fs,1));background:var(--bg-tertiary,rgba(255,255,255,.06));padding:1px 5px;border-radius:4px}',
     '.cc-assistant pre{margin:0 0 8px;background:var(--bg-secondary,#111119);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);padding:9px 11px;overflow-x:auto}',
     '.cc-assistant pre code{background:none;padding:0;font-size:calc(12px*var(--cc-fs,1));line-height:1.5}',
@@ -54,7 +64,15 @@
 
     '.cc-think{border-left:2px solid var(--border);padding-left:9px;color:var(--text-muted);font-size:calc(12px*var(--cc-fs,1));font-style:italic}',
     '.cc-think-head{cursor:pointer;user-select:none;color:var(--text-secondary);font-style:normal;display:flex;align-items:center;gap:5px}',
-    '.cc-think-body{margin-top:4px;white-space:pre-wrap;max-height:260px;overflow-y:auto}',
+    '.cc-think-body{margin-top:4px;white-space:pre-wrap;max-height:260px;overflow-y:auto;transition:max-height .28s ease,opacity .2s ease,margin-top .28s ease}',
+    // Thinking folds away with a short slide instead of vanishing.
+    '.cc-think.cc-collapsed .cc-think-body{display:block;max-height:0;opacity:0;margin-top:0;overflow:hidden}',
+    // While it is thinking: the label shimmers and a caret blinks at the end.
+    '.cc-think.live .cc-think-head span:last-child{background:linear-gradient(90deg,var(--text-secondary) 0%,var(--text-primary) 45%,var(--text-secondary) 90%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:cc-shimmer 1.6s linear infinite}',
+    '@keyframes cc-shimmer{from{background-position:120% 0}to{background-position:-120% 0}}',
+    '.cc-think-caret{display:inline-block;width:2px;height:1em;margin-left:2px;vertical-align:-2px;background:var(--text-muted);animation:cc-blink 1s steps(1) infinite}',
+    '@keyframes cc-blink{50%{opacity:0}}',
+    '@media (prefers-reduced-motion: reduce){.cc-think.live .cc-think-head span:last-child{animation:none;color:var(--text-secondary);background:none}.cc-think-caret{animation:none}.cc-think-body{transition:none}}',
     '.cc-collapsed .cc-think-body,.cc-collapsed .cc-tool-body{display:none}',
     '.cc-thought{display:flex;align-items:center;gap:6px;color:var(--text-muted);font-size:calc(12px*var(--cc-fs,1));font-style:italic;user-select:none}',
     '.cc-thought-dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);opacity:.55;flex:0 0 auto}',
@@ -411,11 +429,48 @@
   }
 
   function inline(s) {
-    return s
-      .replace(/`([^`]+)`/g, function (m, c) { return '<code>' + c + '</code>'; })
+    // Code spans and [text](url) links are set aside first, so a URL inside
+    // either is not linked a second time; bare URLs are linked after.
+    var held = [];
+    var hold = function (html) { held.push(html); return '\u0001' + (held.length - 1) + '\u0001'; };
+    s = s
+      .replace(/`([^`]+)`/g, function (m, c) { return hold(looksLikePath(c) ? '<code class="cc-path" data-path="' + c + '" title="Open ' + c + '">' + c + '</code>' : '<code>' + c + '</code>'); })
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, function (m, t, u) { return hold('<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + t + '</a>'); })
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    s = linkify(s);
+    return s.replace(/\u0001(\d+)\u0001/g, function (m, i) { return held[+i]; });
+  }
+
+  /**
+   * In already-escaped text: absolute file paths become openable links (the
+   * host opens them in its file viewer), and bare http(s) URLs become links.
+   * Trailing punctuation stays outside either, so "see https://x.com." links
+   * x.com and "in /a/b.js:12," opens /a/b.js.
+   */
+  function linkify(escaped) {
+    var held = [];
+    var hold = function (html) { held.push(html); return '\u0002' + (held.length - 1) + '\u0002'; };
+    var trim = function (u) { var m = u.match(/(?:[.,;:!?)\]'"]|&#39;|&quot;|&gt;)+$/); return m ? [u.slice(0, -m[0].length), m[0]] : [u, '']; };
+    var out = String(escaped).replace(/\bhttps?:\/\/[^\s<\u0001\u0002]+/g, function (u) {
+      var t = trim(u);
+      if (!t[0]) return t[1];
+      return hold('<a href="' + t[0] + '" target="_blank" rel="noopener noreferrer">' + t[0] + '</a>') + t[1];
+    });
+    out = out.replace(/(^|[\s(\[>]|&quot;|&#39;)(\/(?:[\w.@+~%,=-]+\/)+[\w.@+~%,=-]+(?::\d+(?::\d+)?)?)/g, function (m, pre, pth) {
+      var t = trim(pth);
+      return pre + hold('<a class="cc-path" data-path="' + t[0] + '" title="Open ' + t[0] + '">' + t[0] + '</a>') + t[1];
+    });
+    return out.replace(/\u0002(\d+)\u0002/g, function (m, i) { return held[+i]; });
+  }
+
+  /** A code span that is just a file path (src/a.js, ./x/y.md, /etc/z) is openable. */
+  function looksLikePath(c) {
+    if (!c || c.length > 260 || /\s/.test(c) || /^https?:/.test(c) || /[<>&*|$`]/.test(c)) return false;
+    var bare = c.replace(/:\d+(:\d+)?$/, '');
+    if (/^(\.{0,2}\/)?[\w.@+~-]+(\/[\w.@+~-]+)+$/.test(bare)) return true;
+    // A bare name only with a real file extension, so obj.prop is left alone.
+    return /^[\w-][\w.@+~-]*\.(js|mjs|cjs|ts|tsx|jsx|json|md|txt|log|py|sh|bash|yml|yaml|toml|ini|conf|cfg|env|html|htm|css|scss|xml|svg|png|jpe?g|gif|webp|pdf|csv|sql|go|rs|rb|php|java|kt|swift|c|h|cc|cpp|hpp|vue|lock|dockerfile|service)$/i.test(bare);
   }
 
   function shortPath(p) {
@@ -579,6 +634,7 @@
     var project = opts.project || '';
     var apiFetch = opts.apiFetch;
     var apiUpload = opts.apiUpload || null;   // absent in older hosts
+    var openPath = opts.openPath || null;      // host opens a file path in its viewer
     var wsSend = opts.wsSend || function () {};
 
     var root = el('div', 'cc-root');
@@ -712,6 +768,72 @@
     root.appendChild(goalBar);
     root.appendChild(composer);
     host.appendChild(root);
+    // A file path in any message opens in the host's file viewer.
+    root.addEventListener('click', function (e) {
+      var pth = e.target.closest && e.target.closest('.cc-path');
+      if (!pth || !openPath) return;
+      e.preventDefault();
+      openPath(pth.getAttribute('data-path'));
+    });
+
+    // Hovering a code block, a code span or a link in Claude's reply shows a
+    // small copy button by it. One button, moved to whatever is hovered.
+    var COPY_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    var DONE_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    var copyHint = el('button', 'cc-copyhint', COPY_IC);
+    copyHint.type = 'button';
+    root.appendChild(copyHint);
+    var copyFor = null, copyHideT = null;
+    function copyTargetOf(t) {
+      var n = t && t.closest && t.closest('.cc-assistant pre, .cc-assistant code, .cc-assistant a, .cc-user-body a');
+      if (!n || !root.contains(n)) return null;
+      var pre = n.closest('pre');
+      return pre && root.contains(pre) ? pre : n;
+    }
+    function copyTextOf(n) {
+      if (n.tagName === 'PRE') return n.textContent;
+      if (n.tagName === 'A') return n.getAttribute('data-path') || n.getAttribute('href') || n.textContent;
+      return n.getAttribute('data-path') || n.textContent;
+    }
+    function placeCopyHint(n) {
+      clearTimeout(copyHideT);
+      if (copyFor !== n) { copyHint.classList.remove('done'); copyHint.innerHTML = COPY_IC; }
+      copyFor = n;
+      var what = n.tagName === 'PRE' ? 'code' : n.getAttribute('data-path') ? 'path' : n.tagName === 'A' ? 'link' : 'code';
+      copyHint.title = 'Copy ' + what;
+      copyHint.classList.add('on');
+      var bw = copyHint.offsetWidth || 24, bh = copyHint.offsetHeight || 22, x, y;
+      if (n.tagName === 'PRE') {
+        var r = n.getBoundingClientRect();
+        x = r.right - bw - 6; y = r.top + 6;
+      } else {
+        // Just after the end of the span (its last line, if it wraps).
+        var rs = n.getClientRects(), last = rs[rs.length - 1] || n.getBoundingClientRect();
+        x = last.right + 3; y = last.top + last.height / 2 - bh / 2;
+        if (x + bw > window.innerWidth - 4) x = last.right - bw;
+      }
+      copyHint.style.left = Math.round(x) + 'px';
+      copyHint.style.top = Math.round(y) + 'px';
+    }
+    function hideCopyHint() { copyHint.classList.remove('on'); copyFor = null; }
+    log.addEventListener('mouseover', function (e) {
+      if (e.target === copyHint || copyHint.contains(e.target)) return;
+      var n = copyTargetOf(e.target);
+      if (n) placeCopyHint(n);
+      else if (copyFor) { clearTimeout(copyHideT); copyHideT = setTimeout(hideCopyHint, 250); }
+    });
+    log.addEventListener('mouseleave', function () { clearTimeout(copyHideT); copyHideT = setTimeout(hideCopyHint, 250); });
+    copyHint.addEventListener('mouseenter', function () { clearTimeout(copyHideT); });
+    copyHint.addEventListener('mouseleave', function () { clearTimeout(copyHideT); copyHideT = setTimeout(hideCopyHint, 250); });
+    log.addEventListener('scroll', function () { if (copyFor) hideCopyHint(); }, { passive: true });
+    copyHint.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    copyHint.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (!copyFor) return;
+      var txt = copyTextOf(copyFor), n = copyFor;
+      var ok = function () { if (copyFor === n) { copyHint.classList.add('done'); copyHint.innerHTML = DONE_IC; } toast('Copied'); };
+      (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject()).then(ok, function () { toast('Could not copy', 'error'); });
+    });
 
     var entries = new Map();   // entry id -> { data, node }
     var plan = null;           // { text, filePath, at, status } from ExitPlanMode
@@ -825,8 +947,19 @@
     function atBottom() {
       return log.scrollHeight - log.scrollTop - log.clientHeight < 60;
     }
+    // Following the newest message is the reader's choice, kept in
+    // stickBottom (set when they scroll). Asking "are we within 60px of the
+    // bottom?" mid-stream failed: the smooth scroll was still catching up when
+    // the next chunk landed, so a growing thinking block shook it off the end.
+    function followingBottom() { return stickBottom || atBottom(); }
     function scrollDown(force) {
-      if (force || atBottom()) log.scrollTop = log.scrollHeight;
+      if (!(force || atBottom())) return;
+      // Instant, not smooth: streaming text adds a line every few ms and an
+      // animation always lags behind it.
+      var prev = log.style.scrollBehavior;
+      log.style.scrollBehavior = 'auto';
+      log.scrollTop = log.scrollHeight;
+      log.style.scrollBehavior = prev;
     }
 
     // ─── Scroll retention across re-parenting ───
@@ -949,7 +1082,7 @@
           if (e.by === 'owner') w.appendChild(el('div', 'cc-user-by', 'Owner'));
           // Crundi posting the output of a command the owner ran.
           if (e.by === 'system') w.appendChild(el('div', 'cc-user-by', 'Crundi'));
-          w.appendChild(el('div', 'cc-user-body', esc(e.text)));
+          w.appendChild(el('div', 'cc-user-body', linkify(esc(e.text))));
           node.appendChild(w);
           break;
         }
@@ -989,7 +1122,37 @@
       }
     }
 
-    var thinkClosed = new Set();   // thinking blocks the user collapsed
+    var thinkUser = new Map();     // id -> 'open' | 'closed', set by the user
+    var thinkAuto = new Map();     // id -> 'open' | 'closed', set by the rules
+    var thinkTimers = new Map();   // id -> timer that folds it after it finishes
+    var THINK_LINGER_MS = 5000;
+    function thinkCollapsed(e) {
+      var u = thinkUser.get(e.id);
+      if (u) return u === 'closed';
+      var a = thinkAuto.get(e.id);
+      if (a) return a === 'closed';
+      return !e.streaming;          // from history, or already finished: closed
+    }
+    // Fold a block now (unless the user has chosen for it), animating in place.
+    function autoCloseThinking(id) {
+      clearTimeout(thinkTimers.get(id)); thinkTimers.delete(id);
+      if (thinkUser.has(id)) return;
+      thinkAuto.set(id, 'closed');
+      var rec = entries.get(id);
+      var box = rec && rec.node.querySelector('.cc-think');
+      if (box) box.classList.add('cc-collapsed');
+    }
+    // Called whenever a thinking entry is added or changes.
+    function thinkingChanged(e, isNew) {
+      if (isNew && e.streaming) {
+        // A newer thought folds the earlier ones away.
+        thinkAuto.forEach(function (v, id) { if (id !== e.id && v === 'open') autoCloseThinking(id); });
+        thinkAuto.set(e.id, 'open');
+      }
+      if (!e.streaming && thinkAuto.get(e.id) === 'open' && !thinkTimers.has(e.id)) {
+        thinkTimers.set(e.id, setTimeout(function () { autoCloseThinking(e.id); }, THINK_LINGER_MS));
+      }
+    }
     function thinkingNode(e) {
       // Models from Opus 4.7 on return thinking blocks with no text (see
       // handleStreamEvent in claude-ui.js). An expander over an empty body
@@ -1002,14 +1165,16 @@
           + (n ? ' for ~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + ' tokens' : '')
           + '</span>');
       }
-      // Open by default. One you close stays closed: streaming repaints the
-      // node, so the choice is kept by entry id rather than on the element.
-      var box = el('div', 'cc-think' + (thinkClosed.has(e.id) ? ' cc-collapsed' : ''));
+      // Open while it is thinking, folded away a little after it finishes or
+      // as soon as a newer one starts, and closed when loaded from history.
+      // Once you open or close one yourself, that wins and it stays put.
+      // Kept by entry id, since streaming repaints the node.
+      var box = el('div', 'cc-think' + (thinkCollapsed(e) ? ' cc-collapsed' : '') + (e.streaming ? ' live' : ''));
       var head = el('div', 'cc-think-head', '<span class="cc-caret">▾</span><span>Thinking</span>');
-      var body = el('div', 'cc-think-body', esc(e.text));
+      var body = el('div', 'cc-think-body', esc(e.text) + (e.streaming ? '<span class="cc-think-caret"></span>' : ''));
       head.addEventListener('click', function () {
         var closed = box.classList.toggle('cc-collapsed');
-        if (closed) thinkClosed.add(e.id); else thinkClosed.delete(e.id);
+        thinkUser.set(e.id, closed ? 'closed' : 'open');
       });
       box.appendChild(head);
       box.appendChild(body);
@@ -1763,10 +1928,17 @@
       return btoa(bin);
     }
 
+    // An attachment's path goes in where the caret is (or replaces a
+    // selection), spaced from its neighbours — not on the end of the message.
     function insertPath(p) {
       var v = input.value;
-      var pad = (!v || /\s$/.test(v)) ? '' : ' ';
-      input.value = v + pad + p + ' ';
+      var a = typeof input.selectionStart === 'number' ? input.selectionStart : v.length;
+      var b = typeof input.selectionEnd === 'number' ? input.selectionEnd : v.length;
+      var before = v.slice(0, a), after = v.slice(b);
+      var ins = ((before && !/\s$/.test(before)) ? ' ' : '') + p + ((after && /^\s/.test(after)) ? '' : ' ');
+      input.value = before + ins + after;
+      var caret = before.length + ins.length;
+      try { input.setSelectionRange(caret, caret); } catch (e) {}
       saveDraft();
       autoGrow();
       input.focus();
@@ -2420,9 +2592,10 @@
     }
 
     function addEntry(data) {
+      if (data.kind === 'thinking') thinkingChanged(data, true);
       var node = renderEntry(data);
       entries.set(data.id, { data: data, node: node });
-      var stick = atBottom();
+      var stick = followingBottom();
       log.appendChild(node);
       // The activity row is not a conversation entry; keep it last.
       if (activityNode && activityNode.parentNode === log) log.appendChild(activityNode);
@@ -2788,7 +2961,8 @@
           var rec = entries.get(ev.id);
           if (!rec) break;
           Object.assign(rec.data, ev.patch);
-          var stick = atBottom();
+          if (rec.data.kind === 'thinking') thinkingChanged(rec.data, false);
+          var stick = followingBottom();
           paint(rec.node, rec.data);
           scrollDown(stick);
           // An open task panel shows this same command: keep it current, so a
@@ -2806,8 +2980,11 @@
           r.data.text = (r.data.text || '') + ev.text;
           // Repaint just the text node; markdown is cheap enough per delta and
           // keeps fences/lists correct as they stream in.
-          var stick2 = atBottom();
+          var stick2 = followingBottom();
           paint(r.node, r.data);
+          // A long thought scrolls inside its own box: keep its newest line in view.
+          var tb = r.data.kind === 'thinking' && r.node.querySelector('.cc-think-body');
+          if (tb) tb.scrollTop = tb.scrollHeight;
           scrollDown(stick2);
           break;
         }
