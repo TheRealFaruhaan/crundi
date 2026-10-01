@@ -101,6 +101,19 @@
     '.cc-opt:hover{border-color:var(--accent-hover)}',
     '.cc-opt.sel{border-color:var(--accent);background:var(--accent-dim);box-shadow:var(--ring)}',
     '.cc-opt input{margin-top:3px;accent-color:var(--accent);flex:none}',
+    // Note on a choice: a button in the corner, and the note under the choice.
+    '.cc-opt{position:relative;padding-right:36px}',
+    '.cc-opt > div{flex:1;min-width:0}',
+    '.cc-opt-nb{position:absolute;top:5px;right:5px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:6px;background:none;color:var(--text-muted);cursor:pointer;padding:0}',
+    '.cc-opt-nb svg{width:14px;height:14px}',
+    '.cc-opt-nb:hover{color:var(--text-primary);background:var(--bg-tertiary,#1a1a28);border-color:var(--border)}',
+    '.cc-opt-nb.on{color:var(--accent-hover)}',
+    '.cc-opt-note{display:flex;align-items:center;gap:6px;margin-top:7px}',
+    '.cc-opt-note input{flex:1;min-width:0;margin:0;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);padding:5px 8px;font-family:inherit;font-size:calc(12px*var(--cc-fs,1))}',
+    '.cc-opt-note input:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}',
+    '.cc-opt-note button{flex:none;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;border-radius:6px;background:none;color:var(--text-muted);cursor:pointer;font-size:calc(12px*var(--cc-fs,1));padding:0}',
+    '.cc-opt-note button:hover{color:var(--text-primary);background:rgba(148,163,184,.15)}',
+    '.cc-ans-note{flex-basis:100%;color:var(--text-muted);font-size:calc(11.5px*var(--cc-fs,1))}',
     '.cc-opt-label{font-weight:600;color:var(--text-primary)}',
     '.cc-opt-desc{color:var(--text-secondary);font-size:calc(12px*var(--cc-fs,1));margin-top:1px}',
     '.cc-opt-prev{font-family:var(--mono);font-size:calc(11px*var(--cc-fs,1));background:var(--bg-secondary,#111119);border:1px solid var(--border-subtle);border-radius:4px;padding:6px 8px;margin-top:5px;white-space:pre-wrap;overflow-x:auto;color:var(--text-secondary)}',
@@ -289,12 +302,13 @@
     '.cc-sched-trig.off{opacity:0.45;cursor:not-allowed}',
     '.cc-queue.sent.recallable{cursor:pointer}',
     // The CLI's predicted next message: tap to send it, x to drop it.
-    '.cc-sug{position:relative;margin-bottom:7px;border:1px solid var(--border);background:var(--bg-primary);border-radius:12px 12px 3px 12px;padding:6px 32px 7px 11px;cursor:pointer;transition:.14s;margin-left:auto;max-width:86%;width:fit-content}',
-    '.cc-sug:hover{border-color:var(--accent);background:var(--accent-dim)}',
-    '.cc-sug-head{font-size:calc(10px*var(--cc-fs,1));text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:700;margin-bottom:2px}',
-    '.cc-sug-body{white-space:pre-wrap;word-break:break-word;color:var(--text-secondary);font-size:calc(12.5px*var(--cc-fs,1));display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;line-clamp:4;overflow:hidden}',
-    '.cc-sug:hover .cc-sug-body{color:var(--text-primary)}',
-    '.cc-sug-x{position:absolute;top:4px;right:4px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:none;border:none;border-radius:6px;color:var(--text-muted);cursor:pointer;font-size:calc(12px*var(--cc-fs,1));line-height:1;padding:0}',
+    // A ghost of the user's own bubble at the end of the conversation: same
+    // shape and alignment, dashed and muted so it never reads as sent.
+    '.cc-sug-row{pointer-events:auto;display:flex;flex-direction:column;align-items:flex-end;gap:3px;max-width:100%;margin-top:3px}',
+    '.cc-sug-cap{font-size:calc(10.5px*var(--cc-fs,1));color:var(--text-muted);margin-right:4px;background:var(--bg-primary);padding:0 4px;border-radius:4px}',
+    '.cc-sug{position:relative;max-width:100%;padding:7px 30px 7px 11px;border:1px dashed rgba(129,140,248,.55);background:var(--bg-secondary,#12121a);box-shadow:0 4px 14px rgba(0,0,0,.35);color:var(--text-secondary);border-radius:12px 12px 3px 12px;cursor:pointer;white-space:pre-wrap;word-break:break-word;text-align:left;font:inherit;transition:background .14s,border-color .14s,color .14s}',
+    '.cc-sug:hover,.cc-sug:focus-visible{border-style:solid;border-color:rgba(99,102,241,.55);background:var(--accent-dim);color:var(--text-primary);outline:none}',
+    '.cc-sug-x{position:absolute;top:4px;right:4px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:none;border:none;border-radius:6px;color:var(--text-muted);cursor:pointer;font-size:calc(11px*var(--cc-fs,1));line-height:1;padding:0}',
     '.cc-sug-x:hover{color:var(--text-primary);background:rgba(148,163,184,.15)}',
     '.cc-sched-at{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:6px 8px}',
     '.cc-sched-note{color:var(--text-muted);font-size:calc(11px*var(--cc-fs,1))}',
@@ -725,7 +739,7 @@
     var handedOver = [];       // {text, uuid, state} written to stdin, oldest first
     var sentNode = null;       // the separate "handed over" drawer
     var suggestion = null;     // {text, uuid}: the CLI's guess at the next message
-    var sugNode = null;        // its tap-to-send bubble above the composer
+    var sugNode = null;        // its tap-to-send bubble, last in the floating dock
     var activityNode = null;   // in-log "working" row for turns that stream nothing
 
     // Enter behaviour: 'send' = Enter sends / Shift+Enter newline;
@@ -975,6 +989,7 @@
       }
     }
 
+    var thinkClosed = new Set();   // thinking blocks the user collapsed
     function thinkingNode(e) {
       // Models from Opus 4.7 on return thinking blocks with no text (see
       // handleStreamEvent in claude-ui.js). An expander over an empty body
@@ -987,10 +1002,15 @@
           + (n ? ' for ~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + ' tokens' : '')
           + '</span>');
       }
-      var box = el('div', 'cc-think cc-collapsed');
+      // Open by default. One you close stays closed: streaming repaints the
+      // node, so the choice is kept by entry id rather than on the element.
+      var box = el('div', 'cc-think' + (thinkClosed.has(e.id) ? ' cc-collapsed' : ''));
       var head = el('div', 'cc-think-head', '<span class="cc-caret">▾</span><span>Thinking</span>');
       var body = el('div', 'cc-think-body', esc(e.text));
-      head.addEventListener('click', function () { box.classList.toggle('cc-collapsed'); });
+      head.addEventListener('click', function () {
+        var closed = box.classList.toggle('cc-collapsed');
+        if (closed) thinkClosed.add(e.id); else thinkClosed.delete(e.id);
+      });
       box.appendChild(head);
       box.appendChild(body);
       return box;
@@ -1123,6 +1143,10 @@
           : Object.keys(answered).map(function (k) {
               return '<span class="cc-tag ok">' + esc(answered[k]) + '</span>';
             }).join(' ');
+        var ann = (e.answeredInput && e.answeredInput.annotations) || {};
+        Object.keys(ann).forEach(function (k) {
+          if (ann[k] && ann[k].notes) html += '<div class="cc-ans-note">Note: ' + esc(ann[k].notes) + '</div>';
+        });
         box.appendChild(el('div', 'cc-answered', html || '<span class="cc-tag">answered</span>'));
         return box;
       }
@@ -1133,7 +1157,11 @@
           'This question outlived the session that asked it. Answering sends your choice as a message.'));
       }
 
-      var picks = questions.map(function () { return { chosen: [], other: '' }; });
+      // note: free text the CLI passes to Claude as annotations[question].notes.
+      // One per question; noteOpt is the choice it is shown under.
+      var picks = questions.map(function () { return { chosen: [], other: '', note: '', noteOpt: '' }; });
+      var NOTE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5z"/><path d="M15 3v6h6"/><line x1="8" y1="13" x2="14" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>';
       var qNodes = [];
 
       questions.forEach(function (q, qi) {
@@ -1155,6 +1183,18 @@
           if (opt.preview) txt.appendChild(el('div', 'cc-opt-prev', esc(opt.preview)));
           row.appendChild(inp);
           row.appendChild(txt);
+          var nb = el('button', 'cc-opt-nb', NOTE_SVG);
+          nb.type = 'button';
+          nb.title = 'Add a note to this choice';
+          nb.addEventListener('click', function (ev) {
+            ev.preventDefault(); ev.stopPropagation();
+            // Picks the choice first if it is not already picked.
+            if (!inp.checked) { inp.checked = true; inp.dispatchEvent(new Event('change')); }
+            picks[qi].noteOpt = opt.label;
+            drawNote(qi, true);
+            saveAnswer();
+          });
+          row.appendChild(nb);
           inp.addEventListener('change', function () {
             if (multi) {
               picks[qi].chosen = Array.prototype.slice
@@ -1166,11 +1206,15 @@
               picks[qi].other = '';
               otherInput.value = '';
             }
+            var choiceInputs = qEl.querySelectorAll('input[name="' + name + '"]');
             qEl.querySelectorAll('.cc-opt').forEach(function (r, ri) {
-              r.classList.toggle('sel', multi
-                ? qEl.querySelectorAll('input')[ri].checked
-                : ri === oi);
+              r.classList.toggle('sel', multi ? choiceInputs[ri].checked : ri === oi);
             });
+            // A note follows the selection: it moves to the newly picked choice.
+            if (picks[qi].noteOpt && picks[qi].chosen.indexOf(picks[qi].noteOpt) < 0) {
+              picks[qi].noteOpt = picks[qi].chosen[picks[qi].chosen.length - 1] || '';
+              drawNote(qi, false);
+            }
             syncSubmit();
             saveAnswer();
           });
@@ -1193,8 +1237,43 @@
         });
         qEl.appendChild(otherInput);
         box.appendChild(qEl);
-        qNodes.push({ qEl: qEl, otherInput: otherInput, name: name });
+        qNodes.push({ qEl: qEl, otherInput: otherInput, name: name, noteBox: null });
       });
+
+      // Show the question's note under the choice it belongs to, or nowhere.
+      function drawNote(qi, focus) {
+        var n = qNodes[qi], p = picks[qi];
+        if (!n) return;
+        if (n.noteBox) { n.noteBox.remove(); n.noteBox = null; }
+        n.qEl.querySelectorAll('.cc-opt-nb').forEach(function (b) { b.classList.remove('on'); });
+        if (!p.noteOpt) return;
+        var rows = n.qEl.querySelectorAll('.cc-opt'), inputs = n.qEl.querySelectorAll('input[name="' + n.name + '"]');
+        var row = null;
+        for (var i = 0; i < inputs.length; i++) if (inputs[i].value === p.noteOpt) row = rows[i];
+        if (!row) return;
+        var nbtn = row.querySelector('.cc-opt-nb'); if (nbtn) nbtn.classList.add('on');
+        var boxN = el('div', 'cc-opt-note');
+        var ti = el('input');
+        ti.type = 'text';
+        ti.placeholder = 'Note for Claude about this choice';
+        ti.value = p.note;
+        var x = el('button', '', '\u2715');
+        x.type = 'button';
+        x.title = 'Remove the note';
+        ti.addEventListener('input', function () { p.note = ti.value; saveAnswer(); });
+        // Typing a space or Enter in the note must not toggle the choice it sits in.
+        ti.addEventListener('click', function (ev) { ev.stopPropagation(); });
+        ti.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') ev.preventDefault(); ev.stopPropagation(); });
+        x.addEventListener('click', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          p.note = ''; p.noteOpt = ''; drawNote(qi, false); saveAnswer();
+        });
+        boxN.appendChild(ti);
+        boxN.appendChild(x);
+        row.querySelector('div').appendChild(boxN);
+        n.noteBox = boxN;
+        if (focus) ti.focus();
+      }
 
       var btns = el('div', 'cc-btns');
       var submit = el('button', 'cc-btn primary', 'Submit');
@@ -1220,7 +1299,7 @@
       var ANS_KEY = 'crundi_chat_ans_' + sessionId + '_' + e.id;
       function saveAnswer() {
         try {
-          var any = picks.some(function (p) { return (p.chosen && p.chosen.length) || p.other; });
+          var any = picks.some(function (p) { return (p.chosen && p.chosen.length) || p.other || p.note; });
           if (any) localStorage.setItem(ANS_KEY, JSON.stringify({ v: picks, t: Date.now() }));
           else localStorage.removeItem(ANS_KEY);
         } catch (err) {}
@@ -1238,6 +1317,8 @@
           if (!p || !qNodes[qi]) return;
           picks[qi].chosen = p.chosen || [];
           picks[qi].other = p.other || '';
+          picks[qi].note = p.note || '';
+          picks[qi].noteOpt = p.noteOpt || '';
           var n = qNodes[qi];
           n.otherInput.value = picks[qi].other;
           var inputs = n.qEl.querySelectorAll('input[name="' + n.name + '"]');
@@ -1247,22 +1328,34 @@
             inputs[i].checked = on;
             if (rows[i]) rows[i].classList.toggle('sel', on);
           }
+          drawNote(qi, false);
         });
         syncSubmit();
       }
       restoreAnswer();
 
       submit.addEventListener('click', function () {
-        var answers = {};
-        questions.forEach(function (q, qi) { answers[q.question] = answerFor(qi); });
+        var answers = {}, annotations = {}, anyNote = false;
+        questions.forEach(function (q, qi) {
+          answers[q.question] = answerFor(qi);
+          var note = (picks[qi].note || '').trim();
+          if (note) { annotations[q.question] = { notes: note }; anyNote = true; }
+        });
         clearAnswer();
         if (orphaned) {
-          var lines = questions.map(function (q, qi) { return q.question + ' -> ' + answerFor(qi); });
+          var lines = questions.map(function (q, qi) {
+            var note = (picks[qi].note || '').trim();
+            return q.question + ' -> ' + answerFor(qi) + (note ? ' (note: ' + note + ')' : '');
+          });
           answerOrphaned(e, answers,
             'Answering the question from before the session restarted:' + String.fromCharCode(10) + lines.join(String.fromCharCode(10)));
           return;
         }
-        respond(e, { behavior: 'allow', updatedInput: Object.assign({}, e.input, { answers: answers }) });
+        // Notes ride the tool's own annotations field, which the CLI puts in
+        // the answer Claude reads, so nothing is appended to the answer text.
+        var upd = { answers: answers };
+        if (anyNote) upd.annotations = annotations;
+        respond(e, { behavior: 'allow', updatedInput: Object.assign({}, e.input, upd) });
       });
       skip.addEventListener('click', function () {
         clearAnswer();
@@ -1474,6 +1567,12 @@
       if (trimmed) hint.textContent = 'Shown trimmed \u00b7 ' + hint.textContent;
     }
 
+    // A mouse and keyboard can also use the up arrow; a touchscreen just taps.
+    function takeBackHint() {
+      var desktop = window.matchMedia && window.matchMedia('(any-pointer: fine)').matches;
+      return desktop ? 'Click or press \u2191 to take it back' : 'Tap to take it back';
+    }
+
     function renderQueue() {
       renderSent();
       if (!queued.length) {
@@ -1491,7 +1590,7 @@
         + '<span>Sending</span><span style="opacity:.7;font-weight:500;text-transform:none;letter-spacing:0">'
         + (n === 1 ? '1 line' : n + ' lines') + ' · as one message, at the next tool call</span></div>'
         + '<div class="cc-queue-body">' + esc(queuedText()) + '</div>'
-        + '<div class="cc-queue-hint">Click to take it back</div>';
+        + '<div class="cc-queue-hint">' + takeBackHint() + '</div>';
       markTrimmed(queueNode);
     }
 
@@ -1503,18 +1602,22 @@
         if (sugNode) { sugNode.remove(); sugNode = null; }
         return;
       }
-      if (!sugNode) {
-        sugNode = el('div', 'cc-sug');
-        sugNode.title = 'Tap to send';
+      var stick = atBottom();
+      // Last in the same floating list as the task bubbles, so they stack above
+      // it. resetAgents empties that list, so it is re-created when missing.
+      if (!sugNode || sugNode.parentNode !== agentDock) {
+        sugNode = el('div', 'cc-sug-row');
         sugNode.addEventListener('click', function (e) {
           if (e.target.closest('.cc-sug-x')) { dismissSuggestion(); return; }
-          sendSuggestion();
+          if (e.target.closest('.cc-sug')) sendSuggestion();
         });
-        wrap.insertBefore(sugNode, inrow);
+        agentDock.appendChild(sugNode);
       }
-      sugNode.innerHTML = '<div class="cc-sug-head">Suggested \u00b7 tap to send</div>'
-        + '<div class="cc-sug-body">' + esc(suggestion.text) + '</div>'
-        + '<button class="cc-sug-x" title="Dismiss" aria-label="Dismiss suggestion">\u2715</button>';
+      sugNode.innerHTML = '<div class="cc-sug-cap">Suggested, tap to send</div>'
+        + '<div class="cc-sug" role="button" tabindex="0" title="Tap to send">' + esc(suggestion.text)
+        + '<button class="cc-sug-x" title="Dismiss" aria-label="Dismiss suggestion">\u2715</button></div>';
+      dockLayout();
+      scrollDown(stick);
     }
 
     function sendSuggestion() {
@@ -1559,7 +1662,7 @@
       // is our problem — it is not a second concept for the user to learn, and
       // the two drawers must not look like different features.
       var hint = recallable
-        ? 'Click to take it back'
+        ? takeBackHint()
         : (started
           ? 'Claude is reading this one — too late to edit'
           : 'Waiting for the session to confirm');
@@ -1884,6 +1987,34 @@
       slashBox._hits = hits;
     }
 
+    // Whether the caret is on the first VISUAL row of the input. Checking for a
+    // newline before it was not enough: a long line wraps, and its second row
+    // has none. A hidden copy of the box, styled the same, shows where the text
+    // up to the caret ends.
+    function caretOnTopRow() {
+      var pos = input.selectionStart;
+      if (pos === 0) return true;
+      if (input.value.slice(0, pos).indexOf('\n') >= 0) return false;
+      var cs = window.getComputedStyle(input);
+      var m = document.createElement('div');
+      ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+        'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+        'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight',
+        'textTransform', 'wordSpacing', 'tabSize'].forEach(function (k) { m.style[k] = cs[k]; });
+      m.style.position = 'absolute'; m.style.visibility = 'hidden'; m.style.top = '0'; m.style.left = '-9999px';
+      m.style.whiteSpace = 'pre-wrap'; m.style.overflowWrap = 'break-word'; m.style.wordBreak = cs.wordBreak;
+      m.style.borderStyle = 'solid'; m.style.overflow = 'hidden';
+      m.textContent = input.value.slice(0, pos);
+      var mark = document.createElement('span');
+      mark.textContent = '\u200b';
+      m.appendChild(mark);
+      document.body.appendChild(m);
+      var lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.45;
+      var top = mark.offsetTop - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.borderTopWidth) || 0);
+      m.remove();
+      return top < lh / 2;
+    }
+
     function onKeyDown(ev) {
       if (slashBox && slashBox._hits) {
         if (ev.key === 'ArrowDown') { ev.preventDefault(); slashIdx = Math.min(slashIdx + 1, slashBox._hits.length - 1); showSlash(); return; }
@@ -1902,7 +2033,7 @@
       // usual, and with nothing to take back it does nothing special.
       if (ev.key === 'ArrowUp' && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey
           && input.selectionStart === input.selectionEnd
-          && input.value.slice(0, input.selectionStart).indexOf('\n') < 0) {
+          && caretOnTopRow()) {
         var canRecall = queued.length || handedOver.some(function (h) { return h.uuid && h.state === 'queued'; });
         if (canRecall) { ev.preventDefault(); recallQueued(); return; }
       }
@@ -2030,6 +2161,23 @@
     }
 
     /** Header visible only when there is something to dismiss. */
+    // The dock floats over the bottom of the log. Keep the suggestion its last
+    // item whatever gets appended, and pad the log by the dock's height so the
+    // newest message can always scroll clear of it rather than sit underneath.
+    var LOG_PAD = 4;
+    function dockLayout() {
+      if (sugNode && sugNode.parentNode === agentDock && agentDock.lastChild !== sugNode) agentDock.appendChild(sugNode);
+      var shown = !!(sugNode && sugNode.parentNode === agentDock) || !!agentDock.querySelector('.cc-bub');
+      var pad = shown ? Math.max(LOG_PAD, agentDock.offsetHeight + 14) : LOG_PAD;
+      if (log.style.paddingBottom !== pad + 'px') {
+        var stick = stickBottom;
+        log.style.paddingBottom = pad + 'px';
+        if (stick) { var prev = log.style.scrollBehavior; log.style.scrollBehavior = 'auto'; log.scrollTop = log.scrollHeight; log.style.scrollBehavior = prev; }
+      }
+    }
+    if (window.MutationObserver) { try { new MutationObserver(dockLayout).observe(agentDock, { childList: true }); } catch (e) {} }
+    if (window.ResizeObserver) { try { new ResizeObserver(dockLayout).observe(agentDock); } catch (e) {} }
+
     function syncDock() {
       var bubbles = agentDock.querySelectorAll('.cc-bub').length;
       agentDockHd.style.display = bubbles ? 'flex' : 'none';
@@ -2255,7 +2403,8 @@
     // Agent row in the log.
     var DOCK_MAX = 4;
     function trimDock() {
-      var bubs = [].slice.call(agentDock.children);
+      // Task bubbles only: the header and the suggestion are not counted.
+      var bubs = [].slice.call(agentDock.querySelectorAll('.cc-bub'));
       var over = bubs.length - DOCK_MAX;
       for (var i = 0; i < bubs.length && over > 0; i++) {
         if (bubs[i].classList.contains('done')) { bubs[i].remove(); over--; }

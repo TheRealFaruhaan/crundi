@@ -48,7 +48,8 @@ import * as schedule from './schedule-store.js';
 import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
-import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS } from './claude-ui.js';
+import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS, readTranscriptHistory } from './claude-ui.js';
+import { createPanes, MIN_TIMEOUT_MIN, DEFAULT_TIMEOUT_MIN } from './panes.js';
 import { createLimitWarmer } from './limit-warmer.js';
 import { createLimitResetNotifier } from './limit-reset-notify.js';
 import * as authConfig from './auth-config.js';
@@ -833,6 +834,35 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return false;
   }
 
+  // ─── Parked panes (panes.js) ───
+  // When someone was last at Crundi (a focused, visible window). Starts at boot:
+  // a server that just came up has not seen anyone leave yet.
+  let lastPresentAt = Date.now();
+  // Auto-park timeout in minutes: 0 = off, otherwise at least MIN_TIMEOUT_MIN.
+  // Kept in the state file; absent means the default.
+  function readAutoParkMinutes() {
+    try {
+      const f = join(config.dataDir, '.crundi-state.json');
+      const st = existsSync(f) ? JSON.parse(readFileSync(f, 'utf-8')) || {} : {};
+      if (st.autoParkMinutes === undefined) return DEFAULT_TIMEOUT_MIN;
+      const n = Number(st.autoParkMinutes);
+      return n === 0 ? 0 : Math.max(MIN_TIMEOUT_MIN, Number.isFinite(n) ? Math.round(n) : DEFAULT_TIMEOUT_MIN);
+    } catch { return DEFAULT_TIMEOUT_MIN; }
+  }
+  let autoParkMinutes = readAutoParkMinutes();
+  const panes = createPanes({
+    dataDir: config.dataDir, claudeTerminals, claudeUi, readTranscriptHistory,
+    getProject: (a) => getProjectUnscoped(a),
+    timeoutMinutes: () => autoParkMinutes,
+    awayFor: (ms) => {
+      if (anyClientPresent()) { lastPresentAt = Date.now(); return false; }
+      return Date.now() - lastPresentAt >= ms;
+    },
+    terminalState: (id) => agentStates.get(id) || 'idle',
+    onChange: () => broadcastState(),
+  });
+  panes.start();
+
   // Telegram's hard limit. MarkdownV2 escaping ADDS characters, so a body that
   // fit before conversion can overflow after it.
   const TG_HARD_MAX = 4096;
@@ -1351,6 +1381,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         agentState: t.status === 'running' ? (agentStates.get(t.id) || 'idle') : null,
       })),
       ...uiSessions,
+      // Parked panes keep their id, so the layout keeps their slot.
+      ...panes.listParked(),
     ];
     const userTerminals = terminalsMod.listTerminals();
     // Project aliases that have at least one enabled schedule (for the sidebar
@@ -2299,6 +2331,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const tid = String(body.terminal || '');
       const state = ['working', 'needs-input', 'idle'].includes(body.state) ? body.state : null;
       if (!tid || !state) return json(res, { ok: false, error: 'terminal and valid state required' }, 400);
+      // The hook carries the conversation's real id on every event; a terminal
+      // has no other way to learn it, and resuming a parked one needs it.
+      if (body.sessionId && claudeTerminals?.setSessionId) claudeTerminals.setSessionId(tid, String(body.sessionId));
       handleAgentState(tid, state, Number(body.ts) || 0);
       return json(res, { ok: true });
     }
@@ -2919,6 +2954,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!claudeTerminals) return json(res, { ok: false, error: 'Terminal manager not available' });
       const body = JSON.parse(await readBody(req));
       if (!body.project) return json(res, { ok: false, error: 'project is required' }, 400);
+      // Only a parked pane coming back picks its own id and slot (panes.js).
+      delete body.id; delete body.order;
       const result = await claudeTerminals.create(body.project, body);
       // A terminal continues the same conversation somewhere we can't observe,
       // so the transcript we stored for UI replay is about to become a stale
@@ -2939,6 +2976,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // Per-terminal actions keyed by terminal id.
+    // ─── Parked panes ───
+    // resume: start it again in place. discard: close a parked pane for good.
+    // park: park a live one now. preview: what it shows behind Resume.
+    // The owner's alone — a collaborator's chats are never parked.
+    const paneMatch = path.match(/^\/api\/panes\/([0-9a-f]{16})\/(resume|discard|park|preview)$/);
+    if (paneMatch) {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
+      const pid = paneMatch[1], act = paneMatch[2];
+      if (act === 'preview' && req.method === 'GET') return json(res, panes.preview(pid));
+      if (req.method !== 'POST') return json(res, { ok: false, error: 'Method not allowed' }, 405);
+      if (act === 'resume') { const r = await panes.resume(pid); broadcastState(); return json(res, r); }
+      if (act === 'park') { const r = panes.park(pid, 'manual'); broadcastState(); return json(res, r); }
+      if (act === 'discard') { panes.forget(pid); broadcastState(); return json(res, { ok: true }); }
+    }
+
     const termMatch = path.match(/^\/api\/terminals\/([^/]+)\/(close|resize|rename)$/);
     if (termMatch && req.method === 'POST') {
       const termId = decodeURIComponent(termMatch[1]);
@@ -2947,6 +2999,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       if (action === 'close') {
         const result = claudeTerminals.close(termId);
+        panes.forget(termId);   // closed on purpose: nothing to bring back
         broadcastState();
         return json(res, result);
       }
@@ -3041,6 +3094,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!claudeUi) return json(res, { ok: false, error: 'Chat manager not available' });
       const body = JSON.parse(await readBody(req));
       if (!body.project) return json(res, { ok: false, error: 'project is required' }, 400);
+      delete body.id; delete body.order;   // see /api/terminals/create
       // Everything a collaborator could otherwise choose here is decided for
       // them: which project, which folder, and the restricted launch. A create
       // body is user input, and this one reaches a process spawn.
@@ -3112,6 +3166,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (action === 'interrupt') return json(res, claudeUi.interrupt(sid));
       if (action === 'close') {
         const result = claudeUi.close(sid);
+        panes.forget(sid);
         broadcastState();
         return json(res, result);
       }
@@ -3592,6 +3647,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // The desktop app has electron-updater; a server does not, so it asks
     // GitHub and reports here. Applying is a separate, explicit call because it
     // restarts the server and takes every running session with it.
+    // Which releases this server follows: 'production' or 'dev'.
+    if (path === '/api/update/channel' && req.method === 'POST') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch { /* empty */ }
+      const channel = serverUpdate.setChannel(body.channel);
+      await serverUpdate.check({ force: true }).catch(() => {});
+      return json(res, { ok: true, channel, update: serverUpdate.status() });
+    }
+
     if (path === '/api/update/status' && req.method === 'GET') {
       const force = /[?&]force=1/.test(req.url || '');
       if (force) await serverUpdate.check({ force: true }).catch(() => {});
@@ -3712,6 +3777,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           queuedLimitReset: chatSchedule.countPendingLimitReset(),
           systemPrompt: globalPrompt(),
           systemPromptMax: MAX_LAYER,
+          autoParkMinutes, autoParkMin: MIN_TIMEOUT_MIN,
         });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
@@ -3784,6 +3850,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // The system-wide system-prompt layer. Read fresh from disk on every
         // spawn, so this takes effect without a restart — but only for NEW
         // conversations; see the snapshot note in system-prompt.js.
+        if (body.autoParkMinutes !== undefined) {
+          const n = Math.round(Number(body.autoParkMinutes));
+          if (!Number.isFinite(n) || n < 0 || (n > 0 && n < MIN_TIMEOUT_MIN) || n > 10080) {
+            return json(res, { ok: false, error: `Use 0 to turn it off, or ${MIN_TIMEOUT_MIN} minutes or more.` }, 400);
+          }
+          const stateFile = join(config.dataDir, '.crundi-state.json');
+          let state = {};
+          try { if (existsSync(stateFile)) state = JSON.parse(readFileSync(stateFile, 'utf-8')) || {}; } catch { state = {}; }
+          state.autoParkMinutes = n;
+          writeFileSync(stateFile, JSON.stringify(state));
+          autoParkMinutes = n;
+        }
         if (body.systemPrompt !== undefined) {
           const stateFile = join(config.dataDir, '.crundi-state.json');
           let state = {};
@@ -4973,6 +5051,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           // one telling the owner that collaborator is waiting on them.
           if (confined) return;
           if (msg.active) presentClients.set(ws, Date.now() + PRESENCE_TTL);
+          if (msg.active) lastPresentAt = Date.now();   // panes.js: the away clock
           else presentClients.delete(ws);
           return;
         }
@@ -5231,7 +5310,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return { port, tunnelUrl, localPort };
     },
 
+    /** Write down every open pane now, so a restart brings them back parked. */
+    savePanes() { try { panes.snapshot(); } catch { /* best effort on the way down */ } },
     stop() {
+      panes.stop();
       if (claudeWatchTimer) { clearInterval(claudeWatchTimer); claudeWatchTimer = null; }
       stopStatsSampler();
       for (const client of sseClients) {

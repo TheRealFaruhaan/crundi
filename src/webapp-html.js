@@ -1141,6 +1141,31 @@ export function getWebappHtml(botUsername) {
     .term-grid.mosaic:not(.mobile) .mosaic-leaf { min-width: 340px; contain: inline-size; }
     .term-grid.mosaic:not(.mobile) .mosaic-split { min-width: min-content; }
     .mosaic-gutter { flex: 0 0 7px; position: relative; z-index: 3; touch-action: none; }
+    /* Parked pane: what it was, blurred, under a Resume button. The header
+       stays sharp and usable (move, pin, close). */
+    .parked-cell .term-body { position: relative; overflow: hidden; }
+    .parked-cell .pk-view {
+      position: absolute; inset: 0; filter: blur(3px) saturate(0.7) brightness(0.55);
+      pointer-events: none; user-select: none; overflow: hidden;
+    }
+    .parked-cell .pk-view .xterm { height: 100%; padding: 4px 6px; }
+    .parked-cell .pk-veil {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(10,10,15,0.55) 0%, rgba(10,10,15,0.15) 70%);
+    }
+    .parked-cell .pk-card { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 16px; max-width: 280px; }
+    .parked-cell .pk-resume {
+      display: inline-flex; align-items: center; gap: 8px; padding: 10px 22px; border-radius: 999px; cursor: pointer;
+      border: 1px solid var(--accent); background: var(--accent); color: #fff; font-size: 0.9rem; font-weight: 600;
+      box-shadow: var(--glow); transition: background 0.14s ease, transform 0.14s ease;
+    }
+    .parked-cell .pk-resume .ic { width: 14px; height: 14px; fill: currentColor; }
+    .parked-cell .pk-resume:hover:not(:disabled) { background: var(--accent-hover); }
+    .parked-cell .pk-resume:active:not(:disabled) { transform: scale(0.98); }
+    .parked-cell .pk-resume:disabled { opacity: 0.7; cursor: default; }
+    .parked-cell .pk-resume:focus-visible { outline: none; box-shadow: var(--ring); }
+    .parked-cell .pk-why { font-size: 0.78rem; color: var(--text-primary); }
+    .parked-cell .pk-what { font-size: 0.72rem; color: var(--text-secondary); }
     /* A divider next to a pinned pane does not move it. */
     .mosaic-split > .mosaic-gutter.locked { cursor: not-allowed; }
     .mosaic-gutter.locked::after { opacity: 0.4; }
@@ -3471,13 +3496,33 @@ export function getWebappHtml(botUsername) {
       if (swS) { swS.classList.toggle('on', !!updateState.launch); swS.setAttribute('aria-checked', updateState.launch ? 'true' : 'false'); }
       const row = document.getElementById('upd-statusrow');
       if (row) row.innerHTML = updStatusRowHtml();
+      document.querySelectorAll('#upd-chanrow [data-action="upd-channel"]').forEach(btn => btn.classList.toggle('active', btn.dataset.val === (updateState.channel || 'production')));
     }
+    // ─── Release channels (both the desktop app and the server) ───
+    function channelSegHtml(cur, action) {
+      const b = (v, label) => '<button type="button" data-action="' + action + '" data-val="' + v + '"' + (cur === v ? ' class="active"' : '') + '>' + label + '</button>';
+      return '<div class="seg-pref">' + b('production', 'Production') + b('dev', 'Dev') + '</div>';
+    }
+    // Leaving production is the one-way step: nothing ever installs an older
+    // version, so going back waits for a production release newer than the dev
+    // build you end up on. Said before the switch, not discovered after it.
+    function confirmDevChannel(what) {
+      return confirm('Switch ' + what + ' to dev releases?\\n\\n'
+        + 'Dev builds are previews of what is coming and may be less stable.\\n\\n'
+        + 'You cannot go back to production until a production release newer than your dev build is published: '
+        + 'Crundi never installs an older version. A newer production release is always offered on the dev channel too.');
+    }
+    function updAvailableLabel(channel, kind, v) {
+      if (channel === 'dev') return (kind === 'production' ? 'Production release available \u2014 v' : 'Dev build available \u2014 v') + escHtml(v || '');
+      return 'Update available \u2014 v' + escHtml(v || '');
+    }
+
     function updStatusRowHtml() {
       const us = updateState;
       const status = us.downloading
         ? '<div class="upd-status avail"><span class="upd-dot"></span>Downloading\\u2026 ' + (us.percent || 0) + '%</div>'
         : us.available
-          ? '<div class="upd-status avail"><span class="upd-dot"></span>Update available \\u2014 v' + escHtml(us.version || '') + (us.downloaded ? ' (ready)' : '') + '</div>'
+          ? '<div class="upd-status avail"><span class="upd-dot"></span>' + updAvailableLabel(us.channel, us.latestKind, us.version) + (us.downloaded ? ' (ready)' : '') + '</div>'
           : '<div class="upd-status"><span class="upd-dot"></span>Up to date' + (us.current ? ' \\u2014 v' + escHtml(us.current) : '') + '</div>';
       const action = us.available
         ? '<button class="kanban-btn primary"' + (us.downloading ? ' disabled' : '') + ' data-action="update-install">' + (us.downloaded ? 'Restart \\u0026 install' : us.downloading ? 'Downloading\\u2026' : 'Download \\u0026 install') + '</button>'
@@ -3784,7 +3829,9 @@ export function getWebappHtml(botUsername) {
         + (u.applying
             ? 'Updating… the server will restart on its own.'
             : u.available
-              ? ('Version ' + escHtml(u.latest) + ' is available.')
+              ? (u.channel === 'dev'
+                  ? (u.latestKind === 'production' ? 'Production release ' + escHtml(u.latest) + ' is available.' : 'Dev build ' + escHtml(u.latest) + ' is available.')
+                  : ('Version ' + escHtml(u.latest) + ' is available.'))
               : u.error
                 ? ('Last check failed: ' + escHtml(u.error))
                 : ('Up to date' + (u.checkedAt ? ' \u00b7 checked ' + escHtml(relTime(u.checkedAt)) : '') + '.'))
@@ -3801,6 +3848,16 @@ export function getWebappHtml(botUsername) {
         h += '<button type="button" style="' + btn + '" data-action="srv-update-check">Check now</button>';
       }
       h += '</div>';
+
+      h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;">'
+        + '<div><div style="font-size:0.86rem;color:var(--text-primary);">Release channel</div>'
+        + '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">Dev gets preview builds early. A newer production release is offered either way.</div></div>'
+        + channelSegHtml(u.channel || 'production', 'srv-channel') + '</div>';
+      // On production while running a dev build: nothing older is installed, so
+      // say why no update is offered yet.
+      if (u.channel !== 'dev' && u.currentIsDev && !u.available) {
+        h += '<p style="font-size:0.72rem;color:var(--text-muted);margin-top:8px;">This server runs a dev build. Production updates resume once a production release is newer than ' + escHtml(u.current) + '.</p>';
+      }
 
       // Say plainly why the button is not there, rather than hiding the fact
       // that an update exists and this install cannot take it.
@@ -3885,6 +3942,10 @@ export function getWebappHtml(botUsername) {
       return '<div class="info-section"><h4>Desktop App</h4>'
         + row('Launch at startup', 'Start Crundi in the tray when Windows starts.', sw(us.launch, 'startup-toggle', 'Launch at startup'))
         + row('Automatic updates', 'Check on launch and once a day. Always asks before installing.', sw(us.enabled, 'update-toggle', 'Automatic updates'))
+        // Older desktop apps have no channel switch to drive.
+        + (window.api && window.api.setUpdateChannel
+          ? '<div id="upd-chanrow">' + row('Release channel', 'Dev gets preview builds early. A newer production release is offered either way.', channelSegHtml(us.channel || 'production', 'upd-channel')) + '</div>'
+          : '')
         + '<div id="upd-statusrow" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">' + updStatusRowHtml() + '</div></div>';
     }
     async function initUpdateUi() {
@@ -5279,6 +5340,15 @@ export function getWebappHtml(botUsername) {
     }
 
     async function closeTerminal(id) {
+      const pk = terminals.find(t => t.id === id && t.kind === 'parked');
+      if (pk) {
+        try {
+          await apiFetch('/api/panes/' + id + '/discard', { method: 'POST' });
+          terminals = terminals.filter(t => t.id !== id);
+          renderTermGrid(); renderProjects();
+        } catch (err) { toast('Failed to close: ' + err.message, 'error'); }
+        return;
+      }
       try {
         await apiFetch(cellApiBase(id) + '/close', { method: 'POST' });
         terminals = terminals.filter(t => t.id !== id);
@@ -5423,7 +5493,7 @@ export function getWebappHtml(botUsername) {
       // either a PTY terminal or a Claude chat session — same key namespace, so
       // stored ordering/mosaic layouts survive either kind.
       const items = [
-        ...live.map(t => ({ key: 'live:' + t.id, type: t.kind === 'ui' ? 'chat' : 'live', t })),
+        ...live.map(t => ({ key: 'live:' + t.id, type: t.kind === 'parked' ? 'parked' : t.kind === 'ui' ? 'chat' : 'live', t })),
         ...pendingCells.map(lid => ({ key: 'pend:' + lid, type: 'pending', localId: lid })),
         ...wbCells.map(c => ({ key: 'panel:' + c.id, type: 'panel', cell: c })),
       ];
@@ -5445,7 +5515,10 @@ export function getWebappHtml(botUsername) {
       const newLive = [];
       for (const d of desired) {
         let el = grid.querySelector('[data-cellkey="' + d.key + '"]');
-        if (!el) { el = buildCellEl(d); if (d.type === 'live' || d.type === 'chat') newLive.push([d, el]); }
+        // Parked <-> running keeps the key (so the layout slot holds) but is a
+        // different cell inside: rebuild it in place.
+        if (el && (el.dataset.ctype === 'parked') !== (d.type === 'parked')) { destroyCell(el); el = null; }
+        if (!el) { el = buildCellEl(d); if (d.type === 'live' || d.type === 'chat' || d.type === 'parked') newLive.push([d, el]); }
         else if (d.type === 'live' || d.type === 'chat') updateCellHead(el, d.t);
         elByKey[d.key] = el;
       }
@@ -5467,6 +5540,7 @@ export function getWebappHtml(botUsername) {
       // attached to the DOM (both measure their container on mount).
       for (const [d, el] of newLive) {
         if (d.type === 'chat') mountChat(d.t, el);
+        else if (d.type === 'parked') mountParked(d.t, el);
         else mountXterm(d.t, el);
       }
 
@@ -5634,6 +5708,7 @@ export function getWebappHtml(botUsername) {
       const el = document.createElement('div');
       el.className = 'term-cell';
       el.dataset.cellkey = d.key;
+      el.dataset.ctype = d.type;
       const head = document.createElement('div'); head.className = 'term-head';
       const body = document.createElement('div'); body.className = 'term-body';
       if (d.type === 'pending') {
@@ -5668,6 +5743,23 @@ export function getWebappHtml(botUsername) {
           + '</div>'
           + '</div>';
         peekShields(body);
+      } else if (d.type === 'parked') {
+        el.dataset.tid = d.t.id;
+        el.classList.add('parked-cell');
+        if (d.t.paneKind === 'ui') el.dataset.chat = '1';
+        head.innerHTML = headHtmlParked(d.t);
+        const when = d.t.parkedAt ? relTime(new Date(d.t.parkedAt).toISOString()) : '';
+        const why = d.t.reason === 'idle' ? 'Closed while idle' : d.t.reason === 'manual' ? 'Closed' : 'Closed when Crundi restarted';
+        const what = d.t.paneKind === 'ui'
+          ? (d.t.hasSession ? 'Resume picks up this conversation.' : 'Resume starts a new conversation.')
+          : d.t.shellOnly ? 'Resume opens a new shell in the same folder.'
+          : (d.t.hasSession ? 'Resume picks up this conversation.' : 'Resume starts a new Claude session.');
+        body.innerHTML = '<div class="pk-view"></div>'
+          + '<div class="pk-veil"><div class="pk-card">'
+          + '<button class="pk-resume" data-action="pane-resume" data-tid="' + d.t.id + '">' + ic('play') + 'Resume</button>'
+          + '<div class="pk-why">' + escHtml(why) + (when ? ' \u00b7 ' + escHtml(when) : '') + '</div>'
+          + '<div class="pk-what">' + escHtml(what) + '</div>'
+          + '</div></div>';
       } else if (d.type === 'chat') {
         el.dataset.tid = d.t.id;
         el.dataset.chat = '1';
@@ -5805,6 +5897,68 @@ export function getWebappHtml(botUsername) {
         + ' title="' + p.title + '">' + p.label + '</span>';
     }
 
+    // A parked pane's header: the same frame, so it reads as the same pane, but
+    // only what still applies to it — move, pin, close for good.
+    function headHtmlParked(t) {
+      const kind = t.paneKind === 'ui' ? 'chat' : t.shellOnly ? 'shell' : 'terminal';
+      return '<span class="term-drag" title="Drag to reorder">\u22ee\u22ee</span>'
+        + '<span class="term-status-dot exited" title="Closed"></span>'
+        + '<span class="term-title" title="' + escHtml(t.title || '') + '">' + escHtml(t.title || (kind === 'chat' ? 'Chat' : 'Terminal')) + '</span>'
+        + '<span class="term-kind-tag">' + kind + '</span>'
+        + '<span class="term-head-spacer"></span>'
+        + pinBtnHtml()
+        + '<button class="term-head-btn term-close" data-action="term-close" data-tid="' + t.id + '" title="Close this pane for good">\u00d7</button>';
+    }
+
+    // What a parked pane shows behind its Resume button: the conversation, or
+    // the terminal's last screen. Read-only; dropped when the pane resumes.
+    const parkedViews = new Map(); // tid -> { dispose }
+    async function mountParked(t, cellEl) {
+      const view = cellEl.querySelector('.pk-view');
+      if (!view || parkedViews.has(t.id)) return;
+      parkedViews.set(t.id, { dispose() {} });
+      let d;
+      try { d = await (await apiFetch('/api/panes/' + t.id + '/preview')).json(); } catch { d = null; }
+      if (!d || !d.ok || !cellEl.isConnected || !parkedViews.has(t.id)) return;
+      if (d.kind === 'terminal') {
+        const xt = new Terminal({
+          fontSize: cellFont(t.id, 'term'), fontFamily: TERM_FONT_FAMILY, theme: TERM_THEME,
+          convertEol: true, disableStdin: true, cursorBlink: false, scrollback: 3000,
+        });
+        const fit = new FitAddon.FitAddon();
+        xt.loadAddon(fit);
+        xt.open(view);
+        try { fit.fit(); } catch { /* not laid out yet */ }
+        xt.write(d.screen || '');
+        let ro = null;
+        if (window.ResizeObserver) { ro = new ResizeObserver(() => { try { fit.fit(); } catch { /* ignore */ } }); ro.observe(view); }
+        parkedViews.set(t.id, { dispose() { try { if (ro) ro.disconnect(); xt.dispose(); } catch { /* ignore */ } } });
+      } else if (window.CrundiChat) {
+        // The chat view itself, fed the stored transcript and never connected.
+        // Its draft is keyed by this same id, so what you had typed shows too.
+        const v = window.CrundiChat.mount(view, {
+          sessionId: t.id, project: t.project,
+          apiFetch: () => Promise.resolve(new Response('{}')),
+          wsSend: () => {}, toast: () => {},
+        });
+        v.applyHistory({ status: 'parked', state: 'idle', messages: d.messages || [] });
+        cellEl.style.setProperty('--cc-fs', String(cellFont(t.id, 'chat') / CHAT_FONT_BASE));
+        parkedViews.set(t.id, { dispose() { try { v.destroy(); } catch { /* ignore */ } } });
+      }
+    }
+
+    async function resumePane(id, btn) {
+      if (btn) { btn.disabled = true; btn.lastChild.textContent = 'Resuming\u2026'; }
+      try {
+        const d = await (await apiFetch('/api/panes/' + id + '/resume', { method: 'POST' })).json();
+        if (!d.ok) throw new Error(d.error || 'Could not resume');
+        // The state push swaps the parked pane for the live one in place.
+      } catch (err) {
+        toast(err.message, 'error');
+        if (btn && btn.isConnected) { btn.disabled = false; btn.lastChild.textContent = 'Resume'; }
+      }
+    }
+
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
@@ -5888,6 +6042,7 @@ export function getWebappHtml(botUsername) {
       const grid = document.getElementById('term-grid');
       if (!grid) return;
       for (const t of terminals) {
+        if (t.kind === 'parked') continue;
         const el = grid.querySelector('[data-cellkey="live:' + t.id + '"]');
         if (el) updateCellHead(el, t);
       }
@@ -6027,6 +6182,10 @@ export function getWebappHtml(botUsername) {
 
     function destroyCell(cellEl) {
       const tid = cellEl.dataset.tid;
+      if (tid && cellEl.dataset.ctype === 'parked' && parkedViews.has(tid)) {
+        parkedViews.get(tid).dispose();
+        parkedViews.delete(tid);
+      }
       if (tid && termViews.has(tid)) {
         const v = termViews.get(tid);
         try { if (v.ro) v.ro.disconnect(); } catch { /* ignore */ }
@@ -7523,7 +7682,7 @@ export function getWebappHtml(botUsername) {
       clearTimeout(resumeTimer);
       resumeTimer = setTimeout(() => { // we actually had to reconnect → refresh the active view
         if (!token || !$('#app').classList.contains('visible')) return;
-        if (currentTab === 'kanban') loadKanban();
+        if (kanbanVisible()) loadKanban();
         else if (currentTab === 'mindmap') loadMindmap();
         else if (currentTab === 'secrets') loadSecrets();
         else if (currentTab === 'services') loadServices();
@@ -10254,9 +10413,10 @@ export function getWebappHtml(botUsername) {
       if (!panel) return;
 
       // Merge Claude terminals and user terminals for current project
+      const notParked = terminals.filter(t => t.kind !== 'parked');
       const claudeTerms = currentProject
-        ? terminals.filter(t => t.project === currentProject)
-        : terminals;
+        ? notParked.filter(t => t.project === currentProject)
+        : notParked;
       const userTerms = currentProject
         ? userTerminals.filter(t => t.alias === currentProject)
         : userTerminals;
@@ -10527,7 +10687,7 @@ export function getWebappHtml(botUsername) {
 
     // ─── Info Panel ───
     async function renderInfo() {
-      const projectTerminals = terminals.filter(t => t.project === currentProject);
+      const projectTerminals = terminals.filter(t => t.project === currentProject && t.kind !== 'parked');
       const projectServices = services.filter(s => s.alias === currentProject);
 
       // Fetch tunnel info
@@ -10880,7 +11040,10 @@ export function getWebappHtml(botUsername) {
           + '<button type="button" data-action="term-newline-key" data-val="shift"' + (termNewlineKey === 'shift' ? ' class="active"' : '') + '><kbd>Shift</kbd> + <kbd>Enter</kbd></button>'
           + '<button type="button" data-action="term-newline-key" data-val="ctrl"' + (termNewlineKey === 'ctrl' ? ' class="active"' : '') + '><kbd>Ctrl</kbd> + <kbd>Enter</kbd></button>'
           + '</div>'
-          + '<p style="' + hintStyle + '">Inserts a newline in the terminal instead of submitting \\u2014 the other key still submits. Applies instantly to all terminals.</p></div></div>';
+          + '<p style="' + hintStyle + '">Inserts a newline in the terminal instead of submitting \\u2014 the other key still submits. Applies instantly to all terminals.</p></div>'
+          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '" for="set-autopark">Close idle panes after (minutes)</label>'
+          + '<input type="number" id="set-autopark" min="0" step="5" value="' + escHtml(String(data.autoParkMinutes != null ? data.autoParkMinutes : 60)) + '" style="' + inputStyle + 'width:110px;">'
+          + '<p style="' + hintStyle + '">A chat or Claude terminal with nothing going on closes once you have also been away this long. It keeps its place, shows what it was, and Resume picks the conversation back up. 0 turns it off; otherwise at least ' + (data.autoParkMin || 10) + '. Shells are never closed for being idle. After a restart, every pane that was open comes back the same way.</p></div></div>';
 
         // Desktop app update (Electron's auto-updater) — the app itself.
         if (window.api && window.api.getUpdateState) html += buildUpdatesSection();
@@ -10915,6 +11078,22 @@ export function getWebappHtml(botUsername) {
         panel.innerHTML = html;
         renderServerUpdate();
         renderClaudeUpdate();
+        const ap = document.getElementById('set-autopark');
+        if (ap) ap.addEventListener('change', async () => {
+          const n = Math.round(Number(ap.value));
+          const min = data.autoParkMin || 10;
+          if (!Number.isFinite(n) || n < 0 || (n > 0 && n < min)) {
+            toast('Use 0 to turn it off, or ' + min + ' minutes or more', 'error');
+            ap.value = String(data.autoParkMinutes);
+            return;
+          }
+          try {
+            const r = await (await apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoParkMinutes: n }) })).json();
+            if (!r.ok) throw new Error(r.error || 'Could not save');
+            data.autoParkMinutes = n;
+            toast(n ? 'Idle panes close after ' + n + ' minutes' : 'Idle panes stay open', 'success');
+          } catch (err) { toast(err.message, 'error'); ap.value = String(data.autoParkMinutes); }
+        });
       } catch (err) {
         panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(err.message) + '</p></div>';
       }
@@ -11065,6 +11244,24 @@ export function getWebappHtml(botUsername) {
         case 'srv-restart':
           restartServer();
           break;
+        case 'srv-channel': {
+          const want = d.val === 'dev' ? 'dev' : 'production';
+          const cur = (document.querySelector('[data-action="srv-channel"].active') || {}).dataset;
+          if (cur && cur.val === want) break;
+          if (want === 'dev' && !confirmDevChannel('this server')) break;
+          apiFetch('/api/update/channel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channel: want }) })
+            .then(r => r.json())
+            .then(r => { if (!r.ok) throw new Error(r.error || 'Could not switch'); toast(want === 'dev' ? 'Server follows dev releases' : 'Server follows production releases', 'success'); renderServerUpdate(); })
+            .catch(err => toast(err.message, 'error'));
+          break;
+        }
+        case 'upd-channel': {
+          const want = d.val === 'dev' ? 'dev' : 'production';
+          if ((updateState.channel || 'production') === want || !window.api || !window.api.setUpdateChannel) break;
+          if (want === 'dev' && !confirmDevChannel('the desktop app')) break;
+          window.api.setUpdateChannel(want).then(applyUpdateState).catch(err => toast(err.message, 'error'));
+          break;
+        }
         case 'srv-update-check':
           renderServerUpdate(true);
           break;
@@ -11281,6 +11478,7 @@ export function getWebappHtml(botUsername) {
         case 'wb-add': { e.stopPropagation(); hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
         case 'wb-layout': { hideWbAddMenu(); mosaicApplyPreset(d.mlayout); break; }
         case 'wb-fit': { hideWbAddMenu(); mosaicFitToScreen(); break; }
+        case 'pane-resume': { if (d.tid) resumePane(d.tid, actionEl); break; }
         case 'pane-pin': { if (actionEl) togglePanePin(actionEl); break; }
         case 'leaf-split': { e.stopPropagation(); const [id, dir] = (d.leaf || '').split('|'); setMosaic(mosaicSplitLeaf(currentMosaic(), id, dir)); renderTermGrid(); break; }
         case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
@@ -11993,8 +12191,11 @@ export function getWebappHtml(botUsername) {
         if (clipBtn) { openClipPop(clipBtn); return; }
         const clipAdd = e.target.closest('[data-kclip-add]');
         if (clipAdd) {
+          // The task's whole gallery, with upload — the same window a subtask's
+          // attach opens, rather than straight to a file picker.
           const tid = clipAdd.dataset.kclipAdd;
-          mediaTriggerUpload({ link: { type: 'task', taskId: tid }, project: currentProject, reload: () => { kanbanClipOpen = tid; loadKanban(); } });
+          closeKtPop();
+          openMediaModal('Task media', { scope: 'project', kind: 'all', linkFilter: { type: 'task', taskId: tid }, uploadLink: { type: 'task', taskId: tid }, uploadProject: currentProject });
           return;
         }
         if (e.target.closest('.kt-pop button, .kc-media-pop [data-media-open]')) setTimeout(closeKtPop, 0);
@@ -13096,6 +13297,12 @@ export function getWebappHtml(botUsername) {
       mountMediaBrowser(host, mediaTabState);
     }
     // Refresh every mounted media browser (tab/panel + open modal) after a change.
+    // The board is on screen on its own tab, or embedded in a workbench pane.
+    function kanbanVisible() {
+      if (currentTab === 'kanban') return true;
+      const kp = document.getElementById('kanban-panel');
+      return !!(kp && kp.classList.contains('wb-embedded') && currentTab === 'workbench');
+    }
     function refreshAllMediaViews() {
       document.querySelectorAll('.media-panel, .media-modal-body').forEach(h => { if (h._mediaReload) h._mediaReload(); });
       // Refresh the mindmap node-detail thumbnail strip if it's open.
@@ -13138,7 +13345,7 @@ export function getWebappHtml(botUsername) {
       if (ctx.reload) ctx.reload();
       refreshAllMediaViews();
       // refresh attachment strips on cards/nodes if shown
-      if (currentTab === 'kanban') loadKanban();
+      if (kanbanVisible()) loadKanban();
     }
 
     // ── Delete ──
@@ -13150,7 +13357,7 @@ export function getWebappHtml(botUsername) {
         if (!d.ok) { toast(d.error || 'Delete failed', 'error'); return; }
         toast('Deleted', 'success');
         refreshAllMediaViews();
-        if (currentTab === 'kanban') loadKanban();
+        if (kanbanVisible()) loadKanban();
       } catch (err) { toast('Error: ' + err.message, 'error'); }
     }
     function mediaDownload(id) {

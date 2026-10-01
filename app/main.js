@@ -522,19 +522,121 @@ async function gracefulShutdownAndExit() {
 // settings-save can never clobber it.
 const updateConfigPath = join(userDataDir, 'update-config.json');
 let updateInstalling = false;
-const updateState = { enabled: true, available: false, downloading: false, downloaded: false, percent: 0, version: '', current: app.getVersion() };
+const updateState = {
+  enabled: true, available: false, downloading: false, downloaded: false, percent: 0, version: '', current: app.getVersion(),
+  channel: 'production',   // 'production' | 'dev' — which releases this app follows
+  latestKind: '',          // 'production' | 'dev' — what the offered update is
+};
 
-function readAutoUpdate() {
+// The whole file, merged on write: it holds more than one setting now, and
+// writing just the one being changed used to drop the rest.
+function readUpdateConfig() {
   try {
     if (existsSync(updateConfigPath)) {
       const c = JSON.parse(readFileSync(updateConfigPath, 'utf8'));
-      if (c && typeof c.autoUpdate === 'boolean') return c.autoUpdate;
+      if (c && typeof c === 'object') return c;
     }
   } catch { /* default */ }
-  return true; // default ON
+  return {};
 }
-function writeAutoUpdate(enabled) {
-  try { writeFileSync(updateConfigPath, JSON.stringify({ autoUpdate: !!enabled }), 'utf8'); } catch { /* non-fatal */ }
+function writeUpdateConfig(patch) {
+  try { writeFileSync(updateConfigPath, JSON.stringify({ ...readUpdateConfig(), ...patch }), 'utf8'); } catch { /* non-fatal */ }
+}
+function readAutoUpdate() {
+  const c = readUpdateConfig();
+  return typeof c.autoUpdate === 'boolean' ? c.autoUpdate : true; // default ON
+}
+function writeAutoUpdate(enabled) { writeUpdateConfig({ autoUpdate: !!enabled }); }
+function readChannel() { return readUpdateConfig().channel === 'dev' ? 'dev' : 'production'; }
+
+// ─── Update channels ───
+//
+// Production follows GitHub's "latest release", which never includes a
+// prerelease. Dev follows the highest version of either kind — a dev build, or
+// a production release once one is newer than it — which is how a dev
+// subscriber is always offered the newer production release.
+//
+// electron-updater's own prerelease mode cannot do that: on a custom channel
+// like "dev" it skips stable releases entirely, and it switches itself on
+// whenever the running version is a prerelease. So for Dev we choose the
+// release ourselves and point a generic feed straight at it, and for
+// Production we turn that mode off explicitly. Downgrades are never allowed:
+// switching from Dev back to Production waits for a newer production release.
+
+/** Owner, repo and update-file name this build publishes to (from app-update.yml). */
+function feedInfo() {
+  let owner = 'TheRealFaruhaan', repo = 'crundi', channel = 'latest';
+  try {
+    const y = readFileSync(join(process.resourcesPath, 'app-update.yml'), 'utf8');
+    owner = (y.match(/^owner:\s*(\S+)/m) || [])[1] || owner;
+    repo = (y.match(/^repo:\s*(\S+)/m) || [])[1] || repo;
+    channel = (y.match(/^channel:\s*(\S+)/m) || [])[1] || channel;   // 'client' for the client-only app
+  } catch { /* the defaults */ }
+  return { owner, repo, channel };
+}
+
+/** a > b, with 1.2.0-dev.3 < 1.2.0-dev.10 < 1.2.0. */
+function versionGt(a, b) {
+  const p = (v) => { const m = String(v).replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/); return m ? { n: [+m[1], +m[2], +m[3]], pre: m[4] ? m[4].split('.') : [] } : null; };
+  const x = p(a), y = p(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x.n[i] !== y.n[i]) return x.n[i] > y.n[i];
+  if (!x.pre.length || !y.pre.length) return !x.pre.length && !!y.pre.length;
+  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+    const s = x.pre[i], t = y.pre[i];
+    if (s === undefined) return false;
+    if (t === undefined) return true;
+    const sn = /^\d+$/.test(s), tn = /^\d+$/.test(t);
+    if (sn && tn && +s !== +t) return +s > +t;
+    if (sn !== tn) return !sn;
+    if (s !== t) return s > t;
+  }
+  return false;
+}
+
+/** The newest release of either kind carrying this build's update file. */
+async function pickDevRelease() {
+  const { owner, repo, channel } = feedInfo();
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'crundi' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error('GitHub returned ' + res.status);
+  let best = null;
+  for (const r of await res.json()) {
+    if (r.draft || !(r.assets || []).some(a => a.name === channel + '.yml')) continue;
+    const v = String(r.tag_name || '').replace(/^v/, '');
+    if (!best || versionGt(v, best.version)) best = { tag: r.tag_name, version: v, prerelease: !!r.prerelease };
+  }
+  return best;
+}
+
+/** Point the updater at the right place for the chosen channel. */
+async function applyFeed() {
+  const { owner, repo, channel } = feedInfo();
+  autoUpdater.allowDowngrade = false;
+  if (updateState.channel === 'dev') {
+    const pick = await pickDevRelease();
+    if (!pick) throw new Error('No release found');
+    autoUpdater.allowPrerelease = true;
+    autoUpdater.setFeedURL({ provider: 'generic', url: `https://github.com/${owner}/${repo}/releases/download/${pick.tag}`, channel });
+    updateState.latestKind = pick.prerelease ? 'dev' : 'production';
+  } else {
+    autoUpdater.allowPrerelease = false;
+    autoUpdater.setFeedURL({ provider: 'github', owner, repo, ...(channel !== 'latest' ? { channel } : {}) });
+    updateState.latestKind = 'production';
+  }
+}
+
+function setUpdateChannel(ch) {
+  const next = ch === 'dev' ? 'dev' : 'production';
+  writeUpdateConfig({ channel: next });
+  updateState.channel = next;
+  updateState.available = false; updateState.version = ''; updateState.latestKind = '';
+  downloadPrompted = '';
+  appendLog('[update] Channel: ' + next);
+  sendUpdateStatus();
+  checkForUpdates(true);
 }
 
 function sendUpdateStatus() {
@@ -548,6 +650,7 @@ let downloadPrompted = ''; // version we've already shown the "download?" modal 
 
 function setupAutoUpdate() {
   updateState.enabled = readAutoUpdate();
+  updateState.channel = readChannel();
   autoUpdater.autoDownload = false;             // ask first (modal on detection)
   autoUpdater.autoInstallOnAppQuit = true;
   // Full downloads only. Differential (blockmap) reconstruction of a code-signed
@@ -602,8 +705,13 @@ async function promptDownload(info) {
       buttons: ['Download & Install', 'Later'],
       defaultId: 0, cancelId: 1,
       title: 'Update available',
-      message: `Crundi ${info.version} is available.`,
-      detail: 'Download it now? You can watch progress in Settings, and Crundi will ask you to save your work before it restarts to install.',
+      // On the Dev channel, say which kind it is: a newer production release
+      // is offered over the dev build, and that should not look like another dev build.
+      message: updateState.channel === 'dev'
+        ? (/-/.test(info.version) ? `Dev build Crundi ${info.version} is available.` : `A production release, Crundi ${info.version}, is available.`)
+        : `Crundi ${info.version} is available.`,
+      detail: (updateState.channel === 'dev' && !/-/.test(info.version) ? 'It is newer than the dev build you are on. ' : '')
+        + 'Download it now? You can watch progress in Settings, and Crundi will ask you to save your work before it restarts to install.',
     });
     if (response === 0) startDownload();
   } catch { /* ignore */ }
@@ -627,7 +735,9 @@ function checkForUpdates(manual = false) {
     return;
   }
   if (!updateState.enabled && !manual) return; // respect the opt-out for automatic checks
-  autoUpdater.checkForUpdates().catch((err) => appendLog('[update] check failed: ' + err.message));
+  applyFeed()
+    .then(() => autoUpdater.checkForUpdates())
+    .catch((err) => appendLog('[update] check failed: ' + err.message));
 }
 
 function setAutoUpdate(enabled) {
@@ -800,6 +910,7 @@ ipcMain.handle('update:getState', () => ({ ...updateState, launch: getLaunchAtSt
 ipcMain.handle('update:setEnabled', (_e, enabled) => { setAutoUpdate(enabled); return { ...updateState, launch: getLaunchAtStartup() }; });
 ipcMain.handle('update:check', () => { checkForUpdates(true); return { ...updateState, launch: getLaunchAtStartup() }; });
 ipcMain.handle('update:install', () => { confirmAndInstall(); return { ...updateState, launch: getLaunchAtStartup() }; });
+ipcMain.handle('update:setChannel', (_e, ch) => { setUpdateChannel(ch); return { ...updateState, launch: getLaunchAtStartup() }; });
 ipcMain.handle('startup:set', (_e, enabled) => { setLaunchAtStartup(enabled); return { ...updateState, launch: getLaunchAtStartup() }; });
 
 // ─── Interactive browser panel — real pages via WebContentsView ───

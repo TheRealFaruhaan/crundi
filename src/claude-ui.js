@@ -929,6 +929,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     cwd = '', background = false,
     userLayers = true, systemPromptExtra = '', persistSession = true,
     collaborator = null,
+    // A parked pane coming back: same id and order, so it keeps its place in
+    // the workbench layout (which is keyed by id). Ignored if already taken.
+    id: wantId = '', order: wantOrder = null,
   } = {}) {
     const key = String(alias || '').toLowerCase();
     const project = getProject(key);
@@ -1181,13 +1184,14 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
 
     // A collaborator chat already has its id: it is in that chat's tool config.
-    const id = collabChatId || genId();
+    const id = collabChatId
+      || (/^[0-9a-f]{16}$/.test(String(wantId)) && !sessions.has(wantId) ? String(wantId) : genId());
     const siblings = entriesForAlias(key);
     const s = {
       id,
       alias: key,
       title: (title && String(title).trim()) || 'Chat',
-      order: siblings.length ? Math.max(...siblings.map(x => x.order)) + 1 : 0,
+      order: Number.isFinite(wantOrder) ? wantOrder : (siblings.length ? Math.max(...siblings.map(x => x.order)) + 1 : 0),
       proc,
       emitter: new EventEmitter(),
       messages: [],
@@ -2378,6 +2382,28 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     return s ? snapshot(s) : null;
   }
 
+  /**
+   * What the pane manager needs to park a chat and bring it back: how it was
+   * launched, which conversation it holds, and whether anything is still going
+   * on in it. busyTasks counts background tasks still running that the user has
+   * not dismissed — a dismissed one is the user saying it no longer matters,
+   * and some never report that they ended.
+   */
+  function meta(id) {
+    const s = sessions.get(id);
+    if (!s) return null;
+    let busyTasks = 0;
+    for (const a of s.agents.values()) if (a.status === 'running' && !a.dismissed) busyTasks++;
+    return {
+      id: s.id, alias: s.alias, title: s.title, order: s.order,
+      sessionId: s.sessionId || '', model: s.model || '', effort: s.effort || '',
+      permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
+      background: !!s.background, collaborator: !!s.collaborator, cwd: s.cwd || '',
+      running: !!s.proc, state: s.state, busyTasks,
+      pendingInjections: (s.pendingInjections || []).length,
+    };
+  }
+
   /** The full client-facing view of a session. */
   function snapshot(s) {
     return {
@@ -2492,7 +2518,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion,
+    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
