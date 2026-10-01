@@ -3595,7 +3595,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/update/status' && req.method === 'GET') {
       const force = /[?&]force=1/.test(req.url || '');
       if (force) await serverUpdate.check({ force: true }).catch(() => {});
-      return json(res, { ok: true, update: serverUpdate.status(), log: serverUpdate.readLog(), canRestart: canRestart() });
+      // `embedded`: this server runs inside the desktop app, which updates them
+      // both, so a desktop client talking to it has no separate server update.
+      return json(res, { ok: true, update: serverUpdate.status(), log: serverUpdate.readLog(), canRestart: canRestart(), embedded: !!process.versions.electron });
     }
 
     // ─── Restart ───

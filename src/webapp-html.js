@@ -3718,6 +3718,11 @@ export function getWebappHtml(botUsername) {
         const r = await apiFetch('/api/update/status' + (force ? '?force=1' : ''));
         const d = await r.json();
         if (!d.ok) throw new Error(d.error || 'Failed');
+        // The server inside the desktop app updates with the app: one update, not two.
+        if (d.embedded && window.api && window.api.getUpdateState) {
+          const sec = document.getElementById('srv-update-section'); if (sec) sec.remove();
+          return;
+        }
         u = d.update; log = d.log || ''; canRestart = !!d.canRestart;
       } catch (err) {
         body.innerHTML = '<span style="color:var(--text-muted);">Could not check for updates: ' + escHtml(err.message) + '</span>';
@@ -10832,12 +10837,15 @@ export function getWebappHtml(botUsername) {
           + '</div>'
           + '<p style="' + hintStyle + '">Inserts a newline in the terminal instead of submitting \\u2014 the other key still submits. Applies instantly to all terminals.</p></div></div>';
 
-        // Updates section — desktop app only (driven by Electron's auto-updater).
+        // Desktop app update (Electron's auto-updater) — the app itself.
         if (window.api && window.api.getUpdateState) html += buildUpdatesSection();
-        // A server has no electron-updater, so it asks GitHub instead. Rendered
-        // as a placeholder and filled in after, because the check is a network
-        // call and Settings should not wait on GitHub to draw.
-        else html += '<div class="info-section" id="srv-update-section"><h4>Server</h4>'
+        // Server update — the server this page is talking to, which asks GitHub.
+        // Shown in the desktop app too: the client-only Windows app talks to a
+        // remote server, and updating the app never touched it. Hidden again by
+        // renderServerUpdate when the server is the one built into the desktop
+        // app, which the app's own update already covers. Rendered as a
+        // placeholder because the check is a network call.
+        html += '<div class="info-section" id="srv-update-section"><h4>Server</h4>'
           + '<div id="srv-update-body" style="font-size:0.8rem;color:var(--text-muted);">Checking for updates…</div></div>';
         // Claude Code sits next to the server update because it is the other
         // thing whose version decides what your sessions can do.
@@ -10860,7 +10868,7 @@ export function getWebappHtml(botUsername) {
           + '</div>';
 
         panel.innerHTML = html;
-        if (!(window.api && window.api.getUpdateState)) renderServerUpdate();
+        renderServerUpdate();
         renderClaudeUpdate();
       } catch (err) {
         panel.innerHTML = '<div class="info-section"><h4>Error</h4><p>' + escHtml(err.message) + '</p></div>';
