@@ -2175,6 +2175,10 @@ export function getWebappHtml(botUsername) {
       font-weight: 600; font-size: 0.9rem; line-height: 1.35; margin-bottom: 5px; word-break: break-word;
     }
     .kanban-card .card-title .t { flex: 1; min-width: 0; }
+    /* Nothing below the title (no subtasks, menu shut): even space top and bottom. */
+    .kanban-card.compact { padding-bottom: 9px; } /* title-row buttons add 3px below the text */
+    .kanban-card.compact:not(.menu-open) .card-title:not(:has(+ .card-desc)),
+    .kanban-card.compact:not(.menu-open) .card-desc { margin-bottom: 0; }
     .kanban-card .card-mm {
       display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; margin-top: 1px;
       font-size: 0.68rem; font-weight: 600; color: var(--accent-hover);
@@ -2199,6 +2203,7 @@ export function getWebappHtml(botUsername) {
     .kanban-todo .todo-media { height: 20px; margin-top: 0; }
     .kanban-todo .todo-more {
       width: 24px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+      font-size: inherit; margin-top: calc((1.45em - 22px) / 2);
       border: none; background: none; border-radius: 5px; color: var(--text-muted); cursor: pointer; opacity: 0.55;
     }
     .kanban-todo:hover .todo-more, .kanban-todo .todo-more.open, .kanban-todo .todo-more:focus-visible { opacity: 1; }
@@ -2207,7 +2212,10 @@ export function getWebappHtml(botUsername) {
 
     /* The checkbox: drawn, not native. */
     .kanban-todo input[type=checkbox] {
-      appearance: none; -webkit-appearance: none; margin: 1px 0 0; width: 16px; height: 16px; flex-shrink: 0;
+      /* Centred on the first text line: the line box is 1.45em tall, so the
+         box drops by half the difference (measured: within 0.25px). */
+      font-size: inherit; margin: calc((1.45em - 16px) / 2) 0 0;
+      appearance: none; -webkit-appearance: none; width: 16px; height: 16px; flex-shrink: 0;
       border: 1.5px solid #4a4a68; border-radius: 4px; background: var(--bg-primary); cursor: pointer;
       display: grid; place-content: center; transition: background 0.14s ease, border-color 0.14s ease;
     }
@@ -2224,7 +2232,7 @@ export function getWebappHtml(botUsername) {
     .kanban-todo.adding:focus-within { box-shadow: inset 0 0 0 1px rgba(99,102,241,0.55); }
     .kanban-todo.adding input[type=text]:focus { border: none; outline: none; box-shadow: none; background: none; }
     .kanban-todo.adding input[type=text]::placeholder { color: var(--text-muted); }
-    .kanban-todo.adding .ck-ghost { width: 16px; height: 16px; margin-top: 3px; border: 1.5px dashed #4a4a68; border-radius: 4px; }
+    .kanban-todo.adding .ck-ghost { width: 16px; height: 16px; margin-top: calc((1.45em - 16px) / 2); border: 1.5px dashed #4a4a68; border-radius: 4px; }
     .kanban-todo.adding input[type=text] {
       grid-column: 2 / 5; width: 100%; min-width: 0; background: none; border: none; outline: none;
       color: var(--text-primary); font: inherit; padding: 1px 0;
@@ -2266,6 +2274,25 @@ export function getWebappHtml(botUsername) {
     .kanban-card .card-actions .danger { margin-left: auto; }
     .kanban-card .card-actions .danger:hover { color: var(--red); border-color: var(--red); background: var(--red-dim); }
 
+    /* End of a column: "+ Add task", and the blank card it opens. */
+    .kc-add-task {
+      display: flex; align-items: center; gap: 6px; width: 100%; padding: 9px 10px; cursor: pointer;
+      border: 1px dashed var(--border); border-radius: var(--radius); background: transparent;
+      color: var(--text-muted); font-size: 0.8rem; font-weight: 500; text-align: left;
+      transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+    }
+    .kc-add-task .ic { width: 14px; height: 14px; }
+    .kc-add-task:hover, .kc-add-task:focus-visible { color: var(--text-primary); border-color: #3c3c58; border-style: solid; background: var(--bg-card); outline: none; }
+    .kc-new {
+      background: var(--bg-card); border: 1px solid rgba(99,102,241,0.55); border-radius: var(--radius);
+      padding: 12px; box-shadow: var(--shadow-sm), var(--surface-hi);
+    }
+    .kc-new input[type=text] {
+      width: 100%; min-width: 0; background: none; border: none; outline: none; padding: 0;
+      color: var(--text-primary); font: inherit; font-weight: 600; font-size: 0.9rem; line-height: 1.35;
+    }
+    .kc-new input[type=text]:focus { border: none; outline: none; box-shadow: none; background: none; }
+    .kc-new input[type=text]::placeholder { color: var(--text-muted); font-weight: 500; }
     /* Attachments: a paperclip in the title row, opening a horizontal strip. */
     .kanban-card .card-clip {
       display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; height: 22px; min-width: 24px;
@@ -2274,6 +2301,14 @@ export function getWebappHtml(botUsername) {
       font-size: 0.7rem; font-weight: 600; font-variant-numeric: tabular-nums;
     }
     .kanban-card .card-clip .ic { width: 14px; height: 14px; }
+    .kanban-card .card-title .kc-menu {
+      display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+      width: 24px; height: 22px; margin: -1px -4px 0 0; padding: 0; cursor: pointer;
+      border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text-muted);
+    }
+    .kanban-card .card-title .kc-menu .ic { width: 14px; height: 14px; }
+    .kanban-card .card-title .kc-menu:hover { color: var(--text-primary); background: var(--bg-tertiary); border-color: var(--border); }
+    .kanban-card.menu-open .card-title .kc-menu { color: var(--accent-hover); border-color: var(--accent); background: var(--accent-dim); }
     .kanban-card .card-clip.has { color: var(--text-secondary); }
     .kanban-card .card-clip:hover, .kanban-card .card-clip.open { color: var(--text-primary); background: var(--bg-tertiary); border-color: var(--border); }
     .kc-media-pop {
@@ -2692,6 +2727,15 @@ export function getWebappHtml(botUsername) {
     .input-modal textarea { resize: vertical; min-height: 70px; }
     .input-modal input:focus, .input-modal textarea:focus { border-color: var(--accent); outline: none; }
     .input-modal .im-buttons { display: flex; gap: 10px; margin-top: 12px; }
+    .input-modal .im-choice { margin-top: 12px; }
+    .input-modal .im-choice .lbl { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 6px; }
+    .input-modal .im-choice .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+    .input-modal .im-choice button {
+      padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 0.8rem;
+      border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-secondary);
+    }
+    .input-modal .im-choice button:hover { color: var(--text-primary); border-color: #3c3c58; }
+    .input-modal .im-choice button[aria-checked="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--accent-hover); }
     .input-modal .im-buttons button { flex: 1; border-radius: var(--radius-sm); padding: 9px; font-size: 0.85rem; cursor: pointer; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); }
     .input-modal .im-buttons button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     /* link picker */
@@ -3172,6 +3216,7 @@ export function getWebappHtml(botUsername) {
       <div class="im-label" id="im-label"></div>
       <input type="text" id="im-input" autocomplete="off">
       <textarea id="im-textarea" style="display:none"></textarea>
+      <div class="im-choice" id="im-choice" role="radiogroup" style="display:none"></div>
       <div class="im-buttons">
         <button id="im-cancel">Cancel</button>
         <button id="im-ok" class="primary">OK</button>
@@ -11457,11 +11502,30 @@ export function getWebappHtml(botUsername) {
       // A refresh while typing a new subtask must not take the caret away.
       const ae = document.activeElement;
       const typing = !!(ae && ae.matches && ae.matches('#kanban-panel [data-ktodo-input]'));
+      const typingTask = !!(ae && ae.matches && ae.matches('#kanban-panel [data-ktask-input]'));
       const clip = kanbanClipOpen;
+      // Every change re-renders the board, and replacing the HTML resets every
+      // scroller in it to the top. Remember where each one was and put it back.
+      const keep = [];
+      const mark = (el, key) => { if (el) keep.push([key, el.scrollTop, el.scrollLeft]); };
+      mark(panel, 'panel');
+      mark(panel.querySelector('.kanban-board'), 'board');
+      panel.querySelectorAll('.kanban-col-body[data-status]').forEach(b => mark(b, 'col:' + b.dataset.status));
       closeKtPop();
       panel.innerHTML = h;
+      const sameView = panel.dataset.kview === kanbanView;
+      panel.dataset.kview = kanbanView;
+      if (sameView) {
+        for (const [key, top, left] of keep) {
+          const el = key === 'panel' ? panel
+            : key === 'board' ? panel.querySelector('.kanban-board')
+            : panel.querySelector('.kanban-col-body[data-status="' + key.slice(4) + '"]');
+          if (el) { el.scrollTop = top; el.scrollLeft = left; }
+        }
+      }
       if (kanbanView === 'board') attachKanbanDrag();
       if (typing) focusKanbanAdd();
+      if (typingTask) focusKanbanTaskAdd();
       // An upload reloads the board; the attachments menu stays open to show it.
       if (clip) { const b = panel.querySelector('[data-kclip="' + clip + '"]'); if (b) openClipPop(b, true); }
     }
@@ -11474,6 +11538,7 @@ export function getWebappHtml(botUsername) {
           + '<div class="kanban-col-head"><span>' + KANBAN_STATUS_LABELS[st] + '</span><span class="count">' + tasks.length + '</span></div>'
           + '<div class="kanban-col-body" data-status="' + st + '">'
           + tasks.map(renderKanbanCard).join('')
+          + renderKanbanAddTask(st)
           + '</div></div>';
       }
       // Safety net: surface any task whose status isn't a known column so it can
@@ -11489,6 +11554,34 @@ export function getWebappHtml(botUsername) {
       return h + '</div>';
     }
 
+    // The end of every column: "+ Add task", or the blank card it opens. Not a
+    // .kanban-card, so it is never draggable or counted as a drop position.
+    let kanbanAddingTask = null;        // column status with an open blank card
+    let kanbanTaskDraft = '';
+    function renderKanbanAddTask(st) {
+      if (kanbanAddingTask === st) {
+        return '<div class="kc-new"><input type="text" data-ktask-input="' + st + '" placeholder="Task title, Enter to add" value="' + escHtml(kanbanTaskDraft) + '" autocomplete="off"></div>';
+      }
+      return '<button class="kc-add-task" data-kact="add-task-inline" data-status="' + st + '">' + ic('plus') + 'Add task</button>';
+    }
+    function focusKanbanTaskAdd() {
+      if (!kanbanAddingTask) return;
+      const inp = document.querySelector('#kanban-panel [data-ktask-input="' + kanbanAddingTask + '"]');
+      if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    }
+    async function saveKanbanTaskAdd(st, keepOpen) {
+      const title = kanbanTaskDraft.trim();
+      kanbanTaskDraft = '';
+      if (!keepOpen) kanbanAddingTask = null;
+      if (title) await kanbanPost({ action: 'addTask', title, status: st });
+      await loadKanban();
+      if (keepOpen) {
+        focusKanbanTaskAdd();
+        const inp = document.querySelector('#kanban-panel [data-ktask-input="' + st + '"]');
+        if (inp) inp.scrollIntoView({ block: 'nearest' });
+      }
+    }
+
     // Card UI state that has to survive a re-render (every change reloads the board).
     const kanbanMenuOpen = new Set();   // task ids whose action menu is open
     let kanbanAdding = null;            // task id with an open "new subtask" row
@@ -11497,13 +11590,19 @@ export function getWebappHtml(botUsername) {
     function renderKanbanCard(t) {
       const todos = t.todos || [];
       const done = todos.filter(td => td.done).length;
-      let h = '<div class="kanban-card' + (kanbanMenuOpen.has(t.id) ? ' menu-open' : '') + '" data-task="' + t.id + '">';
+      const isCompact = !todos.length && kanbanAdding !== t.id;
+      let h = '<div class="kanban-card' + (kanbanMenuOpen.has(t.id) ? ' menu-open' : '') + (isCompact ? ' compact' : '') + '" data-task="' + t.id + '">';
       const mmCount = (t.mindmapNodes || []).length;
       // Attachments live behind the paperclip in the title row; it opens a strip.
       const nMedia = (kanbanMediaByTask[t.id] || []).length;
+      // No subtasks yet: no footer row. The menu sits beside the paperclip and
+      // carries "Subtask" itself; the first one added brings the footer back.
+      const compact = !todos.length && kanbanAdding !== t.id;
+      const menuBtn = '<button class="kc-menu" data-kact="card-menu" data-task="' + t.id + '" title="Task actions" aria-expanded="' + (kanbanMenuOpen.has(t.id) ? 'true' : 'false') + '">' + ic('menu') + '</button>';
       h += '<div class="card-title"><span class="t">' + escHtml(t.title) + '</span>'
         + (mmCount ? '<span class="card-mm" data-kact="goto-mindmap" title="' + mmCount + ' linked mindmap idea(s)">' + ic('mindmap') + mmCount + '</span>' : '')
         + '<button class="card-clip' + (nMedia ? ' has' : '') + '" data-kclip="' + t.id + '" title="Attachments" aria-haspopup="menu">' + ic('paperclip') + (nMedia ? '<span>' + nMedia + '</span>' : '') + '</button>'
+        + (compact ? menuBtn : '')
         + '</div>';
       if (t.description) h += '<div class="card-desc">' + escHtml(t.description) + '</div>';
       const adding = kanbanAdding === t.id;
@@ -11532,15 +11631,17 @@ export function getWebappHtml(botUsername) {
             + '<span class="lbl">' + done + ' of ' + todos.length + '</span></div>';
         }
       }
-      h += '<div class="card-foot">'
-        + '<button class="kc-menu" data-kact="card-menu" data-task="' + t.id + '" title="Task actions" aria-expanded="' + (kanbanMenuOpen.has(t.id) ? 'true' : 'false') + '">' + ic('menu') + '</button>'
-        + '<button data-kact="add-subtask" data-task="' + t.id + '" title="Add a subtask">' + ic('plus') + 'Subtask</button>'
-        + '</div>';
+      if (!compact) {
+        h += '<div class="card-foot">' + menuBtn
+          + '<button data-kact="add-subtask" data-task="' + t.id + '" title="Add a subtask">' + ic('plus') + 'Subtask</button>'
+          + '</div>';
+      }
       let opts = '';
       for (const st of kanbanBoard.statuses) {
         opts += '<option value="' + st + '"' + (st === t.status ? ' selected' : '') + '>' + KANBAN_STATUS_LABELS[st] + '</option>';
       }
       h += '<div class="card-actions">'
+        + (compact ? '<button data-kact="add-subtask" data-task="' + t.id + '" title="Add a subtask">' + ic('plus') + 'Subtask</button>' : '')
         + '<select data-kmove="' + t.id + '" title="Move to column">' + opts + '</select>'
         + '<button data-kact="brainstorm" data-task="' + t.id + '" title="Brainstorm this task in the Mindmap">' + ic('mindmap') + 'Brainstorm</button>'
         + '<button data-kact="edit-task" data-task="' + t.id + '">' + ic('pencil') + 'Edit</button>'
@@ -11938,7 +12039,20 @@ export function getWebappHtml(botUsername) {
           btn.setAttribute('aria-expanded', open ? 'true' : 'false');
           return;
         }
+        if (act === 'add-task-inline') {
+          const st = btn.dataset.status;
+          // Another column's open card keeps what was typed in it.
+          if (kanbanAddingTask && kanbanAddingTask !== st && kanbanTaskDraft.trim()) {
+            const prev = kanbanAddingTask, title = kanbanTaskDraft.trim();
+            kanbanAddingTask = st; kanbanTaskDraft = '';
+            await kanbanPost({ action: 'addTask', title, status: prev });
+            await loadKanban();
+          } else { kanbanAddingTask = st; kanbanTaskDraft = ''; renderKanban(); }
+          focusKanbanTaskAdd();
+          return;
+        }
         if (act === 'add-subtask') {
+          kanbanMenuOpen.delete(taskId); // you're typing now, not choosing
           // Another card's open row keeps what was typed in it.
           if (kanbanAdding && kanbanAdding !== taskId && kanbanAddDraft.trim()) {
             const prev = kanbanAdding; kanbanAdding = taskId;
@@ -11952,8 +12066,16 @@ export function getWebappHtml(botUsername) {
         else if (act === 'view-trash') { kanbanView = 'trash'; loadKanban(); }
         else if (act === 'view-history') { kanbanView = 'history'; loadKanban(); }
         else if (act === 'add-task') {
-          const title = await askText({ title: 'Add task', label: 'Task title' });
-          if (title && title.trim()) { await kanbanPost({ action: 'addTask', title: title.trim() }); loadKanban(); }
+          // Which column it lands in; remembers the last one picked.
+          const sts = kanbanBoard.statuses || Object.keys(KANBAN_STATUS_LABELS);
+          let last = localStorage.getItem('crundi_kanban_add_status');
+          if (!sts.includes(last)) last = sts[0];
+          const r = await askText({ title: 'Add task', label: 'Task title', okLabel: 'Add task',
+            choice: { label: 'Column', value: last, options: sts.map(st => [st, KANBAN_STATUS_LABELS[st] || st]) } });
+          if (r && r.value && r.value.trim()) {
+            try { localStorage.setItem('crundi_kanban_add_status', r.choice); } catch { /* ignore */ }
+            await kanbanPost({ action: 'addTask', title: r.value.trim(), status: r.choice }); loadKanban();
+          }
         } else if (act === 'edit-task') {
           const task = (kanbanBoard.tasks || []).find(t => t.id === taskId);
           if (!task) return;
@@ -12001,6 +12123,28 @@ export function getWebappHtml(botUsername) {
       // and leaving it saves whatever was typed.
       panel.addEventListener('input', (e) => {
         if (e.target.closest('[data-ktodo-input]')) kanbanAddDraft = e.target.value;
+        if (e.target.closest('[data-ktask-input]')) kanbanTaskDraft = e.target.value;
+      });
+      // The blank task card works the same way as the subtask row.
+      panel.addEventListener('keydown', async (e) => {
+        const tin = e.target.closest('[data-ktask-input]');
+        if (!tin) return;
+        if (e.key === 'Escape') { e.preventDefault(); kanbanAddingTask = null; kanbanTaskDraft = ''; renderKanban(); return; }
+        if (e.key !== 'Enter' || e.isComposing) return;
+        e.preventDefault();
+        if (!tin.value.trim()) return;
+        kanbanTaskDraft = tin.value;
+        tin.dataset.saving = '1';
+        await saveKanbanTaskAdd(tin.dataset.ktaskInput, true);
+      });
+      panel.addEventListener('focusout', (e) => {
+        const tin = e.target.closest && e.target.closest('[data-ktask-input]');
+        if (!tin || tin.dataset.saving) return;
+        setTimeout(() => {
+          if (!tin.isConnected || kanbanAddingTask !== tin.dataset.ktaskInput) return;
+          if (document.activeElement && document.activeElement.closest && document.activeElement.closest('[data-ktask-input]')) return;
+          saveKanbanTaskAdd(tin.dataset.ktaskInput, false);
+        }, 0);
       });
       panel.addEventListener('keydown', async (e) => {
         const inp = e.target.closest('[data-ktodo-input]');
@@ -13126,9 +13270,19 @@ export function getWebappHtml(botUsername) {
 
     // ─── Text input modal (window.prompt replacement; Electron has no prompt) ───
     let imResolve = null;
-    function askText({ title = 'Input', label = '', value = '', multiline = false, okLabel = 'OK' } = {}) {
+    let imChoice = null; // { value } while a choice row is shown
+    // choice ({ label, options: [[value, text]...], value }) adds a row of
+    // pills under the field; the promise then resolves to { value, choice }.
+    function askText({ title = 'Input', label = '', value = '', multiline = false, okLabel = 'OK', choice = null } = {}) {
       return new Promise((resolve) => {
         imResolve = resolve;
+        const ch = $('#im-choice');
+        imChoice = choice ? { value: choice.value } : null;
+        if (choice) {
+          ch.innerHTML = (choice.label ? '<div class="lbl">' + escHtml(choice.label) + '</div>' : '')
+            + '<div class="opts">' + choice.options.map(o => '<button type="button" role="radio" data-im-choice="' + escHtml(o[0]) + '" aria-checked="' + (o[0] === choice.value ? 'true' : 'false') + '">' + escHtml(o[1]) + '</button>').join('') + '</div>';
+          ch.style.display = '';
+        } else { ch.innerHTML = ''; ch.style.display = 'none'; }
         $('#im-title').textContent = title;
         const lbl = $('#im-label');
         lbl.textContent = label || '';
@@ -13147,9 +13301,12 @@ export function getWebappHtml(botUsername) {
       const ml = $('#im-textarea').style.display !== 'none';
       const val = (ml ? $('#im-textarea') : $('#im-input')).value;
       $('#input-modal').classList.remove('visible');
-      const r = imResolve; imResolve = null; if (r) r(val);
+      const out = imChoice ? { value: val, choice: imChoice.value } : val;
+      imChoice = null;
+      const r = imResolve; imResolve = null; if (r) r(out);
     }
     function imCancel() {
+      imChoice = null;
       $('#input-modal').classList.remove('visible');
       const r = imResolve; imResolve = null; if (r) r(null);
     }
@@ -13199,6 +13356,12 @@ export function getWebappHtml(botUsername) {
     $('#im-ok').addEventListener('click', imSubmit);
     $('#im-cancel').addEventListener('click', imCancel);
     $('#im-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); imSubmit(); } });
+    $('#im-choice').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-im-choice]'); if (!b || !imChoice) return;
+      imChoice.value = b.dataset.imChoice;
+      $('#im-choice').querySelectorAll('[data-im-choice]').forEach(x => x.setAttribute('aria-checked', x === b ? 'true' : 'false'));
+      const f = $('#im-input').style.display !== 'none' ? $('#im-input') : $('#im-textarea'); f.focus();
+    });
     $('#im-textarea').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); imSubmit(); } });
     // Link picker
     $('#lm-project').addEventListener('change', loadLinkBoard);
