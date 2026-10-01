@@ -4041,6 +4041,7 @@ export function getWebappHtml(botUsername) {
     // ─── Flat icon set (stroke icons, inherit currentColor) ───
     const ICON_PATHS = {
       note: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
+      pages: '<path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8"/>',
       more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
       pin: '<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24z"/>',
       menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
@@ -5920,7 +5921,7 @@ export function getWebappHtml(botUsername) {
         + '<span class="wb-head-ic">' + ic('note') + '</span>'
         + '<span class="term-title" style="cursor:default;" data-nt-title="' + cell.id + '">' + escHtml(cell.pageId ? (cell.title || 'Untitled') : 'Notes') + '</span>'
         + '<span class="term-head-spacer"></span>'
-        + (cell.pageId ? '<button class="term-font-btn" data-action="notes-switch" data-wbid="' + cell.id + '" title="Open another page here">Pages</button>' : '')
+        + (cell.pageId ? '<button class="term-font-btn" data-action="notes-switch" data-wbid="' + cell.id + '" title="Pages: open another page here" aria-label="Pages">' + ic('pages') + '</button>' : '')
         + '<button class="term-font-btn" data-action="notes-font" data-dir="-1" title="Smaller text (all notes)">A-</button>'
         + '<button class="term-font-btn" data-action="notes-font" data-dir="0" title="Reset text size">' + ic('rotate-ccw') + '</button>'
         + '<button class="term-font-btn" data-action="notes-font" data-dir="1" title="Larger text (all notes)">A+</button>'

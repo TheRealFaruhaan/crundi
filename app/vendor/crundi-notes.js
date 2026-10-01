@@ -116,6 +116,9 @@
     '.nt-fmt{position:fixed;z-index:800;display:flex;align-items:center;gap:2px;padding:4px;background:var(--bg-secondary,#12121a);border:1px solid var(--border,#2a2a3d);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5)}',
     '.nt-fmt button{min-width:28px;height:26px;padding:0 6px;border:none;border-radius:5px;background:none;color:var(--text-primary);cursor:pointer;font-size:13px}',
     '.nt-fmt button:hover,.nt-fmt button.on{background:var(--bg-hover,#22223a);color:var(--accent-hover,#818cf8)}',
+    '.nt-fmt .nt-grip{flex:none;margin-right:2px}',
+    '.nt-fmt .sep{width:1px;align-self:stretch;margin:3px 4px;background:var(--border,#2a2a3d)}',
+    '.nt-fmt button.txt{font-size:12.5px;padding:0 8px}',
     '.nt-fmt input{width:220px;height:26px;border:1px solid var(--border,#2a2a3d);border-radius:5px;background:var(--bg-primary);color:var(--text-primary);padding:0 8px;font-size:12.5px;outline:none}',
     // menus (slash and block)
     '.nt-menu{position:fixed;z-index:800;min-width:220px;max-height:320px;overflow-y:auto;padding:4px;background:var(--bg-secondary,#12121a);border:1px solid var(--border,#2a2a3d);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.55)}',
@@ -911,6 +914,14 @@
       if (!rect.width && !linkMode) return;
       closeFloating();
       var bar = el('div', 'nt-fmt');
+      // Left: a handle that drags the selected text (as Markdown) onto a
+      // chat, a terminal or another place in a note. Taken from this range,
+      // so it still works if the bar closes mid-drag.
+      var gWrap = el('span', '');
+      var g = el('span', 'nt-grip', '\u22ee\u22ee'); g.title = 'Drag the selected text onto a chat or terminal';
+      gWrap.appendChild(g); bar.appendChild(gWrap);
+      g.addEventListener('mousedown', function (e) { e.preventDefault(); });
+      if (opts.dragBlock) opts.dragBlock(gWrap, g, function () { return rangeMarkdown(range); }, null);
       var btns = [['<b>B</b>', 'Bold (Ctrl+B)', function () { document.execCommand('bold'); }],
         ['<i>I</i>', 'Italic (Ctrl+I)', function () { document.execCommand('italic'); }],
         ['<u>U</u>', 'Underline (Ctrl+U)', function () { document.execCommand('underline'); }],
@@ -926,6 +937,12 @@
       lb.addEventListener('mousedown', function (e) { e.preventDefault(); });
       lb.addEventListener('click', function () { linkInput(); });
       bar.appendChild(lb);
+      bar.appendChild(el('span', 'sep'));
+      var cb = el('button', 'txt', 'Copy'); cb.title = 'Copy as Markdown'; cb.type = 'button';
+      var ab = el('button', 'txt', 'Select all'); ab.title = 'Select every block (' + MOD + '+Shift+A)'; ab.type = 'button';
+      [cb, ab].forEach(function (b) { b.addEventListener('mousedown', function (e) { e.preventDefault(); }); bar.appendChild(b); });
+      cb.addEventListener('click', function () { copyText(rangeMarkdown(range)); });
+      ab.addEventListener('click', function () { selectAllBlocks(); });
       document.body.appendChild(bar);
       function position() {
         var r = range.getBoundingClientRect();
@@ -1135,11 +1152,10 @@
       return page.contains(r.commonAncestorContainer) ? r : null;
     }
     function showSelbar() {
+      // Whole blocks only; selected text gets the same actions on its format bar.
       var n = selectedBlocks().length;
-      var r = n ? null : textSelection();
-      if (!n && !r) { selbar.classList.remove('on'); return; }
-      selCnt.textContent = n ? (n === 1 ? '1 block selected' : n + ' blocks selected') : 'Text selected';
-      bDel.style.display = n ? '' : 'none';
+      if (!n) { selbar.classList.remove('on'); return; }
+      selCnt.textContent = n === 1 ? '1 block selected' : n + ' blocks selected';
       selbar.classList.add('on');
     }
     /** Markdown of whatever is selected: whole blocks, or the selected text. */
@@ -1147,12 +1163,14 @@
       var bs = selectedBlocks();
       if (bs.length) return toMarkdown(bs.map(readBlock));
       var r = textSelection();
-      if (!r) return '';
+      return r ? rangeMarkdown(r) : '';
+    }
+    function rangeMarkdown(r) {
       var box = el('div'); box.appendChild(r.cloneContents());
       return inlineMd(box.innerHTML).trim();
     }
-    function copySelection() {
-      var md = selectionMarkdown();
+    function copySelection() { copyText(selectionMarkdown()); }
+    function copyText(md) {
       if (!md) return;
       (navigator.clipboard ? navigator.clipboard.writeText(md) : Promise.reject()).then(function () { toast('Copied as Markdown'); }, function () { toast('Could not copy', 'error'); });
     }
