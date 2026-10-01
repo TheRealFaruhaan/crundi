@@ -288,6 +288,14 @@
     // Shown, not hidden: the trigger exists, it just needs the limit warmer on.
     '.cc-sched-trig.off{opacity:0.45;cursor:not-allowed}',
     '.cc-queue.sent.recallable{cursor:pointer}',
+    // The CLI's predicted next message: tap to send it, x to drop it.
+    '.cc-sug{position:relative;margin-bottom:7px;border:1px solid var(--border);background:var(--bg-primary);border-radius:12px 12px 3px 12px;padding:6px 32px 7px 11px;cursor:pointer;transition:.14s;margin-left:auto;max-width:86%;width:fit-content}',
+    '.cc-sug:hover{border-color:var(--accent);background:var(--accent-dim)}',
+    '.cc-sug-head{font-size:calc(10px*var(--cc-fs,1));text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);font-weight:700;margin-bottom:2px}',
+    '.cc-sug-body{white-space:pre-wrap;word-break:break-word;color:var(--text-secondary);font-size:calc(12.5px*var(--cc-fs,1));display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;line-clamp:4;overflow:hidden}',
+    '.cc-sug:hover .cc-sug-body{color:var(--text-primary)}',
+    '.cc-sug-x{position:absolute;top:4px;right:4px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:none;border:none;border-radius:6px;color:var(--text-muted);cursor:pointer;font-size:calc(12px*var(--cc-fs,1));line-height:1;padding:0}',
+    '.cc-sug-x:hover{color:var(--text-primary);background:rgba(148,163,184,.15)}',
     '.cc-sched-at{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:6px 8px}',
     '.cc-sched-note{color:var(--text-muted);font-size:calc(11px*var(--cc-fs,1))}',
     '.cc-sched-note:empty{display:none}',
@@ -716,7 +724,8 @@
     // arrived. It now stays until --replay-user-messages says otherwise.
     var handedOver = [];       // {text, uuid, state} written to stdin, oldest first
     var sentNode = null;       // the separate "handed over" drawer
-    var lastTypeAt = 0;        // last keystroke, so we never send mid-thought
+    var suggestion = null;     // {text, uuid}: the CLI's guess at the next message
+    var sugNode = null;        // its tap-to-send bubble above the composer
     var activityNode = null;   // in-log "working" row for turns that stream nothing
 
     // Enter behaviour: 'send' = Enter sends / Shift+Enter newline;
@@ -872,6 +881,9 @@
       syncActivity();
       // Turn finished: send everything typed in the meantime as one message.
       if (s === 'idle' && was !== 'idle') flushQueue();
+      // A turn under way means the suggestion answered an older one.
+      if (s !== 'idle') suggestion = null;
+      renderSuggestion();
     }
 
     // Some turns produce no visible output for a long time — /compact is the
@@ -1303,14 +1315,38 @@
       }).catch(function (err) { appendLocal({ kind: 'error', text: String(err.message || err) }); });
     }
 
-    function postMessage(text) {
+    // `slot` is the drawer entry for a message sent while busy, if any. The
+    // server's reply settles it: sent straight through (the turn had already
+    // ended) means it is in the transcript and the drawer must let go; failed
+    // means it never went, so the words go back in the box.
+    function postMessage(text, slot) {
+      // Any message going out retires the suggestion (the server does too).
+      suggestion = null;
+      renderSuggestion();
       apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text }),
       }).then(function (r) { return r.json(); }).then(function (d) {
-        if (d && d.ok === false) appendLocal({ kind: 'error', text: d.error || 'Failed to send' });
-      }).catch(function (err) { appendLocal({ kind: 'error', text: String(err.message || err) }); });
+        if (d && d.ok === false) { giveBack(slot); appendLocal({ kind: 'error', text: d.error || 'Failed to send' }); return; }
+        if (!slot || handedOver.indexOf(slot) < 0) return;
+        if (d && d.injected === false) {
+          handedOver = handedOver.filter(function (h) { return h !== slot; });
+          renderQueue();
+        } else if (d && d.uuid && !slot.uuid) {
+          slot.uuid = d.uuid;
+        }
+      }).catch(function (err) { giveBack(slot); appendLocal({ kind: 'error', text: String(err.message || err) }); });
+    }
+
+    function giveBack(slot) {
+      if (!slot || handedOver.indexOf(slot) < 0) return;
+      handedOver = handedOver.filter(function (h) { return h !== slot; });
+      renderQueue();
+      var cur = input.value.trim();
+      input.value = cur ? slot.text + '\n' + cur : slot.text;
+      saveDraft();
+      autoGrow();
     }
 
     /**
@@ -1321,32 +1357,50 @@
      * did not happen — the user is about to see their message answered.
      */
     function recallQueued() {
-      var slot = null;
-      for (var i = 0; i < handedOver.length; i++) {
-        if (handedOver[i].uuid && handedOver[i].state === 'queued') { slot = handedOver[i]; break; }
+      // Everything still waiting goes back at once: what Claude has been
+      // handed but not read, plus anything held locally. The drawers show it
+      // stacked as one message and Claude would read it as one, so taking back
+      // just the oldest line left the rest to go out on their own.
+      var held = queued.length ? queuedText() : '';
+      if (held) { stopTicker(); queued = []; renderQueue(); }
+      var slots = handedOver.filter(function (h) { return h.uuid && h.state === 'queued'; });
+      function putBack(texts) {
+        if (held) texts.push(held);
+        if (!texts.length) return;
+        var restored = texts.join('\n');
+        var cur = input.value.trim();
+        input.value = cur ? restored + '\n' + cur : restored;
+        saveDraft();
+        autoGrow();
+        input.focus();
+        try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
       }
-      if (!slot) return;
-      apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/cancel-queued', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uuid: slot.uuid }),
-      }).then(function (r) { return r.json(); }).then(function (d) {
-        if (!d || d.ok === false) {
-          appendLocal({ kind: 'error', text: (d && d.error) || 'Could not take it back' });
-          return;
-        }
-        if (d.cancelled) {
-          // Put the words back in the box rather than destroying them.
-          handedOver = handedOver.filter(function (h) { return h !== slot; });
-          renderQueue();
-          var cur = input.value.trim();
-          input.value = cur ? (slot.text + '\n' + cur) : slot.text;
-          input.focus();
-        } else {
-          slot.state = 'started';
-          renderQueue();
-        }
-      }).catch(function (err) { appendLocal({ kind: 'error', text: String(err.message || err) }); });
+      if (!slots.length) { putBack([]); return; }
+      Promise.all(slots.map(function (slot) {
+        return apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/cancel-queued', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid: slot.uuid }),
+        }).then(function (r) { return r.json(); })
+          .then(function (d) { return { slot: slot, d: d }; })
+          .catch(function (err) { return { slot: slot, d: { ok: false, error: String(err.message || err) } }; });
+      })).then(function (results) {
+        var back = [], failed = '';
+        results.forEach(function (x) {
+          if (x.d && x.d.ok !== false && x.d.cancelled) {
+            handedOver = handedOver.filter(function (h) { return h !== x.slot; });
+            back.push(x.slot.text);
+          } else if (x.d && x.d.ok !== false) {
+            // Not an error: the CLI had already started reading this one.
+            x.slot.state = 'started';
+          } else if (!failed) {
+            failed = (x.d && x.d.error) || 'Could not take it back';
+          }
+        });
+        renderQueue();
+        putBack(back);
+        if (failed) appendLocal({ kind: 'error', text: failed });
+      });
     }
 
     // ─── Queued input ───
@@ -1361,16 +1415,18 @@
     // reason to wait for a particular boundary; the only reason to hold at all is
     // to batch what is still being typed.
     //
-    // The first attempt debounced from the last Enter, which fired while the user
-    // was still typing the NEXT line and split a batch into separate messages.
-    // The quiet period is measured from the last KEYSTROKE instead, so a pending
-    // batch keeps waiting for as long as typing continues.
-    var QUIET_MS = 1500;
+    //
+    // So there is no batching delay: Enter hands the message over at once, and
+    // the "Sending" drawer's take-back (a cancel on the wire) covers changing
+    // your mind for as long as Claude has not picked it up. Holding it until
+    // typing went quiet used to cost at least 1.5s, and indefinitely while the
+    // next line was being typed. The one wait left is a pending permission
+    // prompt, which has to be answered before the CLI reads anything else.
     var TICK_MS = 300;
 
     function enqueue(text) {
       queued.push(text);
-      lastTypeAt = Date.now();
+      if (state !== 'needs-input') { flushQueue(); return; }
       renderQueue();
       startTicker();
     }
@@ -1382,7 +1438,7 @@
         // Never inject while a permission prompt is outstanding: the CLI is
         // blocked waiting for a control_response, so that must be answered first.
         if (state === 'needs-input') return;
-        if (Date.now() - lastTypeAt >= QUIET_MS) flushQueue();
+        flushQueue();
       }, TICK_MS);
     }
 
@@ -1427,7 +1483,7 @@
       if (!queueNode) {
         queueNode = el('div', 'cc-queue');
         queueNode.title = 'Click to edit — brings every queued line back to the message box';
-        queueNode.addEventListener('click', unqueue);
+        queueNode.addEventListener('click', recallQueued);
         wrap.insertBefore(queueNode, inrow);
       }
       var n = queued.length;
@@ -1437,6 +1493,45 @@
         + '<div class="cc-queue-body">' + esc(queuedText()) + '</div>'
         + '<div class="cc-queue-hint">Click to take it back</div>';
       markTrimmed(queueNode);
+    }
+
+    // Suggested next message. Shown only while idle on a live session; a tap
+    // sends it as typed, the x drops it here and on the server so a reload
+    // does not bring it back.
+    function renderSuggestion() {
+      if (!suggestion || state !== 'idle' || input.disabled) {
+        if (sugNode) { sugNode.remove(); sugNode = null; }
+        return;
+      }
+      if (!sugNode) {
+        sugNode = el('div', 'cc-sug');
+        sugNode.title = 'Tap to send';
+        sugNode.addEventListener('click', function (e) {
+          if (e.target.closest('.cc-sug-x')) { dismissSuggestion(); return; }
+          sendSuggestion();
+        });
+        wrap.insertBefore(sugNode, inrow);
+      }
+      sugNode.innerHTML = '<div class="cc-sug-head">Suggested \u00b7 tap to send</div>'
+        + '<div class="cc-sug-body">' + esc(suggestion.text) + '</div>'
+        + '<button class="cc-sug-x" title="Dismiss" aria-label="Dismiss suggestion">\u2715</button>';
+    }
+
+    function sendSuggestion() {
+      if (!suggestion || state !== 'idle') return;
+      var text = suggestion.text;
+      stickBottom = true;
+      scrollDown(true);
+      postMessage(text);
+      setState('working');
+    }
+
+    function dismissSuggestion() {
+      if (!suggestion) return;
+      suggestion = null;
+      renderSuggestion();
+      apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/dismiss-suggestion', { method: 'POST' })
+        .catch(function () {});
     }
 
     // The second drawer: written to the CLI's stdin, not yet taken into the
@@ -1491,9 +1586,10 @@
       // that the CLI actually took it (the 'injected' event).
       // uuid arrives with the CLI's 'queued' lifecycle frame; until then
       // there is nothing to name in a recall request.
-      handedOver.push({ text: text, uuid: null, state: 'sent' });
+      var slot = { text: text, uuid: null, state: 'sent' };
+      handedOver.push(slot);
       renderQueue();
-      postMessage(text);
+      postMessage(text, slot);
       // Go busy immediately, for the same reason doSend does. A message queued
       // just as the turn ends flushes AFTER the server has reported idle, so
       // until its next state event lands the UI says idle while Claude is
@@ -1801,6 +1897,15 @@
         }
         if (ev.key === 'Escape') { hideSlash(); return; }
       }
+      // Up arrow on the input's top line takes back what is waiting to go —
+      // the same as clicking the drawer. Anywhere lower it moves the caret as
+      // usual, and with nothing to take back it does nothing special.
+      if (ev.key === 'ArrowUp' && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey
+          && input.selectionStart === input.selectionEnd
+          && input.value.slice(0, input.selectionStart).indexOf('\n') < 0) {
+        var canRecall = queued.length || handedOver.some(function (h) { return h.uuid && h.state === 'queued'; });
+        if (canRecall) { ev.preventDefault(); recallQueued(); return; }
+      }
       if (ev.key !== 'Enter') return;
       if (enterMode === 'send') {
         // Enter sends; Shift+Enter (and Ctrl+Enter) fall through to a newline.
@@ -1879,7 +1984,6 @@
 
     input.addEventListener('keydown', onKeyDown);
     input.addEventListener('input', function () {
-      lastTypeAt = Date.now(); // keeps a pending batch waiting while you type
       slashIdx = 0; autoGrow(); showSlash(); saveDraft();
     });
     input.addEventListener('blur', function () { setTimeout(hideSlash, 120); });
@@ -2423,12 +2527,62 @@
       setState('working');
     }
 
+    // Bring the log in line with a full snapshot WITHOUT rebuilding it, when
+    // the snapshot is the same conversation plus/minus a few entries — the
+    // normal case on a reconnect (minimised window, phone asleep, network
+    // blip). Rebuilding wiped the log, which reset scrollTop to 0, and the
+    // smooth scroll back down then swept the whole transcript top to bottom.
+    // Returns false when the order cannot be reconciled; the caller rebuilds.
+    function reconcileLog(msgs) {
+      var idx = {};
+      for (var i = 0; i < msgs.length; i++) idx[msgs[i].id] = i;
+      var onScreen = [];
+      for (var c = 0; c < log.children.length; c++) {
+        var cid = log.children[c].dataset && log.children[c].dataset.id;
+        if (cid && entries.has(cid)) onScreen.push(cid);
+      }
+      if (!onScreen.length) return false;
+      // Kept entries must already be in the snapshot's order, and nothing new
+      // may need to go in between them (only after the last one).
+      var last = -1;
+      for (var k = 0; k < onScreen.length; k++) {
+        if (!(onScreen[k] in idx)) continue;
+        if (idx[onScreen[k]] < last) return false;
+        last = idx[onScreen[k]];
+      }
+      for (var j = 0; j <= last; j++) if (!entries.has(msgs[j].id)) return false;
+      // Gone from the server's copy (trimmed, or a local-only error line).
+      onScreen.forEach(function (id) {
+        if (id in idx) return;
+        var r = entries.get(id);
+        if (r && r.node.parentNode) r.node.parentNode.removeChild(r.node);
+        entries.delete(id);
+      });
+      // Changed while we were away (a tool finished, an answer landed).
+      for (var u = 0; u <= last; u++) {
+        var rec = entries.get(msgs[u].id);
+        if (JSON.stringify(rec.data) !== JSON.stringify(msgs[u])) { rec.data = msgs[u]; paint(rec.node, rec.data); }
+      }
+      // New since then: appended, which also follows the bottom if pinned.
+      for (var n = last + 1; n < msgs.length; n++) addEntry(msgs[n]);
+      return true;
+    }
+
     function applyHistory(session) {
       if (destroyed || !session) return;
-      log.innerHTML = '';
-      entries.clear();
-      activityNode = null; // detached by the wipe above; setState re-creates it
-      (session.messages || []).forEach(addEntry);
+      var msgs = session.messages || [];
+      var firstLoad = !entries.size;
+      var wasStuck = stickBottom, keepTop = log.scrollTop;
+      var smooth = log.style.scrollBehavior;
+      var reconciled = !firstLoad && reconcileLog(msgs);
+      if (!reconciled) {
+        // A rebuild must not animate: set the position directly afterwards.
+        log.style.scrollBehavior = 'auto';
+        log.innerHTML = '';
+        entries.clear();
+        activityNode = null; // detached by the wipe above; setState re-creates it
+        msgs.forEach(addEntry);
+      }
       resetAgents();
       (session.agents || []).forEach(function (a) {
         if (!a || !a.toolUseId) return;
@@ -2453,14 +2607,28 @@
       modelLbl.textContent = session.model || '';
       setSessionId(session.sessionId);
       if (session.totalCostUsd) costLbl.textContent = '$' + session.totalCostUsd.toFixed(4);
+      suggestion = session.suggestion || null;
       setState(session.state || 'idle');
       input.disabled = session.status !== 'running';
+      renderSuggestion();
       if (session.status !== 'running') {
         input.placeholder = 'Session ended.';
         stateLbl.textContent = 'exited';
       }
-      stickBottom = true; // a full replay always lands on the newest message
-      scrollDown(true);
+      if (firstLoad) {
+        // Opening a chat lands on the newest message, instantly.
+        stickBottom = true;
+        log.scrollTop = log.scrollHeight;
+      } else if (!reconciled) {
+        // Rebuilt: put the reader back where they were, no sweep.
+        stickBottom = wasStuck;
+        log.scrollTop = wasStuck ? log.scrollHeight : keepTop;
+      } else if (wasStuck) {
+        // Reconciled and following the bottom: glide from here to the new end.
+        stickBottom = true;
+        scrollDown(true);
+      }
+      log.style.scrollBehavior = smooth;
     }
 
     function applyEvent(ev) {
@@ -2523,13 +2691,20 @@
           renderQueue();
           break;
         }
-        case 'injected':
-          if (handedOver.length) { handedOver.shift(); renderQueue(); }
+        case 'injected': {
+          // Clear the one that landed, by its text; the oldest only as a fallback.
+          if (!handedOver.length) break;
+          var hit = -1;
+          for (var hi = 0; hi < handedOver.length; hi++) { if (handedOver[hi].text === ev.text) { hit = hi; break; } }
+          handedOver.splice(hit < 0 ? 0 : hit, 1);
+          renderQueue();
           break;
+        }
         case 'agent': applyAgent(ev.agent); break;
         case 'agent-entry': addAgentEntry(ev.toolUseId, ev.entry); break;
         case 'agent-patch': patchAgentEntry(ev.toolUseId, ev.id, ev.patch); break;
         case 'state': setState(ev.state); break;
+        case 'suggestion': suggestion = ev.suggestion || null; renderSuggestion(); break;
         case 'init':
           slashCommands = ev.slashCommands || [];
           if (ev.model) modelLbl.textContent = ev.model;
@@ -2561,6 +2736,8 @@
           input.disabled = true;
           input.placeholder = 'Session ended.';
           stateLbl.textContent = 'exited';
+          suggestion = null;
+          renderSuggestion();
           break;
       }
     }

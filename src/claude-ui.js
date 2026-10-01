@@ -892,6 +892,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function setState(s, state) {
     if (s.state === state) return;
     if (state === 'idle') settleInjections(s);
+    else clearSuggestion(s); // a turn started, so the guess at its prompt is moot
     s.state = state;
     s.emitter.emit('event', { type: 'state', state });
     s.onStateChange?.(s.id, state);
@@ -1207,6 +1208,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // The plan Claude proposed via ExitPlanMode, kept so the header can show
       // it during execution — long after the permission card scrolled away.
       plan: null,
+      suggestion: null, // { text, uuid } — the CLI's predicted next message, while idle
       // Set when this chat belongs to an outside collaborator. Drives where
       // permission requests go: they cannot approve their own escalations.
       collaborator: collaborator || null,
@@ -1279,7 +1281,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     send(s, {
       type: 'control_request',
       request_id: s.initRequestId,
-      request: { subtype: 'initialize', systemPrompt: [''] },
+      // promptSuggestions: after each turn the CLI predicts the user's next
+      // message and emits it as a `prompt_suggestion` frame (see
+      // handlePromptSuggestion). Off unless asked for here.
+      request: { subtype: 'initialize', systemPrompt: [''], promptSuggestions: true },
     });
 
     // Spawning takes a moment, so say so rather than showing an empty cell.
@@ -1367,7 +1372,38 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       case 'control_request':  return handleControlRequest(s, msg);
       case 'control_response': return handleControlResponse(s, msg);
       case 'command_lifecycle': return handleCommandLifecycle(s, msg);
+      case 'prompt_suggestion': return handlePromptSuggestion(s, msg);
     }
+  }
+
+  /**
+   * The CLI's guess at what the user will say next, emitted after a turn ends
+   * (not on the first turns, in plan mode, near a rate limit, or while a
+   * prompt is pending — the CLI decides). Shown as a tap-to-send bubble.
+   *
+   * Only kept while idle: one that lands after the user has already sent
+   * something answers a turn that is no longer the latest.
+   */
+  function handlePromptSuggestion(s, msg) {
+    const text = typeof msg.suggestion === 'string' ? msg.suggestion.trim() : '';
+    if (!text || s.state !== 'idle') return;
+    s.suggestion = { text, uuid: msg.uuid || genId() };
+    s.emitter.emit('event', { type: 'suggestion', suggestion: s.suggestion });
+  }
+
+  /** Drop the current suggestion and tell subscribers. */
+  function clearSuggestion(s) {
+    if (!s.suggestion) return;
+    s.suggestion = null;
+    s.emitter.emit('event', { type: 'suggestion', suggestion: null });
+  }
+
+  /** The user closed the suggestion bubble. */
+  function dismissSuggestion(id) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: 'No such session' };
+    clearSuggestion(s);
+    return { ok: true };
   }
 
   function handleSystem(s, msg) {
@@ -2053,6 +2089,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       s.limitStopped = false;
     }
     noteGoalCommand(s, body);
+    // Any message going out retires the suggestion, sent from it or not.
+    clearSuggestion(s);
     // Who is speaking, in a collaborator's chat. The owner's message lifts the
     // permission prompts (see ownerTurn); ANY collaborator input restores them
     // at once — set here, at send time, so even a message still queued behind
@@ -2085,7 +2123,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     });
     if (!ok) return { ok: false, error: 'Failed to write to the session' };
     setState(s, 'working');
-    return { ok: true };
+    // Say which way it went. The browser decides to show its "Sending" drawer
+    // from its own idea of the state, and that can be a moment out of date:
+    // sent just as a turn ended, the message goes straight into the transcript
+    // here and no 'injected' event will ever come to clear the drawer.
+    return { ok: true, injected, uuid };
   }
 
   /**
@@ -2349,6 +2391,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       agents: [...s.agents.values()],
       goal: goalSnapshot(s),
       plan: planSnapshot(s),
+      suggestion: s.suggestion || null,
       // So a client that reloads mid-turn puts the drawer back rather than
       // losing sight of a message that has not landed yet.
       pendingInjections: (s.pendingInjections || []).map(p => ({ text: p.text, uuid: p.uuid, state: p.state || 'sent' })),
@@ -2449,7 +2492,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents,
+    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },

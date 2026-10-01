@@ -1096,12 +1096,22 @@ export function getWebappHtml(botUsername) {
     /* "Layout" submenu flyout (desktop only) */
     .wb-sub { position: relative; }
     .wb-sub-caret { margin-left: auto; opacity: 0.55; }
+    /* Hidden with visibility, not display, so closing can wait a moment: the
+       pointer on its way to a lower item crosses the menu's padding, outside
+       both "Layout" and the submenu, and used to shut it before it got there. */
     .wb-subitems {
-      display: none; position: absolute; left: 100%; top: -5px; margin-left: 4px; min-width: 178px;
+      display: flex; visibility: hidden; opacity: 0;
+      transition: opacity 0.1s ease 0.25s, visibility 0s linear 0.35s;
+      position: absolute; left: 100%; top: -5px; margin-left: 4px; min-width: 178px;
       background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius);
       padding: 5px; box-shadow: 0 6px 22px rgba(0,0,0,0.55); flex-direction: column; gap: 2px;
     }
-    .wb-sub:hover .wb-subitems, .wb-subitems:hover { display: flex; }
+    /* Bridges the 4px gap so moving straight across never leaves the menu. */
+    .wb-subitems::before { content: ''; position: absolute; top: 0; bottom: 0; left: -10px; width: 10px; }
+    .wb-sub:hover .wb-subitems, .wb-subitems:hover {
+      visibility: visible; opacity: 1; transition: opacity 0.1s ease, visibility 0s;
+    }
+    @media (prefers-reduced-motion: reduce) { .wb-subitems { transition: visibility 0s linear 0.35s; } }
     @media (max-width: 768px) { .wb-sub { display: none; } }
     .wb-subitems button .lay-ic { width: 22px; height: 16px; flex-shrink: 0; color: var(--accent-hover); }
     .wb-subitems button:hover .lay-ic { color: #fff; }
@@ -1124,9 +1134,22 @@ export function getWebappHtml(botUsername) {
     /* Desktop: every pane has a min-width floor; splits size to their content so
        the grid scrolls when the floors exceed the viewport. (Mobile overrides
        these with full-width snap columns.) */
-    .term-grid.mosaic:not(.mobile) .mosaic-leaf { min-width: 340px; }
+    /* contain:inline-size makes a leaf's min-content its 340px floor and nothing
+       more. Without it, one unbreakable line anywhere inside (a long command,
+       a <pre>) became the split's min-content, every pane widened together,
+       and the row ran off the right edge even with room for all of them. */
+    .term-grid.mosaic:not(.mobile) .mosaic-leaf { min-width: 340px; contain: inline-size; }
     .term-grid.mosaic:not(.mobile) .mosaic-split { min-width: min-content; }
     .mosaic-gutter { flex: 0 0 7px; position: relative; z-index: 3; touch-action: none; }
+    /* A divider next to a pinned pane does not move it. */
+    .mosaic-split > .mosaic-gutter.locked { cursor: not-allowed; }
+    .mosaic-gutter.locked::after { opacity: 0.4; }
+    /* Pin button: desktop mosaic only, where sizes are pixels on screen. */
+    .pane-pin { display: none; }
+    .term-grid.mosaic:not(.mobile) .pane-pin { display: inline-flex; align-items: center; justify-content: center; }
+    .pane-pin .ic { width: 13px; height: 13px; }
+    .term-cell.pinned .pane-pin { color: var(--accent-hover); border-color: var(--accent); background: var(--accent-dim); }
+    .term-cell.pinned .pane-pin .ic { transform: rotate(-30deg); }
     .mosaic-split.row > .mosaic-gutter { cursor: col-resize; }
     .mosaic-split.col > .mosaic-gutter { cursor: row-resize; }
     .mosaic-gutter::after { content: ''; position: absolute; background: var(--border); transition: background 0.12s; }
@@ -2129,54 +2152,173 @@ export function getWebappHtml(botUsername) {
     }
     .kanban-col.drag-over { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
     .kanban-col-head {
-      display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
-      font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
-      color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 12px 9px;
+      font-size: 0.84rem; font-weight: 650; color: var(--text-primary); border-bottom: 1px solid var(--border-subtle);
     }
-    .kanban-col-head .count { color: var(--text-muted); font-weight: 500; }
+    .kanban-col-head .count {
+      min-width: 22px; padding: 1px 7px; border-radius: 999px; text-align: center;
+      background: var(--bg-tertiary); color: var(--text-secondary); font-size: 0.72rem; font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
     .kanban-col-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+
+    /* ─── Card ─── */
     .kanban-card {
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);
-      padding: 10px; cursor: grab;
+      position: relative; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 12px 12px 10px; cursor: grab; transition: border-color 0.14s ease;
     }
+    .kanban-card:hover { border-color: #34344d; }
     .kanban-card:active { cursor: grabbing; }
     .kanban-card.deleted { opacity: 0.6; }
-    .kanban-card .card-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; word-break: break-word; }
+    .kanban-card .card-title {
+      display: flex; align-items: flex-start; gap: 8px;
+      font-weight: 600; font-size: 0.9rem; line-height: 1.35; margin-bottom: 5px; word-break: break-word;
+    }
+    .kanban-card .card-title .t { flex: 1; min-width: 0; }
     .kanban-card .card-mm {
+      display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; margin-top: 1px;
       font-size: 0.68rem; font-weight: 600; color: var(--accent-hover);
-      background: var(--accent-dim); border-radius: 8px; padding: 0 6px;
-      white-space: nowrap; cursor: pointer; vertical-align: middle;
+      background: var(--accent-dim); border-radius: 999px; padding: 1px 7px 1px 5px;
+      white-space: nowrap; cursor: pointer;
     }
-    .kanban-card .card-desc { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 8px; white-space: pre-wrap; word-break: break-word; }
-    .kanban-card .card-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-    .kanban-card .card-actions button {
-      background: none; border: 1px solid var(--border); color: var(--text-muted);
-      border-radius: 4px; font-size: 0.72rem; padding: 2px 7px; cursor: pointer;
+    .kanban-card .card-mm .ic { width: 11px; height: 11px; }
+    .kanban-card .card-desc {
+      font-size: 0.8rem; line-height: 1.5; color: var(--text-secondary); margin-bottom: 8px;
+      white-space: pre-wrap; word-break: break-word;
     }
-    .kanban-card .card-actions button:hover { color: var(--text-primary); border-color: var(--text-muted); }
-    .kanban-card .card-actions select {
-      background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-secondary);
-      border-radius: 4px; font-size: 0.72rem; padding: 2px 4px; cursor: pointer;
+
+    /* Subtasks: checkbox | text | menu, the menu in a fixed column so they line up. */
+    .kanban-todos { display: flex; flex-direction: column; gap: 1px; margin: 8px -6px 0; }
+    .kanban-todo {
+      display: grid; grid-template-columns: 18px 1fr auto 24px; align-items: start; column-gap: 8px;
+      padding: 5px 4px 5px 6px; border-radius: 6px; font-size: 0.8rem; line-height: 1.45;
     }
-    .kanban-todos { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
-    .kanban-todo { display: flex; align-items: flex-start; gap: 6px; font-size: 0.8rem; }
-    .kanban-todo input[type=checkbox] { margin-top: 2px; cursor: pointer; }
-    .kanban-todo .todo-text { flex: 1; word-break: break-word; }
-    .kanban-todo .todo-text.done { text-decoration: line-through; color: var(--text-muted); }
-    .kanban-todo .todo-edit, .kanban-todo .todo-del { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; padding: 0 3px; line-height: 1; flex-shrink: 0; }
-    .kanban-todo .todo-edit:hover { color: var(--accent-hover); }
-    .kanban-todo .todo-del:hover { color: var(--red); }
-    .kanban-todo-add { display: flex; gap: 4px; margin-top: 6px; }
-    .kanban-todo-add input {
-      flex: 1; background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary);
-      border-radius: 4px; padding: 3px 6px; font-size: 0.78rem;
+    .kanban-todo:hover { background: var(--bg-hover); }
+    .kanban-todo .todo-text { min-width: 0; word-break: break-word; color: var(--text-primary); padding-top: 1px; }
+    .kanban-todo .todo-text.done { text-decoration: line-through; text-decoration-color: var(--text-muted); color: var(--text-muted); }
+    .kanban-todo .todo-media { height: 20px; margin-top: 0; }
+    .kanban-todo .todo-more {
+      width: 24px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+      border: none; background: none; border-radius: 5px; color: var(--text-muted); cursor: pointer; opacity: 0.55;
     }
-    .kanban-todo-add .ktodo-add-btn {
-      flex-shrink: 0; padding: 0 11px; border-radius: 4px; cursor: pointer; font-size: 0.85rem;
-      border: 1px solid var(--accent); background: var(--accent-dim); color: var(--accent-hover);
+    .kanban-todo:hover .todo-more, .kanban-todo .todo-more.open, .kanban-todo .todo-more:focus-visible { opacity: 1; }
+    .kanban-todo .todo-more:hover, .kanban-todo .todo-more.open { color: var(--text-primary); background: var(--bg-tertiary); }
+    .kanban-todo .todo-more .ic { width: 15px; height: 15px; }
+
+    /* The checkbox: drawn, not native. */
+    .kanban-todo input[type=checkbox] {
+      appearance: none; -webkit-appearance: none; margin: 1px 0 0; width: 16px; height: 16px; flex-shrink: 0;
+      border: 1.5px solid #4a4a68; border-radius: 4px; background: var(--bg-primary); cursor: pointer;
+      display: grid; place-content: center; transition: background 0.14s ease, border-color 0.14s ease;
     }
-    .kanban-todo-add .ktodo-add-btn:hover { background: var(--accent); color: #fff; }
-    .kanban-progress { font-size: 0.72rem; color: var(--text-muted); margin-top: 6px; }
+    .kanban-todo input[type=checkbox]::after {
+      content: ''; width: 8px; height: 4px; margin-top: -2px;
+      border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) scale(0);
+      transition: transform 0.14s ease;
+    }
+    .kanban-todo input[type=checkbox]:hover { border-color: var(--accent-hover); }
+    .kanban-todo input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+    .kanban-todo input[type=checkbox]:checked::after { transform: rotate(-45deg) scale(1); }
+    .kanban-todo input[type=checkbox]:focus-visible { outline: none; box-shadow: var(--ring); }
+    .kanban-todo.adding { background: var(--bg-tertiary); }
+    .kanban-todo.adding:focus-within { box-shadow: inset 0 0 0 1px rgba(99,102,241,0.55); }
+    .kanban-todo.adding input[type=text]:focus { border: none; outline: none; box-shadow: none; background: none; }
+    .kanban-todo.adding input[type=text]::placeholder { color: var(--text-muted); }
+    .kanban-todo.adding .ck-ghost { width: 16px; height: 16px; margin-top: 3px; border: 1.5px dashed #4a4a68; border-radius: 4px; }
+    .kanban-todo.adding input[type=text] {
+      grid-column: 2 / 5; width: 100%; min-width: 0; background: none; border: none; outline: none;
+      color: var(--text-primary); font: inherit; padding: 1px 0;
+    }
+
+    /* Progress: a thin bar, green once everything is done. */
+    .kanban-progress { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .kanban-progress .bar { flex: 1; height: 3px; border-radius: 3px; background: var(--bg-tertiary); overflow: hidden; }
+    .kanban-progress .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s ease; }
+    .kanban-progress.complete .bar i { background: var(--green); }
+    .kanban-progress .lbl { font-size: 0.7rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+    /* Footer: menu, then add — one row. The menu opens the card's actions below. */
+    .kanban-card .card-foot { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+    .kanban-card .card-foot button {
+      display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; cursor: pointer;
+      border: 1px solid var(--border); background: transparent; color: var(--text-secondary);
+      border-radius: 6px; font-size: 0.74rem; font-weight: 500;
+    }
+    .kanban-card .card-foot button .ic { width: 14px; height: 14px; }
+    .kanban-card .card-foot button:hover { color: var(--text-primary); border-color: #3c3c58; background: var(--bg-tertiary); }
+    .kanban-card .card-foot .kc-menu { width: 28px; padding: 0; justify-content: center; }
+    .kanban-card.menu-open .card-foot .kc-menu { color: var(--accent-hover); border-color: var(--accent); background: var(--accent-dim); }
+    .kanban-card .card-actions {
+      display: none; align-items: center; gap: 6px; flex-wrap: wrap;
+      margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle);
+    }
+    .kanban-card.menu-open .card-actions { display: flex; animation: kc-open 0.14s ease; }
+    .kanban-card.deleted .card-actions { display: flex; border-top: none; padding-top: 0; }
+    @keyframes kc-open { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+    .kanban-card .card-actions button, .kanban-card .card-actions select {
+      height: 26px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.74rem; cursor: pointer;
+      background: var(--bg-primary); color: var(--text-secondary);
+    }
+    .kanban-card .card-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; background: transparent; }
+    .kanban-card .card-actions button .ic { width: 13px; height: 13px; }
+    .kanban-card .card-actions select { padding: 0 6px; }
+    .kanban-card .card-actions button:hover { color: var(--text-primary); border-color: #3c3c58; background: var(--bg-tertiary); }
+    .kanban-card .card-actions .danger { margin-left: auto; }
+    .kanban-card .card-actions .danger:hover { color: var(--red); border-color: var(--red); background: var(--red-dim); }
+
+    /* Attachments: a paperclip in the title row, opening a horizontal strip. */
+    .kanban-card .card-clip {
+      display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; height: 22px; min-width: 24px;
+      padding: 0 5px; margin: -1px -4px 0 0; justify-content: center; cursor: pointer;
+      border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text-muted);
+      font-size: 0.7rem; font-weight: 600; font-variant-numeric: tabular-nums;
+    }
+    .kanban-card .card-clip .ic { width: 14px; height: 14px; }
+    .kanban-card .card-clip.has { color: var(--text-secondary); }
+    .kanban-card .card-clip:hover, .kanban-card .card-clip.open { color: var(--text-primary); background: var(--bg-tertiary); border-color: var(--border); }
+    .kc-media-pop {
+      position: fixed; z-index: 700; display: flex; align-items: stretch; overflow: hidden;
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: var(--shadow-md), var(--surface-hi); animation: kc-open 0.12s ease;
+    }
+    .kc-media-pop .strip {
+      flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 8px;
+      overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: #3a3a55 transparent;
+    }
+    .kc-media-pop .strip::-webkit-scrollbar { height: 6px; }
+    .kc-media-pop .strip::-webkit-scrollbar-track { background: transparent; }
+    .kc-media-pop .strip::-webkit-scrollbar-thumb { background: #3a3a55; border-radius: 3px; }
+    .kc-media-pop .strip .media-mini { width: 48px; height: 48px; }
+    .kc-media-pop .none { font-size: 0.78rem; color: var(--text-muted); padding: 0 4px; white-space: nowrap; }
+    /* The add button sits outside the scroller, so it stays put on the right. */
+    .kc-media-pop .add {
+      flex: none; width: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+      border: none; border-left: 1px solid var(--border-subtle); background: var(--bg-tertiary); color: var(--accent-hover);
+      box-shadow: -10px 0 12px -8px rgba(0,0,0,0.6);
+    }
+    .kc-media-pop .add .ic { width: 18px; height: 18px; }
+    .kc-media-pop .add:hover { background: var(--accent); color: #fff; }
+    .kc-media-pop .add:focus-visible { outline: none; box-shadow: var(--ring); }
+    /* Subtask menu: a small dropdown, fixed so a column's scroll cannot clip it. */
+    .kt-pop {
+      position: fixed; z-index: 700; min-width: 168px; padding: 4px; display: flex; flex-direction: column;
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: var(--shadow-md), var(--surface-hi); animation: kc-open 0.12s ease;
+    }
+    .kt-pop button {
+      display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: none; border-radius: 5px;
+      background: none; color: var(--text-primary); font-size: 0.8rem; text-align: left; cursor: pointer;
+    }
+    .kt-pop button .ic { width: 14px; height: 14px; color: var(--text-secondary); }
+    .kt-pop button:hover, .kt-pop button:focus-visible { background: var(--bg-hover); outline: none; }
+    .kt-pop button .n { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); }
+    .kt-pop .sep { height: 1px; margin: 4px 2px; background: var(--border-subtle); }
+    .kt-pop button.danger:hover { background: var(--red-dim); color: var(--red); }
+    .kt-pop button.danger:hover .ic { color: var(--red); }
+    @media (prefers-reduced-motion: reduce) {
+      .kanban-card.menu-open .card-actions, .kt-pop, .kc-media-pop { animation: none; }
+      .kanban-todo input[type=checkbox]::after, .kanban-progress .bar i { transition: none; }
+    }
 
     /* ─── Schedule tab ─── */
     .schedule-panel { padding: 0; }
@@ -2882,6 +3024,7 @@ export function getWebappHtml(botUsername) {
           <button data-action="wb-add" data-kind="mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Mindmap</button>
           <button data-action="wb-add" data-kind="media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg> Media</button>
           <button data-action="wb-add" data-kind="browser"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Browser</button>
+          <button data-action="wb-fit" title="Share the width out again so every pane fits the window (pinned panes keep their size)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="7 8 3 12 7 16"/><polyline points="17 8 21 12 17 16"/><line x1="3" y1="12" x2="21" y2="12"/></svg> Fit to screen</button>
           <div class="wb-sub" id="wb-layout-sub">
             <button type="button"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg> Layout <span class="wb-sub-caret">&#9656;</span></button>
             <div class="wb-subitems">
@@ -3755,6 +3898,8 @@ export function getWebappHtml(botUsername) {
 
     // ─── Flat icon set (stroke icons, inherit currentColor) ───
     const ICON_PATHS = {
+      more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
+      pin: '<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24z"/>',
       menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
       folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
       file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
@@ -5303,7 +5448,11 @@ export function getWebappHtml(botUsername) {
       const skeleton = buildMosaicDom(tree, leafMap);
       for (const { node, dom } of leafMap) {
         if (node.key && elByKey[node.key]) {
-          dom.appendChild(elByKey[node.key]);
+          const cell = elByKey[node.key];
+          cell.classList.toggle('pinned', !!node.pin);
+          const pb = cell.querySelector('.pane-pin');
+          if (pb) pb.title = node.pin ? 'Unpin (size and position are locked)' : 'Pin size and position';
+          dom.appendChild(cell);
           dom.insertAdjacentHTML('beforeend', leafCtrlsHtml(node._id));
         } else {
           dom.innerHTML = emptyLeafHtml(node._id);
@@ -5328,10 +5477,79 @@ export function getWebappHtml(botUsername) {
         }
         const kEl = buildMosaicDom(kid, leafMap);
         const size = (node.sizes && node.sizes[i] != null) ? node.sizes[i] : (100 / node.kids.length);
-        kEl.style.flex = size + ' 1 0';
+        // A pinned pane (or a split that holds one) takes its pixel size along
+        // this split's axis instead of a share, so nothing else moves it.
+        const fx = pinsOn() ? mosaicFixed(kid) : null;
+        const px = fx ? (node.dir === 'row' ? fx.w : fx.h) : null;
+        kEl.style.flex = px ? '0 0 ' + px + 'px' : size + ' 1 0';
         s.appendChild(kEl);
       });
+      // Lock the dividers that touch a fixed-size neighbour.
+      if (pinsOn()) {
+        const fixedAt = node.kids.map(k => { const f = mosaicFixed(k); return !!(node.dir === 'row' ? f.w : f.h); });
+        s.querySelectorAll(':scope > .mosaic-gutter').forEach(g => {
+          const gi = parseInt(g.dataset.gutter, 10);
+          if (fixedAt[gi - 1] || fixedAt[gi]) { g.classList.add('locked'); g.title = 'A pinned pane is next to this divider'; }
+        });
+      }
       return s;
+    }
+    // Pins only mean anything in the desktop mosaic; the phone layout is full-width columns.
+    function pinsOn() { return !isMobileTerm(); }
+    // Fixed pixel size of a mosaic node, per axis, or null where it flexes.
+    // A pinned leaf fixes both. A split is fixed along its own axis only when
+    // every child is, and across it by its widest/tallest fixed child.
+    function mosaicFixed(node) {
+      if (node.t === 'leaf') return node.pin ? { w: node.pin.w, h: node.pin.h } : { w: null, h: null };
+      const fs = node.kids.map(mosaicFixed);
+      const gut = 7 * (node.kids.length - 1);
+      const along = node.dir === 'row' ? 'w' : 'h', across = node.dir === 'row' ? 'h' : 'w';
+      const out = { w: null, h: null };
+      if (fs.every(f => f[along])) out[along] = fs.reduce((a, f) => a + f[along], 0) + gut;
+      const xs = fs.map(f => f[across]).filter(Boolean);
+      if (xs.length) out[across] = Math.max(...xs);
+      return out;
+    }
+    function mosaicHasPin(node) { return mosaicLeaves(node).some(l => !!l.pin); }
+    // Toggle the pin on the pane the button sits in, capturing its size now.
+    function togglePanePin(btn) {
+      const leafEl = btn.closest('.mosaic-leaf'); const tree = currentMosaic();
+      if (!leafEl || !tree || !mosaicDesktop()) return;
+      const leaf = mosaicLeafById(tree, leafEl.dataset.leafId); if (!leaf) return;
+      if (leaf.pin) delete leaf.pin;
+      else {
+        const r = leafEl.getBoundingClientRect();
+        leaf.pin = { w: Math.round(r.width), h: Math.round(r.height) };
+      }
+      setMosaic(tree);
+      renderTermGrid();
+      setTimeout(fitAllTerms, 0);
+    }
+    // Plus-menu "Fit to screen": even out every split's free panes so the
+    // whole workbench sits inside the window. Pinned panes keep their size;
+    // if the panes' minimum widths still do not fit, the row scrolls and we
+    // say so.
+    function mosaicFitToScreen() {
+      if (!mosaicDesktop()) { toast('Fit to screen is available on desktop only', ''); return; }
+      const tree = currentMosaic(); if (!tree) return;
+      (function even(n) {
+        if (n.t !== 'split') return;
+        n.sizes = n.kids.map(() => 100 / n.kids.length);
+        n.kids.forEach(even);
+      })(tree);
+      setMosaic(tree);
+      renderTermGrid();
+      const grid = document.getElementById('term-grid');
+      if (grid) grid.scrollLeft = 0;
+      setTimeout(() => {
+        fitAllTerms();
+        if (typeof brzSync === 'function') brzSync();
+        const g = document.getElementById('term-grid');
+        if (g && g.scrollWidth > g.clientWidth + 2) {
+          toast(mosaicHasPin(tree) ? 'Does not fit: the pinned panes plus the others at their minimum width are wider than the window'
+            : 'Does not fit: too many panes side by side for this window, even at their minimum width', 'error');
+        }
+      }, 60);
     }
     function leafCtrlsHtml(id) {
       const sr = '<svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="12" y1="1" x2="12" y2="17"/></svg>';
@@ -5373,6 +5591,7 @@ export function getWebappHtml(botUsername) {
         head.innerHTML = '<span class="term-drag" style="opacity:.25">\\u22ee\\u22ee</span>'
           + '<span class="term-title">New terminal</span>'
           + '<span class="term-head-spacer"></span>'
+          + pinBtnHtml()
           + '<button class="term-head-btn term-close" data-action="term-close-pending" data-lid="' + d.localId + '" title="Remove">\\u00d7</button>';
         body.innerHTML = '<div class="term-launch">'
           + '<div class="icon">&gt;_</div>'
@@ -5496,6 +5715,11 @@ export function getWebappHtml(botUsername) {
       media: { icon: 'images', label: 'Media' },
       browser: { icon: 'globe', label: 'Browser' },
     };
+    // Pin toggle shared by every pane header. Which pane it acts on comes from
+    // the mosaic leaf it sits in, so the header needs no key of its own.
+    function pinBtnHtml() {
+      return '<button class="term-font-btn pane-pin" data-action="pane-pin" title="Pin size and position">' + ic('pin') + '</button>';
+    }
     function headHtmlPanel(cell) {
       const m = WB_KIND_META[cell.kind] || { icon: 'file', label: cell.kind };
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
@@ -5503,6 +5727,7 @@ export function getWebappHtml(botUsername) {
         + '<span class="term-title" style="cursor:default;">' + escHtml(m.label) + '</span>'
         + '<span class="term-head-spacer"></span>'
         + '<button class="term-font-btn" data-action="wb-refresh" data-wbid="' + cell.id + '" title="Refresh">' + ic('refresh') + '</button>'
+        + pinBtnHtml()
         + '<button class="term-head-btn term-close" data-action="wb-close" data-wbid="' + cell.id + '" title="Close panel">\\u00d7</button>';
     }
 
@@ -5543,7 +5768,7 @@ export function getWebappHtml(botUsername) {
       const fontBtns = '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
         + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
         + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
-      const controls = isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns : fontBtns;
+      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns : fontBtns) + pinBtnHtml();
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
         + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
@@ -6138,6 +6363,9 @@ export function getWebappHtml(botUsername) {
     function mosaicApplyPreset(preset) {
       if (!mosaicDesktop()) { toast('Layouts are available on desktop only', ''); return; }
       const keys = currentDesiredKeys();
+      // A preset rearranges the slots; a pinned pane keeps its size wherever it lands.
+      const pinsByKey = {};
+      for (const l of mosaicLeaves(currentMosaic())) if (l.key && l.pin) pinsByKey[l.key] = l.pin;
       const L = (i) => mosLeaf(keys[i] || null);
       let tree;
       switch (preset) {
@@ -6152,6 +6380,7 @@ export function getWebappHtml(botUsername) {
       // place any cells beyond the preset's slots
       let t = currentMosaic();
       for (const k of keys) if (!mosaicHasKey(t, k)) t = mosaicAddKey(t, k);
+      for (const l of mosaicLeaves(t)) if (l.key && pinsByKey[l.key]) l.pin = pinsByKey[l.key];
       setMosaic(t);
       renderTermGrid();
     }
@@ -6317,7 +6546,8 @@ export function getWebappHtml(botUsername) {
             clearLeaf();
             const under = document.elementFromPoint(x, y);
             const lf = under && under.closest('.mosaic-leaf');
-            if (lf && lf.dataset.leafId) { leafEl = lf; lf.classList.add('drop-hover'); }
+            const lfNode = lf && lf.dataset.leafId ? mosaicLeafById(currentMosaic(), lf.dataset.leafId) : null;
+            if (lf && lf.dataset.leafId && !(lfNode && lfNode.pin)) { leafEl = lf; lf.classList.add('drop-hover'); }
             return;
           }
           const grid = $('#term-grid'); if (!grid) return;
@@ -6334,6 +6564,8 @@ export function getWebappHtml(botUsername) {
             if (typeof brzSync === 'function') setTimeout(brzSync, 0);
             const lid = leafEl && leafEl.dataset.leafId;
             clearLeaf();
+            const srcLeaf = mosaicLeaves(currentMosaic()).find(l => l.key === key);
+            if (commit && srcLeaf && srcLeaf.pin) { toast('This pane is pinned. Unpin it to move it.', ''); target = null; return; }
             if (commit && lid) { setMosaic(mosaicAssignToLeaf(currentMosaic(), lid, key)); renderTermGrid(); }
             target = null;
             return;
@@ -6390,6 +6622,7 @@ export function getWebappHtml(botUsername) {
       });
       grid.addEventListener('pointerdown', (e) => {
         const g = e.target.closest('.mosaic-gutter'); if (!g) return;
+        if (g.classList.contains('locked')) { e.preventDefault(); return; }
         const split = g.parentNode; const node = mosaicFind(currentMosaic(), g.dataset.splitId);
         if (!node) return;
         e.preventDefault();
@@ -10994,6 +11227,8 @@ export function getWebappHtml(botUsername) {
         // leaf, which is itself a click/drop target.
         case 'wb-add': { e.stopPropagation(); hideWbAddMenu(); if (d.kind === 'terminal') addTerminalCell(); else addWbPanel(d.kind); break; }
         case 'wb-layout': { hideWbAddMenu(); mosaicApplyPreset(d.mlayout); break; }
+        case 'wb-fit': { hideWbAddMenu(); mosaicFitToScreen(); break; }
+        case 'pane-pin': { if (actionEl) togglePanePin(actionEl); break; }
         case 'leaf-split': { e.stopPropagation(); const [id, dir] = (d.leaf || '').split('|'); setMosaic(mosaicSplitLeaf(currentMosaic(), id, dir)); renderTermGrid(); break; }
         case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
         case 'wb-close': if (d.wbid) { e.stopPropagation(); closeWbCell(d.wbid); } break;
@@ -11175,14 +11410,21 @@ export function getWebappHtml(botUsername) {
     // cards can show a thumbnail strip without a per-card request.
     let kanbanMediaByTask = {}, kanbanMediaByTodo = {};
     async function loadKanbanMedia() {
-      kanbanMediaByTask = {}; kanbanMediaByTodo = {};
-      if (!currentProject) return;
+      if (!currentProject) { kanbanMediaByTask = {}; kanbanMediaByTodo = {}; return; }
       const items = await fetchMedia({ scope: 'project', kind: 'kanban' });
+      // Built aside and swapped in whole: two loads in flight at once (an
+      // upload reloads the board from two places) each filled the shared maps
+      // after the other had cleared them, and every attachment showed twice.
+      const byTask = {}, byTodo = {};
       for (const it of items) {
+        // The viewer looks items up by id; without this a card's thumbnail
+        // opened nothing unless a media browser had been shown first.
+        _mediaCache.set(it.id, it);
         if (!it.link) continue;
-        if (it.link.type === 'task') (kanbanMediaByTask[it.link.taskId] = kanbanMediaByTask[it.link.taskId] || []).push(it);
-        else if (it.link.type === 'todo') (kanbanMediaByTodo[it.link.todoId] = kanbanMediaByTodo[it.link.todoId] || []).push(it);
+        if (it.link.type === 'task') (byTask[it.link.taskId] = byTask[it.link.taskId] || []).push(it);
+        else if (it.link.type === 'todo') (byTodo[it.link.todoId] = byTodo[it.link.todoId] || []).push(it);
       }
+      kanbanMediaByTask = byTask; kanbanMediaByTodo = byTodo;
     }
     function mediaMiniThumb(it) {
       const inner = it.kind === 'image' ? '<img loading="lazy" src="' + mediaRawUrl(it.id) + '">' : ic(MEDIA_KIND_ICON[it.kind] || 'file');
@@ -11204,8 +11446,16 @@ export function getWebappHtml(botUsername) {
       if (kanbanView === 'history') h += renderKanbanHistory();
       else if (kanbanView === 'trash') h += renderKanbanTrash();
       else h += renderKanbanBoard();
+      // A refresh while typing a new subtask must not take the caret away.
+      const ae = document.activeElement;
+      const typing = !!(ae && ae.matches && ae.matches('#kanban-panel [data-ktodo-input]'));
+      const clip = kanbanClipOpen;
+      closeKtPop();
       panel.innerHTML = h;
       if (kanbanView === 'board') attachKanbanDrag();
+      if (typing) focusKanbanAdd();
+      // An upload reloads the board; the attachments menu stays open to show it.
+      if (clip) { const b = panel.querySelector('[data-kclip="' + clip + '"]'); if (b) openClipPop(b, true); }
     }
 
     function renderKanbanBoard() {
@@ -11231,38 +11481,52 @@ export function getWebappHtml(botUsername) {
       return h + '</div>';
     }
 
+    // Card UI state that has to survive a re-render (every change reloads the board).
+    const kanbanMenuOpen = new Set();   // task ids whose action menu is open
+    let kanbanAdding = null;            // task id with an open "new subtask" row
+    let kanbanAddDraft = '';            // what is typed in it
+
     function renderKanbanCard(t) {
       const todos = t.todos || [];
       const done = todos.filter(td => td.done).length;
-      let h = '<div class="kanban-card" data-task="' + t.id + '">';
+      let h = '<div class="kanban-card' + (kanbanMenuOpen.has(t.id) ? ' menu-open' : '') + '" data-task="' + t.id + '">';
       const mmCount = (t.mindmapNodes || []).length;
-      h += '<div class="card-title">' + escHtml(t.title)
-        + (mmCount ? ' <span class="card-mm" data-kact="goto-mindmap" title="' + mmCount + ' linked mindmap idea(s)">🧠 ' + mmCount + '</span>' : '')
+      // Attachments live behind the paperclip in the title row; it opens a strip.
+      const nMedia = (kanbanMediaByTask[t.id] || []).length;
+      h += '<div class="card-title"><span class="t">' + escHtml(t.title) + '</span>'
+        + (mmCount ? '<span class="card-mm" data-kact="goto-mindmap" title="' + mmCount + ' linked mindmap idea(s)">' + ic('mindmap') + mmCount + '</span>' : '')
+        + '<button class="card-clip' + (nMedia ? ' has' : '') + '" data-kclip="' + t.id + '" title="Attachments" aria-haspopup="menu">' + ic('paperclip') + (nMedia ? '<span>' + nMedia + '</span>' : '') + '</button>'
         + '</div>';
       if (t.description) h += '<div class="card-desc">' + escHtml(t.description) + '</div>';
-      // Task-level media strip: thumbnails + attach.
-      const tmedia = kanbanMediaByTask[t.id] || [];
-      h += '<div class="card-media">'
-        + tmedia.slice(0, 6).map(mediaMiniThumb).join('')
-        + '<button class="card-media-add" data-kmedia-task="' + t.id + '" title="Attach / view media">' + ic('paperclip') + '</button>'
-        + '</div>';
-      if (todos.length) {
+      const adding = kanbanAdding === t.id;
+      if (todos.length || adding) {
         h += '<div class="kanban-todos">';
         for (const td of todos) {
           const tdm = (kanbanMediaByTodo[td.id] || []).length;
           h += '<div class="kanban-todo" data-drag-ref="' + td.id + '" data-drag-kind="kanban-subtask" title="Drag onto a terminal to insert this subtask id">'
-            + '<input type="checkbox" data-ktodo-toggle="' + t.id + '|' + td.id + '"' + (td.done ? ' checked' : '') + '>'
+            + '<input type="checkbox" data-ktodo-toggle="' + t.id + '|' + td.id + '"' + (td.done ? ' checked' : '') + ' aria-label="Done">'
             + '<span class="todo-text' + (td.done ? ' done' : '') + '">' + escHtml(td.text) + '</span>'
-            + '<button class="todo-media" data-kmedia-todo="' + t.id + '|' + td.id + '" title="Subtask media">' + ic('paperclip') + (tdm ? '<span class="cnt">' + tdm + '</span>' : '') + '</button>'
-            + '<button class="todo-edit" data-ktodo-edit="' + t.id + '|' + td.id + '" title="Edit subtask">' + ic('pencil') + '</button>'
-            + '<button class="todo-del" data-ktodo-del="' + t.id + '|' + td.id + '" title="Delete subtask">&times;</button>'
+            // Attached media stays visible as a count; adding more lives in the menu.
+            + (tdm ? '<button class="todo-media" data-kmedia-todo="' + t.id + '|' + td.id + '" title="Subtask media">' + ic('paperclip') + '<span class="cnt">' + tdm + '</span></button>' : '<span></span>')
+            + '<button class="todo-more" data-ktodo-menu="' + t.id + '|' + td.id + '" title="Subtask actions" aria-haspopup="menu">' + ic('more') + '</button>'
             + '</div>';
         }
-        h += '</div><div class="kanban-progress">' + done + '/' + todos.length + ' done</div>';
+        if (adding) {
+          h += '<div class="kanban-todo adding"><span class="ck-ghost"></span>'
+            + '<input type="text" data-ktodo-input="' + t.id + '" placeholder="New subtask, Enter to add" value="' + escHtml(kanbanAddDraft) + '" autocomplete="off">'
+            + '</div>';
+        }
+        h += '</div>';
+        if (todos.length) {
+          const pct = Math.round(done / todos.length * 100);
+          h += '<div class="kanban-progress' + (done === todos.length ? ' complete' : '') + '">'
+            + '<span class="bar"><i style="width:' + pct + '%"></i></span>'
+            + '<span class="lbl">' + done + ' of ' + todos.length + '</span></div>';
+        }
       }
-      h += '<div class="kanban-todo-add">'
-        + '<input type="text" placeholder="+ add subtask" data-ktodo-input="' + t.id + '">'
-        + '<button class="ktodo-add-btn" data-ktodo-add="' + t.id + '" title="Add subtask">' + ic('check') + '</button>'
+      h += '<div class="card-foot">'
+        + '<button class="kc-menu" data-kact="card-menu" data-task="' + t.id + '" title="Task actions" aria-expanded="' + (kanbanMenuOpen.has(t.id) ? 'true' : 'false') + '">' + ic('menu') + '</button>'
+        + '<button data-kact="add-subtask" data-task="' + t.id + '" title="Add a subtask">' + ic('plus') + 'Subtask</button>'
         + '</div>';
       let opts = '';
       for (const st of kanbanBoard.statuses) {
@@ -11270,11 +11534,78 @@ export function getWebappHtml(botUsername) {
       }
       h += '<div class="card-actions">'
         + '<select data-kmove="' + t.id + '" title="Move to column">' + opts + '</select>'
-        + '<button data-kact="brainstorm" data-task="' + t.id + '" title="Brainstorm this task in the Mindmap">🧠 Brainstorm</button>'
-        + '<button data-kact="edit-task" data-task="' + t.id + '">Edit</button>'
-        + '<button data-kact="del-task" data-task="' + t.id + '">Delete</button>'
+        + '<button data-kact="brainstorm" data-task="' + t.id + '" title="Brainstorm this task in the Mindmap">' + ic('mindmap') + 'Brainstorm</button>'
+        + '<button data-kact="edit-task" data-task="' + t.id + '">' + ic('pencil') + 'Edit</button>'
+        + '<button class="danger" data-kact="del-task" data-task="' + t.id + '">' + ic('trash') + 'Delete</button>'
         + '</div></div>';
       return h;
+    }
+
+    // Subtask menu and attachments menu: one at a time, positioned against the
+    // button that opened it.
+    let kanbanClipOpen = null;          // task id whose attachments menu is open
+    function closeKtPop() {
+      document.querySelectorAll('.kt-pop, .kc-media-pop').forEach(p => p.remove());
+      document.querySelectorAll('.todo-more.open, .card-clip.open').forEach(b => b.classList.remove('open'));
+      kanbanClipOpen = null;
+    }
+    function placePop(pop, btn) {
+      const r = btn.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+      let top = r.bottom + 4;
+      if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 4);
+      pop.style.top = top + 'px';
+      pop.style.left = Math.max(8, Math.min(r.right - pw, window.innerWidth - pw - 8)) + 'px';
+    }
+    function openClipPop(btn, keep) {
+      const taskId = btn.dataset.kclip;
+      if (!keep && btn.classList.contains('open')) { closeKtPop(); return; }
+      closeKtPop();
+      const items = kanbanMediaByTask[taskId] || [];
+      const card = btn.closest('.kanban-card');
+      const pop = document.createElement('div');
+      pop.className = 'kc-media-pop'; pop.setAttribute('role', 'menu');
+      pop.style.width = Math.min(360, Math.max(220, (card ? card.offsetWidth : 260) - 8)) + 'px';
+      pop.innerHTML = '<div class="strip">'
+        + (items.length ? items.map(mediaMiniThumb).join('') : '<span class="none">No attachments yet</span>')
+        + '</div>'
+        + '<button class="add" data-kclip-add="' + taskId + '" title="Attach a file">' + ic('plus') + '</button>';
+      $('#kanban-panel').appendChild(pop);
+      btn.classList.add('open');
+      kanbanClipOpen = taskId;
+      placePop(pop, btn);
+    }
+    function openKtPop(btn) {
+      const wasOpen = btn.classList.contains('open');
+      closeKtPop();
+      if (wasOpen) return;
+      const [taskId, todoId] = btn.dataset.ktodoMenu.split('|');
+      const n = (kanbanMediaByTodo[todoId] || []).length;
+      const ref = taskId + '|' + todoId;
+      const pop = document.createElement('div');
+      pop.className = 'kt-pop'; pop.setAttribute('role', 'menu');
+      pop.innerHTML = '<button role="menuitem" data-kmedia-todo="' + ref + '">' + ic('paperclip') + 'Attach media' + (n ? '<span class="n">' + n + '</span>' : '') + '</button>'
+        + '<button role="menuitem" data-ktodo-edit="' + ref + '">' + ic('pencil') + 'Rename</button>'
+        + '<div class="sep"></div>'
+        + '<button role="menuitem" class="danger" data-ktodo-del="' + ref + '">' + ic('trash') + 'Delete</button>';
+      // Inside the panel so its click handler serves the items.
+      $('#kanban-panel').appendChild(pop);
+      btn.classList.add('open');
+      placePop(pop, btn);
+      const first = pop.querySelector('button'); if (first) first.focus({ preventScroll: true });
+    }
+    // Open the inline "new subtask" row on a card and put the caret in it.
+    function focusKanbanAdd() {
+      if (!kanbanAdding) return;
+      const inp = document.querySelector('#kanban-panel [data-ktodo-input="' + kanbanAdding + '"]');
+      if (inp) { inp.focus({ preventScroll: false }); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    }
+    async function saveKanbanAdd(taskId, keepOpen) {
+      const text = kanbanAddDraft.trim();
+      kanbanAddDraft = '';
+      if (!keepOpen) kanbanAdding = null;
+      if (text) await kanbanPost({ action: 'addTodo', taskId, text });
+      await loadKanban();
+      if (keepOpen) focusKanbanAdd();
     }
 
     function renderKanbanTrash() {
@@ -11534,19 +11865,34 @@ export function getWebappHtml(botUsername) {
 
     function setupKanbanHandlers() {
       const panel = $('#kanban-panel');
+      setupMediaHandlers(); // thumbnail clicks; idempotent, also called by the mindmap
+      // Clicks anywhere else close the subtask menu.
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('.kt-pop, .kc-media-pop, [data-ktodo-menu], [data-kclip]')) closeKtPop();
+      }, true);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeKtPop(); });
+      // The board scrolling moves the button out from under its menu; a scroll
+      // inside a menu (the attachment strip) is the menu being used.
+      panel.addEventListener('scroll', (e) => {
+        if (e.target && e.target.closest && e.target.closest('.kt-pop, .kc-media-pop')) return;
+        closeKtPop();
+      }, true);
       panel.addEventListener('click', async (e) => {
+        const moreBtn = e.target.closest('[data-ktodo-menu]');
+        if (moreBtn) { openKtPop(moreBtn); return; }
+        const clipBtn = e.target.closest('[data-kclip]');
+        if (clipBtn) { openClipPop(clipBtn); return; }
+        const clipAdd = e.target.closest('[data-kclip-add]');
+        if (clipAdd) {
+          const tid = clipAdd.dataset.kclipAdd;
+          mediaTriggerUpload({ link: { type: 'task', taskId: tid }, project: currentProject, reload: () => { kanbanClipOpen = tid; loadKanban(); } });
+          return;
+        }
+        if (e.target.closest('.kt-pop button, .kc-media-pop [data-media-open]')) setTimeout(closeKtPop, 0);
         const delBtn = e.target.closest('[data-ktodo-del]');
         if (delBtn) {
           const [taskId, todoId] = delBtn.dataset.ktodoDel.split('|');
           await kanbanPost({ action: 'deleteTodo', taskId, todoId }); loadKanban(); return;
-        }
-        // Save/add a subtask (mobile-friendly; the Enter key still works too)
-        const addBtn = e.target.closest('[data-ktodo-add]');
-        if (addBtn) {
-          const inp = addBtn.closest('.kanban-todo-add').querySelector('input');
-          const text = inp ? inp.value.trim() : '';
-          if (text) { await kanbanPost({ action: 'addTodo', taskId: addBtn.dataset.ktodoAdd, text }); loadKanban(); }
-          return;
         }
         // Rename a subtask inline
         const editTodoBtn = e.target.closest('[data-ktodo-edit]');
@@ -11576,6 +11922,24 @@ export function getWebappHtml(botUsername) {
         const act = btn.dataset.kact;
         const taskId = btn.dataset.task;
         if (act === 'media') { openMediaModal('Media \\u00b7 Kanban', { scope: 'project', kind: 'kanban' }); return; }
+        if (act === 'card-menu') {
+          const card = btn.closest('.kanban-card');
+          const open = !kanbanMenuOpen.has(taskId);
+          if (open) kanbanMenuOpen.add(taskId); else kanbanMenuOpen.delete(taskId);
+          if (card) card.classList.toggle('menu-open', open);
+          btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+          return;
+        }
+        if (act === 'add-subtask') {
+          // Another card's open row keeps what was typed in it.
+          if (kanbanAdding && kanbanAdding !== taskId && kanbanAddDraft.trim()) {
+            const prev = kanbanAdding; kanbanAdding = taskId;
+            const text = kanbanAddDraft.trim(); kanbanAddDraft = '';
+            await kanbanPost({ action: 'addTodo', taskId: prev, text });
+          } else { kanbanAdding = taskId; kanbanAddDraft = ''; }
+          renderKanban(); focusKanbanAdd();
+          return;
+        }
         if (act === 'view-board') { kanbanView = 'board'; loadKanban(); }
         else if (act === 'view-trash') { kanbanView = 'trash'; loadKanban(); }
         else if (act === 'view-history') { kanbanView = 'history'; loadKanban(); }
@@ -11625,13 +11989,31 @@ export function getWebappHtml(botUsername) {
           await kanbanPost({ action: 'moveTask', taskId: sel.dataset.kmove, status: sel.value }); loadKanban();
         }
       });
+      // New-subtask row: Enter adds and opens the next one, Escape closes it,
+      // and leaving it saves whatever was typed.
+      panel.addEventListener('input', (e) => {
+        if (e.target.closest('[data-ktodo-input]')) kanbanAddDraft = e.target.value;
+      });
       panel.addEventListener('keydown', async (e) => {
         const inp = e.target.closest('[data-ktodo-input]');
-        if (!inp || e.key !== 'Enter') return;
+        if (!inp) return;
+        if (e.key === 'Escape') { e.preventDefault(); kanbanAdding = null; kanbanAddDraft = ''; renderKanban(); return; }
+        if (e.key !== 'Enter' || e.isComposing) return;
         e.preventDefault();
-        const text = inp.value.trim();
-        if (!text) return;
-        await kanbanPost({ action: 'addTodo', taskId: inp.dataset.ktodoInput, text }); loadKanban();
+        if (!inp.value.trim()) return;
+        kanbanAddDraft = inp.value;
+        inp.dataset.saving = '1';
+        await saveKanbanAdd(inp.dataset.ktodoInput, true);
+      });
+      panel.addEventListener('focusout', (e) => {
+        const inp = e.target.closest && e.target.closest('[data-ktodo-input]');
+        if (!inp || inp.dataset.saving) return;
+        // Re-rendering replaces the row; only a real move elsewhere counts.
+        setTimeout(() => {
+          if (!inp.isConnected || kanbanAdding !== inp.dataset.ktodoInput) return;
+          if (document.activeElement && document.activeElement.closest && document.activeElement.closest('[data-ktodo-input]')) return;
+          saveKanbanAdd(inp.dataset.ktodoInput, false);
+        }, 0);
       });
     }
 
