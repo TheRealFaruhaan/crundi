@@ -2690,6 +2690,14 @@ export function getWebappHtml(botUsername) {
       font-size: 0.83rem; font-weight: 600; word-break: break-word; line-height: 1.3;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
+    /* Hovered: the whole idea, up to about seven lines (then it scrolls). The
+       node is centred on its anchor, so it grows equally up and down over its
+       neighbours and its edges still meet it in the middle. */
+    .mm-node:not(.mm-ghost):hover { z-index: 20; }
+    .mm-node:not(.mm-ghost):hover .mm-text {
+      display: block; -webkit-line-clamp: unset; line-clamp: none;
+      max-height: calc(1.3em * 7); overflow-y: auto; overscroll-behavior: contain;
+    }
     /* compact meta chips row */
     .mm-node .mm-meta { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
     .mm-node .mm-meta:empty { display: none; }
