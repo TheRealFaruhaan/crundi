@@ -227,33 +227,51 @@
     '.cc-slash-item span{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.cc-wrap{position:relative}',
 
-    // Floating subagent dock. Sits over the transcript rather than in it: a
-    // subagent is work happening beside the conversation, not a turn in it.
-    // 320px, not a percentage: on a wide cell 78% was a 900px pill lying across
-    // the conversation. A bubble is a label, and its size should not depend on
-    // how much room happens to be going spare.
+    // Floating dock over the bottom of the transcript. It holds two things: one
+    // small badge for the subagents (below) and the suggested reply.
+    //
+    // It used to hold a pill per agent and per background command, capped at
+    // four finished ones but with no cap on running ones - so a turn that
+    // fanned out to ten agents and five commands stacked fifteen pills over
+    // the conversation, covering most of a phone screen. Now: commands are not
+    // shown here at all (each already has its row in the transcript), and the
+    // agents collapse into one badge with a count that opens a list.
     '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:min(320px,calc(100% - 20px))}',
     '.cc-agents:empty{display:none}',
-    '.cc-agents-hd{pointer-events:auto;display:none;justify-content:flex-end}',
-    '.cc-agents-x{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;color:var(--text-muted);cursor:pointer;font-size:calc(11px*var(--cc-fs,1));line-height:1;padding:3px 7px;box-shadow:var(--shadow-md)}',
-    '.cc-agents-x:hover{color:var(--red);border-color:var(--red)}',
-    '.cc-bub{pointer-events:auto;display:flex;align-items:center;gap:7px;max-width:100%;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;padding:5px 11px 5px 9px;font-size:calc(11.5px*var(--cc-fs,1));color:var(--text-secondary);cursor:pointer;box-shadow:var(--shadow-md);animation:cc-in .2s ease}',
-    '.cc-bub:hover{border-color:var(--accent);color:var(--text-primary)}',
-    // min-width:0 is what makes the ellipsis work at all. A flex item defaults
-    // to min-width:auto and refuses to shrink below its content, so without
-    // this the text never truncates — the bubble just grows to fit an entire
-    // command line and overflows the cell, which is what dragged a horizontal
-    // scrollbar into the panel.
-    '.cc-bub-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}',
-    '.cc-bub-n{font-family:var(--mono);font-size:calc(10px*var(--cc-fs,1));color:var(--text-muted);flex:none}',
-    '.cc-bub-x{flex:none;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:calc(12px*var(--cc-fs,1));line-height:1;padding:0 1px;opacity:0;transition:opacity .12s}',
-    '.cc-bub:hover .cc-bub-x,.cc-bub-x:focus{opacity:1}',
-    '.cc-bub-x:hover{color:var(--red)}',
-    // A background task reads as a task, not a subagent, at a glance.
-    '.cc-bub.task{border-style:dashed}',
-    '.cc-bub.task:hover{border-color:var(--accent)}',
-    '.cc-bub.done{opacity:.72}',
-    '.cc-bub.done:hover{opacity:1}',
+    '.cc-agbadge{pointer-events:auto;display:none;align-items:center;gap:6px;min-height:30px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;padding:4px 10px 4px 8px;color:var(--text-secondary);cursor:pointer;box-shadow:var(--shadow-md);font:inherit;font-size:calc(12px*var(--cc-fs,1));line-height:1}',
+    '.cc-agbadge.on{display:inline-flex}',
+    '.cc-agbadge:hover,.cc-agbadge.open{border-color:var(--accent);color:var(--text-primary)}',
+    '.cc-agbadge:focus-visible{outline:2px solid var(--accent);outline-offset:2px}',
+    '.cc-agbadge svg{width:calc(15px*var(--cc-fs,1));height:calc(15px*var(--cc-fs,1));flex:none}',
+    '.cc-agbadge.busy svg{color:var(--accent-hover)}',
+    '.cc-agbadge-n{font-family:var(--mono);font-weight:600;font-variant-numeric:tabular-nums;color:var(--text-primary)}',
+    // An agent arrived: the badge pops and throws an accent ring. One finished:
+    // a green ring. Both are one-shot; nothing here loops but the spinner.
+    '.cc-agbadge.ev-add{animation:cc-ag-pop .5s cubic-bezier(.2,.9,.3,1.4)}',
+    '.cc-agbadge.ev-done{animation:cc-ag-done .9s ease-out}',
+    '@keyframes cc-ag-pop{0%{transform:scale(.6);box-shadow:0 0 0 0 var(--accent)}55%{transform:scale(1.14)}100%{transform:scale(1);box-shadow:0 0 0 9px transparent}}',
+    '@keyframes cc-ag-done{0%{box-shadow:0 0 0 0 var(--green);border-color:var(--green)}30%{transform:scale(1.08);border-color:var(--green)}100%{transform:scale(1);box-shadow:0 0 0 10px transparent}}',
+    '@media (prefers-reduced-motion: reduce){.cc-agbadge.ev-add,.cc-agbadge.ev-done{animation:none}}',
+
+    // The agents list: same sheet as a transcript, one row per agent.
+    '.cc-aglist-acts{flex:0 0 auto;background:none;border:1px solid var(--border);border-radius:999px;color:var(--text-secondary);cursor:pointer;font:inherit;font-size:calc(11px*var(--cc-fs,1));padding:3px 9px;white-space:nowrap}',
+    '.cc-aglist-acts:hover{color:var(--red);border-color:var(--red)}',
+    '.cc-aglist-body{flex:1;overflow-y:auto;padding:6px}',
+    '.cc-agrow{display:flex;align-items:center;gap:9px;padding:9px 8px;border-radius:var(--radius-sm);cursor:pointer;min-width:0}',
+    '.cc-agrow:hover,.cc-agrow:focus-visible{background:var(--bg-hover);outline:none}',
+    '.cc-agrow-st{flex:none;width:12px;display:flex;justify-content:center}',
+    '.cc-agrow-tx{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}',
+    '.cc-agrow-t{color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cc-agrow-s{font-family:var(--mono);font-size:calc(10.5px*var(--cc-fs,1));color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cc-agrow.done .cc-agrow-t{color:var(--text-secondary)}',
+    '.cc-agrow-go{flex:none;color:var(--text-muted)}',
+    '.cc-agrow-x{flex:none;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:calc(13px*var(--cc-fs,1));line-height:1;padding:6px;min-width:28px;border-radius:var(--radius-sm)}',
+    '.cc-agrow-x:hover{color:var(--red)}',
+    '.cc-aglist-foot{flex:none;padding:8px 12px;border-top:1px solid var(--border-subtle);color:var(--text-muted);font-size:calc(11px*var(--cc-fs,1));line-height:1.45}',
+    '.cc-agpanel-back{flex:0 0 auto;background:none;border:0;color:var(--text-muted);cursor:pointer;font:inherit;font-size:calc(12px*var(--cc-fs,1));padding:2px 6px 2px 0;white-space:nowrap}',
+    '.cc-agpanel-back:hover{color:var(--text-primary)}',
+    // The title is what tells two transcripts apart; the status line gives way first.
+    '.cc-agpanel-sub{flex-shrink:5}',
 
     // Expanded transcript, anchored inside the chat cell.
     '.cc-agpanel{position:absolute;inset:8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);display:flex;flex-direction:column;z-index:25;animation:cc-in .16s ease}',
@@ -741,11 +759,11 @@
     composer.appendChild(meta);
     var logWrap = el('div', 'cc-logwrap');
     var agentDock = el('div', 'cc-agents');
-    // Sits above the stack so a burst of agents can be cleared in one go
-    // rather than one pill at a time.
-    var agentDockHd = el('div', 'cc-agents-hd');
-    agentDockHd.innerHTML = '<button class="cc-agents-x" title="Hide all">✕</button>';
-    agentDock.appendChild(agentDockHd);
+    // One badge for every subagent that has not been put away: an icon and a
+    // count. Hidden while there are none.
+    var agentBadge = el('button', 'cc-agbadge');
+    agentBadge.type = 'button';
+    agentDock.appendChild(agentBadge);
     logWrap.appendChild(log);
     logWrap.appendChild(agentDock);
     // Hidden until there is a plan AND the header pill is clicked.
@@ -1183,8 +1201,8 @@
 
     function toolNode(e) {
       // A Task/Agent tool row IS a subagent. Give it the same drill-in as the
-      // floating bubble so the transcript stays reachable in chronological
-      // place once the bubble has aged out of the dock.
+      // agents list, so the transcript stays reachable in chronological place
+      // after the agent has been dismissed from the badge.
       if (e.toolUseId && agents.has(e.toolUseId) && agents.get(e.toolUseId).meta.kind !== 'task') {
         var ab = el('div', 'cc-tool cc-agentrow');
         var am = agents.get(e.toolUseId).meta;
@@ -1195,7 +1213,7 @@
           + '<span class="cc-tool-name">' + esc(am.subagentType || 'Agent') + '</span>'
           + '<span class="cc-tool-sum">' + esc(am.description || '') + '</span>'
           + '<span class="cc-agentrow-go">transcript ›</span>';
-        ab.addEventListener('click', function () { toggleAgentPanel(e.toolUseId); });
+        ab.addEventListener('click', function () { toggleAgentPanel(e.toolUseId, false); });
         return ab;
       }
       var box = el('div', 'cc-tool cc-collapsed' + (e.isError ? ' err' : ''));
@@ -1768,8 +1786,8 @@
         return;
       }
       var stick = atBottom();
-      // Last in the same floating list as the task bubbles, so they stack above
-      // it. resetAgents empties that list, so it is re-created when missing.
+      // Last in the floating dock, under the agents badge. resetAgents empties
+      // the dock, so it is re-created when missing.
       if (!sugNode || sugNode.parentNode !== agentDock) {
         sugNode = el('div', 'cc-sug-row');
         sugNode.addEventListener('click', function (e) {
@@ -2309,18 +2327,20 @@
     // them here instead, so they surface as bubbles floating over the log —
     // present and inspectable, but never mistaken for the conversation itself.
 
-    var agents = new Map();   // toolUseId -> { meta, messages, bubble }
-    var openAgent = null;     // toolUseId of the expanded panel, if any
+    var agents = new Map();   // toolUseId -> { meta, messages, dismissed }
+    var openAgent = null;     // toolUseId of the open transcript, if any
     var agentPanel = null;
+    var agentList = null;     // the agents list sheet, while it is open
+    var agentsLive = false;   // false while a stored session is being replayed
 
-    // Putting a bubble away has to stick. It lived only in the record before,
-    // so a refresh - or reopening the desktop app - rebuilt every pill from
-    // the replayed session and handed back the exact clutter the X removed.
+    // Putting an agent away has to stick. It lived only in the record before,
+    // so a refresh - or reopening the desktop app - rebuilt every one from the
+    // replayed session and handed back the exact clutter the X removed.
     // Same {t, ids} shape as the drafts so the TTL sweep above reaps it too.
     function agentRec(toolUseId) {
       var rec = agents.get(toolUseId);
       if (!rec) {
-        rec = { meta: { toolUseId: toolUseId, kind: 'agent', description: '', status: 'running' }, messages: [], bubble: null,
+        rec = { meta: { toolUseId: toolUseId, kind: 'agent', description: '', status: 'running' }, messages: [],
                 dismissed: isDismissed(toolUseId) };
         agents.set(toolUseId, rec);
       }
@@ -2332,14 +2352,31 @@
       return m.description || (m.subagentType ? m.subagentType + ' agent' : 'Agent');
     }
 
-    /** Header visible only when there is something to dismiss. */
+    function agentRunning(m) { return m.status === 'running' || !m.status; }
+
+    /**
+     * The agents on show: real subagents that have not been dismissed.
+     *
+     * A background command or Monitor (kind "task") is deliberately not one of
+     * them. The server tracks those alongside agents because the CLI reports
+     * them the same way, but each already has its own row in the transcript,
+     * and listing them here again is what buried the conversation.
+     */
+    function shownAgents() {
+      var out = [];
+      agents.forEach(function (rec) {
+        if (rec.meta.kind !== 'task' && !rec.dismissed) out.push(rec);
+      });
+      return out;
+    }
+
     // The dock floats over the bottom of the log. Keep the suggestion its last
     // item whatever gets appended, and pad the log by the dock's height so the
     // newest message can always scroll clear of it rather than sit underneath.
     var LOG_PAD = 4;
     function dockLayout() {
       if (sugNode && sugNode.parentNode === agentDock && agentDock.lastChild !== sugNode) agentDock.appendChild(sugNode);
-      var shown = !!(sugNode && sugNode.parentNode === agentDock) || !!agentDock.querySelector('.cc-bub');
+      var shown = !!(sugNode && sugNode.parentNode === agentDock) || agentBadge.classList.contains('on');
       var pad = shown ? Math.max(LOG_PAD, agentDock.offsetHeight + 14) : LOG_PAD;
       if (log.style.paddingBottom !== pad + 'px') {
         var stick = stickBottom;
@@ -2350,11 +2387,40 @@
     if (window.MutationObserver) { try { new MutationObserver(dockLayout).observe(agentDock, { childList: true }); } catch (e) {} }
     if (window.ResizeObserver) { try { new ResizeObserver(dockLayout).observe(agentDock); } catch (e) {} }
 
-    function syncDock() {
-      var bubbles = agentDock.querySelectorAll('.cc-bub').length;
-      agentDockHd.style.display = bubbles ? 'flex' : 'none';
-      // Appended bubbles would otherwise land after it.
-      if (agentDock.firstChild !== agentDockHd) agentDock.insertBefore(agentDockHd, agentDock.firstChild);
+    var AGENT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+
+    /** Play a one-shot animation on the badge: "add" or "done". */
+    function badgeEvent(kind) {
+      if (!agentsLive) return;   // a replayed session is not news
+      var cls = 'ev-' + kind;
+      agentBadge.classList.remove('ev-add', 'ev-done');
+      // Reading a layout property between the two is what restarts an
+      // animation that is already running.
+      void agentBadge.offsetWidth;
+      agentBadge.classList.add(cls);
+      clearTimeout(agentBadge._evTimer);
+      agentBadge._evTimer = setTimeout(function () { agentBadge.classList.remove(cls); }, 1000);
+    }
+
+    function syncBadge() {
+      var shown = shownAgents();
+      var running = shown.filter(function (r) { return agentRunning(r.meta); }).length;
+      var was = agentBadge.classList.contains('on');
+      agentBadge.classList.toggle('on', shown.length > 0);
+      agentBadge.classList.toggle('busy', running > 0);
+      agentBadge.classList.toggle('open', !!agentList);
+      if (shown.length) {
+        agentBadge.innerHTML = AGENT_ICON + '<span class="cc-agbadge-n">' + shown.length + '</span>'
+          + (running ? '<span class="cc-spin"></span>' : '<span class="cc-dot-ok"></span>');
+        var label = shown.length + (shown.length === 1 ? ' agent' : ' agents')
+          + (running ? ', ' + running + ' running' : ', all finished');
+        agentBadge.title = label + ' — click to see ' + (shown.length === 1 ? 'it' : 'them');
+        agentBadge.setAttribute('aria-label', label);
+        agentBadge.setAttribute('aria-expanded', agentList ? 'true' : 'false');
+      }
+      if (was !== shown.length > 0) dockLayout();
+      if (agentList) paintAgentList();
     }
 
     /**
@@ -2372,68 +2438,49 @@
       }).catch(function () { /* localStorage still covers this browser */ });
     }
 
-    function dismissAllBubbles() {
+    // Dismissing takes an agent off the badge; it does not stop the agent -
+    // that is the CLI's business. The transcript still has its Agent row, so
+    // the work stays reachable afterwards.
+    function dismissAgent(toolUseId) {
+      var rec = agents.get(toolUseId);
+      if (!rec || rec.dismissed) return;
+      rec.dismissed = true;
+      markDismissed(toolUseId);
+      persistDismissed([toolUseId], false);
+      syncBadge();
+    }
+
+    function dismissAllAgents() {
+      // Everything the server tracks, commands included, so a background task
+      // that never reports its end stops holding the chat "busy" as well.
       agents.forEach(function (rec, id) {
         rec.dismissed = true;
         markDismissed(id);
-        if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
       });
       persistDismissed(null, true);
-      syncDock();
-    }
-
-    function drawBubble(rec) {
-      var m = rec.meta;
-      var running = m.status === 'running' || !m.status;
-      if (rec.dismissed) return;   // the user put this one away; leave it there
-      if (!rec.bubble) {
-        rec.bubble = el('div', 'cc-bub');
-        rec.bubble.addEventListener('click', function () { toggleAgentPanel(m.toolUseId); });
-        agentDock.appendChild(rec.bubble);
-      } else if (!rec.bubble.parentNode && running) {
-        agentDock.appendChild(rec.bubble); // trimmed while idle, now active again
-      }
-      rec.bubble.className = 'cc-bub' + (running ? '' : ' done') + (m.kind === 'task' ? ' task' : '');
-      var tok = m.usage && m.usage.total_tokens;
-      rec.bubble.innerHTML =
-        (running ? '<span class="cc-spin"></span>'
-                 : '<span class="' + (m.status === 'failed' ? 'cc-dot-err' : 'cc-dot-ok') + '"></span>')
-        + '<span class="cc-bub-txt">' + esc(agentLabel(m)) + '</span>'
-        + '<span class="cc-bub-n">' + esc(tok ? (tok >= 1000 ? Math.round(tok / 1000) + 'k' : String(tok)) : '') + '</span>'
-        + '<button class="cc-bub-x" title="Dismiss">✕</button>';
-      // Dismissing hides the bubble, it does not stop the agent — that is the
-      // CLI's business. The transcript still has its Agent row, so the work
-      // remains reachable after the pill is out of the way.
-      var x = rec.bubble.querySelector('.cc-bub-x');
-      if (x) x.addEventListener('click', function (ev) {
-        ev.stopPropagation();
-        rec.dismissed = true;
-        markDismissed(m.toolUseId);
-        persistDismissed([m.toolUseId], false);
-        if (rec.bubble && rec.bubble.parentNode) rec.bubble.remove();
-        syncDock();
-      });
-      syncDock();
-      rec.bubble.title = (m.subagentType ? m.subagentType + ' · ' : '')
-        + (m.step ? m.step + ' · ' : '')
-        + (m.status || 'running')
-        + (m.kind === 'task' ? ' — background task, click for details'
-                             : ' — click to open the transcript');
+      closeAgentList();
+      syncBadge();
     }
 
     function applyAgent(meta) {
       if (!meta || !meta.toolUseId) return;
+      var known = agents.has(meta.toolUseId);
       var rec = agentRec(meta.toolUseId);
+      var wasShown = known && rec.meta.kind !== 'task' && !rec.dismissed;
+      var wasRunning = agentRunning(rec.meta);
       // `count` is the server's tally; our own messages array is authoritative.
       var count = rec.meta.count;
       rec.meta = meta;
-      // The server remembers dismissals now. localStorage is per-origin and
-      // per-device, so the same conversation on a phone, in another browser, or
-      // moved to a different hostname brought every dismissed bubble back.
+      // The server remembers dismissals, and makes its own: a finished agent is
+      // dismissed there five minutes after it ended, and that arrives here as
+      // this flag. localStorage alone was per-origin and per-device, so the
+      // same conversation on a phone brought every dismissed agent back.
       if (meta.dismissed) rec.dismissed = true;
       if (meta.count == null) rec.meta.count = count;
-      drawBubble(rec);
-      trimDock();
+      var isShown = meta.kind !== 'task' && !rec.dismissed;
+      syncBadge();
+      if (isShown && !wasShown) badgeEvent('add');
+      else if (isShown && wasRunning && !agentRunning(meta)) badgeEvent('done');
       // The tool row that spawned this agent was painted before we knew it was
       // one; repaint it now so it picks up the drill-in.
       entries.forEach(function (r) {
@@ -2446,7 +2493,6 @@
       var rec = agentRec(toolUseId);
       rec.messages.push(entry);
       if (openAgent === toolUseId) appendAgentEntry(entry);
-      else drawBubble(rec);
     }
 
     function patchAgentEntry(toolUseId, id, patch) {
@@ -2514,14 +2560,23 @@
       return n;
     }
 
-    function toggleAgentPanel(toolUseId) {
+    // fromList: opened from the agents list, so offer the way back to it.
+    function toggleAgentPanel(toolUseId, fromList) {
       if (openAgent === toolUseId) { closeAgentPanel(); return; }
       closeAgentPanel();
+      closeAgentList();
       var rec = agents.get(toolUseId);
       if (!rec) return;
       openAgent = toolUseId;
       agentPanel = el('div', 'cc-agpanel');
       var head = el('div', 'cc-agpanel-head');
+      if (fromList === true) {
+        var back = el('button', 'cc-agpanel-back', '‹ Agents');
+        back.type = 'button';
+        back.title = 'Back to the agents list';
+        back.addEventListener('click', function () { closeAgentPanel(); openAgentList(); });
+        head.appendChild(back);
+      }
       head.appendChild(el('span', 'cc-agpanel-title', ''));
       head.appendChild(el('span', 'cc-agpanel-sub', ''));
       var x = el('button', 'cc-agpanel-x', '✕');
@@ -2569,26 +2624,115 @@
       openAgent = null;
     }
 
-    // The dock floats over the transcript, so it must never grow into it.
-    // Running agents always stay visible; finished ones fall away oldest-first
-    // once the dock is full — their transcripts remain one click away on the
-    // Agent row in the log.
-    var DOCK_MAX = 4;
-    function trimDock() {
-      // Task bubbles only: the header and the suggestion are not counted.
-      var bubs = [].slice.call(agentDock.querySelectorAll('.cc-bub'));
-      var over = bubs.length - DOCK_MAX;
-      for (var i = 0; i < bubs.length && over > 0; i++) {
-        if (bubs[i].classList.contains('done')) { bubs[i].remove(); over--; }
+    // ─── The agents list ───
+    //
+    // What the badge opens: every agent on show, running ones first. A row
+    // opens that agent's transcript; its X dismisses it.
+
+    function agentRowSub(m) {
+      var bits = [];
+      if (m.subagentType) bits.push(m.subagentType);
+      if (agentRunning(m)) bits.push(m.step || 'running');
+      else bits.push(m.status === 'completed' || !m.status ? 'finished' : m.status);
+      var tok = m.usage && m.usage.total_tokens;
+      if (tok) bits.push((tok >= 1000 ? Math.round(tok / 1000) + 'k' : String(tok)) + ' tok');
+      return bits.join(' · ');
+    }
+
+    function paintAgentList() {
+      if (!agentList) return;
+      var shown = shownAgents();
+      if (!shown.length) { closeAgentList(); return; }
+      // Running first, then the most recently finished; ties keep their order.
+      shown = shown.map(function (r, i) { return { r: r, i: i }; }).sort(function (a, b) {
+        var ra = agentRunning(a.r.meta), rb = agentRunning(b.r.meta);
+        if (ra !== rb) return ra ? -1 : 1;
+        if (!ra) { var d = (b.r.meta.endedAt || 0) - (a.r.meta.endedAt || 0); if (d) return d; }
+        return a.i - b.i;
+      }).map(function (x) { return x.r; });
+      var running = shown.filter(function (r) { return agentRunning(r.meta); }).length;
+      var sub = agentList.querySelector('.cc-agpanel-sub');
+      if (sub) sub.textContent = (running ? running + ' running' : '') + (running && shown.length - running ? ' · ' : '')
+        + (shown.length - running ? (shown.length - running) + ' finished' : '');
+      var body = agentList.querySelector('.cc-aglist-body');
+      var top = body.scrollTop;
+      body.innerHTML = shown.map(function (rec) {
+        var m = rec.meta, run = agentRunning(m);
+        return '<div class="cc-agrow' + (run ? '' : ' done') + '" role="button" tabindex="0" data-id="' + esc(m.toolUseId) + '">'
+          + '<span class="cc-agrow-st">' + (run ? '<span class="cc-spin"></span>'
+              : '<span class="' + (m.status === 'failed' ? 'cc-dot-err' : 'cc-dot-ok') + '"></span>') + '</span>'
+          + '<span class="cc-agrow-tx"><span class="cc-agrow-t">' + esc(agentLabel(m)) + '</span>'
+          + '<span class="cc-agrow-s">' + esc(agentRowSub(m)) + '</span></span>'
+          + '<span class="cc-agrow-go" aria-hidden="true">›</span>'
+          + '<button type="button" class="cc-agrow-x" title="Dismiss" aria-label="Dismiss ' + esc(agentLabel(m)) + '">✕</button>'
+          + '</div>';
+      }).join('');
+      body.scrollTop = top;
+    }
+
+    function openAgentList() {
+      if (agentList) return;
+      if (!shownAgents().length) return;
+      closeAgentPanel();
+      agentList = el('div', 'cc-agpanel cc-aglist');
+      agentList.setAttribute('role', 'dialog');
+      agentList.setAttribute('aria-label', 'Agents');
+      var head = el('div', 'cc-agpanel-head');
+      head.appendChild(el('span', 'cc-agpanel-title', 'Agents'));
+      head.appendChild(el('span', 'cc-agpanel-sub', ''));
+      var all = el('button', 'cc-aglist-acts', 'Dismiss all');
+      all.type = 'button';
+      all.addEventListener('click', dismissAllAgents);
+      head.appendChild(all);
+      var x = el('button', 'cc-agpanel-x', '✕');
+      x.type = 'button';
+      x.title = 'Close';
+      x.addEventListener('click', closeAgentList);
+      head.appendChild(x);
+      var body = el('div', 'cc-aglist-body');
+      function act(ev) {
+        var row = ev.target.closest('.cc-agrow');
+        if (!row) return;
+        if (ev.target.closest('.cc-agrow-x')) { ev.stopPropagation(); dismissAgent(row.dataset.id); return; }
+        toggleAgentPanel(row.dataset.id, true);
       }
+      body.addEventListener('click', act);
+      body.addEventListener('keydown', function (ev) {
+        if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.classList.contains('cc-agrow')) { ev.preventDefault(); act(ev); }
+      });
+      agentList.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closeAgentList(); agentBadge.focus(); } });
+      agentList.appendChild(head);
+      agentList.appendChild(body);
+      agentList.appendChild(el('div', 'cc-aglist-foot',
+        'A finished agent leaves this list after 5 minutes. Its transcript stays on its Agent row in the chat.'));
+      logWrap.appendChild(agentList);
+      paintAgentList();
+      syncBadge();
+      var first = body.querySelector('.cc-agrow');
+      if (first) { try { first.focus({ preventScroll: true }); } catch (e) { first.focus(); } }
+    }
+
+    function closeAgentList() {
+      if (!agentList) return;
+      agentList.remove();
+      agentList = null;
+      agentBadge.classList.remove('open');
+      agentBadge.setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleAgentList() {
+      if (agentList) { closeAgentList(); return; }
+      openAgentList();
     }
 
     function resetAgents() {
       closeAgentPanel();
+      closeAgentList();
       agents.clear();
       agentDock.innerHTML = '';
-      agentDock.appendChild(agentDockHd);   // the wipe above detaches it
-      syncDock();
+      agentDock.appendChild(agentBadge);   // the wipe above detaches it
+      agentBadge.classList.remove('ev-add', 'ev-done');
+      syncBadge();
     }
 
     function addEntry(data) {
@@ -2768,8 +2912,8 @@
     }
 
     schedBtn.addEventListener('click', openSched);
-    agentDockHd.querySelector('.cc-agents-x').addEventListener('click', dismissAllBubbles);
-    syncDock();
+    agentBadge.addEventListener('click', toggleAgentList);
+    syncBadge();
 
     // ─── Goal mode ───
     // The CLI runs the loop inside a single turn, pushed on by a Stop hook, so
@@ -2906,12 +3050,15 @@
         msgs.forEach(addEntry);
       }
       resetAgents();
+      // Agents that come back with a stored session are not news: no animation.
+      agentsLive = false;
       (session.agents || []).forEach(function (a) {
         if (!a || !a.toolUseId) return;
         var rec = agentRec(a.toolUseId);
         rec.messages = a.messages || [];
         applyAgent(a);
       });
+      agentsLive = true;
       goal = session.goal || null;
       renderGoal();
       plan = session.plan || null;

@@ -635,7 +635,18 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     ];
     for (const a of d.agents || []) {
       if (a && a.toolUseId && !s.agents.has(a.toolUseId)) {
-        s.agents.set(a.toolUseId, { ...a, messages: a.messages || [] });
+        const rec = { ...a, messages: a.messages || [] };
+        // The process that was running this agent is gone, so it will never
+        // report an end. Left as 'running' it would sit on show, spinning, for
+        // as long as the conversation lives.
+        if (rec.kind === 'agent' && rec.status === 'running') {
+          rec.status = 'stopped';
+          if (!rec.endedAt) rec.endedAt = d.savedAt || Date.now();
+        }
+        s.agents.set(a.toolUseId, rec);
+        // Pick the countdown up where it was; one whose time ran out while
+        // nothing was running is dismissed here, before the client sees it.
+        scheduleAutoDismiss(s, rec);
       }
     }
     s.replaySpliced = true;
@@ -680,6 +691,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     const drop = (id, a) => {
       s.agents.delete(id);
       if (a.taskId) s.agentsByTask.delete(a.taskId);
+      cancelAutoDismiss(s, id);
     };
     for (const [id, a] of s.agents) {
       if (s.agents.size <= MAX_AGENTS) break;
@@ -722,6 +734,60 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function emitAgent(s, a) {
     s.emitter.emit('event', { type: 'agent', agent: agentMeta(a) });
     schedulePersist(s);
+  }
+
+  // ─── Finished agents put themselves away ───
+  //
+  // A finished agent stays on show for a few minutes — long enough to notice it
+  // ended and open its transcript — and is then dismissed without being asked.
+  // Left to the user, a session that fans out to a dozen agents ends with a
+  // dozen things to close by hand, on every device that opens the chat.
+  //
+  // Done here rather than in the browser for the same reason dismissing is: it
+  // is a fact about the conversation. A timer in one tab would leave the agent
+  // on show everywhere else, and would not run at all with no tab open.
+  // Agents only. A background command or Monitor is never shown as one.
+  const AGENT_LINGER_MS = 5 * 60 * 1000;
+
+  /** A timestamp from the CLI in ms: it has reported seconds, ms and ISO text. */
+  function toMs(v) {
+    if (typeof v === 'number' && isFinite(v) && v > 0) return v < 1e12 ? v * 1000 : v;
+    const t = Date.parse(String(v || ''));
+    return isFinite(t) ? t : Date.now();
+  }
+
+  function cancelAutoDismiss(s, toolUseId) {
+    const t = s.agentTimers && s.agentTimers.get(toolUseId);
+    if (t) { clearTimeout(t); s.agentTimers.delete(toolUseId); }
+  }
+
+  /**
+   * Arrange for a finished agent to be dismissed AGENT_LINGER_MS after it
+   * ended. Safe to call on every event: it does nothing for one that is still
+   * running, already dismissed, or already counting down. Returns true if it
+   * dismissed the agent on the spot (its time was already up).
+   */
+  function scheduleAutoDismiss(s, a) {
+    if (!a || a.kind !== 'agent') return false;
+    if (a.dismissed || a.status === 'running') { cancelAutoDismiss(s, a.toolUseId); return false; }
+    if (!a.endedAt) a.endedAt = Date.now();
+    if (!s.agentTimers) s.agentTimers = new Map();
+    if (s.agentTimers.has(a.toolUseId)) return false;
+    const fire = () => {
+      s.agentTimers.delete(a.toolUseId);
+      if (sessions.get(s.id) !== s) return;   // the chat was closed meanwhile
+      const cur = s.agents.get(a.toolUseId);
+      if (!cur || cur.dismissed || cur.status === 'running') return;
+      cur.dismissed = true;
+      cur.autoDismissed = true;
+      emitAgent(s, cur);
+    };
+    const wait = toMs(a.endedAt) + AGENT_LINGER_MS - Date.now();
+    if (wait <= 0) { a.dismissed = true; a.autoDismissed = true; return true; }
+    const t = setTimeout(fire, wait);
+    if (t.unref) t.unref();
+    s.agentTimers.set(a.toolUseId, t);
+    return false;
   }
 
   function agentEntry(s, a, entry) {
@@ -819,7 +885,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     } else if (msg.subtype === 'task_updated') {
       const patch = msg.patch || {};
       if (patch.status) a.status = patch.status;
-      if (patch.end_time) a.endedAt = patch.end_time;
+      if (patch.end_time) a.endedAt = toMs(patch.end_time);
     } else if (msg.subtype === 'task_notification') {
       if (msg.status) a.status = msg.status;
       if (msg.summary) a.summary = String(msg.summary).slice(0, MAX_TEXT);
@@ -831,6 +897,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       if (ends && !a.endedAt) a.endedAt = Date.now();
       if (a.kind === 'task' && !ends) a.status = 'running';
     }
+    scheduleAutoDismiss(s, a);
     emitAgent(s, a);
   }
 
@@ -2362,6 +2429,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // closed — and on a short exchange that is the entire conversation, which
     // is precisely what the stored transcript exists to keep.
     persistNow(s);
+    if (s.agentTimers) { for (const t of s.agentTimers.values()) clearTimeout(t); s.agentTimers.clear(); }
     releaseSession('chat:' + id);
     sessions.delete(id);
     console.log(`[claude-ui] Closed "${s.alias}" (${id})`);
@@ -2526,6 +2594,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     for (const id of ids) {
       const a = s.agents.get(id);
       if (a && !a.dismissed) { a.dismissed = true; n++; }
+      cancelAutoDismiss(s, id);
     }
     if (n) persistNow(s);   // survive a restart, not just this process
     return { ok: true, dismissed: n };
