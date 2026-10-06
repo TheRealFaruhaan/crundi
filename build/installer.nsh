@@ -20,20 +20,22 @@
   ; Crundi ships a skill telling Claude how to drive this machine: the MCP
   ; tools, and how to run, expose, test and hand over work on a Crundi host. It
   ; belongs to the USER's Claude config, not to the install directory, so every
-  ; project on the box picks it up. Mirrors what scripts/install.sh does on Linux.
+  ; project on the box picks it up.
   ;
-  ; Overwritten on every install on purpose: the repo copy is canonical, so an
-  ; upgrade must be able to correct it. Anything hand-edited in place is lost,
-  ; which is why the skill itself says to edit the repo copy.
+  ; That folder is shared with the user's own skills, so only the "crundi"
+  ; folder is touched here, by name: removed and copied fresh, which is how an
+  ; update reaches it. Never widen this to a wildcard copy - it would write over
+  ; any skill of the user's that happened to share a name. Other skills Crundi
+  ; ships are placed by the app itself when it starts (src/skills-sync.js),
+  ; which knows which folders are Crundi's and leaves the rest alone.
   ;
   ; Guarded: the client-only build ships no skills, and a missing directory here
-  ; must not fail the install. Add a RMDir line per new skill directory shipped,
-  ; so a rename cannot leave the old copy behind.
-  IfFileExists "$INSTDIR\resources\skills\*.*" 0 crundiSkillsDone
+  ; must not fail the install.
+  IfFileExists "$INSTDIR\resources\skills\crundi\*.*" 0 crundiSkillsDone
     RMDir /r "$PROFILE\.claude\skills\crundi"
-    CreateDirectory "$PROFILE\.claude\skills"
-    CopyFiles /SILENT "$INSTDIR\resources\skills\*.*" "$PROFILE\.claude\skills"
-    DetailPrint "Installed Crundi skills to $PROFILE\.claude\skills"
+    CreateDirectory "$PROFILE\.claude\skills\crundi"
+    CopyFiles /SILENT "$INSTDIR\resources\skills\crundi\*.*" "$PROFILE\.claude\skills\crundi"
+    DetailPrint "Installed the crundi skill to $PROFILE\.claude\skills\crundi"
   crundiSkillsDone:
 !macroend
 

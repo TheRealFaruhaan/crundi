@@ -56,14 +56,30 @@ const install = read('scripts/install.sh');
 check('install.sh copies skills into the prefix',
   /for item in .*\bskills\b.*; do/.test(install),
   'the prefix copy loop does not list skills');
-check('install.sh installs skills into ~/.claude/skills',
-  /\.claude\/skills/.test(install) && /cp -r "\$skill"/.test(install),
-  'no skill install block');
+// ~/.claude/skills is shared with the user's own skills, so nothing may copy a
+// whole folder over it. One routine (src/skills-sync.js) decides what is
+// Crundi's to replace; every way in has to go through it.
+check('install.sh installs skills through the sync routine',
+  /node "\$PREFIX\/scripts\/sync-skills\.mjs" --home "\$TARGET_HOME"/.test(install),
+  'install.sh does not run scripts/sync-skills.mjs');
+check('install.sh no longer copies over ~/.claude/skills itself',
+  !/cp -r "\$skill"/.test(install) && !/rm -rf "\$\{SKILL_DIR/.test(install),
+  'a raw copy into the skills folder is back');
+check('the sync script calls the shared routine',
+  /syncBundled\(/.test(read('scripts/sync-skills.mjs')), 'scripts/sync-skills.mjs does not call syncBundled');
+// The container image, the Windows server package and the desktop app run no
+// install.sh; the server start is what installs and updates their skills.
+check('the server syncs included skills when it starts',
+  /syncBundled\(/.test(read('src/index.js')) && /if \(!isDev\) \{\s*try \{\s*const \{ syncBundled/.test(read('src/index.js')),
+  'src/index.js does not call syncBundled outside dev');
 
 const nsh = read('build/installer.nsh');
-check('NSIS installs skills into the user profile',
-  /\$PROFILE\\\.claude\\skills/.test(nsh) && /CopyFiles/.test(nsh),
+check('NSIS installs the crundi skill into the user profile',
+  /\$PROFILE\\\.claude\\skills\\crundi/.test(nsh) && /CopyFiles/.test(nsh),
   'no skills copy in customInstall');
+check('NSIS touches only the crundi folder, never the whole skills folder',
+  !/CopyFiles[^\n]*resources\\skills\\\*\.\*/.test(nsh) && !/RMDir \/r "\$PROFILE\\\.claude\\skills"\s/.test(nsh),
+  'a wildcard copy over the user\'s skills folder is back');
 check('NSIS guards a build that ships no skills',
   /IfFileExists\s+"\$INSTDIR\\resources\\skills/.test(nsh),
   'the copy is unguarded, so the client build would error');

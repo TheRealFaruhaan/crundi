@@ -57,6 +57,7 @@ import * as authConfig from './auth-config.js';
 import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
 import { createBackups } from './backup.js';
+import * as skills from './skills-store.js';
 import { sandboxStatus, setupSandbox } from './collab-sandbox.js';
 import { COLLAB_FORWARD_COOKIE, mintCollabForwardToken, readCollabForwardToken, collabMayReachForward } from './forward-access.js';
 import { spawn as spawnOwnerCommand } from 'node:child_process';
@@ -866,6 +867,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   panes.start();
 
   // ─── Backups (backup.js) ───
+  // Skills are files under the home directory and under each project; the store
+  // only needs to know where the projects are. Unscoped on purpose: these
+  // routes are the owner's, and a collaborator's worktree is not a project here.
+  skills.configure({ getProject: getProjectUnscoped, projects: listProjects });
+
   // A scheduled backup that falls due while you are here waits (and says so)
   // until you have left; progress and results go to the owner's open pages.
   const backups = createBackups({
@@ -3783,6 +3789,68 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, { ok: true, update: serverUpdate.status(), log: serverUpdate.readLog(), canRestart: canRestart(), embedded: !!process.versions.electron });
     }
 
+    // ─── Skills ───
+    // The Claude skills on this machine: ~/.claude/skills for every project,
+    // <project>/.claude/skills for one. Owner only, in both places — a skill is
+    // instructions Claude follows with the user's permissions, so installing one
+    // is closer to changing the system prompt than to uploading a file.
+    if (path === '/api/skills' || path.startsWith('/api/skills/')) {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
+      const q = url.searchParams;
+      const reply = (r) => json(res, r, r.ok ? 200 : (r.conflict ? 409 : 400));
+      const attach = (r) => {
+        if (!r.ok) return json(res, r, 404);
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': r.data.length,
+          'Content-Disposition': `attachment; filename="${r.filename.replace(/[^\w.-]+/g, '_')}"`,
+          'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': 'no-store',
+        });
+        return res.end(r.data);
+      };
+      if (req.method === 'GET') {
+        if (path === '/api/skills') return json(res, { ...skills.list(), limits: skills.LIMITS });
+        if (path === '/api/skills/detail') return reply(skills.get(q.get('scope'), q.get('name')));
+        if (path === '/api/skills/file') return reply(skills.readFile(q.get('scope'), q.get('name'), q.get('path')));
+        if (path === '/api/skills/file-download') return attach(skills.readFileRaw(q.get('scope'), q.get('name'), q.get('path')));
+        if (path === '/api/skills/download') return attach(skills.exportZip(q.get('scope'), q.get('name')));
+        return json(res, { ok: false, error: 'Not found' }, 404);
+      }
+      if (req.method !== 'POST') return json(res, { ok: false, error: 'Not found' }, 404);
+
+      // The two uploads carry the file itself as the body, not JSON: an
+      // archive read into a string and base64-decoded costs several times its
+      // size in memory, and the size has to be capped while it is arriving.
+      if (path === '/api/skills/upload' || path === '/api/skills/file-upload') {
+        const max = path === '/api/skills/upload' ? skills.LIMITS.upload : skills.LIMITS.file;
+        const chunks = [];
+        let size = 0, over = false;
+        await new Promise((done) => {
+          req.on('data', (c) => { size += c.length; if (size > max) over = true; else chunks.push(c); });
+          req.on('end', done);
+          req.on('error', done);
+          req.on('close', done);
+        });
+        if (over) return json(res, { ok: false, error: `That is too large (the limit is ${Math.round(max / 1048576)} MB)` }, 413);
+        const data = Buffer.concat(chunks);
+        if (path === '/api/skills/upload') {
+          return reply(skills.install(q.get('scope'), { filename: q.get('filename') || '', data, name: q.get('name') || '', overwrite: q.get('overwrite') === '1' }));
+        }
+        return reply(skills.writeFile(q.get('scope'), q.get('name'), q.get('path'), { data }));
+      }
+
+      let body = {};
+      try { body = JSON.parse(await readBody(req)) || {}; } catch { body = {}; }
+      if (path === '/api/skills/create') return reply(skills.create(body.scope, { name: body.name, description: body.description }));
+      if (path === '/api/skills/rename') return reply(skills.rename(body.scope, body.name, body.to));
+      if (path === '/api/skills/delete') return reply(skills.remove(body.scope, body.name));
+      if (path === '/api/skills/transfer') return reply(skills.transfer(body.scope, body.name, body.to, { move: !!body.move, overwrite: !!body.overwrite, as: body.as || '' }));
+      if (path === '/api/skills/file') return reply(skills.writeFile(body.scope, body.name, body.path, { content: body.content }));
+      if (path === '/api/skills/file-delete') return reply(skills.deleteFile(body.scope, body.name, body.path));
+      return json(res, { ok: false, error: 'Not found' }, 404);
+    }
+
     // ─── Backup & restore ───
     if (path.startsWith('/api/backup')) {
       if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
@@ -5070,6 +5138,42 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       if (body.tool === 'remove_forward') {
         return json(res, forwards.remove(body.args?.host));
+      }
+
+      // ─── Skills ───
+      // Owner chats only: COLLABORATOR_MCP_TOOLS does not list these, so a
+      // collaborator's key was turned away above. scope is "global" (every
+      // project, the default), "project" (the chat's own), or a project alias.
+      if (body.tool === 'skill_list' || body.tool === 'skill_get' || body.tool === 'skill_install' || body.tool === 'skill_delete') {
+        const a = body.args || {};
+        const want = String(a.scope || 'global').trim().toLowerCase();
+        const scope = want === 'global' || want === 'synced' ? want
+          : 'project:' + (want === 'project' ? String(a.alias || '').toLowerCase() : want.replace(/^project:/, ''));
+        if (body.tool === 'skill_list') {
+          const all = skills.list();
+          const only = a.scope ? all.skills.filter(s => s.scope === scope) : all.skills;
+          return json(res, {
+            ok: true,
+            skills: only.map(s => ({ name: s.name, scope: s.scope, description: s.description, files: s.files, kind: s.origin, readOnly: s.readOnly, problem: s.problem || undefined })),
+            scopes: all.scopes.map(x => ({ scope: x.id, path: x.path })),
+          });
+        }
+        if (!a.name && body.tool !== 'skill_install') return json(res, { ok: false, error: 'Missing skill name' });
+        if (body.tool === 'skill_get') {
+          if (a.path) return json(res, skills.readFile(scope, a.name, a.path));
+          const d = skills.get(scope, a.name);
+          if (!d.ok) return json(res, d);
+          const md = skills.readFile(scope, a.name, 'SKILL.md');
+          return json(res, { ...d, skillMd: md.ok ? md.text : undefined });
+        }
+        if (body.tool === 'skill_delete') return json(res, skills.remove(scope, a.name));
+        // skill_install
+        const opts = { name: a.name || '', overwrite: !!a.overwrite };
+        if (a.path) return json(res, skills.installFromPath(scope, String(a.path), opts));
+        if (typeof a.content === 'string' && a.content) {
+          return json(res, skills.install(scope, { ...opts, filename: (a.name || 'SKILL') + '.md', data: Buffer.from(a.content, 'utf8') }));
+        }
+        return json(res, { ok: false, error: 'Give either path (a skill folder, .zip, .skill or SKILL.md on this machine) or content (the text of a SKILL.md)' });
       }
 
       // Delegate to external dispatch handler (for browser, screenshots, etc.)

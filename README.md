@@ -13,7 +13,8 @@ Agents and the access channel are pluggable. Today the available agent is **Clau
 - **Git** — status, side-by-side diff, stage/unstage, commit, push/pull.
 - **Services** — register and run background services (PM2-style) per project, with live status.
 - **Tools** — headless browser automation, screenshots/window capture, a secrets vault (PIN-gated), and an agent usage meter.
-- **MCP server** — exposes project-scoped tools (kanban, mindmap, schedule, services, terminals, browser, screenshots, secrets, notifications) so agents can drive Crundi.
+- **Skills** — upload, edit and remove Claude skills from Settings: for every project on the machine or for one. Takes a `.zip` / `.skill` archive or a single `SKILL.md`. Updates to Crundi replace only the skills it ships; yours are left alone.
+- **MCP server** — exposes project-scoped tools (kanban, mindmap, schedule, services, terminals, browser, screenshots, secrets, skills, notifications) so agents can drive Crundi.
 - **Desktop app** (Electron) + **mobile-friendly** web UI.
 
 ## Requirements

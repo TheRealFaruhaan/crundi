@@ -52,7 +52,7 @@ export function applyStagedRestore({ appDir = defaultAppDir(), log = console.log
   const when = new Date().toISOString().replace(/[:.]/g, '-');
   const safety = join(appDir, 'pre-restore-' + when);
   mkdirSync(safety, { recursive: true });
-  let replaced = 0, transcripts = 0;
+  let replaced = 0, transcripts = 0, skills = 0;
 
   // .env (sign-in and settings). Its DATA_DIR named the other machine's
   // folder; keep this install's.
@@ -92,6 +92,19 @@ export function applyStagedRestore({ appDir = defaultAppDir(), log = console.log
     }
   }
 
+  // Global skills: added back whole, and never over one that is already here.
+  // A skill on this machine may be newer than the backup, or be the copy
+  // Crundi itself installs; either way it is not the restore's to replace.
+  const stagedSkills = join(stage, 'skills');
+  if (existsSync(stagedSkills)) {
+    const root = join(homedir(), '.claude', 'skills');
+    for (const name of readdirSync(stagedSkills)) {
+      const dest = join(root, name);
+      if (name.startsWith('.') || name === 'synced' || existsSync(dest)) continue;
+      try { mkdirSync(root, { recursive: true }); move(join(stagedSkills, name), dest); skills++; } catch { /* skip one */ }
+    }
+  }
+
   rmSync(stage, { recursive: true, force: true });
 
   // Only the newest few safety copies are kept.
@@ -102,10 +115,10 @@ export function applyStagedRestore({ appDir = defaultAppDir(), log = console.log
 
   const result = {
     at: Date.now(), key: info.key || '', backupCreatedAt: info.manifest?.createdAt || '',
-    fromHost: info.manifest?.host || '', replaced, transcripts, safetyCopy: safety,
+    fromHost: info.manifest?.host || '', replaced, transcripts, skills, safetyCopy: safety,
   };
   try { writeFileSync(join(appDir, 'restore-result.json'), JSON.stringify(result, null, 2)); } catch { /* ignore */ }
-  log(`[restore] Restored the backup made ${result.backupCreatedAt || '(unknown time)'} on ${result.fromHost || 'another machine'}: ${replaced} item(s) replaced, ${transcripts} transcript(s) added. The previous files are in ${safety}`);
+  log(`[restore] Restored the backup made ${result.backupCreatedAt || '(unknown time)'} on ${result.fromHost || 'another machine'}: ${replaced} item(s) replaced, ${transcripts} transcript(s) and ${skills} skill(s) added. The previous files are in ${safety}`);
   return result;
 }
 

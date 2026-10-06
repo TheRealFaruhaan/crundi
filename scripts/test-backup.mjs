@@ -115,6 +115,15 @@ for (let i = 1; i <= 5; i++) {
   const t = new Date(Date.UTC(2026, 0, i)); utimesSync(f, t, t);
 }
 
+// Global Claude skills: two the user put there, the one Crundi ships, one synced.
+const skillsDir = join(home, '.claude', 'skills');
+for (const [p, c] of Object.entries({
+  'mine/SKILL.md': '---\nname: mine\ndescription: d\n---\n', 'mine/scripts/run.sh': '#!/bin/sh\n',
+  'other/SKILL.md': '---\nname: other\ndescription: backed up\n---\n',
+  'crundi/SKILL.md': '---\nname: crundi\ndescription: d\n---\n',
+  'synced/bucket/docx/SKILL.md': '---\nname: docx\ndescription: d\n---\n',
+})) { mkdirSync(join(skillsDir, p, '..'), { recursive: true }); writeFileSync(join(skillsDir, p), c); }
+
 const backup = await import('../src/backup.js');
 const { applyStagedRestore } = await import('../src/restore-apply.js');
 
@@ -127,6 +136,9 @@ ok(!rels.some(r => /chrome|worktrees|update\.log|\.tmp$/.test(r)), 'browser prof
 const tr = rels.filter(r => r.startsWith('claude/')).sort();
 ok(tr.length === 3 && tr.join() === [`claude/${enc}/s3.jsonl`, `claude/${enc}/s4.jsonl`, `claude/${enc}/s5.jsonl`].join(), 'only the three newest transcripts of the project', tr.join());
 ok(manifest.projects.length === 1 && manifest.projects[0].alias === 'app' && manifest.transcripts === 3, 'the manifest lists the projects', JSON.stringify(manifest.projects) + ' ' + manifest.transcripts);
+
+const sk = rels.filter(r => r.startsWith('skills/')).sort();
+ok(sk.join() === 'skills/mine/SKILL.md,skills/mine/scripts/run.sh,skills/other/SKILL.md' && manifest.skills === 2, 'global skills the user installed are included; the one Crundi ships and synced ones are not', sk.join() + ' ' + manifest.skills);
 
 // ─── settings ───
 ok(!backup.updateConfig({ schedule: { enabled: true } }).ok, 'the schedule cannot be turned on before storage and passphrase are set');
@@ -167,6 +179,8 @@ rmSync(join(dataDir, 'notes'), { recursive: true });
 writeFileSync(join(appDir, '.env'), 'CRUNDI_PASSWORD_HASH=new\n');
 rmSync(join(tdir, 's5.jsonl'));
 writeFileSync(join(tdir, 's4.jsonl'), 'newer local copy');
+rmSync(join(skillsDir, 'mine'), { recursive: true });
+writeFileSync(join(skillsDir, 'other', 'SKILL.md'), 'edited since the backup');
 const applied = applyStagedRestore({ appDir, log: () => {} });
 ok(applied && JSON.parse(readFileSync(join(dataDir, 'kanban.json'), 'utf-8')).app[0].title === 'Ship it', 'applying at start brings the kanban back');
 ok(existsSync(join(dataDir, 'notes', 'app', '0123456789abcdef.json')), 'and the notes');
@@ -174,6 +188,8 @@ ok(readFileSync(join(dataDir, 'media', 'clip.bin')).equals(bigMedia), 'and the m
 ok(/CRUNDI_PASSWORD_HASH=abc/.test(readFileSync(join(appDir, '.env'), 'utf-8')), 'and the .env (sign-in)');
 ok(readFileSync(join(dataDir, 'chrome', 'Default', 'Cookies'), 'utf-8') === 'browser', 'the browser profile is left alone');
 ok(existsSync(join(tdir, 's5.jsonl')) && readFileSync(join(tdir, 's4.jsonl'), 'utf-8') === 'newer local copy', 'missing transcripts come back; existing ones are not overwritten');
+ok(existsSync(join(skillsDir, 'mine', 'scripts', 'run.sh')) && applied.skills === 1, 'a missing skill comes back whole', String(applied.skills));
+ok(readFileSync(join(skillsDir, 'other', 'SKILL.md'), 'utf-8') === 'edited since the backup', 'a skill that is already here is not overwritten by the restore');
 ok(existsSync(join(applied.safetyCopy, 'data', 'kanban.json')) && readFileSync(join(applied.safetyCopy, 'data', 'kanban.json'), 'utf-8').includes('changed'), 'what was replaced is kept in a pre-restore copy');
 ok(!existsSync(backup.stagingDir()) && existsSync(backup.restoreResultFile()), 'staging is cleared and the result recorded');
 ok(applyStagedRestore({ appDir, log: () => {} }) === null, 'nothing happens at the next start');

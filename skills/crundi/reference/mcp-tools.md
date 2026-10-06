@@ -130,6 +130,35 @@ workbench terminal panel (agent or command) or starts/stops a service.
 `todoId` / `nodeId` to link it), `media_delete`. Each item reports an absolute
 `path` so a file can be read directly.
 
+## Skills
+
+Claude skills are folders with a `SKILL.md`. Claude Code reads them from
+`~/.claude/skills/<name>/` (every project on the machine) and
+`<project>/.claude/skills/<name>/` (that project only). These tools manage both;
+the user has the same thing under Settings → Skills.
+
+| Tool | Use |
+|---|---|
+| `skill_list` | What is installed: `name`, `scope`, `description`, `kind`. `scope?` narrows it |
+| `skill_get` | One skill's file list and `SKILL.md`; `path` reads another file in it |
+| `skill_install` | Install from `path` (a skill folder, `.zip`, `.skill` or `SKILL.md` on this machine) or `content` (the text of a `SKILL.md`) |
+| `skill_delete` | Remove a skill and its files. No undo |
+
+`scope` is `global` (the default), `project` (this chat's project) or a project
+alias. `kind` says what may be done to a skill: only `user` skills can be
+changed or deleted. `bundled` skills ship with Crundi and are replaced on every
+update, `synced` ones are downloaded by Claude Code from the signed-in account,
+and `linked` ones are symlinks — all three are read-only here.
+
+`skill_install` never replaces silently: if the name is taken it fails with
+`conflict: true`. Repeat it with `overwrite: true` only when the user wants the
+existing skill replaced. A name that belongs to a bundled skill is refused
+outright — install under another `name`.
+
+A chat loads its skills when it starts. Installing or deleting one does not
+change a chat that is already running, including this one, and nothing here
+restarts a chat; tell the user a new chat will pick it up.
+
 ## Secrets
 
 | Tool | Approval | Use |

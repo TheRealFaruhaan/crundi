@@ -70,6 +70,7 @@ export const BASE = [
   '- Schedules: schedule_list, schedule_get, schedule_add, schedule_update, schedule_set_enabled, schedule_delete.',
   '- Media: media_list, media_get, media_add_path, media_delete.',
   '- Secrets: secret_search, secret_get, secret_run. secret_run hands a secret to a command without printing it — prefer it over reading a secret and pasting the value.',
+  '- Skills: skill_list, skill_get, skill_install, skill_delete manage the Claude skills on this machine, for every project or for one. Skills that ship with Crundi are read-only; a running chat keeps the skills it started with.',
   '- Also: get_usage for the current Claude usage windows, syntax_check for a fast parse of a file you just wrote.',
   '',
   'Use them where they fit, and call them rather than describing what calling them would do.',
