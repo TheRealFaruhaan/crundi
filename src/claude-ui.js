@@ -636,10 +636,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     for (const a of d.agents || []) {
       if (a && a.toolUseId && !s.agents.has(a.toolUseId)) {
         const rec = { ...a, messages: a.messages || [] };
-        // The process that was running this agent is gone, so it will never
-        // report an end. Left as 'running' it would sit on show, spinning, for
-        // as long as the conversation lives.
-        if (rec.kind === 'agent' && rec.status === 'running') {
+        // The process that was running this agent or command is gone, so it
+        // will never report an end. Left as 'running' it would sit on show,
+        // spinning, and hold the chat "busy", for as long as the conversation
+        // lives.
+        if (rec.status === 'running') {
           rec.status = 'stopped';
           if (!rec.endedAt) rec.endedAt = d.savedAt || Date.now();
         }
@@ -736,7 +737,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     schedulePersist(s);
   }
 
-  // ─── Finished agents put themselves away ───
+  // ─── Finished agents and commands put themselves away ───
   //
   // A finished agent stays on show for a few minutes — long enough to notice it
   // ended and open its transcript — and is then dismissed without being asked.
@@ -746,7 +747,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // Done here rather than in the browser for the same reason dismissing is: it
   // is a fact about the conversation. A timer in one tab would leave the agent
   // on show everywhere else, and would not run at all with no tab open.
-  // Agents only. A background command or Monitor is never shown as one.
+  //
+  // Background commands and Monitors ("task") follow the same rule. Only ever
+  // once one has ENDED: a Monitor reports each event it sees and stays armed,
+  // and handleTaskEvent keeps it 'running' until it says otherwise.
   const AGENT_LINGER_MS = 5 * 60 * 1000;
 
   /** A timestamp from the CLI in ms: it has reported seconds, ms and ISO text. */
@@ -768,7 +772,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * dismissed the agent on the spot (its time was already up).
    */
   function scheduleAutoDismiss(s, a) {
-    if (!a || a.kind !== 'agent') return false;
+    if (!a) return false;
     if (a.dismissed || a.status === 'running') { cancelAutoDismiss(s, a.toolUseId); return false; }
     if (!a.endedAt) a.endedAt = Date.now();
     if (!s.agentTimers) s.agentTimers = new Map();

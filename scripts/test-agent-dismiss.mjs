@@ -1,10 +1,10 @@
-// Finished agents put themselves away, and commands are not agents.
+// Finished agents and background commands put themselves away.
 //
 // The chat used to float one pill per subagent AND per background command over
 // the conversation, with no cap on running ones: a turn that fanned out to ten
 // agents and five commands covered most of a phone screen, and every pill had
-// to be closed by hand. Now the client shows one badge for agents only, and the
-// server dismisses a finished agent five minutes after it ended.
+// to be closed by hand. Now the client shows two badges - one count of agents,
+// one of commands - and the server dismisses either five minutes after it ends.
 //
 // The server half is tested by lifting the real functions out of claude-ui.js
 // and running them against a fake clock, the way test-waiting-state.mjs does:
@@ -81,8 +81,13 @@ const MIN = 60_000;
 
   const task = w.agent('t', { kind: 'task', status: 'completed' });
   w.api.scheduleAutoDismiss(w.s, task);
+  w.advance(5 * MIN - 1); const taskEarly = task.dismissed;
+  w.advance(1);
+  ok(!taskEarly && task.dismissed === true, 'a finished background command is put away after five minutes as well');
+  const monitor = w.agent('mon', { kind: 'task', status: 'running' });   // armed: reports events, has not ended
+  w.api.scheduleAutoDismiss(w.s, monitor);
   w.advance(60 * MIN);
-  ok(!task.dismissed && !task.endedAt, 'a background command is left alone: it is not an agent');
+  ok(!monitor.dismissed && !monitor.endedAt, 'a command or Monitor that is still running is never put away');
 
   const manual = w.agent('m', { status: 'completed' });
   w.api.scheduleAutoDismiss(w.s, manual);
@@ -126,22 +131,25 @@ const MIN = 60_000;
 
 // ─── Wiring: the countdown is actually reached ───
 ok(/scheduleAutoDismiss\(s, a\);\s*emitAgent\(s, a\);\s*\}/.test(ui), 'every task event passes through the countdown');
-ok(/rec\.status = 'stopped'/.test(ui) && /scheduleAutoDismiss\(s, rec\)/.test(ui), 'an agent restored as "running" is marked stopped and counted down: its process is gone');
+ok(/if \(rec\.status === 'running'\) \{\s*rec\.status = 'stopped'/.test(ui) && /scheduleAutoDismiss\(s, rec\)/.test(ui), 'anything restored as "running" is marked stopped and counted down: its process is gone');
 ok(/cancelAutoDismiss\(s, id\)/.test(ui), 'dismissing by hand cancels the countdown');
 ok(/s\.agentTimers\.values\(\)\) clearTimeout\(t\)/.test(ui), 'closing a chat clears its countdowns');
 ok(/a\.endedAt = toMs\(patch\.end_time\)/.test(ui), 'end times from the CLI are normalised');
 
-// ─── The client: one badge, agents only ───
+// ─── The client: one badge per kind ───
 const chat = read('app', 'vendor', 'claude-chat.js');
 ok(!/cc-bub\b|drawBubble|trimDock/.test(chat), 'the per-item pills are gone');
-const shown = chat.slice(chat.indexOf('function shownAgents()'), chat.indexOf('function shownAgents()') + 260);
-ok(/rec\.meta\.kind !== 'task' && !rec\.dismissed/.test(shown), 'the badge counts undismissed agents and never commands', shown);
-ok(/function syncBadge\(\)[\s\S]{0,400}shownAgents\(\)/.test(chat) && /function paintAgentList\(\)[\s\S]{0,200}shownAgents\(\)/.test(chat), 'the badge and the list draw from the same set');
-ok(/badgeEvent\('add'\)/.test(chat) && /badgeEvent\('done'\)/.test(chat), 'the badge animates when an agent is added and when one finishes');
+ok(/function kindOf\(m\) \{ return m\.kind === 'task' \? 'task' : 'agent'; \}/.test(chat), 'commands and agents are told apart');
+const shown = chat.slice(chat.indexOf('function shownOf(kind)'), chat.indexOf('function shownOf(kind)') + 220);
+ok(/kindOf\(rec\.meta\) === kind && !rec\.dismissed/.test(shown), 'a badge counts what is undismissed, of its own kind only', shown);
+ok(/badgeRow\.appendChild\(taskBadge\);\s*badgeRow\.appendChild\(agentBadge\);/.test(chat), 'the commands badge sits in the same row as the agents badge');
+ok(/function syncBadge\(\)[\s\S]{0,300}shownOf\(kind\)/.test(chat) && /function paintAgentList\(\)[\s\S]{0,200}shownOf\(listKind\)/.test(chat), 'a badge and its list draw from the same set');
+ok(/badgeEvent\(kind, 'add'\)/.test(chat) && /badgeEvent\(kind, 'done'\)/.test(chat), 'each badge animates when one of its kind is added and when one finishes');
 ok(/if \(!agentsLive\) return;/.test(chat), 'but not while a stored conversation is being replayed');
 ok(/prefers-reduced-motion: reduce\)\{\.cc-agbadge\.ev-add,\.cc-agbadge\.ev-done\{animation:none\}/.test(chat), 'and not for someone who has asked for reduced motion');
-ok(/toggleAgentPanel\(row\.dataset\.id, true\)/.test(chat), 'a row in the list opens that agent\'s transcript');
+ok(/toggleAgentPanel\(row\.dataset\.id, true\)/.test(chat), 'a row in a list opens that agent\'s transcript or that command\'s output');
 ok(/if \(meta\.dismissed\) rec\.dismissed = true;/.test(chat), 'a dismissal made by the server is honoured');
+ok(/function dismissAllShown\(kind\)[\s\S]{0,120}shownOf\(kind\)/.test(chat) && !/all: true/.test(chat), 'Dismiss all clears the open list only, not the other kind');
 
 console.log(failed ? `\n${failed} agent check(s) failed` : '\nAll agent dismiss checks passed');
 process.exit(failed ? 1 : 0);

@@ -227,17 +227,18 @@
     '.cc-slash-item span{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.cc-wrap{position:relative}',
 
-    // Floating dock over the bottom of the transcript. It holds two things: one
-    // small badge for the subagents (below) and the suggested reply.
+    // Floating dock over the bottom of the transcript. It holds a row of two
+    // small badges - background commands and subagents - and the suggested
+    // reply.
     //
     // It used to hold a pill per agent and per background command, capped at
     // four finished ones but with no cap on running ones - so a turn that
     // fanned out to ten agents and five commands stacked fifteen pills over
-    // the conversation, covering most of a phone screen. Now: commands are not
-    // shown here at all (each already has its row in the transcript), and the
-    // agents collapse into one badge with a count that opens a list.
+    // the conversation, covering most of a phone screen. Now each kind is one
+    // badge: an icon and a count, which opens a list.
     '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:min(320px,calc(100% - 20px))}',
     '.cc-agents:empty{display:none}',
+    '.cc-agbadges{display:flex;align-items:center;justify-content:flex-end;gap:6px;max-width:100%}',
     '.cc-agbadge{pointer-events:auto;display:none;align-items:center;gap:6px;min-height:30px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:999px;padding:4px 10px 4px 8px;color:var(--text-secondary);cursor:pointer;box-shadow:var(--shadow-md);font:inherit;font-size:calc(12px*var(--cc-fs,1));line-height:1}',
     '.cc-agbadge.on{display:inline-flex}',
     '.cc-agbadge:hover,.cc-agbadge.open{border-color:var(--accent);color:var(--text-primary)}',
@@ -272,6 +273,9 @@
     '.cc-agpanel-back:hover{color:var(--text-primary)}',
     // The title is what tells two transcripts apart; the status line gives way first.
     '.cc-agpanel-sub{flex-shrink:5}',
+    // In a list the title is one short word and must not be the thing that gives way.
+    '.cc-aglist .cc-agpanel-title{flex:0 0 auto}',
+    '.cc-aglist .cc-agpanel-sub{flex:1 1 auto}',
 
     // Expanded transcript, anchored inside the chat cell.
     '.cc-agpanel{position:absolute;inset:8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);display:flex;flex-direction:column;z-index:25;animation:cc-in .16s ease}',
@@ -759,11 +763,17 @@
     composer.appendChild(meta);
     var logWrap = el('div', 'cc-logwrap');
     var agentDock = el('div', 'cc-agents');
-    // One badge for every subagent that has not been put away: an icon and a
-    // count. Hidden while there are none.
-    var agentBadge = el('button', 'cc-agbadge');
+    // Two badges side by side, each an icon and a count of what has not been
+    // put away: background commands on the left, subagents on the right. Each
+    // is hidden while it has nothing to count.
+    var badgeRow = el('div', 'cc-agbadges');
+    var taskBadge = el('button', 'cc-agbadge cc-agbadge-task');
+    taskBadge.type = 'button';
+    var agentBadge = el('button', 'cc-agbadge cc-agbadge-agent');
     agentBadge.type = 'button';
-    agentDock.appendChild(agentBadge);
+    badgeRow.appendChild(taskBadge);
+    badgeRow.appendChild(agentBadge);
+    agentDock.appendChild(badgeRow);
     logWrap.appendChild(log);
     logWrap.appendChild(agentDock);
     // Hidden until there is a plan AND the header pill is clicked.
@@ -1786,8 +1796,8 @@
         return;
       }
       var stick = atBottom();
-      // Last in the floating dock, under the agents badge. resetAgents empties
-      // the dock, so it is re-created when missing.
+      // Last in the floating dock, under the badges. resetAgents empties the
+      // dock, so it is re-created when missing.
       if (!sugNode || sugNode.parentNode !== agentDock) {
         sugNode = el('div', 'cc-sug-row');
         sugNode.addEventListener('click', function (e) {
@@ -2330,11 +2340,12 @@
     var agents = new Map();   // toolUseId -> { meta, messages, dismissed }
     var openAgent = null;     // toolUseId of the open transcript, if any
     var agentPanel = null;
-    var agentList = null;     // the agents list sheet, while it is open
+    var agentList = null;     // the list sheet, while it is open
+    var listKind = '';        // which list that is: 'agent' or 'task'
     var agentsLive = false;   // false while a stored session is being replayed
 
-    // Putting an agent away has to stick. It lived only in the record before,
-    // so a refresh - or reopening the desktop app - rebuilt every one from the
+    // Putting one away has to stick. It lived only in the record before, so a
+    // refresh - or reopening the desktop app - rebuilt every one from the
     // replayed session and handed back the exact clutter the X removed.
     // Same {t, ids} shape as the drafts so the TTL sweep above reaps it too.
     function agentRec(toolUseId) {
@@ -2354,18 +2365,17 @@
 
     function agentRunning(m) { return m.status === 'running' || !m.status; }
 
-    /**
-     * The agents on show: real subagents that have not been dismissed.
-     *
-     * A background command or Monitor (kind "task") is deliberately not one of
-     * them. The server tracks those alongside agents because the CLI reports
-     * them the same way, but each already has its own row in the transcript,
-     * and listing them here again is what buried the conversation.
-     */
-    function shownAgents() {
+    // The server tracks two kinds of background work the same way, because the
+    // CLI reports them the same way: subagents, and background commands and
+    // Monitors ("task"). They are counted and listed apart - an agent has a
+    // transcript to read, a command has output - but behave alike.
+    function kindOf(m) { return m.kind === 'task' ? 'task' : 'agent'; }
+
+    /** What is on show for one kind: everything of it not yet dismissed. */
+    function shownOf(kind) {
       var out = [];
       agents.forEach(function (rec) {
-        if (rec.meta.kind !== 'task' && !rec.dismissed) out.push(rec);
+        if (kindOf(rec.meta) === kind && !rec.dismissed) out.push(rec);
       });
       return out;
     }
@@ -2376,7 +2386,8 @@
     var LOG_PAD = 4;
     function dockLayout() {
       if (sugNode && sugNode.parentNode === agentDock && agentDock.lastChild !== sugNode) agentDock.appendChild(sugNode);
-      var shown = !!(sugNode && sugNode.parentNode === agentDock) || agentBadge.classList.contains('on');
+      var shown = !!(sugNode && sugNode.parentNode === agentDock)
+        || agentBadge.classList.contains('on') || taskBadge.classList.contains('on');
       var pad = shown ? Math.max(LOG_PAD, agentDock.offsetHeight + 14) : LOG_PAD;
       if (log.style.paddingBottom !== pad + 'px') {
         var stick = stickBottom;
@@ -2387,39 +2398,57 @@
     if (window.MutationObserver) { try { new MutationObserver(dockLayout).observe(agentDock, { childList: true }); } catch (e) {} }
     if (window.ResizeObserver) { try { new ResizeObserver(dockLayout).observe(agentDock); } catch (e) {} }
 
-    var AGENT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-      + '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+    var SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+    var KINDS = {
+      agent: {
+        badge: agentBadge, one: 'agent', many: 'agents', title: 'Agents', back: '‹ Agents',
+        icon: SVG_OPEN + '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>',
+        foot: 'A finished agent leaves this list after 5 minutes. Its transcript stays on its Agent row in the chat.',
+      },
+      task: {
+        badge: taskBadge, one: 'background command', many: 'background commands', title: 'Commands', back: '‹ Commands',
+        icon: SVG_OPEN + '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+        foot: 'A finished command leaves this list after 5 minutes. Its output stays on its row in the chat. Dismissing one does not stop it.',
+      },
+    };
 
-    /** Play a one-shot animation on the badge: "add" or "done". */
-    function badgeEvent(kind) {
+    /** Play a one-shot animation on a kind's badge: "add" or "done". */
+    function badgeEvent(kind, what) {
       if (!agentsLive) return;   // a replayed session is not news
-      var cls = 'ev-' + kind;
-      agentBadge.classList.remove('ev-add', 'ev-done');
+      // A sheet is open over the badges: the ring would glow out from under its edge.
+      if (agentList || agentPanel) return;
+      var badge = KINDS[kind].badge;
+      var cls = 'ev-' + what;
+      badge.classList.remove('ev-add', 'ev-done');
       // Reading a layout property between the two is what restarts an
       // animation that is already running.
-      void agentBadge.offsetWidth;
-      agentBadge.classList.add(cls);
-      clearTimeout(agentBadge._evTimer);
-      agentBadge._evTimer = setTimeout(function () { agentBadge.classList.remove(cls); }, 1000);
+      void badge.offsetWidth;
+      badge.classList.add(cls);
+      clearTimeout(badge._evTimer);
+      badge._evTimer = setTimeout(function () { badge.classList.remove(cls); }, 1000);
     }
 
     function syncBadge() {
-      var shown = shownAgents();
-      var running = shown.filter(function (r) { return agentRunning(r.meta); }).length;
-      var was = agentBadge.classList.contains('on');
-      agentBadge.classList.toggle('on', shown.length > 0);
-      agentBadge.classList.toggle('busy', running > 0);
-      agentBadge.classList.toggle('open', !!agentList);
-      if (shown.length) {
-        agentBadge.innerHTML = AGENT_ICON + '<span class="cc-agbadge-n">' + shown.length + '</span>'
+      var changed = false;
+      ['task', 'agent'].forEach(function (kind) {
+        var k = KINDS[kind], badge = k.badge;
+        var shown = shownOf(kind);
+        var running = shown.filter(function (r) { return agentRunning(r.meta); }).length;
+        var open = !!agentList && listKind === kind;
+        if (badge.classList.contains('on') !== shown.length > 0) changed = true;
+        badge.classList.toggle('on', shown.length > 0);
+        badge.classList.toggle('busy', running > 0);
+        badge.classList.toggle('open', open);
+        if (!shown.length) return;
+        badge.innerHTML = k.icon + '<span class="cc-agbadge-n">' + shown.length + '</span>'
           + (running ? '<span class="cc-spin"></span>' : '<span class="cc-dot-ok"></span>');
-        var label = shown.length + (shown.length === 1 ? ' agent' : ' agents')
+        var label = shown.length + ' ' + (shown.length === 1 ? k.one : k.many)
           + (running ? ', ' + running + ' running' : ', all finished');
-        agentBadge.title = label + ' — click to see ' + (shown.length === 1 ? 'it' : 'them');
-        agentBadge.setAttribute('aria-label', label);
-        agentBadge.setAttribute('aria-expanded', agentList ? 'true' : 'false');
-      }
-      if (was !== shown.length > 0) dockLayout();
+        badge.title = label + ' — click to see ' + (shown.length === 1 ? 'it' : 'them');
+        badge.setAttribute('aria-label', label);
+        badge.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      if (changed) dockLayout();
       if (agentList) paintAgentList();
     }
 
@@ -2430,34 +2459,36 @@
      * where the call fails, but the server copy is what makes a dismissal stick
      * across devices, origins and reinstalls.
      */
-    function persistDismissed(ids, all) {
+    function persistDismissed(ids) {
+      if (!ids.length) return;
       apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/dismiss-agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(all ? { all: true } : { toolUseIds: ids }),
+        body: JSON.stringify({ toolUseIds: ids }),
       }).catch(function () { /* localStorage still covers this browser */ });
     }
 
-    // Dismissing takes an agent off the badge; it does not stop the agent -
-    // that is the CLI's business. The transcript still has its Agent row, so
-    // the work stays reachable afterwards.
+    // Dismissing takes one off its badge; it does not stop it - that is the
+    // CLI's business. Its row in the transcript stays, so the transcript or the
+    // output is still reachable afterwards. For a command it also stops that
+    // command holding the chat "busy", which is what keeps an idle chat open.
     function dismissAgent(toolUseId) {
       var rec = agents.get(toolUseId);
       if (!rec || rec.dismissed) return;
       rec.dismissed = true;
       markDismissed(toolUseId);
-      persistDismissed([toolUseId], false);
+      persistDismissed([toolUseId]);
       syncBadge();
     }
 
-    function dismissAllAgents() {
-      // Everything the server tracks, commands included, so a background task
-      // that never reports its end stops holding the chat "busy" as well.
-      agents.forEach(function (rec, id) {
+    /** Everything in the open list, and only that: the other kind is untouched. */
+    function dismissAllShown(kind) {
+      var ids = shownOf(kind).map(function (rec) {
         rec.dismissed = true;
-        markDismissed(id);
+        markDismissed(rec.meta.toolUseId);
+        return rec.meta.toolUseId;
       });
-      persistDismissed(null, true);
+      persistDismissed(ids);
       closeAgentList();
       syncBadge();
     }
@@ -2466,21 +2497,23 @@
       if (!meta || !meta.toolUseId) return;
       var known = agents.has(meta.toolUseId);
       var rec = agentRec(meta.toolUseId);
-      var wasShown = known && rec.meta.kind !== 'task' && !rec.dismissed;
+      var wasShown = known && !rec.dismissed;
+      var wasKind = kindOf(rec.meta);
       var wasRunning = agentRunning(rec.meta);
       // `count` is the server's tally; our own messages array is authoritative.
       var count = rec.meta.count;
       rec.meta = meta;
-      // The server remembers dismissals, and makes its own: a finished agent is
-      // dismissed there five minutes after it ended, and that arrives here as
-      // this flag. localStorage alone was per-origin and per-device, so the
-      // same conversation on a phone brought every dismissed agent back.
+      // The server remembers dismissals, and makes its own: a finished agent or
+      // command is dismissed there five minutes after it ended, and that
+      // arrives here as this flag. localStorage alone was per-origin and
+      // per-device, so the same conversation on a phone brought them all back.
       if (meta.dismissed) rec.dismissed = true;
       if (meta.count == null) rec.meta.count = count;
-      var isShown = meta.kind !== 'task' && !rec.dismissed;
+      var kind = kindOf(meta);
+      var isShown = !rec.dismissed;
       syncBadge();
-      if (isShown && !wasShown) badgeEvent('add');
-      else if (isShown && wasRunning && !agentRunning(meta)) badgeEvent('done');
+      if (isShown && (!wasShown || wasKind !== kind)) badgeEvent(kind, 'add');
+      else if (isShown && wasRunning && !agentRunning(meta)) badgeEvent(kind, 'done');
       // The tool row that spawned this agent was painted before we knew it was
       // one; repaint it now so it picks up the drill-in.
       entries.forEach(function (r) {
@@ -2571,10 +2604,11 @@
       agentPanel = el('div', 'cc-agpanel');
       var head = el('div', 'cc-agpanel-head');
       if (fromList === true) {
-        var back = el('button', 'cc-agpanel-back', '‹ Agents');
+        var backKind = kindOf(rec.meta);
+        var back = el('button', 'cc-agpanel-back', KINDS[backKind].back);
         back.type = 'button';
-        back.title = 'Back to the agents list';
-        back.addEventListener('click', function () { closeAgentPanel(); openAgentList(); });
+        back.title = 'Back to the list';
+        back.addEventListener('click', function () { closeAgentPanel(); openAgentList(backKind); });
         head.appendChild(back);
       }
       head.appendChild(el('span', 'cc-agpanel-title', ''));
@@ -2624,10 +2658,10 @@
       openAgent = null;
     }
 
-    // ─── The agents list ───
+    // ─── The list a badge opens ───
     //
-    // What the badge opens: every agent on show, running ones first. A row
-    // opens that agent's transcript; its X dismisses it.
+    // Everything of one kind that is on show, running ones first. A row opens
+    // that agent's transcript, or that command's output; its X dismisses it.
 
     function agentRowSub(m) {
       var bits = [];
@@ -2641,7 +2675,7 @@
 
     function paintAgentList() {
       if (!agentList) return;
-      var shown = shownAgents();
+      var shown = shownOf(listKind);
       if (!shown.length) { closeAgentList(); return; }
       // Running first, then the most recently finished; ties keep their order.
       shown = shown.map(function (r, i) { return { r: r, i: i }; }).sort(function (a, b) {
@@ -2670,19 +2704,23 @@
       body.scrollTop = top;
     }
 
-    function openAgentList() {
-      if (agentList) return;
-      if (!shownAgents().length) return;
+    function openAgentList(kind) {
+      kind = kind === 'task' ? 'task' : 'agent';
+      if (agentList && listKind === kind) return;
+      if (!shownOf(kind).length) return;
       closeAgentPanel();
+      closeAgentList();
+      listKind = kind;
+      var k = KINDS[kind];
       agentList = el('div', 'cc-agpanel cc-aglist');
       agentList.setAttribute('role', 'dialog');
-      agentList.setAttribute('aria-label', 'Agents');
+      agentList.setAttribute('aria-label', k.title);
       var head = el('div', 'cc-agpanel-head');
-      head.appendChild(el('span', 'cc-agpanel-title', 'Agents'));
+      head.appendChild(el('span', 'cc-agpanel-title', k.title));
       head.appendChild(el('span', 'cc-agpanel-sub', ''));
       var all = el('button', 'cc-aglist-acts', 'Dismiss all');
       all.type = 'button';
-      all.addEventListener('click', dismissAllAgents);
+      all.addEventListener('click', function () { dismissAllShown(kind); });
       head.appendChild(all);
       var x = el('button', 'cc-agpanel-x', '✕');
       x.type = 'button';
@@ -2700,11 +2738,10 @@
       body.addEventListener('keydown', function (ev) {
         if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.classList.contains('cc-agrow')) { ev.preventDefault(); act(ev); }
       });
-      agentList.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closeAgentList(); agentBadge.focus(); } });
+      agentList.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closeAgentList(); k.badge.focus(); } });
       agentList.appendChild(head);
       agentList.appendChild(body);
-      agentList.appendChild(el('div', 'cc-aglist-foot',
-        'A finished agent leaves this list after 5 minutes. Its transcript stays on its Agent row in the chat.'));
+      agentList.appendChild(el('div', 'cc-aglist-foot', k.foot));
       logWrap.appendChild(agentList);
       paintAgentList();
       syncBadge();
@@ -2716,13 +2753,16 @@
       if (!agentList) return;
       agentList.remove();
       agentList = null;
-      agentBadge.classList.remove('open');
-      agentBadge.setAttribute('aria-expanded', 'false');
+      listKind = '';
+      [agentBadge, taskBadge].forEach(function (b) {
+        b.classList.remove('open');
+        b.setAttribute('aria-expanded', 'false');
+      });
     }
 
-    function toggleAgentList() {
-      if (agentList) { closeAgentList(); return; }
-      openAgentList();
+    function toggleAgentList(kind) {
+      if (agentList && listKind === kind) { closeAgentList(); return; }
+      openAgentList(kind);
     }
 
     function resetAgents() {
@@ -2730,8 +2770,9 @@
       closeAgentList();
       agents.clear();
       agentDock.innerHTML = '';
-      agentDock.appendChild(agentBadge);   // the wipe above detaches it
+      agentDock.appendChild(badgeRow);   // the wipe above detaches it
       agentBadge.classList.remove('ev-add', 'ev-done');
+      taskBadge.classList.remove('ev-add', 'ev-done');
       syncBadge();
     }
 
@@ -2912,7 +2953,8 @@
     }
 
     schedBtn.addEventListener('click', openSched);
-    agentBadge.addEventListener('click', toggleAgentList);
+    agentBadge.addEventListener('click', function () { toggleAgentList('agent'); });
+    taskBadge.addEventListener('click', function () { toggleAgentList('task'); });
     syncBadge();
 
     // ─── Goal mode ───
