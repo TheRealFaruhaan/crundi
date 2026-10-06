@@ -64,6 +64,11 @@ ok(ns.getPage('proj', id).page.blocks[0].text === 'v2', 'and nothing was overwri
 const empty = ns.savePage('proj', id, { blocks: [], baseVersion: 2 });
 ok(empty.ok && ns.getPage('proj', id).page.blocks.length === 1, 'an empty page keeps one blank paragraph');
 
+// "Newest" is updatedAt, an ISO string with millisecond resolution. The save
+// above and this create can land in the same millisecond, and then the order
+// is whatever the directory listing gives — which failed about 1 run in 15
+// and blocked a release build. Let the clock move on first.
+for (const t = Date.now(); Date.now() === t;) { /* spin for under a millisecond */ }
 ns.createPage('proj', { title: 'Second', blocks: [{ type: 'p', text: 'second body' }] });
 let list = ns.listPages('proj');
 ok(list.length === 2 && list[0].title === 'Second', 'the list holds both pages, newest first');
