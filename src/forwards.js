@@ -315,11 +315,76 @@ export function match(hostHeader) {
 }
 
 /**
+ * How long a proxied stream may sit blocked on a reader that takes nothing
+ * before both ends are torn down. Not an idle timeout: a quiet SSE stream with
+ * a live client never trips it, because nothing is waiting to be written. It
+ * only runs while bytes are queued for a side that has stopped accepting them.
+ */
+const STALL_TIMEOUT_MS = Math.max(1000, Number(process.env.FORWARD_STALL_TIMEOUT_MS) || 120_000);
+
+/** After one side of an upgraded connection ends, how long the other gets to finish. */
+const HALF_CLOSE_GRACE_MS = 5_000;
+
+/** Probe interval for dead peers on upgraded connections that carry no traffic. */
+const KEEPALIVE_MS = 30_000;
+
+/**
+ * Copy src to dst with backpressure, and notice when dst stops draining.
+ *
+ * This replaces src.pipe(dst), which has two holes that between them leaked
+ * every upstream socket whose client left mid-stream. When dst closes, pipe()
+ * only unpipes: src is left paused and open, so the upstream keeps sending
+ * until the kernel receive buffer is full and then the socket sits there for
+ * good, megabytes deep. And when dst merely stalls — a frozen phone tab, a
+ * tunnel that went away without a FIN — pipe() waits for a 'drain' that never
+ * comes. Enough of those and the box hits TCP memory pressure, which throttles
+ * everything on it, not just the forward.
+ *
+ * Closing is the caller's job (see the 'close' handlers at each call site);
+ * this only reports a stall. Progress is judged by bytes actually leaving on
+ * dst's socket, so a slow reader of a large buffered chunk is not a stall.
+ */
+function pump(src, dst, onStall) {
+  let timer = null;
+  let seen = 0;
+  const written = () => (dst.socket || dst).bytesWritten || 0;
+  const disarm = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  const arm = () => {
+    disarm();
+    seen = written();
+    timer = setTimeout(() => {
+      timer = null;
+      if (dst.destroyed) return;
+      if (written() !== seen) arm(); else onStall();
+    }, STALL_TIMEOUT_MS);
+    timer.unref?.();
+  };
+  src.on('data', (chunk) => {
+    if (dst.destroyed || dst.writableEnded) return;
+    if (!dst.write(chunk)) { src.pause(); arm(); }
+  });
+  dst.on('drain', () => { disarm(); src.resume(); });
+  src.on('end', () => {
+    if (dst.destroyed || dst.writableEnded) return;
+    // The tail still has to reach dst; keep watching until it has.
+    if (dst.writableNeedDrain || dst.writableLength) arm();
+    dst.end();
+  });
+  dst.on('finish', disarm);
+  dst.on('close', disarm);
+}
+
+/**
  * Proxy a request to the forwarded port.
  *
  * Headers pass through mostly untouched: the app believes it is at the root of
  * its own hostname, which is the entire reason for doing it this way. Only
  * X-Forwarded-* are added, so an app that cares can tell.
+ *
+ * The two connections live and die together. Whichever way the client leaves —
+ * finished, closed, reset, aborted mid-upload, or stalled past the timeout —
+ * the upstream request is destroyed with it, and an upstream that dies
+ * mid-response takes the client's response down rather than leaving it hung.
  */
 export function proxy(forward, req, res, upstreamPath) {
   const headers = { ...req.headers };
@@ -328,6 +393,11 @@ export function proxy(forward, req, res, upstreamPath) {
   headers['x-forwarded-host'] = req.headers.host || '';
   headers['x-forwarded-for'] = req.socket.remoteAddress || '';
 
+  const teardown = () => {
+    if (!upstream.destroyed) upstream.destroy();
+    if (!res.destroyed) res.destroy();
+  };
+
   const upstream = httpRequest({
     host: '127.0.0.1',
     port: forward.port,
@@ -335,11 +405,34 @@ export function proxy(forward, req, res, upstreamPath) {
     path: upstreamPath || req.url,
     headers,
   }, (up) => {
-    res.writeHead(up.statusCode || 502, up.headers);
-    up.pipe(res);
+    // The client may have gone while the upstream was thinking. Nobody is
+    // left to read this; an unread response is exactly the leak.
+    if (res.destroyed) { upstream.destroy(); return; }
+    // Upstream closed before its response was complete: say so to the client
+    // by closing, instead of leaving a response that will never end.
+    up.on('close', () => { if (!up.complete) teardown(); });
+    up.on('error', () => { /* 'close' follows and does the work */ });
+    try {
+      res.writeHead(up.statusCode || 502, up.headers);
+    } catch {
+      teardown();
+      return;
+    }
+    pump(up, res, teardown);
   });
 
+  // 'close' is the one event every client exit ends in: response finished,
+  // connection closed or reset, request aborted mid-body, res.destroy(). If
+  // the response did not finish, the upstream has no reader — destroy it. On a
+  // clean finish the upstream socket has already gone back to the keep-alive
+  // pool and this must leave it alone.
+  res.on('close', () => {
+    if (!res.writableFinished && !upstream.destroyed) upstream.destroy();
+  });
+  req.on('error', () => { /* res 'close' follows */ });
+
   upstream.on('error', (err) => {
+    if (res.destroyed) return;                       // we destroyed it ourselves
     if (res.headersSent) { try { res.destroy(); } catch { /* ignore */ } return; }
     res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end(
@@ -350,7 +443,9 @@ export function proxy(forward, req, res, upstreamPath) {
     );
   });
 
-  req.pipe(upstream);
+  // Same watchdog for the upload direction: an upstream that stops reading a
+  // request body would otherwise hold the client's socket the same way.
+  pump(req, upstream, teardown);
 }
 
 /**
@@ -358,6 +453,9 @@ export function proxy(forward, req, res, upstreamPath) {
  *
  * Without this every dev server's hot reload dies at the first hop, which is
  * exactly the thing you notice ten minutes later and blame on something else.
+ *
+ * As with proxy(), neither socket outlives the other: close, error, a refused
+ * upgrade, a stall, or a peer that vanished without a FIN all end both.
  */
 export function proxyUpgrade(forward, req, socket, head, upstreamPath) {
   const upstream = httpRequest({
@@ -368,7 +466,32 @@ export function proxyUpgrade(forward, req, socket, head, upstreamPath) {
     headers: req.headers,
   });
 
-  upstream.on('upgrade', (upRes, upSocket, upHead) => {
+  let upSocket = null;
+  let grace = null;
+  const teardown = () => {
+    if (grace) { clearTimeout(grace); grace = null; }
+    if (!socket.destroyed) socket.destroy();
+    if (upSocket && !upSocket.destroyed) upSocket.destroy();
+    if (!upstream.destroyed) upstream.destroy();
+  };
+
+  // From the moment the server hands the socket over it has no listeners of
+  // its own, so these have to exist before the upstream answers: an error here
+  // would otherwise be uncaught, and a client that left early would leave the
+  // upstream request waiting on nobody.
+  socket.on('error', teardown);
+  socket.on('close', teardown);
+
+  upstream.on('upgrade', (upRes, sock, upHead) => {
+    upSocket = sock;
+    upSocket.on('error', teardown);
+    upSocket.on('close', teardown);
+    if (socket.destroyed) { teardown(); return; }
+
+    // A WebSocket that says nothing gives TCP no reason to notice its peer is
+    // gone. Keepalive probes turn a vanished phone into an error on the socket.
+    try { socket.setKeepAlive(true, KEEPALIVE_MS); upSocket.setKeepAlive(true, KEEPALIVE_MS); } catch { /* ignore */ }
+
     const lines = [`HTTP/1.1 ${upRes.statusCode} ${upRes.statusMessage}`];
     for (const [k, v] of Object.entries(upRes.headers)) {
       for (const one of [].concat(v)) lines.push(`${k}: ${one}`);
@@ -384,14 +507,24 @@ export function proxyUpgrade(forward, req, socket, head, upstreamPath) {
     // it (chisel, SSH-over-WS, WS-RPC, terminals); HMR stays silent until
     // spoken to, so this sat here looking fine.
     if (upHead?.length) socket.write(upHead);
-    upSocket.pipe(socket);
-    socket.pipe(upSocket);
-    upSocket.on('error', () => socket.destroy());
-    socket.on('error', () => upSocket.destroy());
+    pump(upSocket, socket, teardown);
+    pump(socket, upSocket, teardown);
+
+    // pump() passes a FIN along. The far side should then close; one that
+    // never does would hold both sockets half-open indefinitely.
+    const halfClosed = () => {
+      if (grace) return;
+      grace = setTimeout(teardown, HALF_CLOSE_GRACE_MS);
+      grace.unref?.();
+    };
+    socket.on('end', halfClosed);
+    upSocket.on('end', halfClosed);
   });
 
-  upstream.on('response', () => socket.destroy());   // upstream refused to upgrade
-  upstream.on('error', () => socket.destroy());
+  // Upstream refused to upgrade and sent an ordinary response instead. Destroy
+  // the request too: its body is never read, and leaving it open is the leak.
+  upstream.on('response', teardown);
+  upstream.on('error', teardown);
   if (head?.length) upstream.write(head);
   upstream.end();
 }
