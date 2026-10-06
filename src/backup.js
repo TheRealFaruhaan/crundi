@@ -8,6 +8,8 @@
  *                     media, schedules, services, forwards, secrets (still
  *                     PIN-sealed), chat history, notification settings…
  *   claude/<dir>/…    the three most recent Claude transcripts per project
+ *   skills/<name>/…   the global Claude skills that were put there (not the ones
+ *                     Crundi ships or Claude Code syncs, which come back anyway)
  *   manifest.json     what this is, from where, and when
  * Left out: the browser profile (large, and only sign-ins), collaborator
  * worktrees (working copies), logs and temporary files.
@@ -37,6 +39,7 @@ import { Readable, Writable } from 'node:stream';
 import { createGzip, createGunzip } from 'node:zlib';
 import { config, envPath } from './config.js';
 import { createS3 } from './s3.js';
+import { backupFiles as skillBackupFiles } from './skills-store.js';
 
 const MAGIC = Buffer.from('CRUNDIBK');
 const REC_MAGIC = Buffer.from('CRA1');
@@ -267,11 +270,19 @@ export function collect() {
     transcripts += list.length;
     files.push(...list);
   }
+  // Global skills (~/.claude/skills). Project skills live in the project folders,
+  // which a backup does not carry.
+  let skills = 0;
+  try {
+    const list = skillBackupFiles();
+    skills = new Set(list.map(f => f.rel.split('/')[0])).size;
+    for (const f of list) files.push({ abs: f.abs, rel: 'skills/' + f.rel, size: f.size, mode: f.mode, mtime: f.mtime });
+  } catch { /* an unreadable skills folder must not fail the backup */ }
   const manifest = {
     format: 1, createdAt: new Date().toISOString(), crundiVersion: pkgVersion,
     host: hostname(), platform: process.platform, home: homedir(),
     appDir: config.appDir, dataDir: config.dataDir,
-    projects, transcripts,
+    projects, transcripts, skills,
     files: files.length, bytes: files.reduce((n, f) => n + f.size, 0),
   };
   return { files, manifest };
@@ -348,7 +359,7 @@ export function readHead(file) {
 function safeTarget(dest, p) {
   const s = String(p || '');
   if (!s || s.includes('\0') || s.startsWith('/') || /^[a-zA-Z]:/.test(s) || s.split(/[\\/]/).some(x => x === '..' || x === '')) return null;
-  if (!(s === 'manifest.json' || s.startsWith('env/') || s.startsWith('data/') || s.startsWith('claude/'))) return null;
+  if (!(s === 'manifest.json' || s.startsWith('env/') || s.startsWith('data/') || s.startsWith('claude/') || s.startsWith('skills/'))) return null;
   const t = resolvePath(dest, s);
   const r = relative(dest, t);
   if (!r || r.startsWith('..') || r.includes('..' + sep)) return null;

@@ -374,19 +374,20 @@ fi
 # the USER's Claude config, not to the prefix, so every project on the box picks
 # it up.
 #
-# Overwritten on every install on purpose: the repo copy is the canonical one, so
-# an upgrade must be able to correct it. Anything hand-edited in place is lost,
-# which is why the skill itself says to edit the repo copy.
-if [ -d "$SRC/skills" ]; then
-  SKILL_DIR="${TARGET_HOME}/.claude/skills"
-  mkdir -p "$SKILL_DIR"
-  for skill in "$SRC"/skills/*/; do
-    [ -d "$skill" ] || continue
-    name="$(basename "$skill")"
-    rm -rf "${SKILL_DIR:?}/${name}"
-    cp -r "$skill" "$SKILL_DIR/"
-    say "Installed the '${name}' skill to ${SKILL_DIR}/${name}"
-  done
+# That folder is shared with the user's own skills, so this does not copy over
+# it. src/skills-sync.js installs each included skill if it is missing, replaces
+# it in place if this release changed it, and touches no other skill there. The
+# server runs the same routine at every start; doing it here as well means the
+# skill is in place before the first chat.
+if [ -d "$PREFIX/skills" ] && [ -f "$PREFIX/scripts/sync-skills.mjs" ]; then
+  if SKILL_OUT="$(node "$PREFIX/scripts/sync-skills.mjs" --home "$TARGET_HOME" --source "$PREFIX/skills" 2>&1)"; then
+    printf '%s\n' "$SKILL_OUT" | while IFS= read -r line; do
+      if [ -n "$line" ]; then say "$line"; fi
+    done
+  else
+    warn "Could not install Crundi's skills; the server will try again when it starts."
+    if [ -n "$SKILL_OUT" ]; then warn "$SKILL_OUT"; fi
+  fi
 fi
 
 # Everything under the prefix and the config dir was written by root; hand it

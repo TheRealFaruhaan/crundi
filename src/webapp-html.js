@@ -2982,6 +2982,46 @@ export function getWebappHtml(botUsername) {
     .bk-confirm { grid-column: 1 / -1; margin-top: 8px; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.06); }
     .bk-confirm p { margin: 0 0 8px; font-size: 0.76rem; color: var(--text-secondary); line-height: 1.5; }
     .bk-empty { padding: 14px; font-size: 0.8rem; color: var(--text-muted); }
+    /* ─── Skills ─── */
+    .sk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+    .sk-bar label { font-size: 0.76rem; color: var(--text-secondary); }
+    .sk-bar select.bk-in { width: auto; flex: 1 1 150px; min-width: 0; max-width: 260px; }
+    .sk-group { margin-top: 16px; }
+    .sk-group > h5 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
+    .sk-group > h5 code { font-family: var(--mono); font-size: 0.68rem; font-weight: 400; color: var(--text-muted); overflow-wrap: anywhere; }
+    .sk-group > h5 .svc-btn { margin-left: auto; }
+    .sk-item { border-top: 1px solid var(--border); }
+    .sk-item:first-child { border-top: none; }
+    .sk-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: baseline; width: 100%; padding: 10px 12px; background: none; border: none; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+    .sk-head:hover, .sk-item.open > .sk-head { background: var(--bg-hover); }
+    .sk-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .sk-name { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; min-width: 0; font-size: 0.86rem; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+    .sk-tag { font-size: 0.66rem; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); white-space: nowrap; }
+    .sk-tag.warn { background: rgba(245, 158, 11, 0.14); color: #d97706; }
+    .sk-meta { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; }
+    .sk-desc { grid-column: 1 / -1; font-size: 0.76rem; line-height: 1.45; color: var(--text-secondary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+    .sk-item.open .sk-desc { display: block; }
+    .sk-detail { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 14px; }
+    .sk-note { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 6px; font-size: 0.76rem; line-height: 1.5; color: var(--text-secondary); background: var(--bg-tertiary); }
+    .sk-note .ic { flex: none; margin-top: 3px; }
+    .sk-note.warn { border: 1px solid rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.06); }
+    .sk-note.warn .bk-actions { margin-top: 8px; }
+    .sk-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); }
+    .sk-form .bk-in { flex: 1 1 160px; width: auto; min-width: 0; }
+    .sk-form .sk-form-label { flex: 1 1 100%; font-size: 0.76rem; color: var(--text-secondary); }
+    .sk-files { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .sk-frow { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--border); }
+    .sk-frow:first-child { border-top: none; }
+    .sk-fopen { flex: 1; min-width: 0; padding: 8px 10px; background: none; border: none; text-align: left; color: var(--text-primary); font-family: var(--mono); font-size: 0.74rem; cursor: pointer; overflow-wrap: anywhere; }
+    .sk-fopen:hover, .sk-frow.on .sk-fopen { background: var(--bg-hover); }
+    .sk-fopen:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .sk-fsize { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; }
+    .sk-frow .svc-btn { margin-right: 6px; }
+    .sk-editor { display: flex; flex-direction: column; gap: 8px; }
+    .sk-editor .sk-epath { font-family: var(--mono); font-size: 0.76rem; color: var(--text-primary); overflow-wrap: anywhere; }
+    .sk-editor textarea { width: 100%; min-height: 280px; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); font-family: var(--mono); font-size: 12.5px; line-height: 1.5; box-sizing: border-box; resize: vertical; tab-size: 2; }
+    .sk-editor textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .sk-editor textarea[readonly] { color: var(--text-secondary); }
     /* The "waiting for you to leave" notice: the toast's sibling, with actions. */
     #bk-notice { position: fixed; left: 16px; bottom: 16px; z-index: 950; display: none; max-width: 360px; padding: 12px 14px; border-radius: 10px; background: var(--bg-secondary); border: 1px solid var(--border); border-left: 3px solid var(--accent); box-shadow: var(--shadow-md); font-size: 0.8rem; color: var(--text-secondary); line-height: 1.45; }
     #bk-notice.visible { display: block; }
@@ -11216,6 +11256,400 @@ export function getWebappHtml(botUsername) {
     }
 
     // ─── Backup & restore (Settings) ───
+    // ─── Skills ───
+    // Claude skills are folders with a SKILL.md, read by Claude Code from the
+    // home directory (every project) and from each project. This section is a
+    // view of those folders; the server holds no list of its own.
+    let skData = null;          // { skills, scopes, limits }
+    let skOpen = null;          // { scope, name } of the skill shown in detail
+    let skDetail = null;        // that skill's file list
+    let skFile = null;          // { path, text, saved, binary, readOnly, size } in the editor
+    let skForm = '';            // the inline form that is open: new | rename | transfer | newfile
+    let skPending = null;       // something waiting on an answer: replace it? what name?
+    let skTarget = 'global';    // where Upload and New put a skill
+    let skShowSynced = false;
+    let skError = '';
+
+    function skQuery(o) {
+      const q = new URLSearchParams();
+      Object.keys(o).forEach(k => { if (o[k] !== undefined && o[k] !== null && o[k] !== '') q.set(k, o[k]); });
+      return q.toString();
+    }
+    async function skPost(path, body) {
+      try { return await (await apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })).json(); }
+      catch (e) { return { ok: false, error: e.message }; }
+    }
+    function skScopeLabel(id) {
+      const sc = ((skData && skData.scopes) || []).find(x => x.id === id);
+      if (id === 'synced') return 'your Claude account';
+      return sc ? sc.label : id;
+    }
+    function skIs(a, b) { return !!a && !!b && a.scope === b.scope && a.name === b.name; }
+    function skDirty() { const ta = $('#sk-text'); return !!(skFile && !skFile.binary && !skFile.readOnly && ta && ta.dataset.path === skFile.path && ta.value !== skFile.saved); }
+    // The textarea on screen may belong to the file that was open a moment ago.
+    function skKeepText() { const ta = $('#sk-text'); if (ta && skFile && !skFile.binary && ta.dataset.path === skFile.path) skFile.text = ta.value; }
+    function skLeaveFile() { return !skDirty() || confirm('Discard the changes you have not saved?'); }
+
+    async function renderSkillsSection() {
+      const body = $('#skills-body');
+      if (!body) return;
+      if (!body.dataset.bound) {
+        body.dataset.bound = '1';
+        body.addEventListener('click', onSkillsClick);
+        body.addEventListener('change', onSkillsChange);
+        body.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+          const go = e.target.closest('.sk-form') && e.target.closest('.sk-form').querySelector('[data-sk-default]');
+          if (go) { e.preventDefault(); go.click(); }
+        });
+      }
+      await skLoad();
+    }
+    async function skLoad() {
+      const body = $('#skills-body');
+      if (!body) return;
+      try {
+        const d = await (await apiFetch('/api/skills')).json();
+        if (!d.ok) throw new Error(d.error || 'Could not load the skills');
+        skData = d; skError = '';
+      } catch (e) { skError = e.message; }
+      if (skData && !skData.scopes.some(x => x.id === skTarget)) skTarget = 'global';
+      if (skOpen && skData && !skData.skills.some(x => skIs(x, skOpen))) { skOpen = null; skDetail = null; skFile = null; skForm = ''; }
+      if (skOpen) await skLoadDetail();
+      drawSkills();
+    }
+    async function skLoadDetail() {
+      if (!skOpen) return;
+      try {
+        const d = await (await apiFetch('/api/skills/detail?' + skQuery(skOpen))).json();
+        skDetail = d.ok ? d : { error: d.error || 'Could not open this skill' };
+      } catch (e) { skDetail = { error: e.message }; }
+      if (skFile && skDetail.files && !skDetail.files.some(f => f.path === skFile.path)) skFile = null;
+    }
+
+    function skTags(sk) {
+      let t = '';
+      if (sk.origin === 'bundled') t += '<span class="sk-tag">Included with Crundi</span>';
+      if (sk.origin === 'synced') t += '<span class="sk-tag">Synced</span>';
+      if (sk.origin === 'linked') t += '<span class="sk-tag">Link</span>';
+      if (sk.problem) t += '<span class="sk-tag warn">Needs attention</span>';
+      return t;
+    }
+    function skRow(sk) {
+      const open = skIs(sk, skOpen);
+      const at = ' data-scope="' + escHtml(sk.scope) + '" data-name="' + escHtml(sk.name) + '"';
+      let h = '<div class="sk-item' + (open ? ' open' : '') + '">'
+        + '<button type="button" class="sk-head" data-sk="open"' + at + ' aria-expanded="' + (open ? 'true' : 'false') + '">'
+        + '<span class="sk-name">' + escHtml(sk.name) + skTags(sk) + '</span>'
+        + '<span class="sk-meta">' + (sk.more ? 'over ' + sk.files + ' files' : sk.files + (sk.files === 1 ? ' file' : ' files') + ', ' + escHtml(fmtBytes(sk.size))) + '</span>'
+        + '<span class="sk-desc">' + escHtml(sk.description || sk.problem || 'No description') + '</span>'
+        + '</button>';
+      if (open) h += skDetailHtml(sk);
+      return h + '</div>';
+    }
+    function skDetailHtml(sk) {
+      if (!skDetail) return '<div class="sk-detail"><span class="bk-hint">Loading…</span></div>';
+      if (skDetail.error) return '<div class="sk-detail"><p class="bk-err">' + escHtml(skDetail.error) + '</p></div>';
+      const ro = sk.readOnly;
+      let h = '<div class="sk-detail">';
+      if (skDetail.readOnlyReason) h += '<div class="sk-note">' + ic('lock') + '<span>' + escHtml(skDetail.readOnlyReason) + '</span></div>';
+      if (sk.problem) h += '<div class="sk-note warn">' + ic('info') + '<span>' + escHtml(sk.problem) + '.</span></div>';
+      h += '<div class="bk-actions">'
+        + (ro ? '' : '<button type="button" class="svc-btn" data-sk="rename">' + ic('pencil') + ' Rename</button>')
+        + '<button type="button" class="svc-btn" data-sk="transfer">' + ic('copy') + (ro ? ' Copy to…' : ' Copy or move…') + '</button>'
+        + '<button type="button" class="svc-btn" data-sk="download">' + ic('download') + ' Download</button>'
+        + (sk.origin === 'user' || sk.origin === 'linked' ? '<button type="button" class="svc-btn danger" data-sk="delete">' + ic('trash') + ' Delete</button>' : '')
+        + '</div>';
+      if (skForm === 'rename') {
+        h += '<div class="sk-form"><label class="sk-form-label" for="sk-rename">New name. Lowercase letters, digits and hyphens.</label>'
+          + '<input class="bk-in" id="sk-rename" value="' + escHtml(sk.name) + '" maxlength="64" autocomplete="off" spellcheck="false">'
+          + '<button type="button" class="svc-btn primary" data-sk="rename-go" data-sk-default>Rename</button>'
+          + '<button type="button" class="svc-btn" data-sk="form-close">Cancel</button></div>';
+      }
+      if (skForm === 'transfer') {
+        const opts = skData.scopes.map(x => '<option value="' + escHtml(x.id) + '">' + escHtml(x.label) + '</option>').join('');
+        h += '<div class="sk-form"><label class="sk-form-label" for="sk-to">Where to, and under what name. A copy leaves this one where it is.</label>'
+          + '<select class="bk-in" id="sk-to">' + opts + '</select>'
+          + '<input class="bk-in" id="sk-as" value="' + escHtml(sk.name) + '" maxlength="64" autocomplete="off" spellcheck="false" aria-label="Name">'
+          + '<button type="button" class="svc-btn primary" data-sk="copy-go" data-sk-default>Copy</button>'
+          + (ro ? '' : '<button type="button" class="svc-btn" data-sk="move-go">Move</button>')
+          + '<button type="button" class="svc-btn" data-sk="form-close">Cancel</button></div>';
+      }
+      h += '<div class="sk-files">' + skDetail.files.map(f => {
+        const on = skFile && skFile.path === f.path;
+        return '<div class="sk-frow' + (on ? ' on' : '') + '">'
+          + '<button type="button" class="sk-fopen" data-sk="file" data-path="' + escHtml(f.path) + '">' + escHtml(f.path) + '</button>'
+          + '<span class="sk-fsize">' + escHtml(fmtBytes(f.size)) + '</span>'
+          + (ro || f.path === 'SKILL.md' ? '<span style="width:6px"></span>' : '<button type="button" class="svc-btn danger" data-sk="file-delete" data-path="' + escHtml(f.path) + '" title="Delete this file" aria-label="Delete ' + escHtml(f.path) + '">' + ic('trash') + '</button>')
+          + '</div>';
+      }).join('') + '</div>';
+      if (skDetail.more) h += '<div class="bk-hint">Only the first ' + skDetail.files.length + ' files are listed. This folder holds more.</div>';
+      if (skDetail.skippedLinks) h += '<div class="bk-hint">' + skDetail.skippedLinks + (skDetail.skippedLinks === 1 ? ' link in this folder is' : ' links in this folder are') + ' not shown.</div>';
+      if (!ro) {
+        h += '<div class="bk-actions">'
+          + '<button type="button" class="svc-btn" data-sk="newfile">' + ic('plus') + ' New file</button>'
+          + '<button type="button" class="svc-btn" data-sk="asset">' + ic('upload') + ' Upload file</button>'
+          + '<input type="file" id="sk-asset" hidden></div>';
+        if (skForm === 'newfile') {
+          h += '<div class="sk-form"><label class="sk-form-label" for="sk-newfile">Path inside the skill, for example reference/notes.md</label>'
+            + '<input class="bk-in" id="sk-newfile" placeholder="reference/notes.md" autocomplete="off" spellcheck="false">'
+            + '<button type="button" class="svc-btn primary" data-sk="newfile-go" data-sk-default>Create</button>'
+            + '<button type="button" class="svc-btn" data-sk="form-close">Cancel</button></div>';
+        }
+      }
+      if (skFile) {
+        h += '<div class="sk-editor"><div class="bk-row" style="justify-content:space-between;"><span class="sk-epath">' + escHtml(skFile.path) + '</span>'
+          + '<span class="sk-fsize">' + escHtml(fmtBytes(skFile.size)) + '</span></div>';
+        if (skFile.binary) {
+          h += '<div class="sk-note">' + ic('file') + '<span>' + (skFile.tooLarge ? 'This file is too large to open here.' : 'This is not a text file, so it cannot be edited here.') + ' Download it to look at it.</span></div>';
+        } else {
+          h += '<textarea id="sk-text" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="' + escHtml(skFile.path) + '"' + (skFile.readOnly ? ' readonly' : '') + '></textarea>';
+        }
+        h += '<div class="bk-actions">'
+          + (skFile.binary || skFile.readOnly ? '' : '<button type="button" class="svc-btn primary" data-sk="save">Save</button>')
+          + '<button type="button" class="svc-btn" data-sk="file-download">' + ic('download') + ' Download</button>'
+          + '<button type="button" class="svc-btn" data-sk="file-close">Close</button></div></div>';
+      }
+      return h + '</div>';
+    }
+    function skPendingHtml() {
+      const p = skPending;
+      if (!p) return '';
+      if (p.needsName) {
+        return '<div class="sk-form" style="margin-top:10px;"><label class="sk-form-label" for="sk-pname">' + escHtml(p.message) + '</label>'
+          + '<input class="bk-in" id="sk-pname" placeholder="skill-name" maxlength="64" autocomplete="off" spellcheck="false">'
+          + '<button type="button" class="svc-btn primary" data-sk="pending-name" data-sk-default>Install</button>'
+          + '<button type="button" class="svc-btn" data-sk="pending-cancel">Cancel</button></div>';
+      }
+      const many = p.existing.length > 1;
+      return '<div class="sk-note warn" style="margin-top:10px;">' + ic('info') + '<div><span>'
+        + (many ? 'These skills already exist in ' : 'A skill called <b>' + escHtml(p.existing[0]) + '</b> already exists in ')
+        + escHtml(skScopeLabel(p.scope)) + (many ? ': <b>' + escHtml(p.existing.join(', ')) + '</b>' : '')
+        + '. Replacing ' + (many ? 'them' : 'it') + ' removes every file in ' + (many ? 'them' : 'it') + ' first.</span>'
+        + '<div class="bk-actions"><button type="button" class="svc-btn danger" data-sk="pending-replace">Replace</button>'
+        + '<button type="button" class="svc-btn" data-sk="pending-cancel">Cancel</button></div></div></div>';
+    }
+    function drawSkills() {
+      const body = $('#skills-body');
+      if (!body) return;
+      skKeepText();
+      if (!skData) { body.innerHTML = '<p class="bk-err">' + escHtml(skError || 'Could not load the skills') + '</p>'; return; }
+      const d = skData;
+      let h = '<div class="bk-hint" style="margin:0 0 12px;">A skill is a folder with a SKILL.md that tells Claude how to do one kind of task. A chat loads its skills when it starts, so changes here reach new chats. Chats that are already running keep the skills they started with.</div>'
+        + '<div class="sk-bar"><label for="sk-target">Add to</label>'
+        + '<select class="bk-in" id="sk-target">' + d.scopes.map(x => '<option value="' + escHtml(x.id) + '"' + (x.id === skTarget ? ' selected' : '') + '>' + escHtml(x.label) + '</option>').join('') + '</select>'
+        + '<button type="button" class="svc-btn primary" data-sk="upload">' + ic('upload') + ' Upload</button>'
+        + '<button type="button" class="svc-btn" data-sk="new">' + ic('plus') + ' New</button>'
+        + '<input type="file" id="sk-upload" accept=".zip,.skill,.md,application/zip" hidden></div>'
+        + '<div class="bk-hint">Upload a .zip or .skill archive holding one or more skills, or a single SKILL.md. Up to ' + Math.round((d.limits ? d.limits.upload : 52428800) / 1048576) + ' MB.</div>';
+      if (skError) h += '<p class="bk-err" style="margin-top:8px;">' + escHtml(skError) + '</p>';
+      h += skPendingHtml();
+      if (skForm === 'new') {
+        h += '<div class="sk-form" style="margin-top:10px;"><label class="sk-form-label" for="sk-new-name">A new, empty skill in ' + escHtml(skScopeLabel(skTarget)) + '. The description is how Claude decides when to use it.</label>'
+          + '<input class="bk-in" id="sk-new-name" placeholder="skill-name" maxlength="64" autocomplete="off" spellcheck="false" aria-label="Name">'
+          + '<input class="bk-in" id="sk-new-desc" placeholder="What it does and when to use it" maxlength="1024" style="flex:3 1 240px;" aria-label="Description">'
+          + '<button type="button" class="svc-btn primary" data-sk="new-go" data-sk-default>Create</button>'
+          + '<button type="button" class="svc-btn" data-sk="form-close">Cancel</button></div>';
+      }
+      const group = (title, path, items, extra) => '<div class="sk-group"><h5>' + escHtml(title)
+        + (path ? '<code>' + escHtml(path) + '</code>' : '') + (extra || '') + '</h5>'
+        + (items === null ? '' : items.length ? '<div class="bk-list">' + items.map(skRow).join('') + '</div>' : '<div class="bk-list"><div class="bk-empty">None yet.</div></div>') + '</div>';
+      const inScope = (id) => d.skills.filter(x => x.scope === id);
+      h += group('All projects', (d.scopes[0] || {}).path, inScope('global'));
+      d.scopes.slice(1).forEach(sc => { const it = inScope(sc.id); if (it.length) h += group(sc.label, sc.path, it); });
+      const synced = inScope('synced');
+      if (synced.length) {
+        h += group('Synced from your Claude account (' + synced.length + ')', '', skShowSynced ? synced : null,
+          '<button type="button" class="svc-btn" data-sk="synced-toggle" aria-expanded="' + (skShowSynced ? 'true' : 'false') + '">' + (skShowSynced ? 'Hide' : 'Show') + '</button>');
+      }
+      body.innerHTML = h;
+      const ta = $('#sk-text');
+      if (ta && skFile) { ta.value = skFile.text || ''; ta.dataset.path = skFile.path; }
+      const to = $('#sk-to');
+      if (to && skOpen) { const other = d.scopes.find(x => x.id !== skOpen.scope); to.value = skOpen.scope === 'global' || skOpen.scope === 'synced' ? (other ? other.id : 'global') : 'global'; }
+      const focus = { new: '#sk-new-name', rename: '#sk-rename', newfile: '#sk-newfile', transfer: '#sk-to' }[skForm];
+      const el = (skPending && skPending.needsName && $('#sk-pname')) || (focus && $(focus));
+      if (el && document.activeElement !== el && !skFile) { try { el.focus({ preventScroll: true }); } catch { el.focus(); } }
+    }
+
+    async function skDownload(url, name) {
+      try {
+        const res = await apiFetch(url);
+        if (!res.ok) { let m = 'Could not download'; try { m = (await res.json()).error || m; } catch { /* not json */ } toast(m, 'error'); return; }
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(await res.blob());
+        a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    // One upload, possibly asked twice: again with a name, or again to replace.
+    async function skUpload(p) {
+      const q = skQuery({ scope: p.scope, filename: p.file.name, name: p.name, overwrite: p.overwrite ? '1' : '' });
+      let d;
+      try { d = await (await apiFetch('/api/skills/upload?' + q, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: p.file })).json(); }
+      catch (e) { d = { ok: false, error: e.message }; }
+      if (d.ok) {
+        skPending = null;
+        const n = d.installed.map(x => x.name);
+        toast('Installed ' + (n.length === 1 ? n[0] : n.length + ' skills') + '. New chats will have ' + (n.length === 1 ? 'it' : 'them') + '.');
+        if (d.dropped && d.dropped.length) skError = 'Left out of the upload: ' + d.dropped.join(', '); else skError = '';
+        if (n.length === 1) { skOpen = { scope: d.installed[0].scope, name: n[0] }; skFile = null; skForm = ''; }
+        const keep = skError; await skLoad(); if (keep) { skError = keep; drawSkills(); }
+        return;
+      }
+      if (d.conflict) { skPending = { kind: 'upload', file: p.file, scope: p.scope, name: p.name, existing: d.existing }; skError = ''; drawSkills(); return; }
+      if (d.needsName) { skPending = { kind: 'upload', file: p.file, scope: p.scope, needsName: true, message: 'This upload does not say what the skill is called. Give it a name: lowercase letters, digits and hyphens.' }; skError = ''; drawSkills(); return; }
+      skPending = null; skError = d.error || 'Could not install that'; drawSkills();
+    }
+    async function skTransfer(p) {
+      const d = await skPost('/api/skills/transfer', { scope: p.from.scope, name: p.from.name, to: p.scope, as: p.as, move: p.move, overwrite: !!p.overwrite });
+      if (d.ok) {
+        skPending = null; skForm = ''; skFile = null;
+        toast((p.move ? 'Moved to ' : 'Copied to ') + skScopeLabel(d.skill.scope));
+        skOpen = { scope: d.skill.scope, name: d.skill.name };
+        await skLoad();
+        return;
+      }
+      if (d.conflict) { skPending = { kind: 'transfer', from: p.from, scope: p.scope, as: p.as, move: p.move, existing: d.existing }; drawSkills(); return; }
+      skPending = null; toast(d.error || 'Could not do that', 'error'); drawSkills();
+    }
+    async function onSkillsChange(e) {
+      const t = e.target;
+      if (t.id === 'sk-target') { skTarget = t.value; if (skForm === 'new') drawSkills(); return; }
+      if (t.id === 'sk-upload') {
+        const file = t.files && t.files[0]; t.value = '';
+        if (!file) return;
+        if (skData.limits && file.size > skData.limits.upload) { skError = 'That file is too large (the limit is ' + Math.round(skData.limits.upload / 1048576) + ' MB)'; drawSkills(); return; }
+        skForm = ''; skError = '';
+        await skUpload({ file: file, scope: skTarget });
+        return;
+      }
+      if (t.id === 'sk-asset') {
+        const file = t.files && t.files[0]; t.value = '';
+        if (!file || !skOpen) return;
+        if (skDetail && skDetail.files && skDetail.files.some(f => f.path === file.name) && !confirm('Replace ' + file.name + ' in this skill?')) return;
+        let d;
+        try { d = await (await apiFetch('/api/skills/file-upload?' + skQuery({ scope: skOpen.scope, name: skOpen.name, path: file.name }), { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file })).json(); }
+        catch (err) { d = { ok: false, error: err.message }; }
+        if (!d.ok) { toast(d.error || 'Could not add that file', 'error'); return; }
+        toast('Added ' + file.name);
+        await skLoad();
+      }
+    }
+    async function onSkillsClick(e) {
+      const b = e.target.closest('[data-sk]');
+      if (!b || b.disabled) return;
+      const act = b.dataset.sk;
+      const val = (sel) => (($(sel) || {}).value || '').trim();
+
+      if (act === 'upload') { $('#sk-upload').click(); return; }
+      if (act === 'asset') { $('#sk-asset').click(); return; }
+      if (act === 'synced-toggle') { skShowSynced = !skShowSynced; drawSkills(); return; }
+      if (act === 'form-close') { skForm = ''; drawSkills(); return; }
+      if (act === 'pending-cancel') { skPending = null; drawSkills(); return; }
+      if (act === 'new') { skForm = skForm === 'new' ? '' : 'new'; skPending = null; drawSkills(); return; }
+      if (act === 'open') {
+        const next = { scope: b.dataset.scope, name: b.dataset.name };
+        if (!skLeaveFile()) return;
+        skFile = null; skForm = ''; skDetail = null;
+        if (skIs(skOpen, next)) { skOpen = null; drawSkills(); return; }
+        skOpen = next; drawSkills();
+        await skLoadDetail(); drawSkills();
+        return;
+      }
+      if (act === 'rename' || act === 'transfer' || act === 'newfile') { skForm = skForm === act ? '' : act; drawSkills(); return; }
+
+      b.disabled = true;
+      try {
+        if (act === 'new-go') {
+          const d = await skPost('/api/skills/create', { scope: skTarget, name: val('#sk-new-name'), description: val('#sk-new-desc') });
+          if (!d.ok) { toast(d.error, 'error'); return; }
+          skForm = ''; skOpen = { scope: d.skill.scope, name: d.skill.name };
+          await skLoad();
+          await skOpenFile('SKILL.md');
+          return;
+        }
+        if (act === 'pending-replace' && skPending) {
+          const p = Object.assign({}, skPending, { overwrite: true });
+          if (p.kind === 'upload') await skUpload(p); else await skTransfer(p);
+          return;
+        }
+        if (act === 'pending-name' && skPending) { await skUpload({ file: skPending.file, scope: skPending.scope, name: val('#sk-pname') }); return; }
+        if (!skOpen) return;
+        if (act === 'download') { await skDownload('/api/skills/download?' + skQuery(skOpen), skOpen.name + '.zip'); return; }
+        if (act === 'delete') {
+          if (!confirm('Delete the skill "' + skOpen.name + '" and all its files? This cannot be undone.')) return;
+          const d = await skPost('/api/skills/delete', skOpen);
+          if (!d.ok) { toast(d.error, 'error'); return; }
+          toast('Deleted ' + skOpen.name);
+          skOpen = null; skDetail = null; skFile = null; skForm = '';
+          await skLoad();
+          return;
+        }
+        if (act === 'rename-go') {
+          if (!skLeaveFile()) return;
+          const d = await skPost('/api/skills/rename', { scope: skOpen.scope, name: skOpen.name, to: val('#sk-rename') });
+          if (!d.ok) { toast(d.error, 'error'); return; }
+          skForm = ''; skFile = null; skOpen = { scope: d.skill.scope, name: d.skill.name };
+          await skLoad();
+          return;
+        }
+        if (act === 'copy-go' || act === 'move-go') {
+          if (act === 'move-go' && !skLeaveFile()) return;
+          await skTransfer({ from: skOpen, scope: val('#sk-to'), as: val('#sk-as'), move: act === 'move-go' });
+          return;
+        }
+        if (act === 'file') { if (skFile && skFile.path === b.dataset.path) return; if (!skLeaveFile()) return; await skOpenFile(b.dataset.path); return; }
+        if (act === 'file-close') { if (!skLeaveFile()) return; skFile = null; drawSkills(); return; }
+        if (act === 'file-download' && skFile) {
+          await skDownload('/api/skills/file-download?' + skQuery({ scope: skOpen.scope, name: skOpen.name, path: skFile.path }), skFile.path.split('/').pop());
+          return;
+        }
+        if (act === 'save' && skFile) {
+          const text = ($('#sk-text') || {}).value || '';
+          const d = await skPost('/api/skills/file', { scope: skOpen.scope, name: skOpen.name, path: skFile.path, content: text });
+          if (!d.ok) { toast(d.error, 'error'); return; }
+          skFile.saved = text; skFile.text = text; skFile.size = d.size;
+          toast('Saved ' + skFile.path);
+          await skLoad();
+          return;
+        }
+        if (act === 'newfile-go') {
+          const path = val('#sk-newfile');
+          if (!path) return;
+          if (skDetail && skDetail.files && skDetail.files.some(f => f.path === path)) { toast('That file already exists', 'error'); return; }
+          if (!skLeaveFile()) return;
+          const d = await skPost('/api/skills/file', { scope: skOpen.scope, name: skOpen.name, path: path, content: '' });
+          if (!d.ok) { toast(d.error, 'error'); return; }
+          skForm = '';
+          await skLoad();
+          await skOpenFile(d.path);
+          return;
+        }
+        if (act === 'file-delete') {
+          const path = b.dataset.path;
+          if (!confirm('Delete ' + path + ' from this skill?')) return;
+          const d = await skPost('/api/skills/file-delete', { scope: skOpen.scope, name: skOpen.name, path: path });
+          if (!d.ok) { toast(d.error, 'error'); return; }
+          if (skFile && skFile.path === path) skFile = null;
+          await skLoad();
+          return;
+        }
+      } finally { if (b.isConnected) b.disabled = false; }
+    }
+    async function skOpenFile(path) {
+      if (!skOpen) return;
+      let d;
+      try { d = await (await apiFetch('/api/skills/file?' + skQuery({ scope: skOpen.scope, name: skOpen.name, path: path }))).json(); }
+      catch (e) { d = { ok: false, error: e.message }; }
+      if (!d.ok) { toast(d.error || 'Could not open that file', 'error'); return; }
+      skFile = { path: d.path, text: d.text || '', saved: d.text || '', binary: !!d.binary, tooLarge: !!d.tooLarge, readOnly: !!d.readOnly, size: d.size };
+      drawSkills();
+      const ed = document.querySelector('#skills-body .sk-editor');
+      if (ed && ed.scrollIntoView) ed.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
     let backupState = null;
     let backupItems = null;     // the bucket listing, once asked for
     let bkConfirmKey = '';      // the backup whose restore is being confirmed
@@ -11351,7 +11785,7 @@ export function getWebappHtml(botUsername) {
           + '<div class="bk-btns"><button type="button" class="svc-btn" data-bk="restore-ask" data-key="' + k + '">' + ic('download') + ' Restore</button>'
           + '<button type="button" class="svc-btn" data-bk="delete" data-key="' + k + '" title="Delete this backup" aria-label="Delete this backup">' + ic('trash') + '</button></div>'
           + '<div class="bk-meta"><span class="bk-tag">' + (it.reason === 'scheduled' ? 'Scheduled' : 'By hand') + '</span><span>' + escHtml(fmtBytes(it.size)) + '</span>' + (it.host ? '<span>' + escHtml(it.host) + '</span>' : '') + '</div>'
-          + (bkConfirmKey === it.key ? '<div class="bk-confirm"><p>This replaces this Crundi’s settings, sign-in, projects, layouts, kanban, notes, mindmap, media, schedules and services with the backup’s, and adds back its Claude transcripts. What it replaces is kept in a pre-restore folder. Crundi restarts to finish.</p>'
+          + (bkConfirmKey === it.key ? '<div class="bk-confirm"><p>This replaces this Crundi’s settings, sign-in, projects, layouts, kanban, notes, mindmap, media, schedules and services with the backup’s, and adds back its Claude transcripts and any global skills that are not already here. What it replaces is kept in a pre-restore folder. Crundi restarts to finish.</p>'
             + '<div class="bk-row"><input class="bk-in" id="bk-restore-pass" type="password" placeholder="Passphrase (blank: the saved one)" style="flex:1;min-width:180px;" autocomplete="off">'
             + '<button type="button" class="kanban-btn" data-bk="restore-go" data-key="' + k + '">Restore and restart</button><button type="button" class="svc-btn" data-bk="restore-cancel">Cancel</button></div></div>' : '')
           + '</div>';
@@ -11690,6 +12124,10 @@ export function getWebappHtml(botUsername) {
           + '<input type="number" id="set-autopark" min="0" step="5" value="' + escHtml(String(data.autoParkMinutes != null ? data.autoParkMinutes : 60)) + '" style="' + inputStyle + 'width:110px;">'
           + '<p style="' + hintStyle + '">A chat or Claude terminal with nothing going on closes once you have also been away this long. It keeps its place, shows what it was, and Resume picks the conversation back up. 0 turns it off; otherwise at least ' + (data.autoParkMin || 10) + '. Shells are never closed for being idle. After a restart, every pane that was open comes back the same way.</p></div></div>';
 
+        // The Claude skills on this machine: upload, edit, move between "every
+        // project" and one project, delete.
+        html += '<div class="info-section" id="skills-section"><h4>Skills</h4><div id="skills-body" style="font-size:0.8rem;color:var(--text-muted);">Loading…</div></div>';
+
         // Backups of the whole of Crundi to S3-compatible storage, and restoring them.
         html += '<div class="info-section" id="backup-section"><h4>Backup &amp; restore</h4><div id="backup-body" style="font-size:0.8rem;color:var(--text-muted);">Loading…</div></div>';
 
@@ -11724,6 +12162,7 @@ export function getWebappHtml(botUsername) {
           + '</div>';
 
         panel.innerHTML = html;
+        renderSkillsSection();
         renderBackupSection();
         renderServerUpdate();
         renderClaudeUpdate();

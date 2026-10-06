@@ -151,6 +151,7 @@ const COLLABORATOR_NEVER = [
   /^\/api\/schedules/,      // arbitrary commands on a timer
   /^\/api\/chat-schedule/,
   /^\/api\/settings/,
+  /^\/api\/skills/,        // a skill is instructions Claude runs with the owner's permissions
   /^\/api\/auth\/config/,   // would let them turn auth off
   /^\/api\/terminals/,      // every PTY path, including /spawn
   /^\/api\/server-logs/,    // other people's projects scroll past in here

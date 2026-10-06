@@ -286,6 +286,22 @@ if (!isDev) {
   }
 }
 
+// The skills Crundi ships, brought up to date in ~/.claude/skills. Included
+// skills only: anything else in that folder is the user's and is not touched.
+// Not in dev, where the checkout's copy would replace the installed release's.
+if (!isDev) {
+  try {
+    const { syncBundled, describeSync } = await import('./skills-sync.js');
+    const { homedir } = await import('node:os');
+    const target = join(homedir(), '.claude', 'skills');
+    let version = '';
+    try { version = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version; } catch { /* unversioned copy */ }
+    for (const line of describeSync(syncBundled({ target, version }), target)) console.log(`[skills] ${line}`);
+  } catch (err) {
+    console.warn(`[skills] Could not update Crundi's skills: ${err.message}`);
+  }
+}
+
 // Start webapp (HTTP + WebSocket + tunnel)
 let port, tunnelUrl, localPort;
 try {
