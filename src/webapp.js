@@ -65,6 +65,7 @@ import * as serverUpdate from './server-update.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
+import { createWidgetApi } from './widget-api.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1461,6 +1462,34 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     };
   }
 
+  // ─── Widgets (Claude-authored UI; see widget-api.js) ───
+  // Owner pages only: a widget event names a project and a widget, and a
+  // collaborator has no route to either.
+  const widgetApi = createWidgetApi({
+    broadcast: (event, data) => broadcastOwnerSSE(event, data),
+    claudeUi,
+    baseUrl: () => `http://127.0.0.1:${localPort || port}`,
+    // A widget's button reaches a Crundi tool the same way Claude does, so it
+    // gets the same checks and the same live-update broadcasts for free.
+    callTool: async (tool, args) => {
+      try {
+        const r = await fetch(`http://127.0.0.1:${localPort || port}/api/mcp/call`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Api-Key': internalApiKey },
+          body: JSON.stringify({ tool, args }),
+        });
+        return await r.json();
+      } catch (err) { return { ok: false, error: err.message }; }
+    },
+    crundi: {
+      kanban: (alias) => kanban.getBoard(alias),
+      services: (alias) => getAllServiceStatus()
+        .filter(x => String(x.alias || '').toLowerCase() === String(alias || '').toLowerCase())
+        .map(x => ({ key: x.key, name: x.name, status: x.status, command: x.command, pid: x.pid || null, startedAt: x.startedAt || null })),
+      schedules: (alias) => schedule.listSchedules(alias),
+    },
+  });
+
   // ─── Kanban live updates ───
   function broadcastKanban(projectAlias) {
     broadcastSSE('kanban', { project: String(projectAlias || '').toLowerCase() });
@@ -2297,6 +2326,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return;
     }
 
+    // A widget rendered for Claude's own check. The headless browser has no
+    // session; the single-use ticket in the URL is the credential.
+    if (path === '/api/widgets/harness' && req.method === 'GET') return widgetApi.handleHarness(req, res, url);
+
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
 
@@ -2341,6 +2374,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         error: 'Not available to collaborator access.',
         collaborator: true,
       }, 403);
+    }
+
+    // ─── Widgets ───
+    if (path.startsWith('/api/widgets')) {
+      if (await widgetApi.handleHttp(req, res, url, path, { json, readBody, confined: isConfined(principal) })) return;
     }
 
     // ─── Project scoping ───
@@ -4793,6 +4831,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         }
       }
 
+      // ─── Widget tools (owner only: not in COLLABORATOR_MCP_TOOLS) ───
+      if (body.tool.startsWith('widget_')) {
+        try { return json(res, await widgetApi.handleMcp(body.tool, a) || { ok: false, error: `Unknown tool: ${body.tool}` }); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
       // ─── Kanban tools (project-scoped via args.alias) ───
       if (body.tool.startsWith('kanban_')) {
         const alias = a.alias;
@@ -5461,9 +5505,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         }
         await new Promise((resolve, reject) => {
           server = createServer(onRequest);
-          server.listen(listenPort, '0.0.0.0', () => {
+          // A dev instance speaks plain HTTP and hands out owner sessions. On a
+          // machine with a public address that must not be reachable from
+          // outside: loopback unless WEB_HOST says otherwise. Production keeps
+          // every interface, which is how an install without TLS is reached.
+          const bindHost = process.env.WEB_HOST || (process.env.CRUNDI_DEV === '1' ? '127.0.0.1' : '0.0.0.0');
+          server.listen(listenPort, bindHost, () => {
             port = server.address().port;
-            console.log(`[webapp] HTTP server on 0.0.0.0:${port}`);
+            console.log(`[webapp] HTTP server on ${bindHost}:${port}`);
             resolve();
           });
           server.on('error', reject);
@@ -5572,6 +5621,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     /** Write down every open pane now, so a restart brings them back parked. */
     savePanes() { try { panes.snapshot(); } catch { /* best effort on the way down */ } },
     stop() {
+      try { widgetApi.stop(); } catch { /* shutting down anyway */ }
       panes.stop();
       if (claudeWatchTimer) { clearInterval(claudeWatchTimer); claudeWatchTimer = null; }
       stopStatsSampler();

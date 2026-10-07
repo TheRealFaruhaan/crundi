@@ -71,6 +71,7 @@ export const BASE = [
   '- Media: media_list, media_get, media_add_path, media_delete.',
   '- Secrets: secret_search, secret_get, secret_run. secret_run hands a secret to a command without printing it — prefer it over reading a secret and pasting the value.',
   '- Skills: skill_list, skill_get, skill_install, skill_delete manage the Claude skills on this machine, for every project or for one. Skills that ship with Crundi are read-only; a running chat keeps the skills it started with.',
+  '- Widgets: widget_guide, widget_open, widget_set_data, widget_render, widget_get, widget_list, widget_close, widget_rollback. A widget is a live panel you design and Crundi shows beside the chat (progress on a long task, a table or chart from a file or database, a status board). Build one when something is better seen than read and will be looked at more than once, not for a quick answer; read widget_guide first, and widget_render to check your own work before saying it is done.',
   '- Also: get_usage for the current Claude usage windows, syntax_check for a fast parse of a file you just wrote.',
   '',
   'Use them where they fit, and call them rather than describing what calling them would do.',
