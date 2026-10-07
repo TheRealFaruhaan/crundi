@@ -66,6 +66,7 @@ import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
+import { publicBaseUrl } from './public-url.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -349,7 +350,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
 
   function getFileShareUrl(token) {
-    const base = tunnelUrl || (port ? `http://localhost:${port}` : null);
+    const base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port });
     if (!base) return null;
     return base + '/dl/' + token;
   }
@@ -5106,7 +5107,40 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (!filePath || !existsSync(filePath)) return json(res, { ok: false, error: 'File not found' });
         const tok = shareFile(filePath);
         const url = getFileShareUrl(tok);
-        return json(res, { ok: true, url });
+        // The name says "send", and it only ever made a link and handed it
+        // back to Claude: nothing reached the person unless Claude then pasted
+        // it into a reply they happened to be reading. Deliver it. Telegram
+        // takes the file itself up to its bot limit; past that, or if the
+        // upload fails, the link goes instead.
+        let delivered = 'link';
+        let note = 'Nothing was sent out of band (no Telegram chat is linked). Give the person this link in your reply; it works for 30 minutes.';
+        const chatId = bot && getChatId ? getChatId() : null;
+        if (chatId) {
+          let size = 0;
+          try { size = statSync(filePath).size; } catch { /* sent as a link */ }
+          const caption = url ? `Download (30 min): ${url}` : undefined;
+          try {
+            if (size > 0 && size <= 49 * 1024 * 1024) {
+              const { InputFile } = await import('grammy');
+              await bot.api.sendDocument(chatId, new InputFile(filePath, basename(filePath)), caption ? { caption } : undefined);
+              delivered = 'telegram-file';
+              note = 'Sent to the person on Telegram as a file, with the download link.';
+            } else {
+              await bot.api.sendMessage(chatId, `${basename(filePath)}\n${caption || ''}`.trim());
+              delivered = 'telegram-link';
+              note = 'Too large to attach on Telegram (50 MB limit), so the download link was sent there instead.';
+            }
+          } catch (err) {
+            try {
+              await bot.api.sendMessage(chatId, `${basename(filePath)}\n${caption || ''}`.trim());
+              delivered = 'telegram-link';
+              note = `Could not attach the file on Telegram (${err.message}); the download link was sent there instead.`;
+            } catch (err2) {
+              note = `Telegram delivery failed (${err2.message}). Give the person this link in your reply; it works for 30 minutes.`;
+            }
+          }
+        }
+        return json(res, { ok: true, url, delivered, note });
       }
 
       // Service tools

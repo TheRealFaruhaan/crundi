@@ -23,7 +23,7 @@ long-lived. See `platform-linux.md` / `platform-windows.md`.
 |---|---|
 | `send_message_to_user` | Out-of-band; arrives when nobody is watching the chat |
 | `send_photo_to_user` | Image by path |
-| `send_file_to_user` | Any file by path |
+| `send_file_to_user` | Any file by path. Attached on Telegram up to 50 MB (a link beyond that); always returns a 30-minute download link and says how it was delivered. If nothing went out of band, put the link in your reply. |
 
 ## Services
 

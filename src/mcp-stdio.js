@@ -80,7 +80,7 @@ const TOOLS = [
   },
   {
     name: 'send_file_to_user',
-    description: 'Share a file with the user via a download link.',
+    description: 'Send a file to the user. It is delivered on Telegram when a chat is linked (attached up to 50 MB, as a link beyond that), and a download link valid for 30 minutes is returned either way. The result says how it was delivered; if it was not sent out of band, put the link in your reply.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } }, required: ['path'] },
   },
 
