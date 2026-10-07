@@ -31,6 +31,11 @@
     '.cc-logwrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}',
     '.cc-root.cc-drop{outline:2px dashed var(--accent);outline-offset:-2px}',
     '.cc-log{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 12px 4px;scroll-behavior:smooth}',
+    // While text in a conversation is selected, nothing else on the page can be.
+    // See "Selection stays in the conversation" in mount(). The path classes
+    // keep the log's own ancestors out of it: user-select:none on an ancestor
+    // is inherited by everything under it that says "auto", the log included.
+    'html.cc-selecting *:not(.cc-sel-path):not(.cc-sel-host):not(.cc-sel-host *){-webkit-user-select:none!important;user-select:none!important}',
     '.cc-entry{margin-bottom:10px;animation:cc-in .18s ease}',
     '@keyframes cc-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}',
 
@@ -1005,6 +1010,185 @@
       stickBottom = atBottom();
       lastTop = log.scrollTop;
     });
+    // ─── Selection stays in the conversation ───
+    //
+    // On a phone, select some text, scroll until the start of the selection is
+    // above the top of the log, then drag the end handle. The browser extends
+    // the selection between two SCREEN points - the finger, and where the other
+    // handle is drawn. That handle cannot be drawn at text that is scrolled out
+    // of the log, so it is pinned to the edge, and the point under it is no
+    // longer the text: it is whatever sits there. The selection jumped to the
+    // page header and the project name above the chat.
+    //
+    // Three things, because none is enough alone:
+    //
+    //  1. While a selection lives in the log, the rest of the page is made
+    //     unselectable (the cc-selecting rule), so the worst case is a
+    //     selection that is wrong inside the chat, never one that leaves it.
+    //  2. The selection's ends are remembered. An end whose handle is scrolled
+    //     out of sight cannot have been moved by the reader, so if it changes
+    //     it is put back.
+    //  3. Dragging a handle near the top or bottom edge scrolls the log. The
+    //     browser does that for the page but not for a scrolling box inside
+    //     it, which left a long selection impossible to extend past one screen.
+    var selSaved = null;       // { s, e } as { n: node, o: offset }: the selection as last seen
+    var selTouches = 0;        // fingers on the page (a handle drag is not one: the page never sees it)
+    var selMouse = false;
+    var selTouchEndAt = 0;
+    var selScrollAt = 0;
+    var SEL_EDGE = 56;         // px from an edge of the log that counts as "at the edge"
+
+    function selSame(a, b) { return a.n === b.n && a.o === b.o; }
+    function selCmp(a, b) {    // negative when a comes before b
+      try {
+        var ra = document.createRange(), rb = document.createRange();
+        ra.setStart(a.n, a.o); ra.collapse(true);
+        rb.setStart(b.n, b.o); rb.collapse(true);
+        return ra.compareBoundaryPoints(Range.START_TO_START, rb);
+      } catch (e) { return 0; }
+    }
+    /** Where one end of the selection is on screen, or null if it cannot be told. */
+    function selRect(p, isEnd) {
+      try {
+        if (p.n.nodeType === 3 && p.n.length) {
+          var r = document.createRange();
+          var at = isEnd ? Math.max(0, Math.min(p.o, p.n.length) - 1) : Math.min(p.o, p.n.length - 1);
+          r.setStart(p.n, at); r.setEnd(p.n, at + 1);
+          var rects = r.getClientRects();
+          if (rects.length) return isEnd ? rects[rects.length - 1] : rects[0];
+        }
+        var node = p.n;
+        if (node.nodeType === 1 && node.childNodes.length) {
+          node = node.childNodes[Math.max(0, Math.min(isEnd ? p.o - 1 : p.o, node.childNodes.length - 1))];
+        }
+        while (node && node.nodeType !== 1) node = node.parentNode;
+        return node ? node.getBoundingClientRect() : null;
+      } catch (e) { return null; }
+    }
+    function selHiddenAbove(p) { var r = selRect(p, false); return !!r && r.bottom <= log.getBoundingClientRect().top + 2; }
+    function selHiddenBelow(p) { var r = selRect(p, true); return !!r && r.top >= log.getBoundingClientRect().bottom - 2; }
+    /** No text in the log before (or after) this point: it is the log's own start (or end). */
+    function selAtLogEdge(p, atEnd) {
+      try {
+        var r = document.createRange();
+        r.selectNodeContents(log);
+        if (atEnd) r.setStart(p.n, p.o); else r.setEnd(p.n, p.o);
+        return !r.toString().trim();
+      } catch (e) { return false; }
+    }
+
+    function selContain(on) {
+      var top = document.documentElement;
+      if (on) {
+        if (log.classList.contains('cc-sel-host')) return;
+        log.classList.add('cc-sel-host');
+        for (var n = log.parentNode; n && n.nodeType === 1 && n !== top; n = n.parentNode) n.classList.add('cc-sel-path');
+        top.classList.add('cc-selecting');
+        return;
+      }
+      if (!log.classList.contains('cc-sel-host')) return;
+      log.classList.remove('cc-sel-host');
+      if (document.querySelector('.cc-sel-host')) return;   // another chat has the selection now
+      top.classList.remove('cc-selecting');
+      [].forEach.call(document.querySelectorAll('.cc-sel-path'), function (n) { n.classList.remove('cc-sel-path'); });
+    }
+    function selEnd() { selSaved = null; selContain(false); }
+
+    function selAutoScroll(p, isEnd) {
+      var now = Date.now();
+      if (now - selScrollAt < 160) return;
+      var r = selRect(p, isEnd);
+      if (!r) return;
+      var box = log.getBoundingClientRect();
+      var step = Math.max(72, Math.round(log.clientHeight * 0.3));
+      if (r.bottom > box.bottom - SEL_EDGE && log.scrollTop + log.clientHeight < log.scrollHeight - 1) {
+        selScrollAt = now;
+        log.scrollBy({ top: step, behavior: 'smooth' });
+      } else if (r.top < box.top + SEL_EDGE && log.scrollTop > 0) {
+        selScrollAt = now;
+        log.scrollBy({ top: -step, behavior: 'smooth' });
+      }
+    }
+
+    function onSelectionChange() {
+      if (destroyed) return;
+      var sel = document.getSelection && document.getSelection();
+      if (!sel || !sel.rangeCount || sel.isCollapsed || !log.clientHeight) { selEnd(); return; }
+      var r = sel.getRangeAt(0);
+      var s = { n: r.startContainer, o: r.startOffset }, e = { n: r.endContainer, o: r.endOffset };
+      var sIn = log.contains(s.n), eIn = log.contains(e.n);
+      if (selSaved && (!selSaved.s.n.isConnected || !selSaved.e.n.isConnected)) selSaved = null;   // the text was re-rendered
+      if (!selSaved) {
+        if (sIn && eIn) { selSaved = { s: s, e: e }; selContain(true); } else selContain(false);
+        return;
+      }
+      // A finger or the mouse is on the page: the reader is making this
+      // selection directly (a new long-press, a mouse drag), and the browser
+      // gets that right. Only a handle drag - which the page never sees as a
+      // touch - is second-guessed.
+      var direct = selTouches > 0 || selMouse || Date.now() - selTouchEndAt < 350;
+      if (direct) {
+        if (!sIn && !eIn) { selEnd(); return; }
+      } else {
+        var fixS = !selSame(s, selSaved.s) && selHiddenAbove(selSaved.s);
+        var fixE = !selSame(e, selSaved.e) && selHiddenBelow(selSaved.e);
+        // "Select all" moves both ends to the ends of the log, on purpose. The
+        // browser may put them just outside it (the page's own start and end);
+        // with the rest of the page unselectable that is the same text, so say
+        // it in the log's terms and leave it be.
+        var all = (fixS || fixE || !sIn || !eIn) && selAtLogEdge(s, false) && selAtLogEdge(e, true);
+        if (all) {
+          fixS = false; fixE = false;
+          if (!sIn || !eIn) {
+            try { sel.setBaseAndExtent(log, 0, log, log.childNodes.length); s = { n: log, o: 0 }; e = { n: log, o: log.childNodes.length }; } catch (err) {}
+          }
+        } else {
+          // An end dragged right out of the log has nowhere to go; keep it.
+          if (!fixS && !sIn) fixS = true;
+          if (!fixE && !eIn) fixE = true;
+        }
+        if (fixS || fixE) {
+          var ns = fixS ? selSaved.s : s, ne = fixE ? selSaved.e : e;
+          if (selCmp(ns, ne) < 0) {
+            try {
+              // The end being put back is the fixed one, so it is the base; the
+              // other is the one under the reader's finger.
+              if (fixE && !fixS) sel.setBaseAndExtent(ne.n, ne.o, ns.n, ns.o);
+              else sel.setBaseAndExtent(ns.n, ns.o, ne.n, ne.o);
+              s = ns; e = ne;
+            } catch (err) { /* leave what the browser chose */ }
+          }
+        }
+      }
+      var movedS = !selSame(s, selSaved.s), movedE = !selSame(e, selSaved.e);
+      selSaved = { s: s, e: e };
+      selContain(true);
+      // One end moved: follow it. Both moved: a new selection, nothing to follow.
+      // A mouse drag is scrolled by the browser already.
+      if (!selMouse && movedS !== movedE) selAutoScroll(movedE ? e : s, movedE);
+    }
+    function onSelTouch(ev) {
+      selTouches = ev.touches ? ev.touches.length : 0;
+      if (!selTouches) selTouchEndAt = Date.now();
+    }
+    function onSelMouseDown() { selMouse = true; }
+    function onSelMouseUp() { selMouse = false; }
+    document.addEventListener('selectionchange', onSelectionChange);
+    window.addEventListener('touchstart', onSelTouch, { capture: true, passive: true });
+    window.addEventListener('touchend', onSelTouch, { capture: true, passive: true });
+    window.addEventListener('touchcancel', onSelTouch, { capture: true, passive: true });
+    window.addEventListener('mousedown', onSelMouseDown, true);
+    window.addEventListener('mouseup', onSelMouseUp, true);
+    function selDispose() {
+      document.removeEventListener('selectionchange', onSelectionChange);
+      window.removeEventListener('touchstart', onSelTouch, true);
+      window.removeEventListener('touchend', onSelTouch, true);
+      window.removeEventListener('touchcancel', onSelTouch, true);
+      window.removeEventListener('mousedown', onSelMouseDown, true);
+      window.removeEventListener('mouseup', onSelMouseUp, true);
+      selEnd();
+    }
+
     function restoreScroll() {
       if (!log.clientHeight) return;
       // scroll-behavior:smooth would animate the restore (and lose a race with
@@ -3274,6 +3458,7 @@
         destroyed = true;
         // Let a later chat in this project pick the draft back up.
         if (DRAFT_PROJ_KEY && CLAIMED[DRAFT_PROJ_KEY] === sessionId) delete CLAIMED[DRAFT_PROJ_KEY];
+        selDispose();
         stopTicker(); // closing a cell must not leave an interval running
         window.removeEventListener('paste', onPaste);
         input.removeEventListener('paste', onPaste);
