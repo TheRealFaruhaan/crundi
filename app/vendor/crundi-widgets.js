@@ -119,7 +119,11 @@
       '.wg-zoom{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out}',
       '.wg-zoom img{max-width:100%;max-height:100%;border-radius:8px;border:1px solid var(--border)}',
       // chips
-      '.wg-chips{display:inline-flex;gap:6px;align-items:center;min-width:0;position:relative;z-index:1}',
+      // In the desktop app the whole top bar is a window-drag area, and a drag
+      // area swallows clicks: a chip there could be seen but never pressed.
+      // no-drag gives it back to the pointer. A browser ignores the property.
+      '.wg-chips{display:inline-flex;gap:6px;align-items:center;min-width:0;position:relative;z-index:2;-webkit-app-region:no-drag}',
+      '.wg-chip{-webkit-app-region:no-drag}',
       '.wg-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:3px 9px;border-radius:99px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:11.5px;cursor:pointer;white-space:nowrap}',
       '.wg-chip:hover{border-color:var(--accent)}',
       '.wg-chip .ic{color:var(--accent-hover)}',

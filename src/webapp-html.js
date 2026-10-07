@@ -947,6 +947,9 @@ export function getWebappHtml(botUsername) {
       background: var(--bg-secondary); border: 1px solid var(--border);
       border-radius: 99px; color: var(--text-secondary); cursor: pointer;
       font-size: 0.7rem; padding: 3px 9px; font-weight: 600; white-space: nowrap;
+      /* The desktop app makes the top bar a window-drag area, which eats
+         clicks on anything in it that does not opt out. */
+      -webkit-app-region: no-drag;
     }
     .topbar-act.on { display: inline-flex; }
     .topbar-act:hover { color: var(--text-primary); border-color: var(--accent); }
