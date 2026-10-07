@@ -1429,6 +1429,20 @@
       head.addEventListener('click', function () { box.classList.toggle('cc-collapsed'); });
       box.appendChild(head);
       box.appendChild(body);
+      // The host may put something of its own under a finished tool call (a
+      // panel Claude opened inline, the screenshots from a check). It is the
+      // host's node, built from the host's data: nothing from the tool's
+      // result is written into the page here.
+      if (opts.toolExtra && e.status !== 'running') {
+        var extra = null;
+        try { extra = opts.toolExtra(e); } catch (x) { extra = null; }
+        if (extra) {
+          var wrap = el('div', 'cc-tool-wrap');
+          wrap.appendChild(box);
+          wrap.appendChild(extra);
+          return wrap;
+        }
+      }
       return box;
     }
 

@@ -416,9 +416,21 @@ const ops = {
       await cdpSend('Runtime.enable', {}, entry.sessionId);
       await cdpSend('Log.enable', {}, entry.sessionId);
       await cdpSend('Network.enable', {}, entry.sessionId);
+      // `mobile` and `dpr` are for Crundi's own widget renders (widget-render.js):
+      // a phone is not a narrow desktop. Touch changes which CSS applies
+      // (hover, pointer) and density changes how thin a hairline looks.
+      entry.mobile = !!msg.mobile;
+      entry.dpr = Math.min(3, Math.max(1, Number(msg.dpr) || 1));
       await cdpSend('Emulation.setDeviceMetricsOverride', {
-        width: width || 1280, height: height || 720, deviceScaleFactor: 1, mobile: false,
+        width: width || 1280, height: height || 720, deviceScaleFactor: entry.dpr, mobile: entry.mobile,
       }, entry.sessionId);
+      if (entry.mobile) {
+        await cdpSend('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, entry.sessionId).catch(() => {});
+        await cdpSend('Emulation.setUserAgentOverride', {
+          userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+          platform: 'iPhone',
+        }, entry.sessionId).catch(() => {});
+      }
       // Headless has no one to answer a dialog, so an alert() would block the
       // page forever. Same reasoning as the desktop backend, different lever.
       await cdpSend('Page.setInterceptFileChooserDialog', { enabled: true }, entry.sessionId).catch(() => {});
@@ -550,7 +562,7 @@ const ops = {
     const entry = page(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await cdpSend('Emulation.setDeviceMetricsOverride', {
-      width: msg.width, height: msg.height, deviceScaleFactor: 1, mobile: false,
+      width: msg.width, height: msg.height, deviceScaleFactor: entry.dpr || 1, mobile: !!entry.mobile,
     }, entry.sessionId);
     return { ok: true };
   },

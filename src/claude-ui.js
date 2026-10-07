@@ -1231,6 +1231,38 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     const resuming = args.includes('--resume') || args.includes('--continue');
     if (!persistSession && !resuming) args.push('--no-session-persistence');
 
+    // Decided before the spawn, not after: the id goes into the process's
+    // environment so its tool bridge can say which chat a call came from
+    // (a widget docks beside the chat that opened it).
+    // A collaborator chat already has its id: it is in that chat's tool config.
+    const id = collabChatId
+      || (/^[0-9a-f]{16}$/.test(String(wantId)) && !sessions.has(wantId) ? String(wantId) : genId());
+
+    // Dev only. A project's .mcp.json names the PRODUCTION server (dev leaves
+    // those files alone on purpose), so a chat started from a dev instance
+    // would call production's tools and never reach the code being tested.
+    // Point this one chat at this instance instead. --strict leaves out the
+    // project's and the user's other servers for that chat: a fair trade for
+    // a throwaway dev session, and never what production does.
+    let devMcpFile = null;
+    if (!collaborator && process.env.CRUNDI_DEV === '1' && apiUrl) {
+      try {
+        const devDir = join(config.dataDir, 'dev-mcp');
+        mkdirSync(devDir, { recursive: true });
+        devMcpFile = join(devDir, `${id}.json`);
+        writeFileSync(devMcpFile, JSON.stringify({
+          mcpServers: {
+            crundi: {
+              command: 'node',
+              args: [resolvePath(fileURLToPath(new URL('./mcp-stdio.js', import.meta.url)))],
+              env: { CRUNDI_API_URL: apiUrl, CRUNDI_API_KEY: apiKey || '', CRUNDI_PROJECT: key, CRUNDI_CHAT_ID: id },
+            },
+          },
+        }, null, 2), { mode: 0o600 });
+        args.push('--strict-mcp-config', '--mcp-config', devMcpFile);
+      } catch { devMcpFile = null; /* falls back to the project's own config */ }
+    }
+
     let proc;
     try {
       // A collaborator's Claude starts without Crundi's inherited capability
@@ -1246,6 +1278,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
           // hooks a terminal id to report against — UI mode derives agent state
           // from the message stream, so the hooks intentionally no-op here.
           CRUNDI_UI_SESSION: '1',
+          // Inherited by the tool bridge: which chat its calls belong to.
+          CRUNDI_CHAT_ID: id,
           ...(apiUrl ? { CRUNDI_API_URL: apiUrl } : {}),
           ...(apiKey ? { CRUNDI_API_KEY: apiKey } : {}),
         },
@@ -1255,9 +1289,6 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       return { ok: false, error: `Failed to start claude: ${err.message}` };
     }
 
-    // A collaborator chat already has its id: it is in that chat's tool config.
-    const id = collabChatId
-      || (/^[0-9a-f]{16}$/.test(String(wantId)) && !sessions.has(wantId) ? String(wantId) : genId());
     const siblings = entriesForAlias(key);
     const s = {
       id,
@@ -1302,7 +1333,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       agentsByTask: new Map(), // CLI task_id -> tool_use_id (task_updated only carries task_id)
       onStateChange: stateChangeCb,
       totalCostUsd: 0,
-      collabMcpFile: collabMcpFileForChat,   // deleted when the chat closes
+      collabMcpFile: collabMcpFileForChat || devMcpFile || '',   // deleted when the chat closes
     };
     s.emitter.setMaxListeners(50);
     sessions.set(id, s);

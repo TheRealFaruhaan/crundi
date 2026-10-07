@@ -80,7 +80,7 @@ const TOOLS = [
   },
   {
     name: 'send_file_to_user',
-    description: 'Share a file with the user via a download link.',
+    description: 'Send a file to the user. It is delivered on Telegram when a chat is linked (attached up to 50 MB, as a link beyond that), and a download link valid for 30 minutes is returned either way. The result says how it was delivered; if it was not sent out of band, put the link in your reply.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } }, required: ['path'] },
   },
 
@@ -268,6 +268,80 @@ const TOOLS = [
   { name: 'skill_get', description: 'Read one installed skill: its details, file list and the text of its SKILL.md. Pass path to read another file inside it instead.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The skill\'s folder name' }, scope: { type: 'string', description: '"global" (default), "project", a project alias, or "synced"' }, path: { type: 'string', description: 'A file inside the skill, e.g. "reference/notes.md"' } }, required: ['name'] } },
   { name: 'skill_install', description: 'Install a Claude skill on this machine. Give EITHER path (a skill folder containing SKILL.md, or a .zip / .skill archive holding one or more skills, or a SKILL.md file, already on this machine) OR content (the full text of a SKILL.md, with name and description front matter). If a skill of that name exists the call fails with conflict:true; only then repeat it with overwrite:true, and only if the user wants it replaced. Skills that ship with Crundi cannot be replaced. Running chats keep the skills they started with.', inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to a skill folder, .zip, .skill or SKILL.md' }, content: { type: 'string', description: 'The text of a SKILL.md, instead of path' }, name: { type: 'string', description: 'Name to install it under (lowercase letters, digits, hyphens). Defaults to the name in its front matter.' }, scope: { type: 'string', description: '"global" (default: every project), "project" (this chat\'s project only), or a project alias' }, overwrite: { type: 'boolean', description: 'Replace an existing skill of the same name. Default false.' } } } },
   { name: 'skill_delete', description: 'Delete an installed skill and all its files. Cannot be undone. Only "user" skills can be deleted.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The skill\'s folder name' }, scope: { type: 'string', description: '"global" (default), "project", or a project alias' } }, required: ['name'] } },
+
+  // ─── Widgets: UI you author and place inside Crundi ───
+  {
+    name: 'widget_guide',
+    description: 'How to build a Crundi widget: the file layout, the `crundi` API inside the frame, the design tokens and kit classes, data source kinds, slots, and when a widget is worth opening at all. Read this once before your first widget in a session.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'widget_open',
+    description: 'Create, update or re-open a widget: a small live UI you design, shown inside Crundi next to this chat. Use it when something is better seen than read: progress on a long task, a table from a database, a build or test board, a log tail, anything the person will glance at repeatedly. You decide whether one is worth it; do not open one for a quick answer. Source lives in <project>/.crundi/widgets/<id>/ (index.html, widget.json, fixtures/) and hot-reloads when you edit it with your normal file tools. Passing html/manifest here writes those files for you. Returns the source folder and any problems. Always widget_render before telling the person it is done.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Lowercase id, e.g. "task-progress". Reusing an id updates that widget.' },
+        title: { type: 'string', description: 'Short title shown in the widget header' },
+        slot: { type: 'string', enum: ['dock', 'cell', 'tab', 'inline', 'chip'], description: 'Where it sits. dock: attached to this chat (best for live task progress). cell: its own workbench pane (best for something used alongside several chats). tab: full-size in the Panels tab (dense dashboards, wide tables). inline: a card in this chat at the point you call it (a one-off result). chip: a one-line status in the top bar that opens the widget when tapped. The person can move it; their choice wins.' },
+        beside: { type: 'string', enum: ['right', 'below'], description: 'For slot "cell": split this chat\'s pane and place the widget on that side.' },
+        lifecycle: { type: 'string', enum: ['task', 'pinned'], description: 'task (default): belongs to the work in hand; close it when done. pinned: meant to stay, e.g. a dashboard bound to a database.' },
+        html: { type: 'string', description: 'Optional: contents for index.html (a body fragment with markup, <style>, <script>). Omit to write the file yourself.' },
+        manifest: { type: 'object', description: 'Optional: contents for widget.json, e.g. { "sources": { "orders": { "kind": "sqlite", "path": "data/app.db", "query": "select ..." } } }. See widget_guide.' },
+        fixtures: { type: 'object', description: 'Optional: { stateName: { sourceName: value } } written to fixtures/, for rendering empty/error/full states with widget_render.' },
+        data: { type: 'object', description: 'Optional: initial pushed values, { sourceName: value }.' },
+        chip: { type: 'object', description: 'For slot "chip": { source, path, label } naming the value to show, e.g. { "source": "task", "path": "summary" }.' },
+        icon: { type: 'string', description: 'Optional icon name from the kit (e.g. activity, chart, database, list, terminal).' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'widget_set_data',
+    description: 'Push a value to a widget; it redraws at once. This is how a live task dashboard is driven: call it as you finish each step. Give exactly one of value (replace), merge (deep-merge into an object; null deletes a key) or append (add to an array, keeping the last `max`). Sources bound to a file, database, command or the chat session update themselves and need no pushing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Widget id' },
+        source: { type: 'string', description: 'Source name the widget reads as crundi.data[source]. Default "data".' },
+        value: { description: 'Replace the whole value' },
+        merge: { type: 'object', description: 'Deep-merge into the current object' },
+        append: { description: 'Item, or array of items, to append' },
+        max: { type: 'number', description: 'With append: keep at most this many items (default 500)' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'widget_render',
+    description: 'Render a widget inside Crundi\'s real chrome in a headless browser and return screenshots plus a report: script errors, sideways overflow, clipped or tiny text, tap targets too small for a finger, low contrast, hard-coded colours, failed sources. This is how you check your own work: call it after building or changing a widget, read the report, LOOK at every screenshot, fix, and render again. Defaults to the widget\'s own slot on desktop and on a phone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Widget id' },
+        frames: { type: 'array', items: { type: 'string', enum: ['cell', 'dock', 'dock-wide', 'tab', 'inline', 'mobile', 'mobile-dock', 'mobile-tab'] }, description: 'Which layouts to render. Default: the widget\'s slot on desktop, and on a phone.' },
+        states: { type: 'array', items: { type: 'string' }, description: 'Fixture names to render in place of live data (e.g. ["empty","error","full"]). "live" is the current data.' },
+        allStates: { type: 'boolean', description: 'Render live data and every fixture (capped at 8 screenshots in total)' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'widget_get',
+    description: 'A widget\'s status: where it actually sits (the person may have moved, collapsed or closed it), each source\'s state and errors, script faults reported from the live page, whether it is waiting for the owner\'s approval, and anything the person did in it since you last looked (events from crundi.emit and "event" actions; reading them clears them).',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' } }, required: ['id'] },
+  },
+  { name: 'widget_list', description: 'List this project\'s widgets, open and closed.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'widget_close',
+    description: 'Close a widget when its job is done (a task dashboard after the task). Closed is not deleted: widget_open brings it back. remove:true deletes it and its source files.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, remove: { type: 'boolean', description: 'Delete it for good, source files included' } }, required: ['id'] },
+  },
+  {
+    name: 'widget_rollback',
+    description: 'Put a widget\'s source back to an earlier version (widget_get lists them). The current source is kept as a version first.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, version: { type: 'number', description: 'Version number to restore' } }, required: ['id', 'version'] },
+  },
 ];
 
 // ─── Tool handler ───
@@ -280,7 +354,8 @@ const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service',
   'media_list', 'media_get', 'media_add_path', 'media_delete',
   'secret_get',
   'secret_run',
-  'skill_list', 'skill_get', 'skill_install', 'skill_delete']);
+  'skill_list', 'skill_get', 'skill_install', 'skill_delete',
+  'widget_open', 'widget_set_data', 'widget_render', 'widget_get', 'widget_list', 'widget_close', 'widget_rollback']);
 const IMAGE_TOOLS = new Set(['browser_screenshot', 'capture_window', 'capture_display']);
 
 async function handleToolCall(name, args) {
@@ -292,7 +367,14 @@ async function handleToolCall(name, args) {
     args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
 
+  // A widget remembers which chat made it: that is the chat it docks beside,
+  // and the one whose activity a "session" source reports.
+  if (name === 'widget_open' && process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+
   const result = await apiCall(name, args);
+
+  // Tools that answer with ready-made content blocks (text and images mixed).
+  if (result.ok && Array.isArray(result.content)) return { content: result.content };
 
   if (IMAGE_TOOLS.has(name) && result.ok && result.data) {
     return { content: [{ type: 'image', data: result.data, mimeType: 'image/png' }] };

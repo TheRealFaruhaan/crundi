@@ -23,7 +23,7 @@ long-lived. See `platform-linux.md` / `platform-windows.md`.
 |---|---|
 | `send_message_to_user` | Out-of-band; arrives when nobody is watching the chat |
 | `send_photo_to_user` | Image by path |
-| `send_file_to_user` | Any file by path |
+| `send_file_to_user` | Any file by path. Attached on Telegram up to 50 MB (a link beyond that); always returns a 30-minute download link and says how it was delivered. If nothing went out of band, put the link in your reply. |
 
 ## Services
 
@@ -158,6 +158,23 @@ outright — install under another `name`.
 A chat loads its skills when it starts. Installing or deleting one does not
 change a chat that is already running, including this one, and nothing here
 restarts a chat; tell the user a new chat will pick it up.
+
+## Widgets
+
+Live UI panels you author and Crundi shows in its own interface. Owner chats only. Read `widget_guide` before building one; the `crundi-widgets` skill covers when to.
+
+| Tool | What it does |
+|---|---|
+| `widget_guide` | The authoring reference: files, the `crundi` frame API, tokens, kit classes, sources, slots, an example. |
+| `widget_open` | Create, update or re-open a widget. `id`, `slot` (`dock`, `cell`, `tab`, `inline`, `chip`), optional `html` / `manifest` / `fixtures` / `data`. Returns `sourceDir`: edit the files there and it hot-reloads. |
+| `widget_set_data` | Push a value: `value` (replace), `merge` (deep-merge, `null` deletes) or `append` (with `max`). |
+| `widget_render` | Screenshots in Crundi's real chrome plus a lint report. `frames` (`cell`, `dock`, `dock-wide`, `tab`, `inline`, `mobile`, `mobile-dock`, `mobile-tab`), `states` (fixture names). Always run it before calling a widget done. |
+| `widget_get` | Status: actual slot, source errors, faults from the live page, approval state, and events the person triggered (reading clears them). |
+| `widget_list` | This project's widgets. |
+| `widget_close` | Close (reopenable); `remove: true` deletes it and its files. |
+| `widget_rollback` | Restore an earlier version of the source. |
+
+A widget's frame has no network and no storage. Data comes from sources named in `widget.json` (`push`, `session`, `file`, `sqlite`, `command`, `http`, `crundi`); `command` and `http` sources, files outside the project and `command` / `tool` / `prompt` actions need the owner's approval, shown on the widget.
 
 ## Secrets
 
