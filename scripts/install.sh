@@ -222,7 +222,29 @@ mkdir -p "$PREFIX/app"
 
 if [ "$PREBUILT" -eq 1 ]; then
   say "Copying the prebuilt modules"
-  cp -r "$SRC/node_modules" "$PREFIX/"
+  # Copied beside the old tree and swapped in, never over the top of it.
+  #
+  # node_modules holds programs as well as libraries, and an update runs while
+  # the server it is updating is still up. cloudflared is one of those programs:
+  # with any tunnel open it is executing from this very folder, and Linux will
+  # not let a running program's file be written to ("Text file busy"). cp failed
+  # on that one file, the script stopped there, and the update was left with new
+  # code in place and no restart. A whole folder can be renamed out from under a
+  # running program without disturbing it, so that is what happens here; the
+  # tunnel keeps running from the old copy until it is next started.
+  if [ "$SRC/node_modules" -ef "$PREFIX/node_modules" ]; then
+    : # installing in place: there is nothing to copy
+  else
+    rm -rf "$PREFIX"/node_modules.new.* "$PREFIX"/node_modules.old.* 2>/dev/null || true
+    NM_NEW="$PREFIX/node_modules.new.$$"
+    NM_OLD="$PREFIX/node_modules.old.$$"
+    cp -r "$SRC/node_modules" "$NM_NEW"
+    if [ -d "$PREFIX/node_modules" ]; then mv "$PREFIX/node_modules" "$NM_OLD"; fi
+    mv "$NM_NEW" "$PREFIX/node_modules"
+    # Best effort: a leftover old copy costs disk, not correctness, and the
+    # next install clears it.
+    rm -rf "$NM_OLD" 2>/dev/null || true
+  fi
   cp "$SRC/.prebuilt" "$PREFIX/" 2>/dev/null || true
 else
 say "Installing dependencies (production only) — this compiles node-pty, so give it a minute"
