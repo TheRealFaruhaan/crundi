@@ -1188,6 +1188,10 @@ export function getWebappHtml(botUsername) {
        fills the cross axis. */
     .mosaic-split { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
     .mosaic-split.row { flex-direction: row; }
+    /* Only while a size change is being eased in (see mosaicResizeInPlace):
+       left on, it would make dragging a divider lag behind the pointer. */
+    .term-grid.mosaic-easing .mosaic-split > .mosaic-leaf,
+    .term-grid.mosaic-easing .mosaic-split > .mosaic-split { transition: flex-grow 0.22s cubic-bezier(.2,.7,.2,1), flex-basis 0.22s cubic-bezier(.2,.7,.2,1); }
     .mosaic-split.col { flex-direction: column; }
     .mosaic-leaf { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; }
     .mosaic-leaf > .term-cell { flex: 1 1 0; min-width: 0; min-height: 0; }
@@ -5682,6 +5686,87 @@ export function getWebappHtml(botUsername) {
     // un-launched placeholders). Existing xterm views are preserved; cells are
     // re-appended in order (moving a cell within its parent doesn't disturb the
     // embedded terminal).
+    // ─── Layout motion ───
+    // A change of layout used to be an instant swap: panes jumped to their new
+    // places. Two cases, two treatments.
+    //
+    // Sizes only (double-click a header or a divider): nothing moves in the
+    // DOM at all. The splits get their new shares and CSS eases between them.
+    // No pane is re-parented, so no terminal refits twice and no frame reloads.
+    //
+    // Structure (a pane closed, added or moved): the DOM does have to be
+    // rebuilt, so each surviving pane is animated from where it was to where
+    // it is now (first-last-invert-play), and a new one fades in.
+    const LAYOUT_MS = 220;
+    function motionOk() {
+      return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+        && !document.body.classList.contains('mosaic-resizing');
+    }
+    /** Apply the tree's sizes to the splits already on screen. False if they do not match. */
+    function mosaicResizeInPlace() {
+      const grid = document.getElementById('term-grid');
+      const tree = currentMosaic();
+      if (!grid || !tree || !grid.classList.contains('mosaic')) return false;
+      const jobs = [];
+      const walk = (node) => {
+        if (node.t !== 'split') return true;
+        const dom = grid.querySelector('.mosaic-split[data-split-id="' + node._id + '"]');
+        if (!dom) return false;
+        const kids = [...dom.children].filter(c => !c.classList.contains('mosaic-gutter'));
+        if (kids.length !== node.kids.length) return false;
+        for (let i = 0; i < kids.length; i++) {
+          const kid = node.kids[i];
+          const fx = pinsOn() ? mosaicFixed(kid) : null;
+          const px = fx ? (node.dir === 'row' ? fx.w : fx.h) : null;
+          const size = (node.sizes && node.sizes[i] != null) ? node.sizes[i] : (100 / node.kids.length);
+          jobs.push([kids[i], px ? '0 0 ' + px + 'px' : size + ' 1 0']);
+          if (!walk(kid)) return false;
+        }
+        return true;
+      };
+      if (!walk(tree)) return false;
+      const animate = motionOk();
+      if (animate) grid.classList.add('mosaic-easing');
+      for (const [el, flex] of jobs) el.style.flex = flex;
+      clearTimeout(grid._easeTimer);
+      grid._easeTimer = setTimeout(() => { grid.classList.remove('mosaic-easing'); fitAllTerms(); if (typeof brzSync === 'function') brzSync(); }, animate ? LAYOUT_MS + 40 : 0);
+      return true;
+    }
+    /** Where every pane is right now, by key. */
+    function captureCellRects() {
+      const out = new Map();
+      const grid = document.getElementById('term-grid');
+      if (!grid || currentTab !== 'workbench' || !motionOk()) return out;
+      grid.querySelectorAll('.term-cell[data-cellkey]').forEach(c => {
+        const r = c.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) out.set(c.dataset.cellkey, r);
+      });
+      return out;
+    }
+    /** Animate each pane from where it was (before) to where the rebuild put it. */
+    function playCellMotion(before) {
+      if (!before || !before.size || !motionOk()) return;
+      const grid = document.getElementById('term-grid');
+      if (!grid) return;
+      grid.querySelectorAll('.term-cell[data-cellkey]').forEach(c => {
+        if (!c.animate) return;
+        const now = c.getBoundingClientRect();
+        if (now.width < 1 || now.height < 1) return;
+        const was = before.get(c.dataset.cellkey);
+        if (!was) {
+          // New to the layout: arrive, rather than appear.
+          c.animate([{ opacity: 0, transform: 'scale(0.985)' }, { opacity: 1, transform: 'none' }], { duration: LAYOUT_MS, easing: 'ease-out' });
+          return;
+        }
+        const dx = was.left - now.left, dy = was.top - now.top;
+        const sx = was.width / now.width, sy = was.height / now.height;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) return;
+        c.animate(
+          [{ transformOrigin: '0 0', transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ',' + sy + ')' }, { transformOrigin: '0 0', transform: 'none' }],
+          { duration: LAYOUT_MS, easing: 'cubic-bezier(.2,.7,.2,1)' });
+      });
+    }
+
     function renderTermGrid() {
       // A re-render replaces the armed button, so the visual warning would
       // vanish while the timer still ran — the next click would close with no
@@ -5704,6 +5789,8 @@ export function getWebappHtml(botUsername) {
 
       syncWbStateProject();
       applyWidgetPickSwaps();
+      // Where the panes are before anything moves (see playCellMotion).
+      const cellsBefore = captureCellRects();
       // Re-parenting cells below (replaceChildren / arrangeMosaic) blurs whatever
       // descendant had focus — so a state push that rebuilds the grid would steal
       // the cursor out of the terminal you're typing in. Remember the focused
@@ -5792,7 +5879,11 @@ export function getWebappHtml(botUsername) {
       updateFocusStyles();
       embedWbPanels();
       syncWidgetDocks();
+      playCellMotion(cellsBefore);
       setTimeout(fitAllTerms, 30);
+      // Once more when the motion has finished: a terminal fitted mid-flight
+      // was measured while scaled.
+      if (cellsBefore.size) setTimeout(fitAllTerms, LAYOUT_MS + 60);
     }
     let wbLastKeys = [];
     function currentDesiredKeys() { return wbLastKeys.slice(); }
@@ -7393,12 +7484,12 @@ export function getWebappHtml(botUsername) {
       grid.addEventListener('dblclick', (e) => {
         if (!currentMosaic() || !mosaicActive()) return;
         const g = e.target.closest('.mosaic-gutter');
-        if (g) { setMosaic(mosaicEvenSplit(currentMosaic(), g.dataset.splitId)); renderTermGrid(); return; }
+        if (g) { setMosaic(mosaicEvenSplit(currentMosaic(), g.dataset.splitId)); if (!mosaicResizeInPlace()) renderTermGrid(); return; }
         const leaf = e.target.closest('.mosaic-leaf'); if (!leaf) return;
         // Only via the header or an empty pane — never from inside a terminal
         // (where double-click selects a word).
         if (!e.target.closest('.term-head') && !e.target.closest('.mosaic-empty')) return;
-        setMosaic(mosaicMaximizeLeaf(currentMosaic(), leaf.dataset.leafId)); renderTermGrid();
+        setMosaic(mosaicMaximizeLeaf(currentMosaic(), leaf.dataset.leafId)); if (!mosaicResizeInPlace()) renderTermGrid();
       });
       grid.addEventListener('pointerdown', (e) => {
         const g = e.target.closest('.mosaic-gutter'); if (!g) return;
