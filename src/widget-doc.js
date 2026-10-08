@@ -34,6 +34,13 @@ export const CSP = [
 /** The sandbox tokens every widget frame gets. Never add allow-same-origin. */
 export const SANDBOX = 'allow-scripts';
 
+/**
+ * Permissions-policy features handed to the frame. Audio only: without it a
+ * panel cannot make a sound until it is touched, again after every reload.
+ * Not a sandbox token; it grants no network, storage or origin.
+ */
+export const FRAME_ALLOW = 'autoplay';
+
 // Re-read when the file changes, so editing the kit does not need a restart.
 const fileCache = new Map();
 function runtimeFile(name) {
@@ -281,7 +288,7 @@ export async function buildHarnessPage({ doc, title, frame, data, store: kv = {}
   const f = FRAMES[frame] || FRAMES.cell;
   const { all } = await loadAppCss();
   const mobile = !!f.mobile;
-  const iframe = `<iframe class="hz-frame" id="hz-frame" sandbox="${SANDBOX}" title="${escapeHtml(title)}"></iframe>`;
+  const iframe = `<iframe class="hz-frame" id="hz-frame" sandbox="${SANDBOX}" allow="${FRAME_ALLOW}" title="${escapeHtml(title)}"></iframe>`;
   let main;
   if (f.slot === 'dock') {
     const side = !mobile && f.width >= 900;

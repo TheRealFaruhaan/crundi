@@ -6,7 +6,7 @@
  * The escape test loads a real frame in the headless browser. Without a
  * browser on the machine it is skipped, loudly, rather than passed.
  */
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -28,7 +28,7 @@ const ok = (cond, name, detail = '') => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const store = await import('../src/widget-store.js');
-const { buildDoc, CSP, SANDBOX } = await import('../src/widget-doc.js');
+const { buildDoc, CSP, SANDBOX, FRAME_ALLOW } = await import('../src/widget-doc.js');
 const { createWidgetSources, parseCsv, parseAs, summariseSession } = await import('../src/widget-sources.js');
 const { fillTemplate, ACTION_TOOLS } = await import('../src/widget-api.js');
 
@@ -107,11 +107,50 @@ const A = 'demo';
   ok(!d.html.includes('default-src *'), 'doc: the author cannot restate the CSP');
   ok(/connect-src 'none'/.test(CSP) && /default-src 'none'/.test(CSP) && !/unsafe-eval/.test(CSP), 'doc: CSP has no network and no eval');
   ok(SANDBOX === 'allow-scripts', 'doc: sandbox is allow-scripts and nothing else', SANDBOX);
+  ok(FRAME_ALLOW === 'autoplay', 'doc: the only feature handed to the frame is audio', FRAME_ALLOW);
+  const clientSrc = readFileSync(new URL('../app/vendor/crundi-widgets.js', import.meta.url), 'utf8');
+  ok(/setAttribute\('sandbox', 'allow-scripts'\)/.test(clientSrc) && !/allow-same-origin'\)/.test(clientSrc) && /setAttribute\('allow', 'autoplay'\)/.test(clientSrc), 'doc: the page builds the frame with the same sandbox and the same single grant');
   ok(d.html.includes('window.LOCAL = 1') && d.html.includes('<\\/script> in a comment'), 'doc: a local script is inlined and cannot close its own tag');
   ok(!d.html.includes('OUTSIDE'), 'doc: a file outside the widget folder is not inlined');
   ok(!d.html.includes('cdn.example.com/lib.js"') && d.problems.some((p) => /cdn\.example\.com/.test(p)), 'doc: a remote script is removed and reported');
   ok(!/src="https:\/\/example\.com\/a\.png"/.test(d.html), 'doc: a remote image is removed');
   ok(d.html.indexOf('window.crundi') < d.html.indexOf('<p id="p">'), 'doc: the runtime loads before the widget\'s own markup');
+}
+
+// ─── Global scope ───
+{
+  const root = join(projects, 'demo');
+  writeFileSync(join(root, 'g.json'), '{"g":1}');
+  store.upsert(A, 'glob', { title: 'Glob', slot: 'chip' });
+  const manifest = { sources: { f: { kind: 'file', path: 'g.json' }, c: { kind: 'command', run: 'pwd' } } };
+  store.writeSource(A, 'glob', { html: '<p>g</p>', manifest });
+  store.push(A, 'glob', 'kept', { value: 7 });
+  store.snapshot(A, 'glob');
+  const before = store.grantState(A, 'glob', manifest);
+  store.grant(A, 'glob', before.hash);
+  const oldSrc = store.sourceDir(A, 'glob');
+
+  ok(store.resolveScope(A, 'glob') === 'demo' && store.resolveScope('other', 'glob') === null, 'scope: a project widget is found in its project only');
+  const m = store.moveScope(A, 'glob', store.GLOBAL);
+  ok(m.ok && m.widget.project === store.GLOBAL && m.widget.home === 'demo' && m.widget.lifecycle === 'pinned', 'scope: promoted to global, pinned, remembering its home project', JSON.stringify(m).slice(0, 200));
+  ok(!store.get(A, 'glob') && !existsSync(oldSrc), 'scope: nothing is left behind in the project');
+  ok(store.resolveScope(A, 'glob') === store.GLOBAL && store.resolveScope('other', 'glob') === store.GLOBAL, 'scope: a global widget is found from any project');
+  ok(store.readHtml(store.GLOBAL, 'glob').html === '<p>g</p>' && store.getPushed(store.GLOBAL, 'glob').kept.value === 7 && store.listVersions(store.GLOBAL, 'glob').length === 1, 'scope: source, pushed data and versions came along');
+  const r = store.resolveDataPath(store.GLOBAL, 'g.json', 'glob');
+  ok(r.ok && r.inProject && r.path === join(root, 'g.json'), 'scope: a global widget\'s paths still resolve against its home project', JSON.stringify(r));
+  const after = store.grantState(store.GLOBAL, 'glob', manifest);
+  ok(after.hash === before.hash && after.granted, 'scope: the owner\'s approval carries over, because what it may do is unchanged');
+  ok(store.dataRoot(store.GLOBAL, 'glob') === root && store.homeAlias(store.GLOBAL, 'glob') === 'demo', 'scope: commands run in, and the board is read from, the home project');
+
+  store.upsert(A, 'clash', { title: 'Clash' }); store.writeSource(A, 'clash', { html: '<p></p>' });
+  store.moveScope(A, 'clash', store.GLOBAL);
+  store.upsert(A, 'clash', { title: 'Clash again' });
+  ok(!store.moveScope(A, 'clash', store.GLOBAL).ok, 'scope: refuses to promote over a global widget with the same id');
+  ok(store.resolveScope(A, 'clash') === 'demo', 'scope: with the same id in both, the project\'s own wins');
+  mkdirSync(join(projects, 'other'), { recursive: true });
+  ok(!store.moveScope(store.GLOBAL, 'glob', 'other').ok, 'scope: a global widget only goes back to the project it came from');
+  const back = store.moveScope(store.GLOBAL, 'glob', A);
+  ok(back.ok && !back.widget.home && existsSync(join(oldSrc, 'index.html')) && !store.get(store.GLOBAL, 'glob'), 'scope: demoted back into its project, files and all');
 }
 
 // ─── Parsing and templates ───
@@ -213,7 +252,7 @@ const A = 'demo';
     const server = createServer((req, res) => {
       if (req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`<!doctype html><title>host</title><iframe id="f" sandbox="${SANDBOX}"></iframe><script>
+        res.end(`<!doctype html><title>host</title><iframe id="f" sandbox="${SANDBOX}" allow="${FRAME_ALLOW}"></iframe><script>
           localStorage.setItem('crundi_token', 'SECRET');
           window.__probe = null;
           var f = document.getElementById('f');

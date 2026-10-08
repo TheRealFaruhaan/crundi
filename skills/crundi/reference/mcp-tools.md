@@ -22,7 +22,8 @@ long-lived. See `platform-linux.md` / `platform-windows.md`.
 | Tool | Notes |
 |---|---|
 | `send_message_to_user` | Out-of-band; arrives when nobody is watching the chat |
-| `send_photo_to_user` | Image by path |
+| `send_photo_to_user` | Image by path, to Telegram: for when they are not looking at the chat |
+| `show_image` | Draws images in the chat itself, under the call. `path`, or `paths` (up to 8, strings or `{path, caption}`), optional `caption`. PNG/JPEG/GIF/WebP, 10 MB each; files are copied. Chat UI mode only, owner chats. |
 | `send_file_to_user` | Any file by path. Attached on Telegram up to 50 MB (a link beyond that); always returns a 30-minute download link and says how it was delivered. If nothing went out of band, put the link in your reply. |
 
 ## Services
@@ -159,6 +160,12 @@ A chat loads its skills when it starts. Installing or deleting one does not
 change a chat that is already running, including this one, and nothing here
 restarts a chat; tell the user a new chat will pick it up.
 
+## This chat
+
+| Tool | What it does |
+|---|---|
+| `rename_chat` | Renames the chat or terminal you are running in. `title` (at most 20 characters, shown everywhere) and `long` (at most 50, shown where a pane's header has room). Call it first when the person gives a task, and not again until the scope or topic changes. Crundi also names an unnamed chat by itself as a backstop. Refused if the person renamed it themselves. Owner chats only. |
+
 ## Widgets
 
 Live UI panels you author and Crundi shows in its own interface. Owner chats only. Read `widget_guide` before building one; the `crundi-widgets` skill covers when to.
@@ -173,6 +180,7 @@ Live UI panels you author and Crundi shows in its own interface. Owner chats onl
 | `widget_list` | This project's widgets. |
 | `widget_close` | Close (reopenable); `remove: true` deletes it and its files. |
 | `widget_rollback` | Restore an earlier version of the source. |
+| `widget_scope` | Make a widget global (shown in every project, pinned; as a `chip` it stays in the top bar everywhere) or return it to its project with `global: false`. Its sources keep reading from its home project. |
 
 A widget's frame has no network and no storage. Data comes from sources named in `widget.json` (`push`, `session`, `file`, `sqlite`, `command`, `http`, `crundi`); `command` and `http` sources, files outside the project and `command` / `tool` / `prompt` actions need the owner's approval, shown on the widget.
 

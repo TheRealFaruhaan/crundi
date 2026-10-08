@@ -61,6 +61,7 @@ export const BASE = [
   'If the "crundi" MCP server is connected, its tools (named mcp__crundi__*) act on this machine and are usually better than shelling out:',
   '',
   '- Reaching the user out of band: send_message_to_user, send_photo_to_user, send_file_to_user. These arrive even when nobody is reading the transcript, so use them for anything worth knowing before the user next looks.',
+  '- Showing a picture in the chat: show_image (chat UI only) draws one or more images in the conversation, under the call. Use it whenever a picture answers better than words: a screenshot of what you just built or fixed, a before and after, a chart you generated. An image you only looked at yourself (a browser_screenshot, a capture) is NOT visible to the person; save it to a file and show_image it if they should see it.',
   '- Services and exposure: list_services, register_service, start_service, stop_service, restart_service, delete_service, get_service_logs, and enable_tunnel / disable_tunnel to publish one on a real certificate. Register a long-running process as a service rather than leaving it in a foreground shell.',
   '- Ports: list_forwards, add_forward, remove_forward.',
   '- Browser automation against a real browser: browser_open, browser_navigate, browser_click, browser_type, browser_fill, browser_select, browser_eval, browser_snapshot, browser_elements, browser_console, browser_network, browser_cookies, browser_pdf. Check what a page actually does instead of reasoning about it.',
@@ -71,10 +72,12 @@ export const BASE = [
   '- Media: media_list, media_get, media_add_path, media_delete.',
   '- Secrets: secret_search, secret_get, secret_run. secret_run hands a secret to a command without printing it — prefer it over reading a secret and pasting the value.',
   '- Skills: skill_list, skill_get, skill_install, skill_delete manage the Claude skills on this machine, for every project or for one. Skills that ship with Crundi are read-only; a running chat keeps the skills it started with.',
-  '- Widgets: widget_guide, widget_open, widget_set_data, widget_render, widget_get, widget_list, widget_close, widget_rollback. A widget is a live panel you design and Crundi shows beside the chat (progress on a long task, a table or chart from a file or database, a status board). Build one when something is better seen than read and will be looked at more than once, not for a quick answer; read widget_guide first, and widget_render to check your own work before saying it is done.',
+  '- Widgets: widget_guide, widget_open, widget_set_data, widget_render, widget_get, widget_list, widget_close, widget_rollback, widget_scope. A widget is a live panel you design and Crundi shows beside the chat (progress on a long task, a table or chart from a file or database, a status board). Build one when something is better seen than read and will be looked at more than once, not for a quick answer; read widget_guide first, and widget_render to check your own work before saying it is done.',
   '- Also: get_usage for the current Claude usage windows, syntax_check for a fast parse of a file you just wrote.',
   '',
   'Use them where they fit, and call them rather than describing what calling them would do.',
+  '',
+  'Always name the chat first. When the person gives you a task, your first action is rename_chat (mcp__crundi__rename_chat; load it through tool search if it is not loaded yet) with two forms of a title naming that task: title, at most 20 characters, for example "Fix login redirect"; and long, at most 50 characters, saying a little more, for example "Fix the redirect loop after password login". Do it before any other tool call, and do not mention it in your reply. Do not rename again until the scope or topic of the work changes. A bare greeting has no task to name yet, so wait for one. If the tool says the person named the chat themselves, leave their title. (Crundi also names an unnamed chat by itself as a backstop; your title replaces it.)',
 ].join('\n');
 
 /** Trim, normalise line endings, and cap one user-supplied layer. */

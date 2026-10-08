@@ -255,7 +255,7 @@ export function createWidgetSources({ onChange = () => {}, claudeUi = null, crun
   // ── starters: each returns a dispose() ──
 
   function startFile(rt, name, spec) {
-    const r = store.resolveDataPath(rt.alias, spec.path);
+    const r = store.resolveDataPath(rt.alias, spec.path, rt.id);
     if (!r.ok) { settle(rt, name, null, r.error); return () => {}; }
     const format = formatFor(spec, r.path);
     let timer = null, lastStat = '';
@@ -282,7 +282,7 @@ export function createWidgetSources({ onChange = () => {}, claudeUi = null, crun
   }
 
   function startSqlite(rt, name, spec) {
-    const r = store.resolveDataPath(rt.alias, spec.path);
+    const r = store.resolveDataPath(rt.alias, spec.path, rt.id);
     if (!r.ok) { settle(rt, name, null, r.error); return () => {}; }
     const queries = spec.queries && typeof spec.queries === 'object' ? spec.queries : null;
     if (!queries && !spec.query) { settle(rt, name, null, 'A sqlite source needs "query" (or "queries": { name: sql })'); return () => {}; }
@@ -330,7 +330,7 @@ export function createWidgetSources({ onChange = () => {}, claudeUi = null, crun
     if (!cmd && !(argv && argv.length)) { settle(rt, name, null, 'A command source needs "run"'); return () => {}; }
     const timeoutMs = clamp(spec.timeout, 1, 60, 10) * 1000;
     const format = String(spec.format || 'text').toLowerCase();
-    const cwd = store.projectRoot(rt.alias) || process.env.HOME || '/';
+    const cwd = store.dataRoot(rt.alias, rt.id) || process.env.HOME || '/';
     let child = null, stopped = false;
     const run = () => {
       if (child || stopped) return;
@@ -403,7 +403,8 @@ export function createWidgetSources({ onChange = () => {}, claudeUi = null, crun
     const what = String(spec.what || '');
     const reader = crundi[what];
     if (!reader) { settle(rt, name, null, `A crundi source needs "what": one of ${Object.keys(crundi).join(', ')}`); return () => {}; }
-    const run = () => { try { settle(rt, name, reader(rt.alias, spec)); } catch (err) { settle(rt, name, null, err.message); } };
+    // A global widget still reads ITS project's board, wherever it is shown.
+    const run = () => { try { settle(rt, name, reader(store.homeAlias(rt.alias, rt.id), spec)); } catch (err) { settle(rt, name, null, err.message); } };
     const poll = setInterval(run, clamp(spec.every, 1, 600, 3) * 1000);
     poll.unref?.();
     run();

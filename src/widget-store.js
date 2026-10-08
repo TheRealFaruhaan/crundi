@@ -25,10 +25,10 @@
  * workbench cell; a third meaning for either would make the code unsearchable.
  */
 
-import { join, resolve as resolvePath, sep } from 'node:path';
+import { join, resolve as resolvePath, sep, dirname } from 'node:path';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync,
-  rmSync, statSync, realpathSync,
+  rmSync, statSync, realpathSync, cpSync,
 } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { config } from './config.js';
@@ -85,6 +85,35 @@ export function projectRoot(alias) {
     const p = getProject(alias);
     return p && p.path && existsSync(p.path) ? resolvePath(p.path) : '';
   } catch { return ''; }
+}
+
+/**
+ * The folder a widget's relative paths and commands are anchored to.
+ *
+ * For a project widget that is the project. A GLOBAL widget shows in every
+ * project, but it was written against one: its manifest says "data/app.db",
+ * not an absolute path. It keeps that project as its home (meta.home), so
+ * promoting a widget changes where it is shown and nothing about what it reads.
+ */
+export function dataRoot(alias, id) {
+  if (projectKey(alias) !== GLOBAL) return projectRoot(alias);
+  const meta = id ? readMeta(alias, id) : null;
+  return meta && meta.home ? projectRoot(meta.home) : '';
+}
+
+/** The project whose board, services and schedules a widget reads. */
+export function homeAlias(alias, id) {
+  if (projectKey(alias) !== GLOBAL) return projectKey(alias);
+  const meta = id ? readMeta(alias, id) : null;
+  return (meta && meta.home) || '';
+}
+
+/** Which scope holds this id: the project first, then global. Null if neither. */
+export function resolveScope(alias, id) {
+  if (!validId(id)) return null;
+  if (readMeta(alias, id)) return projectKey(alias);
+  if (projectKey(alias) !== GLOBAL && readMeta(GLOBAL, id)) return GLOBAL;
+  return null;
 }
 
 /** Where a widget's source lives. In the project when it has a folder. */
@@ -229,9 +258,9 @@ function insideRoot(root, target) {
   return target === root || target.startsWith(r);
 }
 
-/** Resolve a manifest path against the project, following symlinks. */
-export function resolveDataPath(alias, p) {
-  const root = projectRoot(alias);
+/** Resolve a manifest path against the widget's home project, following symlinks. */
+export function resolveDataPath(alias, p, id) {
+  const root = dataRoot(alias, id);
   const raw = String(p || '');
   if (!raw) return { ok: false, error: 'Missing path' };
   let abs = raw.startsWith('~/') ? join(process.env.HOME || '', raw.slice(2)) : raw;
@@ -247,7 +276,7 @@ export function resolveDataPath(alias, p) {
  * The parts of a manifest that need the owner's say-so, as a stable list.
  * The same list is hashed for the grant, so changing any of it asks again.
  */
-export function privileged(alias, manifest) {
+export function privileged(alias, manifest, id) {
   const out = [];
   const sources = (manifest && manifest.sources) || {};
   for (const name of Object.keys(sources).sort()) {
@@ -255,7 +284,7 @@ export function privileged(alias, manifest) {
     if (s.kind === 'command') out.push({ what: 'command', name, detail: String(Array.isArray(s.run) ? s.run.join(' ') : s.run || '') });
     else if (s.kind === 'http') out.push({ what: 'fetch', name, detail: String(s.url || '') });
     else if (s.kind === 'file' || s.kind === 'sqlite') {
-      const r = resolveDataPath(alias, s.path);
+      const r = resolveDataPath(alias, s.path, id);
       if (r.ok && !r.inProject) out.push({ what: s.kind === 'sqlite' ? 'database outside the project' : 'file outside the project', name, detail: r.path });
     }
   }
@@ -279,7 +308,7 @@ export function grantHashOf(items) {
 
 /** { needed, granted, items } for a widget as its manifest stands now. */
 export function grantState(alias, id, manifest) {
-  const items = privileged(alias, manifest);
+  const items = privileged(alias, manifest, id);
   const hash = grantHashOf(items);
   const meta = readMeta(alias, id);
   return { items, hash, needed: !!hash, granted: !hash || (!!meta && meta.grantHash === hash) };
@@ -290,7 +319,7 @@ export function grant(alias, id, hash) {
   if (!meta) return { ok: false, error: 'No such widget' };
   const m = readManifest(alias, id);
   if (!m.ok) return m;
-  const want = grantHashOf(privileged(alias, m.manifest));
+  const want = grantHashOf(privileged(alias, m.manifest, id));
   // The page approves what it was SHOWN. If the manifest moved on since, the
   // approval is for something else and must not carry over.
   if (hash !== want) return { ok: false, error: 'The widget changed since this was shown. Review it again.', stale: true };
@@ -391,6 +420,53 @@ export function remove(alias, id, { keepSource = false } = {}) {
   rmSync(dir, { recursive: true, force: true });
   if (!keepSource && src !== join(dir, 'src')) { try { rmSync(src, { recursive: true, force: true }); } catch { /* leave it */ } }
   return { ok: true };
+}
+
+// ─── Scope: project ⇄ global ───
+
+/**
+ * Move a widget between a project and the global scope, with everything it
+ * has: source, pushed data, its store, versions and the owner's grant (what it
+ * may do is unchanged, because its home project is).
+ *
+ * @param {string} from  alias it lives under now
+ * @param {string} to    alias to move it to (GLOBAL for global)
+ */
+export function moveScope(from, id, to) {
+  const meta = readMeta(from, id);
+  if (!meta) return { ok: false, error: 'No such widget' };
+  const fromKey = projectKey(from), toKey = projectKey(to);
+  if (fromKey === toKey) return { ok: true, widget: meta, unchanged: true };
+  if (toKey !== GLOBAL && fromKey !== GLOBAL) return { ok: false, error: 'A widget moves between its project and global, not between projects' };
+  if (readMeta(to, id)) return { ok: false, error: `There is already a ${toKey === GLOBAL ? 'global' : 'project'} widget with the id "${id}". Rename or remove one first.` };
+  if (toKey !== GLOBAL) {
+    // Back to a project: only its home, or its relative paths would point elsewhere.
+    if (meta.home && meta.home !== toKey) return { ok: false, error: `This widget belongs to the project "${meta.home}"; it can only go back there.` };
+    if (!projectRoot(to)) return { ok: false, error: 'That project has no folder to hold the widget\'s files' };
+    if (list(to).length >= LIMITS.perProject) return { ok: false, error: `That project already has ${LIMITS.perProject} widgets.` };
+  } else if (list(GLOBAL).length >= LIMITS.perProject) return { ok: false, error: `There are already ${LIMITS.perProject} global widgets.` };
+
+  const oldState = stateDir(from, id), oldSrc = sourceDir(from, id);
+  const newState = stateDir(to, id), newSrc = sourceDir(to, id);
+  try {
+    ensureDir(newState);
+    // State first, without any source it holds: that is copied to its new home below.
+    cpSync(oldState, newState, { recursive: true, filter: (p) => p !== join(oldState, 'src') });
+    if (existsSync(oldSrc)) { ensureDir(dirname(newSrc)); cpSync(oldSrc, newSrc, { recursive: true }); }
+  } catch (err) {
+    try { rmSync(newState, { recursive: true, force: true }); } catch { /* nothing to undo */ }
+    return { ok: false, error: `Could not move the widget's files: ${err.message}` };
+  }
+  const moved = readJson(join(newState, 'meta.json'), meta);
+  moved.project = toKey;
+  if (toKey === GLOBAL) { moved.home = fromKey; moved.lifecycle = 'pinned'; }
+  else delete moved.home;
+  moved.updatedAt = Date.now();
+  writeJson(join(newState, 'meta.json'), moved);
+  // Only now is the original let go.
+  try { rmSync(oldState, { recursive: true, force: true }); } catch { /* a stray copy is harmless */ }
+  if (oldSrc !== join(oldState, 'src')) { try { rmSync(oldSrc, { recursive: true, force: true }); } catch { /* ditto */ } }
+  return { ok: true, widget: moved };
 }
 
 // ─── Pushed data ───

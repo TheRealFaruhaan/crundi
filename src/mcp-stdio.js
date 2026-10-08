@@ -269,6 +269,24 @@ const TOOLS = [
   { name: 'skill_install', description: 'Install a Claude skill on this machine. Give EITHER path (a skill folder containing SKILL.md, or a .zip / .skill archive holding one or more skills, or a SKILL.md file, already on this machine) OR content (the full text of a SKILL.md, with name and description front matter). If a skill of that name exists the call fails with conflict:true; only then repeat it with overwrite:true, and only if the user wants it replaced. Skills that ship with Crundi cannot be replaced. Running chats keep the skills they started with.', inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to a skill folder, .zip, .skill or SKILL.md' }, content: { type: 'string', description: 'The text of a SKILL.md, instead of path' }, name: { type: 'string', description: 'Name to install it under (lowercase letters, digits, hyphens). Defaults to the name in its front matter.' }, scope: { type: 'string', description: '"global" (default: every project), "project" (this chat\'s project only), or a project alias' }, overwrite: { type: 'boolean', description: 'Replace an existing skill of the same name. Default false.' } } } },
   { name: 'skill_delete', description: 'Delete an installed skill and all its files. Cannot be undone. Only "user" skills can be deleted.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The skill\'s folder name' }, scope: { type: 'string', description: '"global" (default), "project", or a project alias' } }, required: ['name'] } },
 
+  {
+    name: 'show_image',
+    description: 'Show one or more images to the person, right here in the chat, drawn under this call. Use it whenever a picture answers better than words: a screenshot of the page you just changed, a before and after, a chart or diagram you generated, a photo they asked you to find. Give path for one image or paths for several (up to 8); PNG, JPEG, GIF or WebP, 10 MB each. The files are copied, so a temporary file is fine. Chat (UI mode) only. This shows the image in the conversation; send_photo_to_user is the different job of reaching them on Telegram when they are not looking at the chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of one image file' },
+        paths: { type: 'array', description: 'Several images: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one image, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'rename_chat',
+    description: 'Name the Crundi chat (or terminal) you are running in after the task the person gave. Call it FIRST, before any other tool, when a task is given; do not call it again until the scope or topic of the work changes. Give two forms: title, at most 20 characters, shown on a phone and in narrow panes (e.g. "Fix login redirect"); and long, at most 50 characters, shown where the header has room (e.g. "Fix the redirect loop after password login"). Plain words, no quotes, no trailing punctuation. Refused if the person has named the chat themselves; leave it then.',
+    inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'Short title, at most 20 characters' }, long: { type: 'string', description: 'Longer title saying a little more, at most 50 characters' } }, required: ['title'] },
+  },
+
   // ─── Widgets: UI you author and place inside Crundi ───
   {
     name: 'widget_guide',
@@ -338,6 +356,11 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, remove: { type: 'boolean', description: 'Delete it for good, source files included' } }, required: ['id'] },
   },
   {
+    name: 'widget_scope',
+    description: 'Make a widget global, or put a global one back in its project. A global widget shows in every project, not only the one it was built in, and is pinned; with slot "chip" it stays in the top bar across projects and chats. Its data sources keep reading from the project it came from. Do this when the person asks for a panel to be available everywhere.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, global: { type: 'boolean', description: 'true (default) to make it global, false to return it to its project' } }, required: ['id'] },
+  },
+  {
     name: 'widget_rollback',
     description: 'Put a widget\'s source back to an earlier version (widget_get lists them). The current source is kept as a version first.',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, version: { type: 'number', description: 'Version number to restore' } }, required: ['id', 'version'] },
@@ -355,7 +378,7 @@ const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service',
   'secret_get',
   'secret_run',
   'skill_list', 'skill_get', 'skill_install', 'skill_delete',
-  'widget_open', 'widget_set_data', 'widget_render', 'widget_get', 'widget_list', 'widget_close', 'widget_rollback']);
+  'widget_open', 'widget_set_data', 'widget_render', 'widget_get', 'widget_list', 'widget_close', 'widget_rollback', 'widget_scope']);
 const IMAGE_TOOLS = new Set(['browser_screenshot', 'capture_window', 'capture_display']);
 
 async function handleToolCall(name, args) {
@@ -370,6 +393,18 @@ async function handleToolCall(name, args) {
   // A widget remembers which chat made it: that is the chat it docks beside,
   // and the one whose activity a "session" source reports.
   if (name === 'widget_open' && process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+  // Which session to rename is this process's own, never an argument: Claude
+  // cannot name a chat it is not in.
+  // Which chat an image is shown in is this process's own, never an argument.
+  if (name === 'show_image') {
+    delete args.sessionId;
+    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+  }
+  if (name === 'rename_chat') {
+    delete args.sessionId; delete args.terminalId;
+    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+    else if (process.env.CRUNDI_TERMINAL_ID) args.terminalId = process.env.CRUNDI_TERMINAL_ID;
+  }
 
   const result = await apiCall(name, args);
 
@@ -432,9 +467,14 @@ const server = new Server(
 const TOOL_SCOPE = process.env.CRUNDI_TOOL_SCOPE || '';
 // Tools that only mean anything in an outside collaborator's chat.
 const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);
-const LISTED_TOOLS = TOOL_SCOPE === 'collaborator'
+// Tools that only mean anything inside a Crundi chat (UI mode): a terminal
+// session has no transcript for Crundi to draw into, so it is not told about them.
+const CHAT_ONLY_TOOLS = new Set(['show_image']);
+const IN_CHAT = !!process.env.CRUNDI_CHAT_ID;
+const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
-  : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name));
+  : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name))
+).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: LISTED_TOOLS };

@@ -622,6 +622,63 @@ export function getWebappHtml(botUsername) {
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px;
     }
     .term-title:hover { background: var(--bg-tertiary); }
+    /* A title has two forms: short (20 characters, always fits) and long (50).
+       The header is a size container, so the long one takes over only where
+       this pane is wide enough to hold it; a narrow pane keeps the short one. The short text stays in the element (rename reads it); it is
+       hidden by size and the long form is drawn from the attribute. */
+    .term-head { container-type: inline-size; }
+    /* Secondary header buttons. Wide: in the header, as ever (display:contents
+       makes the wrapper vanish). Narrow pane, or any pane on a phone: folded
+       into a menu behind .term-more, which sits next to close. */
+    .term-head-tools { display: contents; }
+    /* The pane body is positioned and comes later, so it would paint over a
+       menu hanging below the header. Lift the header while its menu is open. */
+    .term-head.tools-open { position: relative; z-index: 6; }
+    .term-more { display: none; align-items: center; font-size: 13px; padding: 3px 6px; }
+    /* Split is offered in the menu only where the layout can be split and the
+       floating split buttons are not doing the job (a phone). */
+    .head-split { display: none; }
+    .head-split .lay-ic { width: 14px; height: 11px; display: block; }
+    @container (max-width: 559px) {
+        .term-head-tools {
+          display: none; position: absolute; top: calc(100% + 2px); right: 4px; z-index: 30;
+          flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px;
+          padding: 8px; max-width: calc(100% - 8px);
+          background: var(--bg-secondary); border: 1px solid var(--border);
+          border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+        }
+        .term-head.tools-open .term-head-tools { display: flex; }
+        .term-head.tools-open .term-more { color: var(--accent-hover); border-color: var(--accent); }
+        .term-more { display: inline-flex; }
+        /* With the buttons folded away the title can have the room. */
+        .term-title { max-width: none; flex: 0 1 auto; min-width: 0; }
+    }
+    @media (max-width: 768px) {
+        .term-head-tools {
+          display: none; position: absolute; top: calc(100% + 2px); right: 4px; z-index: 30;
+          flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px;
+          padding: 8px; max-width: calc(100% - 8px);
+          background: var(--bg-secondary); border: 1px solid var(--border);
+          border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+        }
+        .term-head.tools-open .term-head-tools { display: flex; }
+        .term-head.tools-open .term-more { color: var(--accent-hover); border-color: var(--accent); }
+        .term-more { display: inline-flex; }
+        /* With the buttons folded away the title can have the room. */
+        .term-title { max-width: none; flex: 0 1 auto; min-width: 0; }
+        .term-head-tools .term-font-btn, .term-head-tools .term-head-btn { min-height: 34px; min-width: 38px; padding: 6px 10px; font-size: 13px; }
+        .term-grid.mosaic.mobile .head-split { display: inline-flex; align-items: center; justify-content: center; }
+        /* They floated over the header, on top of the title and the buttons. */
+        .term-grid.mosaic.mobile .leaf-ctrls { display: none; }
+    }
+    /* Never on a phone, however the pane measures: the short one is the
+       phone's title. */
+    @media (min-width: 769px) {
+      @container (min-width: 560px) {
+        .term-title[data-long] { font-size: 0; max-width: min(440px, 62cqw); }
+        .term-title[data-long]::after { content: attr(data-long); font-size: 12px; }
+      }
+    }
     .term-title-input {
       font-size: 12px; font-weight: 600; font-family: inherit;
       padding: 2px 6px; border-radius: var(--radius-sm);
@@ -2048,7 +2105,11 @@ export function getWebappHtml(botUsername) {
          makes the terminal taller and grows the whole container. */
       .term-cell { min-width: 0; min-height: 320px; flex: 1 0 0; }
       .term-drop-line { width: auto; height: 3px; }
-      .term-title, .term-title-input { max-width: 110px; }
+      /* The title was capped at 110px here to leave room for the header's
+         buttons. Those now fold into a menu on a phone, so the title takes
+         the space; only the rename box keeps a width. */
+      .term-title { max-width: none; flex: 0 1 auto; min-width: 0; }
+      .term-title-input { max-width: 200px; }
     }
     .term-input-bar {
       display: flex; gap: 6px; padding: 6px 8px;
@@ -5276,6 +5337,7 @@ export function getWebappHtml(botUsername) {
 
     async function selectProject(alias) {
       currentProject = alias;
+      widgetsOn();
       // So a reload, or a second browser, lands where you left off instead of
       // on an empty workbench.
       try { localStorage.setItem('crundi_last_project', alias); } catch { /* private mode */ }
@@ -6060,7 +6122,11 @@ export function getWebappHtml(botUsername) {
           isMobile: isMobileTerm,
           // Chats on screen for this project: a docked panel needs its chat.
           liveChats: () => liveTermsForProject().filter(t => t.kind === 'ui').map(t => t.id),
+          // The set of panel panes changed: the grid has to be rebuilt.
           onChange: () => { if (currentTab === 'workbench') renderTermGrid(); },
+          // Anything smaller (a dock opening or closing, a new title, an edit
+          // by Claude): update that corner in place, move nothing.
+          onChrome: () => { if (currentTab === 'workbench') { mountWidgetCells(); syncWidgetDocks(); } },
           openTab: (id) => { window.CrundiWidgets.selectInTab(id); switchTab('widgets'); },
         });
         window.CrundiWidgets.setChipHost(document.getElementById('wg-chips'));
@@ -6156,6 +6222,17 @@ export function getWebappHtml(botUsername) {
     function widgetToolExtra(t, entry) {
       if (!widgetsOn() || !entry || entry.status !== 'done' || entry.isError) return null;
       const name = String(entry.name || '');
+      // Pictures Claude showed with show_image. Only the stored names are
+      // taken from the result, and only if they look like ours; the caption
+      // is set as text.
+      if (/show_image$/.test(name)) {
+        let r = null;
+        try { r = JSON.parse(String(entry.result || '')); } catch { return null; }
+        const items = ((r && Array.isArray(r.images)) ? r.images : [])
+          .filter(i => i && /^[0-9a-f]{16}[.](png|jpg|gif|webp)$/.test(String(i.name || '')))
+          .map(i => ({ url: '/api/chat-images?session=' + encodeURIComponent(t.id) + '&name=' + encodeURIComponent(i.name), caption: String(i.caption || '').slice(0, 200) }));
+        return items.length ? window.CrundiWidgets.picturesNode(items, String((r && r.caption) || '').slice(0, 300)) : null;
+      }
       const id = String((entry.input && entry.input.id) || '').toLowerCase();
       if (!id) return null;
       if (/widget_render$/.test(name)) return window.CrundiWidgets.shotsNode(t.project || currentProject, id);
@@ -6182,11 +6259,11 @@ export function getWebappHtml(botUsername) {
         + '<span class="wb-head-ic">' + ic('note') + '</span>'
         + '<span class="term-title" style="cursor:default;" data-nt-title="' + cell.id + '">' + escHtml(cell.pageId ? (cell.title || 'Untitled') : 'Notes') + '</span>'
         + '<span class="term-head-spacer"></span>'
-        + (cell.pageId ? '<button class="term-font-btn" data-action="notes-switch" data-wbid="' + cell.id + '" title="Pages: open another page here" aria-label="Pages">' + ic('pages') + '</button>' : '')
+        + headTools((cell.pageId ? '<button class="term-font-btn" data-action="notes-switch" data-wbid="' + cell.id + '" title="Pages: open another page here" aria-label="Pages">' + ic('pages') + '</button>' : '')
         + '<button class="term-font-btn" data-action="notes-font" data-dir="-1" title="Smaller text (all notes)">A-</button>'
         + '<button class="term-font-btn" data-action="notes-font" data-dir="0" title="Reset text size">' + ic('rotate-ccw') + '</button>'
         + '<button class="term-font-btn" data-action="notes-font" data-dir="1" title="Larger text (all notes)">A+</button>'
-        + pinBtnHtml()
+        + pinBtnHtml())
         + '<button class="term-head-btn term-close" data-action="wb-close" data-wbid="' + cell.id + '" title="Close panel">\u00d7</button>';
     }
 
@@ -6417,6 +6494,31 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // A pane's secondary buttons (text size, pin, the kind tag, split). In a
+    // wide pane they sit in the header as before. In a narrow pane or on a
+    // phone they would crowd out the title, so CSS folds them into a menu
+    // behind one button next to close. Same markup either way.
+    function headTools(inner) {
+      const sr = '<svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="12" y1="1" x2="12" y2="17"/></svg>';
+      const sd = '<svg class="lay-ic" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="1" y1="9" x2="23" y2="9"/></svg>';
+      return '<span class="term-head-tools">'
+        // Split lives here on a phone, in place of the two buttons that used
+        // to float over the header.
+        + '<button class="term-font-btn head-split" data-action="head-split" data-dir="row" title="Split right">' + sr + '</button>'
+        + '<button class="term-font-btn head-split" data-action="head-split" data-dir="col" title="Split down">' + sd + '</button>'
+        + inner
+        + '</span>'
+        + '<button class="term-head-btn term-more" data-action="head-more" title="More" aria-label="More" aria-haspopup="true">' + ic('more') + '</button>';
+    }
+    function closeHeadMenus(except) {
+      document.querySelectorAll('.term-head.tools-open').forEach(h => { if (h !== except) h.classList.remove('tools-open'); });
+    }
+    document.addEventListener('click', (e) => {
+      // A tap anywhere else closes an open menu; taps inside it are the point.
+      if (e.target.closest && (e.target.closest('.term-head-tools') || e.target.closest('.term-more'))) return;
+      closeHeadMenus(null);
+    }, true);
+
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
@@ -6433,16 +6535,22 @@ export function getWebappHtml(botUsername) {
       const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns : fontBtns) + pinBtnHtml();
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
-        + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename">' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
+        + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename"' + (t.longTitle ? ' data-long="' + escHtml(t.longTitle) + '"' : '') + '>' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
         + badge
         + '<span class="term-head-spacer"></span>'
-        + controls
+        + headTools(controls)
         + '<button class="term-head-btn term-close" data-action="term-close" data-tid="' + t.id + '" title="' + (isChat ? 'Close chat' : 'Close terminal') + '">\\u00d7</button>';
     }
 
     function updateCellHead(el, t) {
       const titleEl = el.querySelector('.term-title');
       if (titleEl && titleEl.tagName !== 'INPUT' && titleEl.textContent !== (t.title || 'Terminal')) titleEl.textContent = t.title || 'Terminal';
+      // The long form rides along as an attribute; CSS shows it in place of
+      // the short one when this header is wide enough (see .term-title[data-long]).
+      if (titleEl && titleEl.tagName !== 'INPUT') {
+        const long = t.longTitle || '';
+        if ((titleEl.dataset.long || '') !== long) { if (long) titleEl.dataset.long = long; else delete titleEl.dataset.long; }
+      }
       const exited = t.status === 'exited';
       const as = exited ? '' : (t.agentState || 'idle');
       const dot = el.querySelector('.term-status-dot');
@@ -7179,7 +7287,7 @@ export function getWebappHtml(botUsername) {
         span.textContent = save ? val : cur;
         input.replaceWith(span);
         if (save && val !== cur) {
-          const tt = terminals.find(t => t.id === id); if (tt) tt.title = val;
+          const tt = terminals.find(t => t.id === id); if (tt) { tt.title = val; tt.longTitle = ''; }
           try { await apiFetch(cellApiBase(id) + '/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: val }) }); } catch { /* ignore */ }
         }
       };
@@ -8067,7 +8175,10 @@ export function getWebappHtml(botUsername) {
       // Only rebuild the grid when the terminal SET/layout actually changes -
       // NOT for agent-status changes (working<->done), which are excluded from
       // the signature so a rebuild cannot re-parent cells and steal typing focus.
-      const termSig = JSON.stringify(terminals.map(t => [t.id, t.project, t.title, t.order, t.status]));
+      // Titles are left out as well: updateLiveCellHeads() above has already
+      // written a new one into its header, and a chat that names itself must
+      // not make every pane on screen reload.
+      const termSig = JSON.stringify(terminals.map(t => [t.id, t.project, t.order, t.status]));
       if (termSig !== lastTermSig) { lastTermSig = termSig; renderTermGrid(); }
     }
 
@@ -8350,9 +8461,12 @@ export function getWebappHtml(botUsername) {
     // global scope of their own; Info, Secrets and Settings are app-level. The
     // rest are meaningless without a project, so they stay hidden rather than
     // being shown and then erroring.
-    const GLOBAL_TABS = ['media', 'mindmap', 'info', 'secrets', 'settings'];
+    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'info', 'secrets', 'settings'];
 
     function syncTabScope() {
+      // Global panels (and their top bar chips) exist with or without a
+      // project, so the panel list follows the selection from here.
+      widgetsOn();
       const bar = $('#tab-bar');
       if (!bar) return;
       bar.classList.add('visible');
@@ -12717,6 +12831,19 @@ export function getWebappHtml(botUsername) {
         case 'notes-switch': { if (d.wbid) notesSwitchPage(d.wbid); break; }
         case 'pane-resume': { if (d.tid) resumePane(d.tid, actionEl); break; }
         case 'pane-pin': { if (actionEl) togglePanePin(actionEl); break; }
+        case 'head-more': {
+          e.stopPropagation();
+          const head = actionEl && actionEl.closest('.term-head');
+          if (head) { closeHeadMenus(head); head.classList.toggle('tools-open'); }
+          break;
+        }
+        case 'head-split': {
+          e.stopPropagation();
+          const leaf = actionEl && actionEl.closest('.mosaic-leaf');
+          closeHeadMenus(null);
+          if (leaf && leaf.dataset.leafId) { setMosaic(mosaicSplitLeaf(currentMosaic(), leaf.dataset.leafId, d.dir === 'col' ? 'col' : 'row')); renderTermGrid(); }
+          break;
+        }
         case 'leaf-split': { e.stopPropagation(); const [id, dir] = (d.leaf || '').split('|'); setMosaic(mosaicSplitLeaf(currentMosaic(), id, dir)); renderTermGrid(); break; }
         case 'leaf-remove': { e.stopPropagation(); setMosaic(mosaicCollapseLeaf(currentMosaic(), d.leaf)); renderTermGrid(); break; }
         case 'wb-close': if (d.wbid) { e.stopPropagation(); closeWbCell(d.wbid); } break;

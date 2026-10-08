@@ -339,6 +339,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
         id: t.id,
         project: t.alias,
         title: t.title,
+        longTitle: t.longTitle || '',
         order: t.order,
         status: t.proc ? 'running' : 'exited',
       });
@@ -612,11 +613,15 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
   /**
    * Rename a terminal (display title only).
    */
-  function rename(id, title) {
+  function rename(id, title, { auto = false, long = '' } = {}) {
     const entry = terminals.get(id);
     if (!entry) return { ok: false, error: `No terminal "${id}"` };
+    // Same rule as a chat: a title the person typed is not replaced by Claude.
+    if (auto && entry.titleByUser) return { ok: false, error: 'The person named this terminal themselves. Leave their title.', keptTitle: entry.title };
     entry.title = (title && String(title).trim()) || 'Terminal';
-    return { ok: true, title: entry.title };
+    entry.longTitle = auto ? String(long || '') : '';
+    if (!auto) entry.titleByUser = true;
+    return { ok: true, title: entry.title, ...(entry.longTitle ? { long: entry.longTitle } : {}) };
   }
 
   /**

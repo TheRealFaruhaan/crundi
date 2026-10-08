@@ -18,7 +18,8 @@
 (function () {
   'use strict';
 
-  var cfg = { apiFetch: null, toast: function () {}, isMobile: function () { return false; }, liveChats: function () { return []; }, onChange: function () {} };
+  var cfg = { apiFetch: null, toast: function () {}, isMobile: function () { return false; }, liveChats: function () { return []; }, onChange: function () {}, onChrome: function () {} };
+  var cellSig = null;        // which panels are workbench panes, as last told to the host
   var project = '';          // alias as the host knows it
   var widgets = [];          // public meta for the current project
   var views = [];            // every mounted frame
@@ -47,6 +48,7 @@
     eye: svg('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>'),
     history: svg('<polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/><polyline points="12 7 12 12 15 14"/>'),
     trash: svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>'),
+    globe: svg('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
     expand: svg('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>')
   };
 
@@ -116,6 +118,16 @@
       '.wg-shots{display:flex;gap:8px;overflow-x:auto;padding:8px 2px 4px}',
       '.wg-shot{flex:0 0 auto;display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--text-muted);font-family:var(--mono)}',
       '.wg-shot img{display:block;height:150px;width:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);cursor:zoom-in}',
+      // pictures shown in a chat
+      '.wg-pics{margin:6px 0 2px}',
+      '.wg-pics-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;align-items:flex-start}',
+      '.wg-pic{margin:0;flex:0 0 auto;display:flex;flex-direction:column;gap:4px;max-width:100%}',
+      '.wg-pic img{display:block;height:220px;width:auto;max-width:none;border:1px solid var(--border);border-radius:8px;background:var(--bg-primary);cursor:zoom-in}',
+      '.wg-pics.one .wg-pic img{height:auto;max-height:420px;max-width:100%}',
+      '.wg-pic figcaption,.wg-pics-cap{font-size:11.5px;color:var(--text-secondary);line-height:1.35;max-width:420px}',
+      '.wg-pics-cap{margin-top:4px;max-width:none}',
+      '.wg-pic-gone{display:none;font-size:11.5px;color:var(--text-muted);padding:10px 12px;border:1px dashed var(--border);border-radius:8px}',
+      '.wg-pic.gone img{display:none}.wg-pic.gone .wg-pic-gone{display:block}',
       '.wg-zoom{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out}',
       '.wg-zoom img{max-width:100%;max-height:100%;border-radius:8px;border:1px solid var(--border)}',
       // chips
@@ -195,6 +207,13 @@
     v.iframe.className = 'wg-frame';
     // The only tokens this frame ever gets. See the note at the top of the file.
     v.iframe.setAttribute('sandbox', 'allow-scripts');
+    // Sound. A frame with an opaque origin does not inherit "the person has
+    // interacted with this page", so a panel could not play anything until it
+    // was touched itself, and lost that again on every reload (and panels
+    // reload whenever Claude saves a change). This hands down the page's own
+    // standing for audio and nothing else: it is a permissions-policy grant,
+    // not a sandbox token, and gives no network, storage or origin.
+    v.iframe.setAttribute('allow', 'autoplay');
     v.iframe.setAttribute('referrerpolicy', 'no-referrer');
     v.iframe.setAttribute('title', 'Panel');
     v.root.appendChild(v.banners);
@@ -383,11 +402,18 @@
 
   function refresh() {
     var mine = ++loadSeq, p = project;
-    if (!p || !cfg.apiFetch) { widgets = []; cfg.onChange(); return Promise.resolve(); }
+    if (!cfg.apiFetch) { widgets = []; cellSig = ''; cfg.onChange(); return Promise.resolve(); }
+    // No project selected still has something to show: the global panels.
     return api('/api/widgets?project=' + encodeURIComponent(p)).then(function (d) {
       if (mine !== loadSeq) return;
       widgets = d.ok ? (d.widgets || []) : [];
-      cfg.onChange();
+      // Rebuilding the workbench moves every pane, which reloads every frame
+      // in it and makes the whole page blink. That is only worth it when the
+      // SET of panes changed. A panel docking, closing in a dock, being
+      // retitled or edited by Claude touches only its own corner (onChrome).
+      var sig = widgets.filter(function (w) { return placeOf(w) === 'cell'; }).map(function (w) { return w.id; }).join(',');
+      if (sig !== cellSig) { cellSig = sig; cfg.onChange(); }
+      else cfg.onChrome();
       renderChips();
       renderTabList();
       repaintPickers();
@@ -432,9 +458,22 @@
       + '<button class="term-head-btn term-close" data-action="widget-close" data-wgid="' + esc(id) + '" title="Close panel">×</button>';
   }
 
+  /** Bring a pane's header up to date without rebuilding it. */
+  function refreshCellHead(cellEl, id) {
+    var w = byId(id); if (!w) return;
+    var t = cellEl.querySelector('.term-title');
+    if (t && t.textContent !== (w.title || id)) t.textContent = w.title || id;
+    var badge = cellEl.querySelector('.term-head > .wg-badge');
+    if (w.needsGrant && !badge) {
+      badge = el('span', 'wg-badge warn', 'approve'); badge.title = 'Waiting for your approval';
+      if (t && t.nextSibling) t.parentNode.insertBefore(badge, t.nextSibling);
+    } else if (!w.needsGrant && badge) badge.remove();
+  }
+
   function mountCell(cellEl, id) {
     var body = cellEl.querySelector('.wg-cell-body');
     if (!body) return null;
+    refreshCellHead(cellEl, id);
     var slot = cellEl.querySelector('[data-wg-slot]');
     var w = byId(id);
     if (slot && w && !slot.firstChild) slot.appendChild(slotSelect(w));
@@ -576,6 +615,41 @@
     return row;
   }
 
+  /**
+   * Pictures Claude showed with show_image, for the transcript. `items` are
+   * { url, caption } the HOST built from validated names: nothing here is
+   * taken from a tool's output as markup.
+   */
+  function picturesNode(items, caption) {
+    injectStyles();
+    var box = el('div', 'wg-pics' + (items.length === 1 ? ' one' : ''));
+    var row = el('div', 'wg-pics-row');
+    items.forEach(function (it, i) {
+      var fig = el('figure', 'wg-pic');
+      var img = document.createElement('img');
+      img.alt = it.caption || ('Image ' + (i + 1));
+      img.loading = 'lazy';
+      cfg.apiFetch(it.url)
+        .then(function (r) { return r.ok ? r.blob() : null; })
+        .then(function (b) { if (b) img.src = URL.createObjectURL(b); else fig.classList.add('gone'); })
+        .catch(function () { fig.classList.add('gone'); });
+      img.addEventListener('click', function () {
+        if (!img.src) return;
+        var z = el('div', 'wg-zoom'); var big = document.createElement('img'); big.src = img.src; big.alt = img.alt;
+        z.appendChild(big); z.addEventListener('click', function () { z.remove(); });
+        document.body.appendChild(z);
+      });
+      fig.appendChild(img);
+      var gone = el('div', 'wg-pic-gone', 'This image is no longer stored.');
+      fig.appendChild(gone);
+      if (it.caption) { var c = el('figcaption'); c.textContent = it.caption; fig.appendChild(c); }
+      row.appendChild(fig);
+    });
+    box.appendChild(row);
+    if (caption) { var all = el('div', 'wg-pics-cap'); all.textContent = caption; box.appendChild(all); }
+    return box;
+  }
+
   // ─── Chips ───
 
   function pathGet(obj, path) {
@@ -709,6 +783,7 @@
     sorted.forEach(function (w) {
       var b = el('button', 'wg-tab-item' + (w.id === tabState.selected ? ' sel' : '') + (w.state !== 'open' ? ' closed' : ''), IC.panel);
       var n = el('span', 'n'); n.textContent = w.title; b.appendChild(n);
+      if (w.global) { var gb = el('span', 'wg-badge', 'global'); gb.title = 'Shown in every project'; b.appendChild(gb); }
       if (w.needsGrant) b.appendChild(el('span', 'wg-badge warn', 'approve'));
       else if (w.faults) b.appendChild(el('span', 'wg-badge err', 'error'));
       else { var s = el('span', 's'); s.textContent = w.state !== 'open' ? 'closed' : (SLOT_LABEL[w.slot] || w.slot).split(' ')[0].toLowerCase(); b.appendChild(s); }
@@ -728,6 +803,25 @@
     var mk = function (html, title, fn, cls) { var b = el('button', 'wg-btn' + (cls ? ' ' + cls : ''), html); b.title = title; b.addEventListener('click', fn); bar.appendChild(b); return b; };
     if (w.state === 'open') bar.appendChild(slotSelect(w));
     mk(IC.pin + (w.lifecycle === 'pinned' ? 'Pinned' : 'Pin'), w.lifecycle === 'pinned' ? 'Pinned: meant to stay. Click to unpin.' : 'Keep this panel after the task is done', function () { userPatch(w.id, { pinned: w.lifecycle !== 'pinned' }); });
+    // Global: shown in every project (and, as a chip, in the top bar everywhere).
+    // Going back is only offered from the project it came from.
+    if (!w.global) {
+      mk(IC.globe + 'Make global', 'Show this panel in every project. As a top bar chip it then stays there across projects and chats.', function () {
+        api('/api/widgets/scope', { project: project, id: w.id, global: true }).then(function (r) {
+          if (!r.ok) return cfg.toast(r.error || 'Could not make it global', 'error');
+          cfg.toast('Now global: shown in every project');
+        });
+      });
+    } else if (!w.home || w.home === pkey(project)) {
+      mk(IC.globe + 'Global', 'Global: shown in every project. Click to keep it in this project only.', function () {
+        api('/api/widgets/scope', { project: project, id: w.id, global: false }).then(function (r) {
+          if (!r.ok) return cfg.toast(r.error || 'Could not change it', 'error');
+          cfg.toast('Back in this project only');
+        });
+      }, 'primary');
+    } else {
+      var from = el('span', 'wg-badge', 'global · from ' + w.home); from.title = 'A global panel. Open the project it came from to make it project-only again.'; bar.appendChild(from);
+    }
     mk(IC.refresh, 'Reload', function () { showPane(''); reload(w.id); });
     mk(IC.eye + 'Checks', 'The screenshots from Claude\'s last check of this panel', function () { showPane(tabState.pane === 'checks' ? '' : 'checks'); });
     mk(IC.history + 'History', 'Earlier versions', function () { showPane(tabState.pane === 'history' ? '' : 'history'); });
@@ -803,7 +897,7 @@
     injectStyles();
     tabState.el = host;
     if (tabState.view) { tabState.view.destroy(); tabState.view = null; }
-    if (!project) { host.innerHTML = '<div class="wg-msg">' + IC.panel + '<div>Select a project to see its panels.</div></div>'; return; }
+    if (!project && !widgets.length) { host.innerHTML = '<div class="wg-msg">' + IC.panel + '<div>No global panels yet.</div><div style="max-width:340px;font-size:12px">Select a project to see its panels. Any of them can be made global from here, to show in every project.</div></div>'; return; }
     if (!widgets.length) {
       host.innerHTML = '<div class="wg-msg">' + IC.panel + '<div><b style="color:var(--text-primary)">No panels yet</b></div>'
         + '<div style="max-width:360px">Claude builds these when something is better seen than read: progress on a long task, a table from a database, a build board. Ask for one, or let it decide.</div></div>';
@@ -822,15 +916,17 @@
   // ─── Server events ───
 
   function handleEvent(d) {
-    if (!d || d.project !== pkey(project)) return;
+    // Global panels show in every project, so their events are everyone's.
+    var G = d && d.project === '_global';
+    if (!d || (!G && d.project !== pkey(project))) return;
     if (d.kind === 'data') {
-      views.forEach(function (v) { if (v.id === d.id && v.pkey === d.project) v.sendData(d.source); });
+      views.forEach(function (v) { if (v.id === d.id && (G || v.pkey === d.project)) v.sendData(d.source); });
       var w = byId(d.id);
       if (w && placeOf(w) === 'chip' && (!d.source || !w.chip || w.chip.source === d.source)) loadChipValue(w);
       return;
     }
     if (d.kind === 'doc') {
-      views.forEach(function (v) { if (v.id === d.id && v.pkey === d.project) v.load(); });
+      views.forEach(function (v) { if (v.id === d.id && (G || v.pkey === d.project)) v.load(); });
       refresh();
       return;
     }
@@ -840,7 +936,7 @@
 
   window.CrundiWidgets = {
     configure: function (o) { for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) cfg[k] = o[k]; injectStyles(); },
-    setProject: function (alias) { if (alias === project) return Promise.resolve(); project = alias || ''; widgets = []; chipValues = {}; closePop(); tabState.selected = ''; return refresh(); },
+    setProject: function (alias) { if (alias === project) return Promise.resolve(); project = alias || ''; widgets = []; cellSig = null; chipValues = {}; closePop(); tabState.selected = ''; return refresh(); },
     refresh: refresh,
     list: function () { return widgets.slice(); },
     /** Ids of the widgets that are workbench panes right now. */
@@ -853,6 +949,7 @@
     syncDock: syncDock,
     inlineNode: inlineNode,
     shotsNode: shotsNode,
+    picturesNode: picturesNode,
     setChipHost: function (n) { chipEl = n; renderChips(); },
     mountPicker: mountPicker,
     mountTab: mountTab,
