@@ -105,7 +105,10 @@ export async function renderWidget({ baseUrl, alias, id, frames, states, liveDat
   // The chip is its own build of the same source: it knows from its first byte
   // that it is the chip.
   const chipDoc = await buildDoc(alias, id, { harness: true, chip: true });
-  const wantFrames = (Array.isArray(frames) && frames.length ? frames : [slotFrame(meta), slotFrame(meta, true)])
+  // A chip is three things to look at: its face in the bar on a desktop and
+  // on a phone (where it gets half the width), and the panel it opens.
+  const dflt = store.effectiveSlot(meta) === 'chip' ? ['chip', 'mobile-chip', 'mobile'] : [slotFrame(meta), slotFrame(meta, true)];
+  const wantFrames = (Array.isArray(frames) && frames.length ? frames : dflt)
     .map(String).filter((f, i, a) => a.indexOf(f) === i);
   const bad = wantFrames.filter((f) => !FRAMES[f]);
   if (bad.length) return { ok: false, error: `Unknown frame "${bad[0]}". Frames: ${Object.keys(FRAMES).join(', ')}` };
@@ -125,10 +128,10 @@ export async function renderWidget({ baseUrl, alias, id, frames, states, liveDat
     }
     for (const frame of wantFrames) {
       if (shots.length >= MAX_SHOTS) break;
-      const html = await buildHarnessPage({ doc: frame === 'chip' ? chipDoc.html : doc.html, title: doc.title, frame, data, store: kv, stateName: state === 'live' ? '' : state });
+      const html = await buildHarnessPage({ doc: FRAMES[frame].slot === 'chipbar' ? chipDoc.html : doc.html, title: doc.title, frame, data, store: kv, stateName: state === 'live' ? '' : state });
       const r = await shootOne({ baseUrl, html, frame });
       if (!r.ok) return { ok: false, error: `Render failed (${frame}): ${r.error}` };
-      if (frame === 'chip' && !(r.result.lint && r.result.lint.metrics && r.result.lint.metrics.chipFace)) (r.result.faults = r.result.faults || []).push({ message: 'This panel has no chip face. Mark ONE top-level element in index.html with data-chip (e.g. <div data-chip>…</div>) and fill it from onData; without it the chip shows only the title.' });
+      if (FRAMES[frame].slot === 'chipbar' && !(r.result.lint && r.result.lint.metrics && r.result.lint.metrics.chipFace)) (r.result.faults = r.result.faults || []).push({ message: 'This panel has no chip face. Mark ONE top-level element in index.html with data-chip (e.g. <div data-chip>…</div>) and fill it from onData; without it the chip shows only the title.' });
       shots.push({ frame, state, width: FRAMES[frame].width, height: FRAMES[frame].height, label: FRAMES[frame].label, png: r.png, faults: r.result.faults || [], lint: r.result.lint, console: r.console, ready: !!r.result.ready });
     }
   }

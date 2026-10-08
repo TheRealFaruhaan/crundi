@@ -337,7 +337,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Widget id' },
-        frames: { type: 'array', items: { type: 'string', enum: ['cell', 'dock', 'dock-wide', 'tab', 'inline', 'chip', 'mobile', 'mobile-dock', 'mobile-tab'] }, description: 'Which layouts to render. Default: the widget\'s slot on desktop, and on a phone.' },
+        frames: { type: 'array', items: { type: 'string', enum: ['cell', 'dock', 'dock-wide', 'tab', 'inline', 'chip', 'mobile', 'mobile-dock', 'mobile-tab', 'mobile-chip'] }, description: 'Which layouts to render. Default: the widget\'s slot on desktop, and on a phone.' },
         states: { type: 'array', items: { type: 'string' }, description: 'Fixture names to render in place of live data (e.g. ["empty","error","full"]). "live" is the current data.' },
         allStates: { type: 'boolean', description: 'Render live data and every fixture (capped at 8 screenshots in total)' },
       },

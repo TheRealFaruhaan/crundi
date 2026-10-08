@@ -203,7 +203,8 @@ Every widget is also listed in the Panels tab, where the person can reopen, move
 - Sized for it: `c-chip-spark` (a 44×14 box for `crundi.chart.spark`), `c-chip-meter` (`ok warn err`) with an inner `<span style="width:40%">`, `c-chip-label`, plus `c-dot` and `crundi.icon()`.
 - The chip cannot be interacted with: a tap anywhere on it opens the panel. `crundi.isChip` is true in that copy if you need to skip heavy work there.
 - No `data-chip` element means the labelled chip. A panel moved to the top bar by the person shows whichever it has.
-- Check it with `widget_render` and `frames: ["chip"]`.
+- On a phone there is no room for chips in the bar. One Panels button sits there instead and drops a list; your chip is a row of it, the face to the right of the panel's name, at most 200px wide. The name is already shown, so the face need not repeat it.
+- Check it with `widget_render` and `frames: ["chip", "mobile-chip"]` (the default for a chip widget, with the panel it opens).
 
 ## Global widgets
 

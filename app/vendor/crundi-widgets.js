@@ -142,11 +142,25 @@
       // In the desktop app the whole top bar is a window-drag area, and a drag
       // area swallows clicks: a chip there could be seen but never pressed.
       // no-drag gives it back to the pointer. A browser ignores the property.
-      '.wg-chips{display:inline-flex;gap:6px;align-items:center;min-width:0;position:relative;z-index:2;-webkit-app-region:no-drag}',
+      // The chips share the top bar with the project name and the status
+      // badges. They may shrink as a group but must never spill over their
+      // neighbours: when there is not room for all of them the row scrolls
+      // sideways inside its own box. (It used to be allowed to shrink while
+      // its chips were not, so on a phone they were drawn over the badges.)
+      '.wg-chips{display:inline-flex;gap:6px;align-items:center;flex:0 1 auto;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;position:relative;z-index:2;-webkit-app-region:no-drag}',
+      '.wg-chips::-webkit-scrollbar{display:none}',
+      '.wg-chips>.wg-chip{flex:0 0 auto}',
       '.wg-chip{-webkit-app-region:no-drag}',
       '.wg-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:3px 9px;border-radius:99px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:11.5px;cursor:pointer;white-space:nowrap}',
       '.wg-chip:hover{border-color:var(--accent)}',
       '.wg-chip-plain{display:inline-flex;align-items:center;gap:6px;min-width:0}',
+      // Its name, for the phone's list, where a face alone would not say whose it is.
+      '.wg-chip-name{display:none}',
+      // The phone's one button for all chips (see the phone rules below).
+      '.wg-chip-toggle{display:none;align-items:center;gap:5px;flex-shrink:0;position:relative;z-index:2;height:28px;padding:0 9px;border-radius:99px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--accent-hover);font-size:12px;font-weight:650;cursor:pointer;-webkit-app-region:no-drag}',
+      '.wg-chip-toggle.on{border-color:var(--accent)}',
+      '.wg-chip-toggle[hidden]{display:none!important}',
+      '.wg-chip-toggle b{color:var(--text-primary);font-variant-numeric:tabular-nums}',
       // A live chip: the panel's own face, in a frame the pointer passes through
       // so the whole chip is still one button.
       '.wg-chip.live{padding:0 9px;height:26px;max-width:none}',
@@ -203,6 +217,21 @@
       '.wg-pop{top:calc(var(--topbar-height) + 52px);right:8px;left:8px;bottom:auto;width:auto;height:min(68svh,560px)}',
       '.wg-picker-list .wg-tab-item{width:100%;max-width:none}',
       '.wg-chip{max-width:140px}.wg-chip .l{display:none}',
+      // On a phone the bar has no room for chips at all. There is one button
+      // in the bar instead, and the SAME chips become the rows of a list that
+      // drops from it. They are hidden with visibility, never display: a live
+      // chip is a running frame (a timer, a meter) and has to keep running,
+      // and keep being measured, while the list is closed.
+      '.topbar>.wg-chips{position:fixed;top:calc(var(--topbar-height) + 6px);left:8px;right:8px;max-width:none;max-height:min(62svh,420px);flex-direction:column;align-items:stretch;gap:4px;padding:8px;overflow-x:hidden;overflow-y:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:940;visibility:hidden;opacity:0;pointer-events:none;transform:translateY(-6px);transition:opacity .14s ease,transform .14s ease,visibility 0s linear .14s}',
+      '.topbar>.wg-chips.open{visibility:visible;opacity:1;pointer-events:auto;transform:none;transition:opacity .14s ease,transform .14s ease}',
+      '.topbar>.wg-chips::before{content:"Panels";font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-secondary);padding:2px 6px 6px}',
+      '.wg-chips>.wg-chip,.wg-chips>.wg-chip.live{max-width:none;width:100%;height:auto;min-height:46px;padding:6px 12px;border-radius:10px;justify-content:flex-start;gap:10px;background:var(--bg-primary)}',
+      '.wg-chips>.wg-chip .wg-chip-name{display:inline;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left;font-size:13px;color:var(--text-primary)}',
+      '.wg-chips>.wg-chip.live .wg-chip-plain{display:none}',
+      '.wg-chips>.wg-chip .wg-chip-plain .l{display:none}',
+      '.wg-chips>.wg-chip .wg-chip-plain .ic{display:none}',
+      '.wg-chips>.wg-chip .wg-chip-plain .v{color:var(--text-secondary)}',
+      '.wg-chip-toggle{display:inline-flex}',
       '.wg-shot img{height:180px}',
       '}'
     ].join('\n');
@@ -705,6 +734,37 @@
   }
 
   var chipNodes = {};   // id -> { el, view, live, sig }
+  var chipToggle = null;
+
+  /** Open or close the phone's list of chips. */
+  function setChipList(open) {
+    if (!chipEl) return;
+    chipEl.classList.toggle('open', !!open);
+    if (chipToggle) { chipToggle.classList.toggle('on', !!open); chipToggle.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+  }
+
+  /** The phone's single top bar button, shown only when there is a chip to list. */
+  function syncChipToggle(count) {
+    if (!chipEl || !chipEl.parentElement) return;
+    if (!chipToggle) {
+      chipToggle = el('button', 'wg-chip-toggle', IC.panel + '<b></b>');
+      chipToggle.type = 'button';
+      chipToggle.title = 'Panels';
+      chipToggle.setAttribute('aria-label', 'Panels');
+      chipToggle.setAttribute('aria-haspopup', 'true');
+      chipToggle.addEventListener('click', function (e) { e.stopPropagation(); setChipList(!chipEl.classList.contains('open')); });
+      chipEl.parentElement.insertBefore(chipToggle, chipEl);
+      // A tap anywhere else puts the list away.
+      document.addEventListener('click', function (e) {
+        if (!chipEl.classList.contains('open')) return;
+        if (e.target.closest && (e.target.closest('.wg-chips') || e.target.closest('.wg-chip-toggle'))) return;
+        setChipList(false);
+      }, true);
+    }
+    chipToggle.hidden = !count;
+    chipToggle.querySelector('b').textContent = count > 1 ? String(count) : '';
+    if (!count) setChipList(false);
+  }
 
   function dropChip(id) {
     var c = chipNodes[id]; if (!c) return;
@@ -721,6 +781,7 @@
     if (!chipEl) return;
     var list = widgets.filter(function (w) { return placeOf(w) === 'chip'; });
     chipEl.style.display = list.length ? '' : 'none';
+    syncChipToggle(list.length);
     var want = {};
     list.forEach(function (w) { want[w.id] = 1; });
     Object.keys(chipNodes).forEach(function (id) { if (!want[id]) dropChip(id); });
@@ -732,7 +793,8 @@
       if (c && c.live !== live) { dropChip(w.id); c = null; }
       if (!c) {
         var b = el('button', 'wg-chip' + (live ? ' live' : ''));
-        b.addEventListener('click', function () { openPop(w.id); });
+        b.appendChild(el('span', 'wg-chip-name'));
+        b.addEventListener('click', function () { setChipList(false); openPop(w.id); });
         c = chipNodes[w.id] = { el: b, view: null, live: live, sig: '' };
         if (live) {
           var holder = el('span', 'wg-chip-face');
@@ -740,7 +802,8 @@
           c.view = createView(holder, {
             project: project, id: w.id, frame: 'chipbar', chip: true,
             onSize: function (wd) {
-              var max = cfg.isMobile() ? 132 : 260;
+              // On a phone the chip is a row of the dropped list, with room beside its name.
+              var max = cfg.isMobile() ? 200 : 260;
               c.view.iframe.style.width = Math.max(16, Math.min(max, wd || 16)) + 'px';
               // Nothing marked data-chip came up after all: show the label instead.
               b.classList.toggle('empty', !wd);
@@ -750,13 +813,14 @@
         chipEl.appendChild(b);
       }
       c.el.title = w.title + (w.needsGrant ? ' (waiting for your approval)' : '');
+      var nm = c.el.querySelector('.wg-chip-name'); if (nm && nm.textContent !== w.title) nm.textContent = w.title;
       c.el.setAttribute('aria-label', w.title);
       if (!live || c.el.classList.contains('empty') || !c.plain) {
         var sig = [w.title, (w.chip && w.chip.label) || '', chipValues[w.id] || '', w.needsGrant ? 1 : 0].join('|');
         if (sig !== c.sig) {
           c.sig = sig;
           var plain = c.plain;
-          if (!plain) { plain = c.plain = el('span', 'wg-chip-plain'); c.el.insertBefore(plain, c.el.firstChild); }
+          if (!plain) { plain = c.plain = el('span', 'wg-chip-plain'); c.el.insertBefore(plain, c.el.querySelector('.wg-chip-name').nextSibling); }
           plain.innerHTML = IC.panel;
           var l = el('span', 'l'); l.textContent = (w.chip && w.chip.label) || w.title; plain.appendChild(l);
           if (chipValues[w.id]) { var vEl = el('span', 'v'); vEl.textContent = chipValues[w.id]; plain.appendChild(vEl); }
