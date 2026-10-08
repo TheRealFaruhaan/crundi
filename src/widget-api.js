@@ -115,6 +115,11 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
 
   // ─── Views ───
 
+  function hasChipFace(alias, id) {
+    const h = store.readHtml(alias, id);
+    return h.ok && /<[a-z][^>]*\sdata-chip(?=[\s=>\/])/i.test(h.html);
+  }
+
   function publicMeta(alias, meta) {
     const m = store.readManifest(alias, meta.id);
     const g = store.grantState(alias, meta.id, m.ok ? m.manifest : {});
@@ -122,6 +127,9 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
       id: meta.id, project: meta.project, title: meta.title, icon: meta.icon || '',
       slot: store.effectiveSlot(meta), requestedSlot: meta.slot, chat: meta.chat || '', beside: meta.beside || '',
       state: meta.state, lifecycle: meta.lifecycle, rev: meta.rev || 0, version: meta.version || 0,
+      global: meta.project === store.GLOBAL, home: meta.home || '',
+      // A top-level element marked data-chip is the panel's live face in the top bar.
+      chipLive: hasChipFace(alias, meta.id),
       size: meta.size || null, chip: meta.chip || (m.ok && m.manifest.chip) || null,
       collapsed: !!(meta.user && meta.user.collapsed),
       chatLive: !!(meta.chat && claudeUi && claudeUi.has && claudeUi.has(meta.chat)),
@@ -130,7 +138,35 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
     };
   }
 
-  function listFor(alias) { return store.list(alias).map((m) => publicMeta(alias, m)); }
+  /**
+   * What a project's pages show: its own widgets, then the global ones. A
+   * project widget hides a global one with the same id, so an id means one
+   * thing on any given page.
+   */
+  function listFor(alias) {
+    const own = store.list(alias).map((m) => publicMeta(alias, m));
+    if (store.projectKey(alias) === store.GLOBAL) return own;
+    const have = new Set(own.map((w) => w.id));
+    return own.concat(store.list(store.GLOBAL).filter((m) => !have.has(m.id)).map((m) => publicMeta(store.GLOBAL, m)));
+  }
+
+  /** Move a widget between its project and global, and tell every page. */
+  function changeScope(alias, id, toGlobal) {
+    const from = store.resolveScope(alias, id);
+    if (!from) return { ok: false, error: 'No such widget' };
+    const to = toGlobal ? store.GLOBAL : (store.homeAlias(from, id) || store.projectKey(alias));
+    sources.drop(from, id);
+    const r = store.moveScope(from, id, to);
+    if (!r.ok) return r;
+    if (!r.unchanged) {
+      const e = docWatch.get(wkey(from, id));
+      if (e) { clearTimeout(e.timer); try { e.watcher?.close(); } catch { /* gone */ } docWatch.delete(wkey(from, id)); }
+      // Both sides: pages on the old scope drop it, pages everywhere pick it up.
+      tell(from, id, 'list');
+      tell(to, id, 'list');
+    }
+    return { ok: true, widget: publicMeta(to, r.widget), global: store.projectKey(to) === store.GLOBAL, left: r.left || '', inPlace: r.inPlace || [] };
+  }
 
   // ─── Calls from inside a frame ───
 
@@ -153,7 +189,13 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
     const meta = store.get(alias, id);
     if (!meta) return { ok: false, error: 'No such widget' };
     const a = args && typeof args === 'object' ? args : {};
-    if (op === 'store.set') return store.storeSet(alias, id, a.key, a.value);
+    if (op === 'store.set') {
+      const r = store.storeSet(alias, id, a.key, a.value);
+      // Every other copy of this panel on screen (its chip, its pane, another
+      // browser) hears about it; that is what keeps them one panel.
+      if (r.ok) tell(alias, id, 'store');
+      return r;
+    }
     if (op === 'emit') return store.addEvent(alias, id, a.name, a.payload);
     if (op === 'toast' || op === 'openLink') return { ok: true }; // the page does these itself
     const m = store.readManifest(alias, id);
@@ -173,14 +215,14 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
       const params = a.params && typeof a.params === 'object' ? a.params : {};
       if (spec.kind === 'event') { store.addEvent(alias, id, a.name, params); return { ok: true }; }
       const no = needGrant(); if (no) return no;
-      if (spec.kind === 'command') return runCommand(fillTemplate(spec.run, params, true), store.projectRoot(alias) || process.env.HOME || '/');
+      if (spec.kind === 'command') return runCommand(fillTemplate(spec.run, params, true), store.commandRoot(alias, id) || process.env.HOME || '/');
       if (spec.kind === 'prompt') {
         if (!meta.chat || !claudeUi) return { ok: false, error: 'The chat that owns this widget is not known' };
         return claudeUi.sendMessage(meta.chat, fillTemplate(spec.text, params).slice(0, 4000));
       }
       if (spec.kind === 'tool') {
         if (!ACTION_TOOLS.has(spec.tool)) return { ok: false, error: `"${spec.tool}" cannot be wired to a widget. Allowed: ${[...ACTION_TOOLS].join(', ')}` };
-        const out = await callTool(spec.tool, { alias: store.projectKey(alias), ...fillArgs(spec.args || {}, params) });
+        const out = await callTool(spec.tool, { alias: store.homeAlias(alias, id), ...fillArgs(spec.args || {}, params) });
         if (out && out.ok) sources.refresh(alias, id);
         return out;
       }
@@ -208,16 +250,21 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
     const q = url.searchParams;
     let body = {};
     if (req.method === 'POST') { try { body = JSON.parse(await readBody(req)) || {}; } catch { body = {}; } }
-    const alias = String((req.method === 'POST' ? body.project : q.get('project')) || '');
+    const asked = String((req.method === 'POST' ? body.project : q.get('project')) || '');
     const id = String((req.method === 'POST' ? body.id : q.get('id')) || '');
+    // A page names the project it is showing. The widget may be a global one
+    // shown there, so the id is looked up in the project first, then globally.
+    const alias = (id && store.resolveScope(asked, id)) || asked;
 
-    if (path === '/api/widgets' && req.method === 'GET') { json(res, { ok: true, widgets: listFor(alias), slots: store.SLOTS }); return true; }
+    if (path === '/api/widgets' && req.method === 'GET') { json(res, { ok: true, widgets: listFor(asked), slots: store.SLOTS }); return true; }
+
+    if (path === '/api/widgets/scope' && req.method === 'POST') { json(res, changeScope(asked, id, !!body.global)); return true; }
 
     if (path === '/api/widgets/doc' && req.method === 'GET') {
       const meta = store.get(alias, id);
       if (!meta) { json(res, { ok: false, error: 'No such widget' }, 404); return true; }
       watchDoc(alias, id);
-      const doc = await buildDoc(alias, id);
+      const doc = await buildDoc(alias, id, { chip: q.get('chip') === '1' });
       const g = store.grantState(alias, id, doc.manifest);
       json(res, {
         ok: true, html: doc.html, rev: meta.rev || 0, widget: publicMeta(alias, meta), problems: doc.problems,
@@ -229,6 +276,7 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
 
     if (path === '/api/widgets/data' && req.method === 'GET') {
       if (!store.get(alias, id)) { json(res, { ok: false, error: 'No such widget' }, 404); return true; }
+      if (q.get('storeOnly') === '1') { json(res, { ok: true, data: {}, store: store.storeAll(alias, id) }); return true; }
       watchDoc(alias, id);
       let all = sources.values(alias, id);
       // The first look starts the sources, and a query or a command has not
@@ -245,9 +293,10 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
 
     if (path === '/api/widgets/watch' && req.method === 'POST') {
       for (const wid of (Array.isArray(body.ids) ? body.ids : []).slice(0, 40)) {
-        if (!store.get(alias, String(wid))) continue;
-        sources.watch(alias, String(wid));
-        watchDoc(alias, String(wid));
+        const scope = store.resolveScope(asked, String(wid));
+        if (!scope) continue;
+        sources.watch(scope, String(wid));
+        watchDoc(scope, String(wid));
       }
       json(res, { ok: true }); return true;
     }
@@ -334,6 +383,7 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
     const user = meta.user || {};
     const out = {
       ok: true, id, title: meta.title, state: meta.state, lifecycle: meta.lifecycle,
+      scope: meta.project === store.GLOBAL ? 'global' : 'project', ...(meta.home ? { homeProject: meta.home } : {}),
       slot: store.effectiveSlot(meta), requestedSlot: meta.slot, version: meta.version || 0,
       sourceDir: store.sourceDir(alias, id), sources: src, fixtures: store.listFixtures(alias, id),
       faults: (meta.faults || []).map((f) => ({ message: f.message, where: f.where || undefined, at: new Date(f.at).toISOString() })),
@@ -353,13 +403,16 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
    */
   async function handleMcp(tool, a = {}) {
     if (!tool.startsWith('widget_')) return null;
-    const alias = String(a.alias || '');
+    const project = String(a.alias || '');
     const id = String(a.id || '').toLowerCase();
+    // An id is this project's widget if there is one, else a global one.
+    // A new id is created in the project.
+    const alias = (id && store.resolveScope(project, id)) || project;
 
     if (tool === 'widget_guide') return { ok: true, content: [{ type: 'text', text: await guide() }] };
 
     if (tool === 'widget_list') {
-      return { ok: true, widgets: listFor(alias).map((w) => ({ id: w.id, title: w.title, slot: w.slot, state: w.state, lifecycle: w.lifecycle, needsApproval: w.needsGrant || undefined, faults: w.faults || undefined })) };
+      return { ok: true, widgets: listFor(project).map((w) => ({ id: w.id, title: w.title, slot: w.slot, state: w.state, lifecycle: w.lifecycle, global: w.global || undefined, needsApproval: w.needsGrant || undefined, faults: w.faults || undefined })) };
     }
 
     if (tool === 'widget_open') {
@@ -437,6 +490,26 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
       const r = store.setState(alias, id, 'closed');
       if (r.ok) { sources.drop(alias, id); tell(alias, id, 'list'); }
       return r.ok ? { ok: true, closed: id, note: 'Closed, not deleted: widget_open brings it back. Pass remove:true to delete it and its files.' } : r;
+    }
+
+    if (tool === 'widget_scope') {
+      const r = changeScope(project, id, a.global !== false);
+      if (!r.ok) return r;
+      const out = { ok: true, id, scope: r.global ? 'global' : 'project', sourceDir: store.sourceDir(r.global ? store.GLOBAL : r.widget.project, id) };
+      if (r.global) {
+        if (r.left) out.leftInProject = r.left;
+        if (r.inPlace.length) out.stillReadFromProject = r.inPlace;
+        out.note = [
+          'Now global: it shows in every project and is pinned; slot "chip" keeps it in the top bar everywhere.',
+          'Its own folder was COPIED to sourceDir, with any data it keeps there, and it is built and fed from that copy from now on. That copy is in Crundi\'s backup.',
+          r.left ? 'The folder it came from (leftInProject) was left in place but is no longer read: edit files in sourceDir, and repoint anything that writes the widget\'s data (a script, a schedule, a background process) to sourceDir, or the widget will quietly show old values. Tell the person this.' : '',
+          r.inPlace.length ? 'Project data is not copied. The sources in stillReadFromProject still read those files where they are, in the project: they are not in the backup, and the widget loses them if the project is moved or removed. To make it self-contained, keep its data in its own folder and use a "./" path.' : '',
+          'Its commands still run in the project it came from.',
+        ].filter(Boolean).join(' ');
+      } else {
+        out.note = 'Back in its project only. Its global folder was copied over the project\'s .crundi/widgets/' + id + ' folder, so that folder is current again and is what it reads.';
+      }
+      return out;
     }
 
     if (tool === 'widget_rollback') {

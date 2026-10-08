@@ -50,7 +50,9 @@ const TRANSCRIPTS_PER_PROJECT = 3;
 const AWAY_BEFORE_RUN_MS = 2 * 60 * 1000;   // gone this long before a waiting backup starts
 
 // Never backed up: the browser profile, working copies, logs and leftovers.
-const SKIP_TOP = new Set(['chrome', 'worktrees', 'collab-mcp', 'update.log', 'update.sh', 'backup-tmp']);
+// chat-images: pictures Claude showed in chats. Up to 10 MB each and many per
+// chat; the transcript they belong to is itself only kept for a few sessions.
+const SKIP_TOP = new Set(['chrome', 'worktrees', 'collab-mcp', 'chat-images', 'update.log', 'update.sh', 'backup-tmp']);
 const skipName = (n) => n.endsWith('.tmp') || /\.bak(\b|-|$)/.test(n) || n.startsWith('.restore');
 
 const appDirOf = () => config.appDir;

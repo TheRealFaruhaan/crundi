@@ -79,6 +79,21 @@ nobody is watching the transcript. Use them for anything worth knowing before th
 user next looks — a long job finishing, a blocker, a result they asked to be told
 about. Do not narrate routine progress into them.
 
+### Showing a picture in the chat
+
+`show_image` draws one or more images in the conversation, under the call. It exists
+because a chat's transcript is text: a screenshot you take with `browser_screenshot`
+or `capture_window` is something only you saw, and the person sees the word
+"[image]". If they should see it, write it to a file and `show_image` it.
+
+Use it when a picture answers better than words: the page you just changed, a
+before and after (pass both in `paths`), a chart or diagram you generated, an image
+you were asked to find. Give a short `caption` saying what to look at, and do not
+then describe the picture at length in your reply.
+
+It is there only in chat (UI) mode. In a terminal session, or to reach someone who
+is not looking at the chat, use `send_photo_to_user`.
+
 ### Long-running processes
 
 Register them as services instead of leaving them in a foreground shell:

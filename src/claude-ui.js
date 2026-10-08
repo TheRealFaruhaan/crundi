@@ -427,6 +427,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         id: s.id,
         project: s.alias,
         title: s.title,
+        longTitle: s.longTitle || '',
         order: s.order,
         kind: 'ui',
         status: s.proc ? 'running' : 'exited',
@@ -2482,11 +2483,22 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     for (const id of [...sessions.keys()]) close(id);
   }
 
-  function rename(id, title) {
+  /**
+   * `auto` is Claude naming its own chat (rename_chat). A title the person
+   * typed is theirs: once they have renamed a chat, an automatic rename is
+   * refused rather than quietly replacing what they chose.
+   */
+  function rename(id, title, { auto = false, long = '' } = {}) {
     const s = sessions.get(id);
     if (!s) return { ok: false, error: `No session "${id}"` };
+    if (auto && s.titleByUser) return { ok: false, error: 'The person named this chat themselves. Leave their title.', keptTitle: s.title };
     s.title = (title && String(title).trim()) || 'Chat';
-    return { ok: true, title: s.title };
+    // The long form belongs to the title it was given with. A title the
+    // person typed has no long form: what they typed is shown everywhere.
+    s.longTitle = auto ? String(long || '') : '';
+    if (!auto) s.titleByUser = true;
+    schedulePersist(s);
+    return { ok: true, title: s.title, ...(s.longTitle ? { long: s.longTitle } : {}) };
   }
 
   function setOrder(alias, ids) {

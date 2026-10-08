@@ -171,6 +171,40 @@
     '.cc-meta{display:flex;gap:7px;align-items:center;margin-top:6px;font-size:calc(11px*var(--cc-fs,1));color:var(--text-muted);flex-wrap:wrap}',
     '.cc-sel{background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:calc(11px*var(--cc-fs,1));padding:2px 5px;font-family:inherit;cursor:pointer}',
     '.cc-sel:focus{outline:none;border-color:var(--accent)}',
+    // Permission mode: an icon that says which mode is on, and opens a chooser.
+    // The <select> behind it is kept (hidden) as the value everything reads.
+    '.cc-sel.cc-mode-store{display:none}',
+    '.cc-mode{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:calc(26px*var(--cc-fs,1));height:calc(22px*var(--cc-fs,1));padding:0 6px;border-radius:5px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);cursor:pointer;font-family:inherit;font-size:calc(11px*var(--cc-fs,1))}',
+    '.cc-mode:hover{border-color:var(--accent);color:var(--text-primary)}',
+    '.cc-mode svg{width:calc(13px*var(--cc-fs,1));height:calc(13px*var(--cc-fs,1));flex-shrink:0}',
+    // Narrow pane or a phone: the icon alone, and big enough for a finger.
+    '.cc-narrow .cc-mode-l{display:none}',
+    '.cc-narrow .cc-mode{min-width:calc(34px*var(--cc-fs,1));height:calc(28px*var(--cc-fs,1));padding:0}',
+    '@media (max-width:768px){.cc-mode-l{display:none}.cc-mode{min-width:calc(34px*var(--cc-fs,1));height:calc(28px*var(--cc-fs,1));padding:0}}',
+    '.cc-mode[data-mode="plan"]{color:var(--sky,#38bdf8);border-color:rgba(56,189,248,.45)}',
+    '.cc-mode[data-mode="acceptEdits"],.cc-mode[data-mode="auto"]{color:var(--accent-hover)}',
+    '.cc-mode[data-mode="dontAsk"]{color:var(--yellow)}',
+    '.cc-mode[data-mode="bypassPermissions"]{color:var(--red);border-color:rgba(239,68,68,.5)}',
+    '.cc-modal-back{position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px}',
+    '.cc-modal{width:min(380px,100%);max-height:min(560px,calc(100svh - 32px));overflow:auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:6px}',
+    '.cc-modal-h{display:flex;align-items:center;gap:8px;padding:8px 8px 6px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-secondary)}',
+    '.cc-modal-h span{flex:1}',
+    '.cc-modal-x{background:none;border:0;color:var(--text-secondary);font-size:18px;line-height:1;cursor:pointer;padding:4px 8px;border-radius:6px}',
+    '.cc-modal-x:hover{color:var(--text-primary);background:var(--bg-tertiary)}',
+    '.cc-mode-opt{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:10px;min-height:52px;border:1px solid transparent;border-radius:8px;background:none;color:var(--text-primary);cursor:pointer;font-family:inherit}',
+    '.cc-mode-opt:hover{background:var(--bg-tertiary)}',
+    '.cc-mode-opt.on{background:var(--accent-dim);border-color:rgba(99,102,241,.5)}',
+    '.cc-mode-opt .i{width:32px;height:32px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-secondary);flex-shrink:0}',
+    '.cc-mode-opt .i svg{width:16px;height:16px}',
+    '.cc-mode-opt[data-mode="plan"] .i{color:var(--sky,#38bdf8)}',
+    '.cc-mode-opt[data-mode="acceptEdits"] .i,.cc-mode-opt[data-mode="auto"] .i{color:var(--accent-hover)}',
+    '.cc-mode-opt[data-mode="dontAsk"] .i{color:var(--yellow)}',
+    '.cc-mode-opt[data-mode="bypassPermissions"] .i{color:var(--red)}',
+    '.cc-mode-opt .t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}',
+    '.cc-mode-opt .n{font-size:13px;font-weight:600}',
+    '.cc-mode-opt .d{font-size:11.5px;color:var(--text-secondary);line-height:1.35}',
+    '.cc-mode-opt .ck{color:var(--accent-hover);flex-shrink:0;visibility:hidden}',
+    '.cc-mode-opt.on .ck{visibility:visible}',
     '.cc-meta-sp{flex:1}',
     '.cc-busy{color:var(--accent-hover)}',
     // Enter-key behaviour toggle, sitting beside the permission-mode dropdown.
@@ -723,9 +757,77 @@
     // Only modes the CLI will actually accept at runtime. bypassPermissions is
     // deliberately absent: it can only be set at launch, and offering it here
     // meant the dropdown showed a mode that was never in effect.
-    var modeSel = el('select', 'cc-sel');
+    var modeSel = el('select', 'cc-sel cc-mode-store');
     var MODES = [['default', 'ask permissions'], ['acceptEdits', 'accept edits'],
       ['auto', 'auto'], ['plan', 'plan mode'], ['dontAsk', "don't ask"]];
+    // What the composer shows in place of a dropdown: one icon per mode. The
+    // closed control is that icon, so the mode is readable at a glance and the
+    // chooser can say what each one does, which a native dropdown never could.
+    var MODE_SVG = function (body) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>'; };
+    var MODE_INFO = {
+      'default': { icon: MODE_SVG('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9.6 9.2a2.5 2.5 0 0 1 4.8.8c0 1.6-2.4 2-2.4 3.4"/><line x1="12" y1="16.6" x2="12.01" y2="16.6"/>'), name: 'Ask permissions', desc: 'Asks you before editing files or running commands.' },
+      'acceptEdits': { icon: MODE_SVG('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'), name: 'Accept edits', desc: 'Edits files without asking. Still asks before running commands.' },
+      'auto': { icon: MODE_SVG('<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'), name: 'Auto', desc: 'Decides for itself what is safe to do, and asks about the rest.' },
+      'plan': { icon: MODE_SVG('<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>'), name: 'Plan mode', desc: 'Reads and plans only. Changes nothing until you approve the plan.' },
+      'dontAsk': { icon: MODE_SVG('<circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/>'), name: "Don't ask", desc: 'Never asks. Anything not already allowed is refused.' },
+      'bypassPermissions': { icon: MODE_SVG('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12.5"/><line x1="12" y1="16" x2="12.01" y2="16"/>'), name: 'Bypass all', desc: 'Runs everything without asking. Only for a chat launched with skip permissions.' }
+    };
+    var modeBtn = el('button', 'cc-mode');
+    modeBtn.type = 'button';
+    modeBtn.setAttribute('aria-haspopup', 'dialog');
+    function syncModeBtn() {
+      var m = modeSel.value || 'default';
+      var info = MODE_INFO[m] || MODE_INFO['default'];
+      if (modeBtn.getAttribute('data-mode') === m) return;
+      modeBtn.setAttribute('data-mode', m);
+      // Icon always; the name beside it where the composer has room (CSS).
+      modeBtn.innerHTML = info.icon + '<span class="cc-mode-l">' + esc(info.name) + '</span>';
+      modeBtn.title = 'Permission mode: ' + info.name + '. Click to change.';
+      modeBtn.setAttribute('aria-label', 'Permission mode: ' + info.name + '. Change');
+    }
+    var modeModal = null;
+    function closeModeModal() { if (modeModal) { modeModal.remove(); modeModal = null; document.removeEventListener('keydown', modeModalKey, true); } }
+    function modeModalKey(e) { if (e.key === 'Escape') { e.stopPropagation(); closeModeModal(); } }
+    function openModeModal() {
+      closeModeModal();
+      var back = el('div', 'cc-modal-back');
+      var box = el('div', 'cc-modal');
+      box.setAttribute('role', 'dialog');
+      box.setAttribute('aria-label', 'Permission mode');
+      var head = el('div', 'cc-modal-h', '<span>Permission mode</span>');
+      var x = el('button', 'cc-modal-x', '\u00d7');
+      x.type = 'button'; x.title = 'Close';
+      x.addEventListener('click', closeModeModal);
+      head.appendChild(x);
+      box.appendChild(head);
+      for (var i = 0; i < modeSel.options.length; i++) {
+        (function (value) {
+          var info = MODE_INFO[value] || { icon: MODE_INFO['default'].icon, name: value, desc: '' };
+          var b = el('button', 'cc-mode-opt' + (value === modeSel.value ? ' on' : ''));
+          b.type = 'button';
+          b.setAttribute('data-mode', value);
+          b.innerHTML = '<span class="i">' + info.icon + '</span><span class="t"><span class="n">' + esc(info.name) + '</span><span class="d">' + esc(info.desc) + '</span></span>'
+            + '<span class="ck">' + MODE_SVG('<polyline points="20 6 9 17 4 12"/>') + '</span>';
+          b.addEventListener('click', function () {
+            if (modeSel.value !== value) {
+              modeSel.value = value;
+              // The same event a hand on the dropdown raised: one path to the server.
+              modeSel.dispatchEvent(new Event('change'));
+            }
+            closeModeModal();
+          });
+          box.appendChild(b);
+        })(modeSel.options[i].value);
+      }
+      back.appendChild(box);
+      back.addEventListener('click', function (e) { if (e.target === back) closeModeModal(); });
+      document.body.appendChild(back);
+      document.addEventListener('keydown', modeModalKey, true);
+      modeModal = back;
+      var on = box.querySelector('.cc-mode-opt.on');
+      if (on) { try { on.focus(); } catch (e) { /* not focusable yet */ } }
+    }
+    modeBtn.addEventListener('click', openModeModal);
     function buildModes(isBypass) {
       modeSel.innerHTML = '';
       // Only switching INTO bypass is a launch-time decision. A session started
@@ -741,10 +843,11 @@
       modeSel.title = isBypass
         ? 'Permission mode — this chat can return to "bypass all" because it was launched for it'
         : 'Permission mode for this chat';
+      syncModeBtn();
     }
     function setModeIfKnown(mode) {
       for (var i = 0; i < modeSel.options.length; i++) {
-        if (modeSel.options[i].value === mode) { modeSel.value = mode; return; }
+        if (modeSel.options[i].value === mode) { modeSel.value = mode; syncModeBtn(); return; }
       }
     }
     buildModes(false);
@@ -755,6 +858,7 @@
     var costLbl = el('span', '', '');
     meta.appendChild(stateLbl);
     meta.appendChild(modeSel);
+    meta.appendChild(modeBtn);
     meta.appendChild(enterBtn);
     meta.appendChild(schedBtn);
     meta.appendChild(el('span', 'cc-meta-sp'));
@@ -2519,6 +2623,7 @@
     sendBtn.addEventListener('click', doSend);
     stopBtn.addEventListener('click', doStop);
     modeSel.addEventListener('change', function () {
+      syncModeBtn();
       apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/permission-mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3313,6 +3418,7 @@
       slashCommands = session.slashCommands || [];
       buildModes(session.skipPermissions);
       modeSel.value = session.permissionMode || 'default';
+      syncModeBtn();
       modelLbl.textContent = session.model || '';
       setSessionId(session.sessionId);
       if (session.totalCostUsd) costLbl.textContent = '$' + session.totalCostUsd.toFixed(4);
@@ -3469,6 +3575,7 @@
       // HTML5 drag events — see insertRefToTarget in webapp-html.js.
       insertText: function (text) { if (text) insertPath(text); },
       destroy: function () {
+        closeModeModal();
         destroyed = true;
         // Let a later chat in this project pick the draft back up.
         if (DRAFT_PROJ_KEY && CLAIMED[DRAFT_PROJ_KEY] === sessionId) delete CLAIMED[DRAFT_PROJ_KEY];

@@ -49,7 +49,7 @@ import * as schedule from './schedule-store.js';
 import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
-import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS, readTranscriptHistory } from './claude-ui.js';
+import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS, readTranscriptHistory, resolveClaudeBin } from './claude-ui.js';
 import { createPanes, MIN_TIMEOUT_MIN, DEFAULT_TIMEOUT_MIN } from './panes.js';
 import { createLimitWarmer } from './limit-warmer.js';
 import { createLimitResetNotifier } from './limit-reset-notify.js';
@@ -67,6 +67,9 @@ import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
+import { cleanAutoTitle, cleanLongTitle } from './chat-title.js';
+import { createAutoTitler } from './chat-autotitle.js';
+import * as chatImages from './chat-images.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1463,6 +1466,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     };
   }
 
+  try { chatImages.sweep(); } catch { /* housekeeping only */ }
+
+  // ─── Chat titles (see chat-autotitle.js) ───
+  const autoTitler = createAutoTitler({
+    claudeBin: () => { try { return resolveClaudeBin(); } catch { return null; } },
+    currentTitle: (id) => { const m = claudeUi && claudeUi.meta(id); return m && !m.collaborator ? m.title : null; },
+    apply: (id, title, long) => claudeUi.rename(id, title, { auto: true, long: long || '' }),
+    onApplied: () => broadcastState(),
+  });
+
   // ─── Widgets (Claude-authored UI; see widget-api.js) ───
   // Owner pages only: a widget event names a project and a widget, and a
   // collaborator has no route to either.
@@ -1488,6 +1501,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         .filter(x => String(x.alias || '').toLowerCase() === String(alias || '').toLowerCase())
         .map(x => ({ key: x.key, name: x.name, status: x.status, command: x.command, pid: x.pid || null, startedAt: x.startedAt || null })),
       schedules: (alias) => schedule.listSchedules(alias),
+      // This machine, as the Info tab shows it. Trimmed to what a gauge needs:
+      // no hostnames or addresses, which have no business in a panel's data.
+      stats: async () => {
+        const s = await getSystemStats();
+        const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
+        return {
+          cpu: { pct: Math.round((s.cpu?.overall || 0) * 10) / 10, cores: (s.cpu?.cores || []).map(c => Math.round(c * 10) / 10) },
+          mem: { pct: pct(s.mem?.used, s.mem?.total), used: s.mem?.used || 0, total: s.mem?.total || 0 },
+          disk: { pct: pct(s.disk?.used, s.disk?.total), used: s.disk?.used || 0, total: s.disk?.total || 0 },
+          net: { rxPerSec: Math.round(s.net?.rxPerSec || 0), txPerSec: Math.round(s.net?.txPerSec || 0) },
+          load: s.load || null,
+          history: { cpu: (s.history?.cpu || []).slice(-60), mem: (s.history?.mem || []).slice(-60) },
+        };
+      },
     },
   });
 
@@ -2375,6 +2402,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         error: 'Not available to collaborator access.',
         collaborator: true,
       }, 403);
+    }
+
+    // ─── Images Claude showed in a chat (see chat-images.js) ───
+    if (path === '/api/chat-images' && req.method === 'GET') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
+      const img = chatImages.readImage(url.searchParams.get('session'), url.searchParams.get('name'));
+      if (!img) return json(res, { ok: false, error: 'Not found' }, 404);
+      res.writeHead(200, { 'Content-Type': img.mime, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+      return res.end(img.buffer);
     }
 
     // ─── Widgets ───
@@ -3344,7 +3380,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Who sent it matters in a collaborator's chat: while the OWNER's message
       // is the latest, their permission prompts are approved without asking.
       if (action === 'send') {
-        return json(res, claudeUi.sendMessage(sid, body.text, { by: isConfined(principal) ? 'collaborator' : 'owner' }));
+        const sent = claudeUi.sendMessage(sid, body.text, { by: isConfined(principal) ? 'collaborator' : 'owner' });
+        // A new chat is named from its first request, in the background.
+        // Owner chats only: a collaborator's tokens are metered and theirs.
+        if (sent && sent.ok && !isConfined(principal)) autoTitler.maybe(sid, body.text);
+        return json(res, sent);
       }
       // Recall a message that was handed over but not yet read. The CLI answers
       // with cancelled true/false, and that distinction is the whole point:
@@ -4830,6 +4870,46 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             message: 'Sent to the owner to review. If they run it, the output arrives in this chat as a new message starting with "[Crundi]". Tell the user it is waiting on the owner.',
           });
         }
+      }
+
+      // ─── show_image: pictures drawn in the chat, under the call ───
+      // Owner chats only. The files are read as the Crundi user, which is why a
+      // collaborator's sandboxed Claude is not offered this: it would be a way
+      // to look at any image on the machine.
+      if (body.tool === 'show_image') {
+        const sid = String(a.sessionId || '');
+        if (!sid || !claudeUi || !claudeUi.has(sid)) {
+          return json(res, { ok: false, error: 'show_image only works in a Crundi chat (UI mode). Use send_photo_to_user to reach the person on Telegram.' });
+        }
+        const items = [];
+        if (a.path) items.push({ path: String(a.path), caption: a.caption });
+        for (const p of (Array.isArray(a.paths) ? a.paths : [])) items.push(typeof p === 'string' ? { path: p } : { path: String((p && p.path) || ''), caption: p && p.caption });
+        const r = chatImages.addImages(sid, items);
+        if (!r.ok) return json(res, r);
+        return json(res, {
+          ok: true, shown: r.images.length, images: r.images.map(i => ({ name: i.name, caption: i.caption || undefined })),
+          ...(a.caption && items.length > 1 ? { caption: String(a.caption).slice(0, 300) } : {}),
+          note: 'Shown to the person in this chat, under this call. They can tap one to enlarge it. Do not describe them at length; say what to look at.',
+        });
+      }
+
+      // ─── rename_chat: Claude names the chat or terminal it is running in ───
+      // Owner only (not in COLLABORATOR_MCP_TOOLS). The bridge says which
+      // session it belongs to; a caller cannot name one it is not in, because
+      // the id comes from the process's own environment, not from Claude.
+      if (body.tool === 'rename_chat') {
+        const t = cleanAutoTitle(a.title);
+        if (!t.ok) return json(res, t);
+        const l = cleanLongTitle(a.long);
+        if (!l.ok) return json(res, l);
+        // A long form that only repeats the short one adds nothing.
+        const long = l.title && l.title.toLowerCase() !== t.title.toLowerCase() ? l.title : '';
+        let r = null;
+        if (a.sessionId && claudeUi && claudeUi.has(String(a.sessionId))) r = claudeUi.rename(String(a.sessionId), t.title, { auto: true, long });
+        else if (a.terminalId && claudeTerminals) r = claudeTerminals.rename(String(a.terminalId), t.title, { auto: true, long });
+        else return json(res, { ok: false, error: 'This session is not a Crundi chat or terminal, so there is nothing to rename. Carry on without it.' });
+        if (r.ok) broadcastState();
+        return json(res, r);
       }
 
       // ─── Widget tools (owner only: not in COLLABORATOR_MCP_TOOLS) ───

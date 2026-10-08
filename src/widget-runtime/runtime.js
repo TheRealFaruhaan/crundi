@@ -10,10 +10,18 @@
 (function () {
   'use strict';
   var BOOT = window.__CRUNDI_BOOT__ || {};
+  // The top bar chip is the same panel in a frame 24px tall, showing only the
+  // element marked data-chip. Which copy this is has to be known before the
+  // body is parsed, or the whole panel flashes into that sliver, so the server
+  // builds the chip's document saying so (it also sets data-frame on <html>).
+  // The frame's name was tried first and was not reliable: a sandboxed frame
+  // does not always keep it across the load.
+  var IS_CHIP = !!BOOT.chip;
+  if (IS_CHIP) document.documentElement.setAttribute('data-frame', 'chipbar');
   var host = window.parent;
   var seq = 0;
   var waiting = {};
-  var handlers = { data: [], context: [], ready: [] };
+  var handlers = { data: [], context: [], ready: [], store: [] };
   var started = false;
   var faultCount = 0;
 
@@ -309,6 +317,8 @@
   function dataChanged(name) {
     applyBindings();
     fire('data', crundi.data, name);
+    // New data usually means a new size. Measured now, not left to the next paint.
+    if (typeof reportHeight === 'function') reportHeight();
   }
 
   var crundi = {
@@ -321,6 +331,8 @@
     /** frame ('dock'|'cell'|'tab'|'inline'|'chip'), platform ('desktop'|'mobile'), width, height, touch */
     context: {},
     isHarness: !!BOOT.harness,
+    /** True when this copy of the panel is the top bar chip, showing only [data-chip]. */
+    isChip: IS_CHIP,
 
     /** Run fn(data, changedSourceName) now if data has arrived, and on every change. */
     onData: function (fn) {
@@ -340,7 +352,14 @@
       _all: {},
       get: function (key, dflt) { var v = crundi.store._all[key]; return v === undefined ? dflt : v; },
       set: function (key, value) { if (value == null) delete crundi.store._all[key]; else crundi.store._all[key] = value; return call('store.set', { key: key, value: value }); },
-      all: function () { return crundi.store._all; }
+      all: function () { return crundi.store._all; },
+      /**
+       * Run fn(all) when the store changes, including from ANOTHER copy of
+       * this panel. The chip in the top bar, the panel it opens and a pane in
+       * the workbench are separate frames of the same panel; this is how a
+       * button pressed in one reaches the others.
+       */
+      onChange: function (fn) { handlers.store.push(fn); return crundi.store; }
     },
     /** Run an action the manifest declares. Resolves with its result. */
     action: function (name, params) { return call('action', { name: name, params: params || {} }); },
@@ -369,7 +388,7 @@
   function setContext(ctx) {
     crundi.context = ctx || {};
     var root = document.documentElement;
-    root.setAttribute('data-frame', crundi.context.frame || '');
+    root.setAttribute('data-frame', IS_CHIP ? 'chipbar' : (crundi.context.frame || ''));
     root.setAttribute('data-platform', crundi.context.platform || 'desktop');
   }
 
@@ -398,6 +417,15 @@
       if (!w) return;
       delete waiting[m.seq];
       if (m.ok) w.resolve(m.value); else w.reject(new Error(m.error || 'Failed'));
+    } else if (m.t === 'store') {
+      crundi.store._all = m.store || {};
+      fire('store', crundi.store._all);
+    } else if (m.t === 'measure') {
+      // The host asks for the size again, outright. Size normally travels on
+      // a ResizeObserver, which waits for the browser to paint; a frame that is
+      // not being painted yet (headless, a background tab) would stay unsized.
+      lastH = 0; lastW = -1;
+      reportHeight();
     } else if (m.t === 'lint') {
       var report;
       try { report = window.__crundiLint ? window.__crundiLint(crundi) : { issues: [], metrics: {} }; }
@@ -408,17 +436,34 @@
 
   // ── content height, for frames that size to their content ──
 
-  var lastH = 0;
+  var lastH = 0, lastW = -1;
   function reportHeight() {
     var b = document.body; if (!b) return;
     var hgt = Math.ceil(Math.max(b.scrollHeight, b.offsetHeight));
+    if (IS_CHIP) {
+      // A chip sizes sideways: as wide as its face, whatever the frame is now.
+      var face = document.querySelector('body > [data-chip]');
+      // scrollWidth as well: the content's width even if the box was squeezed.
+      var wid = face ? Math.ceil(Math.max(face.getBoundingClientRect().width, face.scrollWidth)) : 0;
+      if (Math.abs(wid - lastW) < 1) return;
+      lastW = wid;
+      post({ t: 'height', h: hgt, w: wid });
+      return;
+    }
     if (Math.abs(hgt - lastH) < 2) return;
     lastH = hgt;
     post({ t: 'height', h: hgt });
   }
 
   function boot() {
-    if (window.ResizeObserver && document.body) { try { new ResizeObserver(reportHeight).observe(document.body); } catch (e) { /* older engine */ } }
+    if (window.ResizeObserver && document.body) {
+      try {
+        var ro = new ResizeObserver(reportHeight);
+        ro.observe(document.body);
+        var face = IS_CHIP && document.querySelector('body > [data-chip]');
+        if (face) ro.observe(face);
+      } catch (e) { /* older engine */ }
+    }
     post({ t: 'ready' });
     reportHeight();
   }

@@ -168,7 +168,7 @@
 
     return {
       issues: issues,
-      metrics: { frameWidth: vw, frameHeight: vh, contentWidth: Math.max(doc.scrollWidth, body.scrollWidth), contentHeight: docH, elements: shown.length, textLength: text.length }
+      metrics: { chipFace: !!document.querySelector('body > [data-chip]'), frameWidth: vw, frameHeight: vh, contentWidth: Math.max(doc.scrollWidth, body.scrollWidth), contentHeight: docH, elements: shown.length, textLength: text.length }
     };
   };
 })();

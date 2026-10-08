@@ -34,6 +34,13 @@ export const CSP = [
 /** The sandbox tokens every widget frame gets. Never add allow-same-origin. */
 export const SANDBOX = 'allow-scripts';
 
+/**
+ * Permissions-policy features handed to the frame. Audio only: without it a
+ * panel cannot make a sound until it is touched, again after every reload.
+ * Not a sandbox token; it grants no network, storage or origin.
+ */
+export const FRAME_ALLOW = 'autoplay';
+
 // Re-read when the file changes, so editing the kit does not need a restart.
 const fileCache = new Map();
 function runtimeFile(name) {
@@ -176,7 +183,7 @@ function escapeHtml(s) {
  * The complete document for a widget's frame.
  * @returns {Promise<{ok:boolean, html:string, title:string, manifest:object, problems:string[], error?:string}>}
  */
-export async function buildDoc(alias, id, { harness = false } = {}) {
+export async function buildDoc(alias, id, { harness = false, chip = false } = {}) {
   const meta = store.get(alias, id);
   const problems = [];
   const m = store.readManifest(alias, id);
@@ -195,8 +202,8 @@ export async function buildDoc(alias, id, { harness = false } = {}) {
     body = placeholder(title, 'This widget has no index.html yet.');
   }
   const { tokens } = await loadAppCss();
-  const boot = { id, title, harness: !!harness };
-  const html = '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+  const boot = { id, title, harness: !!harness, chip: !!chip };
+  const html = '<!doctype html><html lang="en"' + (chip ? ' data-frame="chipbar"' : '') + '><head><meta charset="utf-8">'
     + `<meta http-equiv="Content-Security-Policy" content="${CSP}">`
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'
     // Without this the frame's canvas is opaque white wherever the body is
@@ -224,6 +231,7 @@ export const FRAMES = {
   'dock-wide': { width: 1100, height: 620, slot: 'dock', label: 'docked beside a chat (desktop, wide cell)' },
   tab: { width: 1280, height: 760, slot: 'tab', label: 'full tab (desktop)' },
   inline: { width: 560, height: 420, slot: 'inline', label: 'inline card in the chat' },
+  chip: { width: 520, height: 96, slot: 'chipbar', label: 'top bar chip: only the [data-chip] element, one line' },
   mobile: { width: 390, height: 844, slot: 'cell', mobile: true, label: 'phone, workbench cell' },
   'mobile-dock': { width: 390, height: 844, slot: 'dock', mobile: true, label: 'phone, docked above a chat' },
   'mobile-tab': { width: 390, height: 844, slot: 'tab', mobile: true, label: 'phone, full tab' },
@@ -252,6 +260,8 @@ const HARNESS_CSS = `
   .hz-inline { align-self: stretch; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--bg-card); }
   .hz-inline-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); }
   .hz-tabfill { flex: 1; min-height: 0; display: flex; }
+  .hz-chip { display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 99px; border: 1px solid var(--border); background: var(--bg-tertiary); }
+  .hz-chip .hz-frame { width: 24px; height: 24px; background: transparent; }
   .hz-label { position: fixed; right: 6px; bottom: 4px; font: 10px/1 var(--mono); color: var(--text-muted); opacity: 0.7; pointer-events: none; }
 `;
 
@@ -281,7 +291,7 @@ export async function buildHarnessPage({ doc, title, frame, data, store: kv = {}
   const f = FRAMES[frame] || FRAMES.cell;
   const { all } = await loadAppCss();
   const mobile = !!f.mobile;
-  const iframe = `<iframe class="hz-frame" id="hz-frame" sandbox="${SANDBOX}" title="${escapeHtml(title)}"></iframe>`;
+  const iframe = `<iframe class="hz-frame" id="hz-frame" sandbox="${SANDBOX}" allow="${FRAME_ALLOW}" title="${escapeHtml(title)}"></iframe>`;
   let main;
   if (f.slot === 'dock') {
     const side = !mobile && f.width >= 900;
@@ -297,6 +307,12 @@ export async function buildHarnessPage({ doc, title, frame, data, store: kv = {}
       + `<div class="hz-bubble me">What does the build look like?</div>`
       + `<div class="hz-inline"><div class="hz-inline-head">${escapeHtml(title)}</div><div id="hz-auto" style="height:120px">${iframe}</div></div>`
       + `</div><div class="hz-composer">Message Claude…</div></div></div></div>`;
+  } else if (f.slot === 'chipbar') {
+    // The real top bar, with the chip where it sits: before the status badges.
+    main = `<div class="topbar"><span style="font-weight:700">Crundi</span><span style="color:var(--text-muted);font-size:12px">/ demo-project</span><span style="flex:1"></span>`
+      + `<span class="hz-chip"><iframe class="hz-frame" id="hz-frame" sandbox="${SANDBOX}" allow="${FRAME_ALLOW}" title="${escapeHtml(title)}"></iframe></span>`
+      + `<span class="status-badge connected">connected</span></div>`
+      + `<div style="padding:10px 16px;color:var(--text-muted);font-size:12px">The chip is the element marked data-chip, shown alone on one line. Tapping it opens the full panel.</div>`;
   } else if (f.slot === 'tab') {
     main = `<div class="hz-tabfill">${iframe}</div>`;
   } else {
@@ -307,7 +323,7 @@ export async function buildHarnessPage({ doc, title, frame, data, store: kv = {}
     doc, data, store: kv,
     context: { frame: f.slot, platform: mobile ? 'mobile' : 'desktop', touch: mobile, harness: true, title },
     // Frames that size to their content in the real page do so here too.
-    auto: f.slot === 'inline' ? 'inline' : (f.slot === 'dock' && !(!mobile && f.width >= 900) ? 'dock' : ''),
+    auto: f.slot === 'chipbar' ? 'chip' : f.slot === 'inline' ? 'inline' : (f.slot === 'dock' && !(!mobile && f.width >= 900) ? 'dock' : ''),
   };
   return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">'
@@ -324,6 +340,8 @@ export async function buildHarnessPage({ doc, title, frame, data, store: kv = {}
 const HARNESS_HOST_JS = `
 (function () {
   var P = window.__HZ__, frame = document.getElementById('hz-frame');
+  var asked = false;
+  window.__wgAskLint = function () { if (asked) return false; asked = true; send({ t: 'lint', seq: 1 }); return true; };
   var R = window.__wgResult = { ready: false, done: false, faults: [], calls: [], lint: null, height: 0 };
   function send(m) { m.crundi = 1; frame.contentWindow.postMessage(m, '*'); }
   function ctx() { var r = frame.getBoundingClientRect(); var c = {}; for (var k in P.context) c[k] = P.context[k]; c.width = Math.round(r.width); c.height = Math.round(r.height); return c; }
@@ -333,11 +351,22 @@ const HARNESS_HOST_JS = `
     if (m.t === 'ready') {
       R.ready = true;
       send({ t: 'init', data: P.data, store: P.store, context: ctx() });
-      setTimeout(function () { send({ t: 'lint', seq: 1 }); }, 600);
+      // Size first, then judge: a chip or an inline card linted at its
+      // starting size would be reported as overflowing a frame it never has.
+      setTimeout(function () { send({ t: 'measure' }); }, 250);
+      setTimeout(function () { send({ t: 'measure' }); }, 450);
+      // The lint itself is asked for from outside (window.__wgAskLint), by
+      // the renderer, AFTER it has made the browser draw a frame. A headless
+      // page does not repaint on its own, and until it does the widget's frame
+      // still believes it is the size it started at: a 174px chip was being
+      // judged in the 24px it began with. If nobody asks, do it anyway.
+      R.readyAt = Date.now();
+      setTimeout(function () { if (!asked) window.__wgAskLint(); }, 4000);
     } else if (m.t === 'fault') { R.faults.push({ message: m.message, where: m.where });
     } else if (m.t === 'height') {
       R.height = m.h;
       if (P.auto === 'inline') { var box = document.getElementById('hz-auto'); if (box) box.style.height = Math.max(40, Math.min(460, m.h)) + 'px'; }
+      if (P.auto === 'chip') { R.chipWidth = m.w || 0; frame.style.width = Math.max(24, Math.min(240, m.w || 24)) + 'px'; }
       if (P.auto === 'dock') {
         // Same rule as the page: content height, up to about 44% of the chat pane.
         var pane = frame.closest('.term-body');

@@ -73,9 +73,9 @@ The frame has **no network and no storage of its own**. `fetch`, CDN scripts, we
 | `sqlite` | `path` + `query` (or `queries: {name: sql}`), read-only, `limit` rows (default 500) | when the database file changes; `every` seconds to poll, `always: true` to re-run regardless |
 | `command` | stdout of `run`; `format`, `every` (min 2 s), `timeout` | on the interval |
 | `http` | body of `url`; `format`, `every` | on the interval |
-| `crundi` | `what`: `kanban`, `services`, `schedules` | when it changes |
+| `crundi` | `what`: `kanban`, `services`, `schedules`, or `stats` (this machine: `cpu.pct`, `cpu.cores[]`, `mem.pct/used/total`, `disk.pct/used/total`, `net.rxPerSec/txPerSec`, `load`, `history.cpu[]`, `history.mem[]`) | when it changes; `stats` every 2 s (`every` to change) |
 
-Paths are relative to the project. A value is capped at 1 MB: narrow it with `tail`, `limit` or a tighter query.
+Paths are relative to the project; a path starting with `./` is relative to the widget's own folder, which is where data that belongs to the widget should live (see Global widgets). A value is capped at 1 MB: narrow it with `tail`, `limit` or a tighter query.
 
 A `session` source gives:
 `{ state, working, title, model, prompt, now, lastText, todos:[{text,active,status}], progress:{done,total,pct}, tools:[{name,label,status}], files:[{path,short,edits}], agents:[{description,status,step}], counts:{tools,edits,commands,errors}, costUsd }`.
@@ -146,6 +146,7 @@ Semantic use: `--green` good/done, `--yellow` waiting/warn, `--red` failed, `--s
 - table: `c-table-wrap` > `table.c-table` (`th.r` / `td.r` right-aligned numbers)
 - log: `c-log` (`.err .warn .ok` lines)
 - charts: `c-chart-box` (`small`), `c-donut`, `c-legend` > `c-swatch`
+- chip face: `c-chip-spark`, `c-chip-meter` (`ok warn err`), `c-chip-label`
 - states: `c-empty`, `c-error`, `c-skel`
 - responsive: `c-hide-narrow`, `c-only-narrow`
 
@@ -167,9 +168,82 @@ Semantic use: `--green` good/done, `--yellow` waiting/warn, `--red` failed, `--s
 - `cell` — its own workbench pane, resizable; `beside: "right"|"below"` puts it next to this chat. Best for something used alongside the work.
 - `tab` — full size in the Panels tab. Dense dashboards and wide tables.
 - `inline` — a card in the transcript where you called `widget_open`. Sizes to content (max 460px). A one-off result.
-- `chip` — one line in the top bar (`chip: { source, path, label }`) that opens the widget when tapped. A status worth a glance from anywhere.
+- `chip` — one line in the top bar that opens the widget when tapped. A status worth a glance from anywhere. Two ways to fill it, your choice:
+  - **Labelled** (nothing to write): the title, or `chip: { source, path, label }` to show one value beside a label.
+  - **Your own face**: mark ONE top-level element in `index.html` with `data-chip`. In the top bar only that element is drawn, on one line, as wide as its content (up to about 260px, 130px on a phone); everywhere else it is hidden. Your script runs as usual, so the same `onData` that fills the panel keeps the chip live: a number, a sparkline, a meter, a coloured dot, your own icon. See "The chip face" below.
 
 Every widget is also listed in the Panels tab, where the person can reopen, move, pin or delete it.
+
+## The chip face
+
+```html
+<div data-chip>
+  <span id="chip-ic"></span>
+  <span class="c-chip-label">CPU</span>
+  <b id="chip-cpu">–</b>
+  <span class="c-chip-spark" id="chip-spark"></span>
+  <span class="c-chip-meter" id="chip-mem"><span></span></span>
+</div>
+<!-- the full panel follows, as usual -->
+<script>
+  document.getElementById('chip-ic').innerHTML = crundi.icon('cpu');
+  crundi.onData(function (d) {
+    var s = d.stats; if (!s) return;
+    document.getElementById('chip-cpu').textContent = crundi.fmt.pct(s.cpu.pct);
+    document.getElementById('chip-spark').innerHTML = crundi.chart.spark(s.history.cpu, { fill: false });
+    var m = document.getElementById('chip-mem');
+    m.className = 'c-chip-meter ' + (s.mem.pct > 85 ? 'err' : s.mem.pct > 70 ? 'warn' : 'ok');
+    m.firstElementChild.style.width = s.mem.pct + '%';
+  });
+</script>
+```
+
+- It must be a direct child of the body, and there is one per panel.
+- One line, about 24px tall. Text is 11.5px. Keep it to what reads at a glance: one or two numbers and at most one small graphic.
+- Sized for it: `c-chip-spark` (a 44×14 box for `crundi.chart.spark`), `c-chip-meter` (`ok warn err`) with an inner `<span style="width:40%">`, `c-chip-label`, plus `c-dot` and `crundi.icon()`.
+- The chip cannot be interacted with: a tap anywhere on it opens the panel. `crundi.isChip` is true in that copy if you need to skip heavy work there.
+- No `data-chip` element means the labelled chip. A panel moved to the top bar by the person shows whichever it has.
+- Check it with `widget_render` and `frames: ["chip"]`.
+
+## Global widgets
+
+`widget_scope` makes a widget global: shown in every project, pinned, and as a chip kept in the top bar across projects and chats. Know what moves and what does not before you do it.
+
+**Moves: the widget's own folder, and only that.**
+- `.crundi/widgets/<id>/` is copied into Crundi's own store (the new `sourceDir` in the result). The widget is built and fed from the copy from then on, and the copy is in Crundi's backup.
+- The original folder is left in the project. It is no longer read. Edit the files in the new `sourceDir`.
+- Any data the widget keeps in its own folder comes along. **Anything that writes that data (a script, a schedule, a background process) must be repointed to the new `sourceDir`**, or the widget quietly shows old values. Do it, and tell the person.
+
+**Does not move: project data.**
+- A source that reads a project file (`data/app.db`, `logs/build.log`) keeps reading it where it is. It is not copied, not in the backup, and the widget loses it if the project is moved or removed. That is right for live project data.
+- Commands still run in the project it came from, and a `crundi` source still reads that project's board.
+
+**So, for a widget meant to be global, keep its data in its own folder** and name it with a `./` path:
+
+```json
+"sources": { "state": { "kind": "file", "path": "./state.json" } }
+```
+
+`./` means "this widget's folder", in a project or global, so the manifest does not change when it is promoted. Data files there do not count as a change to the source: rewriting `./state.json` every second updates the widget without reloading it.
+
+`widget_scope` with `global: false` sends it back to its project; the global folder is copied over the project's.
+
+## State that has to survive (timers, toggles, anything running)
+
+A panel is not one long-lived page. Assume all of this:
+
+- **Several copies run at once.** The chip in the top bar, the panel that chip opens, and a workbench pane are separate frames of the same panel, each with its own script and variables.
+- **Every copy reloads often**: when the person reloads Crundi, reopens the panel, or you save a change.
+- **Nothing runs while Crundi is not open in a browser.** A panel cannot ring, tick or notify from a closed tab.
+
+So keep state out of script variables:
+
+- Store **absolute facts** in `crundi.store`, never a countdown: `crundi.store.set('endsAt', Date.now() + 25 * 60000)`, then derive what to draw from `Date.now()` on each tick. A copy that loads later picks up exactly where things are.
+- `crundi.store.onChange(fn)` fires in every copy when any copy saves, so a button pressed in the opened panel updates the chip at once.
+- Do one-off effects (a sound when a timer ends) in **one** copy. The chip is the copy that is always there: `if (crundi.isChip) ring();`. Record that it rang (`crundi.store.set('rangFor', endsAt)`) so a reload does not ring again.
+- A copy that loads after the moment has passed should say so ("finished 4 min ago"), since it could not have rung.
+- A global chip keeps running when the person switches project. A project chip is torn down with its project.
+- To reach someone who has Crundi closed, a panel cannot help. Use a schedule or `send_message_to_user` from your side.
 
 ## Frames for widget_render
 

@@ -22,7 +22,8 @@ long-lived. See `platform-linux.md` / `platform-windows.md`.
 | Tool | Notes |
 |---|---|
 | `send_message_to_user` | Out-of-band; arrives when nobody is watching the chat |
-| `send_photo_to_user` | Image by path |
+| `send_photo_to_user` | Image by path, to Telegram: for when they are not looking at the chat |
+| `show_image` | Draws images in the chat itself, under the call. `path`, or `paths` (up to 8, strings or `{path, caption}`), optional `caption`. PNG/JPEG/GIF/WebP, 10 MB each; files are copied. Chat UI mode only, owner chats. |
 | `send_file_to_user` | Any file by path. Attached on Telegram up to 50 MB (a link beyond that); always returns a 30-minute download link and says how it was delivered. If nothing went out of band, put the link in your reply. |
 
 ## Services
@@ -159,6 +160,12 @@ A chat loads its skills when it starts. Installing or deleting one does not
 change a chat that is already running, including this one, and nothing here
 restarts a chat; tell the user a new chat will pick it up.
 
+## This chat
+
+| Tool | What it does |
+|---|---|
+| `rename_chat` | Renames the chat or terminal you are running in. `title` (at most 20 characters, shown everywhere) and `long` (at most 50, shown where a pane's header has room). Call it first when the person gives a task, and not again until the scope or topic changes. Crundi also names an unnamed chat by itself as a backstop. Refused if the person renamed it themselves. Owner chats only. |
+
 ## Widgets
 
 Live UI panels you author and Crundi shows in its own interface. Owner chats only. Read `widget_guide` before building one; the `crundi-widgets` skill covers when to.
@@ -168,13 +175,14 @@ Live UI panels you author and Crundi shows in its own interface. Owner chats onl
 | `widget_guide` | The authoring reference: files, the `crundi` frame API, tokens, kit classes, sources, slots, an example. |
 | `widget_open` | Create, update or re-open a widget. `id`, `slot` (`dock`, `cell`, `tab`, `inline`, `chip`), optional `html` / `manifest` / `fixtures` / `data`. Returns `sourceDir`: edit the files there and it hot-reloads. |
 | `widget_set_data` | Push a value: `value` (replace), `merge` (deep-merge, `null` deletes) or `append` (with `max`). |
-| `widget_render` | Screenshots in Crundi's real chrome plus a lint report. `frames` (`cell`, `dock`, `dock-wide`, `tab`, `inline`, `mobile`, `mobile-dock`, `mobile-tab`), `states` (fixture names). Always run it before calling a widget done. |
+| `widget_render` | Screenshots in Crundi's real chrome plus a lint report. `frames` (`cell`, `dock`, `dock-wide`, `tab`, `inline`, `chip`, `mobile`, `mobile-dock`, `mobile-tab`), `states` (fixture names). Always run it before calling a widget done. |
 | `widget_get` | Status: actual slot, source errors, faults from the live page, approval state, and events the person triggered (reading clears them). |
 | `widget_list` | This project's widgets. |
 | `widget_close` | Close (reopenable); `remove: true` deletes it and its files. |
 | `widget_rollback` | Restore an earlier version of the source. |
+| `widget_scope` | Make a widget global (shown in every project, pinned; as a `chip` it stays in the top bar everywhere) or return it to its project with `global: false`. Going global copies the widget's own folder (source plus any data kept in it) into Crundi's store, which is backed up; the original folder stays in the project, unread, so writers of that data must be repointed to the new `sourceDir`. Project data is not copied and is still read in place. |
 
-A widget's frame has no network and no storage. Data comes from sources named in `widget.json` (`push`, `session`, `file`, `sqlite`, `command`, `http`, `crundi`); `command` and `http` sources, files outside the project and `command` / `tool` / `prompt` actions need the owner's approval, shown on the widget.
+A widget's frame has no network and no storage. Data comes from sources named in `widget.json` (`push`, `session`, `file`, `sqlite`, `command`, `http`, `crundi`, the last including this machine's live `stats`); `command` and `http` sources, files outside the project and `command` / `tool` / `prompt` actions need the owner's approval, shown on the widget.
 
 ## Secrets
 

@@ -260,8 +260,33 @@ async function ensureBrowser() {
   return launching;
 }
 
+// ─── Idle shutdown ───
+//
+// The browser was started on first use and then never stopped: one screenshot
+// left a full Chrome (about 1 GB across its processes) running until Crundi
+// itself restarted. Once the last page is closed it is given a minute, in case
+// another call follows, and then stopped. The next call starts a fresh one.
+const IDLE_SHUTDOWN_MS = Math.max(1000, parseInt(process.env.CRUNDI_CHROME_IDLE_MS || '', 10) || 60_000);
+let idleTimer = null;
+
+function armIdleShutdown() {
+  clearTimeout(idleTimer);
+  idleTimer = null;
+  if (pages.size > 0 || !browserProc) return;
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (pages.size === 0 && !launching) shutdown().catch(() => {});
+  }, IDLE_SHUTDOWN_MS);
+  idleTimer.unref?.();
+}
+
+/** Is the shared browser process running right now? */
+export function isRunning() { return !!browserProc; }
+
 /** Stop the shared browser and clean up its profile. */
 export async function shutdown() {
+  clearTimeout(idleTimer);
+  idleTimer = null;
   for (const key of [...pages.keys()]) { try { await closePage(key); } catch { /* going away anyway */ } }
   try { browserWs?.close(); } catch { /* ignore */ }
   try { browserProc?.kill(); } catch { /* ignore */ }
@@ -734,10 +759,14 @@ export function supports(type) { return Object.prototype.hasOwnProperty.call(ops
 export async function handle(msg) {
   const op = ops[msg?.type];
   if (!op) return { ok: false, error: 'Unsupported browser operation: ' + (msg?.type || '?') };
+  clearTimeout(idleTimer);
+  idleTimer = null;
   try {
     await ensureBrowser();
     return await op(msg);
   } catch (err) {
     return { ok: false, error: err.message || String(err) };
+  } finally {
+    armIdleShutdown();
   }
 }
