@@ -1949,7 +1949,10 @@ export function getWebappHtml(botUsername) {
       /* Keep the topbar tidy on phones: shrink gaps, let the project name
          truncate, and keep the usage meter compact so nothing gets clipped. */
       .topbar { gap: 8px; padding: 0 10px; }
-      .topbar .project-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+      /* One line, always. Squeezed by chips it used to wrap into two rows of
+         two letters; it now ellipsises, and keeps enough width to be read. */
+      .topbar .project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 56px; flex: 0 1 auto; }
+
       .topbar .ublabel { font-size: 0.52rem; }
       /* Reclaim width so badges never overflow: drop the wordmark text (icon
          stays) and collapse the connection badge to just its status dot. */

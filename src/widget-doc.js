@@ -232,6 +232,7 @@ export const FRAMES = {
   tab: { width: 1280, height: 760, slot: 'tab', label: 'full tab (desktop)' },
   inline: { width: 560, height: 420, slot: 'inline', label: 'inline card in the chat' },
   chip: { width: 520, height: 96, slot: 'chipbar', label: 'top bar chip: only the [data-chip] element, one line' },
+  'mobile-chip': { width: 390, height: 150, slot: 'chipbar', mobile: true, label: 'the chip on a phone: a row in the list that drops from the top bar, the face beside the name, at most 200px wide' },
   mobile: { width: 390, height: 844, slot: 'cell', mobile: true, label: 'phone, workbench cell' },
   'mobile-dock': { width: 390, height: 844, slot: 'dock', mobile: true, label: 'phone, docked above a chat' },
   'mobile-tab': { width: 390, height: 844, slot: 'tab', mobile: true, label: 'phone, full tab' },
@@ -262,6 +263,11 @@ const HARNESS_CSS = `
   .hz-tabfill { flex: 1; min-height: 0; display: flex; }
   .hz-chip { display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 99px; border: 1px solid var(--border); background: var(--bg-tertiary); }
   .hz-chip .hz-frame { width: 24px; height: 24px; background: transparent; }
+  .hz-chiplist { margin: 6px 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+  .hz-chiplist-h { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-secondary); padding: 2px 6px 6px; }
+  .hz-chiprow { display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-primary); }
+  .hz-chiprow-n { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .hz-chiprow .hz-frame { width: 24px; height: 24px; flex: 0 0 auto; background: transparent; }
   .hz-label { position: fixed; right: 6px; bottom: 4px; font: 10px/1 var(--mono); color: var(--text-muted); opacity: 0.7; pointer-events: none; }
 `;
 
@@ -307,9 +313,17 @@ export async function buildHarnessPage({ doc, title, frame, data, store: kv = {}
       + `<div class="hz-bubble me">What does the build look like?</div>`
       + `<div class="hz-inline"><div class="hz-inline-head">${escapeHtml(title)}</div><div id="hz-auto" style="height:120px">${iframe}</div></div>`
       + `</div><div class="hz-composer">Message Claude…</div></div></div></div>`;
+  } else if (f.slot === 'chipbar' && mobile) {
+    // A phone has no room for chips in the bar: one button there drops a list,
+    // and the chip is a row of it, its face beside its name.
+    main = `<div class="topbar"><span style="font-size:1.3rem">\u2630</span><span style="color:var(--text-muted);font-size:12px;white-space:nowrap">/ demo-project</span><span style="flex:1"></span>`
+      + `<span class="hz-chip" style="border-color:var(--accent);color:var(--accent-hover);font-size:12px;font-weight:650">\u25a6 2</span><span class="status-badge connected">\u25cf</span></div>`
+      + `<div class="hz-chiplist"><div class="hz-chiplist-h">Panels</div>`
+      + `<div class="hz-chiprow"><span class="hz-chiprow-n">${escapeHtml(title)}</span><iframe class="hz-frame" id="hz-frame" sandbox="${SANDBOX}" allow="${FRAME_ALLOW}" title="${escapeHtml(title)}"></iframe></div>`
+      + `<div class="hz-chiprow" style="opacity:.55"><span class="hz-chiprow-n">Another panel</span><span style="color:var(--text-secondary);font-size:12px">3 today</span></div></div>`;
   } else if (f.slot === 'chipbar') {
     // The real top bar, with the chip where it sits: before the status badges.
-    main = `<div class="topbar"><span style="font-weight:700">Crundi</span><span style="color:var(--text-muted);font-size:12px">/ demo-project</span><span style="flex:1"></span>`
+    main = `<div class="topbar"><span style="font-weight:700">Crundi</span><span style="color:var(--text-muted);font-size:12px;white-space:nowrap">/ demo-project</span><span style="flex:1"></span>`
       + `<span class="hz-chip"><iframe class="hz-frame" id="hz-frame" sandbox="${SANDBOX}" allow="${FRAME_ALLOW}" title="${escapeHtml(title)}"></iframe></span>`
       + `<span class="status-badge connected">connected</span></div>`
       + `<div style="padding:10px 16px;color:var(--text-muted);font-size:12px">The chip is the element marked data-chip, shown alone on one line. Tapping it opens the full panel.</div>`;
@@ -318,7 +332,7 @@ export async function buildHarnessPage({ doc, title, frame, data, store: kv = {}
   } else {
     main = `<div class="hz-main${mobile ? ' flush' : ''}"><div class="term-cell wb-cell hz-cell">${cellHead(title)}<div class="term-body wb-cell-body" style="padding:0">${iframe}</div></div></div>`;
   }
-  const withChrome = f.slot === 'tab' || mobile;
+  const withChrome = (f.slot === 'tab' || mobile) && f.slot !== 'chipbar';
   const payload = {
     doc, data, store: kv,
     context: { frame: f.slot, platform: mobile ? 'mobile' : 'desktop', touch: mobile, harness: true, title },
@@ -366,7 +380,9 @@ const HARNESS_HOST_JS = `
     } else if (m.t === 'height') {
       R.height = m.h;
       if (P.auto === 'inline') { var box = document.getElementById('hz-auto'); if (box) box.style.height = Math.max(40, Math.min(460, m.h)) + 'px'; }
-      if (P.auto === 'chip') { R.chipWidth = m.w || 0; frame.style.width = Math.max(24, Math.min(240, m.w || 24)) + 'px'; }
+      // The same ceiling the page applies: 260px, or 132px on a phone. A face
+      // wider than that is cut off there, and the lint will say so.
+      if (P.auto === 'chip') { R.chipWidth = m.w || 0; frame.style.width = Math.max(24, Math.min(P.context.platform === 'mobile' ? 200 : 260, m.w || 24)) + 'px'; }
       if (P.auto === 'dock') {
         // Same rule as the page: content height, up to about 44% of the chat pane.
         var pane = frame.closest('.term-body');
