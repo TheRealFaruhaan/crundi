@@ -301,7 +301,7 @@ const TOOLS = [
       properties: {
         id: { type: 'string', description: 'Lowercase id, e.g. "task-progress". Reusing an id updates that widget.' },
         title: { type: 'string', description: 'Short title shown in the widget header' },
-        slot: { type: 'string', enum: ['dock', 'cell', 'tab', 'inline', 'chip'], description: 'Where it sits. dock: attached to this chat (best for live task progress). cell: its own workbench pane (best for something used alongside several chats). tab: full-size in the Panels tab (dense dashboards, wide tables). inline: a card in this chat at the point you call it (a one-off result). chip: a one-line status in the top bar that opens the widget when tapped. The person can move it; their choice wins.' },
+        slot: { type: 'string', enum: ['dock', 'cell', 'tab', 'inline', 'chip'], description: 'Where it sits. dock: attached to this chat (best for live task progress). cell: its own workbench pane (best for something used alongside several chats). tab: full-size in the Panels tab (dense dashboards, wide tables). inline: a card in this chat at the point you call it (a one-off result). chip: a one-line status in the top bar that opens the widget when tapped; it shows a label and value, or your own live face (numbers, a sparkline, a meter, an icon) if you mark one top-level element with data-chip. The person can move it; their choice wins.' },
         beside: { type: 'string', enum: ['right', 'below'], description: 'For slot "cell": split this chat\'s pane and place the widget on that side.' },
         lifecycle: { type: 'string', enum: ['task', 'pinned'], description: 'task (default): belongs to the work in hand; close it when done. pinned: meant to stay, e.g. a dashboard bound to a database.' },
         html: { type: 'string', description: 'Optional: contents for index.html (a body fragment with markup, <style>, <script>). Omit to write the file yourself.' },
@@ -337,7 +337,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Widget id' },
-        frames: { type: 'array', items: { type: 'string', enum: ['cell', 'dock', 'dock-wide', 'tab', 'inline', 'mobile', 'mobile-dock', 'mobile-tab'] }, description: 'Which layouts to render. Default: the widget\'s slot on desktop, and on a phone.' },
+        frames: { type: 'array', items: { type: 'string', enum: ['cell', 'dock', 'dock-wide', 'tab', 'inline', 'chip', 'mobile', 'mobile-dock', 'mobile-tab'] }, description: 'Which layouts to render. Default: the widget\'s slot on desktop, and on a phone.' },
         states: { type: 'array', items: { type: 'string' }, description: 'Fixture names to render in place of live data (e.g. ["empty","error","full"]). "live" is the current data.' },
         allStates: { type: 'boolean', description: 'Render live data and every fixture (capped at 8 screenshots in total)' },
       },
@@ -357,7 +357,7 @@ const TOOLS = [
   },
   {
     name: 'widget_scope',
-    description: 'Make a widget global, or put a global one back in its project. A global widget shows in every project, not only the one it was built in, and is pinned; with slot "chip" it stays in the top bar across projects and chats. Its data sources keep reading from the project it came from. Do this when the person asks for a panel to be available everywhere.',
+    description: 'Make a widget global, or put a global one back in its project. A global widget shows in every project, not only the one it was built in, and is pinned; with slot "chip" it stays in the top bar across projects and chats. Only the widget\'s own folder goes with it: it is copied into Crundi\'s store (new sourceDir in the result, covered by the backup) along with any data kept inside it, and the original folder is left in the project, unread. Project data its sources read is NOT copied and is still read in place. Read the note in the result: anything that writes the widget\'s own data must be repointed to the new sourceDir. Do this when the person asks for a panel to be available everywhere.',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, global: { type: 'boolean', description: 'true (default) to make it global, false to return it to its project' } }, required: ['id'] },
   },
   {

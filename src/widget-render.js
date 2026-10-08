@@ -50,11 +50,24 @@ async function shootOne({ baseUrl, html, frame }) {
   const opened = await headless.handle({ type: 'browserOpen', key, url, width: f.width, height: f.height, mobile: !!f.mobile, dpr: f.mobile ? 2 : 1 });
   if (!opened.ok) return { ok: false, error: opened.error };
   try {
-    let result = null;
+    const evalStr = async (code) => { const r = await headless.handle({ type: 'browserEval', key, code }); return r && r.ok ? (r.result ?? '') : ''; };
     const deadline = Date.now() + 10_000;
+    // 1. Wait for the widget to start and its first sizes to be applied.
     while (Date.now() < deadline) {
-      const r = await headless.handle({ type: 'browserEval', key, code: 'window.__wgResult && window.__wgResult.done ? JSON.stringify(window.__wgResult) : ""' });
-      const raw = r && r.ok ? (r.result ?? r.value ?? r.data) : '';
+      const s = await evalStr('window.__wgResult ? (window.__wgResult.done ? "done" : (window.__wgResult.readyAt ? String(Date.now() - window.__wgResult.readyAt) : "")) : ""');
+      if (s === 'done' || Number(s) >= 600) break;
+      await sleep(120);
+    }
+    // 2. Make the browser draw. A headless page does not repaint by itself,
+    //    and a frame only learns it was resized when its page is next drawn:
+    //    without this the lint measures the widget in a frame of the wrong size.
+    await headless.handle({ type: 'browserScreenshot', key });
+    await sleep(150);
+    // 3. Now ask for the lint, and wait for it.
+    await evalStr('window.__wgAskLint ? String(window.__wgAskLint()) : ""');
+    let result = null;
+    while (Date.now() < deadline) {
+      const raw = await evalStr('window.__wgResult && window.__wgResult.done ? JSON.stringify(window.__wgResult) : ""');
       if (raw) { try { result = JSON.parse(raw); } catch { /* keep waiting */ } }
       if (result) break;
       await sleep(150);
@@ -89,6 +102,9 @@ export async function renderWidget({ baseUrl, alias, id, frames, states, liveDat
   const meta = store.get(alias, id);
   if (!meta) return { ok: false, error: `No widget "${id}". Call widget_open first.` };
   const doc = await buildDoc(alias, id, { harness: true });
+  // The chip is its own build of the same source: it knows from its first byte
+  // that it is the chip.
+  const chipDoc = await buildDoc(alias, id, { harness: true, chip: true });
   const wantFrames = (Array.isArray(frames) && frames.length ? frames : [slotFrame(meta), slotFrame(meta, true)])
     .map(String).filter((f, i, a) => a.indexOf(f) === i);
   const bad = wantFrames.filter((f) => !FRAMES[f]);
@@ -109,9 +125,10 @@ export async function renderWidget({ baseUrl, alias, id, frames, states, liveDat
     }
     for (const frame of wantFrames) {
       if (shots.length >= MAX_SHOTS) break;
-      const html = await buildHarnessPage({ doc: doc.html, title: doc.title, frame, data, store: kv, stateName: state === 'live' ? '' : state });
+      const html = await buildHarnessPage({ doc: frame === 'chip' ? chipDoc.html : doc.html, title: doc.title, frame, data, store: kv, stateName: state === 'live' ? '' : state });
       const r = await shootOne({ baseUrl, html, frame });
       if (!r.ok) return { ok: false, error: `Render failed (${frame}): ${r.error}` };
+      if (frame === 'chip' && !(r.result.lint && r.result.lint.metrics && r.result.lint.metrics.chipFace)) (r.result.faults = r.result.faults || []).push({ message: 'This panel has no chip face. Mark ONE top-level element in index.html with data-chip (e.g. <div data-chip>…</div>) and fill it from onData; without it the chip shows only the title.' });
       shots.push({ frame, state, width: FRAMES[frame].width, height: FRAMES[frame].height, label: FRAMES[frame].label, png: r.png, faults: r.result.faults || [], lint: r.result.lint, console: r.console, ready: !!r.result.ready });
     }
   }
@@ -130,6 +147,8 @@ function slotFrame(meta, mobile = false) {
   if (slot === 'dock') return mobile ? 'mobile-dock' : 'dock';
   if (slot === 'tab') return mobile ? 'mobile-tab' : 'tab';
   if (slot === 'inline') return mobile ? 'mobile' : 'inline';
+  // A chip is two things to look at: its face in the bar, and the panel it opens.
+  if (slot === 'chip') return mobile ? 'cell' : 'chip';
   return mobile ? 'mobile' : 'cell';
 }
 

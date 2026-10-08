@@ -49,6 +49,7 @@
     history: svg('<polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/><polyline points="12 7 12 12 15 14"/>'),
     trash: svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>'),
     globe: svg('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
+    more: svg('<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'),
     expand: svg('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>')
   };
 
@@ -105,6 +106,13 @@
       '.wg-side>.wg-dock>.wg-dock-item:only-child>.wg-dock-body,.wg-side>.wg-dock>.wg-dock-item:only-child>.wg-dock-body>.wg-view{height:100%;flex:1 1 auto}',
       '.wg-dock-head{display:flex;align-items:center;gap:6px;padding:3px 6px 3px 8px;background:var(--bg-secondary);border-bottom:1px solid var(--border-subtle);flex-shrink:0;min-height:28px}',
       '.wg-dock-item.collapsed>.wg-dock-head{border-bottom:0}',
+      // The dock header folds like a pane header: tools inline when wide, a
+      // second row behind a menu button when narrow or on a phone.
+      '.wg-dock-head{container-type:inline-size;flex-wrap:wrap}',
+      '.wg-dock-tools{display:contents}',
+      '.wg-ibtn.wg-dock-more{display:none}',
+      '@container (max-width:420px){.wg-dock-tools{display:none;order:9;flex:0 0 100%;justify-content:flex-end;align-items:center;gap:6px;padding:4px 0 2px}.wg-dock-head.open .wg-dock-tools{display:flex}.wg-ibtn.wg-dock-more{display:inline-flex}.wg-dock-head.open .wg-dock-more{color:var(--accent-hover)}}',
+      '@media (max-width:768px){.wg-dock-tools{display:none;order:9;flex:0 0 100%;justify-content:flex-end;align-items:center;gap:6px;padding:4px 0 2px}.wg-dock-head.open .wg-dock-tools{display:flex}.wg-ibtn.wg-dock-more{display:inline-flex}.wg-dock-head.open .wg-dock-more{color:var(--accent-hover)}}',
       '.wg-dock-item.collapsed>.wg-dock-body{display:none}',
       '.wg-dock-title{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:6px;cursor:pointer}',
       '.wg-dock-title .ic{color:var(--accent-hover);font-size:13px}',
@@ -138,6 +146,17 @@
       '.wg-chip{-webkit-app-region:no-drag}',
       '.wg-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:3px 9px;border-radius:99px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:11.5px;cursor:pointer;white-space:nowrap}',
       '.wg-chip:hover{border-color:var(--accent)}',
+      '.wg-chip-plain{display:inline-flex;align-items:center;gap:6px;min-width:0}',
+      // A live chip: the panel's own face, in a frame the pointer passes through
+      // so the whole chip is still one button.
+      '.wg-chip.live{padding:0 9px;height:26px;max-width:none}',
+      '.wg-chip.live .wg-chip-plain{display:none}',
+      '.wg-chip.live.empty .wg-chip-plain{display:inline-flex}',
+      '.wg-chip.live.empty .wg-chip-face{display:none}',
+      '.wg-chip-face{display:inline-flex;align-items:center;height:24px}',
+      '.wg-chip-face .wg-view{background:transparent;height:24px;flex-direction:row}',
+      '.wg-chip-face .wg-banner{display:none}',
+      '.wg-chip-face .wg-frame{width:16px;height:24px;flex:0 0 auto;background:transparent;pointer-events:none}',
       '.wg-chip .ic{color:var(--accent-hover)}',
       '.wg-chip .l{color:var(--text-secondary)}',
       '.wg-chip .v{overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}',
@@ -248,7 +267,9 @@
 
     v.load = function () {
       var mine = ++v.seq;
-      return api('/api/widgets/doc' + qs(v.project, v.id)).then(function (d) {
+      // The chip asks for the chip build of the panel: same source, told from
+      // its first byte to show only the element marked data-chip.
+      return api('/api/widgets/doc' + qs(v.project, v.id, o.chip ? '&chip=1' : '')).then(function (d) {
         if (v.destroyed || mine !== v.seq) return;
         v.banners.innerHTML = '';
         v.started = false; v.faults = 0; v.missed = false;
@@ -284,9 +305,13 @@
           v.started = true;
           v.post({ t: 'init', data: d.ok ? d.data : {}, store: (d.ok && d.store) || {}, context: v.context() });
           if (v.missed) { v.missed = false; v.sendData(); }
+          // Frames that size to their content (a chip, a dock, an inline card):
+          // ask outright once the first data is in, not only on the next paint.
+          if (o.chip || o.autoHeight) setTimeout(function () { v.post({ t: 'measure' }); }, 200);
         });
       } else if (m.t === 'height') {
         v.height = Number(m.h) || 0;
+        if (o.onSize) { try { o.onSize(Number(m.w) || 0, v.height); } catch (e) { /* host's problem */ } }
         v.applyHeight();
       } else if (m.t === 'fault') {
         // A handful is a diagnosis; a flood is a loop. Stop reporting after a few.
@@ -526,7 +551,7 @@
         item.setAttribute('data-wid', w.id);
         var head = el('div', 'wg-dock-head');
         var title = el('span', 'wg-dock-title');
-        var collapse = el('button', 'wg-ibtn', IC.up);
+        var collapse = el('button', 'wg-ibtn wg-dock-collapse', IC.up);
         collapse.title = 'Collapse';
         var close = el('button', 'wg-ibtn', IC.x);
         close.title = 'Close panel';
@@ -541,10 +566,20 @@
         title.addEventListener('click', toggle);
         collapse.addEventListener('click', toggle);
         close.addEventListener('click', function () { userPatch(w.id, { closed: true }); });
+        // Only placement folds away. It is the wide control and the one used
+        // least; in a narrow dock or on a phone it sits behind a menu button.
+        // Collapse stays in the header at every width: it is what a dock is
+        // for, and one tap must be enough.
+        var tools = el('span', 'wg-dock-tools');
+        tools.appendChild(slotSelect(w));
+        var more = el('button', 'wg-ibtn wg-dock-more', IC.more);
+        more.title = 'More'; more.setAttribute('aria-label', 'More'); more.setAttribute('aria-haspopup', 'true');
+        more.addEventListener('click', function (e) { e.stopPropagation(); head.classList.toggle('open'); });
         head.appendChild(title);
         head.appendChild(el('span', '', '')).setAttribute('data-wg-badge', '1');
-        head.appendChild(slotSelect(w));
+        head.appendChild(tools);
         head.appendChild(collapse);
+        head.appendChild(more);
         head.appendChild(close);
         item.appendChild(head);
         item.appendChild(bodyEl);
@@ -561,7 +596,7 @@
       var isCollapsed = !!w.collapsed;
       if (item.classList.contains('collapsed') !== isCollapsed) {
         item.classList.toggle('collapsed', isCollapsed);
-        var cb = item.querySelectorAll('.wg-ibtn')[0];
+        var cb = item.querySelector('.wg-dock-collapse');
         if (cb) cb.innerHTML = isCollapsed ? IC.down : IC.up;
       }
     });
@@ -669,20 +704,65 @@
     });
   }
 
+  var chipNodes = {};   // id -> { el, view, live, sig }
+
+  function dropChip(id) {
+    var c = chipNodes[id]; if (!c) return;
+    if (c.view) { try { c.view.destroy(); } catch (e) { /* ignore */ } }
+    c.el.remove();
+    delete chipNodes[id];
+  }
+
+  /**
+   * Draw the chips. Reconciled by id, never rebuilt wholesale: a live chip is
+   * a frame, and replacing it on every data tick would reload it every time.
+   */
   function paintChips() {
     if (!chipEl) return;
     var list = widgets.filter(function (w) { return placeOf(w) === 'chip'; });
-    chipEl.innerHTML = '';
     chipEl.style.display = list.length ? '' : 'none';
+    var want = {};
+    list.forEach(function (w) { want[w.id] = 1; });
+    Object.keys(chipNodes).forEach(function (id) { if (!want[id]) dropChip(id); });
     list.forEach(function (w) {
-      var b = el('button', 'wg-chip', IC.panel);
-      b.title = w.title;
-      var label = (w.chip && w.chip.label) || w.title;
-      var l = el('span', 'l'); l.textContent = label;
-      b.appendChild(l);
-      if (chipValues[w.id]) { var vEl = el('span', 'v'); vEl.textContent = chipValues[w.id]; b.appendChild(vEl); }
-      b.addEventListener('click', function () { openPop(w.id); });
-      chipEl.appendChild(b);
+      // A panel with a chip face draws itself; one waiting for approval, or
+      // without a face, gets the plain labelled chip.
+      var live = !!w.chipLive && !w.needsGrant;
+      var c = chipNodes[w.id];
+      if (c && c.live !== live) { dropChip(w.id); c = null; }
+      if (!c) {
+        var b = el('button', 'wg-chip' + (live ? ' live' : ''));
+        b.addEventListener('click', function () { openPop(w.id); });
+        c = chipNodes[w.id] = { el: b, view: null, live: live, sig: '' };
+        if (live) {
+          var holder = el('span', 'wg-chip-face');
+          b.appendChild(holder);
+          c.view = createView(holder, {
+            project: project, id: w.id, frame: 'chipbar', chip: true,
+            onSize: function (wd) {
+              var max = cfg.isMobile() ? 132 : 260;
+              c.view.iframe.style.width = Math.max(16, Math.min(max, wd || 16)) + 'px';
+              // Nothing marked data-chip came up after all: show the label instead.
+              b.classList.toggle('empty', !wd);
+            }
+          });
+        }
+        chipEl.appendChild(b);
+      }
+      c.el.title = w.title + (w.needsGrant ? ' (waiting for your approval)' : '');
+      c.el.setAttribute('aria-label', w.title);
+      if (!live || c.el.classList.contains('empty') || !c.plain) {
+        var sig = [w.title, (w.chip && w.chip.label) || '', chipValues[w.id] || '', w.needsGrant ? 1 : 0].join('|');
+        if (sig !== c.sig) {
+          c.sig = sig;
+          var plain = c.plain;
+          if (!plain) { plain = c.plain = el('span', 'wg-chip-plain'); c.el.insertBefore(plain, c.el.firstChild); }
+          plain.innerHTML = IC.panel;
+          var l = el('span', 'l'); l.textContent = (w.chip && w.chip.label) || w.title; plain.appendChild(l);
+          if (chipValues[w.id]) { var vEl = el('span', 'v'); vEl.textContent = chipValues[w.id]; plain.appendChild(vEl); }
+          if (w.needsGrant) plain.appendChild(el('span', 'wg-badge warn', 'approve'));
+        }
+      }
     });
   }
 
@@ -809,7 +889,8 @@
       mk(IC.globe + 'Make global', 'Show this panel in every project. As a top bar chip it then stays there across projects and chats.', function () {
         api('/api/widgets/scope', { project: project, id: w.id, global: true }).then(function (r) {
           if (!r.ok) return cfg.toast(r.error || 'Could not make it global', 'error');
-          cfg.toast('Now global: shown in every project');
+          var n = (r.inPlace || []).length;
+          cfg.toast('Now global: shown in every project' + (n ? '. It still reads ' + n + ' file' + (n === 1 ? '' : 's') + ' from this project' : ''));
         });
       });
     } else if (!w.home || w.home === pkey(project)) {
@@ -925,6 +1006,14 @@
       if (w && placeOf(w) === 'chip' && (!d.source || !w.chip || w.chip.source === d.source)) loadChipValue(w);
       return;
     }
+    if (d.kind === 'store') {
+      // One copy of the panel saved something: hand every copy the store.
+      views.forEach(function (v) {
+        if (v.id !== d.id || !(G || v.pkey === d.project) || !v.started) return;
+        api('/api/widgets/data' + qs(v.project, v.id, '&storeOnly=1')).then(function (r) { if (r.ok && !v.destroyed) v.post({ t: 'store', store: r.store || {} }); });
+      });
+      return;
+    }
     if (d.kind === 'doc') {
       views.forEach(function (v) { if (v.id === d.id && (G || v.pkey === d.project)) v.load(); });
       refresh();
@@ -936,7 +1025,14 @@
 
   window.CrundiWidgets = {
     configure: function (o) { for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) cfg[k] = o[k]; injectStyles(); },
-    setProject: function (alias) { if (alias === project) return Promise.resolve(); project = alias || ''; widgets = []; cellSig = null; chipValues = {}; closePop(); tabState.selected = ''; return refresh(); },
+    setProject: function (alias) {
+      if (alias === project) return Promise.resolve();
+      project = alias || '';
+      // A global panel belongs to every project, so its chip is not torn down
+      // when the project changes: it is a running frame, and whatever it was
+      // doing (a timer counting, a sound about to play) would be lost with it.
+      Object.keys(chipNodes).forEach(function (id) { var w = byId(id); if (!w || !w.global) dropChip(id); });
+      widgets = widgets.filter(function (w) { return w.global; }); cellSig = null; chipValues = {}; closePop(); tabState.selected = ''; return refresh(); },
     refresh: refresh,
     list: function () { return widgets.slice(); },
     /** Ids of the widgets that are workbench panes right now. */

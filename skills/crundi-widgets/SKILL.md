@@ -43,7 +43,7 @@ Do not report a widget as done without step 3.
 - `cell` (with `beside`) for something used alongside the work.
 - `tab` for dense dashboards and wide tables.
 - `inline` for a one-off result that belongs at this point in the conversation.
-- `chip` for a single status worth a glance from anywhere.
+- `chip` for a status worth a glance from anywhere. It can be a plain label and value, or the panel's own live face in the top bar (a number, a sparkline, a meter, your own icon): mark one top-level element with `data-chip`. Pick the face when the value moves or a graphic says it faster; leave it labelled otherwise.
 
 The person can move, collapse or close a widget. `widget_get` tells you if they did; leave it as they put it.
 

@@ -183,6 +183,25 @@ html[data-platform="mobile"] .c-tab { min-height: 40px; }
 .c-skel { border-radius: 4px; background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-hover) 37%, var(--bg-tertiary) 63%); background-size: 400% 100%; animation: c-skel 1.4s ease infinite; min-height: 12px; }
 @keyframes c-skel { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 
+/* ── the top bar chip ──
+   One top-level element marked data-chip is the panel's face in the top bar.
+   Everywhere else it is hidden; in the chip frame it is the ONLY thing shown,
+   on one line, as wide as its content. The panel's script runs as usual, so
+   the same onData that fills the panel keeps the chip live. */
+[data-chip] { display: none; }
+html[data-frame="chipbar"], html[data-frame="chipbar"] body { height: 100%; background: transparent; }
+html[data-frame="chipbar"] body { padding: 0; overflow: hidden; display: flex; align-items: center; font-size: 11.5px; line-height: 1; }
+html[data-frame="chipbar"] body > *:not([data-chip]) { display: none !important; }
+/* flex: none and the min-width matter: the face is a flex item of a body that
+   starts 24px wide, and would otherwise be measured squeezed to that. */
+html[data-frame="chipbar"] body > [data-chip] { display: inline-flex !important; flex: none; min-width: max-content; align-items: center; gap: 6px; white-space: nowrap; width: max-content; height: 100%; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+/* Small graphics sized for one line of the top bar. */
+.c-chip-spark { display: inline-block; width: 44px; height: 14px; flex-shrink: 0; }
+.c-chip-meter { display: inline-block; width: 34px; height: 5px; border-radius: 99px; background: var(--bg-hover); overflow: hidden; flex-shrink: 0; }
+.c-chip-meter > span { display: block; height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.4s ease; }
+.c-chip-meter.ok > span { background: var(--green); } .c-chip-meter.warn > span { background: var(--yellow); } .c-chip-meter.err > span { background: var(--red); }
+.c-chip-label { color: var(--text-secondary); }
+
 /* ── narrow frames ── */
 @media (max-width: 480px) {
   body { padding: 10px; }

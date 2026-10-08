@@ -1501,6 +1501,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         .filter(x => String(x.alias || '').toLowerCase() === String(alias || '').toLowerCase())
         .map(x => ({ key: x.key, name: x.name, status: x.status, command: x.command, pid: x.pid || null, startedAt: x.startedAt || null })),
       schedules: (alias) => schedule.listSchedules(alias),
+      // This machine, as the Info tab shows it. Trimmed to what a gauge needs:
+      // no hostnames or addresses, which have no business in a panel's data.
+      stats: async () => {
+        const s = await getSystemStats();
+        const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : 0);
+        return {
+          cpu: { pct: Math.round((s.cpu?.overall || 0) * 10) / 10, cores: (s.cpu?.cores || []).map(c => Math.round(c * 10) / 10) },
+          mem: { pct: pct(s.mem?.used, s.mem?.total), used: s.mem?.used || 0, total: s.mem?.total || 0 },
+          disk: { pct: pct(s.disk?.used, s.disk?.total), used: s.disk?.used || 0, total: s.disk?.total || 0 },
+          net: { rxPerSec: Math.round(s.net?.rxPerSec || 0), txPerSec: Math.round(s.net?.txPerSec || 0) },
+          load: s.load || null,
+          history: { cpu: (s.history?.cpu || []).slice(-60), mem: (s.history?.mem || []).slice(-60) },
+        };
+      },
     },
   });
 

@@ -115,6 +115,11 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
 
   // ─── Views ───
 
+  function hasChipFace(alias, id) {
+    const h = store.readHtml(alias, id);
+    return h.ok && /<[a-z][^>]*\sdata-chip(?=[\s=>\/])/i.test(h.html);
+  }
+
   function publicMeta(alias, meta) {
     const m = store.readManifest(alias, meta.id);
     const g = store.grantState(alias, meta.id, m.ok ? m.manifest : {});
@@ -123,6 +128,8 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
       slot: store.effectiveSlot(meta), requestedSlot: meta.slot, chat: meta.chat || '', beside: meta.beside || '',
       state: meta.state, lifecycle: meta.lifecycle, rev: meta.rev || 0, version: meta.version || 0,
       global: meta.project === store.GLOBAL, home: meta.home || '',
+      // A top-level element marked data-chip is the panel's live face in the top bar.
+      chipLive: hasChipFace(alias, meta.id),
       size: meta.size || null, chip: meta.chip || (m.ok && m.manifest.chip) || null,
       collapsed: !!(meta.user && meta.user.collapsed),
       chatLive: !!(meta.chat && claudeUi && claudeUi.has && claudeUi.has(meta.chat)),
@@ -158,7 +165,7 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
       tell(from, id, 'list');
       tell(to, id, 'list');
     }
-    return { ok: true, widget: publicMeta(to, r.widget), global: store.projectKey(to) === store.GLOBAL };
+    return { ok: true, widget: publicMeta(to, r.widget), global: store.projectKey(to) === store.GLOBAL, left: r.left || '', inPlace: r.inPlace || [] };
   }
 
   // ─── Calls from inside a frame ───
@@ -182,7 +189,13 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
     const meta = store.get(alias, id);
     if (!meta) return { ok: false, error: 'No such widget' };
     const a = args && typeof args === 'object' ? args : {};
-    if (op === 'store.set') return store.storeSet(alias, id, a.key, a.value);
+    if (op === 'store.set') {
+      const r = store.storeSet(alias, id, a.key, a.value);
+      // Every other copy of this panel on screen (its chip, its pane, another
+      // browser) hears about it; that is what keeps them one panel.
+      if (r.ok) tell(alias, id, 'store');
+      return r;
+    }
     if (op === 'emit') return store.addEvent(alias, id, a.name, a.payload);
     if (op === 'toast' || op === 'openLink') return { ok: true }; // the page does these itself
     const m = store.readManifest(alias, id);
@@ -202,7 +215,7 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
       const params = a.params && typeof a.params === 'object' ? a.params : {};
       if (spec.kind === 'event') { store.addEvent(alias, id, a.name, params); return { ok: true }; }
       const no = needGrant(); if (no) return no;
-      if (spec.kind === 'command') return runCommand(fillTemplate(spec.run, params, true), store.dataRoot(alias, id) || process.env.HOME || '/');
+      if (spec.kind === 'command') return runCommand(fillTemplate(spec.run, params, true), store.commandRoot(alias, id) || process.env.HOME || '/');
       if (spec.kind === 'prompt') {
         if (!meta.chat || !claudeUi) return { ok: false, error: 'The chat that owns this widget is not known' };
         return claudeUi.sendMessage(meta.chat, fillTemplate(spec.text, params).slice(0, 4000));
@@ -251,7 +264,7 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
       const meta = store.get(alias, id);
       if (!meta) { json(res, { ok: false, error: 'No such widget' }, 404); return true; }
       watchDoc(alias, id);
-      const doc = await buildDoc(alias, id);
+      const doc = await buildDoc(alias, id, { chip: q.get('chip') === '1' });
       const g = store.grantState(alias, id, doc.manifest);
       json(res, {
         ok: true, html: doc.html, rev: meta.rev || 0, widget: publicMeta(alias, meta), problems: doc.problems,
@@ -263,6 +276,7 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
 
     if (path === '/api/widgets/data' && req.method === 'GET') {
       if (!store.get(alias, id)) { json(res, { ok: false, error: 'No such widget' }, 404); return true; }
+      if (q.get('storeOnly') === '1') { json(res, { ok: true, data: {}, store: store.storeAll(alias, id) }); return true; }
       watchDoc(alias, id);
       let all = sources.values(alias, id);
       // The first look starts the sources, and a query or a command has not
@@ -481,8 +495,21 @@ export function createWidgetApi({ broadcast, claudeUi, baseUrl, callTool, crundi
     if (tool === 'widget_scope') {
       const r = changeScope(project, id, a.global !== false);
       if (!r.ok) return r;
-      return { ok: true, id, scope: r.global ? 'global' : 'project', sourceDir: store.sourceDir(r.global ? store.GLOBAL : r.widget.project, id),
-        note: r.global ? 'Now global: it shows in every project and is pinned. Its files moved to sourceDir; its data paths still resolve against its home project. Slot "chip" keeps it in the top bar everywhere.' : 'Back in its project only.' };
+      const out = { ok: true, id, scope: r.global ? 'global' : 'project', sourceDir: store.sourceDir(r.global ? store.GLOBAL : r.widget.project, id) };
+      if (r.global) {
+        if (r.left) out.leftInProject = r.left;
+        if (r.inPlace.length) out.stillReadFromProject = r.inPlace;
+        out.note = [
+          'Now global: it shows in every project and is pinned; slot "chip" keeps it in the top bar everywhere.',
+          'Its own folder was COPIED to sourceDir, with any data it keeps there, and it is built and fed from that copy from now on. That copy is in Crundi\'s backup.',
+          r.left ? 'The folder it came from (leftInProject) was left in place but is no longer read: edit files in sourceDir, and repoint anything that writes the widget\'s data (a script, a schedule, a background process) to sourceDir, or the widget will quietly show old values. Tell the person this.' : '',
+          r.inPlace.length ? 'Project data is not copied. The sources in stillReadFromProject still read those files where they are, in the project: they are not in the backup, and the widget loses them if the project is moved or removed. To make it self-contained, keep its data in its own folder and use a "./" path.' : '',
+          'Its commands still run in the project it came from.',
+        ].filter(Boolean).join(' ');
+      } else {
+        out.note = 'Back in its project only. Its global folder was copied over the project\'s .crundi/widgets/' + id + ' folder, so that folder is current again and is what it reads.';
+      }
+      return out;
     }
 
     if (tool === 'widget_rollback') {

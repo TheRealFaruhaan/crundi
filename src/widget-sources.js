@@ -330,7 +330,7 @@ export function createWidgetSources({ onChange = () => {}, claudeUi = null, crun
     if (!cmd && !(argv && argv.length)) { settle(rt, name, null, 'A command source needs "run"'); return () => {}; }
     const timeoutMs = clamp(spec.timeout, 1, 60, 10) * 1000;
     const format = String(spec.format || 'text').toLowerCase();
-    const cwd = store.dataRoot(rt.alias, rt.id) || process.env.HOME || '/';
+    const cwd = store.commandRoot(rt.alias, rt.id) || process.env.HOME || '/';
     let child = null, stopped = false;
     const run = () => {
       if (child || stopped) return;
@@ -404,11 +404,19 @@ export function createWidgetSources({ onChange = () => {}, claudeUi = null, crun
     const reader = crundi[what];
     if (!reader) { settle(rt, name, null, `A crundi source needs "what": one of ${Object.keys(crundi).join(', ')}`); return () => {}; }
     // A global widget still reads ITS project's board, wherever it is shown.
-    const run = () => { try { settle(rt, name, reader(store.homeAlias(rt.alias, rt.id), spec)); } catch (err) { settle(rt, name, null, err.message); } };
-    const poll = setInterval(run, clamp(spec.every, 1, 600, 3) * 1000);
+    let busy = false, stopped = false;
+    const run = async () => {
+      if (busy || stopped) return;
+      busy = true;
+      try { const v = await reader(store.homeAlias(rt.alias, rt.id), spec); if (!stopped) settle(rt, name, v); }
+      catch (err) { if (!stopped) settle(rt, name, null, err.message); }
+      finally { busy = false; }
+    };
+    // Machine stats move every couple of seconds; the rest change rarely.
+    const poll = setInterval(run, clamp(spec.every, 1, 600, what === 'stats' ? 2 : 3) * 1000);
     poll.unref?.();
     run();
-    return () => clearInterval(poll);
+    return () => { stopped = true; clearInterval(poll); };
   }
 
   const STARTERS = { file: startFile, sqlite: startSqlite, command: startCommand, http: startHttp, session: startSession, crundi: startCrundi };

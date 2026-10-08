@@ -120,27 +120,61 @@ const A = 'demo';
 // ─── Global scope ───
 {
   const root = join(projects, 'demo');
-  writeFileSync(join(root, 'g.json'), '{"g":1}');
+  mkdirSync(join(root, 'data'), { recursive: true });
+  writeFileSync(join(root, 'data', 'project.json'), '{"p":1}');
   store.upsert(A, 'glob', { title: 'Glob', slot: 'chip' });
-  const manifest = { sources: { f: { kind: 'file', path: 'g.json' }, c: { kind: 'command', run: 'pwd' } } };
+  const manifest = { sources: {
+    own: { kind: 'file', path: './state.json' },                              // the widget's own data
+    longway: { kind: 'file', path: '.crundi/widgets/glob/state.json' },       // the same file, spelled from the project
+    proj: { kind: 'file', path: 'data/project.json' },                        // project data
+    c: { kind: 'command', run: 'pwd' },
+  } };
   store.writeSource(A, 'glob', { html: '<p>g</p>', manifest });
+  const oldSrc = store.sourceDir(A, 'glob');
+  writeFileSync(join(oldSrc, 'state.json'), '{"s":1}');
   store.push(A, 'glob', 'kept', { value: 7 });
   store.snapshot(A, 'glob');
   const before = store.grantState(A, 'glob', manifest);
   store.grant(A, 'glob', before.hash);
-  const oldSrc = store.sourceDir(A, 'glob');
+
+  const own0 = store.resolveDataPath(A, './state.json', 'glob');
+  ok(own0.ok && own0.own && own0.inProject && own0.path === join(oldSrc, 'state.json'), 'paths: "./" is the widget\'s own folder', JSON.stringify(own0));
+  const esc0 = store.resolveDataPath(A, './../../../../outside.txt', 'glob');
+  ok(esc0.ok && !esc0.own, 'paths: "./.." out of the widget\'s folder is not its own data');
+  const h1 = store.sourceHash(A, 'glob');
+  writeFileSync(join(oldSrc, 'state.json'), '{"s":2}');
+  ok(store.sourceHash(A, 'glob') === h1, 'source: rewriting the widget\'s data file is not a change to its source (no reload, no new version)');
+  writeFileSync(join(oldSrc, 'index.html'), '<p>g2</p>');
+  ok(store.sourceHash(A, 'glob') !== h1, 'source: editing index.html is');
 
   ok(store.resolveScope(A, 'glob') === 'demo' && store.resolveScope('other', 'glob') === null, 'scope: a project widget is found in its project only');
   const m = store.moveScope(A, 'glob', store.GLOBAL);
   ok(m.ok && m.widget.project === store.GLOBAL && m.widget.home === 'demo' && m.widget.lifecycle === 'pinned', 'scope: promoted to global, pinned, remembering its home project', JSON.stringify(m).slice(0, 200));
-  ok(!store.get(A, 'glob') && !existsSync(oldSrc), 'scope: nothing is left behind in the project');
+  const gSrc = store.sourceDir(store.GLOBAL, 'glob');
+  ok(gSrc.startsWith(process.env.DATA_DIR) && readFileSync(join(gSrc, 'state.json'), 'utf8') === '{"s":2}' && readFileSync(join(gSrc, 'index.html'), 'utf8') === '<p>g2</p>', 'scope: the widget\'s own folder, data included, is copied into Crundi\'s store');
+  ok(m.left === oldSrc && existsSync(join(oldSrc, 'state.json')), 'scope: the folder it came from is left in the project, not deleted');
+  ok(!store.get(A, 'glob'), 'scope: it is no longer a widget of the project');
   ok(store.resolveScope(A, 'glob') === store.GLOBAL && store.resolveScope('other', 'glob') === store.GLOBAL, 'scope: a global widget is found from any project');
-  ok(store.readHtml(store.GLOBAL, 'glob').html === '<p>g</p>' && store.getPushed(store.GLOBAL, 'glob').kept.value === 7 && store.listVersions(store.GLOBAL, 'glob').length === 1, 'scope: source, pushed data and versions came along');
-  const r = store.resolveDataPath(store.GLOBAL, 'g.json', 'glob');
-  ok(r.ok && r.inProject && r.path === join(root, 'g.json'), 'scope: a global widget\'s paths still resolve against its home project', JSON.stringify(r));
+  ok(store.getPushed(store.GLOBAL, 'glob').kept.value === 7 && store.listVersions(store.GLOBAL, 'glob').length >= 1, 'scope: pushed data and versions came along');
+
+  const own1 = store.resolveDataPath(store.GLOBAL, './state.json', 'glob');
+  const long1 = store.resolveDataPath(store.GLOBAL, '.crundi/widgets/glob/state.json', 'glob');
+  ok(own1.path === join(gSrc, 'state.json') && own1.own, 'scope: "./" now means the global folder');
+  ok(long1.path === join(gSrc, 'state.json') && long1.own, 'scope: the old in-project spelling of its own folder follows it to the global folder', JSON.stringify(long1));
+  writeFileSync(join(oldSrc, 'state.json'), '{"s":"written to the old place"}');
+  ok(readFileSync(own1.path, 'utf8') === '{"s":2}', 'scope: a writer still pointed at the old folder no longer reaches the widget');
+
+  const proj1 = store.resolveDataPath(store.GLOBAL, 'data/project.json', 'glob');
+  ok(proj1.path === join(root, 'data', 'project.json') && proj1.inProject && !proj1.own, 'scope: project data is NOT copied; it is read where it is', JSON.stringify(proj1));
+  ok(m.inPlace.length === 1 && m.inPlace[0].source === 'proj', 'scope: the move reports which sources still read from the project', JSON.stringify(m.inPlace));
+  ok(!existsSync(join(gSrc, 'data', 'project.json')) && !existsSync(join(gSrc, '..', 'files')), 'scope: no copy of project data was made anywhere in the global store');
+
+  const backupSrc = readFileSync(new URL('../src/backup.js', import.meta.url), 'utf8');
+  const skip = (/const SKIP_TOP = new Set\(\[(.*?)\]\)/.exec(backupSrc) || [])[1] || '';
+  ok(skip && !/'widgets'/.test(skip), 'scope: the widgets store (a global widget\'s folder and data) is not excluded from the backup', skip);
   const after = store.grantState(store.GLOBAL, 'glob', manifest);
   ok(after.hash === before.hash && after.granted, 'scope: the owner\'s approval carries over, because what it may do is unchanged');
-  ok(store.dataRoot(store.GLOBAL, 'glob') === root && store.homeAlias(store.GLOBAL, 'glob') === 'demo', 'scope: commands run in, and the board is read from, the home project');
+  ok(store.commandRoot(store.GLOBAL, 'glob') === root && store.homeAlias(store.GLOBAL, 'glob') === 'demo', 'scope: commands run in, and the board is read from, the home project');
 
   store.upsert(A, 'clash', { title: 'Clash' }); store.writeSource(A, 'clash', { html: '<p></p>' });
   store.moveScope(A, 'clash', store.GLOBAL);
@@ -149,8 +183,11 @@ const A = 'demo';
   ok(store.resolveScope(A, 'clash') === 'demo', 'scope: with the same id in both, the project\'s own wins');
   mkdirSync(join(projects, 'other'), { recursive: true });
   ok(!store.moveScope(store.GLOBAL, 'glob', 'other').ok, 'scope: a global widget only goes back to the project it came from');
+
+  writeFileSync(join(gSrc, 'state.json'), '{"s":"written while global"}');
   const back = store.moveScope(store.GLOBAL, 'glob', A);
-  ok(back.ok && !back.widget.home && existsSync(join(oldSrc, 'index.html')) && !store.get(store.GLOBAL, 'glob'), 'scope: demoted back into its project, files and all');
+  ok(back.ok && !back.widget.home && !store.get(store.GLOBAL, 'glob'), 'scope: demoted back into its project');
+  ok(readFileSync(join(oldSrc, 'state.json'), 'utf8') === '{"s":"written while global"}' && store.resolveDataPath(A, './state.json', 'glob').path === join(oldSrc, 'state.json'), 'scope: its folder in the project is made current from the global one, and is what it reads again');
 }
 
 // ─── Parsing and templates ───

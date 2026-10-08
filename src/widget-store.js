@@ -101,6 +101,9 @@ export function dataRoot(alias, id) {
   return meta && meta.home ? projectRoot(meta.home) : '';
 }
 
+/** Where a widget's commands run: its (home) project. Same thing as dataRoot, named for the reader. */
+export function commandRoot(alias, id) { return dataRoot(alias, id); }
+
 /** The project whose board, services and schedules a widget reads. */
 export function homeAlias(alias, id) {
   if (projectKey(alias) !== GLOBAL) return projectKey(alias);
@@ -223,6 +226,14 @@ export function writeSource(alias, id, { html, manifest, fixtures } = {}) {
   return { ok: true, dir };
 }
 
+const ASSET_EXT = new Set(['.js', '.mjs', '.css', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.woff', '.woff2']);
+function isSourceFile(rel, name) {
+  if (rel === '' && (name === 'index.html' || name === 'widget.json')) return true;
+  if (rel === 'fixtures/') return name.endsWith('.json');
+  const dot = name.lastIndexOf('.');
+  return dot > 0 && ASSET_EXT.has(name.slice(dot).toLowerCase());
+}
+
 /** A fingerprint of the source, so a change can be told from a no-op. */
 export function sourceHash(alias, id) {
   const dir = sourceDir(alias, id);
@@ -236,6 +247,11 @@ export function sourceHash(alias, id) {
       let st; try { st = statSync(p); } catch { continue; }
       if (st.isDirectory()) { if (rel.split('/').length < 3) walk(p, rel + n + '/'); continue; }
       if (st.size > LIMITS.html) continue;
+      // Only what the frame is BUILT from. A widget may keep data beside its
+      // source ("./state.json", a log, a small database) that something
+      // rewrites every few seconds; counting that as a change to the source
+      // reloaded the frame, and cut a new version, on every write.
+      if (!isSourceFile(rel, n)) continue;
       h.update(rel + n + '\0');
       try { h.update(readFileSync(p)); } catch { /* unreadable: leave it out */ }
       h.update('\0');
@@ -252,24 +268,52 @@ export function sourceHash(alias, id) {
 // owner, so this is not a fence around Claude. It is the owner seeing, and
 // agreeing to, what keeps running after the chat that wrote it is gone.
 
+function realRoot(root) { try { return realpathSync(root); } catch { return root; } }
+
 function insideRoot(root, target) {
   if (!root) return false;
   const r = root.endsWith(sep) ? root : root + sep;
   return target === root || target.startsWith(r);
 }
 
-/** Resolve a manifest path against the widget's home project, following symlinks. */
+/**
+ * Resolve a source's path.
+ *
+ *   "./state.json"      the widget's OWN folder. This is data that belongs to
+ *                       the widget: it travels with it when it goes global, and
+ *                       is then in Crundi's backup.
+ *   "data/app.db"       the (home) project. Project data: read where it is,
+ *                       never copied, global or not.
+ *
+ * A global widget written before it was promoted may name its own folder the
+ * long way (".crundi/widgets/<id>/state.json"). That folder has moved, so the
+ * path is followed to where the folder is now.
+ */
 export function resolveDataPath(alias, p, id) {
   const root = dataRoot(alias, id);
   const raw = String(p || '');
   if (!raw) return { ok: false, error: 'Missing path' };
+  const own = id ? sourceDir(alias, id) : '';
+  if (own && (raw.startsWith('./') || raw.startsWith('.\\'))) {
+    const abs = resolvePath(own, raw);
+    let real = abs; try { real = realpathSync(abs); } catch { /* not there yet */ }
+    let realOwn = own; try { realOwn = realpathSync(own); } catch { /* keep */ }
+    // "./../../etc" is not the widget's folder any more; judge it like any other path.
+    if (insideRoot(realOwn, real)) return { ok: true, path: real, inProject: true, own: true };
+  }
   let abs = raw.startsWith('~/') ? join(process.env.HOME || '', raw.slice(2)) : raw;
   abs = resolvePath(root || '/', abs);
+  if (own && root && projectKey(alias) === GLOBAL) {
+    const was = join(root, '.crundi', 'widgets', id);
+    if (insideRoot(was, abs)) abs = join(own, abs.slice(was.length));
+  }
   let real = abs;
   try { real = realpathSync(abs); } catch { /* not there yet: judge the spelling */ }
-  let realRoot = root;
-  try { if (root) realRoot = realpathSync(root); } catch { /* keep */ }
-  return { ok: true, path: real, inProject: insideRoot(realRoot, real) };
+  let realRoot_ = root;
+  try { if (root) realRoot_ = realpathSync(root); } catch { /* keep */ }
+  let realOwn = own; try { if (own) realOwn = realpathSync(own); } catch { /* keep */ }
+  const isOwn = !!own && insideRoot(realOwn, real);
+  return { ok: true, path: real, inProject: isOwn || insideRoot(realRoot_, real), own: isOwn };
 }
 
 /**
@@ -448,6 +492,18 @@ export function moveScope(from, id, to) {
 
   const oldState = stateDir(from, id), oldSrc = sourceDir(from, id);
   const newState = stateDir(to, id), newSrc = sourceDir(to, id);
+
+  // What moves is the widget's own folder, whole: its source and any data it
+  // keeps there. Project data its sources read (anything outside that folder)
+  // is the project's: it is not copied, and is read where it lies.
+  const m0 = readManifest(from, id);
+  const specs0 = (m0.ok && m0.manifest.sources) || {};
+  const inPlace = [];
+  for (const [name, spec] of Object.entries(specs0)) {
+    if (!spec || (spec.kind !== 'file' && spec.kind !== 'sqlite') || !spec.path) continue;
+    const r = resolveDataPath(from, spec.path, id);
+    if (r.ok && !r.own) inPlace.push({ source: name, path: r.path });
+  }
   try {
     ensureDir(newState);
     // State first, without any source it holds: that is copied to its new home below.
@@ -463,10 +519,14 @@ export function moveScope(from, id, to) {
   else delete moved.home;
   moved.updatedAt = Date.now();
   writeJson(join(newState, 'meta.json'), moved);
-  // Only now is the original let go.
+  // Only now is the original state let go.
   try { rmSync(oldState, { recursive: true, force: true }); } catch { /* a stray copy is harmless */ }
-  if (oldSrc !== join(oldState, 'src')) { try { rmSync(oldSrc, { recursive: true, force: true }); } catch { /* ditto */ } }
-  return { ok: true, widget: moved };
+  // Going global, the widget's folder in the project is LEFT where it is: it
+  // is a copy now, no longer read, and deleting somebody's files out of their
+  // project because a panel was promoted is not ours to do. Coming back, the
+  // global folder was copied over it above, so it is current again.
+  const left = toKey === GLOBAL && oldSrc !== join(oldState, 'src') && existsSync(oldSrc) ? oldSrc : '';
+  return { ok: true, widget: moved, left, inPlace };
 }
 
 // ─── Pushed data ───
