@@ -5698,10 +5698,12 @@ export function getWebappHtml(botUsername) {
     // rebuilt, so each surviving pane is animated from where it was to where
     // it is now (first-last-invert-play), and a new one fades in.
     const LAYOUT_MS = 220;
-    function motionOk() {
-      return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-        && !document.body.classList.contains('mosaic-resizing');
-    }
+    // Always on, whatever the system's "reduce motion" setting says. That
+    // setting is one switch for the whole machine; the owner turned off the
+    // operating system's effects and still wants panes here to glide, and asked
+    // for no switch of Crundi's own. Only held back while a divider is being
+    // dragged, where easing would lag behind the pointer.
+    function motionOk() { return !document.body.classList.contains('mosaic-resizing'); }
     /** Apply the tree's sizes to the splits already on screen. False if they do not match. */
     function mosaicResizeInPlace() {
       const grid = document.getElementById('term-grid');
