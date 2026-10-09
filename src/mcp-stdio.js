@@ -75,12 +75,12 @@ const TOOLS = [
   },
   {
     name: 'send_photo_to_user',
-    description: 'Send a photo/image to the user via Telegram. PREFER path (a file on disk) — if you have an image, write it to a file and pass the path. `data` takes base64 but you should not hand-copy a large base64 string into it: doing so corrupts it and Telegram rejects the result with IMAGE_PROCESS_FAILED. `data` is for callers that already hold the bytes programmatically. PNG, JPEG, GIF or WebP, up to 10 MB.',
+    description: 'Send a photo/image to the user via Telegram (in a chat where they are present, show_image puts it in the conversation and is the better choice). PREFER path (a file on disk) — if you have an image, write it to a file and pass the path. `data` takes base64 but you should not hand-copy a large base64 string into it: doing so corrupts it and Telegram rejects the result with IMAGE_PROCESS_FAILED. `data` is for callers that already hold the bytes programmatically. PNG, JPEG, GIF or WebP, up to 10 MB.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the image file' }, data: { type: 'string', description: 'Image bytes as base64, with or without a data: URL prefix. For programmatic callers that already hold the bytes; do not paste a long base64 string here by hand.' }, caption: { type: 'string', description: 'Optional caption (max 1024 chars)' } },  },
   },
   {
     name: 'send_file_to_user',
-    description: 'Send a file to the user. It is delivered on Telegram when a chat is linked (attached up to 50 MB, as a link beyond that), and a download link valid for 30 minutes is returned either way. The result says how it was delivered; if it was not sent out of band, put the link in your reply.',
+    description: 'Send a file to the user on Telegram (in a chat where they are present, show_file puts it in the conversation and is the better choice). It is delivered on Telegram when a chat is linked (attached up to 50 MB, as a link beyond that), and a download link valid for 30 minutes is returned either way. The result says how it was delivered; if it was not sent out of band, put the link in your reply.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } }, required: ['path'] },
   },
 
@@ -269,15 +269,69 @@ const TOOLS = [
   { name: 'skill_install', description: 'Install a Claude skill on this machine. Give EITHER path (a skill folder containing SKILL.md, or a .zip / .skill archive holding one or more skills, or a SKILL.md file, already on this machine) OR content (the full text of a SKILL.md, with name and description front matter). If a skill of that name exists the call fails with conflict:true; only then repeat it with overwrite:true, and only if the user wants it replaced. Skills that ship with Crundi cannot be replaced. Running chats keep the skills they started with.', inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to a skill folder, .zip, .skill or SKILL.md' }, content: { type: 'string', description: 'The text of a SKILL.md, instead of path' }, name: { type: 'string', description: 'Name to install it under (lowercase letters, digits, hyphens). Defaults to the name in its front matter.' }, scope: { type: 'string', description: '"global" (default: every project), "project" (this chat\'s project only), or a project alias' }, overwrite: { type: 'boolean', description: 'Replace an existing skill of the same name. Default false.' } } } },
   { name: 'skill_delete', description: 'Delete an installed skill and all its files. Cannot be undone. Only "user" skills can be deleted.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The skill\'s folder name' }, scope: { type: 'string', description: '"global" (default), "project", or a project alias' } }, required: ['name'] } },
 
+  // ─── Showing things in the chat (chat UI mode only) ───
+  // When the person is in a Crundi chat, these are how something reaches them:
+  // it appears in the conversation, where they are looking. The send_*_to_user
+  // tools go to Telegram and are for when they are NOT looking.
   {
     name: 'show_image',
-    description: 'Show one or more images to the person, right here in the chat, drawn under this call. Use it whenever a picture answers better than words: a screenshot of the page you just changed, a before and after, a chart or diagram you generated, a photo they asked you to find. Give path for one image or paths for several (up to 8); PNG, JPEG, GIF or WebP, 10 MB each. The files are copied, so a temporary file is fine. Chat (UI mode) only. This shows the image in the conversation; send_photo_to_user is the different job of reaching them on Telegram when they are not looking at the chat.',
+    description: 'Show one or more images to the person, right here in the chat, drawn under this call. Use it whenever a picture answers better than words: a screenshot of the page you just changed, a before and after, a chart or diagram you generated, a photo they asked you to find. An image you only looked at yourself (browser_screenshot, a capture) is NOT visible to them until you save it and show it. path for one, paths for several (up to 8); PNG, JPEG, GIF or WebP, 10 MB each; the files are copied, so a temporary file is fine. Prefer this over send_photo_to_user whenever the person is in the chat.',
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute path of one image file' },
-        paths: { type: 'array', description: 'Several images: absolute paths, or { path, caption } objects', items: {} },
-        caption: { type: 'string', description: 'Optional short caption (for one image, or for the set)' },
+        path: { type: 'string', description: 'Absolute path of one file' },
+        paths: { type: 'array', description: 'Several: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one item, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'show_video',
+    description: 'Show one or more videos to the person, in the chat, as players drawn under this call. Use it for a screen recording of what you built, a rendered clip or reel, an animation, anything that has to be watched. path for one, paths for several (up to 8); MP4, MOV or WebM, 250 MB each; the files are copied, so a file in a temp or render folder is fine. Prefer this over send_file_to_user whenever the person is in the chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of one file' },
+        paths: { type: 'array', description: 'Several: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one item, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'show_audio',
+    description: 'Play one or more audio files to the person, in the chat, as players drawn under this call: a generated voice-over, a soundtrack, a sound effect, a recording. path for one, paths for several (up to 8); MP3, WAV, OGG, M4A, FLAC or WebM, 60 MB each; the files are copied. Prefer this over send_file_to_user whenever the person is in the chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of one file' },
+        paths: { type: 'array', description: 'Several: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one item, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'show_file',
+    description: 'Offer one or more files to the person as downloads, in the chat: a card with the file\'s icon, name and size and a Download button, drawn under this call. Use it for anything they should take away: an export, a report, an archive, a build, a document, a spreadsheet. path for one, paths for several (up to 8). The file is NOT copied; it is downloaded as it is when they press the button, so leave it where it is. Prefer this over send_file_to_user whenever the person is in the chat; use that one to reach them on Telegram when they are away.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of one file' },
+        paths: { type: 'array', description: 'Several: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one item, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'show_embed',
+    description: 'Embed something live in the chat, in a frame drawn under this call. Two ways. (1) url: an https address. Paste the ordinary link, not an embed link: YouTube (videos, shorts, playlists), Vimeo, Dailymotion, Loom, X/Twitter posts, Instagram posts and reels, TikTok, Facebook posts and videos, Reddit posts, Spotify, SoundCloud, CodePen, GitHub gists and Google Maps embed links are turned into their proper embeds. Any other https page is framed as it is, which only works if that site allows framing (many do not; the person always gets an Open link). (2) html: your own HTML with its CSS and JavaScript, for a working demo, an animation, a chart, an interactive example, a rendered snippet. A fragment is enough (it gets a dark page around it); it may load libraries from a CDN. It runs sandboxed: it cannot read files, call Crundi, or see the page around it, so put any data it needs inside it. Use show_embed for a one-off thing to look at or play with; build a panel (widget_*) instead when it should stay open, update live, or read data from this machine. For a video or audio FILE on this machine use show_video / show_audio.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'An https address to embed (the normal link to the video, post, track or page)' },
+        html: { type: 'string', description: 'Your own HTML, with <style> and <script> as needed (max 512 KB). Give url or html, not both.' },
+        title: { type: 'string', description: 'Optional short title shown under the frame' },
+        caption: { type: 'string', description: 'Optional short caption' },
+        height: { type: 'number', description: 'Height of the frame in pixels (80 to 1200). Default: the right shape for a known site, 360 for html, 480 for other pages. Set it for html so the content fits without scrolling.' },
       },
     },
   },
@@ -395,8 +449,8 @@ async function handleToolCall(name, args) {
   if (name === 'widget_open' && process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   // Which session to rename is this process's own, never an argument: Claude
   // cannot name a chat it is not in.
-  // Which chat an image is shown in is this process's own, never an argument.
-  if (name === 'show_image') {
+  // Which chat something is shown in is this process's own, never an argument.
+  if (CHAT_ONLY_TOOLS.has(name)) {
     delete args.sessionId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
@@ -469,7 +523,7 @@ const TOOL_SCOPE = process.env.CRUNDI_TOOL_SCOPE || '';
 const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);
 // Tools that only mean anything inside a Crundi chat (UI mode): a terminal
 // session has no transcript for Crundi to draw into, so it is not told about them.
-const CHAT_ONLY_TOOLS = new Set(['show_image']);
+const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed']);
 const IN_CHAT = !!process.env.CRUNDI_CHAT_ID;
 const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))

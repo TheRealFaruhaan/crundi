@@ -309,6 +309,21 @@ export function latestTranscript(projectPath) {
   } catch { return null; }
 }
 
+/**
+ * How much one specific conversation carries: the context a resume would
+ * inherit. For a parked pane, which names its conversation by id and must not
+ * be measured by "whichever transcript is newest".
+ * @returns {{tokens:number, ageHours:number, sizeBytes:number}|null}
+ */
+export function transcriptWeight(projectPath, uuid) {
+  if (!projectPath || !/^[0-9a-f-]{8,}$/i.test(String(uuid || ''))) return null;
+  try {
+    const full = join(transcriptDir(projectPath), `${uuid}.jsonl`);
+    const st = statSync(full);
+    return { tokens: estimateTranscriptTokens(full, st.size), ageHours: (Date.now() - st.mtimeMs) / 3600000, sizeBytes: st.size };
+  } catch { return null; }
+}
+
 /** Mirrors Claude Code's own "old and large" heuristic for its summary prompt. */
 export const HEAVY_TOKENS = 100_000;
 export const HEAVY_AGE_HOURS = 24;

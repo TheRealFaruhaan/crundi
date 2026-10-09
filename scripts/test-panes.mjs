@@ -159,6 +159,76 @@ try {
   P2.forget('a000000000000002');
   ok(!P2.listParked().some(p => p.id === 'a000000000000002'), 'closing a parked pane forgets it');
   P2.stop();
+
+  // 12) the ways back into a parked chat: resume, compact and resume, new session
+  {
+    const U4 = fakeUi(), T4 = fakeTerminals();
+    const weighed = [];
+    const P4 = createPanes({
+      dataDir: mkdtempSync(join(tmpdir(), 'panes-test-')), claudeTerminals: T4, claudeUi: U4,
+      readTranscriptHistory: () => ({ messages: [] }), getProject: () => ({ path: '/p' }),
+      timeoutMinutes: () => 0, awayFor: () => true, terminalState: () => 'idle', onChange: () => {},
+      sessionWeight: (cwd, sid) => { weighed.push(sid); return sid === 'big-session' ? { tokens: 180000, heavy: true } : { tokens: 9000, heavy: false }; },
+    });
+    U4.add('d000000000000001', { title: 'Long one', sessionId: 'big-session' });
+    U4.add('d000000000000002', { title: 'Short one', sessionId: 'small-session' });
+    U4.add('d000000000000003', { title: 'Third', sessionId: 'small-session-3' });
+    U4.add('d000000000000004', { title: 'Never spoke', sessionId: '' });
+    T4.add('e000000000000001', { title: 'Claude term', sessionId: 'term-session' });
+    for (const id of ['d000000000000001', 'd000000000000002', 'd000000000000003', 'd000000000000004', 'e000000000000001']) P4.park(id, 'manual');
+    const by = (id) => P4.listParked().find(p => p.id === id);
+    ok(by('d000000000000001').heavy === true && by('d000000000000001').tokens === 180000, 'a parked chat with a long conversation is listed as heavy, with its size');
+    ok(by('d000000000000002').heavy === false, 'a short one is not');
+    ok(by('d000000000000004').heavy === undefined && by('d000000000000004').hasSession === false, 'a pane with no conversation is not weighed');
+    P4.listParked(); P4.listParked();
+    ok(weighed.filter(x => x === 'big-session').length === 1, 'a parked conversation is weighed once, not on every listing');
+
+    const createdFor = (id) => U4.created.find(c => c.id === id);
+    await P4.resume('d000000000000001', { mode: 'compact' });
+    ok(createdFor('d000000000000001').sessionMode === 'compact' && createdFor('d000000000000001').resumeId === 'big-session', 'compact and resume: resumes THAT conversation in compact mode');
+    await P4.resume('d000000000000002', { mode: 'new' });
+    ok(createdFor('d000000000000002').sessionMode === 'new' && createdFor('d000000000000002').resumeId === '', 'new session: a fresh conversation, the old id not passed');
+    ok(createdFor('d000000000000002').id === 'd000000000000002' && createdFor('d000000000000002').title === 'Short one', 'new session: same pane id and title, so it keeps its place');
+    await P4.resume('d000000000000003');
+    ok(createdFor('d000000000000003').sessionMode === 'resume' && createdFor('d000000000000003').resumeId === 'small-session-3', 'resume: unchanged, the default');
+    await P4.resume('d000000000000004', { mode: 'bogus' });
+    ok(createdFor('d000000000000004').sessionMode === 'new', 'an unknown mode is treated as a plain resume (here: nothing to resume, so new)');
+    await P4.resume('e000000000000001', { mode: 'compact' });
+    const tc = T4.created.find(c => c.id === 'e000000000000001');
+    ok(tc.sessionMode === 'resume' && tc.resumeId === 'term-session', 'a terminal cannot compact on resume: it resumes as usual');
+    P4.stop();
+  }
+
+  // 11) "nobody here" is asked per project: being busy in one project does
+  //     not keep another project's idle chat awake.
+  {
+    const seen = new Map();   // project -> when someone was last at it
+    const asked = [];
+    const U3 = fakeUi();
+    U3.add('c000000000000001', { alias: 'here', title: 'Where I am' });
+    U3.add('c000000000000002', { alias: 'elsewhere', title: 'Not visited' });
+    U3.add('c000000000000003', { alias: 'elsewhere', title: 'Not visited, working', state: 'working' });
+    const P3 = createPanes({
+      dataDir: mkdtempSync(join(tmpdir(), 'panes-test-')), claudeTerminals: fakeTerminals(), claudeUi: U3,
+      readTranscriptHistory: () => ({ messages: [] }), getProject: () => ({ path: '/p' }),
+      timeoutMinutes: () => 30,
+      awayFor: (ms, project) => { asked.push(project); return now - (seen.get(project) || 0) >= ms; },
+      terminalState: () => 'idle', onChange: () => {},
+    });
+    seen.set('here', now); seen.set('elsewhere', now);
+    P3.tick();
+    // Half an hour and more in "here", touching it throughout; "elsewhere" never visited.
+    for (let i = 0; i < 4; i++) { now += 10 * MIN; seen.set('here', now); P3.tick(); }
+    const parked3 = P3.listParked().map(p => p.title);
+    ok(JSON.stringify(parked3) === JSON.stringify(['Not visited']), 'a chat in a project you have not been at parks, though you are at Crundi: ' + JSON.stringify(parked3));
+    ok(U3.s.has('c000000000000001'), 'the chat in the project you are at stays');
+    ok(U3.s.has('c000000000000003'), 'a working chat stays, visited or not');
+    ok(asked.includes('here') && asked.includes('elsewhere'), 'the away question names the project');
+    // Then you leave "here" as well.
+    now += 31 * MIN; P3.tick();
+    ok(!U3.s.has('c000000000000001'), 'and it parks too once its own project has gone unvisited for the timeout');
+    P3.stop();
+  }
 } finally {
   Date.now = realNow;
   rmSync(dir, { recursive: true, force: true });

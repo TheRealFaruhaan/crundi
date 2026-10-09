@@ -50,6 +50,7 @@
     trash: svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>'),
     globe: svg('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
     more: svg('<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'),
+    download: svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>'),
     expand: svg('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>')
   };
 
@@ -126,18 +127,73 @@
       '.wg-shots{display:flex;gap:8px;overflow-x:auto;padding:8px 2px 4px}',
       '.wg-shot{flex:0 0 auto;display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--text-muted);font-family:var(--mono)}',
       '.wg-shot img{display:block;height:150px;width:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);cursor:zoom-in}',
-      // pictures shown in a chat
-      '.wg-pics{margin:6px 0 2px}',
-      '.wg-pics-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;align-items:flex-start}',
-      '.wg-pic{margin:0;flex:0 0 auto;display:flex;flex-direction:column;gap:4px;max-width:100%}',
-      '.wg-pic img{display:block;height:220px;width:auto;max-width:none;border:1px solid var(--border);border-radius:8px;background:var(--bg-primary);cursor:zoom-in}',
-      '.wg-pics.one .wg-pic img{height:auto;max-height:420px;max-width:100%}',
-      '.wg-pic figcaption,.wg-pics-cap{font-size:11.5px;color:var(--text-secondary);line-height:1.35;max-width:420px}',
-      '.wg-pics-cap{margin-top:4px;max-width:none}',
-      '.wg-pic-gone{display:none;font-size:11.5px;color:var(--text-muted);padding:10px 12px;border:1px dashed var(--border);border-radius:8px}',
-      '.wg-pic.gone img{display:none}.wg-pic.gone .wg-pic-gone{display:block}',
-      '.wg-zoom{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out}',
-      '.wg-zoom img{max-width:100%;max-height:100%;border-radius:8px;border:1px solid var(--border)}',
+      // media shown in a chat
+      '.wg-media{margin:6px 0 2px}',
+      '.wg-media-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;align-items:flex-start}',
+      '.wg-media.files .wg-media-row,.wg-media.audio .wg-media-row{flex-direction:column;overflow:visible}',
+      '.wg-mitem{margin:0;flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:4px;max-width:100%;width:min-content;min-width:min(150px,100%)}',
+      // The box has its shape from the start (aspect-ratio and width are set
+      // inline from the item's size); the content fills it when it arrives.
+      '.wg-mbox{position:relative;max-width:100%;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);overflow:hidden;flex:0 0 auto}',
+      '.wg-mimg img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;opacity:0;transition:opacity .15s ease;cursor:zoom-in}',
+      '.wg-mimg.ready img{opacity:1}',
+      '.wg-mimg.gone{display:flex;align-items:center;justify-content:center;padding:10px;font-size:11.5px;color:var(--text-muted);text-align:center;border-style:dashed}',
+      '.wg-mvid video{position:absolute;inset:0;width:100%;height:100%;display:block;background:#000;cursor:pointer}',
+      '.wg-maud{width:min(100%,440px);border-radius:999px;background:var(--bg-card,var(--bg-secondary))}',
+      '.wg-maud audio{display:none}',
+      // The player's own controls: one bar, under a video's picture or as the whole of an audio clip.
+      '.wg-pl-bar{display:flex;align-items:center;gap:6px;padding:5px 8px;color:var(--text-primary)}',
+      '.wg-mvid .wg-pl-bar{position:absolute;left:0;right:0;bottom:0;padding:22px 8px 6px;background:linear-gradient(to top,rgba(0,0,0,.78),rgba(0,0,0,0));color:#fff;transition:opacity .2s ease}',
+      '.wg-mvid.idle .wg-pl-bar{opacity:0;pointer-events:none}.wg-mvid.idle{cursor:none}',
+      '.wg-pl-btn{appearance:none;border:0;background:transparent;color:inherit;width:32px;height:32px;flex:0 0 auto;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}',
+      '.wg-pl-btn:hover{background:rgba(255,255,255,.12)}.wg-pl-btn .ic{width:16px;height:16px}',
+      '.wg-maud .wg-pl-btn.play{background:var(--accent);color:#fff}.wg-maud .wg-pl-btn.play:hover{filter:brightness(1.1)}',
+      '.wg-pl-btn.big{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.25);backdrop-filter:blur(4px);transition:opacity .15s ease,transform .15s ease}',
+      '.wg-pl-btn.big:hover{background:rgba(0,0,0,.7);transform:scale(1.06)}.wg-pl-btn.big .ic{width:24px;height:24px;margin-left:2px}',
+      '.wg-pl:not(.paused) .wg-pl-btn.big{opacity:0;pointer-events:none}',
+      '.wg-pl-time{font:500 11.5px var(--mono,monospace);font-variant-numeric:tabular-nums;white-space:nowrap;flex:0 0 auto;opacity:.9}',
+      '.wg-pl-seek{flex:1 1 auto;min-width:40px;margin:0 8px;height:26px;display:flex;align-items:center;cursor:pointer;touch-action:none;outline:none}',
+      '.wg-pl-track{position:relative;width:100%;height:4px;border-radius:999px;background:rgba(255,255,255,.22);transition:height .12s ease}',
+      '.wg-maud .wg-pl-track{background:var(--border)}',
+      '.wg-pl-seek:hover .wg-pl-track,.wg-pl.seeking .wg-pl-track,.wg-pl-seek:focus-visible .wg-pl-track{height:6px}',
+      '.wg-pl-buf,.wg-pl-fill{position:absolute;left:0;top:0;bottom:0;border-radius:999px;width:0}',
+      '.wg-pl-buf{background:rgba(255,255,255,.28)}.wg-pl-fill{background:var(--accent)}',
+      '.wg-pl-knob{position:absolute;top:50%;left:0;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.5);transform:scale(0);transition:transform .12s ease}',
+      '.wg-pl-seek:hover .wg-pl-knob,.wg-pl.seeking .wg-pl-knob,.wg-pl-seek:focus-visible .wg-pl-knob{transform:scale(1)}',
+      '@media (hover:none){.wg-pl-knob{transform:scale(1)}.wg-pl-btn{width:38px;height:38px}}',
+      '.wg-pl.busy .wg-pl-fill{animation:wg-pl-busy 1s ease-in-out infinite}@keyframes wg-pl-busy{50%{opacity:.45}}',
+      // Loading and buffering: a ring in the middle of a picture or video, and in place of an audio clip's play button.
+      '@keyframes wg-spin{to{transform:rotate(360deg)}}',
+      '.wg-membed{background:#0f0f14}.wg-membed iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:transparent}',
+      '.wg-membed.loading::after{content:"";position:absolute;inset:0;margin:auto;box-sizing:border-box;width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.18);border-top-color:var(--accent);animation:wg-spin .8s linear infinite;pointer-events:none}',
+      '.wg-membed.gone{display:flex;align-items:center;justify-content:center;font-size:11.5px;color:var(--text-muted);border-style:dashed}',
+      '.wg-membed-open{color:var(--accent-hover,var(--accent))}',
+      '.wg-mimg.loading::after,.wg-mvid.busy::after{content:"";position:absolute;inset:0;margin:auto;box-sizing:border-box;width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.18);border-top-color:var(--accent);animation:wg-spin .8s linear infinite;pointer-events:none}',
+      '.wg-mvid.busy::after{width:48px;height:48px;border-color:rgba(255,255,255,.3);border-top-color:#fff;filter:drop-shadow(0 1px 3px rgba(0,0,0,.6))}',
+      '.wg-mvid.busy .wg-pl-btn.big{opacity:0;pointer-events:none}',
+      '.wg-maud .wg-pl-btn.play{position:relative}',
+      '.wg-maud.busy .wg-pl-btn.play .ic{opacity:0}',
+      '.wg-maud.busy .wg-pl-btn.play::after{content:"";position:absolute;inset:0;margin:auto;box-sizing:border-box;width:20px;height:20px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:wg-spin .8s linear infinite}',
+      '.wg-mvid:fullscreen{width:100%!important;height:100%;aspect-ratio:auto!important;border:0;border-radius:0;background:#000}',
+      '.wg-mvid:fullscreen video{object-fit:contain}',
+      '.wg-mvid.under .wg-pl-bar{background:none;padding-top:6px}',
+      '.wg-pl-fit{display:none;align-items:center;justify-content:center;line-height:1;appearance:none;border:1px solid rgba(255,255,255,.35);background:transparent;color:inherit;height:26px;padding:0 9px;border-radius:999px;font:600 11px var(--mono,monospace);flex:0 0 auto;cursor:pointer}',
+      '.wg-pl-btn.turn{display:none}',
+      '@media (hover:none){.wg-mvid:fullscreen .wg-pl-fit,.wg-mvid:fullscreen .wg-pl-btn.turn{display:inline-flex;align-items:center}}',
+      '.wg-media.audio .wg-mitem{width:min(100%,440px)}',
+      '.wg-mitem figcaption,.wg-media-cap{font-size:11.5px;color:var(--text-secondary);line-height:1.35;max-width:440px;overflow-wrap:anywhere}',
+      '.wg-media-cap{margin-top:4px;max-width:none}',
+      '.wg-mfile{display:flex;align-items:center;gap:10px;width:min(100%,460px);padding:9px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card,var(--bg-secondary))}',
+      '.wg-mfile-ic{width:34px;height:34px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;background:var(--bg-primary);border:1px solid var(--border);font-size:15px;font-family:var(--mono);color:var(--text-secondary)}',
+      '.wg-mfile-meta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}',
+      '.wg-mfile-n{font-size:13px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.wg-mfile-s{font-size:11.5px;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.wg-zoom{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.86);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out;touch-action:none;overflow:hidden;user-select:none;-webkit-user-select:none;overscroll-behavior:contain}',
+      '.wg-zoom.zoomed img{cursor:grab}.wg-zoom.zoomed.grabbing img{cursor:grabbing}',
+      '.wg-zoom-bar{position:absolute;top:max(10px,env(safe-area-inset-top));right:10px;display:flex;align-items:center;gap:2px;padding:3px;border-radius:999px;background:rgba(20,20,28,.88);border:1px solid var(--border);cursor:default}',
+      '.wg-zoom-btn{appearance:none;border:0;background:transparent;color:var(--text-primary);min-width:34px;height:34px;padding:0 8px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font:600 12px var(--mono,monospace);cursor:pointer}',
+      '.wg-zoom-btn:hover{background:rgba(255,255,255,.1)}.wg-zoom-btn .ic{width:16px;height:16px}.wg-zoom-btn.pct{min-width:52px;color:var(--text-secondary)}',
+      '.wg-zoom img{max-width:100%;max-height:100%;border-radius:8px;border:1px solid var(--border);cursor:zoom-in;transform-origin:center center;will-change:transform;-webkit-user-drag:none}',
       // chips
       // In the desktop app the whole top bar is a window-drag area, and a drag
       // area swallows clicks: a chip there could be seen but never pressed.
@@ -161,6 +217,8 @@
       '.wg-chip-toggle.on{border-color:var(--accent)}',
       '.wg-chip-toggle[hidden]{display:none!important}',
       '.wg-chip-toggle b{color:var(--text-primary);font-variant-numeric:tabular-nums}',
+      // One panel: no count, so nothing may hold a gap open beside the icon.
+      '.wg-chip-toggle b:empty{display:none}',
       // A live chip: the panel's own face, in a frame the pointer passes through
       // so the whole chip is still one button.
       '.wg-chip.live{padding:0 9px;height:26px;max-width:none}',
@@ -351,6 +409,9 @@
     };
 
     v.handleCall = function (m) {
+      // Something done inside a panel is the person being here; the page
+      // cannot see pointer or keys that land in the frame.
+      if (window.crundiNoteInput) { try { window.crundiNoteInput(); } catch (e) { /* not this page */ } }
       var now = Date.now();
       v.calls = v.calls.filter(function (t) { return now - t < 10000; });
       if (v.calls.length >= 40) return v.post({ t: 'result', seq: m.seq, ok: false, error: 'Too many requests; slow down.' });
@@ -667,9 +728,7 @@
           .catch(function () {});
         img.addEventListener('click', function () {
           if (!img.src) return;
-          var z = el('div', 'wg-zoom'); var big = document.createElement('img'); big.src = img.src; big.alt = img.alt;
-          z.appendChild(big); z.addEventListener('click', function () { z.remove(); });
-          document.body.appendChild(z);
+          zoomImage(img.src, img.alt);
         });
         fig.appendChild(img);
         fig.appendChild(document.createTextNode(s.frame + (s.state !== 'live' ? ' · ' + s.state : '')));
@@ -679,38 +738,506 @@
     return row;
   }
 
+  // ─── Media shown in a chat (show_image / show_video / show_audio / show_file) ───
+  //
+  // Three rules shape this.
+  //
+  // The box comes first. Every item arrives with its size, so its place is
+  // laid out at the right dimensions before a byte of it has loaded. A picture
+  // that turned up late used to push the rest of the conversation down, after
+  // the chat had already scrolled to where you were reading.
+  //
+  // Nothing loads until it is near the screen, and it is let go again when it
+  // is far from it. A long transcript can hold hundreds of megabytes of
+  // pictures and video; holding all of that for a conversation you are reading
+  // the end of is how a phone tab gets killed.
+  //
+  // `items` are built by the HOST from validated names. Nothing here is taken
+  // from a tool's output as markup: captions and file names are set as text.
+
+  var mediaRoots = [];   // one pair of observers per scrolling container
+
+  function scrollRootOf(node) {
+    for (var n = node.parentElement; n && n !== document.body; n = n.parentElement) {
+      var oy = getComputedStyle(n).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 4) return n;
+    }
+    return null;   // the page itself
+  }
+
+  /** Watch a box: load() when it nears the screen, unload() when it is far off. */
+  function watchMedia(box, load, unload) {
+    if (!window.IntersectionObserver) { load(); return; }
+    box._wgLoad = load; box._wgUnload = unload; box._wgLoaded = false;
+    // The scroller only exists once the node is in the page.
+    var attach = function () {
+      if (!box.isConnected) { if ((box._wgTries = (box._wgTries || 0) + 1) < 40) setTimeout(attach, 150); return; }
+      var root = scrollRootOf(box), entry = null;
+      for (var i = 0; i < mediaRoots.length; i++) if (mediaRoots[i].root === root) entry = mediaRoots[i];
+      if (!entry) {
+        var onNear = function (list) { list.forEach(function (e) { var t = e.target; if (e.isIntersecting && !t._wgLoaded) { t._wgLoaded = true; t._wgLoad(); } }); };
+        var onFar = function (list) { list.forEach(function (e) { var t = e.target; if (!e.isIntersecting && t._wgLoaded) { t._wgLoaded = false; t._wgUnload(); } }); };
+        entry = {
+          root: root,
+          // About a screen ahead in either direction...
+          near: new IntersectionObserver(onNear, { root: root, rootMargin: '900px 0px 900px 0px' }),
+          // ...and let go well past that, so scrolling back a little is free.
+          far: new IntersectionObserver(onFar, { root: root, rootMargin: '4500px 0px 4500px 0px' })
+        };
+        mediaRoots.push(entry);
+      }
+      entry.near.observe(box); entry.far.observe(box);
+    };
+    attach();
+  }
+
+  function fmtDuration(sec) {
+    var s = Math.max(0, Math.round(Number(sec) || 0)), m = Math.floor(s / 60);
+    return m + ':' + ('0' + (s % 60)).slice(-2);
+  }
+  function fmtBytes(n) {
+    var v = Number(n) || 0, u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return (i ? v.toFixed(v < 10 ? 1 : 0) : String(v)) + ' ' + u[i];
+  }
   /**
-   * Pictures Claude showed with show_image, for the transcript. `items` are
-   * { url, caption } the HOST built from validated names: nothing here is
-   * taken from a tool's output as markup.
+   * An image, opened large. Zoom: ctrl + wheel (a trackpad pinch arrives as
+   * that too), two fingers, a double click or double tap, or the buttons.
+   * Move: drag. Close: the backdrop, the cross, or Escape.
    */
-  function picturesNode(items, caption) {
-    injectStyles();
-    var box = el('div', 'wg-pics' + (items.length === 1 ? ' one' : ''));
-    var row = el('div', 'wg-pics-row');
-    items.forEach(function (it, i) {
-      var fig = el('figure', 'wg-pic');
-      var img = document.createElement('img');
-      img.alt = it.caption || ('Image ' + (i + 1));
-      img.loading = 'lazy';
+  function zoomImage(src, alt) {
+    var z = el('div', 'wg-zoom'); var big = document.createElement('img'); big.src = src; big.alt = alt || ''; big.draggable = false;
+    var bar = el('div', 'wg-zoom-bar');
+    var mk = function (label, title, body) { var b = el('button', 'wg-zoom-btn'); b.type = 'button'; b.title = title; b.setAttribute('aria-label', title); if (body) b.innerHTML = svg(body); else b.textContent = label; bar.appendChild(b); return b; };
+    var bOut = mk('', 'Zoom out', '<line x1="5" y1="12" x2="19" y2="12"/>');
+    var bPct = mk('100%', 'Back to fit'); bPct.classList.add('pct');
+    var bIn = mk('', 'Zoom in', '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>');
+    var bClose = mk('', 'Close', '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
+    z.appendChild(big); z.appendChild(bar);
+    var s = 1, x = 0, y = 0, MAX = 8;
+    var apply = function (smooth) {
+      // Never dragged further than the picture's own edge, plus a little.
+      var mx = Math.max(0, (big.offsetWidth * s - z.clientWidth) / 2) + (s > 1 ? 40 : 0);
+      var my = Math.max(0, (big.offsetHeight * s - z.clientHeight) / 2) + (s > 1 ? 40 : 0);
+      x = Math.max(-mx, Math.min(mx, x)); y = Math.max(-my, Math.min(my, y));
+      big.style.transition = smooth ? 'transform .16s ease' : 'none';
+      big.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
+      z.classList.toggle('zoomed', s > 1.001);
+      bPct.textContent = Math.round(s * 100) + '%';
+    };
+    /** Zoom to ns, keeping the point (cx, cy) of the screen under the same spot of the picture. */
+    var zoomAt = function (cx, cy, ns, smooth) {
+      ns = Math.max(1, Math.min(MAX, ns));
+      var r = z.getBoundingClientRect(), ox = cx - (r.left + r.width / 2), oy = cy - (r.top + r.height / 2);
+      x = x + (ox - x) * (1 - ns / s); y = y + (oy - y) * (1 - ns / s);
+      s = ns; if (s <= 1.001) { s = 1; x = 0; y = 0; }
+      apply(smooth);
+    };
+    var centre = function () { var r = z.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+    var close = function () { document.removeEventListener('keydown', onKey, true); z.remove(); };
+    var onKey = function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+      else if (e.key === '+' || e.key === '=') { var c = centre(); zoomAt(c[0], c[1], s * 1.4, true); }
+      else if (e.key === '-') { var c2 = centre(); zoomAt(c2[0], c2[1], s / 1.4, true); }
+      else if (e.key === '0') { zoomAt(0, 0, 1, true); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    bar.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+    bOut.addEventListener('click', function () { var c = centre(); zoomAt(c[0], c[1], s / 1.4, true); });
+    bIn.addEventListener('click', function () { var c = centre(); zoomAt(c[0], c[1], s * 1.4, true); });
+    bPct.addEventListener('click', function () { zoomAt(0, 0, 1, true); });
+    bClose.addEventListener('click', close);
+
+    z.addEventListener('wheel', function (e) {
+      e.preventDefault();                       // or ctrl + wheel zooms the whole page
+      if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, s * Math.exp(-e.deltaY * (Math.abs(e.deltaY) < 50 ? 0.01 : 0.002)));
+      else if (s > 1) { x -= e.deltaX; y -= e.deltaY; apply(); }
+    }, { passive: false });
+
+    var pts = {}, count = 0, moved = 0, downOn = null, lastTap = 0, pinch = null;
+    var two = function () { var k = Object.keys(pts), a = pts[k[0]], b = pts[k[1]]; return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
+    z.addEventListener('pointerdown', function (e) {
+      if (e.button) return;
+      e.preventDefault();
+      if (!count) { moved = 0; downOn = e.target; }
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY }; count = Object.keys(pts).length;
+      try { z.setPointerCapture(e.pointerId); } catch (err) { /* already gone */ }
+      if (count === 2) { pinch = two(); moved = 99; }
+      z.classList.add('grabbing');
+    });
+    z.addEventListener('pointermove', function (e) {
+      var p = pts[e.pointerId]; if (!p) return;
+      var dx = e.clientX - p.x, dy = e.clientY - p.y;
+      p.x = e.clientX; p.y = e.clientY;
+      if (count === 1) {
+        moved += Math.abs(dx) + Math.abs(dy);
+        if (s > 1) { x += dx; y += dy; apply(); }
+      } else if (count === 2 && pinch) {
+        var now = two();
+        x += now.mx - pinch.mx; y += now.my - pinch.my;
+        zoomAt(now.mx, now.my, s * now.d / pinch.d);
+        pinch = now;
+      }
+    });
+    var up = function (e) {
+      if (!pts[e.pointerId]) return;
+      delete pts[e.pointerId]; count = Object.keys(pts).length; pinch = null;
+      if (count) return;
+      z.classList.remove('grabbing');
+      if (e.type === 'pointercancel' || moved > 6) return;
+      // A plain tap or click.
+      if (downOn !== big) { close(); return; }
+      var t = Date.now();
+      if (t - lastTap < 320) { lastTap = 0; zoomAt(e.clientX, e.clientY, s > 1 ? 1 : 2.5, true); }
+      else lastTap = t;
+    };
+    z.addEventListener('pointerup', up); z.addEventListener('pointercancel', up);
+    z._close = close;   // the back button closes it through this
+    document.body.appendChild(z);
+    apply();
+  }
+
+  /** The box an image or video sits in: the right shape from the first frame. */
+  function sizedBox(it, single, cls) {
+    var w = Number(it.w) || 0, h = Number(it.h) || 0;
+    var box = el('div', 'wg-mbox ' + cls);
+    if (w > 0 && h > 0) {
+      box.style.aspectRatio = w + ' / ' + h;
+      if (single) box.style.width = Math.round(Math.min(w, 420 * w / h, 640)) + 'px';   // never taller than 420
+      else box.style.width = Math.round(220 * w / h) + 'px';                            // a row 220 tall
+    } else {
+      // Size unknown (stored by an older version, or nothing could measure it).
+      box.style.aspectRatio = '16 / 9';
+      box.style.width = single ? '420px' : '391px';
+    }
+    return box;
+  }
+
+  function imageItem(it, single) {
+    var box = sizedBox(it, single, 'wg-mimg');
+    var img = document.createElement('img');
+    img.alt = it.caption || it.filename || 'Image';
+    img.decoding = 'async';
+    box.appendChild(img);
+    var objUrl = '';
+    watchMedia(box, function () {
+      box.classList.add('loading');
       cfg.apiFetch(it.url)
         .then(function (r) { return r.ok ? r.blob() : null; })
-        .then(function (b) { if (b) img.src = URL.createObjectURL(b); else fig.classList.add('gone'); })
-        .catch(function () { fig.classList.add('gone'); });
-      img.addEventListener('click', function () {
-        if (!img.src) return;
-        var z = el('div', 'wg-zoom'); var big = document.createElement('img'); big.src = img.src; big.alt = img.alt;
-        z.appendChild(big); z.addEventListener('click', function () { z.remove(); });
-        document.body.appendChild(z);
+        .then(function (b) {
+          box.classList.remove('loading');
+          if (!b) { box.classList.add('gone'); box.textContent = 'This image is no longer stored.'; return; }
+          if (!box._wgLoaded) return;                 // scrolled far away while it was coming
+          objUrl = URL.createObjectURL(b); img.src = objUrl; box.classList.add('ready');
+        })
+        .catch(function () { /* a network blip: it retries the next time it nears the screen */ box.classList.remove('loading'); box._wgLoaded = false; });
+    }, function () {
+      box.classList.remove('ready'); box.classList.remove('loading');
+      img.removeAttribute('src');
+      if (objUrl) { URL.revokeObjectURL(objUrl); objUrl = ''; }
+    });
+    img.addEventListener('click', function () { if (img.src) zoomImage(img.src, img.alt); });
+    return box;
+  }
+
+  var PL_IC = {
+    play: '<polygon points="7 4 20 12 7 20 7 4" fill="currentColor"/>',
+    pause: '<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/>',
+    vol: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>',
+    mute: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/>',
+    turn: '<rect x="8" y="3" width="8" height="14" rx="1.5"/><path d="M3 15a8 8 0 0 0 8 6"/><polyline points="8 22 11 21 10 18"/><path d="M21 9a8 8 0 0 0-3-5"/>',
+    full: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/>'
+  };
+
+  /**
+   * Video and audio stream from the server (so they can seek), which needs a
+   * URL the element can fetch by itself. The controls are ours, so the player
+   * looks like the rest of the app in every browser.
+   */
+  function playerItem(it, single) {
+    var isVideo = it.kind === 'video';
+    var box = isVideo ? sizedBox(it, single, 'wg-mvid') : el('div', 'wg-mbox wg-maud');
+    box.classList.add('wg-pl', 'paused');
+    var m = document.createElement(isVideo ? 'video' : 'audio');
+    m.preload = 'none';                 // nothing is fetched until play is pressed
+    if (isVideo) { m.playsInline = true; m.setAttribute('playsinline', ''); }
+    box.appendChild(m);
+
+    var btn = function (cls, title, body) { var b = el('button', 'wg-pl-btn ' + cls); b.type = 'button'; b.title = title; b.setAttribute('aria-label', title); b.innerHTML = svg(body); return b; };
+    var bar = el('div', 'wg-pl-bar');
+    var bPlay = btn('play', 'Play', PL_IC.play);
+    var seek = el('div', 'wg-pl-seek'); seek.tabIndex = 0; seek.setAttribute('role', 'slider'); seek.setAttribute('aria-label', 'Position');
+    var buf = el('div', 'wg-pl-buf'), fill = el('div', 'wg-pl-fill'), knob = el('div', 'wg-pl-knob');
+    var track = el('div', 'wg-pl-track'); track.appendChild(buf); track.appendChild(fill); track.appendChild(knob); seek.appendChild(track);
+    var time = el('span', 'wg-pl-time');
+    var bMute = btn('mute', 'Mute', PL_IC.vol);
+    bar.appendChild(bPlay); bar.appendChild(time); bar.appendChild(seek); bar.appendChild(bMute);
+    var bFull = null, big = null, bFit = null, bTurn = null;
+    if (isVideo) {
+      // How the picture fills a full screen: only shown there, and only on touch screens.
+      bFit = el('button', 'wg-pl-fit'); bFit.type = 'button'; bFit.title = 'How the video fills the screen'; bFit.textContent = 'Fit'; bar.appendChild(bFit);
+      // Turn the whole screen between upright and sideways, whichever way the
+      // phone is held. Full screen on a touch screen only, and only where the
+      // browser lets a page do it (Android; not iPhone).
+      if (window.screen && screen.orientation && screen.orientation.lock) { bTurn = btn('turn', 'Rotate the screen', PL_IC.turn); bar.appendChild(bTurn); }
+      bFull = btn('full', 'Full screen', PL_IC.full); bar.appendChild(bFull);
+      big = btn('big', 'Play', PL_IC.play); box.appendChild(big);
+    }
+    box.appendChild(bar);
+
+    var total = function () { return (isFinite(m.duration) && m.duration > 0) ? m.duration : (Number(it.duration) || 0); };
+    var dragging = false, dragAt = 0;
+    var paint = function () {
+      var d = total(), t = dragging ? dragAt : (m.currentTime || 0), p = d ? Math.max(0, Math.min(1, t / d)) : 0;
+      fill.style.width = (p * 100) + '%'; knob.style.left = (p * 100) + '%';
+      var b = 0; try { if (d && m.buffered.length) b = m.buffered.end(m.buffered.length - 1) / d; } catch (e) { /* nothing buffered */ }
+      buf.style.width = (Math.min(1, b) * 100) + '%';
+      time.textContent = fmtDuration(t) + (d ? ' / ' + fmtDuration(d) : '');
+      seek.setAttribute('aria-valuenow', String(Math.round(p * 100)));
+    };
+    var state = function () {
+      var off = m.paused || m.ended;
+      box.classList.toggle('paused', off);
+      bPlay.innerHTML = svg(off ? PL_IC.play : PL_IC.pause); bPlay.title = off ? 'Play' : 'Pause'; bPlay.setAttribute('aria-label', bPlay.title);
+      bMute.innerHTML = svg(m.muted || m.volume === 0 ? PL_IC.mute : PL_IC.vol); bMute.title = m.muted ? 'Unmute' : 'Mute'; bMute.setAttribute('aria-label', bMute.title);
+      if (off) box.classList.remove('idle');
+    };
+    var toggle = function () {
+      if (!box.isConnected) return;
+      // The file itself is asked for only now, on the first press.
+      if (!m.getAttribute('src')) setSrc(false);
+      if (m.paused || m.ended) { if (m.readyState < 3) box.classList.add('busy'); var pr = m.play(); if (pr && pr.catch) pr.catch(function () { /* the error handler below deals with it */ }); }
+      else m.pause();
+    };
+    bPlay.addEventListener('click', toggle);
+    if (big) big.addEventListener('click', toggle);
+    bMute.addEventListener('click', function () { m.muted = !m.muted; });
+    ['play', 'pause', 'ended', 'volumechange', 'emptied'].forEach(function (n) { m.addEventListener(n, state); });
+    ['timeupdate', 'durationchange', 'progress', 'seeked', 'loadedmetadata', 'emptied'].forEach(function (n) { m.addEventListener(n, paint); });
+    m.addEventListener('waiting', function () { box.classList.add('busy'); });
+    m.addEventListener('seeking', function () { if (m.readyState < 3 && !m.paused) box.classList.add('busy'); });
+    ['playing', 'pause', 'canplay', 'seeked', 'emptied', 'error'].forEach(function (n) { m.addEventListener(n, function () { box.classList.remove('busy'); }); });
+
+    // Seeking: press or drag anywhere on the track; arrows from the keyboard.
+    var at = function (e) { var r = track.getBoundingClientRect(); return Math.max(0, Math.min(1, (e.clientX - r.left) / (r.width || 1))) * total(); };
+    var go = function (t) { if (!m.getAttribute('src')) setSrc(false); try { m.currentTime = Math.max(0, Math.min(total() || t, t)); } catch (e) { /* not seekable yet */ } paint(); };
+    seek.addEventListener('pointerdown', function (e) {
+      if (e.button || !total()) return;
+      e.preventDefault(); dragging = true; dragAt = at(e); box.classList.add('seeking');
+      try { seek.setPointerCapture(e.pointerId); } catch (err) { /* already gone */ }
+      paint();
+    });
+    seek.addEventListener('pointermove', function (e) { if (dragging) { dragAt = at(e); paint(); } });
+    var drop = function (e) { if (!dragging) return; dragging = false; box.classList.remove('seeking'); if (e.type === 'pointerup') go(dragAt); else paint(); };
+    seek.addEventListener('pointerup', drop); seek.addEventListener('pointercancel', drop);
+    seek.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight') { e.preventDefault(); go((m.currentTime || 0) + 5); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); go((m.currentTime || 0) - 5); }
+      else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); }
+    });
+
+    if (isVideo) {
+      // A press on the picture plays or pauses. While playing, the bar steps
+      // back after a moment and returns when the pointer moves or a finger lands.
+      var idleT = 0;
+      var wake = function () { box.classList.remove('idle'); clearTimeout(idleT); idleT = setTimeout(function () { if (!m.paused && !dragging) box.classList.add('idle'); }, 2600); };
+      m.addEventListener('click', function () {
+        // A finger on a hidden bar brings it back first, rather than pausing.
+        if (box.classList.contains('idle')) { wake(); return; }
+        toggle();
       });
-      fig.appendChild(img);
-      var gone = el('div', 'wg-pic-gone', 'This image is no longer stored.');
-      fig.appendChild(gone);
-      if (it.caption) { var c = el('figcaption'); c.textContent = it.caption; fig.appendChild(c); }
+      m.addEventListener('dblclick', function () { fullscreen(); });
+      box.addEventListener('pointermove', wake); box.addEventListener('pointerdown', wake);
+      m.addEventListener('play', wake);
+      var fullscreen = function () {
+        var d = document, on = d.fullscreenElement || d.webkitFullscreenElement;
+        if (on) { leaveFull(); return; }
+        var req = box.requestFullscreen || box.webkitRequestFullscreen;
+        if (req) { var p = req.call(box); if (p && p.catch) p.catch(function () { /* refused */ }); }
+        else if (m.webkitEnterFullscreen) m.webkitEnterFullscreen();     // iPhone: only the video itself can
+      };
+      bFull.addEventListener('click', fullscreen);
+      // Out of full screen. A screen we turned sideways is turned upright
+      // first: leaving while it is still sideways makes the page lay itself
+      // out for a wide screen for a moment, and the browser reports the turn
+      // as failed.
+      var turned = false;
+      var leaveFull = function () {
+        var d = document, out = function () { if (d.fullscreenElement || d.webkitFullscreenElement) { try { (d.exitFullscreen || d.webkitExitFullscreen).call(d); } catch (e) { /* already out */ } } };
+        if (!turned) { out(); return; }
+        turned = false;
+        var done = false, once = function () { if (!done) { done = true; out(); } };
+        try { var p = screen.orientation.lock('portrait'); if (p && p.then) p.then(once, once); else once(); } catch (e) { once(); }
+        setTimeout(once, 700);      // never stuck in full screen if the browser does not answer
+      };
+      box._wgLeaveFull = leaveFull;
+
+      // Full screen only. The bar sits just under the picture when the screen
+      // is taller than the video (a wide video on an upright phone), and never
+      // lower than the bottom edge: when the picture reaches it, the bar lies
+      // over the picture as it does inline.
+      var FITS = [['contain', 'Fit'], ['cover', 'Fill'], ['fill', 'Stretch']], fitAt = 0;
+      var isFull = function () { var f = document.fullscreenElement || document.webkitFullscreenElement; return f === box; };
+      var place = function () {
+        if (!isFull()) { bar.style.bottom = ''; m.style.objectFit = ''; box.classList.remove('under'); return; }
+        m.style.objectFit = FITS[fitAt][0];
+        var bw = box.clientWidth, bh = box.clientHeight, vw = m.videoWidth || Number(it.w) || 16, vh = m.videoHeight || Number(it.h) || 9;
+        var picH = fitAt === 0 ? Math.min(bh, bw * vh / vw) : bh;
+        var gap = (bh - picH) / 2, barH = bar.offsetHeight || 60;
+        // Room under the picture for the whole bar: put it there. Otherwise the bottom edge.
+        var touch = !!(window.matchMedia && window.matchMedia('(hover: none)').matches);   // a phone or tablet; a desktop keeps the bar at the bottom
+        var under = touch && gap >= barH;
+        bar.style.bottom = under ? Math.round(gap - barH) + 'px' : '0px';
+        box.classList.toggle('under', under);
+      };
+      if (bTurn) bTurn.addEventListener('click', function () {
+        var sideways = String(screen.orientation.type || '').indexOf('landscape') === 0;
+        var p = null;
+        // Only a refusal while still in full screen is worth a message: a turn
+        // cut short by leaving full screen is not a failure.
+        var failed = function (e) { if (isFull() && !(e && e.name === 'AbortError')) cfg.toast('This browser will not rotate the screen', 'error'); };
+        turned = !sideways;
+        try { p = screen.orientation.lock(sideways ? 'portrait' : 'landscape'); } catch (e) { turned = false; failed(e); }
+        if (p && p.catch) p.catch(failed);
+      });
+      // Leaving full screen hands the screen back to however the phone is held.
+      var letGo = function () { if (!isFull() && bTurn) { turned = false; try { screen.orientation.unlock(); } catch (e) { /* nothing was held */ } } };
+      document.addEventListener('fullscreenchange', letGo); document.addEventListener('webkitfullscreenchange', letGo);
+      bFit.addEventListener('click', function () { fitAt = (fitAt + 1) % FITS.length; bFit.textContent = FITS[fitAt][1]; place(); });
+      document.addEventListener('fullscreenchange', place); document.addEventListener('webkitfullscreenchange', place);
+      window.addEventListener('resize', function () { if (isFull()) place(); });
+      m.addEventListener('loadedmetadata', place);
+    }
+
+    var retried = false;
+    function setSrc(keepTime) {
+      var was = keepTime ? m.currentTime : 0;
+      m.src = cfg.mediaUrl(it.url);
+      if (was > 0) { var once = function () { m.removeEventListener('loadedmetadata', once); try { m.currentTime = was; } catch (e) { /* not seekable yet */ } }; m.addEventListener('loadedmetadata', once); m.load(); }
+    }
+    // Near the screen: only the still picture a video shows before it plays.
+    // Nothing of the video or the sound is fetched until play is pressed.
+    watchMedia(box, function () { retried = false; if (isVideo && it.posterUrl) m.poster = cfg.mediaUrl(it.posterUrl); }, function () {
+      // Something still playing is being listened to: it stays, however far the page has scrolled.
+      // So does a video in full screen: there it has left the chat's scrolling
+      // area, which looks exactly like being scrolled far away.
+      var fs = document.fullscreenElement || document.webkitFullscreenElement;
+      if ((!m.paused && !m.ended) || fs === box) { box._wgLoaded = true; return; }
+      m.removeAttribute('src'); m.removeAttribute('poster');
+      try { m.load(); } catch (e) { /* releases the buffer */ }
+      state(); paint();
+    });
+    // The URL carries a sign-in token that lasts minutes. A video paused for a
+    // while fails on its next request: fetch a fresh one, once, where it was.
+    m.addEventListener('error', function () {
+      if (!box._wgLoaded || retried || !m.getAttribute('src')) return;
+      retried = true;
+      (cfg.refreshAuth ? cfg.refreshAuth() : Promise.resolve()).then(function () { if (box._wgLoaded) setSrc(true); });
+    });
+    m.addEventListener('playing', function () { retried = false; });
+    state(); paint();
+    return box;
+  }
+
+  /**
+   * A frame: a site's own embed (a video, a post, a player), any https page,
+   * or HTML of Claude's own. Made when it nears the screen and removed when it
+   * is far off, like the pictures. Always sandboxed:
+   *  - a web address keeps its own origin (a player needs its cookies and
+   *    storage) but can never navigate this page;
+   *  - Claude's HTML gets no origin at all, so it can reach nothing of ours.
+   */
+  function embedItem(it) {
+    var box = el('div', 'wg-mbox wg-membed');
+    if (it.w > 0 && it.h > 0) {
+      box.style.aspectRatio = it.w + ' / ' + it.h;
+      box.style.width = it.w >= it.h ? '640px' : Math.round(560 * it.w / it.h) + 'px';
+    } else {
+      box.style.height = (it.height || 420) + 'px';
+      box.style.width = (it.width || 640) + 'px';
+    }
+    var frame = null, seq = 0;
+    watchMedia(box, function () {
+      var mine = ++seq;
+      box.classList.add('loading');
+      var f = document.createElement('iframe');
+      f.title = it.title || it.provider || 'Embedded content';
+      f.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');   // YouTube refuses a frame that hides where it is
+      f.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write; web-share');
+      f.setAttribute('allowfullscreen', '');
+      f.addEventListener('load', function () { box.classList.remove('loading'); });
+      var put = function () { if (mine !== seq) return; frame = f; box.appendChild(f); };
+      if (it.htmlUrl) {
+        f.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-pointer-lock');
+        cfg.apiFetch(it.htmlUrl).then(function (r) { return r.ok ? r.text() : null; }).then(function (t) {
+          if (mine !== seq) return;
+          if (t == null) { box.classList.remove('loading'); box.classList.add('gone'); box.textContent = 'This embed is no longer stored.'; return; }
+          f.srcdoc = t; put();
+        }).catch(function () { box.classList.remove('loading'); box._wgLoaded = false; });
+      } else {
+        f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation');
+        f.src = it.src; put();
+      }
+    }, function () {
+      // Full screen is not "far away" (see the player).
+      var fs = document.fullscreenElement || document.webkitFullscreenElement;
+      if (fs && frame && (fs === frame || fs === box)) { box._wgLoaded = true; return; }
+      seq++; box.classList.remove('loading');
+      if (frame) { frame.remove(); frame = null; }
+    });
+    return box;
+  }
+
+  function fileItem(it) {
+    var card = el('div', 'wg-mfile');
+    var ic = el('span', 'wg-mfile-ic', cfg.fileIcon ? cfg.fileIcon(it.filename || 'file') : IC.panel);
+    var meta = el('span', 'wg-mfile-meta');
+    var n = el('span', 'wg-mfile-n'); n.textContent = it.filename || 'File'; n.title = it.filename || '';
+    var sz = el('span', 'wg-mfile-s'); sz.textContent = fmtBytes(it.size) + (it.caption ? ' · ' + it.caption : '');
+    meta.appendChild(n); meta.appendChild(sz);
+    var b = el('button', 'wg-btn', IC.download + 'Download');
+    b.type = 'button';
+    b.addEventListener('click', function () {
+      if (cfg.download) cfg.download({ url: it.url, name: it.filename || 'download', size: it.size });
+    });
+    card.appendChild(ic); card.appendChild(meta); card.appendChild(b);
+    return card;
+  }
+
+  /**
+   * @param {Array<{kind:string,url:string,posterUrl?:string,w?:number,h?:number,duration?:number,filename?:string,size?:number,caption?:string}>} items
+   */
+  function mediaNode(items, caption) {
+    injectStyles();
+    var files = items.every(function (it) { return it.kind === 'file'; });
+    var audio = items.every(function (it) { return it.kind === 'audio'; });
+    var single = items.length === 1;
+    var box = el('div', 'wg-media' + (single ? ' one' : '') + (files ? ' files' : '') + (audio ? ' audio' : ''));
+    var row = el('div', 'wg-media-row');
+    items.forEach(function (it) {
+      if (it.kind === 'file') { row.appendChild(fileItem(it)); return; }
+      var fig = el('figure', 'wg-mitem');
+      if (it.kind === 'embed') {
+        fig.appendChild(embedItem(it));
+        var ec = el('figcaption');
+        var what = [it.title || '', it.caption || ''].filter(Boolean).join(' · ') || it.provider || (it.htmlUrl ? 'Embedded HTML' : '');
+        var span = el('span'); span.textContent = what; ec.appendChild(span);
+        if (it.openUrl) {
+          var a = document.createElement('a'); a.href = it.openUrl; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'wg-membed-open';
+          a.textContent = 'Open' + (it.provider && what !== it.provider ? ' on ' + it.provider : '');
+          if (what) ec.appendChild(document.createTextNode(' · '));
+          ec.appendChild(a);
+        }
+        fig.appendChild(ec); row.appendChild(fig);
+        return;
+      }
+      fig.appendChild(it.kind === 'image' ? imageItem(it, single) : playerItem(it, single));
+      var label = it.kind === 'image' ? (it.caption || '') : [it.caption || it.filename || '', it.duration ? fmtDuration(it.duration) : ''].filter(Boolean).join(' · ');
+      if (label) { var c = el('figcaption'); c.textContent = label; fig.appendChild(c); }
       row.appendChild(fig);
     });
     box.appendChild(row);
-    if (caption) { var all = el('div', 'wg-pics-cap'); all.textContent = caption; box.appendChild(all); }
+    if (caption) { var all = el('div', 'wg-media-cap'); all.textContent = caption; box.appendChild(all); }
     return box;
   }
 
@@ -1109,7 +1636,7 @@
     syncDock: syncDock,
     inlineNode: inlineNode,
     shotsNode: shotsNode,
-    picturesNode: picturesNode,
+    mediaNode: mediaNode,
     setChipHost: function (n) { chipEl = n; renderChips(); },
     mountPicker: mountPicker,
     mountTab: mountTab,

@@ -8,7 +8,7 @@
  * again under the same id.
  *
  * Two things park a pane:
- *   - idleness: nothing going on in it AND nobody at Crundi, both for the
+ *   - idleness: nothing going on in it AND nobody at its project, both for the
  *     configured timeout (Settings; 0 = off, otherwise at least 10 minutes).
  *     Plain shells are never parked for idleness — Crundi cannot tell whether
  *     one is running a dev server.
@@ -36,7 +36,8 @@ export const DEFAULT_TIMEOUT_MIN = 60;
  * @param {(cwd:string, uuid:string, opts:object) => any} o.readTranscriptHistory
  * @param {(alias:string) => any} o.getProject
  * @param {() => number} o.timeoutMinutes     current setting (0 = off)
- * @param {(ms:number) => boolean} o.awayFor  true if nobody has been at Crundi for ms
+ * @param {(cwd:string, sessionId:string) => ({tokens:number, heavy:boolean}|null)} [o.sessionWeight]  how much a conversation would load on resume
+ * @param {(ms:number, project:string) => boolean} o.awayFor  true if nobody has been at THAT PROJECT for ms
  * @param {(id:string) => string} o.terminalState  hook-reported state of a terminal
  * @param {() => void} o.onChange             broadcast state after a park / resume
  */
@@ -145,7 +146,17 @@ export function createPanes(o) {
   }
 
   /** Resume a parked pane under the same id and order. */
-  async function resume(id) {
+  /**
+   * @param {string} id
+   * @param {{mode?: 'resume'|'compact'|'new'}} [how]
+   *   resume   pick the conversation up as it is (the default)
+   *   compact  chats only: resume it, then summarise it at once, so a long
+   *            conversation is loaded in full one time, not on every turn
+   *   new      start a fresh conversation in the same pane; the old one stays
+   *            on disk and can still be resumed from the session chooser
+   */
+  async function resume(id, how = {}) {
+    const mode = how.mode === 'compact' || how.mode === 'new' ? how.mode : 'resume';
     const r = records[id];
     if (!r || r.status !== 'parked') return { ok: false, error: 'This pane is not parked' };
     if (!o.getProject(r.project)) return { ok: false, error: `Project "${r.project}" no longer exists` };
@@ -156,15 +167,17 @@ export function createPanes(o) {
         id: r.id, order: r.order, title: r.title, shell,
         skipPermissions: !!r.opts.skipPermissions, model: r.opts.model || '', effort: r.opts.effort || '',
         // A shell has nothing to resume: a fresh one in the same folder.
-        sessionMode: shell ? null : (r.sessionId ? 'resume' : 'new'),
-        resumeId: shell ? '' : (r.sessionId || ''),
+        // A terminal cannot compact on resume (that is a chat feature); asking
+        // for it there resumes as usual.
+        sessionMode: shell ? null : (r.sessionId && mode !== 'new' ? 'resume' : 'new'),
+        resumeId: shell || mode === 'new' ? '' : (r.sessionId || ''),
       });
     } else {
       result = await o.claudeUi.create(r.project, {
         id: r.id, order: r.order, title: r.title, cwd: r.cwd || '',
         model: r.opts.model || '', effort: r.opts.effort || '',
         permissionMode: r.opts.permissionMode || '', skipPermissions: !!r.opts.skipPermissions,
-        sessionMode: r.sessionId ? 'resume' : 'new', resumeId: r.sessionId || '',
+        sessionMode: !r.sessionId || mode === 'new' ? 'new' : mode, resumeId: mode === 'new' ? '' : (r.sessionId || ''),
       });
     }
     if (!result || !result.ok) return result || { ok: false, error: 'Could not resume' };
@@ -191,7 +204,27 @@ export function createPanes(o) {
       kind: 'parked', paneKind: r.kind, shellOnly: !!(r.opts && r.opts.shellOnly),
       status: 'parked', agentState: null, parkedAt: r.parkedAt || 0, reason: r.reason || 'restart',
       hasSession: !!r.sessionId,
+      // How much a resume would load, so the pane can warn before it is done.
+      ...weightOf(r),
     }));
+  }
+
+  // A parked conversation does not change, so it is weighed once. Listing is
+  // part of every state broadcast; reading a transcript each time would not do.
+  const weights = new Map();   // "<id>|<sessionId>" -> { tokens, heavy }
+  function weightOf(r) {
+    if (!r.sessionId || (r.opts && r.opts.shellOnly) || !o.sessionWeight) return {};
+    const k = r.id + '|' + r.sessionId;
+    if (!weights.has(k)) {
+      let w = null;
+      try {
+        const project = o.getProject(r.project);
+        w = o.sessionWeight(r.cwd || (project && project.path) || '', r.sessionId);
+      } catch { w = null; }
+      weights.set(k, w ? { tokens: w.tokens || 0, heavy: !!w.heavy } : {});
+      if (weights.size > 500) weights.delete(weights.keys().next().value);
+    }
+    return weights.get(k);
   }
 
   /** What a parked pane shows behind its Resume button. */
@@ -219,13 +252,12 @@ export function createPanes(o) {
     if (!min) return;
     const ms = Math.max(MIN_TIMEOUT_MIN, min) * 60_000;
     const now = Date.now();
-    const away = o.awayFor(ms);
     const candidates = [];
     for (const t of (o.claudeTerminals?.list() || [])) {
       const m = o.claudeTerminals.meta(t.id);
       if (!m || !m.running || !m.restorable || m.shellOnly) continue;   // shells: never for idleness
       const st = o.terminalState(t.id) || 'idle';
-      candidates.push({ id: t.id, busy: st !== 'idle', since: m.createdAt || now });
+      candidates.push({ id: t.id, project: m.alias || t.project || '', busy: st !== 'idle', since: m.createdAt || now });
     }
     for (const s of (o.claudeUi?.list() || [])) {
       const m = o.claudeUi.meta(s.id);
@@ -233,14 +265,18 @@ export function createPanes(o) {
       // Working, asking, or waiting on a background trigger — and any
       // background task the user has not dismissed — all count as going on.
       const busy = m.state !== 'idle' || m.busyTasks > 0 || m.pendingInjections > 0;
-      candidates.push({ id: s.id, busy, since: now });
+      candidates.push({ id: s.id, project: m.alias || s.project || '', busy, since: now });
     }
     const live = new Set(candidates.map(c => c.id));
     for (const id of [...idleSince.keys()]) if (!live.has(id)) idleSince.delete(id);
     for (const c of candidates) {
       if (c.busy) { idleSince.set(c.id, now); continue; }
       if (!idleSince.has(c.id)) idleSince.set(c.id, Math.min(c.since, now));
-      if (away && now - idleSince.get(c.id) >= ms) park(c.id, 'idle');
+      // "Nobody here" is asked per project. Being at Crundi used to hold every
+      // pane open: an hour spent in one project kept the idle chats of five
+      // others running. A pane now sleeps when ITS project has gone unvisited
+      // for the timeout, whatever is happening elsewhere.
+      if (now - idleSince.get(c.id) >= ms && o.awayFor(ms, c.project)) park(c.id, 'idle');
     }
   }
 
