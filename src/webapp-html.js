@@ -1924,6 +1924,10 @@ export function getWebappHtml(botUsername) {
     .file-item:hover { background: var(--bg-hover); }
     .file-item { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
     .file-item.sel { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
+    /* Cut and waiting to be pasted; a folder a dragged row would land in. */
+    .file-item.cut { opacity: 0.45; }
+    .file-item.files-drop-into, .files-crumbs a.files-drop-into { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--accent-dim); border-radius: var(--radius-sm); }
+    .files-act.files-paste { color: var(--accent-hover); border-color: var(--accent); }
     .file-item .fi-more {
       background: none; border: 0; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
       padding: 3px 6px; border-radius: 4px; display: inline-flex; align-items: center; font-size: 14px; opacity: 0;
@@ -4351,6 +4355,8 @@ export function getWebappHtml(botUsername) {
 
     // ─── Flat icon set (stroke icons, inherit currentColor) ───
     const ICON_PATHS = {
+      scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>',
+      clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
       panel: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
       note: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
       pages: '<path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8"/>',
@@ -6250,7 +6256,8 @@ export function getWebappHtml(botUsername) {
         // Native drop target: dropping a dragged path/ref here sends it to THIS
         // terminal (stopPropagation so the wrap-level handler doesn't also fire).
         el.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; el.classList.add('term-drop-hover'); });
-        el.addEventListener('dragleave', (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove('term-drop-hover'); });
+        // Where the pointer is, not relatedTarget, which is often null for a drag from outside the window.
+        el.addEventListener('dragleave', (e) => { const r = el.getBoundingClientRect(); if (!(e.clientX > r.left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom)) el.classList.remove('term-drop-hover'); });
         el.addEventListener('drop', (e) => {
           const txt = e.dataTransfer && e.dataTransfer.getData('text/plain');
           el.classList.remove('term-drop-hover');
@@ -7220,6 +7227,8 @@ export function getWebappHtml(botUsername) {
       const menu = document.getElementById('wb-add-menu');
       if (menu && menu.classList.contains('visible')) return true;
       if (document.body.classList.contains('mosaic-cell-drag') || document.body.classList.contains('mosaic-resizing')) return true;
+      // A right-click / "more" menu (Files rows, links) or an enlarged picture.
+      if (document.querySelector('.ctx-menu, .wg-zoom')) return true;
       return false;
     }
     function brzVisibleNow() {
@@ -8004,9 +8013,17 @@ export function getWebappHtml(botUsername) {
 
     // ─── Drag a workbench-panel item onto a terminal / the input box ───
     // Returns where a screen point lands: a specific terminal, the input, or null.
-    function wbDropTargetAt(x, y) {
+    function wbDropTargetAt(x, y, dragEl) {
       const el = document.elementFromPoint(x, y);
       if (!el || !el.closest) return null;
+      // A file row over a folder (a row, "..", or a folder in the path bar):
+      // that is a move or a copy, not a path to insert.
+      if (dragEl && dragEl.matches && dragEl.matches('.file-item[data-fpath]')) {
+        const frow = el.closest('.file-item.dir[data-fpath]');
+        if (frow && frow !== dragEl) return { kind: 'folder', path: frow.dataset.fpath, name: frow.dataset.fup ? 'the parent folder' : (frow.dataset.fname || ''), el: frow };
+        const crumb = el.closest('.files-crumbs a[data-dir]');
+        if (crumb) return { kind: 'folder', path: crumb.dataset.dir, name: crumb.textContent || '', el: crumb };
+      }
       // A notes page takes text too; the caret follows the pointer there.
       if (el.closest('.nt-root') && window.CrundiNotes && window.CrundiNotes.dropPreview(x, y)) return { kind: 'notes', x, y };
       if (el.closest('#term-input')) return { kind: 'input' };
@@ -8051,14 +8068,17 @@ export function getWebappHtml(botUsername) {
     // HTML5 drag doesn't fire on touch, which is why this previously only worked
     // on PC.) Each row carries data-drag-ref / -kind / -abs.
     function dragRefHandlers(el) {
-      let target = null, first = null, moved = false, viaTouch = false;
+      let target = null, first = null, moved = false, viaTouch = false, lastXY = [20, 20];
       el.addEventListener('touchstart', () => { viaTouch = true; }, { passive: true });
       el.addEventListener('mousedown', () => { viaTouch = false; });
       return {
         onStart: () => { first = null; moved = false; },
         onMove: (x, y) => {
+          lastXY = [x, y];
           if (!first) first = [x, y]; else if (Math.abs(x - first[0]) > 10 || Math.abs(y - first[1]) > 10) moved = true;
-          target = wbDropTargetAt(x, y); document.body.classList.toggle('wb-drag-armed', !!target);
+          target = wbDropTargetAt(x, y, el); document.body.classList.toggle('wb-drag-armed', !!target);
+          document.querySelectorAll('.files-drop-into').forEach(n => { if (!target || n !== target.el) n.classList.remove('files-drop-into'); });
+          if (target && target.kind === 'folder') target.el.classList.add('files-drop-into');
         },
         onEnd: (commit) => {
           document.body.classList.remove('wb-drag-armed');
@@ -8067,6 +8087,12 @@ export function getWebappHtml(botUsername) {
           if (viaTouch && !moved && el.matches('.file-item[data-fpath]') && typeof openFileMenu === 'function') {
             target = null;
             if (!ctxMenuEl) openFileMenu(el, first ? first[0] : 20, first ? first[1] : 20);
+            return;
+          }
+          document.querySelectorAll('.files-drop-into').forEach(n => n.classList.remove('files-drop-into'));
+          if (commit && target && target.kind === 'folder') {
+            const t = target; target = null;
+            filesDropMenu(el.dataset.fpath, t, lastXY[0], lastXY[1]);
             return;
           }
           if (commit && target) {
@@ -9390,6 +9416,7 @@ export function getWebappHtml(botUsername) {
         if (!data.ok) { $('#files-panel').innerHTML = '<div class="git-empty">' + escHtml(data.error || 'Failed') + '</div>'; return; }
         filesState = { path: data.path, root: data.root, parent: data.parent, inside: data.inside, entries: data.entries || [], crumbs: data.crumbs || [], localShell: data.localShell || null };
         filesSearchQuery = ''; filesSearchResults = null;
+        if (data.fellBack) toast('That folder no longer exists. Showing ' + (filesBaseName(data.path) || data.path) + ' instead.');
         renderFilesPanel();
       } catch (err) {
         $('#files-panel').innerHTML = '<div class="git-empty">Error: ' + escHtml(err.message) + '</div>';
@@ -9429,6 +9456,12 @@ export function getWebappHtml(botUsername) {
         crumbs += (i ? '<span class="crumb-sep">/</span>' : '') + '<a data-action="files-nav" data-dir="' + escHtml(c.path) + '">' + escHtml(c.name) + '</a>';
       });
       let actions = '';
+      // Something cut or copied, waiting to be pasted: offered here because a
+      // full listing leaves no empty space to right-click.
+      if (filesState.inside && filesClipHere()) {
+        const n = filesClip.paths.length;
+        actions += '<button class="files-act files-paste" data-action="files-paste" title="Paste ' + (n === 1 ? escHtml(filesBaseName(filesClip.paths[0])) : n + ' items') + ' into this folder (' + (filesClip.op === 'cut' ? 'move' : 'copy') + ')">' + ic('clipboard') + '</button>';
+      }
       if (filesState.parent) actions += '<button class="files-act" data-action="files-nav" data-dir="' + escHtml(filesState.parent) + '" title="Up to parent folder">' + ic('arrow-up') + '</button>';
       if (filesState.inside) actions += '<button class="files-act" data-action="files-upload" title="Upload to this folder">' + ic('upload') + '</button>';
       return '<div class="files-bc"><div class="files-crumbs">' + (crumbs || '<span>—</span>') + '</div><div class="files-bc-actions">' + actions + '</div></div>';
@@ -9461,7 +9494,7 @@ export function getWebappHtml(botUsername) {
     // on a click of its name, which is easy to do by accident on the way to
     // dragging it or just pointing at it.
     function fileRowHtml(e, isDir, nameHtml) {
-      return '<div class="file-item ' + (isDir ? 'dir' : 'file') + '" data-fpath="' + escHtml(e.path) + '" data-ftype="' + (isDir ? 'dir' : 'file') + '" data-fname="' + escHtml(e.name) + '"'
+      return '<div class="file-item ' + (isDir ? 'dir' : 'file') + (filesClip && filesClip.op === 'cut' && filesClip.paths.includes(e.path) ? ' cut' : '') + '" data-fpath="' + escHtml(e.path) + '" data-ftype="' + (isDir ? 'dir' : 'file') + '" data-fname="' + escHtml(e.name) + '"'
         + ' data-drag-ref="' + escHtml(e.path) + '" data-drag-kind="' + (isDir ? 'folder' : 'file') + '" title="Double-click to open. Right-click for more. Drag onto a terminal to insert its path.">'
         + '<span class="fi-icon">' + (isDir ? ic('folder') : fileIcon(e.name)) + '</span>'
         + '<span class="fi-name">' + nameHtml + '</span>'
@@ -9582,7 +9615,12 @@ export function getWebappHtml(botUsername) {
 
     // ─── Context menu (used by file rows) ───
     let ctxMenuEl = null;
-    function closeCtxMenu() { if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; } }
+    // The desktop app's browser pane is a native view that floats above the
+    // page, so it steps aside while a menu is open (see brzOverlayActive).
+    function ctxSyncBrowser() { if (typeof brzSync === 'function') { try { brzSync(); } catch { /* no browser pane */ } } }
+    function closeCtxMenu() { if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; ctxSyncBrowser(); } }
+    // The enlarged-picture viewer comes and goes on the page body too.
+    if (window.MutationObserver) new MutationObserver(ctxSyncBrowser).observe(document.body, { childList: true });
     /** items: [{ label, icon, run, danger }] or '-' for a divider. */
     function openCtxMenu(x, y, items) {
       closeCtxMenu();
@@ -9607,6 +9645,7 @@ export function getWebappHtml(botUsername) {
       m.style.left = Math.max(6, Math.min(x, vw - r.width - 6)) + 'px';
       m.style.top = Math.max(6, Math.min(y, vh - r.height - 6)) + 'px';
       ctxMenuEl = m;
+      ctxSyncBrowser();
     }
     document.addEventListener('pointerdown', (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target)) closeCtxMenu(); }, true);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtxMenu(); });
@@ -9667,6 +9706,49 @@ export function getWebappHtml(botUsername) {
     document.addEventListener('pointerdown', backArm, true);
     document.addEventListener('keydown', backArm, true);
 
+    // ─── Moving and copying in the Files tab ───
+    // What was cut or copied, until it is pasted once. Kept in the page only:
+    // it names paths in one project, and is dropped after a paste so the same
+    // thing cannot be pasted twice by accident.
+    let filesClip = null;   // { op: 'cut'|'copy', project, paths: [] }
+    function filesBaseName(p) { return String(p || '').split('/').pop().split(String.fromCharCode(92)).pop(); }
+    function filesClipHere() { return !!(filesClip && filesClip.project === currentProject && filesClip.paths.length); }
+    function filesSetClip(op, p) {
+      filesClip = { op, project: currentProject, paths: [p] };
+      // Worded as something waiting, not something done: nothing has moved or been copied yet.
+      toast(filesBaseName(p) + (op === 'cut' ? ' is ready to move.' : ' is ready to copy.') + ' Paste it into a folder.');
+      renderFilesPanel();
+    }
+    async function filesTransfer(op, paths, toDir) {
+      try {
+        const d = await (await apiFetch('/api/files/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: currentProject, op, items: paths, to: toDir }) })).json();
+        const did = (d.done || []), bad = (d.failed || []);
+        if (did.length) {
+          const first = did[0];
+          toast((op === 'move' ? 'Moved ' : 'Copied ') + (did.length === 1 ? first.name : did.length + ' items') + (did.length === 1 && first.renamed ? ' (renamed: that name was taken)' : ''), 'success');
+        }
+        if (bad.length || !d.ok) toast((bad[0] && (filesBaseName(bad[0].from) + ': ' + bad[0].error)) || d.error || 'Could not ' + op, 'error');
+        return did.length > 0;
+      } catch (err) { toast(err.message, 'error'); return false; }
+      finally { loadFiles(); }
+    }
+    async function filesPaste(toDir) {
+      if (!filesClipHere()) return;
+      const clip = filesClip;
+      filesClip = null;      // one paste only, whatever comes of it
+      await filesTransfer(clip.op === 'cut' ? 'move' : 'copy', clip.paths, toDir);
+    }
+    /** Dropped on a folder: ask which, since a drag does not say. */
+    function filesDropMenu(fromPath, target, x, y) {
+      const name = target.name || filesBaseName(target.path);
+      openCtxMenu(x, y, [
+        { label: 'Move to \u201c' + name + '\u201d', icon: 'scissors', run: () => filesTransfer('move', [fromPath], target.path) },
+        { label: 'Copy to \u201c' + name + '\u201d', icon: 'copy', run: () => filesTransfer('copy', [fromPath], target.path) },
+        '-',
+        { label: 'Cancel', icon: 'x', run: () => {} },
+      ]);
+    }
+
     function fileRowOpen(row) {
       if (!row) return;
       if (row.dataset.ftype === 'dir') loadFiles(row.dataset.fpath);
@@ -9691,6 +9773,16 @@ export function getWebappHtml(botUsername) {
         items.push('-');
         if (!isDir) items.push({ label: 'Open externally', icon: 'external-link', run: () => filesShell('open', p) });
         items.push({ label: isDir ? 'Open in ' + sh.fileManager : 'Reveal in ' + sh.fileManager, icon: 'folder', run: () => filesShell(isDir ? 'open' : 'reveal', p) });
+      }
+      items.push('-');
+      items.push({ label: 'Cut', icon: 'scissors', run: () => filesSetClip('cut', p) });
+      items.push({ label: 'Copy', icon: 'copy', run: () => filesSetClip('copy', p) });
+      // Paste goes INTO a folder, never over a file. On a file row it means
+      // the folder being looked at; a folder row offers both that and itself.
+      if (filesClipHere()) {
+        const what = filesClip.paths.length === 1 ? '' : ' ' + filesClip.paths.length + ' items';
+        if (isDir) items.push({ label: 'Paste' + what + ' inside \u201c' + name + '\u201d', icon: 'clipboard', run: () => filesPaste(p) });
+        if (filesState.inside) items.push({ label: 'Paste' + what + (isDir ? ' in the current folder' : ' here'), icon: 'clipboard', run: () => filesPaste(filesState.path) });
       }
       items.push('-');
       items.push({ label: 'Copy path', icon: 'copy', run: () => filesCopyPath(p) });
@@ -13426,6 +13518,7 @@ export function getWebappHtml(botUsername) {
         case 'files-open': feOpen(currentProject, d.file); break;
         case 'files-edit': feOpen(currentProject, d.file, { asSource: true }); break;
         case 'files-upload': filesUpload(); break;
+        case 'files-paste': filesPaste(filesState.path); break;
         case 'files-download': filesDownload(d.file); break;
         case 'files-copy-path': filesCopyPath(d.file); break;
         case 'files-delete': filesDelete(d.file); break;
