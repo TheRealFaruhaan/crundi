@@ -23,7 +23,13 @@ long-lived. See `platform-linux.md` / `platform-windows.md`.
 |---|---|
 | `send_message_to_user` | Out-of-band; arrives when nobody is watching the chat |
 | `send_photo_to_user` | Image by path, to Telegram: for when they are not looking at the chat |
-| `show_image` | Draws images in the chat itself, under the call. `path`, or `paths` (up to 8, strings or `{path, caption}`), optional `caption`. PNG/JPEG/GIF/WebP, 10 MB each; files are copied. Chat UI mode only, owner chats. |
+| `show_image` | Draws images in the chat itself, under the call. `path`, or `paths` (up to 8, strings or `{path, caption}`), optional `caption`. PNG/JPEG/GIF/WebP, 10 MB each; files are copied. |
+| `show_video` | A video player in the chat, with a poster frame. Same arguments. MP4/MOV/WebM, 250 MB each; copied. |
+| `show_audio` | An audio player in the chat. Same arguments. MP3/WAV/OGG/M4A/FLAC/WebM, 60 MB each; copied. |
+| `show_file` | A download card in the chat: the file's icon, name, size and a Download button. Same arguments, any file. Not copied: it downloads the file as it is when the button is pressed. |
+| `show_embed` | A live, sandboxed frame in the chat. `url`: an ordinary https link; YouTube, Vimeo, Dailymotion, Loom, X, Instagram, TikTok, Facebook, Reddit, Spotify, SoundCloud, CodePen, gists and Google Maps embed links become proper embeds, anything else is framed as it is (many sites refuse). `html`: your own HTML/CSS/JS (max 512 KB), which cannot read files or call Crundi. Optional `title`, `caption`, `height` (80 to 1200). |
+
+The four `show_*` tools exist only in chat (UI) mode, in owner chats. **Prefer them over the `send_*_to_user` tools whenever the person is in the chat**: `send_*` goes to Telegram and is for reaching someone who is not looking.
 | `send_file_to_user` | Any file by path. Attached on Telegram up to 50 MB (a link beyond that); always returns a 30-minute download link and says how it was delivered. If nothing went out of band, put the link in your reply. |
 
 ## Services

@@ -635,6 +635,22 @@ export function getWebappHtml(botUsername) {
        menu hanging below the header. Lift the header while its menu is open. */
     .term-head.tools-open { position: relative; z-index: 6; }
     .term-more { display: none; align-items: center; font-size: 13px; padding: 3px 6px; }
+    .term-full { display: none; align-items: center; font-size: 13px; padding: 3px 6px; }
+    .term-cell.pane-full .term-full { display: inline-flex; color: var(--accent-hover); border-color: var(--accent); }
+    .term-cell.pane-full {
+      position: fixed !important; inset: 0 !important; z-index: 390;
+      width: auto !important; height: auto !important; max-width: none !important; max-height: none !important;
+      margin: 0 !important; border-radius: 0 !important; transform: none !important;
+      background: var(--bg-primary);
+      padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    /* The strip beside a phone's camera hole is used by the header instead of
+       being left empty above it: the title is at the left and the buttons at
+       the right, and the hole falls in the gap between them. The header is at
+       least as tall as the strip, so the conversation starts below the hole. */
+    .term-cell.pane-full > .term-head { min-height: env(safe-area-inset-top); box-sizing: border-box; }
+    /* Nothing to drag, split or close into while it covers the screen. */
+    .term-cell.pane-full .term-drag { display: none; }
     /* Split is offered in the menu only where the layout can be split and the
        floating split buttons are not doing the job (a phone). */
     .head-split { display: none; }
@@ -650,6 +666,7 @@ export function getWebappHtml(botUsername) {
         .term-head.tools-open .term-head-tools { display: flex; }
         .term-head.tools-open .term-more { color: var(--accent-hover); border-color: var(--accent); }
         .term-more { display: inline-flex; }
+        .term-full { display: inline-flex; }
         /* With the buttons folded away the title can have the room. */
         .term-title { max-width: none; flex: 0 1 auto; min-width: 0; }
     }
@@ -664,6 +681,7 @@ export function getWebappHtml(botUsername) {
         .term-head.tools-open .term-head-tools { display: flex; }
         .term-head.tools-open .term-more { color: var(--accent-hover); border-color: var(--accent); }
         .term-more { display: inline-flex; }
+        .term-full { display: inline-flex; }
         /* With the buttons folded away the title can have the room. */
         .term-title { max-width: none; flex: 0 1 auto; min-width: 0; }
         .term-head-tools .term-font-btn, .term-head-tools .term-head-btn { min-height: 34px; min-width: 38px; padding: 6px 10px; font-size: 13px; }
@@ -1230,6 +1248,47 @@ export function getWebappHtml(botUsername) {
     .parked-cell .pk-resume:focus-visible { outline: none; box-shadow: var(--ring); }
     .parked-cell .pk-why { font-size: 0.78rem; color: var(--text-primary); }
     .parked-cell .pk-what { font-size: 0.72rem; color: var(--text-secondary); }
+    .parked-cell .pk-warn {
+      display: flex; align-items: flex-start; gap: 7px; text-align: left; margin-top: 4px;
+      padding: 8px 10px; border-radius: var(--radius-sm); font-size: 0.72rem; line-height: 1.4;
+      background: var(--yellow-dim); color: var(--text-primary); border: 1px solid rgba(245,158,11,0.35);
+    }
+    .parked-cell .pk-warn .ic { color: var(--yellow); flex-shrink: 0; margin-top: 2px; font-size: 13px; }
+    .parked-cell .pk-warn b { color: var(--yellow); font-variant-numeric: tabular-nums; }
+    .parked-cell .pk-more { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 2px; }
+    .parked-cell .pk-alt {
+      min-height: 30px; padding: 5px 12px; border-radius: 999px; cursor: pointer; font-size: 0.76rem; font-weight: 600;
+      border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary);
+    }
+    .parked-cell .pk-alt:hover:not(:disabled) { border-color: var(--accent); }
+    .parked-cell .pk-alt.quiet { background: transparent; border-color: transparent; color: var(--text-secondary); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+    .parked-cell .pk-alt.quiet:hover:not(:disabled) { color: var(--text-primary); border-color: transparent; }
+    .parked-cell .pk-alt:disabled { opacity: 0.6; cursor: default; }
+    @media (max-width: 768px) { .parked-cell .pk-alt { min-height: 40px; padding: 8px 14px; } }
+    /* The card has to fit panes of very different sizes: a tall desktop pane, a
+       phone's short one, a sliver in a stacked layout. The veil is a size
+       container and the card sheds what it can live without as the pane gets
+       shorter. Whatever is left can always be scrolled to: margin:auto centres
+       the card but, unlike align-items, keeps its top reachable when it is
+       taller than the pane (the buttons used to be cut off, Resume included). */
+    .parked-cell .pk-veil { container-type: size; overflow-y: auto; align-items: flex-start; }
+    .parked-cell .pk-card { margin: auto; max-width: min(100%, 330px); }
+    .parked-cell .pk-warn-short { display: none; }
+    @container (max-height: 330px) {
+      .parked-cell .pk-card { gap: 6px; padding: 10px 12px; }
+      .parked-cell .pk-what { display: none; }
+      .parked-cell .pk-warn { padding: 4px 10px; border-radius: 999px; align-items: center; margin-top: 2px; }
+      .parked-cell .pk-warn .ic { margin-top: 0; }
+      .parked-cell .pk-warn-long { display: none; }
+      .parked-cell .pk-warn-short { display: inline; }
+    }
+    @container (max-height: 210px) {
+      .parked-cell .pk-card { flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; max-width: 100%; gap: 6px; padding: 8px; }
+      .parked-cell .pk-why { display: none; }
+      .parked-cell .pk-resume { padding: 7px 16px; font-size: 0.82rem; box-shadow: none; }
+      .parked-cell .pk-warn-short { display: none; }
+      .parked-cell .pk-more { margin-top: 0; }
+    }
     /* A divider next to a pinned pane does not move it. */
     .mosaic-split > .mosaic-gutter.locked { cursor: not-allowed; }
     .mosaic-gutter.locked::after { opacity: 0.4; }
@@ -1701,10 +1760,15 @@ export function getWebappHtml(botUsername) {
     #add-project-modal button.primary:hover { background: var(--accent-hover); }
 
     /* ─── Notification Toast ─── */
+    /* Info messages come in at the top: at the bottom they sat on the message
+       box and the Send button. Just under the top bar, on the right, on a
+       desktop and a phone alike. */
     .toast {
       position: fixed;
-      bottom: 20px;
-      right: 20px;
+      top: calc(var(--topbar-height) + 10px);
+      right: 16px;
+      max-width: min(420px, calc(100vw - 32px));
+      overflow-wrap: anywhere;
       background: var(--bg-secondary);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
@@ -1713,11 +1777,14 @@ export function getWebappHtml(botUsername) {
       color: var(--text-primary);
       z-index: 2000;
       opacity: 0;
-      transform: translateY(10px);
+      transform: translateY(-10px);
       transition: all 0.2s;
       pointer-events: none;
     }
     .toast.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    @media (max-width: 768px) {
+      .toast { right: 10px; max-width: calc(100vw - 20px); }
+    }
     .toast.error { border-color: var(--red); }
     .toast.success { border-color: var(--green); }
 
@@ -1855,6 +1922,31 @@ export function getWebappHtml(botUsername) {
     .files-list { overflow-y: auto; }
     .file-item { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-size: 12px; font-family: var(--mono); cursor: pointer; }
     .file-item:hover { background: var(--bg-hover); }
+    .file-item { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+    .file-item.sel { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
+    .file-item .fi-more {
+      background: none; border: 0; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
+      padding: 3px 6px; border-radius: 4px; display: inline-flex; align-items: center; font-size: 14px; opacity: 0;
+    }
+    .file-item:hover .fi-more, .file-item.sel .fi-more, .file-item .fi-more:focus-visible { opacity: 1; }
+    .file-item .fi-more:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+    @media (hover: none) { .file-item .fi-more { opacity: 1; padding: 8px 10px; } .file-item { padding-top: 7px; padding-bottom: 7px; } }
+    .ctx-menu {
+      position: fixed; z-index: 1300; min-width: 190px; max-width: min(300px, calc(100vw - 12px)); padding: 5px;
+      background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg);
+      display: flex; flex-direction: column; gap: 1px; max-height: calc(100dvh - 12px); overflow-y: auto;
+    }
+    .ctx-item {
+      display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 7px 10px; border: 0; border-radius: 6px;
+      background: none; color: var(--text-primary); font-size: 13px; font-family: inherit; cursor: pointer; white-space: nowrap;
+    }
+    .ctx-item:hover, .ctx-item:focus-visible { background: var(--bg-hover); outline: none; }
+    .ctx-item.danger { color: var(--red); }
+    .ctx-item.danger:hover { background: var(--red-dim); }
+    .ctx-ic { width: 16px; display: inline-flex; justify-content: center; color: var(--text-secondary); font-size: 14px; flex-shrink: 0; }
+    .ctx-item.danger .ctx-ic { color: var(--red); }
+    .ctx-sep { height: 1px; background: var(--border-subtle); margin: 4px 2px; }
+    @media (hover: none) { .ctx-item { padding: 12px 12px; font-size: 14px; } }
     .file-item .fi-icon { width: 16px; text-align: center; flex-shrink: 0; white-space: nowrap; font-size: 11px; line-height: 1; }
     .file-item .fi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .file-item .fi-size { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
@@ -3115,6 +3207,29 @@ export function getWebappHtml(botUsername) {
     /* toast: depth + accent edge */
     .toast { box-shadow: var(--shadow-md); border-left: 3px solid var(--accent); }
     .toast.error { border-left-color: var(--red); }
+    /* In-app downloads: a small stack above the toast corner. Anchored by its
+       top edge on a phone, where the bottom of the layout can sit under the
+       browser's bars. */
+    .dl-tray { position: fixed; right: 16px; top: calc(var(--topbar-height) + 64px); z-index: 1250; display: flex; flex-direction: column; gap: 8px; width: min(320px, calc(100vw - 32px)); pointer-events: none; }
+    .dl-row {
+      pointer-events: auto; display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px;
+      background: var(--bg-secondary); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-md); transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .dl-row.out { opacity: 0; transform: translateY(6px); }
+    .dl-row.done { border-left-color: var(--green); }
+    .dl-row.failed { border-left-color: var(--red); }
+    .dl-ic { color: var(--accent-hover); font-size: 15px; flex-shrink: 0; display: inline-flex; }
+    .dl-row.done .dl-ic { color: var(--green); } .dl-row.failed .dl-ic { color: var(--red); }
+    .dl-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .dl-name { font-size: 12.5px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dl-sub { font-size: 11px; color: var(--text-secondary); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dl-bar { height: 3px; border-radius: 99px; background: var(--bg-tertiary); overflow: hidden; }
+    .dl-bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.15s linear; }
+    .dl-row.done .dl-bar > span { background: var(--green); } .dl-row.failed .dl-bar { display: none; }
+    .dl-x { background: none; border: 0; color: var(--text-muted); font-size: 17px; line-height: 1; cursor: pointer; padding: 6px 8px; border-radius: 6px; flex-shrink: 0; }
+    .dl-x:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+    @media (max-width: 768px) { .dl-tray { right: 8px; left: 8px; width: auto; bottom: auto; top: calc(var(--topbar-height) + 64px); } .dl-x { padding: 10px 12px; } }
     .toast.success { border-left-color: var(--green); }
 
     @media (prefers-reduced-motion: reduce) {
@@ -6038,7 +6153,7 @@ export function getWebappHtml(botUsername) {
 
     function buildCellEl(d) {
       const el = document.createElement('div');
-      el.className = 'term-cell';
+      el.className = 'term-cell' + (paneFull.key && d.key === paneFull.key ? ' pane-full' : '');   // a redraw keeps it full
       el.dataset.cellkey = d.key;
       el.dataset.ctype = d.type;
       const head = document.createElement('div'); head.className = 'term-head';
@@ -6091,6 +6206,7 @@ export function getWebappHtml(botUsername) {
           + '<button class="pk-resume" data-action="pane-resume" data-tid="' + d.t.id + '">' + ic('play') + 'Resume</button>'
           + '<div class="pk-why">' + escHtml(why) + (when ? ' \u00b7 ' + escHtml(when) : '') + '</div>'
           + '<div class="pk-what">' + escHtml(what) + '</div>'
+          + parkedChoicesHtml(d.t)
           + '</div></div>';
       } else if (d.type === 'chat') {
         el.dataset.tid = d.t.id;
@@ -6226,6 +6342,12 @@ export function getWebappHtml(botUsername) {
           // by Claude): update that corner in place, move nothing.
           onChrome: () => { if (currentTab === 'workbench') { mountWidgetCells(); syncWidgetDocks(); } },
           openTab: (id) => { window.CrundiWidgets.selectInTab(id); switchTab('widgets'); },
+          // A <video> or <audio> fetches by itself and cannot send the sign-in
+          // header, so its URL carries the token (as the media library's do).
+          mediaUrl: (u) => u + (u.indexOf('?') < 0 ? '?' : '&') + 'token=' + encodeURIComponent(token || ''),
+          refreshAuth: () => refreshSession(),
+          fileIcon: (n) => fileIcon(n),
+          download: (o) => crundiDownload(o),
         });
         window.CrundiWidgets.setChipHost(document.getElementById('wg-chips'));
       }
@@ -6323,13 +6445,48 @@ export function getWebappHtml(botUsername) {
       // Pictures Claude showed with show_image. Only the stored names are
       // taken from the result, and only if they look like ours; the caption
       // is set as text.
-      if (/show_image$/.test(name)) {
+      // Things Claude showed with show_image / show_video / show_audio /
+      // show_file. Only stored names and ids are taken from the result, and
+      // only if they look like ours; every word shown is set as text.
+      if (/show_(image|video|audio|file|embed)$/.test(name)) {
         let r = null;
         try { r = JSON.parse(String(entry.result || '')); } catch { return null; }
-        const items = ((r && Array.isArray(r.images)) ? r.images : [])
-          .filter(i => i && /^[0-9a-f]{16}[.](png|jpg|gif|webp)$/.test(String(i.name || '')))
-          .map(i => ({ url: '/api/chat-images?session=' + encodeURIComponent(t.id) + '&name=' + encodeURIComponent(i.name), caption: String(i.caption || '').slice(0, 200) }));
-        return items.length ? window.CrundiWidgets.picturesNode(items, String((r && r.caption) || '').slice(0, 300)) : null;
+        const sid = encodeURIComponent(t.id);
+        const NAME = /^[0-9a-f]{16}([.]poster)?[.](png|jpg|gif|webp|mp4|webm|mov|mp3|wav|ogg|m4a|flac|weba)$/;
+        const EMBED = /^[0-9a-f]{16}[.]embed$/;
+        const num = (v, max) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n <= max ? n : 0; };
+        // 1.19.19 answered show_image with { images: [{ name, caption }] }.
+        const raw = r && Array.isArray(r.items) ? r.items : ((r && Array.isArray(r.images)) ? r.images.map(i => ({ ...i, kind: 'image' })) : []);
+        const items = [];
+        for (const i of raw) {
+          if (!i) continue;
+          const base = { caption: String(i.caption || '').slice(0, 200), filename: String(i.filename || '').slice(0, 200), size: num(i.size, 1e13) };
+          if (i.kind === 'embed') {
+            // A frame: either an https address that is not this site's own (a
+            // frame of our own origin could act as us), or stored HTML, which
+            // the frame gets as text and runs with no origin at all.
+            const e = { ...base, kind: 'embed', title: String(i.title || '').slice(0, 200), provider: String(i.provider || '').slice(0, 60), w: num(i.w, 100), h: num(i.h, 100), height: num(i.height, 1200), width: num(i.width, 2000) };
+            if (i.name) {
+              if (!EMBED.test(String(i.name))) continue;
+              e.htmlUrl = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.name);
+            } else {
+              let u = null; try { u = new URL(String(i.src || '')); } catch { u = null; }
+              if (!u || u.protocol !== 'https:' || u.host === location.host) continue;
+              e.src = u.href;
+            }
+            let open = null; try { open = new URL(String(i.url || '')); } catch { open = null; }
+            if (open && open.protocol === 'https:') e.openUrl = open.href;
+            items.push(e);
+          } else if (i.kind === 'file') {
+            if (!/^[0-9a-f]{16}$/.test(String(i.id || ''))) continue;
+            items.push({ ...base, kind: 'file', url: '/api/chat-media/file?session=' + sid + '&id=' + i.id });
+          } else if (['image', 'video', 'audio'].includes(i.kind) && NAME.test(String(i.name || ''))) {
+            const it = { ...base, kind: i.kind, url: '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.name), w: num(i.w, 20000), h: num(i.h, 20000), duration: num(i.duration, 1e6) };
+            if (i.poster && NAME.test(String(i.poster))) it.posterUrl = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.poster);
+            items.push(it);
+          }
+        }
+        return items.length ? window.CrundiWidgets.mediaNode(items, String((r && r.caption) || '').slice(0, 300)) : null;
       }
       const id = String((entry.input && entry.input.id) || '').toLowerCase();
       if (!id) return null;
@@ -6573,6 +6730,9 @@ export function getWebappHtml(botUsername) {
           sessionId: t.id, project: t.project,
           apiFetch: () => Promise.resolve(new Response('{}')),
           wsSend: () => {}, toast: () => {},
+          // What Claude showed in the chat is part of the conversation, so it
+          // is here too. Live panels are not: nothing is running behind this.
+          toolExtra: (entry) => (entry && /show_(image|video|audio|file|embed)$/.test(String(entry.name || '')) ? widgetToolExtra(t, entry) : null),
         });
         v.applyHistory({ status: 'parked', state: 'idle', messages: d.messages || [] });
         cellEl.style.setProperty('--cc-fs', String(cellFont(t.id, 'chat') / CHAT_FONT_BASE));
@@ -6580,15 +6740,45 @@ export function getWebappHtml(botUsername) {
       }
     }
 
-    async function resumePane(id, btn) {
-      if (btn) { btn.disabled = true; btn.lastChild.textContent = 'Resuming\u2026'; }
+    // Under Resume, the other ways back into a parked pane.
+    //
+    // A long conversation: the same warning the session chooser gives, with
+    // "Compact and resume" beside it. Resuming over stream-json loads the whole
+    // transcript into every turn, and the pane's one big button hid that.
+    // And, whenever there is a conversation to leave behind, "New session":
+    // the pane and its place in the layout, with a fresh conversation in it.
+    function parkedChoicesHtml(t) {
+      if (t.shellOnly || !t.hasSession) return '';   // Resume already starts fresh there
+      const isChat = t.paneKind === 'ui';
+      let h = '';
+      if (t.heavy) {
+        // The words the session chooser uses for the same choice (see
+        // renderHeavyChoice), so the warning reads the same wherever it is
+        // met. Two lengths of it: the pane picks by how tall it is.
+        const why = isChat ? 'continuing loads all of it into every turn. Compacting loads it once, then summarises it so later turns stay small.'
+          : 'continuing loads all of it into every turn.';
+        h += '<div class="pk-warn" title="' + escHtml(why) + '">' + ic('shield-alert') + '<span><b>' + escHtml((t.tokens / 1000).toFixed(1) + 'k tokens') + '</b>'
+          + '<span class="pk-warn-long"> \u2014 ' + escHtml(why) + '</span><span class="pk-warn-short">, a long conversation</span></span></div>';
+      }
+      h += '<div class="pk-more">';
+      if (isChat && t.heavy) h += '<button class="pk-alt" data-action="pane-resume" data-mode="compact" data-tid="' + t.id + '" data-label="Compact and resume">Compact and resume</button>';
+      h += '<button class="pk-alt' + (t.heavy ? '' : ' quiet') + '" data-action="pane-resume" data-mode="new" data-tid="' + t.id + '" data-label="New session" title="Start a fresh conversation in this pane. The old one stays, and can be resumed from the session list.">New session</button>';
+      return h + '</div>';
+    }
+    async function resumePane(id, btn, mode) {
+      const idleLabel = (btn && btn.dataset.label) || 'Resume';
+      const card = btn && btn.closest('.pk-card');
+      // One choice at a time: the others are dead until this one answers.
+      if (card) card.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      if (btn) { btn.disabled = true; btn.lastChild.textContent = mode === 'new' ? 'Starting\u2026' : mode === 'compact' ? 'Compacting\u2026' : 'Resuming\u2026'; }
       try {
-        const d = await (await apiFetch('/api/panes/' + id + '/resume', { method: 'POST' })).json();
+        const d = await (await apiFetch('/api/panes/' + id + '/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: mode || 'resume' }) })).json();
         if (!d.ok) throw new Error(d.error || 'Could not resume');
         // The state push swaps the parked pane for the live one in place.
       } catch (err) {
         toast(err.message, 'error');
-        if (btn && btn.isConnected) { btn.disabled = false; btn.lastChild.textContent = 'Resume'; }
+        if (card && card.isConnected) card.querySelectorAll('button').forEach(b => { b.disabled = false; });
+        if (btn && btn.isConnected) { btn.disabled = false; btn.lastChild.textContent = idleLabel; }
       }
     }
 
@@ -6606,8 +6796,44 @@ export function getWebappHtml(botUsername) {
         + '<button class="term-font-btn head-split" data-action="head-split" data-dir="col" title="Split down">' + sd + '</button>'
         + inner
         + '</span>'
+        // Where the buttons are folded away there is room for this one: the
+        // pane over the whole screen (see setPaneFull).
+        + '<button class="term-head-btn term-full" data-action="pane-full" title="Full screen" aria-label="Full screen">' + ic('maximize') + '</button>'
         + '<button class="term-head-btn term-more" data-action="head-more" title="More" aria-label="More" aria-haspopup="true">' + ic('more') + '</button>';
     }
+
+    // ─── One pane over the whole screen ───
+    // The pane is laid over everything with CSS, and the page (not the pane)
+    // is put in the browser's full screen. Full-screening the pane itself would
+    // hide every dialog, menu, message and enlarged picture, which live on the
+    // page beside it, and would end whenever the layout redrew.
+    const paneFull = { key: '', real: false };
+    function setPaneFull(cell, on) {
+      document.querySelectorAll('.term-cell.pane-full').forEach(c => c.classList.remove('pane-full'));
+      const d = document, root = d.documentElement;
+      if (on && cell) {
+        paneFull.key = cell.dataset.cellkey || '';
+        cell.classList.add('pane-full');
+        d.body.classList.add('has-pane-full');
+        if (!window.api && !(d.fullscreenElement || d.webkitFullscreenElement)) {
+          const req = root.requestFullscreen || root.webkitRequestFullscreen;
+          // An iPhone has no full screen for a page: the pane still covers the app.
+          if (req) { try { const p = req.call(root); paneFull.real = true; if (p && p.catch) p.catch(() => { paneFull.real = false; }); } catch { paneFull.real = false; } }
+        }
+      } else {
+        paneFull.key = '';
+        d.body.classList.remove('has-pane-full');
+        const fs = d.fullscreenElement || d.webkitFullscreenElement;
+        if (paneFull.real && fs === root) { try { (d.exitFullscreen || d.webkitExitFullscreen).call(d); } catch { /* already out */ } }
+        paneFull.real = false;
+      }
+      setTimeout(() => { try { fitAllTerms(); } catch { /* nothing to fit */ } }, 60);
+    }
+    // Leaving the browser's full screen another way (Escape, the system
+    // gesture) takes the pane back to its place too.
+    const onPaneFullEnd = () => { if (paneFull.key && paneFull.real && !(document.fullscreenElement || document.webkitFullscreenElement)) setPaneFull(null, false); };
+    document.addEventListener('fullscreenchange', onPaneFullEnd);
+    document.addEventListener('webkitfullscreenchange', onPaneFullEnd);
     function closeHeadMenus(except) {
       document.querySelectorAll('.term-head.tools-open').forEach(h => { if (h !== except) h.classList.remove('tools-open'); });
     }
@@ -7585,15 +7811,26 @@ export function getWebappHtml(botUsername) {
 
       // Refit on resize; if we cross the desktop/mobile breakpoint, re-render the
       // grid so it switches between the mosaic layout and the mobile flat stack.
+      // Not while something is full screen, though: a phone turned sideways
+      // under a full-screen video crosses the breakpoint, and rebuilding the
+      // grid moves the video's node, which throws the browser out of full
+      // screen (and undoes the turn). The check waits until full screen ends.
       let _wasMobile = isMobileTerm();
-      window.addEventListener('resize', () => {
+      const inFullScreen = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+      const onResized = () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
+          if (inFullScreen()) return;
           const m = isMobileTerm();
           if (m !== _wasMobile) { _wasMobile = m; if (currentProject && currentTab === 'workbench') renderTermGrid(); }
           fitAllTerms();
         }, 100);
-      });
+      };
+      window.addEventListener('resize', onResized);
+      // Leaving full screen: give the screen a moment to turn back first.
+      const onFullScreenEnd = () => { if (!inFullScreen()) { clearTimeout(resizeTimer); resizeTimer = setTimeout(onResized, 350); } };
+      document.addEventListener('fullscreenchange', onFullScreenEnd);
+      document.addEventListener('webkitfullscreenchange', onFullScreenEnd);
 
       // Mobile: when the on-screen keyboard opens it shrinks the visual viewport.
       // On Chromium the viewport meta's interactive-widget=resizes-content already
@@ -7814,11 +8051,24 @@ export function getWebappHtml(botUsername) {
     // HTML5 drag doesn't fire on touch, which is why this previously only worked
     // on PC.) Each row carries data-drag-ref / -kind / -abs.
     function dragRefHandlers(el) {
-      let target = null;
+      let target = null, first = null, moved = false, viaTouch = false;
+      el.addEventListener('touchstart', () => { viaTouch = true; }, { passive: true });
+      el.addEventListener('mousedown', () => { viaTouch = false; });
       return {
-        onMove: (x, y) => { target = wbDropTargetAt(x, y); document.body.classList.toggle('wb-drag-armed', !!target); },
+        onStart: () => { first = null; moved = false; },
+        onMove: (x, y) => {
+          if (!first) first = [x, y]; else if (Math.abs(x - first[0]) > 10 || Math.abs(y - first[1]) > 10) moved = true;
+          target = wbDropTargetAt(x, y); document.body.classList.toggle('wb-drag-armed', !!target);
+        },
         onEnd: (commit) => {
           document.body.classList.remove('wb-drag-armed');
+          // Press and hold on a file row, then let go without dragging: that
+          // is the phone's right-click. (Hold and drag still inserts the path.)
+          if (viaTouch && !moved && el.matches('.file-item[data-fpath]') && typeof openFileMenu === 'function') {
+            target = null;
+            if (!ctxMenuEl) openFileMenu(el, first ? first[0] : 20, first ? first[1] : 20);
+            return;
+          }
           if (commit && target) {
             let v = el.dataset.dragRef || '';
             if (el.dataset.dragAbs === '1') v = absProjectPath(v);
@@ -9138,7 +9388,7 @@ export function getWebappHtml(botUsername) {
         const res = await apiFetch('/api/files/list?project=' + encodeURIComponent(currentProject) + '&dir=' + encodeURIComponent(target));
         const data = await res.json();
         if (!data.ok) { $('#files-panel').innerHTML = '<div class="git-empty">' + escHtml(data.error || 'Failed') + '</div>'; return; }
-        filesState = { path: data.path, root: data.root, parent: data.parent, inside: data.inside, entries: data.entries || [], crumbs: data.crumbs || [] };
+        filesState = { path: data.path, root: data.root, parent: data.parent, inside: data.inside, entries: data.entries || [], crumbs: data.crumbs || [], localShell: data.localShell || null };
         filesSearchQuery = ''; filesSearchResults = null;
         renderFilesPanel();
       } catch (err) {
@@ -9205,36 +9455,29 @@ export function getWebappHtml(botUsername) {
       wireDragRefs(box); // pointer-drag rows onto a terminal/input (works on touch)
     }
 
-    const _fbtn = (action, p, title, icon, color) =>
-      '<button data-action="' + action + '" data-file="' + escHtml(p) + '" title="' + title + '" style="background:none;border:none;color:' + (color || 'var(--text-muted)') + ';cursor:pointer;padding:4px 6px;min-width:28px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;">' + ic(icon) + '</button>';
+    // A file or folder row. Its actions are in a menu, not a strip of buttons:
+    // right-click (press and hold on a phone), or the "more" button at the end
+    // of the row. A click selects it; a DOUBLE click opens it. It used to open
+    // on a click of its name, which is easy to do by accident on the way to
+    // dragging it or just pointing at it.
+    function fileRowHtml(e, isDir, nameHtml) {
+      return '<div class="file-item ' + (isDir ? 'dir' : 'file') + '" data-fpath="' + escHtml(e.path) + '" data-ftype="' + (isDir ? 'dir' : 'file') + '" data-fname="' + escHtml(e.name) + '"'
+        + ' data-drag-ref="' + escHtml(e.path) + '" data-drag-kind="' + (isDir ? 'folder' : 'file') + '" title="Double-click to open. Right-click for more. Drag onto a terminal to insert its path.">'
+        + '<span class="fi-icon">' + (isDir ? ic('folder') : fileIcon(e.name)) + '</span>'
+        + '<span class="fi-name">' + nameHtml + '</span>'
+        + (isDir ? '' : '<span class="fi-size">' + formatFileSize(e.size) + '</span>')
+        + '<button class="fi-more" data-file-menu="1" title="More" aria-label="More actions" aria-haspopup="menu">' + ic('more') + '</button>'
+        + '</div>';
+    }
 
     // Directory listing (entries carry absolute .path from the server).
     function fileListHtml(state) {
       let html = '<div class="files-list">';
       if (state.parent) {
-        html += '<div class="file-item dir" data-action="files-nav" data-dir="' + escHtml(state.parent) + '">'
+        html += '<div class="file-item dir" data-fpath="' + escHtml(state.parent) + '" data-ftype="dir" data-fup="1" title="Double-click to go up">'
           + '<span class="fi-icon">' + ic('arrow-up') + '</span><span class="fi-name">..</span></div>';
       }
-      for (const e of state.entries) {
-        if (e.type === 'dir') {
-          html += '<div class="file-item dir" data-drag-ref="' + escHtml(e.path) + '" data-drag-kind="folder" title="Drag onto a terminal to insert its path">'
-            + '<span class="fi-icon" data-action="files-nav" data-dir="' + escHtml(e.path) + '" style="cursor:pointer;">' + ic('folder') + '</span>'
-            + '<span class="fi-name" data-action="files-nav" data-dir="' + escHtml(e.path) + '" style="cursor:pointer;flex:1;">' + escHtml(e.name) + '</span>'
-            + _fbtn('files-copy-path', e.path, 'Copy path', 'copy')
-            + _fbtn('files-delete', e.path, 'Delete', 'trash', 'var(--red)')
-            + '</div>';
-        } else {
-          html += '<div class="file-item file" data-drag-ref="' + escHtml(e.path) + '" data-drag-kind="file" title="Drag onto a terminal to insert its path">'
-            + '<span class="fi-icon">' + fileIcon(e.name) + '</span>'
-            + '<span class="fi-name" data-action="files-open" data-file="' + escHtml(e.path) + '" style="cursor:pointer;flex:1;">' + escHtml(e.name) + '</span>'
-            + '<span class="fi-size">' + formatFileSize(e.size) + '</span>'
-            + (feIsSourcePreview(e.name) ? _fbtn('files-edit', e.path, 'Edit the source', 'pencil') : '')
-            + _fbtn('files-copy-path', e.path, 'Copy path', 'copy')
-            + _fbtn('files-download', e.path, 'Download', 'download')
-            + _fbtn('files-delete', e.path, 'Delete', 'trash', 'var(--red)')
-            + '</div>';
-        }
-      }
+      for (const e of state.entries) html += fileRowHtml(e, e.type === 'dir', escHtml(e.name));
       html += '</div>';
       return html;
     }
@@ -9248,22 +9491,303 @@ export function getWebappHtml(botUsername) {
         : '<div class="git-empty">No matches' + (r.gitignoreApplied ? ' (gitignored files are excluded)' : '') + '</div>';
       let html = note + '<div class="files-list">';
       for (const e of r.entries) {
-        const isDir = e.type === 'dir';
         const dir = e.rel.includes('/') ? e.rel.slice(0, e.rel.lastIndexOf('/') + 1) : '';
-        const nameCell = '<span class="fi-name" style="flex:1;cursor:pointer;" data-action="' + (isDir ? 'files-nav" data-dir="' : 'files-open" data-file="') + escHtml(e.path) + '">'
-          + (dir ? '<span class="fi-dir">' + escHtml(dir) + '</span>' : '') + escHtml(e.name) + '</span>';
-        html += '<div class="file-item ' + (isDir ? 'dir' : 'file') + '" data-drag-ref="' + escHtml(e.path) + '" data-drag-kind="' + (isDir ? 'folder' : 'file') + '" title="Drag onto a terminal to insert its path">'
-          + '<span class="fi-icon">' + (isDir ? ic('folder') : fileIcon(e.name)) + '</span>'
-          + nameCell
-          + (!isDir && feIsSourcePreview(e.name) ? _fbtn('files-edit', e.path, 'Edit the source', 'pencil') : '')
-          + _fbtn('files-copy-path', e.path, 'Copy path', 'copy')
-          + (isDir ? '' : _fbtn('files-download', e.path, 'Download', 'download'))
-          + _fbtn('files-delete', e.path, 'Delete', 'trash', 'var(--red)')
-          + '</div>';
+        html += fileRowHtml(e, e.type === 'dir', (dir ? '<span class="fi-dir">' + escHtml(dir) + '</span>' : '') + escHtml(e.name));
       }
       html += '</div>';
       return html;
     }
+
+    // ─── Downloads that stay in the app ───
+    //
+    // A download used to be a link opened in a new tab. In an installed app
+    // (and on a phone generally) that throws you out to the browser's own
+    // download screen, away from what you were doing. So the file is fetched
+    // here, with its progress shown here, and handed to the browser only at
+    // the end, as a save of bytes it already has: no new tab, no navigation.
+    //
+    // The whole file is held in memory to do that, so past a size it is not
+    // worth the risk on a phone and the old way is used.
+    const DL_INAPP_MAX = 600 * 1024 * 1024;
+    let dlTray = null;
+    function dlTrayEl() {
+      if (!dlTray) { dlTray = document.createElement('div'); dlTray.className = 'dl-tray'; dlTray.setAttribute('aria-live', 'polite'); document.body.appendChild(dlTray); }
+      return dlTray;
+    }
+    function fmtDlSize(n) { const v = Number(n) || 0; return v >= 1048576 ? (v / 1048576).toFixed(1) + ' MB' : v >= 1024 ? Math.round(v / 1024) + ' KB' : v + ' B'; }
+    /** @param {{url:string, name:string, size?:number}} o  url is an /api path; the sign-in header is added here. */
+    async function crundiDownload(o) {
+      const name = String(o.name || 'download');
+      if (Number(o.size) > DL_INAPP_MAX) {
+        // Too big to hold in memory: let the browser stream it to disk itself.
+        const a = document.createElement('a');
+        a.href = o.url + (o.url.indexOf('?') < 0 ? '?' : '&') + 'token=' + encodeURIComponent(token || '');
+        a.download = name; a.rel = 'noopener';
+        document.body.appendChild(a); a.click(); a.remove();
+        toast('Downloading ' + name + ' in the browser (too large to do in the app)');
+        return;
+      }
+      const row = document.createElement('div');
+      row.className = 'dl-row';
+      row.innerHTML = '<span class="dl-ic">' + ic('download') + '</span><span class="dl-meta"><span class="dl-name"></span><span class="dl-sub">Starting…</span><span class="dl-bar"><span></span></span></span><button class="dl-x" title="Cancel" aria-label="Cancel">×</button>';
+      row.querySelector('.dl-name').textContent = name;
+      const sub = row.querySelector('.dl-sub'), bar = row.querySelector('.dl-bar > span'), x = row.querySelector('.dl-x');
+      dlTrayEl().appendChild(row);
+      const ctl = new AbortController();
+      let finished = false;
+      const leave = (ms) => setTimeout(() => { row.classList.add('out'); setTimeout(() => row.remove(), 220); }, ms);
+      x.addEventListener('click', () => { if (finished) { row.remove(); return; } ctl.abort(); });
+      try {
+        const res = await apiFetch(o.url, { signal: ctl.signal });
+        if (!res.ok) {
+          let msg = 'Download failed (' + res.status + ')';
+          try { const j = await res.json(); if (j && j.error) msg = j.error; } catch { /* not JSON */ }
+          throw new Error(msg);
+        }
+        const total = Number(res.headers.get('Content-Length')) || Number(o.size) || 0;
+        const chunks = []; let got = 0, lastPaint = 0;
+        if (res.body && res.body.getReader) {
+          const reader = res.body.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value); got += value.length;
+            const now = Date.now();
+            if (now - lastPaint > 120) {
+              lastPaint = now;
+              sub.textContent = total ? fmtDlSize(got) + ' of ' + fmtDlSize(total) : fmtDlSize(got);
+              if (total) bar.style.width = Math.min(100, (got / total) * 100).toFixed(1) + '%';
+            }
+          }
+        } else { const b = await res.blob(); chunks.push(b); got = b.size; }
+        const blob = new Blob(chunks, { type: 'application/octet-stream' });
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = href; a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 60000);
+        finished = true;
+        bar.style.width = '100%';
+        row.classList.add('done');
+        sub.textContent = 'Saved · ' + fmtDlSize(got);
+        leave(4500);
+      } catch (err) {
+        finished = true;
+        row.classList.add('failed');
+        sub.textContent = err && err.name === 'AbortError' ? 'Cancelled' : ((err && err.message) || 'Download failed');
+        leave(err && err.name === 'AbortError' ? 1200 : 7000);
+      }
+    }
+    window.crundiDownload = crundiDownload;
+
+    // ─── Context menu (used by file rows) ───
+    let ctxMenuEl = null;
+    function closeCtxMenu() { if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; } }
+    /** items: [{ label, icon, run, danger }] or '-' for a divider. */
+    function openCtxMenu(x, y, items) {
+      closeCtxMenu();
+      const m = document.createElement('div');
+      m.className = 'ctx-menu';
+      m.setAttribute('role', 'menu');
+      for (const it of items) {
+        if (it === '-') { const hr = document.createElement('div'); hr.className = 'ctx-sep'; m.appendChild(hr); continue; }
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ctx-item' + (it.danger ? ' danger' : '');
+        b.setAttribute('role', 'menuitem');
+        b.innerHTML = '<span class="ctx-ic">' + (it.icon ? ic(it.icon) : '') + '</span><span></span>';
+        b.lastChild.textContent = it.label;
+        b.addEventListener('click', (e) => { e.stopPropagation(); closeCtxMenu(); try { it.run(); } catch (err) { toast(err.message, 'error'); } });
+        m.appendChild(b);
+      }
+      document.body.appendChild(m);
+      // Kept on screen whichever corner it was asked for in.
+      const r = m.getBoundingClientRect();
+      const vw = window.innerWidth, vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+      m.style.left = Math.max(6, Math.min(x, vw - r.width - 6)) + 'px';
+      m.style.top = Math.max(6, Math.min(y, vh - r.height - 6)) + 'px';
+      ctxMenuEl = m;
+    }
+    document.addEventListener('pointerdown', (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target)) closeCtxMenu(); }, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtxMenu(); });
+    window.addEventListener('blur', closeCtxMenu);
+    window.addEventListener('resize', closeCtxMenu);
+    document.addEventListener('scroll', closeCtxMenu, true);
+
+    // ─── The back button (a phone's, or the browser's) ───
+    // Back closes what is open on top (an enlarged picture, a file being
+    // viewed, a menu, the project list) instead of leaving the page. In the
+    // installed app, back with nothing open asks for a second press rather
+    // than closing Crundi under your thumb.
+    // How: one spare history entry is kept in front of the page. Back lands on
+    // the entry behind it, we do the closing, and put the spare one back.
+    // It is added on the first touch or key, not at load: Chrome skips
+    // entries a page added before anyone had interacted with it.
+    const backState = { armed: false, exitAt: 0, leaving: false };
+    function backIsInstalled() {
+      return (window.matchMedia && (window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches || window.matchMedia('(display-mode: minimal-ui)').matches))
+        || window.navigator.standalone === true;
+    }
+    function backArm() {
+      if (backState.armed || backState.leaving || window.api) return;   // the desktop app has no back button
+      try { history.pushState({ crundiBack: 1 }, ''); backState.armed = true; } catch { /* history is not ours to touch here */ }
+    }
+    /** Close the topmost thing that is open. True if something was. */
+    function backCloseTop() {
+      const zoom = document.querySelector('.wg-zoom');
+      if (zoom) { if (zoom._close) zoom._close(); else zoom.remove(); return true; }
+      if (ctxMenuEl) { closeCtxMenu(); return true; }
+      const lb = document.getElementById('media-lightbox');
+      if (lb && lb.classList.contains('visible')) { closeMediaLightbox(); return true; }
+      const fs = document.fullscreenElement || document.webkitFullscreenElement;
+      if (fs && fs !== document.documentElement) { if (fs._wgLeaveFull) fs._wgLeaveFull(); else { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch { /* already out */ } } return true; }
+      if (feWins().length) { feClose(); return true; }
+      if (paneFull.key) { setPaneFull(null, false); return true; }
+      const sb = document.getElementById('sidebar');
+      if (sb && sb.classList.contains('open')) { closeSidebar(); return true; }
+      return false;
+    }
+    window.addEventListener('popstate', () => {
+      if (!backState.armed || backState.leaving) return;
+      backState.armed = false;
+      if (backCloseTop()) { backArm(); return; }
+      if (backIsInstalled()) {
+        const now = Date.now();
+        if (now - backState.exitAt > 2500) {
+          backState.exitAt = now;
+          toast('Press back again to close Crundi');
+          backArm();
+          return;
+        }
+      }
+      // Really leaving: the entry behind ours is the one to go back from.
+      backState.leaving = true;
+      history.back();
+    });
+    document.addEventListener('pointerdown', backArm, true);
+    document.addEventListener('keydown', backArm, true);
+
+    function fileRowOpen(row) {
+      if (!row) return;
+      if (row.dataset.ftype === 'dir') loadFiles(row.dataset.fpath);
+      else feOpen(currentProject, row.dataset.fpath);
+    }
+    async function filesShell(act, p) {
+      try {
+        const d = await (await apiFetch('/api/files/shell', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: currentProject, file: p, act }) })).json();
+        if (!d.ok) toast(d.error || 'Could not do that', 'error');
+      } catch (err) { toast(err.message, 'error'); }
+    }
+    function openFileMenu(row, x, y) {
+      if (!row || row.dataset.fup) return;
+      const p = row.dataset.fpath, isDir = row.dataset.ftype === 'dir', name = row.dataset.fname || '';
+      document.querySelectorAll('.file-item.sel').forEach(n => n.classList.remove('sel'));
+      row.classList.add('sel');
+      const items = [{ label: 'Open', icon: isDir ? 'folder' : 'file', run: () => fileRowOpen(row) }];
+      if (!isDir && feIsSourcePreview(name)) items.push({ label: 'Edit the source', icon: 'pencil', run: () => feOpen(currentProject, p, { asSource: true }) });
+      // Only where this page is on the machine Crundi runs on (server decides).
+      const sh = filesState.localShell;
+      if (sh) {
+        items.push('-');
+        if (!isDir) items.push({ label: 'Open externally', icon: 'external-link', run: () => filesShell('open', p) });
+        items.push({ label: isDir ? 'Open in ' + sh.fileManager : 'Reveal in ' + sh.fileManager, icon: 'folder', run: () => filesShell(isDir ? 'open' : 'reveal', p) });
+      }
+      items.push('-');
+      items.push({ label: 'Copy path', icon: 'copy', run: () => filesCopyPath(p) });
+      if (!isDir) items.push({ label: 'Download', icon: 'download', run: () => filesDownload(p) });
+      items.push('-');
+      items.push({ label: 'Delete', icon: 'trash', danger: true, run: () => filesDelete(p) });
+      openCtxMenu(x, y, items);
+    }
+    // One set of listeners for every file row, in the tab and in a workbench pane.
+    document.addEventListener('click', (e) => {
+      const row = e.target.closest && e.target.closest('.file-item[data-fpath]');
+      if (!row) return;
+      if (e.target.closest('[data-file-menu]')) {
+        e.stopPropagation();
+        const r = e.target.closest('[data-file-menu]').getBoundingClientRect();
+        openFileMenu(row, r.right - 4, r.bottom + 2);
+        return;
+      }
+      document.querySelectorAll('.file-item.sel').forEach(n => { if (n !== row) n.classList.remove('sel'); });
+      row.classList.add('sel');
+      // A finger has no double click: one tap opens, as it always did there.
+      // (pointerType is on the click event in every current browser.)
+      // Where the click does not say what made it, a device with no hover is a touch one.
+      const byTouch = e.pointerType ? (e.pointerType === 'touch' || e.pointerType === 'pen') : (window.matchMedia && window.matchMedia('(hover: none)').matches);
+      if (byTouch) fileRowOpen(row);
+    });
+    document.addEventListener('dblclick', (e) => {
+      const row = e.target.closest && e.target.closest('.file-item[data-fpath]');
+      if (!row || e.target.closest('[data-file-menu]')) return;
+      e.preventDefault();
+      fileRowOpen(row);
+    });
+    document.addEventListener('contextmenu', (e) => {
+      const row = e.target.closest && e.target.closest('.file-item[data-fpath]');
+      if (!row || row.dataset.fup) return;
+      e.preventDefault();
+      if (ctxMenuEl) return;   // a press-and-hold already opened it
+      openFileMenu(row, e.clientX, e.clientY);
+    });
+
+    // Links anywhere in the app: a chat reply, a note, a kanban card.
+    //   Mouse: right-click gives Open / Copy link (the desktop app had no menu
+    //          at all, so a link could not be copied).
+    //   Touch: a TAP gives that same menu instead of leaving straight away, and
+    //          press-and-hold is left alone, because holding is how text is
+    //          selected on a touch screen and a menu there would fight it.
+    // Only real web links are touched; in-app anchors behave as before.
+    function copyText(text, done) {
+      const ok = () => toast(done || 'Copied');
+      const fallback = () => {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); ok(); } catch { toast('Could not copy', 'error'); }
+        ta.remove();
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, fallback);
+      else fallback();
+    }
+    let lastPointerType = '';
+    document.addEventListener('pointerdown', (e) => { lastPointerType = e.pointerType || ''; }, true);
+    function isTouchEvent(e) {
+      const t = e.pointerType || lastPointerType;
+      if (t) return t === 'touch' || t === 'pen';
+      return !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
+    }
+    function webLinkOf(e) {
+      const a = e.target.closest && e.target.closest('a[href]');
+      if (!a || a.hasAttribute('download') || e.target.closest('.file-item') || e.target.closest('.ctx-menu')) return null;
+      const raw = a.getAttribute('href') || '';
+      if (raw.indexOf('http://') !== 0 && raw.indexOf('https://') !== 0) return null;
+      return a;
+    }
+    function openLinkMenu(a, x, y) {
+      const href = a.href;
+      // In the desktop app a new window IS the system browser (see main.js);
+      // in a browser it is a new tab.
+      const outside = window.api ? 'Open in browser' : 'Open in new tab';
+      openCtxMenu(x, y, [
+        { label: outside, icon: 'external-link', run: () => window.open(href, '_blank', 'noopener,noreferrer') },
+        { label: 'Copy link', icon: 'copy', run: () => copyText(href, 'Link copied') },
+      ]);
+    }
+    document.addEventListener('contextmenu', (e) => {
+      const a = webLinkOf(e);
+      if (!a || isTouchEvent(e)) return;   // a held finger keeps the system's own behaviour
+      e.preventDefault();
+      openLinkMenu(a, e.clientX, e.clientY);
+    });
+    document.addEventListener('click', (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const a = webLinkOf(e);
+      if (!a || !isTouchEvent(e)) return;
+      e.preventDefault();
+      const r = a.getBoundingClientRect();
+      openLinkMenu(a, e.clientX || r.left, (e.clientY || r.bottom) + 10);
+    }, true);
 
     function filesUpload() {
       const input = document.createElement('input');
@@ -9293,34 +9817,12 @@ export function getWebappHtml(botUsername) {
     }
 
     function filesDownload(relPath) {
-      apiFetch('/api/files/download-link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project: currentProject, file: relPath }),
-      }).then(r => r.json()).then(data => {
-        if (!data.ok) { toast(data.error || 'Failed', 'error'); return; }
-        const dlUrl = location.origin + data.url;
-        // Try opening in new window
-        window.open(dlUrl, '_blank');
-        // Also copy link to clipboard as fallback
-        navigator.clipboard.writeText(dlUrl).then(
-          () => toast('Download link copied to clipboard'),
-          () => toast('Download started')
-        );
-      }).catch(e => toast('Download failed: ' + e.message, 'error'));
+      // The last part of the path, whichever way its slashes lean. (No regex
+      // here on purpose: a backslash in one does not survive this template.)
+      const name = String(relPath || '').split('/').pop().split(String.fromCharCode(92)).pop() || 'download';
+      crundiDownload({ url: '/api/files/download?project=' + encodeURIComponent(currentProject) + '&file=' + encodeURIComponent(relPath), name, size: 0 });
     }
 
-    // Build the absolute on-disk path for a project-relative path, matching the
-    // project's OS path separator.
-    function absProjectPath(relPath) {
-      const project = projects.find(p => p.alias === currentProject);
-      if (!project) return relPath;
-      const isWin = project.path.includes('\\\\');
-      const sep = isWin ? '\\\\' : '/';
-      const normRel = isWin ? relPath.replace(/\\//g, '\\\\') : relPath;
-      const base = project.path.endsWith(sep) ? project.path.slice(0, -1) : project.path;
-      return base + sep + normRel;
-    }
     function filesCopyPath(p) {
       // Files-panel rows carry absolute paths already; only resolve if relative.
       const abs = /^([a-zA-Z]:[\\\\/]|[\\\\/])/.test(p) ? p : absProjectPath(p);
@@ -12943,8 +13445,14 @@ export function getWebappHtml(botUsername) {
         case 'wb-fit': { hideWbAddMenu(); mosaicFitToScreen(); break; }
         case 'notes-font': { setNotesFont(parseInt(d.dir, 10) || 0); break; }
         case 'notes-switch': { if (d.wbid) notesSwitchPage(d.wbid); break; }
-        case 'pane-resume': { if (d.tid) resumePane(d.tid, actionEl); break; }
+        case 'pane-resume': { if (d.tid) resumePane(d.tid, actionEl, d.mode || 'resume'); break; }
         case 'pane-pin': { if (actionEl) togglePanePin(actionEl); break; }
+        case 'pane-full': {
+          e.stopPropagation();
+          const cell = actionEl && actionEl.closest('.term-cell');
+          if (cell) { closeHeadMenus(null); setPaneFull(cell, !cell.classList.contains('pane-full')); }
+          break;
+        }
         case 'head-more': {
           e.stopPropagation();
           const head = actionEl && actionEl.closest('.term-head');

@@ -49,7 +49,7 @@ import * as schedule from './schedule-store.js';
 import * as usage from './usage.js';
 import { getOldAppDataDir, isFreshInstall, envPath } from './config.js';
 import { ensureGitignore } from './claude-terminals.js';
-import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS, readTranscriptHistory, resolveClaudeBin } from './claude-ui.js';
+import { listResumable, latestTranscript, isHeavyResume, HEAVY_TOKENS, HEAVY_AGE_HOURS, readTranscriptHistory, resolveClaudeBin, transcriptWeight } from './claude-ui.js';
 import { createPanes, MIN_TIMEOUT_MIN, DEFAULT_TIMEOUT_MIN } from './panes.js';
 import { createLimitWarmer } from './limit-warmer.js';
 import { createLimitResetNotifier } from './limit-reset-notify.js';
@@ -69,7 +69,8 @@ import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
 import { cleanAutoTitle, cleanLongTitle } from './chat-title.js';
 import { createAutoTitler } from './chat-autotitle.js';
-import * as chatImages from './chat-images.js';
+import * as chatMedia from './chat-media.js';
+import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -873,6 +874,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     dataDir: config.dataDir, claudeTerminals, claudeUi, readTranscriptHistory,
     getProject: (a) => getProjectUnscoped(a),
     timeoutMinutes: () => autoParkMinutes,
+    // Heavy by size alone. A parked chat is old by definition; its age says
+    // nothing about what resuming it costs.
+    sessionWeight: (cwd, sid) => { const w = transcriptWeight(cwd, sid); return w ? { tokens: w.tokens, heavy: w.tokens >= HEAVY_TOKENS } : null; },
     // Per project, and by what the person is DOING, not only by a focused
     // window (see projectSeenAt). A page that predates this reports neither a
     // project nor activity, and counts for every project, as before.
@@ -1480,7 +1484,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     };
   }
 
-  try { chatImages.sweep(); } catch { /* housekeeping only */ }
+  try { chatMedia.sweep(); } catch { /* housekeeping only */ }
 
   // ─── Chat titles (see chat-autotitle.js) ───
   const autoTitler = createAutoTitler({
@@ -2418,13 +2422,46 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }, 403);
     }
 
-    // ─── Images Claude showed in a chat (see chat-images.js) ───
-    if (path === '/api/chat-images' && req.method === 'GET') {
+    // ─── Media Claude showed in a chat (see chat-media.js) ───
+    // Pictures, video, audio and their poster frames. Byte ranges are honoured:
+    // a <video> seeks by asking for the part it needs, and without them it can
+    // only play from the start. (/api/chat-images is the 1.19.19 name.)
+    if ((path === '/api/chat-media' || path === '/api/chat-images') && req.method === 'GET') {
       if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
-      const img = chatImages.readImage(url.searchParams.get('session'), url.searchParams.get('name'));
-      if (!img) return json(res, { ok: false, error: 'Not found' }, 404);
-      res.writeHead(200, { 'Content-Type': img.mime, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
-      return res.end(img.buffer);
+      const m = chatMedia.locate(url.searchParams.get('session'), url.searchParams.get('name'));
+      if (!m) return json(res, { ok: false, error: 'Not found' }, 404);
+      const base = {
+        'Content-Type': m.mime, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=86400',
+        'X-Content-Type-Options': 'nosniff',
+      };
+      const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ''));
+      if (range && (range[1] || range[2])) {
+        let start = range[1] ? parseInt(range[1], 10) : Math.max(0, m.size - parseInt(range[2], 10));
+        let end = range[1] && range[2] ? parseInt(range[2], 10) : m.size - 1;
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= m.size) {
+          res.writeHead(416, { 'Content-Range': `bytes */${m.size}` }); return res.end();
+        }
+        end = Math.min(end, m.size - 1);
+        res.writeHead(206, { ...base, 'Content-Range': `bytes ${start}-${end}/${m.size}`, 'Content-Length': end - start + 1 });
+        return createReadStream(m.file, { start, end }).on('error', () => res.destroy()).pipe(res);
+      }
+      res.writeHead(200, { ...base, 'Content-Length': m.size });
+      return createReadStream(m.file).on('error', () => res.destroy()).pipe(res);
+    }
+
+    // A file offered with show_file: the file as it is now, as a download.
+    if (path === '/api/chat-media/file' && req.method === 'GET') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
+      const f = chatMedia.locateFile(url.searchParams.get('session'), url.searchParams.get('id'));
+      if (!f) return json(res, { ok: false, error: 'Not found' }, 404);
+      if (f.gone) return json(res, { ok: false, error: `${f.name} is no longer where it was.`, gone: true }, 410);
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream', 'Content-Length': f.size,
+        // RFC 5987, so a name with spaces, quotes or non-Latin letters survives.
+        'Content-Disposition': `attachment; filename="${f.name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(f.name)}`,
+        'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
+      });
+      return createReadStream(f.file).on('error', () => res.destroy()).pipe(res);
     }
 
     // ─── Widgets ───
@@ -3199,7 +3236,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const pid = paneMatch[1], act = paneMatch[2];
       if (act === 'preview' && req.method === 'GET') return json(res, panes.preview(pid));
       if (req.method !== 'POST') return json(res, { ok: false, error: 'Method not allowed' }, 405);
-      if (act === 'resume') { const r = await panes.resume(pid); broadcastState(); return json(res, r); }
+      if (act === 'resume') {
+        let how = {};
+        try { how = JSON.parse(await readBody(req) || '{}') || {}; } catch { how = {}; }
+        const r = await panes.resume(pid, { mode: how.mode });
+        broadcastState();
+        return json(res, r);
+      }
       if (act === 'park') { const r = panes.park(pid, 'manual'); broadcastState(); return json(res, r); }
       if (act === 'discard') { panes.forget(pid); broadcastState(); return json(res, { ok: true }); }
     }
@@ -4345,6 +4388,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           ok: true, entries, crumbs, path: fullPath, root: project.path,
           parent: parent === fullPath ? null : parent,
           inside: isInsideRoot(principal, project, fullPath),
+          // Whether "Reveal" and "Open externally" mean anything for this
+          // page: only when it is on the machine this server runs on.
+          localShell: !isConfined(principal) && isLocalDesktopRequest(req) ? { fileManager: fileManagerName() } : null,
         });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
@@ -4486,6 +4532,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         writeFileSync(filePath, buf);
         return json(res, { ok: true, size: buf.length });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    // Reveal a file in the machine's file manager, or open it with its default
+    // program. Only for the owner, and only when the page is on the same
+    // machine as this server (see local-shell.js): anywhere else the window
+    // would open where nobody can see it.
+    if (path === '/api/files/shell' && req.method === 'POST') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available' }, 403);
+      if (!isLocalDesktopRequest(req)) return json(res, { ok: false, error: 'Only available when Crundi runs on the computer you are using.' }, 403);
+      const body = JSON.parse(await readBody(req));
+      const project = getProject(body.project);
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      const fullPath = resolveFsPath(project, body.file || '', principal);
+      if (!existsSync(fullPath)) return json(res, { ok: false, error: 'Not found' }, 404);
+      const act = body.act === 'open' ? 'open' : 'reveal';
+      let isDir = false; try { isDir = statSync(fullPath).isDirectory(); } catch { /* treated as a file */ }
+      return json(res, await runShell(act, fullPath, { isDir }));
     }
 
     if (path === '/api/files/delete' && req.method === 'POST') {
@@ -4886,25 +4949,54 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         }
       }
 
-      // ─── show_image: pictures drawn in the chat, under the call ───
+      // ─── show_image / show_video / show_audio / show_file: drawn in the chat ───
       // Owner chats only. The files are read as the Crundi user, which is why a
-      // collaborator's sandboxed Claude is not offered this: it would be a way
-      // to look at any image on the machine.
-      if (body.tool === 'show_image') {
+      // collaborator's sandboxed Claude is not offered these: they would be a
+      // way to look at, or take, any file on the machine.
+      if (['show_image', 'show_video', 'show_audio', 'show_file'].includes(body.tool)) {
+        const kind = body.tool.slice(5);
         const sid = String(a.sessionId || '');
         if (!sid || !claudeUi || !claudeUi.has(sid)) {
-          return json(res, { ok: false, error: 'show_image only works in a Crundi chat (UI mode). Use send_photo_to_user to reach the person on Telegram.' });
+          const instead = kind === 'image' ? 'send_photo_to_user' : 'send_file_to_user';
+          return json(res, { ok: false, error: `${body.tool} only works in a Crundi chat (UI mode). Use ${instead} to reach the person on Telegram.` });
         }
         const items = [];
         if (a.path) items.push({ path: String(a.path), caption: a.caption });
         for (const p of (Array.isArray(a.paths) ? a.paths : [])) items.push(typeof p === 'string' ? { path: p } : { path: String((p && p.path) || ''), caption: p && p.caption });
-        const r = chatImages.addImages(sid, items);
+        let r;
+        try { r = chatMedia.addMedia(sid, kind, items); }
+        catch (err) { r = { ok: false, error: err.message }; }
         if (!r.ok) return json(res, r);
+        const NOTE = {
+          image: 'Shown to the person in this chat, under this call. They can tap one to enlarge it. Do not describe it at length; say what to look at.',
+          video: 'Shown to the person in this chat as a player, under this call. Say what to watch for; do not narrate it.',
+          audio: 'Shown to the person in this chat as a player, under this call.',
+          file: 'Offered to the person in this chat as a download, under this call. It downloads the file as it is when they take it, so do not delete or overwrite it. Say what it is in a line.',
+        };
         return json(res, {
-          ok: true, shown: r.images.length, images: r.images.map(i => ({ name: i.name, caption: i.caption || undefined })),
+          ok: true, shown: r.items.length, items: r.items,
           ...(a.caption && items.length > 1 ? { caption: String(a.caption).slice(0, 300) } : {}),
-          note: 'Shown to the person in this chat, under this call. They can tap one to enlarge it. Do not describe them at length; say what to look at.',
+          note: NOTE[kind],
         });
+      }
+
+      // ─── show_embed: a web address or Claude's own HTML, framed in the chat ───
+      // Nothing is read from disk, so there is no file to leak; what it frames
+      // runs in a sandboxed frame that cannot reach the page around it.
+      if (body.tool === 'show_embed') {
+        const sid = String(a.sessionId || '');
+        if (!sid || !claudeUi || !claudeUi.has(sid)) return json(res, { ok: false, error: 'show_embed only works in a Crundi chat (UI mode). Send the link as text instead.' });
+        let r;
+        try { r = chatMedia.addEmbed(sid, { url: a.url, html: a.html, title: a.title, caption: a.caption, height: a.height }); }
+        catch (err) { r = { ok: false, error: err.message }; }
+        if (!r.ok) return json(res, r);
+        const it = r.items[0];
+        const note = it.name && !it.url
+          ? 'Shown to the person in this chat, in a sandboxed frame under this call. It runs by itself: it cannot read files or call Crundi. Say what it is in a line.'
+          : it.known
+            ? `Embedded from ${it.provider} in this chat, under this call. Some posts and videos cannot be embedded (private, age-restricted, or the owner turned it off); the person has an Open link either way.`
+            : 'Framed in this chat, under this call. This site is not one Crundi knows how to embed, and many sites refuse to be framed: if it shows blank, the person still has an Open link. Do not claim it is visible.';
+        return json(res, { ok: true, shown: 1, items: r.items, note });
       }
 
       // ─── rename_chat: Claude names the chat or terminal it is running in ───

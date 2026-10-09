@@ -79,20 +79,63 @@ nobody is watching the transcript. Use them for anything worth knowing before th
 user next looks — a long job finishing, a blocker, a result they asked to be told
 about. Do not narrate routine progress into them.
 
-### Showing a picture in the chat
+### Showing things in the chat
 
-`show_image` draws one or more images in the conversation, under the call. It exists
-because a chat's transcript is text: a screenshot you take with `browser_screenshot`
-or `capture_window` is something only you saw, and the person sees the word
-"[image]". If they should see it, write it to a file and `show_image` it.
+A chat's transcript is text. Four tools put something else in it, drawn under the
+call, and they are how anything that is not text reaches the person:
 
-Use it when a picture answers better than words: the page you just changed, a
-before and after (pass both in `paths`), a chart or diagram you generated, an image
-you were asked to find. Give a short `caption` saying what to look at, and do not
-then describe the picture at length in your reply.
+| Tool | Shows | Takes |
+|---|---|---|
+| `show_image` | pictures, tap to enlarge | PNG, JPEG, GIF, WebP; 10 MB each |
+| `show_video` | a player with a poster frame | MP4, MOV, WebM; 250 MB each |
+| `show_audio` | a player | MP3, WAV, OGG, M4A, FLAC, WebM; 60 MB each |
+| `show_file` | a download card: icon, name, size, button | any file |
+| `show_embed` | a live frame: a site's embed, or your own HTML | `url` (https) or `html`; see below |
 
-It is there only in chat (UI) mode. In a terminal session, or to reach someone who
-is not looking at the chat, use `send_photo_to_user`.
+Each takes `path` (one) or `paths` (up to 8, strings or `{path, caption}`) and an
+optional `caption`.
+
+Two things to hold on to:
+
+- **What you saw, they did not.** A `browser_screenshot`, a `capture_window`, a
+  `widget_render` are images only you received; the person sees the word
+  "[image]". If they should see it, write it to a file and `show_image` it. The
+  same goes for a path in your reply: that is a string, not a file in their hands.
+- **In the chat, show; do not send.** `send_photo_to_user`, `send_file_to_user` and
+  `send_message_to_user` go to Telegram. They are for someone who is NOT looking at
+  the chat (a long job finishing, a blocker) or who asked for it there. When the
+  person is talking to you in the chat, use the `show_*` tools: the result is
+  where they are already looking.
+
+Use them when it answers better than words: the page you just changed, a before
+and after (both in `paths`), a chart, a rendered clip, a generated voice-over, an
+export to take away. Give a short `caption` saying what to look at, and do not
+then describe it at length.
+
+Pictures, video and audio are copied when you call, so a file in `/tmp` or a
+render folder is fine. A file offered with `show_file` is not copied: it is
+downloaded as it is when they press the button, so leave it where it is.
+
+`show_embed` is different: it takes `url` or `html` (not a path), plus optional
+`title`, `caption` and `height`.
+
+- **`url`**: paste the ordinary https link. YouTube (videos, shorts, playlists),
+  Vimeo, Dailymotion, Loom, X/Twitter posts, Instagram posts and reels, TikTok,
+  Facebook, Reddit, Spotify, SoundCloud, CodePen, GitHub gists and Google Maps
+  embed links become their proper embeds. Any other https page is framed as it
+  is, which works only if the site allows framing; many do not, so do not say
+  it is visible. The person always gets an Open link.
+- **`html`**: your own HTML with `<style>` and `<script>`: a working demo, an
+  animation, a chart, an interactive example. A fragment is enough. It may load
+  libraries from a CDN. It is sandboxed: no files, no Crundi API, nothing of the
+  page around it, so put the data it needs inside it. Set `height` so it fits.
+
+Use `show_embed` for a one-off thing to look at or play with. Build a panel
+(`widget_*`) when it should stay open, update live, or read data from this
+machine. Use `show_video` / `show_audio` for a media file on disk.
+
+These tools exist only in chat (UI) mode. In a terminal session, use the `send_*`
+tools.
 
 ### Long-running processes
 
