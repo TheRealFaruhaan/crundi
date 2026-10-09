@@ -2343,7 +2343,6 @@ export function getWebappHtml(botUsername) {
       .mindmap-panel .kanban-btn { padding: 5px 8px; font-size: 0.74rem; border-radius: 6px; gap: 0; }
       .kanban-panel .kanban-btn .tb-lbl,
       .mindmap-panel .kanban-btn .tb-lbl { display: none; }
-      .mindmap-panel .mm-hint { display: none; }
       .mindmap-panel .mm-search { flex: 1 1 80px; min-width: 0; padding: 5px 8px; font-size: 0.76rem; }
       .mindmap-panel .mm-proj-bar { padding: 5px 8px; gap: 5px; }
       .mindmap-panel .mm-proj-label { display: none; }
@@ -2864,17 +2863,60 @@ export function getWebappHtml(botUsername) {
     .mm-scale { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
     .mindmap-edges { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
     .mm-node {
-      position: absolute; transform: translateY(-50%);
+      /* --mm-shift: set while a node near the top is opened up (hovered or
+         edited), to keep the part that grows upward on the canvas. */
+      position: absolute; transform: translateY(calc(-50% + var(--mm-shift, 0px)));
       background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
       padding: 8px 11px; width: 180px; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
       cursor: pointer; transition: opacity 0.12s, box-shadow 0.12s, border-color 0.12s;
     }
     .mm-node:hover { border-color: var(--accent); box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
+    /* Nodes keep their element across a redraw, so a change of place is a glide. */
+    .mm-scale > .mm-node { transition: top 0.22s ease, left 0.22s ease, opacity 0.12s, box-shadow 0.12s, border-color 0.12s; }
+    @keyframes mmNodeIn { from { opacity: 0; transform: translateY(-50%) scale(0.92); } to { opacity: 1; transform: translateY(-50%) scale(1); } }
+    .mm-node.mm-enter:not(.mm-ghost) { animation: mmNodeIn 0.2s ease both; }
+    .mm-node.mm-ghost.mm-enter { animation: mmGhostIn 0.25s ease 0.1s both; }
+    .mindmap-edges.mm-redraw { animation: mmFadeIn 0.28s ease 0.08s both; }
+    .mm-node.mm-pending { border-style: dashed; }
+    /* Dragging to rearrange: the idea in hand fades where it was, and a
+       placeholder holds open the place it would take. */
+    .mm-node.mm-lifted { opacity: 0.3; }
+    @keyframes mmHold { 0%, 100% { background-color: var(--accent-dim); } 50% { background-color: transparent; } }
+    .mm-node.mm-placeholder {
+      border: 2px dashed var(--accent); background: var(--accent-dim); box-shadow: none; cursor: copy; padding: 0;
+      animation: mmNodeIn 0.18s ease both, mmHold 1.1s ease-in-out 0.18s infinite;
+    }
+    /* The ring that marks where the keyboard is; it glides from idea to idea. */
+    .mm-cursor {
+      position: absolute; transform: translateY(-50%); pointer-events: none; z-index: 19; opacity: 0;
+      border: 2px solid var(--accent); border-radius: 17px; box-shadow: 0 0 0 4px var(--accent-dim);
+      transition: left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease, opacity 0.15s ease;
+    }
+    .mm-cursor.on { opacity: 1; }
+    /* The idea being typed. */
+    .mm-node.mm-draft { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim), 0 4px 14px rgba(0,0,0,0.5); cursor: text; z-index: 21; padding: 7px 9px 5px; }
+    .mm-draft-input {
+      display: block; width: 100%; box-sizing: border-box; resize: none; border: 0; outline: 0; background: transparent;
+      color: var(--text-primary); font: inherit; font-size: 0.83rem; font-weight: 600; line-height: 1.3; padding: 0; margin: 0; overflow: hidden;
+    }
+    .mm-draft-input:focus, .mm-edit-input:focus { outline: 0; box-shadow: none; }
+    /* Editing an idea: open as it is under the pointer, about seven lines, then it scrolls. */
+    .mm-node.mm-editing { z-index: 22; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim), 0 4px 14px rgba(0,0,0,0.5); cursor: text; }
+    .mm-edit-input {
+      display: block; width: 100%; box-sizing: border-box; resize: none; border: 0; outline: 0; background: transparent;
+      color: var(--text-primary); font: inherit; font-size: 0.83rem; font-weight: 600; line-height: 1.3; padding: 0; margin: 0;
+      max-height: calc(1.3em * 7); overflow-y: auto; overscroll-behavior: contain; word-break: break-word;
+    }
+    .mm-draft-input::placeholder { color: var(--text-muted); font-weight: 500; }
+    .mm-draft-hint { margin-top: 4px; font-size: 0.62rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mm-draft-hint b { font-weight: 600; color: var(--text-secondary); }
+    @media (hover: none) { .mm-draft-hint { display: none; } }
     .mm-node.root { border-color: var(--accent); background: var(--accent-dim); }
     .mm-node.linked { border-color: var(--green); }
     .mm-node.scoped { border-color: var(--accent); }
     .mm-node .mm-text {
-      font-size: 0.83rem; font-weight: 600; word-break: break-word; line-height: 1.3;
+      /* pre-wrap: an idea can have lines of its own (Shift+Enter while typing). */
+      font-size: 0.83rem; font-weight: 600; word-break: break-word; line-height: 1.3; white-space: pre-wrap;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
     /* Hovered: the whole idea, up to about seven lines (then it scrolls). The
@@ -2979,6 +3021,39 @@ export function getWebappHtml(botUsername) {
 
     /* mindmap node detail modal */
     /* notes as a list — view */
+    /* The Mindmap shortcut sheet. */
+    .mm-help-head { font-weight: 700; }
+    .wb-cell-body .mm-help-btn { display: none; }      /* the pane header has its own */
+    .mmh-box { max-width: 560px !important; padding: 0 !important; display: flex; flex-direction: column; max-height: min(86vh, 720px); }
+    .mmh-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+    .mmh-head h3 { margin: 0; flex: 1; font-size: 1rem; }
+    .mmh-all, .mmh-x { appearance: none; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); border-radius: var(--radius-sm); font-size: 0.74rem; padding: 4px 9px; cursor: pointer; display: inline-flex; align-items: center; }
+    .mmh-all:hover, .mmh-x:hover { color: var(--text-primary); border-color: var(--accent); }
+    .mmh-body { overflow-y: auto; padding: 4px 16px 16px; }
+    .mmh-body h4 { margin: 14px 0 4px; font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+    .mmh-row { border-bottom: 1px solid var(--border-subtle, var(--border)); }
+    .mmh-row summary, .mmh-row .mmh-sum { display: flex; align-items: baseline; gap: 10px; padding: 8px 2px; list-style: none; }
+    .mmh-row summary { cursor: pointer; }
+    .mmh-row summary::-webkit-details-marker { display: none; }
+    .mmh-row summary:hover .mmh-text { color: var(--text-primary); }
+    .mmh-combo { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+    .mmh-keys { flex: 0 0 176px; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; }
+    .mmh-keys kbd { font: 600 0.7rem var(--mono, monospace); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border); border-bottom-width: 2px; background: var(--bg-primary); color: var(--text-primary); white-space: nowrap; }
+    .mmh-plus, .mmh-or { font-size: 0.68rem; color: var(--text-muted); margin: 0 1px; }
+    .mmh-word { font-size: 0.76rem; font-weight: 600; color: var(--accent-hover); }
+    .mmh-text { flex: 1; font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; }
+    .mmh-more { align-self: center; color: var(--text-muted); display: inline-flex; transition: transform 0.15s ease; }
+    details.mmh-row[open] .mmh-more { transform: rotate(90deg); color: var(--accent-hover); }
+    .mmh-dia { margin: 0 0 10px 186px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-primary); overflow-x: auto; }
+    .mmh-dia svg { display: block; max-width: none; }
+    .mmh-note { margin-top: 8px; font-size: 0.74rem; color: var(--text-secondary); line-height: 1.4; }
+    @media (max-width: 560px) {
+      .mmh-row summary, .mmh-row .mmh-sum { flex-wrap: wrap; gap: 4px 10px; }
+      .mmh-keys { flex-basis: 100%; }
+      .mmh-dia { margin-left: 0; }
+    }
+    #mm-detail-modal #mmd-title { white-space: pre-wrap; word-break: break-word; }
+    #mm-detail-modal #mmd-text-input { min-height: 44px; }
     #mm-detail-modal .mmd-notes { list-style: none; margin: 6px 0 10px; padding: 0; max-height: 42vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
     #mm-detail-modal .mmd-notes:empty { display: none; }
     #mm-detail-modal .mmd-notes li {
@@ -3619,7 +3694,7 @@ export function getWebappHtml(botUsername) {
       </div>
       <div id="mmd-edit" style="display:none">
         <label class="im-label">Idea</label>
-        <input type="text" id="mmd-text-input" autocomplete="off">
+        <textarea id="mmd-text-input" rows="2" autocomplete="off"></textarea>
         <label class="im-label" style="margin-top:10px">Notes</label>
         <div class="mmd-notes-edit" id="mmd-notes-edit"></div>
         <button type="button" class="mmd-add-note" id="mmd-add-note">+ Add note</button>
@@ -6665,6 +6740,7 @@ export function getWebappHtml(botUsername) {
         + '<span class="wb-head-ic">' + ic(m.icon) + '</span>'
         + '<span class="term-title" style="cursor:default;">' + escHtml(m.label) + '</span>'
         + '<span class="term-head-spacer"></span>'
+        + (cell.kind === 'mindmap' ? '<button class="term-font-btn mm-help-head" data-action="mm-help" title="Mindmap shortcuts" aria-label="Mindmap shortcuts">?</button>' : '')
         + '<button class="term-font-btn" data-action="wb-refresh" data-wbid="' + cell.id + '" title="Refresh">' + ic('refresh') + '</button>'
         + pinBtnHtml()
         + '<button class="term-head-btn term-close" data-action="wb-close" data-wbid="' + cell.id + '" title="Close panel">\\u00d7</button>';
@@ -9681,6 +9757,8 @@ export function getWebappHtml(botUsername) {
       const fs = document.fullscreenElement || document.webkitFullscreenElement;
       if (fs && fs !== document.documentElement) { if (fs._wgLeaveFull) fs._wgLeaveFull(); else { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch { /* already out */ } } return true; }
       if (feWins().length) { feClose(); return true; }
+      const mmHelp = document.getElementById('mm-help-modal');
+      if (mmHelp && mmHelp.classList.contains('visible')) { mmHelp.classList.remove('visible'); return true; }
       if (paneFull.key) { setPaneFull(null, false); return true; }
       const sb = document.getElementById('sidebar');
       if (sb && sb.classList.contains('open')) { closeSidebar(); return true; }
@@ -13564,6 +13642,7 @@ export function getWebappHtml(botUsername) {
         case 'wb-close': if (d.wbid) { e.stopPropagation(); closeWbCell(d.wbid); } break;
         case 'widget-close': if (d.wgid && window.CrundiWidgets) { e.stopPropagation(); window.CrundiWidgets.close(d.wgid); } break;
         case 'widget-reload': if (d.wgid && window.CrundiWidgets) { e.stopPropagation(); window.CrundiWidgets.reload(d.wgid); } break;
+        case 'mm-help': e.stopPropagation(); openMmHelp(); break;
         case 'wb-refresh': if (d.wbid) { e.stopPropagation(); refreshWbCell(d.wbid); } break;
         case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
@@ -14203,17 +14282,54 @@ export function getWebappHtml(botUsername) {
       document.querySelectorAll('.mm-node.mm-drop-target, .mm-node.mm-insert-above, .mm-node.mm-insert-below')
         .forEach(n => n.classList.remove('mm-drop-target', 'mm-insert-above', 'mm-insert-below'));
     }
-    function mindmapDragHandlers(nodeId) {
-      let target = null;
+    // Dragging an idea.
+    //   Onto the MIDDLE of another: it becomes a child of that one (the target
+    //   is outlined).
+    //   Onto the top or bottom EDGE of another: it goes just before or after
+    //   it. A dashed placeholder opens up where it will land and the ideas
+    //   around make room, so the result is seen before letting go.
+    //   Onto a chat or terminal: a reference to it is inserted.
+    // The placeholder is part of the layout (see mmDropAt in layoutMindmap),
+    // which moves things under the pointer. Two things keep that from turning
+    // into a flicker: the placeholder itself counts as "still here", and a new
+    // spot has to be held for a moment before the map rearranges for it.
+    function mindmapDragHandlers(nodeEl) {
+      let target = null, nodeId = '', want = '', wantT = 0;
+      const show = (at) => {
+        const key = at ? (at.parentId || '') + '#' + at.index : '';
+        if (key === want) return;
+        want = key;
+        clearTimeout(wantT);
+        wantT = setTimeout(() => {
+          const now = mmDropAt ? (mmDropAt.parentId || '') + '#' + mmDropAt.index : '';
+          if (now === key) return;
+          mmDropAt = at ? { parentId: at.parentId || null, index: at.index, dragId: nodeId, h: nodeEl.offsetHeight } : null;
+          renderMindmap();
+        }, 70);
+      };
       return {
+        onStart: () => { nodeId = nodeEl.dataset.node; want = ''; nodeEl.classList.add('mm-lifted'); },
         onMove: (x, y) => {
+          if (!nodeId) nodeId = nodeEl.dataset.node;
           clearMmDropTargets();
           // Dragging a node out onto a terminal / input inserts its node id.
           const ext = wbDropTargetAt(x, y);
-          if (ext) { target = { ext }; return; }
+          if (ext) { target = { ext }; show(null); return; }
           const elAt = document.elementFromPoint(x, y);
           const over = elAt && elAt.closest ? elAt.closest('.mm-node') : null;
-          if (!over || over.dataset.node === nodeId) { target = { parentId: null }; return; } // empty → root
+          if (over && over.classList.contains('mm-placeholder')) return;       // on the gap it opened: stay as we are
+          // Back on itself: put it down where it was. Nothing moves. (This
+          // used to count as "dropped on nothing" and sent it to the top level.)
+          if (over && over.dataset.node === nodeId) { target = null; show(null); return; }
+          if (!over) { target = { parentId: null }; show(null); return; } // empty canvas → top level
+          if (over.classList.contains('mm-ghost')) {
+            // The dashed "add idea" box stands for "under this idea".
+            const pid = over.dataset.addparent;
+            const pEl = pid && pid !== nodeId ? mmNodeEl(pid) : null;
+            if (pEl) { pEl.classList.add('mm-drop-target'); target = { parentId: pid }; } else target = null;   // its own "add idea" box: nothing moves
+            show(null);
+            return;
+          }
           const overId = over.dataset.node;
           const r = over.getBoundingClientRect();
           const rel = (y - r.top) / r.height;
@@ -14225,26 +14341,48 @@ export function getWebappHtml(botUsername) {
             const pos = sibs.findIndex(n => n.id === overId);
             const before = rel < 0.30;
             target = { parentId, index: before ? pos : pos + 1 };
-            over.classList.add(before ? 'mm-insert-above' : 'mm-insert-below');
+            show(target);
           } else {
             // drop onto a node → make it a child (append)
             over.classList.add('mm-drop-target');
             target = { parentId: overId };
+            show(null);
           }
         },
         onEnd: async (commit) => {
           clearMmDropTargets();
+          clearTimeout(wantT); want = '';
+          nodeEl.classList.remove('mm-lifted');
           lastMmDrag = Date.now(); // suppress the click that follows a drag
-          if (commit && target) {
-            if (target.ext) insertRefToTarget(target.ext, formatDragRef('mindmap', nodeId));
-            else { await mindmapPost({ action: 'moveNode', id: nodeId, parentId: target.parentId, index: target.index }); loadMindmap(); }
+          const t = target; target = null;
+          const hadGap = !!mmDropAt; mmDropAt = null;
+          if (commit && t && t.ext) { if (hadGap) renderMindmap(); insertRefToTarget(t.ext, formatDragRef('mindmap', nodeId)); return; }
+          if (!(commit && t)) { if (hadGap) renderMindmap(); return; }
+          // Put it there at once, so it glides into the gap it was shown,
+          // then tell the server and take its word for the result.
+          const node = mindmapNodes.find(n => n.id === nodeId);
+          const under = (id) => { let p = id && mindmapNodes.find(n => n.id === id); while (p) { if (p.id === nodeId) return true; p = p.parentId && mindmapNodes.find(n => n.id === p.parentId); } return false; };
+          if (node && !under(t.parentId)) {
+            const rest = mindmapNodes.filter(n => n.id !== nodeId);
+            const sibs = rest.filter(n => (n.parentId || null) === (t.parentId || null));
+            const ref = t.index != null ? sibs[t.index] : null;
+            node.parentId = t.parentId || null;
+            if (ref) rest.splice(rest.indexOf(ref), 0, node); else rest.push(node);
+            mindmapNodes = rest;
+            if (t.parentId) mindmapCollapsed[t.parentId] = false;
           }
-          target = null;
+          renderMindmap();
+          await mindmapPost({ action: 'moveNode', id: nodeId, parentId: t.parentId, index: t.index });
+          loadMindmap();
         },
       };
     }
     function attachMindmapDrag(inner) {
-      inner.querySelectorAll('.mm-node:not(.mm-ghost)').forEach(node => makeDraggable(node, mindmapDragHandlers(node.dataset.node)));
+      inner.querySelectorAll('.mm-node:not(.mm-ghost):not(.mm-draft):not(.mm-placeholder)').forEach(node => {
+        if (node._mmDrag) return;       // nodes outlive a redraw now; wire each once
+        node._mmDrag = true;
+        makeDraggable(node, mindmapDragHandlers(node));
+      });
     }
 
     function setupKanbanHandlers() {
@@ -14695,11 +14833,18 @@ export function getWebappHtml(botUsername) {
     const MM_COL_W = 235, MM_ROW_H = 90, MM_PAD = 24, MM_NODE_W = 180;
 
     async function loadMindmap() {
+      // Ideas typed a moment ago and still on their way to the server are not
+      // in what it would send back: reloading now would make them vanish and
+      // reappear. Wait for them (see mmDraftCommit).
+      if (mmSaving > 0) { mmReloadWanted = true; return; }
       try {
         const res = await apiFetch('/api/mindmap');
         const d = await res.json();
+        if (mmSaving > 0) { mmReloadWanted = true; return; }
         mindmapNodes = (d.ok && d.mindmap && d.mindmap.nodes) ? d.mindmap.nodes : [];
-        mmAnimate = true; // a fresh load → play the entrance animation
+        // The entrance plays when the map first appears, not on every change:
+        // after that the map is updated in place (see layoutMindmap).
+        mmAnimate = !document.getElementById('mm-scale');
         renderMindmap();
       } catch (err) {
         $('#mindmap-panel').innerHTML = '<div class="kanban-empty">Failed to load mindmap: ' + escHtml(err.message) + '</div>';
@@ -14723,9 +14868,24 @@ export function getWebappHtml(botUsername) {
         + '<button class="kanban-btn" data-mact="media">' + ic('images') + '<span class="tb-lbl"> Media</span></button>'
         + '<input type="text" class="mm-search" id="mm-search" placeholder="Filter ideas…" autocomplete="off" value="' + escHtml(mindmapSearch) + '">'
         + '<div class="spacer"></div>'
-        + '<span class="mm-hint" style="font-size:0.74rem;color:var(--text-muted)">Tap a node for details · Ctrl+scroll / pinch to zoom · green = linked</span>'
+        + '<button class="kanban-btn mm-help-btn" data-mact="help" title="Mindmap shortcuts" aria-label="Mindmap shortcuts">?<span class="tb-lbl"> Shortcuts</span></button>'
         + '</div>';
-      if (!mindmapNodes.length) {
+      const empty = !mindmapNodes.length && !mmDraft;
+      // Already drawn: keep the toolbar, the canvas and where it is scrolled
+      // to, and move the nodes to their new places. Rebuilding the panel on
+      // every change made the whole map blink and threw away the scroll.
+      const scaleNow = panel.querySelector('#mm-scale');
+      if (scaleNow && !empty && !anim) {
+        const bar = panel.querySelector('.mm-proj-bar'), barHtml = renderMindmapProjectBar(false);
+        if ((bar ? bar.outerHTML : '') !== barHtml) {
+          if (bar) bar.remove();
+          if (barHtml) panel.querySelector('#mindmap-canvas').insertAdjacentHTML('beforebegin', barHtml);
+        }
+        panel.querySelector('#mindmap-canvas').classList.remove('mm-anim');
+        layoutMindmap(scaleNow);
+        return;
+      }
+      if (empty) {
         h += '<div class="kanban-empty">No ideas yet. Add one, or hit “Brainstorm” on a Kanban card to extend a task here.</div>';
         panel.innerHTML = h;
         return;
@@ -14796,6 +14956,39 @@ export function getWebappHtml(botUsername) {
         return d;
       };
 
+      // The idea being typed: a node like any other as far as the layout goes,
+      // placed where it will be once saved.
+      const DRAFT = '__draft__';
+      let draftNode = null;
+      if (mmDraft) {
+        const pid = mmDraft.parentId && byId[mmDraft.parentId] ? mmDraft.parentId : null;
+        if (mmDraft.parentId && !pid) mmDraft = null;        // its parent has gone
+        else {
+          draftNode = { id: DRAFT, parentId: pid, draft: true, text: '' };
+          byId[DRAFT] = draftNode;
+          const list = pid ? (children[pid] = children[pid] || []) : roots;
+          const at = mmDraft.afterId ? list.findIndex(n => n.id === mmDraft.afterId) : -1;
+          list.splice(at >= 0 ? at + 1 : list.length, 0, draftNode);
+          if (pid) mindmapCollapsed[pid] = false;
+        }
+      }
+
+      // Where a dragged idea would land: a placeholder that takes its place in
+      // the layout, so the ideas around it move aside.
+      const DROP = '__drop__';
+      let dropNode = null;
+      if (mmDropAt) {
+        const pid = mmDropAt.parentId && byId[mmDropAt.parentId] ? mmDropAt.parentId : null;
+        if (!mmDropAt.parentId || pid) {
+          const list = pid ? (children[pid] = children[pid] || []) : roots;
+          const ref = list.filter(n => n.id !== mmDropAt.dragId && !n.draft)[mmDropAt.index];
+          dropNode = { id: DROP, parentId: pid, drop: true, text: '' };
+          byId[DROP] = dropNode;
+          list.splice(ref ? list.indexOf(ref) : list.length, 0, dropNode);
+          if (pid) mindmapCollapsed[pid] = false;
+        }
+      }
+
       const px = (x) => MM_PAD + x * COL_W;
 
       // --- pass 1: build compact markup for VISIBLE nodes (left from depth;
@@ -14804,6 +14997,8 @@ export function getWebappHtml(botUsername) {
       const pos = {}; // id → {x(depth), y(center-px)}
       let maxDepth = 0;
       const visNodes = nodes.filter(isVisible);
+      if (draftNode) visNodes.push(draftNode);
+      if (dropNode) visNodes.push(dropNode);
       visNodes.forEach(n => { pos[n.id] = { x: depthOf(n), y: 0 }; maxDepth = Math.max(maxDepth, pos[n.id].x); });
 
       // A persistent dashed "add idea" ghost under every visible, expanded node —
@@ -14811,7 +15006,7 @@ export function getWebappHtml(botUsername) {
       const phantomFor = {};
       const phantoms = [];
       for (const n of visNodes) {
-        if (mindmapCollapsed[n.id]) continue;
+        if (mindmapCollapsed[n.id] || n.draft || n.drop) continue;
         const ph = { id: '__add__' + n.id, parentId: n.id, ghost: true };
         phantomFor[n.id] = ph; phantoms.push(ph);
         pos[ph.id] = { x: pos[n.id].x + 1, y: 0 };
@@ -14829,7 +15024,12 @@ export function getWebappHtml(botUsername) {
       const ghostHtml = (ph) => '<div class="mm-node mm-ghost" style="left:' + px(pos[ph.id].x) + 'px" data-node="' + ph.id + '" data-addparent="' + ph.parentId + '" title="Add a child idea here">'
         + '<span class="mm-ghost-plus">+</span><span class="mm-ghost-label">add idea</span></div>';
 
+      const draftHtml = (n) => '<div class="mm-node mm-draft" style="left:' + px(pos[n.id].x) + 'px" data-node="' + DRAFT + '">'
+        + '<textarea class="mm-draft-input" rows="1" maxlength="2000" placeholder="New idea" autocomplete="off" spellcheck="true"></textarea>'
+        + '<div class="mm-draft-hint"><b>Enter</b> next \u00b7 <b>Tab</b> nested \u00b7 <b>Shift+Enter</b> new line</div></div>';
       const nodeHtml = (n) => {
+        if (n.draft) return draftHtml(n);
+        if (n.drop) return '<div class="mm-node mm-placeholder" style="left:' + px(pos[n.id].x) + 'px;height:' + Math.max(30, Math.round(mmDropAt.h || 40)) + 'px" data-node="' + DROP + '"></div>';
         const isRoot = !(n.parentId && byId[n.parentId]);
         const info = n.linkedTaskInfo;
         const linked = !!(n.linkedTask);
@@ -14854,20 +15054,49 @@ export function getWebappHtml(botUsername) {
         }
         const nNotes = (n.notes && n.notes.length) || 0;
         const noteChip = nNotes ? '<span class="mm-chip note">📝 ' + nNotes + (nNotes === 1 ? ' note' : ' notes') + '</span>' : '';
-        return '<div class="mm-node' + (isRoot ? ' root' : '') + (linked ? ' linked' : (n.project ? ' scoped' : '')) + '" style="left:' + px(pos[n.id].x) + 'px" data-node="' + n.id + '">'
+        return '<div class="mm-node' + (isRoot ? ' root' : '') + (linked ? ' linked' : (n.project ? ' scoped' : '')) + (n.pending ? ' mm-pending' : '') + '" style="left:' + px(pos[n.id].x) + 'px" data-node="' + n.id + '">'
           + '<div class="mm-text">' + escHtml(n.text) + '</div>'
           + '<div class="mm-meta">' + chip + noteChip + '</div>'
           + (hasKids ? '<button class="mm-collapse" data-mact="toggle" data-node="' + n.id + '" title="Collapse/expand">' + (collapsed ? '+' : '−') + '</button>' : '')
           + '</div>';
       };
-      inner.innerHTML = visNodes.map(nodeHtml).join('') + phantoms.map(ghostHtml).join('');
+      // Bring what is on screen in line with what is wanted, node by node:
+      // one that is still wanted stays the same element (so it glides to its
+      // new place, and the box being typed in keeps its caret), a new one is
+      // added, one that is gone is removed. Nothing else is touched.
+      const have = {};
+      inner.querySelectorAll(':scope > .mm-node').forEach(el => { have[el.dataset.node] = el; });
+      const firstDraw = !Object.keys(have).length;
+      const tpl = document.createElement('template');
+      const wanted = visNodes.map(n => [n.id, nodeHtml(n)]).concat(phantoms.map(ph => [ph.id, ghostHtml(ph)]));
+      for (const [id, html] of wanted) {
+        const el = have[id]; delete have[id];
+        // The idea being edited is left exactly as it is, text box and all.
+        if (el && mmEdit && mmEdit.el === el) { tpl.innerHTML = html; el.style.left = tpl.content.firstElementChild.style.left; continue; }
+        if (el && el._mmHtml === html) continue;
+        tpl.innerHTML = html;
+        const fresh = tpl.content.firstElementChild;
+        if (!el) { fresh._mmHtml = html; if (!firstDraw) fresh.classList.add('mm-enter'); inner.appendChild(fresh); continue; }
+        el.style.left = fresh.style.left;
+        el._mmHtml = html;
+        if (id === DRAFT) continue;                   // never rebuild what is being typed in
+        el.className = fresh.className;
+        el.innerHTML = fresh.innerHTML;
+        if (fresh.title) el.title = fresh.title; else el.removeAttribute('title');
+        if (fresh.dataset.addparent) el.dataset.addparent = fresh.dataset.addparent;
+      }
+      for (const id in have) have[id].remove();
+      const oldEdges = inner.querySelector(':scope > .mindmap-edges');
+      if (oldEdges) oldEdges.remove();
 
       // measure rendered heights (real nodes + ghosts)
       const nodeEls = {};
       inner.querySelectorAll('.mm-node').forEach(el => { nodeEls[el.dataset.node] = el; });
       const heights = {};
       const allNodes = visNodes.concat(phantoms);
-      allNodes.forEach(n => { const el = nodeEls[n.id]; heights[n.id] = (el && el.offsetHeight) || MIN_H; });
+      // (_mmH: a node being edited is taller for the moment, the way a hovered
+      // one is. It lies over its neighbours rather than pushing them about.)
+      allNodes.forEach(n => { const el = nodeEls[n.id]; heights[n.id] = (el && (el._mmH || el.offsetHeight)) || MIN_H; });
 
       // --- pass 2: pack vertical centers using real heights (post-order) ---
       let cursor = MM_PAD;
@@ -14916,7 +15145,7 @@ export function getWebappHtml(botUsername) {
         const n = byId[ph.parentId];
         if (n && pos[n.id] && pos[ph.id]) paths += edge(n, ph, ' stroke-dasharray="5 5" opacity="0.45"');
       }
-      inner.insertAdjacentHTML('afterbegin', '<svg class="mindmap-edges" width="' + width + '" height="' + contentH + '">' + paths + '</svg>');
+      inner.insertAdjacentHTML('afterbegin', '<svg class="mindmap-edges' + (firstDraw ? '' : ' mm-redraw') + '" width="' + width + '" height="' + contentH + '">' + paths + '</svg>');
 
       mindmapBaseW = width; mindmapBaseH = contentH;
       inner.style.width = width + 'px';
@@ -14933,6 +15162,282 @@ export function getWebappHtml(botUsername) {
       attachMindmapDrag(inner);
       attachMindmapZoom(canvas, inner);
       applyMindmapSearch();
+      mmWireDraft(inner.querySelector(':scope > .mm-draft'));
+      mmPlaceCursor();
+    }
+
+    // ─── Moving about the map with the keyboard ───
+    // Ctrl + Shift + arrows walk the tree, from the idea last clicked, typed or walked
+    // to. Up and down stay on one level and carry on past the end of one
+    // parent's ideas into the next parent's; left goes to the parent; right
+    // goes to the middle child (the earlier of the two middles when the count
+    // is even). A ring glides from idea to idea and the view follows it. An
+    // idea being edited is saved first, and the editing moves along with you.
+    let mmSel = '';                 // id of the idea the ring is on
+    let mmActive = false;           // was the last press inside the mindmap?
+    document.addEventListener('pointerdown', (e) => { mmActive = !!(e.target.closest && e.target.closest('#mindmap-panel')); }, true);
+    function mmNodeEl(id) { return id ? document.querySelector('#mm-scale > .mm-node[data-node="' + id + '"]') : null; }
+    function mmPlaceCursor() {
+      const scale = document.getElementById('mm-scale'); if (!scale) return;
+      let ring = scale.querySelector(':scope > .mm-cursor');
+      const el = mmNodeEl(mmSel);
+      if (!el) { if (ring) ring.classList.remove('on'); return; }
+      if (!ring) { ring = document.createElement('div'); ring.className = 'mm-cursor'; scale.appendChild(ring); ring.getBoundingClientRect(); }
+      ring.style.left = ((parseFloat(el.style.left) || 0) - 4) + 'px';
+      ring.style.top = el.style.top;
+      ring.style.width = (el.offsetWidth + 8) + 'px';
+      ring.style.height = ((el._mmH || el.offsetHeight) + 8) + 'px';
+      ring.classList.add('on');
+    }
+    function mmSelect(id, follow) {
+      mmSel = id || '';
+      mmPlaceCursor();
+      const el = mmNodeEl(mmSel), canvas = document.getElementById('mindmap-canvas');
+      if (!follow || !el || !canvas) return;
+      // Bring it comfortably into view, and only as far as needed: a step to a
+      // neighbour that is already in plain sight should not move the map.
+      const z = mindmapZoom, m = 70;
+      const x0 = (parseFloat(el.style.left) || 0) * z, x1 = x0 + el.offsetWidth * z;
+      const yc = (parseFloat(el.style.top) || 0) * z, hh = el.offsetHeight * z / 2;
+      let sl = canvas.scrollLeft, st = canvas.scrollTop;
+      if (x0 - m < sl) sl = x0 - m; else if (x1 + m > sl + canvas.clientWidth) sl = x1 + m - canvas.clientWidth;
+      if (yc - hh - m < st) st = yc - hh - m; else if (yc + hh + m > st + canvas.clientHeight) st = yc + hh + m - canvas.clientHeight;
+      if (sl !== canvas.scrollLeft || st !== canvas.scrollTop) canvas.scrollTo({ left: Math.max(0, sl), top: Math.max(0, st), behavior: 'smooth' });
+    }
+    /** The idea to step to from the given one, or '' when there is nowhere to go that way. */
+    function mmStepTarget(id, dir) {
+      const shown = [...document.querySelectorAll('#mm-scale > .mm-node:not(.mm-ghost):not(.mm-draft):not(.mm-placeholder)')];
+      const from = mmNodeEl(id);
+      if (!from) {
+        // Nowhere yet: start at the top-left idea.
+        const first = shown.slice().sort((a, b) => (parseFloat(a.style.left) - parseFloat(b.style.left)) || (parseFloat(a.style.top) - parseFloat(b.style.top)))[0];
+        return first ? first.dataset.node : '';
+      }
+      const n = mindmapNodes.find(x => x.id === id);
+      if (dir === 'up' || dir === 'down') {
+        // Everything on this level, top to bottom, whoever its parent is.
+        const level = shown.filter(e => e.style.left === from.style.left).sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top));
+        const to = level[level.indexOf(from) + (dir === 'down' ? 1 : -1)];
+        return to ? to.dataset.node : '';
+      }
+      if (dir === 'left') return (n && n.parentId && mmNodeEl(n.parentId)) ? n.parentId : '';
+      // right: unfold it if need be, then the middle one of what is under it.
+      const kids = mindmapNodes.filter(x => x.parentId === id && mmNodePassesProject(x));
+      if (!kids.length) return '';
+      if (mindmapCollapsed[id]) { mindmapCollapsed[id] = false; renderMindmap(); }
+      return kids[Math.floor((kids.length - 1) / 2)].id;
+    }
+    function mmStep(dir) {
+      let from = mmSel, wasEditing = false;
+      if (mmEdit) { from = mmEdit.id; wasEditing = true; mmFinishEdit(true); }
+      else if (mmDraft) {
+        // A new idea being typed: keep it if there is anything in it, then go
+        // on from it; an empty box is simply closed.
+        const ta = document.querySelector('#mm-scale > .mm-draft .mm-draft-input');
+        const origin = mmDraft.afterId || mmDraft.parentId || '';
+        if (ta && ta.value.trim()) { mmDraftCommit('next'); from = (mmDraft && mmDraft.afterId) || origin; }
+        else from = origin;
+        mmEndDraft();
+        wasEditing = true;
+      }
+      const to = mmStepTarget(from, dir);
+      if (!to) { mmSelect(from, true); const el = mmNodeEl(from); if (wasEditing && el) mmStartEdit(el); return; }
+      mmSelect(to, true);
+      if (wasEditing) { const el = mmNodeEl(to); if (el) mmStartEdit(el); }
+    }
+    document.addEventListener('keydown', (e) => {
+      const panel = document.getElementById('mindmap-panel');
+      if (!panel || panel.offsetParent === null || !document.getElementById('mm-scale')) return;
+      const a = document.activeElement;
+      const inMap = !!(a && panel.contains(a));
+      const elsewhere = !!(a && a !== document.body && !inMap && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable || (a.closest && a.closest('.xterm'))));
+      if (elsewhere || (!inMap && !mmActive) || document.querySelector('.input-modal.visible')) return;
+      if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && /^Arrow(Up|Down|Left|Right)$/.test(e.key)) {
+        if (a && a.id === 'mm-search') return;
+        e.preventDefault(); e.stopPropagation();            // in a text box this would otherwise select by word
+        mmStep(e.key.slice(5).toLowerCase());
+        return;
+      }
+      // With the ring on an idea and nothing being typed, Enter opens it for editing.
+      if (e.key === 'Enter' && !e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && !mmEdit && !mmDraft && (!a || a === document.body) && mmSel) {
+        const el = mmNodeEl(mmSel);
+        if (el) { e.preventDefault(); mmStartEdit(el); }
+      }
+    }, true);
+
+    // ─── Adding ideas in place ───
+    // "Add idea" opens a node you type into, where the idea will sit. Enter
+    // saves it and opens the next one at the same level; Tab saves it and
+    // opens one nested under it; Shift+Tab steps back out a level. Escape, a
+    // click elsewhere or losing focus closes it.
+    //
+    // A saved idea is shown at once, before the server has answered, and the
+    // saves are sent one after another in the order they were typed: the next
+    // idea may hang off one whose real id is not known yet.
+    let mmDropAt = null;            // { parentId, index, dragId, h } while a dragged idea hovers over a place between others
+    let mmDraft = null;             // { parentId, afterId } while an idea is being typed
+    let mmSaving = 0, mmReloadWanted = false, mmTmpSeq = 0;
+    let mmSaveChain = Promise.resolve();
+    const mmRealId = {};            // temporary id -> the id the server gave it
+    function mmStartDraft(parentId, afterId) {
+      mmDraft = { parentId: parentId || null, afterId: afterId || null };
+      renderMindmap();
+    }
+    function mmEndDraft() {
+      if (!mmDraft) return;
+      mmDraft = null;
+      renderMindmap();
+    }
+    function mmWireDraft(el) {
+      if (!el) return;
+      const ta = el.querySelector('.mm-draft-input');
+      if (!el._mmWired) {
+        el._mmWired = true;
+        const grow = () => { const h0 = el.offsetHeight; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; if (el.offsetHeight !== h0) renderMindmap(); mmKeepOnCanvas(el); };
+        ta.addEventListener('input', grow);
+        ta.addEventListener('keydown', (e) => {
+          if (e.isComposing) return;
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmDraftCommit('next'); }
+          else if (e.key === 'Tab') { e.preventDefault(); mmDraftCommit(e.shiftKey ? 'up' : 'nested'); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); mmEndDraft(); }
+        });
+        // Clicked elsewhere, or the window lost focus: close it. (A save keeps
+        // this same box and its focus, so it does not come through here.)
+        ta.addEventListener('blur', () => { setTimeout(() => { if (mmDraft && document.activeElement !== ta) mmEndDraft(); }, 0); });
+        // The node's own handlers (open details, drag) are not for this one.
+        ['mousedown', 'touchstart', 'click'].forEach(n => el.addEventListener(n, (e) => e.stopPropagation()));
+        ta.focus({ preventScroll: true });
+      }
+      // Once it has glided to where it belongs, make sure it can be seen.
+      clearTimeout(el._mmSeeT);
+      el._mmSeeT = setTimeout(() => { if (el.isConnected) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }); }, 240);
+    }
+    // ─── Editing an idea in place ───
+    // One click on an idea edits its text where it is; two open its details.
+    // While edited the node opens up the way it does under the pointer (up to
+    // about seven lines, then it scrolls). Enter or a click elsewhere saves,
+    // Escape puts the old text back.
+    let mmEdit = null;              // { id, el, ta }
+    function mmStartEdit(nodeEl) {
+      if (mmEdit) mmFinishEdit(true);
+      const id = nodeEl && nodeEl.dataset.node;
+      const n = mindmapNodes.find(x => x.id === id);
+      const textEl = nodeEl && nodeEl.querySelector('.mm-text');
+      if (!n || n.pending || !textEl) return;
+      if (mmDraft) { mmDraft = null; renderMindmap(); }
+      mmSel = id; mmPlaceCursor();
+      nodeEl._mmH = nodeEl.offsetHeight;
+      const ta = document.createElement('textarea');
+      ta.className = 'mm-edit-input'; ta.rows = 1; ta.maxLength = 2000; ta.value = n.text; ta.spellcheck = true;
+      textEl.style.display = 'none';
+      textEl.insertAdjacentElement('afterend', ta);
+      nodeEl.classList.add('mm-editing');
+      const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; mmKeepOnCanvas(nodeEl); };   // the stylesheet caps it and scrolls beyond
+      fit();
+      ta.addEventListener('input', fit);
+      ta.addEventListener('keydown', (e) => {
+        if (e.isComposing) return;
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmFinishEdit(true); }
+        // Escape: the edit is thrown away and the idea reads as it did.
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); mmFinishEdit(false); }
+        else if (e.key === 'Tab') {
+          // Save this one and carry on typing, as when adding. Tab: a new idea
+          // nested under it. Shift+Tab: a new idea at its parent's level, just
+          // after the parent; an idea with no parent, or whose parent is at
+          // the top, gets a new top-level idea.
+          e.preventDefault();
+          const par = n.parentId ? mindmapNodes.find(x => x.id === n.parentId) : null;
+          mmFinishEdit(true);
+          if (!e.shiftKey) mmStartDraft(n.id, null);
+          else if (par) mmStartDraft(par.parentId || null, par.id);
+          else mmStartDraft(null, n.id);
+        }
+      });
+      ta.addEventListener('blur', () => { setTimeout(() => { if (mmEdit && mmEdit.ta === ta && document.activeElement !== ta) mmFinishEdit(true); }, 0); });
+      // Clicks and drags inside the box are for the text, not the node.
+      ['mousedown', 'touchstart', 'click', 'dblclick', 'wheel'].forEach(k => ta.addEventListener(k, (e) => e.stopPropagation(), { passive: true }));
+      mmEdit = { id, el: nodeEl, ta };
+      ta.focus({ preventScroll: true });
+      try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch { /* not a text field */ }
+    }
+    function mmFinishEdit(save) {
+      const e = mmEdit; if (!e) return;
+      mmEdit = null;
+      const text = e.ta.value.trim();
+      e.ta.remove();
+      const textEl = e.el.querySelector('.mm-text'); if (textEl) textEl.style.display = '';
+      e.el.classList.remove('mm-editing');
+      e.el.style.removeProperty('--mm-shift');
+      delete e.el._mmH;
+      const n = mindmapNodes.find(x => x.id === e.id);
+      if (!save || !n || !text || text === n.text) return;
+      n.text = text;
+      renderMindmap();
+      mindmapPost({ action: 'updateNode', id: n.id, text }).then(() => loadMindmap());
+    }
+
+    function mmDraftCommit(mode) {
+      const el = document.querySelector('#mm-scale > .mm-draft');
+      const ta = el && el.querySelector('.mm-draft-input');
+      if (!mmDraft || !ta) return;
+      const text = ta.value.trim();
+      const parentId = mmDraft.parentId, afterId = mmDraft.afterId;
+      const parentNode = parentId ? mindmapNodes.find(n => n.id === parentId) : null;
+      if (!text) {
+        // Nothing typed. Shift+Tab still steps out a level; anything else closes.
+        if (mode === 'up' && parentNode) { mmDraft = { parentId: parentNode.parentId || null, afterId: parentNode.id }; renderMindmap(); }
+        else mmEndDraft();
+        return;
+      }
+      const tmpId = 'tmp' + Date.now().toString(36) + (mmTmpSeq++);
+      const local = { id: tmpId, text, parentId: parentId || null, notes: [], pending: true, effectiveProject: parentNode ? (parentNode.effectiveProject || '') : '' };
+      // Order among siblings is order in the list.
+      const afterAt = afterId ? mindmapNodes.findIndex(n => n.id === afterId) : -1;
+      if (afterAt >= 0) mindmapNodes.splice(afterAt + 1, 0, local); else mindmapNodes.push(local);
+      ta.value = ''; ta.style.height = '';
+      mmSel = tmpId;
+      mmDraft = mode === 'nested' ? { parentId: tmpId, afterId: null }
+        : (mode === 'up' && parentNode) ? { parentId: parentNode.parentId || null, afterId: parentNode.id }
+        : { parentId: parentId || null, afterId: tmpId };
+      renderMindmap();
+
+      mmSaving++;
+      mmSaveChain = mmSaveChain.then(async () => {
+        const real = (id) => (id && mmRealId[id]) || id || null;
+        let d = null;
+        try { d = await mindmapPost({ action: 'addNode', text, parentId: real(parentId) || undefined }); } catch { d = null; }
+        const newId = d && d.ok && d.node && d.node.id;
+        if (!newId) {
+          // Not saved (mindmapPost has said why). Take it back off the map,
+          // with anything already hung under it.
+          const gone = new Set([tmpId]);
+          let grew = true;
+          while (grew) { grew = false; for (const n of mindmapNodes) if (n.parentId && gone.has(n.parentId) && !gone.has(n.id)) { gone.add(n.id); grew = true; } }
+          mindmapNodes = mindmapNodes.filter(n => !gone.has(n.id));
+          if (mmDraft && (gone.has(mmDraft.parentId) || gone.has(mmDraft.afterId))) mmDraft = null;
+          return;
+        }
+        // A new idea is added at the end of its level. If it belongs earlier
+        // (after a sibling that is not the last), move it there.
+        const sibs = mindmapNodes.filter(n => (n.parentId || null) === (parentId || null));
+        const at = sibs.indexOf(local);
+        if (at >= 0 && at < sibs.length - 1) { try { await mindmapPost({ action: 'moveNode', id: newId, parentId: real(parentId), index: at }); } catch { /* it stays at the end */ } }
+        // From here on it goes by its real id: in the list, on the page, and
+        // wherever the next idea refers to it.
+        mmRealId[tmpId] = newId;
+        local.id = newId; delete local.pending;
+        for (const n of mindmapNodes) if (n.parentId === tmpId) n.parentId = newId;
+        const nodeEl = document.querySelector('#mm-scale > .mm-node[data-node="' + tmpId + '"]');
+        if (nodeEl) nodeEl.dataset.node = newId;
+        document.querySelectorAll('#mm-scale > .mm-ghost[data-addparent="' + tmpId + '"]').forEach(g => { g.dataset.addparent = newId; g.dataset.node = '__add__' + newId; });
+        if (mmDraft) { if (mmDraft.parentId === tmpId) mmDraft.parentId = newId; if (mmDraft.afterId === tmpId) mmDraft.afterId = newId; }
+        if (mmSel === tmpId) mmSel = newId;
+      }).then(() => {
+        mmSaving--;
+        renderMindmap();
+        // All sent: take the server's own copy (projects, links, order), quietly.
+        if (!mmSaving) { mmReloadWanted = false; loadMindmap(); }
+      });
     }
 
     // Apply current zoom: scale the content layer, size the scroll wrapper to match.
@@ -14969,8 +15474,13 @@ export function getWebappHtml(botUsername) {
       canvas.addEventListener('wheel', (e) => {
         if (!e.ctrlKey) return;          // Ctrl+scroll to zoom
         e.preventDefault();
-        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-        setMindmapZoom(mindmapZoom * factor, e.clientX, e.clientY);
+        // A trackpad pinch arrives as a stream of small ctrl+wheel steps, a
+        // mouse wheel as a few big ones. A fixed 12% per event made the pinch
+        // race; scale by the distance instead, and cap any single step.
+        let dy = e.deltaY;
+        if (e.deltaMode === 1) dy *= 16; else if (e.deltaMode === 2) dy *= 120;
+        const step = Math.max(-0.2, Math.min(0.2, -dy * (Math.abs(dy) < 40 ? 0.006 : 0.0012)));
+        setMindmapZoom(mindmapZoom * Math.exp(step), e.clientX, e.clientY);
       }, { passive: false });
       // pinch zoom
       let pinchStart = 0, pinchZoom0 = 1;
@@ -15091,6 +15601,111 @@ export function getWebappHtml(botUsername) {
       $('#lm-list').innerHTML = h || '<div class="lm-empty">No matching tasks or subtasks.</div>';
     }
 
+    // A node is centred on its anchor, so when it opens up (under the pointer,
+    // or to be edited) it grows up as much as down. Near the top of the map
+    // the upper half would leave the canvas, where it cannot be scrolled to:
+    // push it down by however much would be cut off.
+    function mmKeepOnCanvas(el) {
+      if (!el || !el.isConnected) return;
+      const over = 4 - ((parseFloat(el.style.top) || 0) - el.offsetHeight / 2);
+      if (over > 0) el.style.setProperty('--mm-shift', Math.round(over) + 'px'); else el.style.removeProperty('--mm-shift');
+    }
+    // ─── The shortcut sheet ───
+    // Every way of working the map, in one place, each with a small picture of
+    // what it does that opens under it. Built when first asked for.
+    //
+    // A picture is a little tree: boxes in columns (depth) and rows, the lines
+    // between them, and one box drawn as "the new one" or "the one you hold".
+    function mmDiagram(boxes, links, note) {
+      const CW = 92, RH = 30, BW = 74, BH = 20, PAD = 6;
+      const cols = Math.max.apply(null, boxes.map(b => b[0])) + 1, rows = Math.max.apply(null, boxes.map(b => b[1])) + 1;
+      const W = PAD * 2 + (cols - 1) * CW + BW, H = PAD * 2 + (rows - 1) * RH + BH;
+      const bx = (b) => PAD + b[0] * CW, by = (b) => PAD + b[1] * RH;
+      let g = '';
+      for (const l of links) {
+        const a = boxes[l[0]], b = boxes[l[1]];
+        const x1 = bx(a) + BW, y1 = by(a) + BH / 2, x2 = bx(b), y2 = by(b) + BH / 2, m = (x1 + x2) / 2;
+        g += '<path d="M' + x1 + ',' + y1 + ' C' + m + ',' + y1 + ' ' + m + ',' + y2 + ' ' + x2 + ',' + y2 + '" fill="none" stroke="var(--border)" stroke-width="1.5"' + (l[2] ? ' stroke-dasharray="3 3"' : '') + '/>';
+      }
+      for (const b of boxes) {
+        const kind = b[3] || '';
+        const stroke = kind ? 'var(--accent)' : 'var(--border)';
+        g += '<rect x="' + bx(b) + '" y="' + by(b) + '" width="' + BW + '" height="' + BH + '" rx="7" fill="' + (kind === 'new' ? 'var(--accent-dim)' : 'var(--bg-card)') + '" stroke="' + stroke + '" stroke-width="' + (kind ? 1.6 : 1) + '"' + (kind === 'held' ? ' stroke-dasharray="4 3"' : '') + '/>'
+          + '<text x="' + (bx(b) + BW / 2) + '" y="' + (by(b) + BH / 2 + 3.5) + '" text-anchor="middle" font-size="9.5" font-weight="600" fill="' + (kind ? 'var(--accent-hover)' : 'var(--text-secondary)') + '">' + escHtml(b[2]) + '</text>';
+      }
+      return '<div class="mmh-dia"><svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="' + escHtml(note) + '">' + g + '</svg><div class="mmh-note">' + escHtml(note) + '</div></div>';
+    }
+    function mmHelpHtml() {
+      // One combination stays on one line.
+      const key = (k) => '<span class="mmh-combo">' + k.split('+').map(x => '<kbd>' + escHtml(x.trim()) + '</kbd>').join('<span class="mmh-plus">+</span>') + '</span>';
+      // [keys, what it does, picture or '']
+      const row = (keys, text, dia) => dia
+        ? '<details class="mmh-row"><summary><span class="mmh-keys">' + keys + '</span><span class="mmh-text">' + escHtml(text) + '</span><span class="mmh-more">' + ic('chevron-right') + '</span></summary>' + dia + '</details>'
+        : '<div class="mmh-row plain"><div class="mmh-sum"><span class="mmh-keys">' + keys + '</span><span class="mmh-text">' + escHtml(text) + '</span></div></div>';
+      const word = (w) => '<span class="mmh-word">' + escHtml(w) + '</span>';
+      const T = [[0, 1, 'Trip'], [1, 0, 'Flights'], [1, 1, 'Hotel']];
+      let h = '';
+      h += '<h4>Adding ideas</h4>';
+      h += row(word('+ Add idea'), 'Start a new top-level idea, typed in place. A dashed "add idea" box starts one under that idea.', '');
+      h += row(key('Enter'), 'Save it and start the next idea at the same level.',
+        mmDiagram(T.concat([[1, 2, 'next idea', 'new']]), [[0, 1], [0, 2], [0, 3, 1]], 'You typed "Hotel" and pressed Enter: the next box opens below it, under the same parent.'));
+      h += row(key('Tab'), 'Save it and start an idea nested under it.',
+        mmDiagram(T.concat([[2, 1, 'nested idea', 'new']]), [[0, 1], [0, 2], [2, 3, 1]], 'You typed "Hotel" and pressed Tab: the next box opens one level in, under "Hotel".'));
+      h += row(key('Shift+Tab'), 'Save it and start an idea one level out, beside its parent. From the top level, a new top-level idea.',
+        mmDiagram([[0, 0, 'Trip'], [1, 0, 'Hotel'], [2, 0, 'Near beach'], [1, 1, 'next idea', 'new']], [[0, 1], [1, 2], [0, 3, 1]], 'You typed "Near beach" and pressed Shift+Tab: the next box steps back out, beside "Hotel".'));
+      h += row(key('Shift+Enter'), 'A new line inside the idea.', '');
+      h += row(key('Esc'), 'Close the box without saving what is in it. Clicking elsewhere does the same.', '');
+      h += '<h4>Editing</h4>';
+      h += row(word('Click'), 'Edit the idea where it is. It opens to about seven lines, then scrolls.', '');
+      h += row(key('Enter'), 'Save the edit. Clicking elsewhere saves it too.', '');
+      h += row(key('Esc'), 'Throw the edit away; the idea reads as it did.', '');
+      h += row(key('Tab') + '<span class="mmh-or">or</span>' + key('Shift+Tab'), 'Save the edit and carry on adding: nested under it, or one level out.', '');
+      h += row(word('Double-click'), 'Open the details: notes, a link to a task, media, delete.', '');
+      h += '<h4>Moving about</h4>';
+      h += row(key('Ctrl+Shift+Up / Down'), 'The idea above or below on the same level, carrying on into the next parent when one runs out.',
+        mmDiagram([[0, 0, 'Trip'], [1, 0, 'Hotel', 'held'], [0, 1, 'Work'], [1, 1, 'Budget', 'new']], [[0, 1], [2, 3]], 'From "Hotel", Ctrl+Shift+Down goes to "Budget": the next idea on that level, though it belongs to "Work".'));
+      h += row(key('Ctrl+Shift+Left'), 'Its parent.', '');
+      h += row(key('Ctrl+Shift+Right'), 'The middle idea under it (the earlier of the two middles when there is an even number).',
+        mmDiagram([[0, 1, 'Trip', 'held'], [1, 0, 'Flights'], [1, 1, 'Hotel', 'new'], [1, 2, 'Visa']], [[0, 1], [0, 2], [0, 3]], 'From "Trip", Ctrl+Shift+Right lands on "Hotel", the middle of its three.'));
+      h += row(key('Enter'), 'With the ring on an idea, start editing it. While editing, Ctrl+Shift and an arrow saves and takes the editing with you.', '');
+      h += '<h4>Moving ideas</h4>';
+      h += row(word('Drag onto an idea'), 'It becomes a child of that idea.',
+        mmDiagram([[0, 0, 'Trip'], [1, 0, 'Hotel'], [0, 1, 'Visa', 'held'], [1, 1, 'Visa', 'new']], [[0, 1], [0, 3, 1]], 'Drop "Visa" on the middle of "Trip": it moves under "Trip".'));
+      h += row(word('Drag to the edge of an idea'), 'Dropped on the top or bottom edge of an idea, it goes just before or after it.',
+        mmDiagram([[0, 1, 'Trip'], [1, 0, 'Visa', 'new'], [1, 1, 'Flights'], [1, 2, 'Hotel']], [[0, 1, 1], [0, 2], [0, 3]], 'Drop "Visa" on the top edge of "Flights": it becomes the one before it.'));
+      h += row(word('Drag onto a chat or terminal'), 'Puts a reference to the idea in the message.', '');
+      h += '<h4>Looking around</h4>';
+      h += row(key('Ctrl+Scroll') + '<span class="mmh-or">or</span>' + word('pinch'), 'Zoom, around the pointer.', '');
+      h += row(word('\u2212 / +'), 'The small button on an idea folds or unfolds what is under it.',
+        mmDiagram([[0, 0, 'Trip  +', 'held'], [1, 0, 'Flights'], [1, 1, 'Hotel']], [[0, 1, 1], [0, 2, 1]], 'Folded, "Trip" keeps its ideas but hides them until you unfold it.'));
+      h += row(word('Hover'), 'Shows the whole of a long idea.', '');
+      h += row(word('Filter ideas'), 'Lights up the ideas that match and dims the rest.', '');
+      return h;
+    }
+    function openMmHelp() {
+      let m = document.getElementById('mm-help-modal');
+      if (!m) {
+        m = document.createElement('div');
+        m.className = 'input-modal'; m.id = 'mm-help-modal';
+        m.innerHTML = '<div class="im-box mmh-box" role="dialog" aria-label="Mindmap shortcuts">'
+          + '<div class="mmh-head"><h3>Mindmap shortcuts</h3><button class="mmh-all" type="button">Show all pictures</button><button class="mmh-x" type="button" title="Close" aria-label="Close">' + ic('x') + '</button></div>'
+          + '<div class="mmh-body">' + mmHelpHtml() + '</div></div>';
+        document.body.appendChild(m);
+        const close = () => m.classList.remove('visible');
+        m.addEventListener('click', (e) => { if (e.target === m) close(); });
+        m.querySelector('.mmh-x').addEventListener('click', close);
+        const all = m.querySelector('.mmh-all');
+        all.addEventListener('click', () => {
+          const rows = [...m.querySelectorAll('details.mmh-row')], open = rows.some(r => !r.open);
+          rows.forEach(r => { r.open = open; });
+          all.textContent = open ? 'Hide all pictures' : 'Show all pictures';
+        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && m.classList.contains('visible')) { e.stopPropagation(); close(); } }, true);
+      }
+      m.classList.add('visible');
+    }
+
+    const mmClick = { id: '', at: 0, timer: 0 };
     function setupMindmapHandlers() {
       const panel = $('#mindmap-panel');
       panel.addEventListener('click', async (e) => {
@@ -15104,32 +15719,52 @@ export function getWebappHtml(botUsername) {
         }
         if (e.target.closest('[data-mmproj-all]')) { mindmapHiddenProjects.clear(); renderMindmap(); return; }
         // dashed "add idea" ghost → add a child to its parent
+        if (e.target.closest('.mm-draft')) return;
         const ghost = e.target.closest('.mm-ghost');
-        if (ghost) {
-          const pid = ghost.dataset.addparent;
-          const text = await askText({ title: 'Add idea', label: 'New idea' });
-          if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim(), parentId: pid }); loadMindmap(); }
-          return;
-        }
+        if (ghost) { mmStartDraft(ghost.dataset.addparent, null); return; }
         const btn = e.target.closest('[data-mact]');
         if (btn) {
           const act = btn.dataset.mact;
           const id = btn.dataset.node;
+          if (act === 'help') { openMmHelp(); return; }
           if (act === 'media') {
             openMediaModal('Media \\u00b7 Mindmap', { scope: 'project', kind: 'mindmap' });
           } else if (act === 'add-root') {
-            const text = await askText({ title: 'Add idea', label: 'New idea' });
-            if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim() }); loadMindmap(); }
+            mmStartDraft(null, null);
           } else if (act === 'toggle') {
             mindmapCollapsed[id] = !mindmapCollapsed[id];
             renderMindmap();
           }
           return;
         }
-        // Click on a node card → open its detail modal (ignore the click that
-        // immediately follows a drag-reorder).
+        // A node: one click edits its text in place, two open its details.
+        // The edit waits a moment for a second click, so a double click does
+        // not flash the text box open first. Counted here rather than left to
+        // the browser's dblclick, which a phone does not always send. (The
+        // click that ends a drag-reorder is ignored.)
         const nodeEl = e.target.closest('.mm-node');
-        if (nodeEl && Date.now() - lastMmDrag > 300) openMmDetail(nodeEl.dataset.node);
+        if (!nodeEl || Date.now() - lastMmDrag <= 300 || nodeEl.classList.contains('mm-editing')) return;
+        const nid = nodeEl.dataset.node, now = Date.now();
+        clearTimeout(mmClick.timer);
+        if (mmClick.id === nid && now - mmClick.at < 350) {
+          mmClick.id = '';
+          if (mmEdit) mmFinishEdit(true);
+          openMmDetail(nid);
+          return;
+        }
+        mmClick.id = nid; mmClick.at = now;
+        mmClick.timer = setTimeout(() => { mmClick.id = ''; if (nodeEl.isConnected) mmStartEdit(nodeEl); }, 240);
+      });
+      // Hovering opens a node up (see the stylesheet); keep it on the canvas.
+      panel.addEventListener('mouseover', (e) => {
+        const n = e.target.closest && e.target.closest('.mm-node:not(.mm-ghost):not(.mm-draft)');
+        if (!n || (e.relatedTarget && n.contains(e.relatedTarget))) return;
+        requestAnimationFrame(() => mmKeepOnCanvas(n));
+      });
+      panel.addEventListener('mouseout', (e) => {
+        const n = e.target.closest && e.target.closest('.mm-node:not(.mm-ghost):not(.mm-draft)');
+        if (!n || (e.relatedTarget && n.contains(e.relatedTarget)) || n.classList.contains('mm-editing')) return;
+        n.style.removeProperty('--mm-shift');
       });
       setupMmDetailModal();
       setupMediaHandlers();
@@ -15137,8 +15772,9 @@ export function getWebappHtml(botUsername) {
 
     // Action helpers shared by the detail modal.
     async function mmAddChild(id) {
-      const text = await askText({ title: 'Add child idea', label: 'Child idea' });
-      if (text && text.trim()) { await mindmapPost({ action: 'addNode', text: text.trim(), parentId: id }); loadMindmap(); }
+      // Typed in place, under the idea, like every other new idea.
+      closeMmDetail();
+      mmStartDraft(id, null);
     }
     async function mmToggleLink(id) {
       const node = mindmapNodes.find(n => n.id === id);
