@@ -2345,8 +2345,17 @@
       e.dataTransfer.dropEffect = 'copy';
       root.classList.add('cc-drop');
     }
+    // Has the drag really left the chat? relatedTarget cannot say: for a drag
+    // from outside the window it is often null even while still inside, and
+    // it is null again whenever what lies under the pointer changes, which
+    // showing the drop hint itself does. So the answer comes from where the
+    // pointer is, not from which element the browser last named.
+    function dragStillInside(e) {
+      var r = root.getBoundingClientRect();
+      return e.clientX > r.left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom;
+    }
     function onDragLeave(e) {
-      if (!root.contains(e.relatedTarget)) root.classList.remove('cc-drop');
+      if (!dragStillInside(e)) root.classList.remove('cc-drop');
     }
     function onDrop(e) {
       if (!e.dataTransfer) return;
@@ -2439,7 +2448,13 @@
       e.dataTransfer.dropEffect = 'copy';
       showDrop(true);
     });
-    root.addEventListener('dragleave', function (e) { if (!root.contains(e.relatedTarget)) showDrop(false); });
+    root.addEventListener('dragleave', function (e) { if (!dragStillInside(e)) showDrop(false); });
+    // A drag that ends anywhere else (dropped on another pane, let go outside
+    // the window, cancelled with Escape) leaves no hint behind.
+    var dropDone = function () { showDrop(false); root.classList.remove('cc-drop'); };
+    window.addEventListener('drop', dropDone, true);
+    window.addEventListener('dragend', dropDone, true);
+    root._ccDropDone = dropDone;
     root.addEventListener('drop', function (e) {
       var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
       if (!f) { showDrop(false); return; }
@@ -3583,6 +3598,7 @@
         stopTicker(); // closing a cell must not leave an interval running
         window.removeEventListener('paste', onPaste);
         input.removeEventListener('paste', onPaste);
+        if (root._ccDropDone) { window.removeEventListener('drop', root._ccDropDone, true); window.removeEventListener('dragend', root._ccDropDone, true); }
         root.removeEventListener('dragover', onDragOver);
         root.removeEventListener('dragleave', onDragLeave);
         root.removeEventListener('drop', onDrop);

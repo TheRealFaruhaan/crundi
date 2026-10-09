@@ -71,6 +71,7 @@ import { cleanAutoTitle, cleanLongTitle } from './chat-title.js';
 import { createAutoTitler } from './chat-autotitle.js';
 import * as chatMedia from './chat-media.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
+import { transfer as transferFiles, listableDir } from './file-transfer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -4361,8 +4362,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const alias = url.searchParams.get('project');
       const project = getProject(alias);
       if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
-      const fullPath = resolveFsPath(project, url.searchParams.get('dir') || '', principal);
-      if (!existsSync(fullPath)) return json(res, { ok: false, error: 'Directory not found' }, 404);
+      const wantedPath = resolveFsPath(project, url.searchParams.get('dir') || '', principal);
+      // The folder being looked at can vanish under you (Claude deletes it, a
+      // checkout removes it). Rather than an error with no way back, show the
+      // project's folder, or the nearest one above it that still exists. A
+      // collaborator is never taken above their own root (see listableDir).
+      const fullPath = listableDir(wantedPath, fsRootFor(principal, project), isConfined(principal));
+      if (!fullPath) return json(res, { ok: false, error: 'Directory not found' }, 404);
+      const fellBack = resolve(fullPath) !== resolve(wantedPath);
       try {
         const entries = readdirSync(fullPath, { withFileTypes: true })
           .map(e => {
@@ -4388,6 +4395,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           ok: true, entries, crumbs, path: fullPath, root: project.path,
           parent: parent === fullPath ? null : parent,
           inside: isInsideRoot(principal, project, fullPath),
+          ...(fellBack ? { fellBack: true } : {}),
           // Whether "Reveal" and "Open externally" mean anything for this
           // page: only when it is on the machine this server runs on.
           localShell: !isConfined(principal) && isLocalDesktopRequest(req) ? { fileManager: fileManagerName() } : null,
@@ -4549,6 +4557,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const act = body.act === 'open' ? 'open' : 'reveal';
       let isDir = false; try { isDir = statSync(fullPath).isDirectory(); } catch { /* treated as a file */ }
       return json(res, await runShell(act, fullPath, { isDir }));
+    }
+
+    // Move or copy files and folders into a folder (drag and drop, cut / copy
+    // / paste in the Files tab). Every path, source and destination, has to be
+    // inside what this caller may touch; what is safe to do to the disk is
+    // decided in file-transfer.js (nothing overwritten, no folder into itself).
+    if (path === '/api/files/transfer' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const project = getProject(body.project);
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      const op = body.op === 'move' ? 'move' : body.op === 'copy' ? 'copy' : '';
+      if (!op) return json(res, { ok: false, error: 'Unknown operation' }, 400);
+      const destDir = resolveFsPath(project, body.to || '.', principal);
+      if (!isInsideRoot(principal, project, destDir)) return json(res, { ok: false, error: 'Invalid destination' }, 403);
+      const items = (Array.isArray(body.items) ? body.items : []).slice(0, 200).map((f) => resolveFsPath(project, String(f || ''), principal));
+      if (!items.length) return json(res, { ok: false, error: 'Nothing to ' + op }, 400);
+      if (items.some((f) => !isInsideRoot(principal, project, f))) return json(res, { ok: false, error: 'Invalid path' }, 403);
+      try { return json(res, transferFiles({ sources: items, destDir, op, protect: [resolve(project.path), resolve(fsRootFor(principal, project))] })); }
+      catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
     if (path === '/api/files/delete' && req.method === 'POST') {
