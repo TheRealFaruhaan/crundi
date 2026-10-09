@@ -29,7 +29,7 @@
     // Holds the scrolling log plus the floating agent dock, so the dock
     // anchors just above the composer and does not scroll away with the log.
     '.cc-logwrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}',
-    '.cc-root.cc-drop{outline:2px dashed var(--accent);outline-offset:-2px}',
+    '.cc-root.cc-dropping{outline:2px dashed var(--accent);outline-offset:-2px}',
     '.cc-log{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 12px 4px;scroll-behavior:smooth}',
     // While text in a conversation is selected, nothing else on the page can be.
     // See "Selection stays in the conversation" in mount(). The path classes
@@ -258,7 +258,6 @@
     '.cc-activity .cc-spin{width:11px;height:11px}',
     '.cc-sid{font-family:var(--mono);font-size:calc(10.5px*var(--cc-fs,1));cursor:pointer;border-bottom:1px dotted var(--border)}',
     '.cc-sid:hover{color:var(--text-secondary)}',
-    '.cc-drop{position:absolute;inset:0;border:2px dashed var(--accent);border-radius:var(--radius);background:var(--accent-dim);display:flex;align-items:center;justify-content:center;color:var(--accent-hover);font-weight:600;pointer-events:none;z-index:30}',
     '.cc-slash{position:absolute;bottom:100%;left:0;right:0;margin-bottom:4px;background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);max-height:190px;overflow-y:auto;z-index:20}',
     '.cc-slash-item{padding:5px 10px;cursor:pointer;font-size:calc(12px*var(--cc-fs,1));display:flex;gap:8px}',
     '.cc-slash-item.on{background:var(--accent-dim)}',
@@ -2343,7 +2342,7 @@
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = 'copy';
-      root.classList.add('cc-drop');
+      root.classList.add('cc-dropping');
     }
     // Has the drag really left the chat? relatedTarget cannot say: for a drag
     // from outside the window it is often null even while still inside, and
@@ -2355,23 +2354,25 @@
       return e.clientX > r.left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom;
     }
     function onDragLeave(e) {
-      if (!dragStillInside(e)) root.classList.remove('cc-drop');
+      if (!dragStillInside(e)) root.classList.remove('cc-dropping');
     }
     function onDrop(e) {
       if (!e.dataTransfer) return;
       e.preventDefault();
       e.stopPropagation();
-      root.classList.remove('cc-drop');
+      root.classList.remove('cc-dropping');
       var files = e.dataTransfer.files;
       if (files && files.length) {
         var paths = [];
         for (var i = 0; i < files.length; i++) {
           var f = files[i];
           if (f.type && f.type.indexOf('image/') === 0) { uploadFile(f); continue; }
-          // Electron exposes the real path via the preload bridge; a plain
-          // browser gives us only the name, same limitation as the input bar.
-          var p = (window.api && window.api.getPathForFile && window.api.getPathForFile(f)) || f.path || f.name;
-          if (p) paths.push(p);
+          // The desktop app knows where the file really is, so its path is
+          // enough. A browser is told only the name, which is no use to
+          // Claude: there the file is uploaded and the stored path is what
+          // goes in. One or the other, never both.
+          var p = (window.api && window.api.getPathForFile && window.api.getPathForFile(f)) || f.path || '';
+          if (p) paths.push(p); else uploadFile(f);
         }
         if (paths.length) {
           insertPath(paths.join(' '));
@@ -2434,14 +2435,14 @@
     input.addEventListener('focus', function () { LAST_FOCUSED = sessionId; });
 
     // Drag a file anywhere onto the chat to attach it.
-    var dropHint = null;
-    function showDrop(on) {
-      if (on && !dropHint) {
-        dropHint = el('div', 'cc-drop', 'Drop to attach');
-        root.style.position = 'relative';
-        root.appendChild(dropHint);
-      } else if (!on && dropHint) { dropHint.remove(); dropHint = null; }
-    }
+    // The sign that a drop will land here is the same dashed outline a drag
+    // from the Files tab gives a pane, and nothing more. There used to be a
+    // "Drop to attach" sheet over the chat as well; it shared a class name
+    // with the outline's own mark, so its rules (absolutely placed, a flex
+    // row, no pointer events) fell on the whole chat: the layout broke, and
+    // with no pointer events the chat could neither take the drop nor notice
+    // the drag leaving.
+    function showDrop(on) { root.classList.toggle('cc-dropping', !!on); }
     root.addEventListener('dragover', function (e) {
       if (!e.dataTransfer || !Array.prototype.includes.call(e.dataTransfer.types || [], 'Files')) return;
       e.preventDefault(); e.stopPropagation();
@@ -2451,17 +2452,16 @@
     root.addEventListener('dragleave', function (e) { if (!dragStillInside(e)) showDrop(false); });
     // A drag that ends anywhere else (dropped on another pane, let go outside
     // the window, cancelled with Escape) leaves no hint behind.
-    var dropDone = function () { showDrop(false); root.classList.remove('cc-drop'); };
+    var dropDone = function () { showDrop(false); };
     window.addEventListener('drop', dropDone, true);
     window.addEventListener('dragend', dropDone, true);
     root._ccDropDone = dropDone;
-    root.addEventListener('drop', function (e) {
-      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (!f) { showDrop(false); return; }
-      e.preventDefault(); e.stopPropagation();
-      showDrop(false);
-      uploadFile(f);
-    });
+    // Leaving the WINDOW can report a last position still inside the chat. No
+    // dragover arrives after that, so the mark is dropped when they stop.
+    var dropIdle = 0;
+    root.addEventListener('dragover', function () { clearTimeout(dropIdle); dropIdle = setTimeout(dropDone, 600); });
+    // (The drop itself is taken by onDrop above. A second handler here used
+    // to upload the first file as well, so one dropped file arrived twice.)
 
     // ─── Composer behaviour ───
 
