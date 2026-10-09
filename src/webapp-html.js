@@ -635,8 +635,8 @@ export function getWebappHtml(botUsername) {
        menu hanging below the header. Lift the header while its menu is open. */
     .term-head.tools-open { position: relative; z-index: 6; }
     .term-more { display: none; align-items: center; font-size: 13px; padding: 3px 6px; }
-    .term-full { display: none; align-items: center; font-size: 13px; padding: 3px 6px; }
-    .term-cell.pane-full .term-full { display: inline-flex; color: var(--accent-hover); border-color: var(--accent); }
+    .term-full { display: inline-flex; align-items: center; font-size: 13px; padding: 3px 6px; }
+    .term-cell.pane-full .term-full { color: var(--accent-hover); border-color: var(--accent); }
     .term-cell.pane-full {
       position: fixed !important; inset: 0 !important; z-index: 390;
       width: auto !important; height: auto !important; max-width: none !important; max-height: none !important;
@@ -651,6 +651,8 @@ export function getWebappHtml(botUsername) {
     .term-cell.pane-full > .term-head { min-height: env(safe-area-inset-top); box-sizing: border-box; }
     /* Nothing to drag, split or close into while it covers the screen. */
     .term-cell.pane-full .term-drag { display: none; }
+    /* Nor the close button: too easy to hit where the full screen button was a moment ago. Leave full screen first. */
+    .term-cell.pane-full .term-close { display: none; }
     /* Split is offered in the menu only where the layout can be split and the
        floating split buttons are not doing the job (a phone). */
     .head-split { display: none; }
@@ -666,7 +668,6 @@ export function getWebappHtml(botUsername) {
         .term-head.tools-open .term-head-tools { display: flex; }
         .term-head.tools-open .term-more { color: var(--accent-hover); border-color: var(--accent); }
         .term-more { display: inline-flex; }
-        .term-full { display: inline-flex; }
         /* With the buttons folded away the title can have the room. */
         .term-title { max-width: none; flex: 0 1 auto; min-width: 0; }
     }
@@ -681,7 +682,6 @@ export function getWebappHtml(botUsername) {
         .term-head.tools-open .term-head-tools { display: flex; }
         .term-head.tools-open .term-more { color: var(--accent-hover); border-color: var(--accent); }
         .term-more { display: inline-flex; }
-        .term-full { display: inline-flex; }
         /* With the buttons folded away the title can have the room. */
         .term-title { max-width: none; flex: 0 1 auto; min-width: 0; }
         .term-head-tools .term-font-btn, .term-head-tools .term-head-btn { min-height: 34px; min-width: 38px; padding: 6px 10px; font-size: 13px; }
@@ -6796,8 +6796,8 @@ export function getWebappHtml(botUsername) {
         + '<button class="term-font-btn head-split" data-action="head-split" data-dir="col" title="Split down">' + sd + '</button>'
         + inner
         + '</span>'
-        // Where the buttons are folded away there is room for this one: the
-        // pane over the whole screen (see setPaneFull).
+        // The pane over the whole screen (see setPaneFull). Always in the
+        // header, wide or folded, next to close.
         + '<button class="term-head-btn term-full" data-action="pane-full" title="Full screen" aria-label="Full screen">' + ic('maximize') + '</button>'
         + '<button class="term-head-btn term-more" data-action="head-more" title="More" aria-label="More" aria-haspopup="true">' + ic('more') + '</button>';
     }
