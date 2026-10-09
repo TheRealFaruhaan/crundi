@@ -5344,6 +5344,8 @@ export function getWebappHtml(botUsername) {
 
     async function selectProject(alias) {
       currentProject = alias;
+      // Being at a project is what keeps its chats awake: say where we are now.
+      reportPresence(true);
       widgetsOn();
       // So a reload, or a second browser, lands where you left off instead of
       // on an empty workbench.
@@ -8053,12 +8055,28 @@ export function getWebappHtml(botUsername) {
     // hasFocus() is true only while THIS tab/window holds OS focus, so a tab in
     // the background, or a window left open on a LOCKED PC (lock drops focus),
     // both report not-present and still get the Telegram alert.
+    //
+    // Two more facts ride along, for parking idle chats (server: projectSeenAt):
+    // which project this window is showing, and whether anyone has touched it
+    // lately. Focus alone said "here" for a window left in front on a machine
+    // nobody was at, and "here" in one project kept every other project awake.
+    // The active flag itself is unchanged, so Telegram's "when away" behaves as before.
+    const ENGAGED_MS = 10 * 60 * 1000;
     let _present = null;
+    let _lastInputAt = Date.now();
+    let _sentProject = null;
+    const noteInput = () => { _lastInputAt = Date.now(); };
+    ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove'].forEach(ev => window.addEventListener(ev, noteInput, { passive: true, capture: true }));
+    // A panel's frame swallows the pointer and keys inside it; it says so here.
+    window.crundiNoteInput = noteInput;
     function reportPresence(force) {
       const active = document.hasFocus() && document.visibilityState === 'visible';
-      if (!force && active === _present) return;
+      const project = currentProject || '';
+      if (!force && active === _present && project === _sentProject) return;
       _present = active;
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'presence', active }));
+      _sentProject = project;
+      const engaged = active && (Date.now() - _lastInputAt) < ENGAGED_MS;
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'presence', active, engaged, project }));
     }
     window.addEventListener('focus', () => reportPresence());
     window.addEventListener('blur', () => reportPresence());

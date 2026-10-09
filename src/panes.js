@@ -8,7 +8,7 @@
  * again under the same id.
  *
  * Two things park a pane:
- *   - idleness: nothing going on in it AND nobody at Crundi, both for the
+ *   - idleness: nothing going on in it AND nobody at its project, both for the
  *     configured timeout (Settings; 0 = off, otherwise at least 10 minutes).
  *     Plain shells are never parked for idleness — Crundi cannot tell whether
  *     one is running a dev server.
@@ -36,7 +36,7 @@ export const DEFAULT_TIMEOUT_MIN = 60;
  * @param {(cwd:string, uuid:string, opts:object) => any} o.readTranscriptHistory
  * @param {(alias:string) => any} o.getProject
  * @param {() => number} o.timeoutMinutes     current setting (0 = off)
- * @param {(ms:number) => boolean} o.awayFor  true if nobody has been at Crundi for ms
+ * @param {(ms:number, project:string) => boolean} o.awayFor  true if nobody has been at THAT PROJECT for ms
  * @param {(id:string) => string} o.terminalState  hook-reported state of a terminal
  * @param {() => void} o.onChange             broadcast state after a park / resume
  */
@@ -219,13 +219,12 @@ export function createPanes(o) {
     if (!min) return;
     const ms = Math.max(MIN_TIMEOUT_MIN, min) * 60_000;
     const now = Date.now();
-    const away = o.awayFor(ms);
     const candidates = [];
     for (const t of (o.claudeTerminals?.list() || [])) {
       const m = o.claudeTerminals.meta(t.id);
       if (!m || !m.running || !m.restorable || m.shellOnly) continue;   // shells: never for idleness
       const st = o.terminalState(t.id) || 'idle';
-      candidates.push({ id: t.id, busy: st !== 'idle', since: m.createdAt || now });
+      candidates.push({ id: t.id, project: m.alias || t.project || '', busy: st !== 'idle', since: m.createdAt || now });
     }
     for (const s of (o.claudeUi?.list() || [])) {
       const m = o.claudeUi.meta(s.id);
@@ -233,14 +232,18 @@ export function createPanes(o) {
       // Working, asking, or waiting on a background trigger — and any
       // background task the user has not dismissed — all count as going on.
       const busy = m.state !== 'idle' || m.busyTasks > 0 || m.pendingInjections > 0;
-      candidates.push({ id: s.id, busy, since: now });
+      candidates.push({ id: s.id, project: m.alias || s.project || '', busy, since: now });
     }
     const live = new Set(candidates.map(c => c.id));
     for (const id of [...idleSince.keys()]) if (!live.has(id)) idleSince.delete(id);
     for (const c of candidates) {
       if (c.busy) { idleSince.set(c.id, now); continue; }
       if (!idleSince.has(c.id)) idleSince.set(c.id, Math.min(c.since, now));
-      if (away && now - idleSince.get(c.id) >= ms) park(c.id, 'idle');
+      // "Nobody here" is asked per project. Being at Crundi used to hold every
+      // pane open: an hour spent in one project kept the idle chats of five
+      // others running. A pane now sleeps when ITS project has gone unvisited
+      // for the timeout, whatever is happening elsewhere.
+      if (now - idleSince.get(c.id) >= ms && o.awayFor(ms, c.project)) park(c.id, 'idle');
     }
   }
 

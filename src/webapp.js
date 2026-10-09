@@ -846,6 +846,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // When someone was last at Crundi (a focused, visible window). Starts at boot:
   // a server that just came up has not seen anyone leave yet.
   let lastPresentAt = Date.now();
+  // When someone was last AT each project: its page focused, visible, and
+  // touched within the last few minutes. This is what parking goes by.
+  //
+  // "A focused window" alone is not somebody being there. A desktop app left
+  // in front on a machine nobody is using kept every chat awake for a day
+  // (reported with the laptop locked, which was supposed to drop focus and
+  // evidently does not always). And one project being in use is no reason to
+  // keep another project's idle chats running.
+  const projectSeenAt = new Map();   // alias -> epoch ms
+  let legacySeenAt = 0;              // pages from before this, which report no project
+  const panesBootAt = Date.now();    // a server that just started has not seen anyone leave
   // Auto-park timeout in minutes: 0 = off, otherwise at least MIN_TIMEOUT_MIN.
   // Kept in the state file; absent means the default.
   function readAutoParkMinutes() {
@@ -862,9 +873,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     dataDir: config.dataDir, claudeTerminals, claudeUi, readTranscriptHistory,
     getProject: (a) => getProjectUnscoped(a),
     timeoutMinutes: () => autoParkMinutes,
-    awayFor: (ms) => {
-      if (anyClientPresent()) { lastPresentAt = Date.now(); return false; }
-      return Date.now() - lastPresentAt >= ms;
+    // Per project, and by what the person is DOING, not only by a focused
+    // window (see projectSeenAt). A page that predates this reports neither a
+    // project nor activity, and counts for every project, as before.
+    awayFor: (ms, project) => {
+      const seen = Math.max(projectSeenAt.get(String(project || '').toLowerCase()) || 0, legacySeenAt, panesBootAt);
+      return Date.now() - seen >= ms;
     },
     terminalState: (id) => agentStates.get(id) || 'idle',
     onChange: () => broadcastState(),
@@ -5468,7 +5482,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           // one telling the owner that collaborator is waiting on them.
           if (confined) return;
           if (msg.active) presentClients.set(ws, Date.now() + PRESENCE_TTL);
-          if (msg.active) lastPresentAt = Date.now();   // panes.js: the away clock
+          if (msg.active) lastPresentAt = Date.now();   // backups: the away clock
+          // panes.js: who is at which project. `engaged` is absent from a page
+          // loaded before this existed.
+          if (msg.active && msg.engaged === undefined) legacySeenAt = Date.now();
+          else if (msg.active && msg.engaged && msg.project) projectSeenAt.set(String(msg.project).toLowerCase().slice(0, 120), Date.now());
           else presentClients.delete(ws);
           return;
         }

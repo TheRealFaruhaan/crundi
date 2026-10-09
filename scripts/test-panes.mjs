@@ -159,6 +159,37 @@ try {
   P2.forget('a000000000000002');
   ok(!P2.listParked().some(p => p.id === 'a000000000000002'), 'closing a parked pane forgets it');
   P2.stop();
+
+  // 11) "nobody here" is asked per project: being busy in one project does
+  //     not keep another project's idle chat awake.
+  {
+    const seen = new Map();   // project -> when someone was last at it
+    const asked = [];
+    const U3 = fakeUi();
+    U3.add('c000000000000001', { alias: 'here', title: 'Where I am' });
+    U3.add('c000000000000002', { alias: 'elsewhere', title: 'Not visited' });
+    U3.add('c000000000000003', { alias: 'elsewhere', title: 'Not visited, working', state: 'working' });
+    const P3 = createPanes({
+      dataDir: mkdtempSync(join(tmpdir(), 'panes-test-')), claudeTerminals: fakeTerminals(), claudeUi: U3,
+      readTranscriptHistory: () => ({ messages: [] }), getProject: () => ({ path: '/p' }),
+      timeoutMinutes: () => 30,
+      awayFor: (ms, project) => { asked.push(project); return now - (seen.get(project) || 0) >= ms; },
+      terminalState: () => 'idle', onChange: () => {},
+    });
+    seen.set('here', now); seen.set('elsewhere', now);
+    P3.tick();
+    // Half an hour and more in "here", touching it throughout; "elsewhere" never visited.
+    for (let i = 0; i < 4; i++) { now += 10 * MIN; seen.set('here', now); P3.tick(); }
+    const parked3 = P3.listParked().map(p => p.title);
+    ok(JSON.stringify(parked3) === JSON.stringify(['Not visited']), 'a chat in a project you have not been at parks, though you are at Crundi: ' + JSON.stringify(parked3));
+    ok(U3.s.has('c000000000000001'), 'the chat in the project you are at stays');
+    ok(U3.s.has('c000000000000003'), 'a working chat stays, visited or not');
+    ok(asked.includes('here') && asked.includes('elsewhere'), 'the away question names the project');
+    // Then you leave "here" as well.
+    now += 31 * MIN; P3.tick();
+    ok(!U3.s.has('c000000000000001'), 'and it parks too once its own project has gone unvisited for the timeout');
+    P3.stop();
+  }
 } finally {
   Date.now = realNow;
   rmSync(dir, { recursive: true, force: true });

@@ -351,6 +351,9 @@
     };
 
     v.handleCall = function (m) {
+      // Something done inside a panel is the person being here; the page
+      // cannot see pointer or keys that land in the frame.
+      if (window.crundiNoteInput) { try { window.crundiNoteInput(); } catch (e) { /* not this page */ } }
       var now = Date.now();
       v.calls = v.calls.filter(function (t) { return now - t < 10000; });
       if (v.calls.length >= 40) return v.post({ t: 'result', seq: m.seq, ok: false, error: 'Too many requests; slow down.' });
