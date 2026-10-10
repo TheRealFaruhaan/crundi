@@ -130,15 +130,33 @@
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function rnd(a, b) { return a + Math.random() * (b - a); }
   function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+  // What to do next, without doing the same thing over and over: every choice
+  // is dealt from a shuffled pack, each one once before any comes round again,
+  // and never the same one twice running when a pack is reshuffled. The packs
+  // last as long as the page, so a scene that starts again does not open the
+  // way it opened last time.
+  var PACKS = {};
+  function deal(key, n) {
+    var p = PACKS[key];
+    if (!p || !p.q.length || p.n !== n) {
+      var q = [], last = p && p.n === n ? p.last : -1;
+      for (var i = 0; i < n; i++) q.push(i);
+      for (var j = n - 1; j > 0; j--) { var r = Math.floor(Math.random() * (j + 1)), t = q[j]; q[j] = q[r]; q[r] = t; }
+      if (n > 1 && q[n - 1] === last) { q[n - 1] = q[0]; q[0] = last; }
+      p = PACKS[key] = { q: q, last: last, n: n };
+    }
+    p.last = p.q.pop();
+    return p.last;
+  }
 
   // ─── The actor: a body on springs ───
   // [stiffness, damping]. Lower damping is bouncier.
   var SPRING = {
     turn: [130, 21], lean: [150, 22], squash: [330, 13], headRot: [160, 19], headY: [170, 20],
     eyeX: [230, 26], eyeY: [230, 26], lid: [420, 34], armL: [165, 16], armR: [165, 16],
-    legL: [260, 24], legR: [260, 24], sit: [95, 17], swing: [50, 13], shake: [70, 15], alpha: [60, 15], armSwing: [90, 18], armsBack: [110, 19], grow: [120, 12]
+    legL: [260, 24], legR: [260, 24], sit: [95, 17], swing: [50, 13], shake: [70, 15], alpha: [60, 15], armSwing: [90, 18], armsBack: [110, 19], grow: [120, 12], reach: [150, 20]
   };
-  var REST = { turn: 0, lean: 0, squash: 1, headRot: 0, headY: 0, eyeX: 0, eyeY: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0, sit: 0, swing: 0, shake: 0, alpha: 1, armSwing: 1, armsBack: 0, grow: 1 };
+  var REST = { turn: 0, lean: 0, squash: 1, headRot: 0, headY: 0, eyeX: 0, eyeY: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0, sit: 0, swing: 0, shake: 0, alpha: 1, armSwing: 1, armsBack: 0, grow: 1, reach: 0 };
 
   function Actor(layer, size) {
     addStyle();
@@ -330,8 +348,13 @@
       if (behind) { p.up.insertBefore(p.armR, p.up.firstChild); p.up.insertBefore(p.armL, p.up.firstChild); }
       else { p.up.appendChild(p.armL); p.up.appendChild(p.armR); }
     }
-    p.armL.setAttribute('transform', 'translate(' + (ab * 7.5).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (armL - ab * 24).toFixed(2) + ' 23.5 58)' + sc(23.5, 58, gA));
-    p.armR.setAttribute('transform', 'translate(' + (-ab * 7.5).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (-(armR - ab * 24)).toFixed(2) + ' 72.5 58)' + sc(72.5, 58, gA));
+    // Both hands on something to one side: seen side-on, the two shoulders are
+    // one in front of the other, so both arms start from the same place and
+    // reach the same way, one hand a little under the other.
+    var rcA = clamp(Math.abs(v.reach), 0, 1), rcX = 48 + (v.reach < 0 ? -9 : 9);
+    var rLx = rcA * (rcX - 23.5), rRx = rcA * (rcX - 72.5), rRy = rcA * 5;
+    p.armL.setAttribute('transform', 'translate(' + (ab * 7.5 + rLx).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (armL - ab * 24).toFixed(2) + ' 23.5 58)' + sc(23.5, 58, gA));
+    p.armR.setAttribute('transform', 'translate(' + (-ab * 7.5 + rRx).toFixed(2) + ' ' + (ab * 2.5 + rRy).toFixed(2) + ') rotate(' + (-(armR - ab * 24)).toFixed(2) + ' 72.5 58)' + sc(72.5, 58, gA));
 
     var turn = v.turn, tc = clamp(turn, -1, 1);
     p.head.setAttribute('transform', 'translate(' + (tc * 2.6).toFixed(2) + ' ' + (v.headY + headLag).toFixed(2) + ') rotate(' + v.headRot.toFixed(2) + ' 48 50)');
@@ -586,10 +609,12 @@
     var spot = sf.l + (sf.r - sf.l) * rnd(0.55, 0.72);
     await enter(s, side < 0 ? -40 : layerW + 40, spot, 62);
     await s.wait(380);
-    s.pose({ eyeY: -3, headRot: -6 }); await s.wait(520);                     // look up at the conversation
-    s.pose({ eyeY: 0, headRot: 0 });
-    await knock(s);
-    await shrug(s);
+    // It does not always open the same way.
+    var open = deal('queue-open', 4);
+    if (open === 0) { s.pose({ eyeY: -3, headRot: -6 }); await s.wait(520); s.pose({ eyeY: 0, headRot: 0 }); await knock(s); await shrug(s); }   // look up, knock, nothing
+    else if (open === 1) { await watch(s); await shakeHead(s); }               // arrives already looking at the time
+    else if (open === 2) { await peekDown(s); await knock(s); }                // what is this it is standing on
+    else { await scan(s); await sigh(s); }                                     // anyone? no
     await queueLoop(s, 0, env);
   }
   // "Working…" is right there. Go over, look up at it, point, tap the watch.
@@ -628,14 +653,12 @@
       function () { return nagWorking(s, env); },
       function () { return checkBadge(s, env); }
     ];
-    var order = [9, 0, 10, 1, 2, 3, 5, 8, 6, 4, 7], n = from, was = -1;
     for (;;) {
-      var i = n < order.length ? order[n] : Math.floor(Math.random() * acts.length);
-      // only what is actually on screen
-      if (i === 9 && !(env && env.activity())) i = 1;
-      if (i === 10 && !(env && env.badge())) i = 0;
-      if (i === was) i = (i + 1) % 9;
-      was = i; n++;
+      var i = deal('queue', acts.length);
+      // only what is actually on screen: otherwise deal again
+      if (i === 9 && !(env && env.activity())) i = deal('queue', acts.length);
+      if (i === 10 && !(env && env.badge())) i = deal('queue', acts.length);
+      if ((i === 9 && !(env && env.activity())) || (i === 10 && !(env && env.badge()))) i = deal('queue-plain', 9);
       await acts[i]();
       s.rest();
       await s.wait(rnd(500, 1300));
@@ -682,8 +705,8 @@
     await s.wait(1300);
   }
   async function sitLoop(s, from) {
-    for (var n = from; ; n++) {
-      var r = n % 6;
+    for (;;) {
+      var r = deal('sit', 6);
       if (r === 0) { s.pose({ turn: 0.7, eyeY: 3, headRot: 7 }); await s.wait(1200); s.pose({ turn: 0, eyeY: 0, headRot: 0 }); }        // look at the suggestion beside it
       else if (r === 1) { s.pose({ armR: 62 }); for (var i = 0; i < 3; i++) { s.pose({ armR: 40, turn: 0.5, eyeY: 3 }); await s.wait(170); s.fx('ring', 84, 78); s.pose({ armR: 62 }); await s.wait(210); } s.pose({ armR: 10, turn: 0, eyeY: 0 }); }   // pat it: this one
       else if (r === 2) { s.pose({ armL: 34, armR: 34, headRot: -9, lean: -5, lid: 0.5 }); for (var j = 0; j < 3; j++) { s.fx('note', 70 + j * 4, 6, ';--dx:' + (8 + j * 5) + 'px'); await s.wait(760); } s.pose({ armL: 10, armR: 10, headRot: 0, lean: 0, lid: 0 }); }   // lean back and hum
@@ -791,8 +814,11 @@
     var acts = sendAt
       ? [showAndTell, typing, orThat, ask, jacks, showAndTell, sitAwhile, function () { return watch(s); }, orThat, showAndTell, function () { return sigh(s); }]
       : [point, typing, orThat, ask, jacks, point, function () { return pace(s, 2, 36); }, sitAwhile, function () { return watch(s); }, orThat, function () { return sigh(s); }];
-    for (var n = from; n < acts.length; n++) {
-      await acts[n]();
+    // The first thing is always the point of it; after that, a different
+    // run of things each time, and not all of them.
+    var turns = from >= 99 ? 0 : 6 + Math.floor(Math.random() * 3), key = sendAt ? 'nudge-wide' : 'nudge';
+    for (var n = 0; n < turns; n++) {
+      if (n === 0 && from === 0) await acts[0](); else await acts[deal(key, acts.length)]();
       s.rest();
       await s.wait(rnd(900, 2000) + n * 220);
     }
@@ -1108,7 +1134,7 @@
     s.pose({ legL: 0, legR: 0 });
   }
   async function worn(s) {                                                    // spent
-    s.pose({ armL: 0, armR: 0, lean: 0, squash: 0.9, headY: 5, lid: 0.8, turn: 0, headRot: 0 });
+    s.pose({ reach: 0, armL: 0, armR: 0, lean: 0, squash: 0.9, headY: 5, lid: 0.8, turn: 0, headRot: 0 });
     s.fx('puff', 64, 34); await s.wait(700);
     s.fx('puff', 30, 34); await s.wait(600);
     if (Math.random() < 0.6) { s.pose({ sit: 1, swing: 0, armL: 20, armR: 20, squash: 1 }); await s.wait(rnd(1500, 2400)); s.pose({ sit: 0 }); await s.wait(600); }
@@ -1121,31 +1147,56 @@
     s.pose({ lid: -0.35, headY: -2, armL: 150, armR: 150, shake: 0.9 }); s.fx('bang', 48, -14);
     await s.wait(620);
     var roomRight = Math.min(W, r.five.right) - end;
-    var ways = ['pull', 'pull'];
-    if (roomRight > 34 * k + 8) { ways.push('push', 'push', 'back', 'back'); }
+    var far = roomRight > 44 * k + 8;                                         // is there room to get round the other side
+    var ways = far ? ['pull', 'push', 'back', 'charge', 'plead'] : ['pull', 'plead'];
     var rounds = 1 + Math.floor(Math.random() * 2);
     for (var n = 0; n < rounds; n++) {
-      var way = pick(ways);
+      var way = TOP.force || ways[deal(far ? 'five-far' : 'five-near', ways.length)];
+      var heaves = 1 + Math.floor(Math.random() * 3);
       if (way === 'pull') {                                                   // get hold of the end and heave it back
-        await s.walkTo(clamp(end - 24 * k, 12, W - 12), 150);
-        s.pose({ shake: 0, lid: 0, turn: 0.8, armR: 86, armL: -82, headY: 0 }); await s.wait(320);
-        for (var i = 0; i < 3; i++) {
-          s.pose({ lean: -20, squash: 0.92 }); await strain(s, -20, rnd(900, 1400), 14);
-          s.pose({ lean: -6, squash: 1, lid: 0.3 }); await s.wait(260);
+        // Hands on the end of the bar, feet nearer it than the hands, leaning
+        // away: where it stands is worked out from where the hands must be.
+        await s.walkTo(clamp(end - 14 * k, 12, W - 12), 150);
+        s.pose({ shake: 0, lid: 0, turn: 0.8, reach: 1, armR: 90, armL: -80, headY: 0 }); await s.wait(360);
+        for (var i = 0; i < heaves; i++) {
+          s.pose({ lean: -20, squash: 0.92 }); await strain(s, -20, rnd(700, 1600), 14);
+          s.pose({ lean: -6, squash: 1, lid: 0.3 }); await s.wait(rnd(200, 420));
         }
       } else if (way === 'push') {                                            // round the far side, hands on it, shove
-        await s.walkTo(clamp(end + 24 * k, 12, W - 12), 150);
-        s.pose({ shake: 0, lid: 0, turn: -0.8, armL: 86, armR: -82, headY: 0 }); await s.wait(320);
-        for (var j = 0; j < 3; j++) { await strain(s, -19, rnd(900, 1400), 14); s.pose({ lean: -5, squash: 1, lid: 0.3 }); await s.wait(260); }
-      } else {                                                                // put its back into it
-        await s.walkTo(clamp(end + 17 * k, 12, W - 12), 150);
+        // Hands flat on the end of the bar, feet well back, leaning into it.
+        await s.walkTo(clamp(end + 33 * k, 12, W - 12), 150);
+        s.pose({ shake: 0, lid: 0, turn: -0.8, reach: -1, armL: 90, armR: -80, headY: 0 }); await s.wait(360);
+        for (var j = 0; j < heaves; j++) { await strain(s, -19, rnd(700, 1600), 14); s.pose({ lean: -5, squash: 1, lid: 0.3 }); await s.wait(rnd(200, 420)); }
+      } else if (way === 'back') {                                            // put its back into it
+        // Its back against the end of the bar, feet out in front.
+        await s.walkTo(clamp(end + 23 * k, 12, W - 12), 150);
         s.pose({ shake: 0, lid: 0, turn: 0.8, armL: 26, armR: 26, headRot: -9, headY: 0 }); await s.wait(360);
-        for (var m = 0; m < 3; m++) { await strain(s, -17, rnd(1000, 1500), 14); s.pose({ lean: -6, squash: 1, lid: 0.3 }); await s.wait(260); }
+        for (var m = 0; m < heaves; m++) { await strain(s, -17, rnd(800, 1700), 14); s.pose({ lean: -6, squash: 1, lid: 0.3 }); await s.wait(rnd(200, 420)); }
+      } else if (way === 'charge') {                                          // a run-up. this will do it.
+        await s.walkTo(clamp(end + 30 * k + rnd(46, 70), 12, W - 12), 120);
+        s.pose({ shake: 0, lid: 0.5, turn: -0.8, lean: -6, headY: 1 });
+        for (var c = 0; c < 3; c++) { s.pose({ legR: 34 }); await s.wait(150); s.fx('dust', 66, GROUND - 3, ';--dx:10px'); s.pose({ legR: 0 }); await s.wait(170); }   // paw the ground
+        s.pose({ lean: -12, armL: 40, armR: 40 });
+        await s.walkTo(clamp(end + 20 * k, 12, W - 12), 230);
+        s.fxAt('ring', end, a.baseY - 12 * k); s.fx('bang', 48, -14);
+        a.vx = 150; a.vel.squash -= 3;                                        // and straight back off it
+        s.pose({ lid: 0.94, lean: 14, armL: 150, armR: 150, turn: 0 });
+        await s.hop(7);
+        s.pose({ sit: 1, swing: 0, lean: 0, armL: 30, armR: 30, headY: 4 });
+        for (var d2 = 0; d2 < 5; d2++) { s.pose({ headRot: d2 % 2 ? 10 : -10 }); await s.wait(170); }       // stars
+        s.pose({ headRot: 0, lid: 0.3, sit: 0, headY: 0, armL: 0, armR: 0 }); await s.wait(650);
+      } else {                                                                // ask it nicely
+        await s.walkTo(clamp(end + (far ? 30 : -30) * k, 12, W - 12), 110);
+        var fd = far ? -1 : 1;
+        s.pose({ shake: 0, lid: 0, turn: fd * 0.8, squash: 0.86, headY: 3, reach: fd, armL: fd < 0 ? 62 : -52, armR: fd < 0 ? -52 : 62 }); await s.wait(1300);   // down on its knees to it
+        s.pose({ turn: 0, eyeY: -3, headRot: 6 }); await s.wait(900);          // then to you
+        s.pose({ turn: fd * 0.8, eyeY: 0, headRot: 0 }); await s.wait(900);
+        s.pose({ squash: 1, headY: 0, reach: 0, armL: 0, armR: 0 }); await s.wait(350);
       }
-      await worn(s);
-      if (n < rounds - 1) { s.pose({ turn: end > a.x ? 0.8 : -0.8, lid: 0.45 }); await s.wait(700); }   // look at it. right. again.
+      if (way !== 'plead' || Math.random() < 0.4) await worn(s); else { s.pose({ turn: 0 }); await sigh(s); }
+      if (n < rounds - 1) { s.pose({ turn: end > a.x ? 0.8 : -0.8, lid: 0.45 }); await s.wait(700); }   // look at it. right. something else.
     }
-    var after = Math.random();
+    var after = deal('five-after', 3) / 3;
     if (after < 0.34) {                                                       // kick it, regret it
       s.pose({ turn: end > a.x ? 0.7 : -0.7, lid: 0.5 }); await s.wait(300);
       s.pose({ legR: end > a.x ? -70 : 70 }); await s.wait(170); s.fxAt('ring', end, a.baseY - 8 * k);
@@ -1168,7 +1219,7 @@
       await s.hop(7 + i * 1.2);                                               // not high enough. never high enough.
       s.pose({ armL: 0, armR: 0 }); await s.wait(rnd(160, 320));
     }
-    var after = Math.random();
+    var after = deal('week-after', 3) * 0.34;
     if (after < 0.4) {                                                        // on tiptoe, trembling
       s.pose({ squash: 1.09, armR: 172, headY: -3, shake: 0.3, eyeY: -4.5 }); await s.wait(1500);
       s.pose({ squash: 1, armR: 0, headY: 0, shake: 0, eyeY: 0 });
@@ -1192,7 +1243,7 @@
     for (var n = 0; n < 9 && !seen(); n++) {
       var t = tabs.getBoundingClientRect(), from = clamp(Math.min(t.right, W) - 26, 30, W - 14);
       await s.walkTo(from, 70);
-      s.pose({ turn: 0.75, armR: 86, armL: -82 }); await s.wait(300);         // get a grip on it
+      s.pose({ turn: 0.75, reach: 1, armR: 90, armL: -80 }); await s.wait(300);  // get a grip on it
       var x0 = a.x, base = tabs.scrollLeft, going = s.walkTo(from - rnd(42, 58), 13);
       a.t.turn = 0.75;                                                        // backwards, leaning into it
       var i = 0, set = tabs.scrollLeft, fate = null;
@@ -1208,7 +1259,7 @@
       }
       if (fate === 'flung') return await stompBack();
       if (fate === null) { await going; }
-      s.pose({ lean: 0, squash: 1, lid: 0.3, armL: 0, armR: 0, headY: 0, turn: 0, shake: 0, legL: 0, legR: 0 }); await s.wait(260);
+      s.pose({ reach: 0, lean: 0, squash: 1, lid: 0.3, armL: 0, armR: 0, headY: 0, turn: 0, shake: 0, legL: 0, legR: 0 }); await s.wait(260);
       if (fate === 'dropped') { await shakeHead(s); continue; }               // let go of. dizzy. right, where was it
       if (!seen()) { s.fx('puff', 64, 34); s.pose({ squash: 0.92, headY: 4, lid: 0.7 }); await s.wait(rnd(600, 1000)); s.pose({ squash: 1, headY: 0, lid: 0 }); }
     }
@@ -1219,7 +1270,7 @@
       var gripX = a.x, prev = tabs.scrollLeft, still = 0, v = 0;
       a.tx = null; a.onArrive = null;
       a.carry = function () { return gripX - (tabs.scrollLeft - gripScroll); };
-      s.pose({ lid: -0.35, armR: 86, armL: -82, turn: 0.75, shake: 0.35, squash: 1, headY: -1 }); s.fx('bang', 48, -14);
+      s.pose({ lid: -0.35, reach: 1, armR: 90, armL: -80, turn: 0.75, shake: 0.35, squash: 1, headY: -1 }); s.fx('bang', 48, -14);
       try {
         while (still < 6) {
           await s.wait(70);
@@ -1930,6 +1981,6 @@
 
   window.CrundiMini = { attach: attach, Actor: Actor, delays: DELAY, _acts: { pace: pace },
     // the top bar: starts by itself; `go` is for the demo page and for tests
-    top: { start: topStart, go: function (kind) { var ok = topOuting(kind, topRead()); if (ok) { TOP.seen[kind] = true; TOP.next[kind] = Date.now() + 10 * 60000; } return ok; }, busy: function () { return TOP.busy; } } };
+    top: { start: topStart, go: function (kind, force) { TOP.force = force || null; var ok = topOuting(kind, topRead()); if (ok) { TOP.seen[kind] = true; TOP.next[kind] = Date.now() + 10 * 60000; } return ok; }, busy: function () { return TOP.busy; } } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', topStart); else topStart();
 })();
