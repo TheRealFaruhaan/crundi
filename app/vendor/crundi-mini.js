@@ -28,7 +28,11 @@
  * bothered it is wary of the cursor too, and backs away when the cursor comes
  * close, or cowers if it has nowhere to go. Keep tapping and it storms off.
  *
- * There is only ever one Mini on the page, however many chats are open.
+ * It is the logo. Before it turns up, the head in the top bar grows a body,
+ * arms and legs and walks off the screen; when it has left the chat it comes
+ * back along the top bar at the pace it left with and folds away into the logo
+ * again. So there is only ever one Mini on the page, however many chats are
+ * open, and while it is out the logo's place is empty.
  *
  * Only the robot itself takes a tap; the layer it lives on lets everything
  * else through. It does not appear at all for someone who has asked for
@@ -53,6 +57,7 @@
     var st = document.createElement('style');
     st.id = 'cm-style';
     st.textContent = [
+      '.cm-top{position:fixed;left:0;top:0;right:0;overflow:hidden;pointer-events:none;z-index:2147483000}','.cm-top .cm{pointer-events:none;cursor:default}',
       '.cm-layer{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;pointer-events:none;z-index:16;contain:layout style}',
       '.cm{position:absolute;left:0;top:0;will-change:transform,opacity;pointer-events:auto;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation}',
       '.cm svg{display:block;overflow:visible}',
@@ -82,9 +87,9 @@
       +   '<rect data-p="legL" x="36" y="77" width="9" height="13" rx="4.2" fill="' + A + '"/>'
       +   '<rect data-p="legR" x="51" y="77" width="9" height="13" rx="4.2" fill="' + A + '"/>'
       +   '<g data-p="up">'
-      +     '<rect x="32" y="54" width="32" height="24" rx="9" fill="url(#' + g + ')"/>'
+      +     '<g data-p="torso"><rect x="32" y="54" width="32" height="24" rx="9" fill="url(#' + g + ')"/>'
       +     '<circle data-p="light" cx="48" cy="66" r="4.8" fill="' + D + '" opacity=".6"/>'
-      +     '<g data-p="back" opacity="0"><path d="M41 62H55M41 67H55M41 72H55" stroke="' + D + '" stroke-opacity=".4" stroke-width="2.2" stroke-linecap="round"/></g>'
+      +     '<g data-p="back" opacity="0"><path d="M41 62H55M41 67H55M41 72H55" stroke="' + D + '" stroke-opacity=".4" stroke-width="2.2" stroke-linecap="round"/></g></g>'
       +     '<g data-p="head">'
       +       '<path data-p="ant" d="M48 13L48 6" fill="none" stroke="' + A + '" stroke-width="4" stroke-linecap="round"/>'
       +       '<circle data-p="tip" cx="48" cy="5" r="4.5" fill="' + A + '"/>'
@@ -125,9 +130,9 @@
   var SPRING = {
     turn: [130, 21], lean: [150, 22], squash: [330, 13], headRot: [160, 19], headY: [170, 20],
     eyeX: [230, 26], eyeY: [230, 26], lid: [420, 34], armL: [165, 16], armR: [165, 16],
-    legL: [260, 24], legR: [260, 24], sit: [95, 17], swing: [50, 13], shake: [70, 15], alpha: [60, 15], armSwing: [90, 18], armsBack: [110, 19]
+    legL: [260, 24], legR: [260, 24], sit: [95, 17], swing: [50, 13], shake: [70, 15], alpha: [60, 15], armSwing: [90, 18], armsBack: [110, 19], grow: [120, 12]
   };
-  var REST = { turn: 0, lean: 0, squash: 1, headRot: 0, headY: 0, eyeX: 0, eyeY: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0, sit: 0, swing: 0, shake: 0, alpha: 1, armSwing: 1, armsBack: 0 };
+  var REST = { turn: 0, lean: 0, squash: 1, headRot: 0, headY: 0, eyeX: 0, eyeY: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0, sit: 0, swing: 0, shake: 0, alpha: 1, armSwing: 1, armsBack: 0, grow: 1 };
 
   function Actor(layer, size) {
     addStyle();
@@ -279,7 +284,11 @@
     var amp = (30 + run * 14) * w, cosg = Math.cos(this.phase);
     var legL = v.legL + gait * amp + Math.sin(tm * 5.2) * 24 * sw;
     var legR = v.legR - gait * amp + Math.sin(tm * 5.2 + 2.5) * 24 * sw;
-    var liftL = Math.max(0, cosg) * 3.4 * w, liftR = Math.max(0, -cosg) * 3.4 * w;
+    // The foot to pick up is the one travelling forwards, and which way is
+    // forwards depends on which way it is going. (Lifting the same foot both
+    // ways made it moonwalk to the right.)
+    var way = clamp(this.vx / 18, -1, 1);
+    var liftL = Math.max(0, -way * cosg) * 3.4 * w, liftR = Math.max(0, way * cosg) * 3.4 * w;
     var swingA = 24 * w * clamp(v.armSwing, 0, 1.4) * (1 - clamp(v.shake, 0, 1));
     var armL = v.armL - gait * swingA + shake;
     var armR = v.armR + gait * swingA - shake;
@@ -295,8 +304,14 @@
     this.el.style.opacity = clamp(v.alpha, 0, 1).toFixed(3);
 
     p.root.setAttribute('transform', 'translate(0 ' + drop.toFixed(2) + ') rotate(' + lean.toFixed(2) + ' 48 ' + GROUND + ') translate(48 ' + GROUND + ') scale(' + sx.toFixed(3) + ' ' + sq.toFixed(3) + ') translate(-48 -' + GROUND + ')');
-    p.legL.setAttribute('transform', 'translate(0 ' + (-liftL).toFixed(2) + ') rotate(' + legL.toFixed(2) + ' 40.5 78)');
-    p.legR.setAttribute('transform', 'translate(0 ' + (-liftR).toFixed(2) + ') rotate(' + legR.toFixed(2) + ' 55.5 78)');
+    // Growing out of the logo: with grow at 0 there is only the head. The body
+    // comes first, then the arms, then the legs, each with a little overshoot.
+    var gr = v.grow, gB = clamp(gr * 2.2, 0, 1.12), gA = clamp(gr * 2.2 - 0.6, 0, 1.12), gL = clamp(gr * 2.2 - 1.2, 0, 1.12);
+    if (gr > 0.985 && gr < 1.015) { gB = gA = gL = 1; }
+    function sc(px, py, f) { return f === 1 ? '' : ' translate(' + px + ' ' + py + ') scale(' + Math.max(0, f).toFixed(3) + ') translate(' + (-px) + ' ' + (-py) + ')'; }
+    p.torso.setAttribute('transform', sc(48, 51, gB).trim());
+    p.legL.setAttribute('transform', 'translate(0 ' + (-liftL).toFixed(2) + ') rotate(' + legL.toFixed(2) + ' 40.5 78)' + sc(40.5, 78, gL));
+    p.legR.setAttribute('transform', 'translate(0 ' + (-liftR).toFixed(2) + ') rotate(' + legR.toFixed(2) + ' 55.5 78)' + sc(55.5, 78, gL));
     p.up.setAttribute('transform', 'translate(0 ' + bob.toFixed(2) + ')');
     // Hands behind the back: the arms slip round behind the body and tuck in,
     // so only the elbows show at the sides. They change places with the body
@@ -307,8 +322,8 @@
       if (behind) { p.up.insertBefore(p.armR, p.up.firstChild); p.up.insertBefore(p.armL, p.up.firstChild); }
       else { p.up.appendChild(p.armL); p.up.appendChild(p.armR); }
     }
-    p.armL.setAttribute('transform', 'translate(' + (ab * 7.5).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (armL - ab * 24).toFixed(2) + ' 23.5 58)');
-    p.armR.setAttribute('transform', 'translate(' + (-ab * 7.5).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (-(armR - ab * 24)).toFixed(2) + ' 72.5 58)');
+    p.armL.setAttribute('transform', 'translate(' + (ab * 7.5).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (armL - ab * 24).toFixed(2) + ' 23.5 58)' + sc(23.5, 58, gA));
+    p.armR.setAttribute('transform', 'translate(' + (-ab * 7.5).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (-(armR - ab * 24)).toFixed(2) + ' 72.5 58)' + sc(72.5, 58, gA));
 
     var turn = v.turn, tc = clamp(turn, -1, 1);
     p.head.setAttribute('transform', 'translate(' + (tc * 2.6).toFixed(2) + ' ' + (v.headY + headLag).toFixed(2) + ') rotate(' + v.headRot.toFixed(2) + ' 48 50)');
@@ -325,7 +340,7 @@
     p.tip.setAttribute('cx', ax.toFixed(2)); p.tip.setAttribute('cy', ay.toFixed(2));
 
     var lift = clamp(-this.yOff / 40, 0, 1);
-    p.shadow.setAttribute('opacity', (0.32 * (1 - sit) * (1 - lift * 0.7) * clamp(v.alpha, 0, 1)).toFixed(3));
+    p.shadow.setAttribute('opacity', (0.32 * (1 - sit) * (1 - lift * 0.7) * clamp(v.alpha, 0, 1) * clamp(gL, 0, 1)).toFixed(3));
     p.shadow.setAttribute('transform', 'translate(0 ' + (-this.yOff / k).toFixed(2) + ') translate(48 90) scale(' + (1 - lift * 0.4).toFixed(3) + ') translate(-48 -90)');
   };
 
@@ -339,11 +354,11 @@
       a: a,
       wait: function (ms) { live(); return new Promise(function (res, rej) { a.waits.push({ at: a.time + ms / 1000, tok: tok, res: res, rej: rej }); }); },
       pose: function (o) { live(); for (var key in o) a.t[key] = o[key]; },
-      rest: function (keep) { live(); for (var key in REST) if (key !== 'alpha' && key !== 'sit' && !(keep && keep[key])) a.t[key] = REST[key]; },
+      rest: function (keep) { live(); for (var key in REST) if (key !== 'alpha' && key !== 'sit' && key !== 'grow' && !(keep && keep[key])) a.t[key] = REST[key]; },
       walkTo: function (x, speed) {
         live();
         a.t.sit = 0; a.t.swing = 0;                // nothing walks sitting down
-        a.speed = speed || 55; a.tx = x;
+        a.speed = speed || 55; a.tx = x; a.lastSpeed = a.speed;
         a.t.turn = x > a.x ? 0.8 : -0.8;
         return new Promise(function (res, rej) {
           a.onArrive = function () { if (tok !== a.tok) return rej(CANCEL); a.t.turn = 0; res(); };
@@ -920,6 +935,81 @@
     s.pose({ alpha: 0 }); await s.wait(200);
   }
 
+  // ─── It is the logo ───
+  // Mini in a chat is the head in the top bar, gone for a walk. Before it turns
+  // up anywhere, the logo grows a body, arms and legs where it sits, and walks
+  // off the edge of the screen. When it has left the chat it comes back along
+  // the top bar at the pace it left with, stands in its place, and folds itself
+  // away into a logo again. While it is out, the logo's place is empty.
+  var LOGO = { chain: Promise.resolve(), away: false };
+  function logoMark() {
+    var n = document.querySelector('.topbar .logo .cb-headmark');
+    return n && n.offsetParent !== null ? n : null;
+  }
+  function logoStage(mark) {
+    var r = mark.getBoundingClientRect();
+    if (r.width < 8) return null;
+    var k = (r.width * 74 / 96) / 50;                     // so its head is exactly the size of the logo's
+    var layer = document.createElement('div');
+    layer.className = 'cm-top';
+    layer.style.height = Math.ceil(r.bottom + 30) + 'px';
+    document.body.appendChild(layer);
+    var actor = new Actor(layer, 92 * k);
+    var home = { x: r.left + r.width * 11 / 96 + 25 * k, y: r.top + r.height * 26 / 96 + 78 * k };
+    var edge = home.x < window.innerWidth / 2 ? -46 : window.innerWidth + 46;
+    actor.clampX = false;
+    actor.surf = function () { return { y: home.y, l: -200, r: window.innerWidth + 200 }; };
+    actor.baseY = home.y;
+    return { layer: layer, actor: actor, home: home, edge: edge, done: function () { actor.destroy(); if (layer.parentNode) layer.parentNode.removeChild(layer); } };
+  }
+  function logoLeave() {
+    LOGO.chain = LOGO.chain.then(function () {
+      var mark = logoMark();
+      if (!mark || LOGO.away) return;
+      var st = logoStage(mark); if (!st) return;
+      var a = st.actor;
+      a.x = st.home.x; a.v.grow = 0; a.t.grow = 0; a.v.alpha = 1; a.t.alpha = 1;
+      a.draw();
+      mark.style.visibility = 'hidden';
+      LOGO.away = true;
+      return a.play(async function (s) {
+        await s.wait(260);
+        s.pose({ eyeX: -3 }); await s.wait(300); s.pose({ eyeX: 3 }); await s.wait(300); s.pose({ eyeX: 0 });   // is anyone looking
+        await s.wait(160);
+        s.pose({ grow: 1 });                                                 // body, arms, legs
+        await s.wait(950);
+        s.pose({ armL: 150, armR: 150, headY: -1.5 }); await s.wait(380);     // a stretch
+        s.pose({ armL: 0, armR: 0, headY: 0 }); await s.wait(260);
+        await s.walkTo(st.edge, 62);
+      }).then(st.done, st.done);
+    });
+    return LOGO.chain;
+  }
+  function logoReturn(speed) {
+    LOGO.chain = LOGO.chain.then(function () {
+      if (!LOGO.away) return;
+      var mark = document.querySelector('.topbar .logo .cb-headmark');
+      var shown = mark && mark.offsetParent !== null;
+      function home() { if (mark) mark.style.visibility = ''; LOGO.away = false; }
+      var st = shown ? logoStage(mark) : null;
+      if (!st) { home(); return; }
+      var a = st.actor, sp = clamp(speed || 62, 40, 230);
+      a.x = st.edge; a.v.alpha = 1; a.t.alpha = 1;
+      return a.play(async function (s) {
+        if (sp > 170) s.pose({ armL: 162, armR: 162, shake: 1, lid: -0.3 });   // it left running: it comes back running
+        else if (sp > 95 && sp < 125) s.pose({ lid: 0.5, armL: -34, armR: -34 }); // it stormed off: still cross
+        await s.walkTo(st.home.x, sp);
+        s.pose({ shake: 0, armL: 0, armR: 0, lid: 0, turn: 0 });
+        await s.wait(sp > 170 ? 420 : 240);
+        if (sp > 170) { await sigh(s); }                                       // out of breath
+        s.pose({ eyeX: -3 }); await s.wait(240); s.pose({ eyeX: 3 }); await s.wait(240); s.pose({ eyeX: 0 });
+        s.pose({ grow: 0, squash: 1, headY: 0, headRot: 0, lean: 0 });         // fold away
+        await s.wait(820);
+      }).then(function () { home(); st.done(); }, function () { home(); st.done(); });
+    });
+    return LOGO.chain;
+  }
+
   // There is one Mini. With several chats on screen, whichever needs it first
   // has it, and the others wait until it has left.
   var HOLDER = null;
@@ -1008,10 +1098,40 @@
       return actor;
     }
     var me = {};
-    function gone() { if (actor) { actor.destroy(); actor = null; } scene = null; leaving = false; if (HOLDER === me) HOLDER = null; }
+    // When it has left the chat it goes home to the top bar, at the pace it
+    // left with. Nobody else gets it until it is back in its place.
+    function gone(quiet) {
+      var sp = actor ? actor.lastSpeed : 0;
+      if (actor) { actor.destroy(); actor = null; }
+      scene = null; leaving = false; coming = null;
+      if (HOLDER !== me) return;
+      if (quiet) { HOLDER = null; return; }
+      logoReturn(sp).then(function () { if (HOLDER === me && !scene) HOLDER = null; });
+    }
+    var coming = null;
     function start(name) {
       if (HOLDER && HOLDER !== me) return;      // it is busy in another chat
       HOLDER = me;
+      // First it has to get here: out of the logo and off the top bar.
+      if (!actor && coming !== name) {
+        coming = name; scene = 'coming';
+        logoLeave().then(function () {
+          if (dead || coming !== name) return;
+          coming = null; scene = null;
+          if (!wanted(name)) { gone(); return; }  // what it was coming for has gone: turn round
+          start2(name);
+        });
+        return;
+      }
+      start2(name);
+    }
+    function wanted(name) {
+      if (o.eager) return true;
+      if (name === 'queue') return !!q('.cc-queue');
+      if (name === 'sit') return !!q('.cc-sug');
+      return (o.state ? o.state() : 'idle') === 'idle' && !(input && input.value && input.value.trim());
+    }
+    function start2(name) {
       var a = ensure();
       scene = name; leaving = false;
       a.autoBlink = true;
@@ -1182,10 +1302,11 @@
         evs.forEach(function (e) { root.removeEventListener(e, userActed, { capture: true }); });
         root.removeEventListener('pointermove', moved);
         gone();
+        if (HOLDER === me) HOLDER = null;
         if (layer.parentNode) layer.parentNode.removeChild(layer);
       },
       // For the demo page and for tests: start a scene now, or poke it.
-      trigger: function (name) { if (scene) gone(); lastSig = queueSig(); start(name); },
+      trigger: function (name) { if (scene) gone(true); lastSig = queueSig(); start(name); },
       scare: function (x) { wary = now(); lastFlee = 0; if (actor) moved({ clientX: layer.getBoundingClientRect().left + (x === undefined ? actor.x + 20 : x), clientY: layer.getBoundingClientRect().top + actor.baseY - 20, pointerType: 'mouse' }); },
       poke: function () { if (actor) tapped({ target: actor.el, preventDefault: function () {}, stopPropagation: function () {} }); },
       scene: function () { return leaving ? 'leaving' : scene; },
