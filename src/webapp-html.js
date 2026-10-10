@@ -138,6 +138,29 @@ export function getWebappHtml(botUsername) {
     #boot .boot-note { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--text-secondary); min-height: 1.2em; }
     @media (prefers-reduced-motion: reduce) { #boot { transition: none; } }
 
+    /* ─── Reconnecting ───
+       Shown when the live connection has been down for more than a moment.
+       It does not take clicks: what is on screen stays readable and
+       scrollable while the robot works on getting the connection back. */
+    #reconn {
+      display: none; position: fixed; left: 50%; top: 50%; z-index: 99990;
+      transform: translate(-50%, -50%);
+      flex-direction: column; align-items: center; gap: 8px;
+      padding: 22px 30px 20px; min-width: 220px; max-width: calc(100vw - 32px); box-sizing: border-box;
+      background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+      border: 1px solid var(--border); border-radius: 18px;
+      box-shadow: var(--shadow-lg), var(--surface-hi);
+      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+      pointer-events: none; text-align: center;
+    }
+    #reconn.on { display: flex; animation: reconnIn 0.28s cubic-bezier(0.22,1,0.36,1) both; }
+    @keyframes reconnIn { from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); } to { opacity: 1; transform: translate(-50%, -50%); } }
+    #reconn .cb-mini { width: 84px; height: 84px; }
+    #reconn .rc-t { font-weight: 650; font-size: 0.98rem; color: var(--text-primary); }
+    #reconn .rc-s { font-size: 0.8rem; line-height: 1.45; color: var(--text-secondary); max-width: 240px; }
+    #reconn .rc-s:empty { display: none; }
+    @media (prefers-reduced-motion: reduce) { #reconn.on { animation: none; } }
+
     /* ─── Login Screen ─── */
     #login-screen {
       display: flex;
@@ -3344,6 +3367,12 @@ export function getWebappHtml(botUsername) {
     ${miniSvg('bt', 'cb-load', 'Crundi is loading')}
     ${wordSvg()}
     <div class="boot-note" id="boot-note"></div>
+  </div>
+  <!-- ─── Reconnecting ─── -->
+  <div id="reconn" role="status" aria-live="polite">
+    ${miniSvg('rc', 'cb-load', '')}
+    <div class="rc-t">Reconnecting</div>
+    <div class="rc-s" id="reconn-sub"></div>
   </div>
   <!-- ─── Login Screen ─── -->
   <div id="login-screen">
@@ -8415,6 +8444,32 @@ export function getWebappHtml(botUsername) {
       if (btn) { btn.classList.add('active'); btn.textContent = 'Done'; }
     }
 
+    // ─── Reconnecting card ───
+    // A dropped connection that comes straight back (a phone waking, a tab
+    // returning) should not flash anything, so the card waits a moment before
+    // it appears. After a while it says more, since by then it is the network
+    // or the server and not a blip.
+    let reconnShowTimer = null, reconnSlowTimer = null;
+    function reconnSub() {
+      const el = $('#reconn-sub');
+      if (!el) return;
+      el.textContent = navigator.onLine === false ? 'This device is offline.' : 'Still trying. Crundi may be restarting, or the network may be down.';
+    }
+    function reconnShow() {
+      if (!appReady || reconnShowTimer || $('#reconn').classList.contains('on')) return;
+      reconnShowTimer = setTimeout(function () {
+        reconnShowTimer = null;
+        $('#reconn-sub').textContent = navigator.onLine === false ? 'This device is offline.' : '';
+        $('#reconn').classList.add('on');
+        reconnSlowTimer = setTimeout(reconnSub, 9000);
+      }, 1200);
+    }
+    function reconnHide() {
+      clearTimeout(reconnShowTimer); clearTimeout(reconnSlowTimer);
+      reconnShowTimer = reconnSlowTimer = null;
+      $('#reconn').classList.remove('on');
+    }
+
     // ─── WebSocket ───
     function connectWS() {
       clearTimeout(reconnectTimer);
@@ -8430,6 +8485,7 @@ export function getWebappHtml(botUsername) {
       ws.onopen = () => {
         $('#conn-badge').className = 'status-badge connected';
         $('#conn-badge').textContent = 'connected';
+        reconnHide();
         // Re-subscribe every mounted terminal. Reset each first so the scrollback
         // the server re-sends on subscribe replaces (not duplicates) the buffer.
         for (const [id, v] of termViews) {
@@ -8466,6 +8522,7 @@ export function getWebappHtml(botUsername) {
       ws.onclose = () => {
         $('#conn-badge').className = 'status-badge disconnected';
         $('#conn-badge').textContent = 'disconnected';
+        reconnShow();
         reconnectTimer = setTimeout(connectWS, 3000);
       };
 
