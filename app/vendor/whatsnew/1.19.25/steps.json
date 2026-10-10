@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "id": "new-look",
+      "tag": "Crundi",
+      "title": "A new face",
+      "body": "Crundi has a new logo: a small robot in the app's own indigo, with amber for the parts that move. You will see it on the app icon, in the top bar and on the sign-in screen, and working away while Crundi starts up or gets a lost connection back.",
+      "art": "new-look.html",
+      "artTitle": "Crundi"
+    }
+  ]
+}

@@ -13,7 +13,9 @@
  *           goes: it falls, picks itself up and runs off with its arms up.
  *   nudge   Claude finished a while ago and nothing has been typed. Mini
  *           stands by the Send button and points at the message box, mimes
- *           typing, waves, and eventually falls asleep.
+ *           typing, waves, and eventually falls asleep. A suggestion being
+ *           there does not prevent this: if it is sitting on one it climbs
+ *           down and comes over, and points at the suggestion too.
  *
  * It is drawn in code and moved in code. Nothing here is a keyframe animation
  * played from the start: every part of the body (each arm, each leg, the head,
@@ -700,15 +702,15 @@
   }
 
   // Nothing typed for a long time. Stand by Send and make a case for the box.
-  async function sceneNudge(s, layerW, aim, mobile, sendAt) {
+  async function sceneNudge(s, layerW, aim, mobile, sendAt, sugAt) {
     var sf = s.surf(); if (!sf) return;
     var spot = mobile ? sf.l + (sf.r - sf.l) * 0.5 : sf.r - 70;
     await enter(s, layerW + 40, spot, 66);
     await s.wait(300);
     await wave(s, 3);
-    await nudgeLoop(s, aim, 0, mobile ? null : sendAt);
+    await nudgeLoop(s, aim, 0, mobile ? null : sendAt, sugAt);
   }
-  async function nudgeLoop(s, aim, from, sendAt) {
+  async function nudgeLoop(s, aim, from, sendAt, sugAt) {
     var a = s.a;
     function pointAt(where) {
       var t = (where || aim)(); if (!t) return null;
@@ -761,9 +763,20 @@
       s.pose({ sit: 0, swing: 0, armL: 0, armR: 0 });
       await s.wait(620);
     }
+    // There is a suggested reply right there: or just tap that.
+    async function orThat() {
+      var t = sugAt && sugAt(); if (!t) return point();
+      var p = pointAt(sugAt); if (!p) return;
+      var arm = p.left ? 'armL' : 'armR', o = {};
+      o[arm] = p.ang; o.turn = p.left ? -0.55 : 0.55; o.eyeY = -3.5; o.headRot = p.left ? -7 : 7;
+      s.pose(o); await s.wait(520);
+      for (var i = 0; i < 3; i++) { o[arm] = p.ang - 14; s.pose(o); await s.wait(150); var u = sugAt(); if (u) s.fxAt('ring', u.x, u.y); o[arm] = p.ang + 4; s.pose(o); await s.wait(180); }
+      s.pose({ turn: 0, eyeY: 0, headRot: 0 }); await s.wait(600);            // look at you: well, that one then
+      o = {}; o[arm] = 0; s.pose(o); await s.wait(320);
+    }
     var acts = sendAt
-      ? [showAndTell, typing, ask, jacks, showAndTell, sitAwhile, function () { return watch(s); }, point, showAndTell, function () { return sigh(s); }]
-      : [point, typing, ask, jacks, point, function () { return pace(s, 2, 36); }, sitAwhile, function () { return watch(s); }, point, function () { return sigh(s); }];
+      ? [showAndTell, typing, orThat, ask, jacks, showAndTell, sitAwhile, function () { return watch(s); }, orThat, showAndTell, function () { return sigh(s); }]
+      : [point, typing, orThat, ask, jacks, point, function () { return pace(s, 2, 36); }, sitAwhile, function () { return watch(s); }, orThat, function () { return sigh(s); }];
     for (var n = from; n < acts.length; n++) {
       await acts[n]();
       s.rest();
@@ -1015,6 +1028,8 @@
   var HOLDER = null;
 
   // ─── Watching a chat, and deciding when Mini belongs in it ───
+  // nudge counts from when Claude finished (or the last thing the person did),
+  // suggestion or no suggestion
   var DELAY = { queue: 12000, sit: 25000, nudge: 90000 };
 
   function attach(root, o) {
@@ -1090,6 +1105,7 @@
     }
     function composerTop() { var b = box(composer || q('.cc-composer')); return b ? { y: b.t, l: b.l + 10, r: b.r - 10 } : null; }
     function inputTop() { var b = box(q('.cc-inrow') || composer); return b ? { y: b.t, l: b.l + 10, r: b.r - 10 } : null; }
+    function sugAt() { var b = box(q('.cc-sug')); return b ? { x: b.l + Math.min(40, (b.r - b.l) / 2), y: (b.t + b.b) / 2 } : null; }
     function sendAt() { var b = box(send || q('.cc-btn.primary')); return b ? { x: (b.l + b.r) / 2, y: (b.t + b.b) / 2 } : null; }
     function aim() { var b = box(input || q('.cc-input')); return b ? { x: b.l + Math.min(90, (b.r - b.l) * 0.3), y: (b.t + b.b) / 2 } : null; }
 
@@ -1125,6 +1141,30 @@
       }
       start2(name);
     }
+    // From the seat on the suggestion to the floor by the message box, without
+    // leaving: stand, look down, step off, land, walk over, carry on.
+    function climbDown() {
+      var a = actor, w = width(), mob = mobile();
+      scene = 'nudge';
+      var held = { y: a.baseY, l: -100, r: w + 100 };
+      a.surf = function () { return held; };
+      a.tx = null; a.autoBlink = true;
+      a.play(async function (s) {
+        s.rest();
+        s.pose({ sit: 0, swing: 0 }); await s.wait(650);
+        s.pose({ headY: 5, eyeY: 4.5 }); await s.wait(600);                   // a long way down
+        s.pose({ headY: 0, eyeY: 0, armL: 120, armR: 120 });
+        await s.wait(220);
+        var surf = clearOfBadges(nudgeSurf);
+        await s.fallTo(function () { var f = surf(); return f ? { y: f.y, l: -100, r: w + 100 } : held; });
+        s.pose({ armL: 0, armR: 0 }); await s.wait(360);
+        a.surf = surf;
+        var sf = surf();
+        if (sf) await s.walkTo(mob ? sf.l + (sf.r - sf.l) * 0.5 : sf.r - 70, 60);
+        await wave(s, 2);
+        await nudgeLoop(s, aim, 0, mob ? null : sendAt, sugAt);
+      });
+    }
     function wanted(name) {
       if (o.eager) return true;
       if (name === 'queue') return !!q('.cc-queue');
@@ -1137,7 +1177,7 @@
       a.autoBlink = true;
       if (name === 'queue') { a.surf = clearOfBadges(topOf('.cc-queue', 12, 12)); a.play(function (s) { return sceneQueue(s, width(), env); }); }
       else if (name === 'sit') { a.surf = topOf('.cc-sug', 0, 0); a.play(function (s) { return sceneSit(s, width()); }); }
-      else { a.surf = clearOfBadges(nudgeSurf); a.play(function (s) { return sceneNudge(s, width(), aim, mobile(), sendAt); }); }
+      else { a.surf = clearOfBadges(nudgeSurf); a.play(function (s) { return sceneNudge(s, width(), aim, mobile(), sendAt, sugAt); }); }
     }
     function leave(how) {
       if (!actor || leaving) return;
@@ -1172,7 +1212,7 @@
       }
       if (was === 'queue') return queueLoop(s, 2 + Math.floor(Math.random() * 6), env);
       if (was === 'sit') return (actor.t.sit < 0.5 ? takeSeat(s) : Promise.resolve()).then(function () { s.pose({ sit: 1, swing: 1, armL: 10, armR: 10 }); return sitLoop(s, Math.floor(Math.random() * 6)); });
-      return nudgeLoop(s, aim, asleep ? 99 : 1 + Math.floor(Math.random() * 7), mobile() ? null : sendAt);
+      return nudgeLoop(s, aim, asleep ? 99 : 1 + Math.floor(Math.random() * 7), mobile() ? null : sendAt, sugAt);
     }
     function moved(e) {
       if (!actor || !scene || e.pointerType === 'touch') return;
@@ -1262,8 +1302,20 @@
       since.sit = hasS ? (since.sit || t) : 0;
 
       if (scene === 'queue' && !hasQ) leave('fall');
-      else if (scene === 'sit' && !hasS) leave('fall');
-      else if (scene === 'nudge' && (st !== 'idle' || typed || hasQ || hasS)) leave('bye');
+      else if (scene === 'sit' && !hasS) {
+        // Its seat was taken away, not the reason to be here: if nothing is
+        // typed it is back before long to make the case for the message box.
+        if (!leaving && st === 'idle') since.idle = Math.min(since.idle, t - delay.nudge + Math.min(delay.nudge, 30000));
+        leave('fall');
+      }
+      // A suggestion being there does not send the nudge away: it points at it.
+      else if (scene === 'nudge' && (st !== 'idle' || typed || hasQ)) leave('bye');
+      // It has sat on the suggestion long enough and still nothing has been
+      // typed: get down and go and stand by the message box instead.
+      else if (scene === 'sit' && !leaving && actor && !actor.air && st === 'idle' && sawWork && !typed && since.idle && t - since.idle >= delay.nudge && nudgeSurf()) {
+        sawWork = !!o.eager;
+        climbDown();
+      }
       // More was queued while it stood there: it notices.
       var sig = queueSig();
       if (scene === 'queue' && !leaving && actor && lastSig && sig.n && (sig.n > lastSig.n || sig.len > lastSig.len + 2) && !actor.air) {
@@ -1277,7 +1329,7 @@
 
       if (hasQ && t - since.queue >= delay.queue) start('queue');
       else if (hasS && st === 'idle' && t - since.sit >= delay.sit) start('sit');
-      else if (!hasQ && !hasS && st === 'idle' && sawWork && !typed && since.idle && t - since.idle >= delay.nudge && nudgeSurf()) {
+      else if (!hasQ && st === 'idle' && sawWork && !typed && since.idle && t - since.idle >= delay.nudge && nudgeSurf()) {
         sawWork = !!o.eager;          // once per finished turn, not on a loop
         start('nudge');
       }
