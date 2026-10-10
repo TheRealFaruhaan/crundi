@@ -1,0 +1,28 @@
+<div class="wna a-keys">
+  <svg viewBox="0 0 640 400"><path d="M180,120 C230,120 220,76 270,76"/><path d="M180,120 C230,120 220,164 270,164"/><path d="M180,300 C230,300 220,256 270,256"/><path class="gone" d="M180,300 C230,300 220,344 270,344"/></svg>
+  <div class="n root" style="left:40px;top:120px">Trip</div>
+  <div class="n" style="left:270px;top:76px">Flights</div>
+  <div class="n" style="left:270px;top:164px">Hotel</div>
+  <div class="n root" style="left:40px;top:300px">Work</div>
+  <div class="n" style="left:270px;top:256px">Budget</div>
+  <div class="n gone" style="left:270px;top:344px">Old plan</div>
+  <div class="ring"><em>Press Delete again to delete</em></div>
+  <div class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Arrows</kbd><kbd class="del">Delete</kbd></div>
+  <style>
+    .a-keys svg{position:absolute;inset:0;width:640px;height:400px}
+    .a-keys path{fill:none;stroke:var(--border);stroke-width:2}
+    .a-keys .n{position:absolute;width:140px;height:40px;margin-top:-20px;border-radius:13px;border:1px solid var(--border);background:var(--bg-card);display:flex;align-items:center;padding:0 14px;font-size:13.5px;font-weight:600;color:var(--text-primary)}
+    .a-keys .root{border-color:var(--accent);background:var(--accent-dim)}
+    .a-keys .gone{animation:ak-gone 11s ease infinite}
+    @keyframes ak-gone{0%,84%{opacity:1}88%,96%{opacity:0}100%{opacity:1}}
+    .a-keys .ring{position:absolute;width:148px;height:48px;margin-top:-24px;border:2px solid var(--accent);border-radius:17px;box-shadow:0 0 0 4px var(--accent-dim);animation:ak-walk 11s cubic-bezier(.4,0,.2,1) infinite}
+    @keyframes ak-walk{0%,8%{left:36px;top:120px;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-dim);opacity:1}14%,22%{left:266px;top:76px}28%,36%{left:266px;top:164px}42%,50%{left:266px;top:256px}56%,66%{left:266px;top:344px;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-dim)}70%,84%{left:266px;top:344px;border-color:var(--yellow);box-shadow:0 0 0 6px var(--yellow-dim);opacity:1}88%,94%{left:266px;top:344px;opacity:0}100%{left:36px;top:120px;opacity:1}}
+    .a-keys .ring em{position:absolute;left:0;top:calc(100% + 7px);white-space:nowrap;font:600 11px system-ui,sans-serif;font-style:normal;color:#1a1205;background:var(--yellow);padding:3px 8px;border-radius:6px;opacity:0;animation:ak-msg 11s ease infinite}
+    @keyframes ak-msg{0%,69%{opacity:0}71%,84%{opacity:1}87%,100%{opacity:0}}
+    .a-keys .keys{position:absolute;right:28px;top:22px;display:flex;gap:5px}
+    .a-keys kbd{font:600 11.5px var(--mono,monospace);padding:4px 8px;border-radius:6px;border:1px solid var(--border);border-bottom-width:2px;background:var(--bg-primary);color:var(--text-primary);animation:ak-k 11s ease infinite}
+    .a-keys .del{margin-left:10px;animation-name:ak-kd}
+    @keyframes ak-k{0%,64%{opacity:1}68%,100%{opacity:.25}}
+    @keyframes ak-kd{0%,66%{opacity:.25;border-color:var(--border)}69%,72%{opacity:1;border-color:var(--yellow)}76%,83%{opacity:.6;border-color:var(--border)}85%,88%{opacity:1;border-color:var(--yellow)}92%,100%{opacity:.25;border-color:var(--border)}}
+  </style>
+</div>

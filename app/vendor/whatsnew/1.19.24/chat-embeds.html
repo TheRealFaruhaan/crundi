@@ -1,0 +1,30 @@
+<div class="wna a-embed">
+  <div class="yt"><div class="head"><span class="av"></span><div><b></b><i></i></div></div><span class="btn"></span><span class="cap">YouTube &middot; Open</span></div>
+  <div class="demo"><div class="lbl">A working demo</div><span class="b">Click me</span><div class="num"><em>0</em><em>1</em><em>2</em><em>3</em></div></div>
+  <svg class="cur" viewBox="0 0 24 24"><path d="M5 3l14 8-6 2-2 6z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg>
+  <style>
+    .a-embed .yt{position:absolute;left:34px;top:44px;width:340px;height:300px}
+    .a-embed .yt::before{content:"";position:absolute;left:0;top:0;width:340px;height:260px;border-radius:14px;border:1px solid var(--border);background:radial-gradient(circle at 70% 35%,#84cc16 0,#166534 38%,#052e16 75%)}
+    .a-embed .head{position:absolute;left:14px;top:14px;display:flex;gap:10px;align-items:center}
+    .a-embed .av{width:30px;height:30px;border-radius:50%;background:#fff;opacity:.92}
+    .a-embed .head b{display:block;width:170px;height:9px;border-radius:9px;background:rgba(255,255,255,.92)}
+    .a-embed .head i{display:block;width:80px;height:7px;border-radius:9px;background:rgba(255,255,255,.6);margin-top:6px}
+    .a-embed .btn{position:absolute;left:138px;top:108px;width:64px;height:44px;border-radius:13px;background:#ff0033;animation:ae-pulse 2.2s ease-in-out infinite}
+    .a-embed .btn::after{content:"";position:absolute;left:25px;top:12px;border-left:17px solid #fff;border-top:10px solid transparent;border-bottom:10px solid transparent}
+    @keyframes ae-pulse{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(255,0,51,.5)}50%{transform:scale(1.07);box-shadow:0 0 0 12px rgba(255,0,51,0)}}
+    .a-embed .cap{position:absolute;left:2px;top:270px;font-size:12px;color:var(--text-secondary)}
+    .a-embed .demo{position:absolute;left:396px;top:44px;width:210px;height:260px;border-radius:14px;border:1px solid var(--border);background:var(--bg-card);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px}
+    .a-embed .lbl{position:absolute;left:14px;top:12px;font:600 10.5px var(--mono,monospace);color:var(--text-muted)}
+    .a-embed .b{font-size:15px;font-weight:650;color:#fff;padding:11px 22px;border-radius:99px;background:linear-gradient(90deg,#6366f1,#22d3ee);animation:ae-press 6s ease infinite}
+    @keyframes ae-press{0%,18%,24%,43%,49%,68%,74%,100%{transform:scale(1)}21%,46%,71%{transform:scale(.92)}}
+    .a-embed .num{position:relative;width:60px;height:46px}
+    .a-embed .num em{position:absolute;inset:0;text-align:center;font:750 40px/46px system-ui,sans-serif;font-style:normal;color:var(--text-primary);opacity:0;animation:ae-n 6s steps(1) infinite}
+    .a-embed .num em:nth-child(1){animation-name:ae-n0}.a-embed .num em:nth-child(2){animation-name:ae-n1}.a-embed .num em:nth-child(3){animation-name:ae-n2}.a-embed .num em:nth-child(4){animation-name:ae-n3}
+    @keyframes ae-n0{0%{opacity:1}21%,100%{opacity:0}}
+    @keyframes ae-n1{0%,20.9%{opacity:0}21%{opacity:1}46%,100%{opacity:0}}
+    @keyframes ae-n2{0%,45.9%{opacity:0}46%{opacity:1}71%,100%{opacity:0}}
+    @keyframes ae-n3{0%,70.9%{opacity:0}71%,100%{opacity:1}}
+    .a-embed .cur{position:absolute;width:26px;height:26px;left:520px;top:300px;animation:ae-cur 6s ease infinite;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6))}
+    @keyframes ae-cur{0%{left:560px;top:330px}15%,80%{left:506px;top:168px}100%{left:560px;top:330px}}
+  </style>
+</div>

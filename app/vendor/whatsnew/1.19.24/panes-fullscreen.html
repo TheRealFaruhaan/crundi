@@ -1,0 +1,26 @@
+<div class="wna a-full">
+  <div class="top"><i></i><i></i><i></i><i></i></div>
+  <div class="p p2"><div class="h">Terminal</div></div>
+  <div class="p p3"><div class="h">Files</div></div>
+  <div class="p p4"><div class="h">Mindmap</div></div>
+  <div class="p p1"><div class="h"><b></b>Chat<span class="fs"></span></div><u></u><u class="s"></u><u></u><u class="s2"></u></div>
+  <div class="toast">Link copied</div>
+  <style>
+    .a-full .top{position:absolute;left:24px;right:24px;top:20px;height:26px;border-radius:8px;background:var(--bg-card);border:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 10px}
+    .a-full .top i{width:38px;height:7px;border-radius:9px;background:var(--border)}.a-full .top i:first-child{background:var(--accent)}
+    .a-full .p{position:absolute;border-radius:10px;border:1px solid var(--border);background:var(--bg-secondary);overflow:hidden}
+    .a-full .h{height:26px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:7px;padding:0 9px;font-size:11px;font-weight:650;color:var(--text-primary)}
+    .a-full .h b{width:6px;height:6px;border-radius:50%;background:var(--green)}
+    .a-full .p2{left:326px;top:56px;width:290px;height:152px}
+    .a-full .p3{left:24px;top:218px;width:292px;height:158px}
+    .a-full .p4{left:326px;top:218px;width:290px;height:158px}
+    .a-full .p1{left:24px;top:56px;width:292px;height:152px;border-color:var(--accent);animation:afs-grow 9s cubic-bezier(.4,0,.2,1) infinite;z-index:2}
+    @keyframes afs-grow{0%,22%{left:24px;top:56px;width:292px;height:152px;border-radius:10px}34%,72%{left:0;top:0;width:640px;height:400px;border-radius:0}84%,100%{left:24px;top:56px;width:292px;height:152px;border-radius:10px}}
+    .a-full .fs{margin-left:auto;width:16px;height:14px;border:1.5px solid var(--text-secondary);border-radius:3px;animation:afs-btn 9s ease infinite}
+    @keyframes afs-btn{0%,14%,24%,100%{border-color:var(--text-secondary);background:transparent}17%,21%{border-color:var(--accent);background:var(--accent-dim)}34%,72%{border-color:var(--accent)}}
+    .a-full .p1 u{display:block;height:8px;border-radius:9px;background:var(--border);margin:12px 12px 0;width:70%}
+    .a-full .p1 u.s{width:46%}.a-full .p1 u.s2{width:58%}
+    .a-full .toast{position:absolute;right:16px;top:14px;z-index:3;font-size:12px;font-weight:600;color:var(--text-primary);background:var(--bg-secondary);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:8px 14px;box-shadow:0 10px 26px rgba(0,0,0,.5);opacity:0;animation:afs-toast 9s ease infinite}
+    @keyframes afs-toast{0%,42%{opacity:0;transform:translateY(-8px)}46%,62%{opacity:1;transform:none}66%,100%{opacity:0;transform:translateY(-8px)}}
+  </style>
+</div>

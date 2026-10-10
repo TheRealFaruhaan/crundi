@@ -1,0 +1,90 @@
+{
+  "steps": [
+    {
+      "id": "chat-media",
+      "tag": "Chat",
+      "title": "Claude can show you things",
+      "body": "Pictures, video, audio and files now appear in the conversation itself, under the step that made them. Nothing loads until it is near the screen, and nothing jumps as it arrives.",
+      "keys": [
+        { "keys": ["Ask"], "text": "\"show me the screenshot\", \"play the clip\"" },
+        { "keys": ["Download"], "text": "files save inside the app, with progress" }
+      ],
+      "art": "chat-media.html",
+      "artTitle": "Chat"
+    },
+    {
+      "id": "chat-embeds",
+      "tag": "Chat",
+      "title": "Live things, right in the chat",
+      "body": "A YouTube video, a post, a track, or a working demo Claude wrote for you: embedded where you are reading, and safe to play with. Every embed is sandboxed.",
+      "keys": [
+        { "keys": ["Paste"], "text": "an ordinary link; Claude embeds it" },
+        { "keys": ["Ask"], "text": "\"show me a working demo of that\"" }
+      ],
+      "art": "chat-embeds.html",
+      "artTitle": "Chat"
+    },
+    {
+      "id": "viewer-players",
+      "tag": "Media",
+      "title": "Look closer",
+      "body": "Open any picture and zoom right in. Video and audio have their own players that match the app, and on a phone a video can fill and rotate the screen.",
+      "keys": [
+        { "keys": ["Ctrl", "Scroll"], "text": "zoom at the pointer, drag to move" },
+        { "keys": ["Pinch"], "text": "on a phone, with a finger to move" }
+      ],
+      "art": "viewer-players.html",
+      "artTitle": "Picture"
+    },
+    {
+      "id": "files-move",
+      "tag": "Files",
+      "title": "Files you can move",
+      "body": "Drag a file onto a folder and choose Move or Copy. Cut, copy and paste are in the right-click menu, along with everything the old buttons did. Nothing is ever overwritten.",
+      "keys": [
+        { "keys": ["Right-click"], "text": "or press and hold, for the menu" },
+        { "keys": ["Double-click"], "text": "to open; one click selects" }
+      ],
+      "art": "files-move.html",
+      "artTitle": "Files"
+    },
+    {
+      "id": "mindmap-type",
+      "tag": "Mindmap",
+      "title": "Type ideas where they belong",
+      "body": "No more dialog. A box opens in the map, right where the idea will sit. Click an idea to edit it in place; double-click for its details.",
+      "keys": [
+        { "keys": ["Ctrl", "Enter"], "text": "the next idea, same level" },
+        { "keys": ["Tab"], "text": "an idea nested under it" },
+        { "keys": ["Enter"], "text": "save, or edit the selected idea" }
+      ],
+      "art": "mindmap-type.html",
+      "artTitle": "Mindmap"
+    },
+    {
+      "id": "mindmap-keys",
+      "tag": "Mindmap",
+      "title": "Walk the map from the keyboard",
+      "body": "A ring marks where you are and glides as you move. Rearranging by drag now shows where an idea will land. The ? button in the Mindmap lists every shortcut.",
+      "keys": [
+        { "keys": ["Ctrl", "Shift", "Arrows"], "text": "move through the tree" },
+        { "keys": ["Delete"], "text": "twice: the first press only warns" },
+        { "keys": ["+", "−"], "text": "unfold and fold; with Ctrl, zoom" }
+      ],
+      "art": "mindmap-keys.html",
+      "artTitle": "Mindmap"
+    },
+    {
+      "id": "panes-fullscreen",
+      "tag": "Workbench",
+      "title": "Room to work",
+      "body": "Any pane can take the whole screen with one button, on a phone or a desktop. Messages now appear at the top, out of the way of what you are typing, and links have a menu of their own.",
+      "keys": [
+        { "keys": ["Full screen"], "text": "in every pane header" },
+        { "keys": ["Back"], "text": "closes what is open, not the app" }
+      ],
+      "art": "panes-fullscreen.html",
+      "artTitle": "Workbench"
+    }
+  ]
+}

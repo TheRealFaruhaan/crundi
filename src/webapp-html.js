@@ -3776,6 +3776,7 @@ export function getWebappHtml(botUsername) {
   <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
+  <script src="/vendor/crundi-whatsnew.js?v=${vendorTag('crundi-whatsnew.js')}"><\/script>
   <script>
   (function() {
     'use strict';
@@ -5366,6 +5367,31 @@ export function getWebappHtml(botUsername) {
       });
     }
 
+    // ─── What's new ───
+    // Shown once after an install or an update, when the app has had time to
+    // finish loading and nothing else is asking for attention. The server
+    // decides what there is to show (and that it is the owner asking); Skip
+    // and Done both mark it seen. "all" is the Settings button: the latest
+    // edition again, whenever asked.
+    let whatsNewTries = 0;
+    function scheduleWhatsNew() { whatsNewTries = 0; setTimeout(maybeShowWhatsNew, 1600); }
+    async function maybeShowWhatsNew() {
+      if (!window.CrundiWhatsNew || window.CrundiWhatsNew.isOpen()) return;
+      // Not on top of a dialog, a full-screen pane, or a page still loading.
+      const busy = document.readyState !== 'complete' || document.querySelector('.input-modal.visible, .modal.visible, .pin-modal.visible, #add-project-modal.visible, .wg-zoom') || document.fullscreenElement;
+      if (busy) { if (++whatsNewTries < 20) setTimeout(maybeShowWhatsNew, 1500); return; }
+      openWhatsNew(false);
+    }
+    async function openWhatsNew(all) {
+      if (!window.CrundiWhatsNew) return;
+      let d;
+      try { d = await (await apiFetch('/api/whatsnew' + (all ? '?all=1' : ''))).json(); } catch { return; }
+      if (!d || !d.ok || !d.steps || !d.steps.length) { if (all) toast('Nothing new to show for this version.'); return; }
+      window.CrundiWhatsNew.open(d, {
+        onClose: () => { if (!all) apiFetch('/api/whatsnew/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {}); },
+      });
+    }
+
     function showApp() {
       appReady = true;
       $('#login-screen').style.display = 'none';
@@ -5381,6 +5407,7 @@ export function getWebappHtml(botUsername) {
       setupTerminalArea();
       updateMobileLayoutBtn();
       loadUsage();
+      scheduleWhatsNew();
       // Electron: enable drag region and window controls
       if (window.api) {
         document.querySelector('.topbar').style.webkitAppRegion = 'drag';
@@ -9793,6 +9820,7 @@ export function getWebappHtml(botUsername) {
       const fs = document.fullscreenElement || document.webkitFullscreenElement;
       if (fs && fs !== document.documentElement) { if (fs._wgLeaveFull) fs._wgLeaveFull(); else { try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch { /* already out */ } } return true; }
       if (feWins().length) { feClose(); return true; }
+      if (window.CrundiWhatsNew && window.CrundiWhatsNew.isOpen()) { window.CrundiWhatsNew.close(); return true; }
       const mmHelp = document.getElementById('mm-help-modal');
       if (mmHelp && mmHelp.classList.contains('visible')) { mmHelp.classList.remove('visible'); return true; }
       if (paneFull.key) { setPaneFull(null, false); return true; }
@@ -13214,6 +13242,13 @@ export function getWebappHtml(botUsername) {
         // Backups of the whole of Crundi to S3-compatible storage, and restoring them.
         html += '<div class="info-section" id="backup-section"><h4>Backup &amp; restore</h4><div id="backup-body" style="font-size:0.8rem;color:var(--text-muted);">Loading…</div></div>';
 
+        // The tour of what the last update brought, to see again whenever.
+        html += '<div class="info-section" id="whatsnew-section"><h4>What\u2019s new</h4>'
+          + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+          + '<div style="font-size:0.8rem;color:var(--text-muted);">A short tour of what the latest update added. It shows by itself once after each update.</div>'
+          + '<button data-action="whats-new" style="padding:7px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;font-size:12.5px;white-space:nowrap;">Show it again</button>'
+          + '</div></div>';
+
         // Desktop app update (Electron's auto-updater) — the app itself.
         if (window.api && window.api.getUpdateState) html += buildUpdatesSection();
         // Server update — the server this page is talking to, which asks GitHub.
@@ -13679,6 +13714,7 @@ export function getWebappHtml(botUsername) {
         case 'widget-close': if (d.wgid && window.CrundiWidgets) { e.stopPropagation(); window.CrundiWidgets.close(d.wgid); } break;
         case 'widget-reload': if (d.wgid && window.CrundiWidgets) { e.stopPropagation(); window.CrundiWidgets.reload(d.wgid); } break;
         case 'mm-help': e.stopPropagation(); openMmHelp(); break;
+        case 'whats-new': openWhatsNew(true); break;
         case 'wb-refresh': if (d.wbid) { e.stopPropagation(); refreshWbCell(d.wbid); } break;
         case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;

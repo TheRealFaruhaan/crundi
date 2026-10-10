@@ -1,0 +1,33 @@
+<div class="wna a-mm">
+  <svg viewBox="0 0 640 400"><path d="M190,200 C250,200 230,110 290,110"/><path d="M190,200 C250,200 230,200 290,200"/><path class="e3" d="M190,200 C250,200 230,290 290,290"/><path class="e4" d="M430,200 C470,200 460,200 490,200"/></svg>
+  <div class="n root" style="left:40px;top:200px">Trip</div>
+  <div class="n" style="left:290px;top:110px">Flights</div>
+  <div class="n" style="left:290px;top:200px">Hotel</div>
+  <div class="n d1" style="left:290px;top:290px"><span>Visa</span></div>
+  <div class="n d2" style="left:490px;top:200px;width:120px"><span>Near beach</span></div>
+  <div class="keys"><kbd class="k1">Ctrl</kbd><kbd class="k1">Enter</kbd><kbd class="k2">Tab</kbd></div>
+  <style>
+    .a-mm svg{position:absolute;inset:0;width:640px;height:400px}
+    .a-mm path{fill:none;stroke:var(--border);stroke-width:2}
+    .a-mm .e3{stroke-dasharray:5 5;opacity:0;animation:amm-show 10s ease infinite}
+    .a-mm .e4{opacity:0;animation:amm-show2 10s ease infinite}
+    .a-mm .n{position:absolute;width:140px;height:44px;margin-top:-22px;border-radius:13px;border:1px solid var(--border);background:var(--bg-card);display:flex;align-items:center;padding:0 14px;font-size:13.5px;font-weight:600;color:var(--text-primary)}
+    .a-mm .root{width:150px;border-color:var(--accent);background:var(--accent-dim)}
+    .a-mm .n span{display:inline-block;overflow:hidden;white-space:nowrap;border-right:2px solid var(--accent-hover);width:0}
+    .a-mm .d1{opacity:0;animation:amm-box1 10s ease infinite}
+    .a-mm .d1 span{animation:amm-type1 10s steps(4) infinite}
+    .a-mm .d2{opacity:0;animation:amm-box2 10s ease infinite}
+    .a-mm .d2 span{animation:amm-type2 10s steps(10) infinite}
+    @keyframes amm-show{0%,6%{opacity:0}10%,92%{opacity:.7}100%{opacity:0}}
+    @keyframes amm-show2{0%,50%{opacity:0}54%,92%{opacity:1}100%{opacity:0}}
+    @keyframes amm-box1{0%,6%{opacity:0;transform:scale(.92)}10%{opacity:1;transform:none;border:2px dashed var(--accent);background:var(--accent-dim)}34%{border:2px dashed var(--accent);background:var(--accent-dim)}38%,92%{opacity:1;border:1px solid var(--border);background:var(--bg-card)}100%{opacity:0}}
+    @keyframes amm-type1{0%,12%{width:0}30%,100%{width:30px;border-right-color:transparent}}
+    @keyframes amm-box2{0%,50%{opacity:0;transform:scale(.92)}54%{opacity:1;transform:none;border:2px dashed var(--accent);background:var(--accent-dim)}80%{border:2px dashed var(--accent);background:var(--accent-dim)}84%,92%{opacity:1;border:1px solid var(--border);background:var(--bg-card)}100%{opacity:0}}
+    @keyframes amm-type2{0%,56%{width:0}76%,100%{width:76px;border-right-color:transparent}}
+    .a-mm .keys{position:absolute;left:40px;bottom:26px;display:flex;gap:5px}
+    .a-mm kbd{font:600 11.5px var(--mono,monospace);padding:4px 8px;border-radius:6px;border:1px solid var(--border);border-bottom-width:2px;background:var(--bg-primary);color:var(--text-primary);opacity:.25}
+    .a-mm .k1{animation:amm-k1 10s ease infinite}.a-mm .k2{animation:amm-k2 10s ease infinite;margin-left:10px}
+    @keyframes amm-k1{0%,4%,12%,100%{opacity:.25;border-color:var(--border)}6%,10%{opacity:1;border-color:var(--accent)}}
+    @keyframes amm-k2{0%,48%,56%,100%{opacity:.25;border-color:var(--border)}50%,54%{opacity:1;border-color:var(--accent)}}
+  </style>
+</div>

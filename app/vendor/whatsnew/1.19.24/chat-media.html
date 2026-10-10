@@ -1,0 +1,42 @@
+<div class="wna a-media">
+  <div class="tool"><i></i>show_image</div>
+  <div class="tiles"><b class="t1"></b><b class="t2"></b><b class="t3"></b></div>
+  <div class="tool two"><i></i>show_video</div>
+  <div class="vid"><span class="play"></span><div class="bar"><u></u><em></em></div></div>
+  <div class="aud"><span class="pb"></span><div class="wave"><s></s><s></s><s></s><s></s><s></s><s></s><s></s><s></s><s></s><s></s><s></s><s></s></div></div>
+  <div class="file"><span class="ic"></span><div><b>report.zip</b><small>2.9 MB</small></div><span class="dl">Download</span></div>
+  <style>
+    .a-media .tool{position:absolute;left:34px;top:22px;width:572px;height:26px;border:1px solid var(--border);border-radius:8px;font:600 11px var(--mono,monospace);color:var(--accent-hover);display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--bg-card)}
+    .a-media .tool i{width:6px;height:6px;border-radius:50%;background:var(--green)}
+    .a-media .tool.two{top:176px}
+    .a-media .tiles{position:absolute;left:34px;top:58px;display:flex;gap:10px}
+    .a-media .tiles b{display:block;width:150px;height:104px;border-radius:10px;border:1px solid var(--border);opacity:0;animation:am-in 9s ease infinite}
+    .a-media .t1{background:linear-gradient(135deg,#f97316,#db2777)}
+    .a-media .t2{background:linear-gradient(135deg,#0ea5e9,#6366f1);animation-delay:.35s!important}
+    .a-media .t3{background:linear-gradient(135deg,#10b981,#0ea5e9);animation-delay:.7s!important}
+    @keyframes am-in{0%,4%{opacity:0;transform:translateY(8px) scale(.96)}10%,92%{opacity:1;transform:none}100%{opacity:0}}
+    .a-media .vid{position:absolute;left:34px;top:212px;width:300px;height:150px;border-radius:12px;border:1px solid var(--border);background:linear-gradient(160deg,#1e1b4b,#0f172a 60%,#052e2b);overflow:hidden;opacity:0;animation:am-in 9s ease 1.6s infinite}
+    .a-media .play{position:absolute;left:50%;top:44%;width:44px;height:44px;margin:-22px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.3)}
+    .a-media .play::after{content:"";position:absolute;left:17px;top:13px;border-left:14px solid #fff;border-top:9px solid transparent;border-bottom:9px solid transparent}
+    .a-media .bar{position:absolute;left:14px;right:14px;bottom:16px;height:4px;border-radius:9px;background:rgba(255,255,255,.22)}
+    .a-media .bar u{position:absolute;left:0;top:0;bottom:0;border-radius:9px;background:var(--accent);animation:am-bar 9s linear infinite}
+    .a-media .bar em{position:absolute;top:-4px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:#fff;animation:am-knob 9s linear infinite}
+    @keyframes am-bar{0%,25%{width:0}90%,100%{width:82%}}
+    @keyframes am-knob{0%,25%{left:0}90%,100%{left:82%}}
+    .a-media .aud{position:absolute;left:350px;top:212px;width:256px;height:46px;border-radius:99px;border:1px solid var(--border);background:var(--bg-card);display:flex;align-items:center;gap:12px;padding:0 8px;opacity:0;animation:am-in 9s ease 2.3s infinite}
+    .a-media .pb{width:32px;height:32px;border-radius:50%;background:var(--accent);position:relative;flex:none}
+    .a-media .pb::after{content:"";position:absolute;left:12px;top:9px;border-left:11px solid #fff;border-top:7px solid transparent;border-bottom:7px solid transparent}
+    .a-media .wave{display:flex;align-items:center;gap:4px;height:26px}
+    .a-media .wave s{display:block;width:4px;height:8px;border-radius:3px;background:var(--accent-hover);animation:am-wave 1.1s ease-in-out infinite}
+    .a-media .wave s:nth-child(2n){animation-delay:.15s}.a-media .wave s:nth-child(3n){animation-delay:.32s}.a-media .wave s:nth-child(5n){animation-delay:.5s}
+    @keyframes am-wave{0%,100%{height:6px}50%{height:24px}}
+    .a-media .file{position:absolute;left:350px;top:274px;width:256px;height:58px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);display:flex;align-items:center;gap:10px;padding:0 10px;opacity:0;animation:am-in 9s ease 3s infinite}
+    .a-media .ic{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);flex:none;position:relative}
+    .a-media .ic::after{content:"";position:absolute;left:9px;right:9px;top:10px;height:3px;background:var(--text-muted);box-shadow:0 6px 0 var(--text-muted),0 12px 0 var(--text-muted)}
+    .a-media .file div{flex:1;min-width:0}
+    .a-media .file b{display:block;font-size:13px;color:var(--text-primary)}
+    .a-media .file small{font-size:11px;color:var(--text-muted)}
+    .a-media .dl{font-size:11.5px;font-weight:600;color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:6px 9px;animation:am-dl 9s ease infinite}
+    @keyframes am-dl{0%,58%,70%,100%{background:transparent;border-color:var(--border)}62%,66%{background:var(--accent-dim);border-color:var(--accent)}}
+  </style>
+</div>
