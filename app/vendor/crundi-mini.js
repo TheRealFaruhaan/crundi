@@ -1849,8 +1849,10 @@
       if (name === 'sit') return !!q('.cc-sug');
       return (o.state ? o.state() : 'idle') === 'idle' && !(input && input.value && input.value.trim());
     }
+    var asked = null;
     function start2(name) {
       var a = ensure();
+      asked = null;
       scene = name; leaving = false;
       a.autoBlink = true;
       if (name === 'queue') { a.surf = clearOfBadges(topOf('.cc-queue', 12, 12)); a.play(function (s) { return sceneQueue(s, width(), env); }); }
@@ -2004,6 +2006,7 @@
       lastSig = sig;
       if (scene) return;
       if (HOLDER && HOLDER !== me && HOLDER !== TOPKEY) return;
+      if (asked) { start(asked); return; }
 
       if (hasQ && t - since.queue >= delay.queue) start('queue');
       else if (hasS && st === 'idle' && t - since.sit >= delay.sit) start('sit');
@@ -2036,7 +2039,9 @@
         if (layer.parentNode) layer.parentNode.removeChild(layer);
       },
       // For the demo page and for tests: start a scene now, or poke it.
-      trigger: function (name) { if (scene) gone(true); lastSig = queueSig(); start(name); },
+      // If it is busy in the top bar it has to be called away first, so the
+      // request is kept and tried again until it has arrived.
+      trigger: function (name) { if (scene) gone(true); lastSig = queueSig(); asked = name; start(name); },
       scare: function (x) { wary = now(); lastFlee = 0; if (actor) moved({ clientX: layer.getBoundingClientRect().left + (x === undefined ? actor.x + 20 : x), clientY: layer.getBoundingClientRect().top + actor.baseY - 20, pointerType: 'mouse' }); },
       poke: function () { if (actor) tapped({ target: actor.el, preventDefault: function () {}, stopPropagation: function () {} }); },
       scene: function () { return leaving ? 'leaving' : scene; },
