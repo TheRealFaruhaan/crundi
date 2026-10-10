@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.svg" alt="" width="112" height="112"></p>
+
 # Crundi
 
 A self-hosted remote workbench for your projects. Crundi runs on your machine and exposes your projects — agent terminals, files, git, a task board, scheduling and more — through a mobile-friendly web UI reachable from anywhere over a secure tunnel. Your phone becomes a window into your dev box at home.

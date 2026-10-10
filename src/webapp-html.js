@@ -6,25 +6,20 @@
  * Telegram Login Widget is used for authentication.
  */
 
-import { readFileSync, existsSync, statSync } from 'fs';
+import { statSync } from 'fs';
 import { join, dirname } from 'path';
+import { miniSvg, headSvg, wordSvg, BRAND_CSS } from './brand.js';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Inline the logo images as data URIs so they always render — even inside
-// Telegram's in-app browser, which fails to load the separate /assets request.
-function assetDataUri(file) {
-  for (const dir of [join(__dirname, '..', 'assets'), join(__dirname, '..', '..', 'assets')]) {
-    const p = join(dir, file);
-    if (existsSync(p)) {
-      try { return 'data:image/png;base64,' + readFileSync(p).toString('base64'); } catch { /* fall through */ }
-    }
-  }
-  return '/assets/' + file; // fallback to the served URL
-}
-const LOGO_SM = assetDataUri('icon_64x64.png');   // topbar
-const LOGO_LG = assetDataUri('icon_128x128.png'); // login screen
+// The mark is inline markup (src/brand.js), not an image: it paints with the
+// first byte of the page, which the start-up screen relies on, it can be
+// animated with CSS, and it renders inside Telegram's in-app browser, which
+// fails to load a separate /assets request.
+// ICON_V is bumped when the icon files change: /assets/ is cached for a day
+// and browsers hold on to favicons far longer than that.
+const ICON_V = '2';
 
 // /vendor/ files are served with a 24h Cache-Control, so a shipped update to
 // one is ignored until the cache expires unless its URL changes.
@@ -58,9 +53,10 @@ export function getWebappHtml(botUsername) {
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Crundi">
-  <link rel="icon" type="image/png" sizes="256x256" href="/assets/icon_256x256.png">
-  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon_32x32.png">
-  <link rel="apple-touch-icon" href="/assets/icon_256x256.png">
+  <link rel="icon" type="image/svg+xml" href="/assets/logo-head.svg?v=${ICON_V}">
+  <link rel="icon" type="image/png" sizes="256x256" href="/assets/icon_256x256.png?v=${ICON_V}">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon_32x32.png?v=${ICON_V}">
+  <link rel="apple-touch-icon" href="/assets/apple_touch_180.png?v=${ICON_V}">
   <script src="https://telegram.org/js/telegram-web-app.js"><\/script>
   <link rel="stylesheet" href="/vendor/xterm.css?v=${vendorTag('xterm.css')}">
   <style>
@@ -82,6 +78,8 @@ export function getWebappHtml(botUsername) {
       --text-muted: #5a5a78;
       --accent: #6366f1;
       --accent-hover: #818cf8;
+      --accent-deep: #4f46e5;   /* the dark end of the mark */
+      --amber: #fbbf24;         /* the mark's warm parts; the one warm colour here */
       --accent-dim: rgba(99, 102, 241, 0.15);
       --green: #10b981;
       --green-dim: rgba(16, 185, 129, 0.15);
@@ -119,6 +117,27 @@ export function getWebappHtml(botUsername) {
       -webkit-tap-highlight-color: transparent;
     }
 
+    /* ─── The mark, and how it moves ─── */
+    ${BRAND_CSS}
+
+    /* ─── Start-up screen ───
+       Up from the first paint until the page knows whether to show the app or
+       the sign-in form. Without it the sign-in form flashed on every load,
+       signed in or not. */
+    #boot {
+      position: fixed; inset: 0; z-index: 100000;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+      background:
+        radial-gradient(700px 420px at 50% 38%, rgba(99,102,241,0.13), transparent 70%),
+        var(--bg-primary);
+      transition: opacity 0.28s ease, visibility 0s linear 0.28s;
+    }
+    #boot.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+    #boot .cb-mini { width: 104px; height: 104px; }
+    #boot .cb-word { height: 30px; width: auto; color: var(--text-primary); }
+    #boot .boot-note { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; color: var(--text-secondary); min-height: 1.2em; }
+    @media (prefers-reduced-motion: reduce) { #boot { transition: none; } }
+
     /* ─── Login Screen ─── */
     #login-screen {
       display: flex;
@@ -132,20 +151,13 @@ export function getWebappHtml(botUsername) {
       gap: 32px;
     }
     #login-screen .login-logo {
-      width: 96px;
-      height: 96px;
-      border-radius: 22px;
-      box-shadow: 0 10px 44px rgba(99, 102, 241, 0.4);
-      margin-bottom: -16px;
-      animation: loginReveal 0.6s cubic-bezier(0.22,1,0.36,1) both;
+      width: 112px;
+      height: 112px;
+      margin-bottom: -18px;
+      filter: drop-shadow(0 12px 34px rgba(99, 102, 241, 0.45));
     }
-    #login-screen h1 {
-      font-family: var(--mono);
-      font-size: 2.3rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      animation: loginReveal 0.6s cubic-bezier(0.22,1,0.36,1) 0.08s both;
-    }
+    #login-screen h1 { margin: 0; line-height: 0; color: var(--text-primary); }
+    #login-screen h1 .cb-word { height: 44px; width: auto; }
     #login-screen .subtitle {
       color: var(--text-secondary);
       font-size: 0.95rem;
@@ -167,7 +179,7 @@ export function getWebappHtml(botUsername) {
     }
     @keyframes loginReveal { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
     @media (prefers-reduced-motion: reduce) {
-      #login-screen .login-logo, #login-screen h1, #login-screen .subtitle, #login-screen .login-box { animation: none; }
+      #login-screen .subtitle, #login-screen .login-box { animation: none; }
     }
     #login-screen .login-box p {
       color: var(--text-secondary);
@@ -211,7 +223,7 @@ export function getWebappHtml(botUsername) {
     }
     #login-screen.compact { gap: 14px; }
     #login-screen.compact .login-logo { display: none; }
-    #login-screen.compact h1 { font-size: 1.4rem; }
+    #login-screen.compact h1 .cb-word { height: 26px; }
     #login-screen.compact .subtitle { display: none; }
     #login-screen.compact .login-box { padding: 20px 22px; gap: 14px; }
 
@@ -335,12 +347,9 @@ export function getWebappHtml(botUsername) {
       align-items: center;
       gap: 9px;
     }
-    .topbar .logo img {
-      width: 22px;
-      height: 22px;
-      border-radius: 6px;
-      box-shadow: 0 0 0 1px var(--border), 0 2px 10px rgba(99,102,241,0.45);
-    }
+    .topbar .logo .cb-headmark { width: 24px; height: 24px; flex: none; }
+    .topbar .logo .logo-text { display: inline-flex; color: var(--text-primary); }
+    .topbar .logo .cb-word { height: 15px; width: auto; transform: translateY(-1.5px); }
     .topbar .separator {
       color: var(--text-muted);
     }
@@ -3330,10 +3339,16 @@ export function getWebappHtml(botUsername) {
   </style>
 </head>
 <body>
+  <!-- ─── Start-up screen ─── -->
+  <div id="boot" role="status" aria-live="polite">
+    ${miniSvg('bt', 'cb-load', 'Crundi is loading')}
+    ${wordSvg()}
+    <div class="boot-note" id="boot-note"></div>
+  </div>
   <!-- ─── Login Screen ─── -->
   <div id="login-screen">
-    <img class="login-logo" src="${LOGO_LG}" alt="Crundi" width="96" height="96">
-    <h1>Crundi</h1>
+    ${miniSvg('lg', 'login-logo cb-intro', 'Crundi')}
+    <h1>${wordSvg('cb-intro')}</h1>
     <p class="subtitle">Claude Code terminal in your browser</p>
     <div class="login-box">
       <p id="login-prompt">Sign in to continue</p>
@@ -3462,7 +3477,7 @@ export function getWebappHtml(botUsername) {
         </div>
       </div>
       <button class="hamburger" data-action="toggle-sidebar"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
-      <span class="logo"><img src="${LOGO_SM}" alt=""><span class="logo-text">Crundi</span></span>
+      <span class="logo">${headSvg('tb', 'cb-idle')}<span class="logo-text">${wordSvg()}</span></span>
       <span class="separator">/</span>
       <span class="project-name" id="current-project">No project</span>
       <span class="spacer"></span>
@@ -5392,7 +5407,20 @@ export function getWebappHtml(botUsername) {
       });
     }
 
+    // The start-up screen goes once there is something real to show: the app,
+    // or the sign-in form. If start-up is slow it says so, so a stuck server
+    // does not look like a frozen page.
+    let bootSlowTimer = setTimeout(function () {
+      const n = document.getElementById('boot-note');
+      if (n) n.textContent = 'Starting your workbench';
+    }, 1500);
+    function hideBoot() {
+      clearTimeout(bootSlowTimer);
+      const b = document.getElementById('boot');
+      if (b) b.classList.add('gone');
+    }
     function showApp() {
+      hideBoot();
       appReady = true;
       $('#login-screen').style.display = 'none';
       $('#app').classList.add('visible');
@@ -17036,6 +17064,7 @@ export function getWebappHtml(botUsername) {
       } else {
         clearSession();
         $('#login-screen').style.display = '';
+        hideBoot();
         initLogin();
         $('#password-login').addEventListener('submit', submitPasswordLogin);
         const cf = $('#collab-login');
@@ -17082,7 +17111,10 @@ export function getWebappHtml(botUsername) {
       }
     }
 
-    init();
+    // Whatever happens during start-up, never leave the start-up screen over a
+    // page that failed to finish: show what is underneath instead.
+    init().catch(function (e) { hideBoot(); throw e; });
+    setTimeout(hideBoot, 12000);
     initUpdateUi();
 
     // ─── PWA service worker + update watcher ───

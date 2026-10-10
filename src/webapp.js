@@ -147,11 +147,15 @@ const WEB_MANIFEST = JSON.stringify({
   // follow the OS rotation setting like every other app.
   background_color: '#0a0a0f',
   theme_color: '#0a0a0f',
+  // 'any' icons are the rounded tile on a transparent ground. The maskable one
+  // is full-bleed with the robot inside the safe zone, so a launcher that cuts
+  // its own shape does not cut the robot.
   icons: [
-    { src: '/assets/icon_128x128.png', sizes: '128x128', type: 'image/png', purpose: 'any' },
-    { src: '/assets/icon_192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-    { src: '/assets/icon_256x256.png', sizes: '256x256', type: 'image/png', purpose: 'any maskable' },
-    { src: '/assets/icon_512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    { src: '/assets/icon_128x128.png?v=2', sizes: '128x128', type: 'image/png', purpose: 'any' },
+    { src: '/assets/icon_192x192.png?v=2', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/assets/icon_256x256.png?v=2', sizes: '256x256', type: 'image/png', purpose: 'any' },
+    { src: '/assets/icon_512x512.png?v=2', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/assets/icon_maskable_512.png?v=2', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
   ],
 });
 
