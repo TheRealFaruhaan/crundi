@@ -75,6 +75,7 @@
       '@keyframes cm-pop{0%{opacity:0;transform:scale(.2)}18%{opacity:1;transform:scale(1.15)}30%,78%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(.8)}}',
       '@keyframes cm-ring{0%{opacity:.9;transform:scale(.3)}100%{opacity:0;transform:scale(1.6)}}',
       '@keyframes cm-drop{0%{opacity:0;transform:translateY(-3px)}20%{opacity:1}100%{opacity:0;transform:translateY(14px)}}',
+      '@keyframes cm-fall{0%{opacity:0;transform:translate(0,-6px) rotate(0)}15%{opacity:1}100%{opacity:0;transform:translate(var(--dx,6px),26px) rotate(260deg)}}',
       '@keyframes cm-plane{0%{opacity:0;transform:translate(0,0) rotate(-20deg) scale(.6)}12%{opacity:1}100%{opacity:0;transform:translate(var(--dx,-60px),var(--dy,-110px)) rotate(-34deg) scale(1)}}'
     ].join('\n');
     document.head.appendChild(st);
@@ -124,6 +125,8 @@
     ring: { w: 20, h: 20, d: 520, a: 'cm-ring', s: '<circle cx="10" cy="10" r="8" fill="none" stroke="#818cf8" stroke-width="2"/>' },
     sweat: { w: 8, h: 11, d: 700, a: 'cm-drop', s: '<path d="M4 1C6 4 7 5.5 7 7.5A3 3 0 0 1 1 7.5C1 5.5 2 4 4 1Z" fill="#7dd3fc"/>' },
     anger: { w: 16, h: 16, d: 900, a: 'cm-pop', s: '<path d="M6 2V6H2M10 2V6H14M6 14V10H2M10 14V10H14" stroke="#fb7185" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>' },
+    spark: { w: 14, h: 14, d: 700, a: 'cm-pop', s: '<path d="M7 0L8.6 5.4L14 7L8.6 8.6L7 14L5.4 8.6L0 7L5.4 5.4Z" fill="#fbbf24"/>' },
+    confetti: { w: 6, h: 9, d: 1300, a: 'cm-fall', s: '<rect width="6" height="9" rx="1.5" fill="var(--cf,#818cf8)"/>' },
     plane: { w: 18, h: 14, d: 1100, a: 'cm-plane', s: '<path d="M1 6L17 1L11 13L8 8Z" fill="#e8e8f0"/><path d="M8 8L17 1" stroke="#8888a8" stroke-width="1"/>' }
   };
 
@@ -1080,6 +1083,9 @@
   //   project where the sidebar is beside the work, instead of the bell it may
   //           go down to the project that is waiting: a jump, or a careful,
   //           frightened climb with its back to you. And back up the same way.
+  //   party   a limit has reset. It jumps for joy, or runs a lap of honour
+  //           with its arms up, or dances, or spins; more of it for the
+  //           weekly one.
   //   update  there is an update. It jumps down onto the tabs, walks along to
   //           Settings and points at it. If Settings is off the side of a
   //           narrow screen it hauls the row of tabs along, a little at a time,
@@ -1416,7 +1422,52 @@
     await s.wait(260);
     return careful ? 'tired' : 'calm';
   }
-  var TOPSCENES = { five: sceneFive, week: sceneWeek, update: sceneUpdate, notify: sceneNotify, project: sceneProject };
+  // A limit has reset. Everything it was worried about is gone.
+  async function sceneParty(s, st, r) {
+    var a = s.a, k = a.k, W = window.innerWidth, big = TOP.partyFor === 'week';
+    var COL = ['#818cf8', '#fbbf24', '#34d399', '#fb7185', '#38bdf8'];
+    function throwUp() { for (var i = 0; i < 4; i++) s.fx('confetti', rnd(10, 86), rnd(-26, -4), ';--dx:' + Math.round(rnd(-12, 12)) + 'px;--cf:' + pick(COL)); }
+    s.pose({ eyeY: -3, lid: -0.3 }); await s.wait(600);                       // it looks. it looks again.
+    s.pose({ eyeY: 0, lid: 0 }); await s.wait(200);
+    s.pose({ eyeY: -3, lid: -0.35 }); s.fx('bang', 48, -14); await s.wait(500);
+    s.pose({ eyeY: 0 });
+    var acts = [
+      async function jumps() {                                                // up and down on the spot
+        var n = 4 + Math.floor(Math.random() * 3);
+        for (var i = 0; i < n; i++) { s.pose({ armL: 162, armR: 162, lid: 0.5 }); s.fx('spark', i % 2 ? 78 : 18, 4); if (i % 2 === 0) throwUp(); await s.hop(rnd(8, 13)); s.pose({ armL: 120, armR: 120 }); await s.wait(90); }
+        s.pose({ armL: 0, armR: 0, lid: 0 });
+      },
+      async function lap() {                                                  // a lap of honour, arms in the air
+        var far = clamp(a.x + rnd(0.3, 0.55) * W, 20, W - 20);
+        s.pose({ armL: 162, armR: 162, shake: 0.9, lid: 0.5 });
+        for (var i = 0; i < 2; i++) {
+          var g = s.walkTo(i % 2 ? clamp(st.home.x + 30, 20, W - 20) : far, 185);
+          while (a.tx !== null) { s.fx('spark', 48, -6); await s.wait(170); }
+          await g; throwUp();
+        }
+        s.pose({ shake: 0, armL: 0, armR: 0, lid: 0, turn: 0 });
+      },
+      async function dance() {                                                // a little dance
+        for (var i = 0; i < 8; i++) {
+          s.pose(i % 2 ? { armL: 150, armR: 24, lean: 7, headRot: 8, legL: 0, legR: -18, lid: 0.5 } : { armL: 24, armR: 150, lean: -7, headRot: -8, legL: 18, legR: 0, lid: 0.5 });
+          if (i % 2) s.fx('note', 74, 2, ';--dx:10px');
+          await s.wait(230);
+        }
+        s.pose({ armL: 0, armR: 0, lean: 0, headRot: 0, legL: 0, legR: 0, lid: 0 });
+      },
+      async function spin() {                                                 // round and round, then a pump of the fist
+        for (var i = 0; i < 2; i++) { s.pose({ turn: 2.1, armL: 60, armR: 60 }); await s.wait(260); s.pose({ turn: 0 }); await s.wait(260); }
+        s.pose({ squash: 0.85, armR: 30 }); await s.wait(200);
+        s.pose({ squash: 1, armR: 168, armL: 0 }); throwUp(); await s.hop(12);
+        s.pose({ armR: 0 });
+      }
+    ];
+    var count = big ? 3 : 1 + Math.floor(Math.random() * 2);
+    for (var n = 0; n < count; n++) { await acts[deal('party', acts.length)](); await s.wait(rnd(250, 500)); }
+    s.pose({ turn: 0 }); await wave(s, 3);                                    // to you: did you see that
+    return 'calm';
+  }
+  var TOPSCENES = { five: sceneFive, week: sceneWeek, update: sceneUpdate, notify: sceneNotify, project: sceneProject, party: sceneParty };
   function topOuting(kind, r) {
     if (HOLDER || LOGO.away || TOP.busy) return false;
     var mark = logoMark(); if (!mark) return false;
@@ -1467,6 +1518,17 @@
       if (!TOP.seen[kind]) { TOP.seen[kind] = true; if (TOP.next[kind] < t + first[0]) TOP.next[kind] = t + rnd(first[0], first[1]); }
       if (t >= TOP.next[kind]) ready.push([kind, again]);
     }
+    // A limit that was well up and is suddenly near nothing has reset. What it
+    // last saw is kept across reloads, so a reset that happened while the page
+    // was shut is still noticed.
+    var prev = TOP.prev;
+    if (!prev) { prev = TOP.prev = {}; try { prev = TOP.prev = JSON.parse(localStorage.getItem('crundi_mini_pct') || '{}') || {}; } catch (e) { /* private mode */ } }
+    ['five', 'week'].forEach(function (kk) {
+      var now = r[kk] ? r[kk].pct : null; if (now === null) return;
+      if (typeof prev[kk] === 'number' && prev[kk] >= 35 && prev[kk] - now >= 30) { TOP.partyFor = kk; TOP.partyAt = t + rnd(3000, 9000); }
+      if (typeof prev[kk] !== 'number' || Math.abs(prev[kk] - now) >= 1) { prev[kk] = now; try { localStorage.setItem('crundi_mini_pct', JSON.stringify(prev)); } catch (e) { /* private mode */ } }
+    });
+    if (TOP.partyAt && t >= TOP.partyAt) { if (topOuting('party', r)) TOP.partyAt = 0; return; }
     due('five', r.five && r.five.pct >= 90, [6000, 20000], [7 * 60000, 16 * 60000]);
     due('week', r.week && r.week.pct >= 90, [15000, 45000], [12 * 60000, 25 * 60000]);
     // The update reminder is remembered across reloads, so reloading the page
@@ -1984,6 +2046,6 @@
 
   window.CrundiMini = { attach: attach, Actor: Actor, delays: DELAY, _acts: { pace: pace },
     // the top bar: starts by itself; `go` is for the demo page and for tests
-    top: { start: topStart, go: function (kind, force) { TOP.force = force || null; var ok = topOuting(kind, topRead()); if (ok) { TOP.seen[kind] = true; TOP.next[kind] = Date.now() + 10 * 60000; } return ok; }, busy: function () { return TOP.busy; } } };
+    top: { start: topStart, go: function (kind, force) { TOP.force = force || null; if (kind === 'party') TOP.partyFor = force || 'five'; var ok = topOuting(kind, topRead()); if (ok) { TOP.seen[kind] = true; TOP.next[kind] = Date.now() + 10 * 60000; } return ok; }, busy: function () { return TOP.busy; } } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', topStart); else topStart();
 })();
