@@ -3817,6 +3817,7 @@ export function getWebappHtml(botUsername) {
   <script src="/vendor/xterm.js?v=${vendorTag('xterm.js')}"><\/script>
   <script src="/vendor/addon-fit.js?v=${vendorTag('addon-fit.js')}"><\/script>
   <script src="/vendor/codemirror.js?v=${vendorTag('codemirror.js')}"><\/script>
+  <script src="/vendor/crundi-mini.js?v=${vendorTag('crundi-mini.js')}"><\/script>
   <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
