@@ -2366,12 +2366,15 @@
         var paths = [];
         for (var i = 0; i < files.length; i++) {
           var f = files[i];
-          if (f.type && f.type.indexOf('image/') === 0) { uploadFile(f); continue; }
-          // The desktop app knows where the file really is, so its path is
-          // enough. A browser is told only the name, which is no use to
-          // Claude: there the file is uploaded and the stored path is what
-          // goes in. One or the other, never both.
-          var p = (window.api && window.api.getPathForFile && window.api.getPathForFile(f)) || f.path || '';
+          // On the machine Crundi runs on nothing is uploaded, pictures
+          // included: Claude can read the file where it is.
+          // A path on this computer is only any use to Claude when Crundi
+          // runs on this computer too. The desktop app is often a window onto
+          // a server somewhere else, and there "C:\\Users\\me\\x.pdf" names
+          // nothing: the file has to be uploaded, as it is from a browser
+          // (which is told only the name). One or the other, never both.
+          var sameMachine = ['localhost', '127.0.0.1', '[::1]', '::1'].indexOf(location.hostname) >= 0;
+          var p = sameMachine ? ((window.api && window.api.getPathForFile && window.api.getPathForFile(f)) || f.path || '') : '';
           if (p) paths.push(p); else uploadFile(f);
         }
         if (paths.length) {
