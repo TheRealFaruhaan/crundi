@@ -1102,8 +1102,9 @@
   //   notify  something is waiting for the person and the bell is lit. Some of
   //           the time, it walks over and points at it.
   //   project where the sidebar is beside the work, instead of the bell it may
-  //           go down to the project that is waiting: a jump, or a careful,
-  //           frightened climb with its back to you. And back up the same way.
+  //           go to the project that is waiting: off the screen, in again
+  //           along the first project in the list, and down the list one
+  //           project at a time, by a climb or a jump.
   //   party   a limit has reset. It jumps for joy, or runs a lap of honour
   //           with its arms up, or dances, or spins; more of it for the
   //           weekly one.
@@ -1385,7 +1386,7 @@
     var a = s.a, was = a.baseY + a.yOff, sf = surf(); if (!sf) return;
     a.onLand = null; a.air = false; a.vy = 0;
     a.surf = surf; a.baseY = sf.y; a.yOff = was - sf.y;
-    var down = a.yOff < 0, i = 0, pauseAt = Math.abs(a.yOff) * rnd(0.35, 0.6), looked = false;
+    var down = a.yOff < 0, i = 0, pauseAt = Math.abs(a.yOff) * rnd(0.35, 0.6), looked = Math.abs(a.yOff) < 60;   // a short step down is not worth a look
     s.pose({ turn: 2.1, shake: 0.22, lid: 0.3 });
     await s.wait(500);
     while (Math.abs(a.yOff) > 1.5) {
@@ -1406,42 +1407,60 @@
     await s.wait(300);
     s.fx('puff', 64, 34); s.pose({ squash: 0.93, headY: 3 }); await s.wait(500); s.pose({ squash: 1, headY: 0 });   // made it
   }
-  // A project in the sidebar needs an answer. Go down there and stand by it.
+  // A project in the sidebar needs an answer. It does not come down out of the
+  // top bar through thin air: it leaves the screen, comes back in from the side
+  // along the first project in the list, and makes its way down the list one
+  // project at a time, each a careful climb or a jump, to the one that is
+  // waiting. It goes off the side again when it has made its point.
   async function sceneProject(s, st, r) {
     var a = s.a, k = a.k, W = window.innerWidth, row = r.project; if (!row) return 'calm';
-    function rowBox() { var b = row.isConnected && row.offsetParent !== null ? row.getBoundingClientRect() : null; return b && b.width ? b : null; }
-    var b0 = rowBox(); if (!b0) return 'calm';
+    function boxOf(n) { var b = n && n.isConnected && n.offsetParent !== null ? n.getBoundingClientRect() : null; return b && b.width ? b : null; }
+    var all = document.querySelectorAll('.sidebar .sidebar-item'), rows = [];
+    for (var i = 0; i < all.length; i++) { var bb = boxOf(all[i]); if (bb && bb.top > 40 && bb.bottom < window.innerHeight - 8) rows.push(all[i]); }
+    var ti = rows.indexOf(row); if (ti < 0) return 'calm';
+    var b0 = boxOf(row);
     st.layer.style.height = '100%';
     var narrow = b0.width < 90;                                               // the sidebar is folded to icons
-    function spotX() { var b = rowBox() || b0; return narrow ? b.right + 12 * k : clamp(b.right - 20 * k, b.left + 40, W - 12); }
-    function ledge() { var b = rowBox() || b0; return { y: b.bottom - 1, l: -200, r: W + 200 }; }
+    function spotX(n) { var b = boxOf(n) || b0; return narrow ? b.right + 12 * k : clamp(b.right - 20 * k, b.left + 40, W - 12); }
+    function ledge(n) { return function () { var b = boxOf(n) || b0; return { y: b.bottom - 1, l: -300, r: W + 300 }; }; }
+    var sideX = Math.min(b0.left, 0) - 46;                                    // off the side the list is on
     s.pose({ eyeY: 4, headY: 3, turn: -0.4 }); await s.wait(700);             // someone down there wants something
     s.pose({ eyeY: 0, headY: 0, turn: 0 });
-    await s.walkTo(spotX(), 70);
-    var careful = Math.random() < 0.5;
-    if (careful) {
-      s.pose({ headY: 5, eyeY: 4.5, shake: 0.3 }); s.fx('sweat', 72, 14); await s.wait(900);   // a long way
+    await s.walkTo(st.edge, 70);                                              // off the top bar
+    await s.wait(rnd(500, 1000));
+    // and in again, along the first project
+    var f0 = ledge(rows[0])();
+    a.surf = ledge(rows[0]); a.baseY = f0.y; a.yOff = 0; a.air = false; a.x = sideX; a.vx = 0;
+    await s.walkTo(spotX(rows[0]), 62);
+    await s.wait(300);
+    var careful = 0;
+    for (var n = 1; n <= ti; n++) {
+      // sometimes two at a time, when there is a way to go
+      if (ti - n >= 2 && Math.random() < 0.25) n++;
+      s.pose({ headY: 4, eyeY: 4.5 }); await s.wait(rnd(260, 520));           // look at the next one down
       s.pose({ headY: 0, eyeY: 0 });
-      await climbTo(s, ledge, 36);
-    } else {
-      s.pose({ squash: 0.88, armL: 30, armR: 30 }); await s.wait(260);
-      s.pose({ squash: 1, armL: 150, armR: 150 });
-      await s.fallTo(ledge);
-      s.pose({ armL: 0, armR: 0 }); await s.wait(360);
+      if (Math.random() < 0.5) { careful++; await climbTo(s, ledge(rows[n]), 38); }
+      else {
+        s.pose({ squash: 0.9, armL: 30, armR: 30 }); await s.wait(200);
+        s.pose({ squash: 1, armL: 140, armR: 140 });
+        await s.fallTo(ledge(rows[n]));
+        s.pose({ armL: 0, armR: 0 }); await s.wait(rnd(200, 380));
+      }
+      var want = spotX(rows[n]); if (Math.abs(want - a.x) > 4) await s.walkTo(want, 50);
     }
-    function target() { var b = rowBox(); if (!b) return null; var d = row.querySelector('.dot'), db = d && d.offsetParent !== null ? d.getBoundingClientRect() : null; return db && db.width ? { x: db.left + db.width / 2, y: db.top + db.height / 2 } : { x: b.left + Math.min(20, b.width / 2), y: (b.top + b.bottom) / 2 }; }
-    for (var n = 0; n < 2; n++) {
-      var o = { turn: -0.6, armL: 98 }; s.pose(o); await s.wait(320);
-      for (var i = 0; i < 3; i++) { s.pose({ armL: 86 }); await s.wait(130); var t = target(); if (t) s.fxAt('ring', t.x, t.y); s.pose({ armL: 104 }); await s.wait(170); }
+    function target() { var b = boxOf(row); if (!b) return null; var d = row.querySelector('.dot'), db = d && d.offsetParent !== null ? d.getBoundingClientRect() : null; return db && db.width ? { x: db.left + db.width / 2, y: db.top + db.height / 2 } : { x: b.left + Math.min(20, b.width / 2), y: (b.top + b.bottom) / 2 }; }
+    for (var m = 0; m < 2; m++) {
+      s.pose({ turn: -0.6, armL: 98 }); await s.wait(320);
+      for (var j = 0; j < 3; j++) { s.pose({ armL: 86 }); await s.wait(130); var t = target(); if (t) s.fxAt('ring', t.x, t.y); s.pose({ armL: 104 }); await s.wait(170); }
       s.pose({ turn: 0 }); await s.wait(700);                                 // this one. it is waiting for you.
-      if (n === 0) { if (Math.random() < 0.5) { await s.hop(6); await s.hop(6); } else { s.pose({ armL: 0 }); await wave(s, 3); } }
+      if (m === 0) { if (Math.random() < 0.5) { await s.hop(6); await s.hop(6); } else { s.pose({ armL: 0 }); await wave(s, 3); } }
     }
     s.pose({ armL: 0 }); await s.wait(300);
-    // back up: a big jump, or the long way
-    if (Math.random() < 0.5) { s.pose({ squash: 0.8, armL: 30, armR: 30, eyeY: -4.5 }); await s.wait(420); s.pose({ squash: 1, armL: 170, armR: 170, eyeY: 0 }); await s.jumpTo(a.homeSurf); s.pose({ armL: 0, armR: 0 }); }
-    else await climbTo(s, a.homeSurf, 40);
-    await s.wait(260);
-    return careful ? 'tired' : 'calm';
+    // off the side, and home along the top bar
+    await s.walkTo(sideX, 70);
+    await s.wait(rnd(400, 800));
+    a.surf = a.homeSurf; a.baseY = st.home.y; a.yOff = 0; a.air = false; a.x = st.edge; a.vx = 0;
+    return careful > 1 ? 'tired' : 'calm';
   }
   // A limit has reset. Everything it was worried about is gone.
   async function sceneParty(s, st, r) {
