@@ -125,9 +125,9 @@
   var SPRING = {
     turn: [130, 21], lean: [150, 22], squash: [330, 13], headRot: [160, 19], headY: [170, 20],
     eyeX: [230, 26], eyeY: [230, 26], lid: [420, 34], armL: [165, 16], armR: [165, 16],
-    legL: [260, 24], legR: [260, 24], sit: [95, 17], swing: [50, 13], shake: [70, 15], alpha: [60, 15]
+    legL: [260, 24], legR: [260, 24], sit: [95, 17], swing: [50, 13], shake: [70, 15], alpha: [60, 15], armSwing: [90, 18], armsBack: [110, 19]
   };
-  var REST = { turn: 0, lean: 0, squash: 1, headRot: 0, headY: 0, eyeX: 0, eyeY: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0, sit: 0, swing: 0, shake: 0, alpha: 1 };
+  var REST = { turn: 0, lean: 0, squash: 1, headRot: 0, headY: 0, eyeX: 0, eyeY: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0, sit: 0, swing: 0, shake: 0, alpha: 1, armSwing: 1, armsBack: 0 };
 
   function Actor(layer, size) {
     addStyle();
@@ -230,7 +230,9 @@
     this.x += this.vx * dt;
     var sp = Math.abs(this.vx);
     this.walk += (clamp(sp / 34, 0, 1) - this.walk) * Math.min(1, dt * 10);
-    this.phase += sp * dt * 0.21 / this.k * 0.59;
+    // How far the legs turn for each pixel travelled. Too little and the feet
+    // slide over the ground; this is about one stride to the length of a step.
+    this.phase += sp * dt * 0.165 / this.k;
 
     // falling and hopping
     if (this.air) {
@@ -271,12 +273,21 @@
     var sw = v.swing, tm = this.time;
     var shake = v.shake * Math.sin(tm * 34) * 15;
 
-    var legL = v.legL + gait * (30 + run * 16) * w + Math.sin(tm * 5.2) * 24 * sw;
-    var legR = v.legR - gait * (30 + run * 16) * w + Math.sin(tm * 5.2 + 2.5) * 24 * sw;
-    var armL = v.armL - gait * 24 * w * (1 - clamp(v.shake, 0, 1)) + shake;
-    var armR = v.armR + gait * 24 * w * (1 - clamp(v.shake, 0, 1)) - shake;
-    var bob = -Math.abs(gait) * (2.4 + run * 2) * w + (this.air ? 0 : Math.sin(tm * 2.1) * 0.5);
-    var lean = v.lean + clamp(this.vx / 22, -11, 11);
+    // A step: the leg swings from the hip, the foot going forward is picked up
+    // off the ground, the body rises twice a stride and rolls a little from
+    // side to side, and the head follows the body a moment late.
+    var amp = (30 + run * 14) * w, cosg = Math.cos(this.phase);
+    var legL = v.legL + gait * amp + Math.sin(tm * 5.2) * 24 * sw;
+    var legR = v.legR - gait * amp + Math.sin(tm * 5.2 + 2.5) * 24 * sw;
+    var liftL = Math.max(0, cosg) * 3.4 * w, liftR = Math.max(0, -cosg) * 3.4 * w;
+    var swingA = 24 * w * clamp(v.armSwing, 0, 1.4) * (1 - clamp(v.shake, 0, 1));
+    var armL = v.armL - gait * swingA + shake;
+    var armR = v.armR + gait * swingA - shake;
+    var rise = 0.5 - 0.5 * Math.cos(this.phase * 2);
+    var bob = -rise * (2.3 + run * 2) * w + (this.air ? 0 : Math.sin(tm * 2.1) * 0.5);
+    var roll = gait * 1.7 * w;
+    var headLag = Math.sin(this.phase * 2 - 0.9) * 0.9 * w;
+    var lean = v.lean + clamp(this.vx / 22, -11, 11) + roll;
     var sq = clamp(v.squash, 0.55, 1.4), sx = 1 / Math.sqrt(sq);
     var drop = sit * SIT_DROP;
 
@@ -284,14 +295,23 @@
     this.el.style.opacity = clamp(v.alpha, 0, 1).toFixed(3);
 
     p.root.setAttribute('transform', 'translate(0 ' + drop.toFixed(2) + ') rotate(' + lean.toFixed(2) + ' 48 ' + GROUND + ') translate(48 ' + GROUND + ') scale(' + sx.toFixed(3) + ' ' + sq.toFixed(3) + ') translate(-48 -' + GROUND + ')');
-    p.legL.setAttribute('transform', 'rotate(' + legL.toFixed(2) + ' 40.5 78)');
-    p.legR.setAttribute('transform', 'rotate(' + legR.toFixed(2) + ' 55.5 78)');
+    p.legL.setAttribute('transform', 'translate(0 ' + (-liftL).toFixed(2) + ') rotate(' + legL.toFixed(2) + ' 40.5 78)');
+    p.legR.setAttribute('transform', 'translate(0 ' + (-liftR).toFixed(2) + ') rotate(' + legR.toFixed(2) + ' 55.5 78)');
     p.up.setAttribute('transform', 'translate(0 ' + bob.toFixed(2) + ')');
-    p.armL.setAttribute('transform', 'rotate(' + armL.toFixed(2) + ' 23.5 58)');
-    p.armR.setAttribute('transform', 'rotate(' + (-armR).toFixed(2) + ' 72.5 58)');
+    // Hands behind the back: the arms slip round behind the body and tuck in,
+    // so only the elbows show at the sides. They change places with the body
+    // in the drawing while they are still clear of it, so nothing pops.
+    var ab = clamp(v.armsBack, 0, 1), behind = ab > 0.1;
+    if (behind !== !!this.armsBehind) {
+      this.armsBehind = behind;
+      if (behind) { p.up.insertBefore(p.armR, p.up.firstChild); p.up.insertBefore(p.armL, p.up.firstChild); }
+      else { p.up.appendChild(p.armL); p.up.appendChild(p.armR); }
+    }
+    p.armL.setAttribute('transform', 'translate(' + (ab * 7.5).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (armL - ab * 24).toFixed(2) + ' 23.5 58)');
+    p.armR.setAttribute('transform', 'translate(' + (-ab * 7.5).toFixed(2) + ' ' + (ab * 2.5).toFixed(2) + ') rotate(' + (-(armR - ab * 24)).toFixed(2) + ' 72.5 58)');
 
     var turn = v.turn, tc = clamp(turn, -1, 1);
-    p.head.setAttribute('transform', 'translate(' + (tc * 2.6).toFixed(2) + ' ' + v.headY.toFixed(2) + ') rotate(' + v.headRot.toFixed(2) + ' 48 50)');
+    p.head.setAttribute('transform', 'translate(' + (tc * 2.6).toFixed(2) + ' ' + (v.headY + headLag).toFixed(2) + ') rotate(' + v.headRot.toFixed(2) + ' 48 50)');
     p.eyes.setAttribute('transform', 'translate(' + (turn * 15 + v.eyeX + this.lookX).toFixed(2) + ' ' + (v.eyeY + this.lookY).toFixed(2) + ')');
     var lid = clamp(v.lid + (this.blink > 0 ? 1 : 0), -0.35, 0.94), open = 1 - lid;
     var nearL = 1 - clamp(-tc, 0, 1) * 0.4, nearR = 1 - clamp(tc, 0, 1) * 0.4;
@@ -406,21 +426,74 @@
     s.pose({ squash: 1, headY: 0, headRot: 0, lid: 0, armL: 0, armR: 0 }); await s.wait(380);
   }
   async function tapFoot(s) {
-    s.pose({ armL: -38, armR: -38, headRot: 8, eyeY: -2.5, eyeX: 2 });      // arms folded, eyes to the ceiling
+    if (Math.random() < 0.45) s.pose({ armsBack: 1, headRot: 8, eyeY: -2.5, eyeX: 2 });   // hands behind its back, rocking
+    else s.pose({ armL: -38, armR: -38, headRot: 8, eyeY: -2.5, eyeX: 2 });  // or arms folded; eyes to the ceiling either way
     for (var i = 0; i < 7; i++) { s.pose({ legL: -24 }); await s.wait(140); s.pose({ legL: 0 }); await s.wait(160); }
-    s.pose({ armL: 0, armR: 0, headRot: 0, eyeY: 0, eyeX: 0 }); await s.wait(360);
+    s.pose({ armsBack: 0, armL: 0, armR: 0, headRot: 0, eyeY: 0, eyeX: 0 }); await s.wait(360);
   }
+  // Pacing, the way people do outside a hospital room: not hurrying anywhere,
+  // because there is nowhere to go. Slow, heavy lengths of the same stretch,
+  // head down, hands clasped behind the back or wrung in front. At each end a
+  // stop, a look up at the door (the conversation) in case, nothing, and
+  // round again. Now and then the watch, a hand to the forehead, a long
+  // breath, or sitting down for a moment and not being able to stay sat.
   async function pace(s, turns, speed) {
-    var sf = s.surf(); if (!sf) return;
-    var l = sf.l + 14, r = sf.r - 14;
-    if (r - l < 30) return;
-    for (var i = 0; i < turns; i++) {
-      s.pose({ armL: -16, armR: -16, headY: 1.5 });                          // hands behind its back
-      await s.walkTo(i % 2 ? l + rnd(0, 12) : r - rnd(0, 12), speed);
-      s.pose({ headY: 0 });
-      await s.wait(rnd(180, 420));
+    var a = s.a, sf = s.surf(); if (!sf) return;
+    if (sf.r - sf.l < 58) return;
+    var dir = a.x - sf.l > sf.r - a.x ? -1 : 1;                              // start towards the longer side
+    var clasp = Math.random() < 0.65;
+    function brood(d) {
+      if (clasp) s.pose({ armsBack: 1, armL: 0, armR: 0, shake: 0, armSwing: 0.08, headY: 2.6, headRot: d * 8, eyeY: 3.6, lid: 0.26, lean: d * 1.5, squash: 0.985 });
+      else s.pose({ armsBack: 0, armL: -30, armR: -30, shake: 0.1, armSwing: 0, headY: 2.6, headRot: d * 8, eyeY: 3.6, lid: 0.26, lean: d * 1.5, squash: 0.985 });   // wringing its hands
     }
-    s.pose({ armL: 0, armR: 0 });
+    async function lookUp() {                                                  // anything? no.
+      s.pose({ turn: 0, headRot: -6, headY: -0.5, eyeY: -4.2, lid: -0.12, lean: 0, shake: 0, squash: 1 });
+      await s.wait(rnd(900, 1500));
+      s.pose({ lid: 0.55, headY: 2.5, eyeY: 2 });
+      await s.wait(rnd(380, 620));
+    }
+    for (var i = 0; i < turns; i++) {
+      sf = s.surf(); if (!sf) return;
+      var to = dir > 0 ? sf.r - 8 - rnd(0, 14) : sf.l + 8 + rnd(0, 14);
+      var kind = i === 0 ? 0 : Math.floor(Math.random() * 6);
+      if (i && Math.random() < 0.3) clasp = !clasp;
+      brood(dir);
+      var going = s.walkTo(to, kind === 3 ? speed * 1.4 : speed);
+      if (kind === 1) {                                                        // the watch, without stopping
+        await s.wait(520);
+        s.pose({ armsBack: 0, shake: 0, armSwing: 0.08, armL: -112, armR: 0, headRot: -9, headY: 3, eyeX: -3.2, eyeY: 3.6, lid: 0.1 });
+        await s.wait(1000);
+        if (a.tx !== null) brood(dir);
+      } else if (kind === 2) {                                                 // stop dead, a hand to the forehead
+        await s.wait(rnd(500, 900));
+        if (a.tx !== null) {
+          a.tx = null;
+          s.pose({ turn: 0, armsBack: 0, shake: 0, armR: 0, armL: -122, headY: 4, headRot: -5, lid: 0.9, lean: 0 });
+          await s.wait(1300);
+          s.pose({ armL: 0, lid: 0.3, headY: 2 }); await s.wait(350);
+          brood(dir);
+          going = s.walkTo(to, speed);
+        }
+      } else if (kind === 4) {                                                 // a long breath on the way
+        await s.wait(rnd(400, 800));
+        if (a.tx !== null) { a.tx = null; s.pose({ turn: 0, lean: 0 }); await s.wait(200); await sigh(s); brood(dir); going = s.walkTo(to, speed); }
+      }
+      await going;
+      // the end of the length: stop, look up at the door, turn
+      s.pose({ squash: 0.97, lean: 0, headRot: 0 });
+      await s.wait(rnd(260, 520));
+      if (i === turns - 1 || Math.random() < 0.6) await lookUp();
+      if (kind === 5) {                                                        // sit; cannot stay sat
+        s.pose({ armsBack: 0, shake: 0, sit: 1, swing: 0.25, armL: -118, armR: -118, headY: 5, lid: 0.9, turn: 0, headRot: 0 });   // head in its hands
+        await s.wait(rnd(2200, 3200));
+        s.pose({ sit: 0, swing: 0, armL: 0, armR: 0, headY: 0, lid: 0.2 });
+        await s.wait(650);
+      }
+      s.pose({ squash: 1 });
+      dir = -dir;
+    }
+    s.pose({ armsBack: 0, shake: 0, armL: 0, armR: 0, armSwing: 1, headY: 0, headRot: 0, eyeY: 0, eyeX: 0, lid: 0, lean: 0, turn: 0, squash: 1 });
+    await s.wait(420);
   }
   async function peekDown(s) {
     s.pose({ lean: 0, headY: 6, headRot: 0, eyeY: 4.5, squash: 0.93, armL: 22, armR: 22 });     // read what is underfoot
@@ -512,7 +585,7 @@
   }
   async function queueLoop(s, from, env) {
     var acts = [
-      function () { return pace(s, 4, 74); },
+      function () { return pace(s, 6, 33); },
       function () { return watch(s); },
       function () { return shakeHead(s); },
       function () { return tapFoot(s); },
@@ -675,7 +748,7 @@
     }
     var acts = sendAt
       ? [showAndTell, typing, ask, jacks, showAndTell, sitAwhile, function () { return watch(s); }, point, showAndTell, function () { return sigh(s); }]
-      : [point, typing, ask, jacks, point, function () { return pace(s, 2, 58); }, sitAwhile, function () { return watch(s); }, point, function () { return sigh(s); }];
+      : [point, typing, ask, jacks, point, function () { return pace(s, 2, 36); }, sitAwhile, function () { return watch(s); }, point, function () { return sigh(s); }];
     for (var n = from; n < acts.length; n++) {
       await acts[n]();
       s.rest();
@@ -1120,5 +1193,5 @@
     };
   }
 
-  window.CrundiMini = { attach: attach, Actor: Actor, delays: DELAY };
+  window.CrundiMini = { attach: attach, Actor: Actor, delays: DELAY, _acts: { pace: pace } };
 })();
