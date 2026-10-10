@@ -19,16 +19,35 @@ before? If they could, and it merely works better now, leave it out.
    `1.19.25-dev.1` for a dev prerelease). Bump `package.json` first, then name
    the folder to match. `npm run check` fails if the newest edition is ahead of
    the package version.
-3. A dev edition is seen only by installs on the dev channel. When the work is
-   released to production, **move its steps into the production version's
-   folder and keep their ids.** Someone who already saw a step in the dev
-   edition is not shown it again; someone on production sees it for the first
-   time.
+3. A dev edition is seen only by installs on the dev channel. Dev builds are
+   where things are tried, changed and sometimes taken out again, so each dev
+   build has its own folder and they are free to disagree with each other.
+   **A production edition is the difference in what the user experiences
+   between the previous production version and this one. Nothing more and
+   nothing less.** Not a history of the dev builds in between: something added
+   in one dev build and removed in the next was never part of that
+   difference, and something that changed three times is described as it
+   finally is. It is written once, when the release is cut:
+   - make the production version's folder and put in it the steps for what is
+     actually shipping: one or more for each feature, as rule 5 says, in the
+     order they should be read;
+   - a step that carries over from a dev edition **keeps its id**, so someone
+     who saw it on the dev channel is not shown it twice;
+   - a feature that was dropped, or changed beyond recognition, does not carry
+     over (a reworked one gets a new id and a new step);
+   - **delete the dev folders for that version** in the same commit. They have
+     done their job, and left behind they would go on showing dev users
+     things that never shipped.
 4. Bug fixes never get a step (see above), nor does anything nobody would
    notice. A release with no new feature has no folder; do not invent a step
    so that an update has something to show.
-5. Keep an edition short: one step per thing worth knowing, seven at the very
-   most. If two changes belong together, they are one step.
+5. **A feature gets as many steps as it needs: one, or several.** A small
+   feature is one step. A large one (a whole new way of working, with several
+   parts worth showing) is split into a step per part, kept next to each other
+   in the order. The length of an edition follows from how many features ship
+   and how big they are; there is no fixed number. What does not change is
+   that each step shows one thing, clearly: do not cram two unrelated
+   features into one step to keep the count down, and do not pad one out.
 
 ## An edition
 
