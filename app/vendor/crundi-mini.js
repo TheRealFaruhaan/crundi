@@ -24,6 +24,8 @@
  * something changes, it carries on from exactly that pose. It cannot jump from
  * one state to another because there are no states to jump between.
  *
+ * A fall of more than a couple of its own heights is taken by parachute.
+ *
  * Its eyes follow the mouse when the mouse is near. Tap it and it is annoyed,
  * a different way each time: it stamps, shoos you off, turns its back, steps
  * out of reach, or leaves the pane and peers back in. Once it has been
@@ -91,6 +93,11 @@
       + '<clipPath id="' + c + '"><rect x="23" y="12" width="50" height="37" rx="15"/></clipPath></defs>'
       + '<ellipse data-p="shadow" cx="48" cy="90" rx="21" ry="3.2" fill="#000" opacity=".32"/>'
       + '<g data-p="root">'
+      +   '<g data-p="chute" opacity="0">'
+      +     '<path d="M12 -8L33 56M36 -6L40 54M60 -6L56 54M84 -8L63 56" stroke="#c7c9e8" stroke-width="1.4" fill="none"/>'
+      +     '<path d="M6 -8Q48 -66 90 -8Q78 -17 69 -8Q58 -17 48 -8Q38 -17 27 -8Q18 -17 6 -8Z" fill="' + A + '"/>'
+      +     '<path d="M27 -8Q30 -44 48 -51Q38 -30 48 -8Q38 -17 27 -8ZM69 -8Q66 -44 48 -51Q58 -30 48 -8Q58 -17 69 -8Z" fill="#818cf8"/>'
+      +   '</g>'
       +   '<rect data-p="legL" x="36" y="77" width="9" height="13" rx="4.2" fill="' + A + '"/>'
       +   '<rect data-p="legR" x="51" y="77" width="9" height="13" rx="4.2" fill="' + A + '"/>'
       +   '<g data-p="up">'
@@ -157,9 +164,9 @@
   var SPRING = {
     turn: [130, 21], lean: [150, 22], squash: [330, 13], headRot: [160, 19], headY: [170, 20],
     eyeX: [230, 26], eyeY: [230, 26], lid: [420, 34], armL: [165, 16], armR: [165, 16],
-    legL: [260, 24], legR: [260, 24], sit: [95, 17], swing: [50, 13], shake: [70, 15], alpha: [60, 15], armSwing: [90, 18], armsBack: [110, 19], grow: [120, 12], reach: [150, 20]
+    legL: [260, 24], legR: [260, 24], sit: [95, 17], swing: [50, 13], shake: [70, 15], alpha: [60, 15], armSwing: [90, 18], armsBack: [110, 19], grow: [120, 12], reach: [150, 20], chute: [150, 13]
   };
-  var REST = { turn: 0, lean: 0, squash: 1, headRot: 0, headY: 0, eyeX: 0, eyeY: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0, sit: 0, swing: 0, shake: 0, alpha: 1, armSwing: 1, armsBack: 0, grow: 1, reach: 0 };
+  var REST = { turn: 0, lean: 0, squash: 1, headRot: 0, headY: 0, eyeX: 0, eyeY: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0, sit: 0, swing: 0, shake: 0, alpha: 1, armSwing: 1, armsBack: 0, grow: 1, reach: 0, chute: 0 };
 
   function Actor(layer, size) {
     addStyle();
@@ -271,10 +278,19 @@
     // falling and hopping
     if (this.air) {
       this.vy += G * dt;
+      // A long way down: after a moment of plain falling, the parachute opens
+      // and the rest is a slow, swinging descent.
+      if (this.vy > 0 && !this.chuting && -this.yOff > 2.3 * 92 * this.k && this.vy > 190) { this.chuting = true; this.t.chute = 1; this.vel.squash += 2.5; this.vy *= 0.35; }
+      if (this.chuting) {
+        this.vy = Math.min(this.vy, 62 + 26 * Math.sin(this.time * 3.1));
+        this.x += Math.sin(this.time * 2.3) * 13 * dt;
+        this.t.lean = Math.sin(this.time * 2.3 + 1.2) * 9;
+      }
       this.yOff += this.vy * dt;
       if (this.yOff >= 0 && this.vy > 0) {
         var hit = this.vy;
         this.yOff = 0; this.vy = 0; this.air = false;
+        if (this.chuting) { this.chuting = false; this.t.chute = 0; this.t.lean = 0; }
         vel.squash -= clamp(hit / 95, 1.2, 7);       // the landing squashes it
         if (hit > 260) { this.fx('dust', 30, GROUND - 3, ';--dx:-9px'); this.fx('dust', 66, GROUND - 3, ';--dx:9px'); }
         if (this.onLand) { var fl = this.onLand; this.onLand = null; fl(); }
@@ -321,6 +337,11 @@
     var swingA = 24 * w * clamp(v.armSwing, 0, 1.4) * (1 - clamp(v.shake, 0, 1));
     var armL = v.armL - gait * swingA + shake;
     var armR = v.armR + gait * swingA - shake;
+    // hanging from the lines: both hands up
+    var ch = clamp(v.chute, 0, 1.15);
+    armL = armL * (1 - Math.min(1, ch)) + 152 * Math.min(1, ch); armR = armR * (1 - Math.min(1, ch)) + 152 * Math.min(1, ch);
+    p.chute.setAttribute('opacity', clamp(ch * 3, 0, 1).toFixed(2));
+    p.chute.setAttribute('transform', 'translate(48 54) scale(' + Math.max(0.01, ch).toFixed(3) + ') translate(-48 -54)');
     var rise = 0.5 - 0.5 * Math.cos(this.phase * 2);
     var bob = -rise * (2.3 + run * 2) * w + (this.air ? 0 : Math.sin(tm * 2.1) * 0.5);
     var roll = gait * 1.7 * w;
@@ -388,7 +409,7 @@
       a: a,
       wait: function (ms) { live(); return new Promise(function (res, rej) { a.waits.push({ at: a.time + ms / 1000, tok: tok, res: res, rej: rej }); }); },
       pose: function (o) { live(); for (var key in o) a.t[key] = o[key]; },
-      rest: function (keep) { live(); for (var key in REST) if (key !== 'alpha' && key !== 'sit' && key !== 'grow' && !(keep && keep[key])) a.t[key] = REST[key]; },
+      rest: function (keep) { live(); for (var key in REST) if (key !== 'alpha' && key !== 'sit' && key !== 'grow' && key !== 'chute' && !(keep && keep[key])) a.t[key] = REST[key]; },
       walkTo: function (x, speed) {
         live();
         a.t.sit = 0; a.t.swing = 0;                // nothing walks sitting down
@@ -1107,7 +1128,7 @@
   // A project row in the sidebar that is waiting for an answer, on screen, on a
   // layout wide enough to have the sidebar beside the work (folded or not).
   function waitingProject() {
-    if (window.innerWidth < 900) return null;
+    if (window.innerWidth < 900 && !TOP.anyWidth) return null;
     var list = document.querySelectorAll('.sidebar .sidebar-item.ts-input');
     for (var i = 0; i < list.length; i++) {
       var n = list[i]; if (n.offsetParent === null) continue;
@@ -1631,6 +1652,7 @@
     layer.className = 'cm-layer';
     veil.appendChild(layer);
     var me = {}, actor = null, scene = null, leaving = false, dead = false;
+    var cellEl = veil.parentNode && veil.parentNode.closest ? (veil.closest('.term-cell') || veil.closest('.parked-cell') || veil.parentNode) : null;
     var since = Date.now(), wantAt = since + rnd(35000, 110000);              // if it feels like it, and not at once
     function width() { return layer.clientWidth || 300; }
     function box(node) {
@@ -1673,10 +1695,24 @@
         handing = false;
         logoReturn(215).then(function () { if (HOLDER === me) HOLDER = null; });
       }
+      // What it was standing on has gone, so after the moment it takes to
+      // notice, it comes down: onto the message box of the chat that has just
+      // woken, or the bottom of its pane. From up there, that is a parachute.
+      function ground() {
+        var c = cellEl && cellEl.isConnected ? cellEl.querySelector('.cc-composer') : null;
+        var b = c && c.offsetParent !== null ? c.getBoundingClientRect() : null, y;
+        if (b && b.height) y = b.top;
+        else if (cellEl && cellEl.isConnected && cellEl.getBoundingClientRect().height) y = cellEl.getBoundingClientRect().bottom - 4;
+        else y = window.innerHeight - 6;
+        return { y: Math.max(y, floor.y), l: -200, r: window.innerWidth + 200 };
+      }
       a.play(async function (s) {
-        s.rest(); s.pose({ sit: 0, swing: 0, lid: -0.35, headY: -2 }); s.fx('bang', 48, -12);   // it is awake!
-        await s.wait(420);
-        s.pose({ lid: 0.5, armL: 160, armR: 160, headY: 0 });
+        s.rest(); s.pose({ sit: 0, swing: 0, lid: -0.35, headY: -2, armL: 150, armR: 150 }); s.fx('bang', 48, -12);   // it is awake! and there is no floor
+        await s.wait(380);
+        s.pose({ legL: 22, legR: -22 });
+        await s.fallTo(ground);
+        s.pose({ legL: 0, legR: 0, lid: 0.5, armL: 160, armR: 160, headY: 0 });
+        await s.wait(260);
         await s.hop(11); s.fx('spark', 20, 2); await s.hop(11); s.fx('spark', 76, 2);
         s.pose({ armL: 0, armR: 0, lid: 0 }); await s.wait(200);
         await runOff(s, window.innerWidth);
@@ -2089,6 +2125,6 @@
 
   window.CrundiMini = { attach: attach, Actor: Actor, delays: DELAY, _acts: { pace: pace },
     // the top bar: starts by itself; `go` is for the demo page and for tests
-    top: { start: topStart, go: function (kind, force) { TOP.force = force || null; if (kind === 'party') TOP.partyFor = force || 'five'; var ok = topOuting(kind, topRead()); if (ok) { TOP.seen[kind] = true; TOP.next[kind] = Date.now() + 10 * 60000; } return ok; }, busy: function () { return TOP.busy; } } };
+    top: { start: topStart, go: function (kind, force) { TOP.force = force || null; TOP.anyWidth = true; if (kind === 'party') TOP.partyFor = force || 'five'; var ok = topOuting(kind, topRead()); if (ok) { TOP.seen[kind] = true; TOP.next[kind] = Date.now() + 10 * 60000; } return ok; }, busy: function () { return TOP.busy; } } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', topStart); else topStart();
 })();
