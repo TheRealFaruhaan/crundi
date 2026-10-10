@@ -168,7 +168,14 @@ function onCdpMessage(raw) {
 function readDevToolsEndpoint(dir) {
   const f = join(dir, 'DevToolsActivePort');
   if (!existsSync(f)) return null;
-  const lines = readFileSync(f, 'utf8').split('\n');
+  // Chrome creates this file and then writes to it. On Windows it holds the
+  // file locked while it does, so a read that lands in that moment fails with
+  // EBUSY (or EPERM). That is "not ready yet", not an error: the caller polls,
+  // and the next read a moment later succeeds. Letting it throw made the first
+  // use of the browser fail outright now and then.
+  let text;
+  try { text = readFileSync(f, 'utf8'); } catch { return null; }
+  const lines = text.split('\n');
   const port = parseInt(lines[0], 10);
   const path = (lines[1] || '').trim();
   if (!Number.isFinite(port) || !path) return null;

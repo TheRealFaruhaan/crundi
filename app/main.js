@@ -183,7 +183,10 @@ function createWindow() {
 
 function createTray() {
   appendLog('[lifecycle] Creating tray...');
-  const iconPath = join(assetsDir, 'icon.ico');
+  // The tray is 16 pixels: use the head, which is drawn for that size, rather
+  // than the whole robot scaled down from the window icon.
+  const small = join(assetsDir, 'icon_32x32.png');
+  const iconPath = existsSync(small) ? small : join(assetsDir, 'icon.ico');
   const icon = existsSync(iconPath)
     ? nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
     : nativeImage.createEmpty();

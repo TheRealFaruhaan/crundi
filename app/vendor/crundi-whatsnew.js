@@ -22,8 +22,8 @@
       '.wn-root.in{opacity:1}',
       '.wn-top{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;gap:10px;padding:max(16px,env(safe-area-inset-top)) max(22px,env(safe-area-inset-right)) 0 max(22px,env(safe-area-inset-left));z-index:3}',
       '.wn-brand{font-weight:700;font-size:15px;letter-spacing:.01em;display:flex;align-items:center;gap:9px}',
-      '.wn-logo{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#22d3ee);display:grid;place-items:center}',
-      '.wn-logo svg{width:15px;height:15px}',
+      '.wn-logo{width:28px;height:28px;display:grid;place-items:center}',
+      '.wn-logo svg{width:28px;height:28px;display:block}','.wn-name{display:inline-flex}.wn-name svg{height:16px;width:auto;display:block;transform:translateY(-1.5px)}',
       '.wn-ver{font:600 11.5px var(--mono,ui-monospace,monospace);color:var(--accent-hover,#8b8dfb);background:var(--accent-dim,rgba(99,102,241,.16));border:1px solid rgba(99,102,241,.35);padding:3px 8px;border-radius:99px}',
       '.wn-sp{flex:1}',
       '.wn-skip{appearance:none;background:transparent;border:1px solid var(--border,#262636);color:var(--text-secondary,#8d8da3);border-radius:99px;padding:8px 14px;font:inherit;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}',
@@ -100,7 +100,7 @@
     next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>',
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
-    logo: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>'
+    logo: ''
   };
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
   function txt(tag, cls, t) { var e = document.createElement(tag); if (cls) e.className = cls; e.textContent = t == null ? '' : String(t); return e; }
@@ -122,7 +122,16 @@
 
     var root = el('div', 'wn-root'); root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-label', "What's new");
     var top = el('div', 'wn-top');
-    var brand = el('div', 'wn-brand', '<span class="wn-logo">' + IC.logo + '</span>'); brand.appendChild(document.createTextNode('Crundi'));
+    // The mark and the drawn name are taken from the page's own top bar, so
+    // there is one drawing of the logo, not a second copy to keep in step.
+    // Ids are renamed: two gradients with one id on a page fight each other.
+    var brand = el('div', 'wn-brand');
+    var src = document.querySelector('.topbar .logo');
+    var mk = src && src.querySelector('.cb-headmark'), nm = src && src.querySelector('.cb-word');
+    if (mk && nm) {
+      brand.appendChild(el('span', 'wn-logo', mk.outerHTML.split('"tb').join('"wn').split('#tb').join('#wn')));
+      brand.appendChild(el('span', 'wn-name', nm.outerHTML));
+    } else brand.appendChild(document.createTextNode('Crundi'));
     var skip = el('button', 'wn-skip'); skip.type = 'button'; skip.appendChild(document.createTextNode('Skip')); skip.insertAdjacentHTML('beforeend', IC.x);
     top.appendChild(brand); top.appendChild(txt('span', 'wn-ver', data.version || '')); top.appendChild(el('span', 'wn-sp')); top.appendChild(skip);
     var copy = el('div', 'wn-copy'), art = el('div', 'wn-art');

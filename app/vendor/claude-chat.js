@@ -3582,6 +3582,15 @@
     // Ask the server to stream this session (also replays history).
     wsSend({ type: 'subscribe-ui', id: sessionId });
 
+    // Mini, the robot from the logo, keeps the person company when they are
+    // left waiting (crundi-mini.js). It watches this chat's own elements and
+    // needs only to know whether Claude is busy. Nothing here may stop a chat
+    // from mounting, so a failure is swallowed.
+    var mini = null;
+    try {
+      if (window.CrundiMini) mini = window.CrundiMini.attach(root, { state: function () { return state; }, input: input, sendBtn: sendBtn, composer: composer });
+    } catch (e) { mini = null; }
+
     return {
       applyHistory: applyHistory,
       applyEvent: applyEvent,
@@ -3595,6 +3604,7 @@
       destroy: function () {
         closeModeModal();
         destroyed = true;
+        if (mini) { try { mini.destroy(); } catch (e) {} mini = null; }
         // Let a later chat in this project pick the draft back up.
         if (DRAFT_PROJ_KEY && CLAIMED[DRAFT_PROJ_KEY] === sessionId) delete CLAIMED[DRAFT_PROJ_KEY];
         selDispose();
