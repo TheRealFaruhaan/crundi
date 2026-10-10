@@ -1923,6 +1923,7 @@ export function getWebappHtml(botUsername) {
     .file-item { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-size: 12px; font-family: var(--mono); cursor: pointer; }
     .file-item:hover { background: var(--bg-hover); }
     .file-item { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+    body.file-dragging iframe { pointer-events: none !important; }
     .file-item.sel { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
     /* Cut and waiting to be pasted; a folder a dragged row would land in. */
     .file-item.cut { opacity: 0.45; }
@@ -2888,11 +2889,19 @@ export function getWebappHtml(botUsername) {
     }
     /* The ring that marks where the keyboard is; it glides from idea to idea. */
     .mm-cursor {
-      position: absolute; transform: translateY(-50%); pointer-events: none; z-index: 19; opacity: 0;
+      position: absolute; transform: translateY(calc(-50% + var(--mm-shift, 0px))); pointer-events: none; z-index: 19; opacity: 0;
       border: 2px solid var(--accent); border-radius: 17px; box-shadow: 0 0 0 4px var(--accent-dim);
       transition: left 0.18s ease, top 0.18s ease, width 0.18s ease, height 0.18s ease, opacity 0.15s ease;
     }
     .mm-cursor.on { opacity: 1; }
+    /* A first press of Delete: amber, and what a second press would remove. */
+    @keyframes mmWarn { 0%, 100% { box-shadow: 0 0 0 4px var(--yellow-dim); } 50% { box-shadow: 0 0 0 7px var(--yellow-dim); } }
+    .mm-cursor.warn { border-color: var(--yellow); animation: mmWarn 0.9s ease-in-out infinite; z-index: 23; }
+    .mm-cursor.warn::after {
+      content: attr(data-msg); position: absolute; left: 0; top: calc(100% + 8px); white-space: nowrap;
+      font-size: 0.72rem; font-weight: 600; color: #1a1205; background: var(--yellow); padding: 3px 8px; border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+    }
     /* The idea being typed. */
     .mm-node.mm-draft { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim), 0 4px 14px rgba(0,0,0,0.5); cursor: text; z-index: 21; padding: 7px 9px 5px; }
     .mm-draft-input {
@@ -7883,8 +7892,14 @@ export function getWebappHtml(botUsername) {
           if (files && files.length > 0) {
             const paths = [];
             for (const file of files) {
-              if (file.type && file.type.startsWith('image/')) await uploadAttachment(file);
-              else { const resolved = window.api?.getPathForFile?.(file); paths.push(resolved || file.path || file.name); }
+              // A local path only means something when this page is on the
+              // machine Crundi runs on. Through the desktop app connected
+              // to a server elsewhere, or a browser, the file is uploaded.
+              const sameMachine = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
+              const local = sameMachine ? (window.api?.getPathForFile?.(file) || file.path || '') : '';
+              // (Nothing is uploaded on the same machine, pictures included.)
+              if (local) paths.push(local);
+              else await uploadAttachment(file);
             }
             if (paths.length) { insertIntoTermInput(paths.join(' ')); toast(paths.length === 1 ? 'File added' : paths.length + ' files added'); }
             return;
@@ -9728,6 +9743,25 @@ export function getWebappHtml(botUsername) {
     window.addEventListener('blur', closeCtxMenu);
     window.addEventListener('resize', closeCtxMenu);
     document.addEventListener('scroll', closeCtxMenu, true);
+
+    // ─── A file dragged in from outside, and frames ───
+    // A frame (an embed in a chat, a panel) is its own document: a drag over
+    // it sends this page nothing, so a chat full of embeds had no place to
+    // drop a file except its message box. While a file is over the window
+    // the frames stop taking the pointer, and whatever is behind them does.
+    let fileDragT = 0;
+    const fileDragOff = () => { clearTimeout(fileDragT); document.body.classList.remove('file-dragging'); };
+    const fileDragOn = (e) => {
+      const t = e.dataTransfer && e.dataTransfer.types;
+      if (!t || !Array.prototype.includes.call(t, 'Files')) return;
+      document.body.classList.add('file-dragging');
+      clearTimeout(fileDragT);
+      fileDragT = setTimeout(fileDragOff, 700);       // no more drag events: it left the window, or ended
+    };
+    window.addEventListener('dragenter', fileDragOn, true);
+    window.addEventListener('dragover', fileDragOn, true);
+    window.addEventListener('drop', fileDragOff, true);
+    window.addEventListener('dragend', fileDragOff, true);
 
     // ─── The back button (a phone's, or the browser's) ───
     // Back closes what is open on top (an enlarged picture, a file being
@@ -14308,7 +14342,7 @@ export function getWebappHtml(botUsername) {
         }, 70);
       };
       return {
-        onStart: () => { nodeId = nodeEl.dataset.node; want = ''; nodeEl.classList.add('mm-lifted'); },
+        onStart: () => { nodeId = nodeEl.dataset.node; want = ''; nodeEl.classList.add('mm-lifted'); mmClearSel(); },
         onMove: (x, y) => {
           if (!nodeId) nodeId = nodeEl.dataset.node;
           clearMmDropTargets();
@@ -15173,24 +15207,86 @@ export function getWebappHtml(botUsername) {
     // goes to the middle child (the earlier of the two middles when the count
     // is even). A ring glides from idea to idea and the view follows it. An
     // idea being edited is saved first, and the editing moves along with you.
+    // The ring is only ever on the idea being worked with. It goes when a new
+    // idea is being typed, on a click anywhere else, when another idea is
+    // picked up, and on Escape. Where it last was is remembered (mmAnchor) so
+    // that the arrows can carry on from there.
     let mmSel = '';                 // id of the idea the ring is on
+    let mmAnchor = '';              // where the arrows start from when there is no ring
     let mmActive = false;           // was the last press inside the mindmap?
-    document.addEventListener('pointerdown', (e) => { mmActive = !!(e.target.closest && e.target.closest('#mindmap-panel')); }, true);
+    document.addEventListener('pointerdown', (e) => {
+      mmActive = !!(e.target.closest && e.target.closest('#mindmap-panel'));
+      if (mmDelArmed) mmDisarmDelete();
+      // A press that is not on an idea (empty canvas, the toolbar, anywhere
+      // else in the app) lets go of the ring. A press on an idea is about to
+      // edit or drag it, and those say for themselves where the ring goes.
+      if (mmSel && !(e.target.closest && e.target.closest('#mm-scale > .mm-node:not(.mm-ghost)'))) mmClearSel();
+    }, true);
+    function mmClearSel() { if (!mmSel) return; mmAnchor = mmSel; mmSel = ''; mmPlaceCursor(); }
+    let mmDelArmed = '', mmDelT = 0;      // the idea a first Delete press has warned about
+    function mmDisarmDelete() {
+      clearTimeout(mmDelT); mmDelArmed = '';
+      const ring = document.querySelector('#mm-scale > .mm-cursor');
+      if (ring) { ring.classList.remove('warn'); ring.removeAttribute('data-msg'); }
+    }
+    function mmDeleteKey() {
+      const id = mmSel, n = mindmapNodes.find(x => x.id === id), el = mmNodeEl(id);
+      if (!n || !el || n.pending) return;
+      // Everything under it goes too.
+      const gone = new Set([id]);
+      let grew = true;
+      while (grew) { grew = false; for (const x of mindmapNodes) if (x.parentId && gone.has(x.parentId) && !gone.has(x.id)) { gone.add(x.id); grew = true; } }
+      if (mmDelArmed !== id) {
+        mmDisarmDelete();
+        mmDelArmed = id;
+        const ring = document.querySelector('#mm-scale > .mm-cursor');
+        if (ring) {
+          const under = gone.size - 1;
+          ring.dataset.msg = 'Press Delete again to delete' + (under ? ' it and the ' + under + (under === 1 ? ' idea' : ' ideas') + ' under it' : '');
+          ring.classList.add('warn');
+        }
+        mmDelT = setTimeout(mmDisarmDelete, 3000);
+        return;
+      }
+      mmDisarmDelete();
+      // Where the ring goes next: the idea below on this level, else the one above, else the parent.
+      const next = mmStepTarget(id, 'down') || mmStepTarget(id, 'up') || (n.parentId || '');
+      mindmapNodes = mindmapNodes.filter(x => !gone.has(x.id));
+      mmSel = gone.has(next) ? '' : next;
+      renderMindmap();
+      mmSelect(mmSel, true);
+      mindmapPost({ action: 'deleteNode', id }).then(() => loadMindmap());
+    }
     function mmNodeEl(id) { return id ? document.querySelector('#mm-scale > .mm-node[data-node="' + id + '"]') : null; }
     function mmPlaceCursor() {
       const scale = document.getElementById('mm-scale'); if (!scale) return;
       let ring = scale.querySelector(':scope > .mm-cursor');
       const el = mmNodeEl(mmSel);
-      if (!el) { if (ring) ring.classList.remove('on'); return; }
+      if (!el) { if (ring) ring.classList.remove('on'); if (mmRingRO) mmRingRO.disconnect(); mmRingSees = null; return; }
       if (!ring) { ring = document.createElement('div'); ring.className = 'mm-cursor'; scale.appendChild(ring); ring.getBoundingClientRect(); }
       ring.style.left = ((parseFloat(el.style.left) || 0) - 4) + 'px';
       ring.style.top = el.style.top;
       ring.style.width = (el.offsetWidth + 8) + 'px';
-      ring.style.height = ((el._mmH || el.offsetHeight) + 8) + 'px';
+      // The idea as it is right now: opened up under the pointer or for
+      // editing, or back to its resting size, and nudged down if it is.
+      ring.style.height = (el.offsetHeight + 8) + 'px';
+      const shift = el.style.getPropertyValue('--mm-shift');
+      if (shift) ring.style.setProperty('--mm-shift', shift); else ring.style.removeProperty('--mm-shift');
       ring.classList.add('on');
+      // An idea changes size by itself (hover opens it, leaving closes it,
+      // typing grows it); the ring follows whenever it does.
+      if (window.ResizeObserver && mmRingSees !== el) {
+        if (!mmRingRO) mmRingRO = new ResizeObserver(() => mmPlaceCursor());
+        mmRingRO.disconnect();
+        mmRingRO.observe(el);
+        mmRingSees = el;
+      }
     }
+    let mmRingRO = null, mmRingSees = null;
     function mmSelect(id, follow) {
+      if (mmDelArmed && mmDelArmed !== id) mmDisarmDelete();
       mmSel = id || '';
+      if (mmSel) mmAnchor = mmSel;
       mmPlaceCursor();
       const el = mmNodeEl(mmSel), canvas = document.getElementById('mindmap-canvas');
       if (!follow || !el || !canvas) return;
@@ -15228,7 +15324,7 @@ export function getWebappHtml(botUsername) {
       return kids[Math.floor((kids.length - 1) / 2)].id;
     }
     function mmStep(dir) {
-      let from = mmSel, wasEditing = false;
+      let from = mmSel || (mmNodeEl(mmAnchor) ? mmAnchor : ''), wasEditing = false;
       if (mmEdit) { from = mmEdit.id; wasEditing = true; mmFinishEdit(true); }
       else if (mmDraft) {
         // A new idea being typed: keep it if there is anything in it, then go
@@ -15258,10 +15354,38 @@ export function getWebappHtml(botUsername) {
         mmStep(e.key.slice(5).toLowerCase());
         return;
       }
-      // With the ring on an idea and nothing being typed, Enter opens it for editing.
-      if (e.key === 'Enter' && !e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && !mmEdit && !mmDraft && (!a || a === document.body) && mmSel) {
+      // Delete, with the ring on an idea and nothing being typed: the first
+      // press turns the ring amber and says what would go; a second press
+      // while it is amber deletes. Left alone, the warning passes.
+      if (e.key === 'Delete' && !e.altKey && !e.ctrlKey && !e.metaKey && !mmEdit && !mmDraft && (!a || a === document.body) && mmSel) {
+        e.preventDefault();
+        mmDeleteKey();
+        return;
+      }
+      if (mmDelArmed && e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt') mmDisarmDelete();
+      // Escape with nothing being typed lets go of the ring.
+      if (e.key === 'Escape' && !mmEdit && !mmDraft && mmSel) { e.preventDefault(); mmClearSel(); return; }
+      // Ctrl+Enter with the ring on an idea: edit it. (The same keys in the
+      // text box end the edit, so it works as a switch.)
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !mmEdit && !mmDraft && (!a || a === document.body) && mmSel) {
         const el = mmNodeEl(mmSel);
         if (el) { e.preventDefault(); mmStartEdit(el); }
+        return;
+      }
+      // With the ring on an idea and nothing being typed, the keys do what
+      // they do in a text box: Enter starts the next idea at its level, Tab
+      // one nested under it, Shift+Tab one a level out.
+      if (!e.altKey && !e.ctrlKey && !e.metaKey && !mmEdit && !mmDraft && (!a || a === document.body) && mmSel) {
+        const n = mindmapNodes.find(x => x.id === mmSel), el = mmNodeEl(mmSel);
+        if (!n || !el || n.pending) return;
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmStartDraft(n.parentId || null, n.id); }
+        else if (e.key === 'Tab') {
+          e.preventDefault();
+          const par = n.parentId ? mindmapNodes.find(x => x.id === n.parentId) : null;
+          if (!e.shiftKey) mmStartDraft(n.id, null);
+          else if (par) mmStartDraft(par.parentId || null, par.id);
+          else mmStartDraft(null, n.id);
+        }
       }
     }, true);
 
@@ -15280,6 +15404,10 @@ export function getWebappHtml(botUsername) {
     let mmSaveChain = Promise.resolve();
     const mmRealId = {};            // temporary id -> the id the server gave it
     function mmStartDraft(parentId, afterId) {
+      // Typing a new idea: the box is what is in hand now, so the ring goes.
+      if (mmSel) mmAnchor = mmSel;
+      mmSel = '';
+      if (afterId || parentId) mmAnchor = afterId || parentId;
       mmDraft = { parentId: parentId || null, afterId: afterId || null };
       renderMindmap();
     }
@@ -15297,7 +15425,16 @@ export function getWebappHtml(botUsername) {
         ta.addEventListener('input', grow);
         ta.addEventListener('keydown', (e) => {
           if (e.isComposing) return;
-          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmDraftCommit('next'); }
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            // Save this one and stop adding, with the ring left on it.
+            e.preventDefault(); e.stopPropagation();
+            const had = !!ta.value.trim();
+            if (had) mmDraftCommit('next');
+            const saved = had && mmDraft ? mmDraft.afterId : '';
+            mmEndDraft();
+            if (saved) mmSelect(saved, false);
+          }
+          else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmDraftCommit('next'); }
           else if (e.key === 'Tab') { e.preventDefault(); mmDraftCommit(e.shiftKey ? 'up' : 'nested'); }
           else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); mmEndDraft(); }
         });
@@ -15337,7 +15474,11 @@ export function getWebappHtml(botUsername) {
       ta.addEventListener('input', fit);
       ta.addEventListener('keydown', (e) => {
         if (e.isComposing) return;
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmFinishEdit(true); }
+        // Enter, Tab and Shift+Tab do here what they do while adding: save
+        // this idea and open the next one (same level, nested, one level out).
+        // Ctrl+Enter is the switch for editing: here it saves and stops, ring still on the idea.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); mmFinishEdit(true); mmSelect(id, false); }
+        else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmFinishEdit(true); mmStartDraft(n.parentId || null, n.id); }
         // Escape: the edit is thrown away and the idea reads as it did.
         else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); mmFinishEdit(false); }
         else if (e.key === 'Tab') {
@@ -15395,7 +15536,7 @@ export function getWebappHtml(botUsername) {
       const afterAt = afterId ? mindmapNodes.findIndex(n => n.id === afterId) : -1;
       if (afterAt >= 0) mindmapNodes.splice(afterAt + 1, 0, local); else mindmapNodes.push(local);
       ta.value = ''; ta.style.height = '';
-      mmSel = tmpId;
+      mmAnchor = tmpId;
       mmDraft = mode === 'nested' ? { parentId: tmpId, afterId: null }
         : (mode === 'up' && parentNode) ? { parentId: parentNode.parentId || null, afterId: parentNode.id }
         : { parentId: parentId || null, afterId: tmpId };
@@ -15432,6 +15573,7 @@ export function getWebappHtml(botUsername) {
         document.querySelectorAll('#mm-scale > .mm-ghost[data-addparent="' + tmpId + '"]').forEach(g => { g.dataset.addparent = newId; g.dataset.node = '__add__' + newId; });
         if (mmDraft) { if (mmDraft.parentId === tmpId) mmDraft.parentId = newId; if (mmDraft.afterId === tmpId) mmDraft.afterId = newId; }
         if (mmSel === tmpId) mmSel = newId;
+        if (mmAnchor === tmpId) mmAnchor = newId;
       }).then(() => {
         mmSaving--;
         renderMindmap();
@@ -15609,6 +15751,7 @@ export function getWebappHtml(botUsername) {
       if (!el || !el.isConnected) return;
       const over = 4 - ((parseFloat(el.style.top) || 0) - el.offsetHeight / 2);
       if (over > 0) el.style.setProperty('--mm-shift', Math.round(over) + 'px'); else el.style.removeProperty('--mm-shift');
+      if (el.dataset.node === mmSel) mmPlaceCursor();
     }
     // ─── The shortcut sheet ───
     // Every way of working the map, in one place, each with a small picture of
@@ -15657,7 +15800,7 @@ export function getWebappHtml(botUsername) {
       h += row(key('Esc'), 'Close the box without saving what is in it. Clicking elsewhere does the same.', '');
       h += '<h4>Editing</h4>';
       h += row(word('Click'), 'Edit the idea where it is. It opens to about seven lines, then scrolls.', '');
-      h += row(key('Enter'), 'Save the edit. Clicking elsewhere saves it too.', '');
+      h += row(key('Enter'), 'Save the edit and start the next idea at the same level, as when adding. Clicking elsewhere just saves.', '');
       h += row(key('Esc'), 'Throw the edit away; the idea reads as it did.', '');
       h += row(key('Tab') + '<span class="mmh-or">or</span>' + key('Shift+Tab'), 'Save the edit and carry on adding: nested under it, or one level out.', '');
       h += row(word('Double-click'), 'Open the details: notes, a link to a task, media, delete.', '');
@@ -15667,7 +15810,11 @@ export function getWebappHtml(botUsername) {
       h += row(key('Ctrl+Shift+Left'), 'Its parent.', '');
       h += row(key('Ctrl+Shift+Right'), 'The middle idea under it (the earlier of the two middles when there is an even number).',
         mmDiagram([[0, 1, 'Trip', 'held'], [1, 0, 'Flights'], [1, 1, 'Hotel', 'new'], [1, 2, 'Visa']], [[0, 1], [0, 2], [0, 3]], 'From "Trip", Ctrl+Shift+Right lands on "Hotel", the middle of its three.'));
-      h += row(key('Enter'), 'With the ring on an idea, start editing it. While editing, Ctrl+Shift and an arrow saves and takes the editing with you.', '');
+      h += row(key('Enter') + '<span class="mmh-or">,</span>' + key('Tab') + '<span class="mmh-or">,</span>' + key('Shift+Tab'), 'With the ring on an idea and nothing being typed, these start a new idea just as they do while typing: at its level, nested under it, or one level out.', '');
+      h += row(key('Esc'), 'Let go of the ring. A click anywhere that is not an idea does the same.', '');
+      h += row(key('Ctrl+Enter'), 'Switch editing on and off for the idea the ring is on: start editing it, or save and stop. While editing, Ctrl+Shift and an arrow saves and takes the editing with you.', '');
+      h += row(key('Delete'), 'With the ring on an idea: the ring turns amber and says what would go. Press Delete again while it is amber to delete the idea and everything under it. Any other key, a click, or a few seconds cancels.',
+        mmDiagram([[0, 0, 'Trip'], [1, 0, 'Hotel', 'held'], [2, 0, 'Near beach'], [1, 1, 'Visa']], [[0, 1], [1, 2], [0, 3]], 'With the ring on "Hotel", Delete twice removes "Hotel" and "Near beach". "Visa" stays.'));
       h += '<h4>Moving ideas</h4>';
       h += row(word('Drag onto an idea'), 'It becomes a child of that idea.',
         mmDiagram([[0, 0, 'Trip'], [1, 0, 'Hotel'], [0, 1, 'Visa', 'held'], [1, 1, 'Visa', 'new']], [[0, 1], [0, 3, 1]], 'Drop "Visa" on the middle of "Trip": it moves under "Trip".'));
@@ -15765,6 +15912,7 @@ export function getWebappHtml(botUsername) {
         const n = e.target.closest && e.target.closest('.mm-node:not(.mm-ghost):not(.mm-draft)');
         if (!n || (e.relatedTarget && n.contains(e.relatedTarget)) || n.classList.contains('mm-editing')) return;
         n.style.removeProperty('--mm-shift');
+        if (n.dataset.node === mmSel) requestAnimationFrame(mmPlaceCursor);
       });
       setupMmDetailModal();
       setupMediaHandlers();
