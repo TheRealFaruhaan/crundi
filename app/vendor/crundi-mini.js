@@ -474,9 +474,10 @@
 
   // ─── Scenes ───
   // A message is waiting to be read.
-  async function sceneQueue(s, layerW) {
+  async function sceneQueue(s, layerW, env) {
     var sf = s.surf(); if (!sf) return;
-    var side = Math.random() < 0.5 ? -1 : 1;
+    // come in on the side that does not mean walking across the badges
+    var side = env && env.badge() ? -1 : (Math.random() < 0.5 ? -1 : 1);
     var spot = sf.l + (sf.r - sf.l) * rnd(0.55, 0.72);
     await enter(s, side < 0 ? -40 : layerW + 40, spot, 62);
     await s.wait(380);
@@ -484,9 +485,31 @@
     s.pose({ eyeY: 0, headRot: 0 });
     await knock(s);
     await shrug(s);
-    await queueLoop(s, 0);
+    await queueLoop(s, 0, env);
   }
-  async function queueLoop(s, from) {
+  // "Working…" is right there. Go over, look up at it, point, tap the watch.
+  async function nagWorking(s, env) {
+    var a = s.a, sf = s.surf(), w = env && env.activity(); if (!sf || !w) return;
+    await s.walkTo(clamp(w.r + 30, sf.l, sf.r - 4), 70);
+    var left = w.x < a.x, arm = left ? 'armL' : 'armR', o = { turn: left ? -0.6 : 0.6, eyeY: -4, headRot: left ? -9 : 9 };
+    s.pose(o); await s.wait(700);                                             // look up at it
+    var up = w.y < a.baseY - 46 * a.k ? 128 : 96;                             // above its shoulder, or level with it
+    o[arm] = up; s.pose(o); await s.wait(260);
+    for (var i = 0; i < 3; i++) { o[arm] = up - 14; s.pose(o); await s.wait(140); var t = env.activity(); if (t) s.fxAt('ring', t.x, t.y); o[arm] = up + 6; s.pose(o); await s.wait(170); }
+    o = { turn: 0, eyeY: 0, headRot: 0 }; o[arm] = 0; s.pose(o); await s.wait(300);
+    await watch(s);                                                           // and how long has it been
+  }
+  // A background command is running in the corner. Go and see what it is.
+  async function checkBadge(s, env) {
+    var sf = s.surf(), b = env && env.badge(); if (!sf || !b) return;
+    await s.walkTo(sf.r - 2, 60);
+    s.pose({ turn: 0.75, lean: 7, headRot: 8, eyeY: 2 }); await s.wait(900);  // lean in and read it
+    s.pose({ armR: 96 });
+    for (var i = 0; i < 2; i++) { s.pose({ armR: 84 }); await s.wait(130); var t = env.badge(); if (t) s.fxAt('ring', t.l + 6, t.y); s.pose({ armR: 100 }); await s.wait(170); }
+    s.pose({ armR: 0, lean: 0, headRot: 0, eyeY: 0, turn: 0 }); await s.wait(300);
+    await shrug(s);                                                           // no idea either
+  }
+  async function queueLoop(s, from, env) {
     var acts = [
       function () { return pace(s, 4, 74); },
       function () { return watch(s); },
@@ -496,12 +519,17 @@
       function () { return peekDown(s); },
       function () { return sigh(s); },
       function () { return scan(s); },
-      function () { return paperPlane(s); }
+      function () { return paperPlane(s); },
+      function () { return nagWorking(s, env); },
+      function () { return checkBadge(s, env); }
     ];
-    var order = [0, 1, 2, 3, 5, 8, 6, 4, 7], n = from, was = -1;
+    var order = [9, 0, 10, 1, 2, 3, 5, 8, 6, 4, 7], n = from, was = -1;
     for (;;) {
       var i = n < order.length ? order[n] : Math.floor(Math.random() * acts.length);
-      if (i === was) i = (i + 1) % acts.length;
+      // only what is actually on screen
+      if (i === 9 && !(env && env.activity())) i = 1;
+      if (i === 10 && !(env && env.badge())) i = 0;
+      if (i === was) i = (i + 1) % 9;
       was = i; n++;
       await acts[i]();
       s.rest();
@@ -851,6 +879,38 @@
     function q(sel) { var n = root.querySelector(sel); return n && n.offsetParent !== null ? n : null; }
     function width() { return layer.clientWidth || 300; }
     function mobile() { return root.classList.contains('cc-narrow') || width() < 520; }
+    // Things in the chat it should know about: the "Working…" line, and the
+    // badges for background commands and subagents in the corner. It keeps off
+    // the badges (they are buttons) and goes and looks at both.
+    function badgeBox() {
+      var list = root.querySelectorAll('.cc-agbadge'), l = Infinity, r = -Infinity, t = 0, bt = 0, any = false;
+      for (var i = 0; i < list.length; i++) {
+        var b = list[i].offsetParent !== null ? box(list[i]) : null;
+        if (!b) continue;
+        any = true; if (b.l < l) { l = b.l; } if (b.r > r) r = b.r; t = b.t; bt = b.b;
+      }
+      return any ? { l: l, r: r, x: (l + r) / 2, y: (t + bt) / 2 } : null;
+    }
+    var env = {
+      // the row is as wide as the pane; its words are not
+      activity: function () {
+        var row = q('.cc-activity'), b = box(row); if (!b) return null;
+        var last = row.lastElementChild, t = last ? box(last) : null;
+        return { x: b.l + 8, r: t ? t.r : b.l + 90, y: (b.t + b.b) / 2, t: b.t };
+      },
+      badge: badgeBox
+    };
+    function clearOfBadges(fn) {
+      return function () {
+        var sf = fn(); if (!sf) return sf;
+        var b = badgeBox(), w = env.activity();
+        if (b && b.l - 12 > sf.l + 40) sf.r = Math.min(sf.r, b.l - 12);
+        // Not on top of the words "Working…" either, when they are down at its
+        // level and there is room beside them.
+        if (w && w.t > sf.y - 60 && sf.r - (w.r + 26) > 70) sf.l = Math.max(sf.l, w.r + 26);
+        return sf;
+      };
+    }
     function topOf(sel, padL, padR) {
       return function () {
         var b = box(typeof sel === 'string' ? q(sel) : sel);
@@ -881,9 +941,9 @@
       var a = ensure();
       scene = name; leaving = false;
       a.autoBlink = true;
-      if (name === 'queue') { a.surf = topOf('.cc-queue', 12, 12); a.play(function (s) { return sceneQueue(s, width()); }); }
+      if (name === 'queue') { a.surf = clearOfBadges(topOf('.cc-queue', 12, 12)); a.play(function (s) { return sceneQueue(s, width(), env); }); }
       else if (name === 'sit') { a.surf = topOf('.cc-sug', 0, 0); a.play(function (s) { return sceneSit(s, width()); }); }
-      else { a.surf = nudgeSurf; a.play(function (s) { return sceneNudge(s, width(), aim, mobile(), sendAt); }); }
+      else { a.surf = clearOfBadges(nudgeSurf); a.play(function (s) { return sceneNudge(s, width(), aim, mobile(), sendAt); }); }
     }
     function leave(how) {
       if (!actor || leaving) return;
@@ -909,7 +969,7 @@
     var taps = [], lastKind = -1;
     var wary = 0, lastFlee = 0;                    // goes up with every tap, wears off with time
     function resume(s, was, asleep) {
-      if (was === 'queue') return queueLoop(s, 1 + Math.floor(Math.random() * 6));
+      if (was === 'queue') return queueLoop(s, 2 + Math.floor(Math.random() * 6), env);
       if (was === 'sit') return (actor.t.sit < 0.5 ? takeSeat(s) : Promise.resolve()).then(function () { s.pose({ sit: 1, swing: 1, armL: 10, armR: 10 }); return sitLoop(s, Math.floor(Math.random() * 6)); });
       return nudgeLoop(s, aim, asleep ? 99 : 1 + Math.floor(Math.random() * 7), mobile() ? null : sendAt);
     }
@@ -1000,7 +1060,7 @@
       if (scene === 'queue' && !leaving && actor && lastSig && sig.n && (sig.n > lastSig.n || sig.len > lastSig.len + 2) && !actor.air) {
         var a = actor, cnt = sig.lines;
         a.autoBlink = true;
-        a.play(async function (s) { s.rest(); await another(s, cnt); s.rest(); await s.wait(500); await queueLoop(s, 1 + Math.floor(Math.random() * 6)); });
+        a.play(async function (s) { s.rest(); await another(s, cnt); s.rest(); await s.wait(500); await queueLoop(s, 2 + Math.floor(Math.random() * 6), env); });
       }
       lastSig = sig;
       if (scene) return;
