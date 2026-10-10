@@ -854,7 +854,15 @@
     s.pose({ lid: 0.1, headY: 0 }); await s.wait(500);
     a.autoBlink = false;
     s.pose({ lid: 0.94, headRot: 13, headY: 4, swing: 0 });
-    for (;;) { s.fx('z', 66, 2, ';--dx:10px'); await s.wait(1500); }
+    // Not for ever: while it sleeps here nobody else can have it, and the
+    // logo's place in the top bar stays empty. After a couple of minutes it
+    // wakes by itself, stretches, and goes home.
+    for (var z = 0; z < 80 + Math.floor(Math.random() * 40); z++) { s.fx('z', 66, 2, ';--dx:10px'); await s.wait(1500); }
+    a.autoBlink = true;
+    s.pose({ lid: 0.5, headRot: 0, headY: 0 }); await s.wait(600);
+    s.pose({ lid: 0.75, armL: 152, armR: 152, headY: -2, sit: 0 }); await s.wait(1100);   // a stretch and a yawn
+    s.pose({ lid: 0, armL: 0, armR: 0, headY: 0 }); await s.wait(400);
+    a.finished = true;
   }
 
   // ─── Being tapped ───
@@ -1637,6 +1645,17 @@
   }
   function topStart() { if (!TOP.timer && !REDUCED) TOP.timer = setInterval(topTick, 3000); }
 
+  // Is this pane actually in front of the person: laid out, and mostly inside
+  // the window? On a phone the panes sit side by side and only one is in view;
+  // the others are still "visible" as far as the page is concerned.
+  function inView(node) {
+    if (!node || !node.isConnected) return false;
+    var r = node.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
+    if (r.width < 40 || r.height < 40) return false;
+    var w = Math.min(r.right, W) - Math.max(r.left, 0), h = Math.min(r.bottom, H) - Math.max(r.top, 0);
+    return w > r.width * 0.55 && h > Math.min(r.height * 0.5, 160);
+  }
+
   // There is one Mini. With several chats on screen, whichever needs it first
   // has it, and the others wait until it has left.
   var HOLDER = null;
@@ -1704,7 +1723,11 @@
     s.pose({ lid: 0.5, headY: 2 }); await s.wait(900);
     a.autoBlink = false;
     s.pose({ lid: 0.94, headRot: 13, headY: 4, swing: 0 });
-    for (;;) { s.fx('z', 66, 2, ';--dx:10px'); await s.wait(1500); }
+    for (var z = 0; z < 60 + Math.floor(Math.random() * 40); z++) { s.fx('z', 66, 2, ';--dx:10px'); await s.wait(1500); }
+    a.autoBlink = true;
+    s.pose({ lid: 0.5, headRot: 0, headY: 0, sit: 0 }); await s.wait(700);                // enough of that: home
+    s.pose({ lid: 0 }); await s.wait(300);
+    a.finished = true;
   }
   function attachParked(veil, o) {
     addStyle();
@@ -1736,7 +1759,7 @@
     // it, this layer included, so it cannot leave from here: it would just
     // vanish. It is picked up exactly where it was last seen and put on a
     // layer of the page itself, to be glad about it and run off properly.
-    var handing = false, lastAt = null;
+    var handing = false, lastAt = null, offFor = 0;
     function handOver() {
       if (handing || !actor || !lastAt) { gone(); return; }
       handing = true;
@@ -1802,7 +1825,11 @@
       var btn = q('.pk-resume'), ok = btn && btn.offsetParent !== null && !btn.disabled;
       if (actor && layer.isConnected && layer.clientWidth) { var lb = layer.getBoundingClientRect(); lastAt = { x: lb.left + actor.x, y: lb.top + actor.baseY + actor.yOff }; }
       if (scene === 'parked' && !leaving && (!ok || !veil.isConnected)) { handOver(); return; }
-      if (scene || !ok || HOLDER || Date.now() < wantAt) return;
+      var seen = inView(veil);
+      // It has finished, or the pane is no longer in front of the person: go.
+      if (scene === 'parked' && !leaving && actor && actor.finished) { leave(); return; }
+      if (scene === 'parked' && !leaving) { offFor = seen ? 0 : offFor + 500; if (offFor > 5000) { offFor = 0; gone(); return; } }
+      if (scene || !ok || !seen || HOLDER || Date.now() < wantAt) return;
       HOLDER = me; scene = 'coming';
       logoLeave().then(function () {
         if (dead) return;
@@ -1983,7 +2010,7 @@
       if (name === 'sit') return !!q('.cc-sug');
       return (o.state ? o.state() : 'idle') === 'idle' && !(input && input.value && input.value.trim());
     }
-    var asked = null;
+    var asked = null, awayFor = 0;
     function start2(name) {
       var a = ensure();
       asked = null;
@@ -2112,6 +2139,14 @@
       }
       var hasQ = !!q('.cc-queue'), hasS = !!q('.cc-sug');
       var typed = input && input.value && input.value.trim();
+      // Only in a pane that is in front of the person. If the pane it is in
+      // is swiped or switched away, it does not stay there out of sight
+      // (holding on to the one Mini there is): after a few seconds it is gone
+      // from there and on its way home.
+      var seen = inView(root);
+      if (scene && scene !== 'coming' && !leaving) { awayFor = seen ? 0 : awayFor + 400; if (awayFor > 5000) { awayFor = 0; gone(); return; } }
+      // It tried everything, slept, woke: time to go.
+      if (scene === 'nudge' && !leaving && actor && actor.finished) { leave('bye'); return; }
       since.queue = hasQ ? (since.queue || t) : 0;
       since.sit = hasS ? (since.sit || t) : 0;
 
@@ -2141,6 +2176,7 @@
       if (scene) return;
       if (HOLDER && HOLDER !== me && HOLDER !== TOPKEY) return;
       if (asked) { start(asked); return; }
+      if (!seen) return;
 
       if (hasQ && t - since.queue >= delay.queue) start('queue');
       else if (hasS && st === 'idle' && t - since.sit >= delay.sit) start('sit');
