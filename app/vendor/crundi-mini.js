@@ -1046,7 +1046,12 @@
     if (o.delays) for (var dk in o.delays) delay[dk] = o.delays[dk];
 
     var actor = null, scene = null, leaving = false, dead = false;
-    var since = { queue: 0, sit: 0, idle: 0 }, sawWork = !!o.eager, lastState = '';
+    var since = { queue: 0, sit: 0, idle: 0 }, lastState = '';
+    // The nudge needs only an open chat and nobody typing; it does not need
+    // Claude to have just finished something. What stops it coming round and
+    // round is a rest after each visit, ended early by a new finished turn.
+    var NUDGE_REST = 10 * 60000, nudgeAfter = 0;
+    function mayNudge(t) { return !!o.eager || t >= nudgeAfter; }
     var now = function () { return Date.now(); };
 
     function box(node) {
@@ -1256,7 +1261,7 @@
       if (taps.length >= 4) {                       // it has had enough of you
         taps = []; leaving = true;
         a.surf = (function (f, held) { return function () { return f() || held; }; })(a.surf, { y: a.baseY, l: -100, r: w + 100 });
-        a.play(function (s) { return stormOff(s, w); }).then(function () { if (actor === a && leaving) { gone(); since.queue = since.sit = 0; since.idle = now(); sawWork = false; } });
+        a.play(function (s) { return stormOff(s, w); }).then(function () { if (actor === a && leaving) { gone(); since.queue = since.sit = 0; since.idle = now(); nudgeAfter = now() + NUDGE_REST; } });
         return;
       }
       var asleep = a.t.lid > 0.8, seated = a.t.sit > 0.5;
@@ -1292,7 +1297,7 @@
       var t = now();
       var st = o.state ? o.state() : 'idle';
       if (st !== lastState) {
-        if (st === 'working') sawWork = true;
+        if (st === 'working') nudgeAfter = 0;
         if (st === 'idle') since.idle = t;
         lastState = st;
       }
@@ -1312,8 +1317,8 @@
       else if (scene === 'nudge' && (st !== 'idle' || typed || hasQ)) leave('bye');
       // It has sat on the suggestion long enough and still nothing has been
       // typed: get down and go and stand by the message box instead.
-      else if (scene === 'sit' && !leaving && actor && !actor.air && st === 'idle' && sawWork && !typed && since.idle && t - since.idle >= delay.nudge && nudgeSurf()) {
-        sawWork = !!o.eager;
+      else if (scene === 'sit' && !leaving && actor && !actor.air && st === 'idle' && mayNudge(t) && !typed && since.idle && t - since.idle >= delay.nudge && nudgeSurf()) {
+        nudgeAfter = t + NUDGE_REST;
         climbDown();
       }
       // More was queued while it stood there: it notices.
@@ -1329,8 +1334,8 @@
 
       if (hasQ && t - since.queue >= delay.queue) start('queue');
       else if (hasS && st === 'idle' && t - since.sit >= delay.sit) start('sit');
-      else if (!hasQ && st === 'idle' && sawWork && !typed && since.idle && t - since.idle >= delay.nudge && nudgeSurf()) {
-        sawWork = !!o.eager;          // once per finished turn, not on a loop
+      else if (!hasQ && st === 'idle' && mayNudge(t) && !typed && since.idle && t - since.idle >= delay.nudge && nudgeSurf()) {
+        nudgeAfter = t + NUDGE_REST;  // then leave them be for a while
         start('nudge');
       }
     }
