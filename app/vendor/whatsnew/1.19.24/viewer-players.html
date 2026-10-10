@@ -1,0 +1,23 @@
+<div class="wna a-view">
+  <div class="pic"><div class="img"><i class="sun"></i><i class="hill h1"></i><i class="hill h2"></i><i class="sea"></i></div></div>
+  <div class="pill"><span>&minus;</span><b class="pct"><em>100%</em><em>180%</em><em>260%</em></b><span>+</span><span>&times;</span></div>
+  <div class="hint">Ctrl + scroll &middot; drag &middot; pinch</div>
+  <style>
+    .a-view .pic{position:absolute;left:60px;top:54px;width:520px;height:292px;border-radius:14px;border:1px solid var(--border);overflow:hidden;background:#000}
+    .a-view .img{position:absolute;inset:0;background:linear-gradient(180deg,#1e1b4b 0,#7c2d12 46%,#f97316 62%,#fde68a 70%,#0c4a6e 71%,#082f49 100%);transform-origin:72% 62%;animation:av-zoom 9s ease-in-out infinite}
+    @keyframes av-zoom{0%,12%{transform:scale(1)}34%,46%{transform:scale(1.8)}60%,72%{transform:scale(2.6) translate(8%,-3%)}90%,100%{transform:scale(1)}}
+    .a-view .sun{position:absolute;left:68%;top:54%;width:54px;height:54px;border-radius:50%;background:#fff7d6;box-shadow:0 0 40px 14px rgba(253,230,138,.7)}
+    .a-view .hill{position:absolute;bottom:29%;border-radius:50% 50% 0 0;background:#1c1917}
+    .a-view .h1{left:-6%;width:44%;height:26%}.a-view .h2{left:28%;width:30%;height:14%;background:#292524}
+    .a-view .sea{position:absolute;left:0;right:0;bottom:0;height:29%;background:repeating-linear-gradient(180deg,rgba(255,255,255,.07) 0 2px,transparent 2px 9px)}
+    .a-view .pill{position:absolute;right:72px;top:66px;display:flex;align-items:center;gap:2px;padding:3px;border-radius:99px;background:rgba(20,20,28,.9);border:1px solid var(--border)}
+    .a-view .pill span{width:28px;height:28px;display:grid;place-items:center;color:var(--text-primary);font-size:15px}
+    .a-view .pct{position:relative;width:48px;height:28px;font:600 11px/28px var(--mono,monospace);color:var(--text-secondary);text-align:center}
+    .a-view .pct em{position:absolute;inset:0;font-style:normal;opacity:0;animation:9s steps(1) infinite}
+    .a-view .pct em:nth-child(1){animation-name:av-p1}.a-view .pct em:nth-child(2){animation-name:av-p2}.a-view .pct em:nth-child(3){animation-name:av-p3}
+    @keyframes av-p1{0%{opacity:1}23%{opacity:0}82%,100%{opacity:1}}
+    @keyframes av-p2{0%,22.9%{opacity:0}23%{opacity:1}53%,100%{opacity:0}}
+    @keyframes av-p3{0%,52.9%{opacity:0}53%{opacity:1}82%,100%{opacity:0}}
+    .a-view .hint{position:absolute;left:0;right:0;bottom:16px;text-align:center;font:600 11px var(--mono,monospace);color:var(--text-muted)}
+  </style>
+</div>

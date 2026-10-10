@@ -62,6 +62,7 @@ import { sandboxStatus, setupSandbox } from './collab-sandbox.js';
 import { COLLAB_FORWARD_COOKIE, mintCollabForwardToken, readCollabForwardToken, collabMayReachForward } from './forward-access.js';
 import { spawn as spawnOwnerCommand } from 'node:child_process';
 import * as serverUpdate from './server-update.js';
+import * as whatsNew from './whatsnew.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
@@ -86,6 +87,27 @@ function ensureAttachmentsDir(projectPath) {
 
 // ─── Vendor files (xterm.js, addon-fit) ───
 const VENDOR_DIR = join(__dirname, '..', 'app', 'vendor');
+// What's new: one folder per version that has something to show. It lives
+// under app/vendor because that is the folder every way of installing Crundi
+// already copies whole.
+const WHATSNEW_DIR = join(VENDOR_DIR, 'whatsnew');
+let whatsNewDataDir = '';      // set at startup (initWhatsNew): the server's config is not in scope up here
+const WHATSNEW_STATE = () => join(whatsNewDataDir, 'whatsnew.json');
+/**
+ * Decide, once, at the first start that knows about "what's new", whether
+ * this is a new install (it will be shown the latest edition only) or one
+ * already in use (everything it has not seen). The tell is the data folder:
+ * on a new install nothing in it is more than a few minutes old.
+ */
+function initWhatsNew(dataDir) {
+  whatsNewDataDir = dataDir;
+  try {
+    if (whatsNew.hasState(WHATSNEW_STATE())) return;
+    let oldest = Date.now();
+    for (const n of readdirSync(dataDir)) { try { oldest = Math.min(oldest, statSync(join(dataDir, n)).mtimeMs); } catch { /* skip it */ } }
+    whatsNew.loadState(WHATSNEW_STATE(), { usedBefore: Date.now() - oldest > 5 * 60 * 1000 });
+  } catch { /* decided on the first request instead, as an install in use */ }
+}
 const VENDOR_MIME = {
   '.js': 'application/javascript',
   '.css': 'text/css',
@@ -1486,6 +1508,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
 
   try { chatMedia.sweep(); } catch { /* housekeeping only */ }
+  initWhatsNew(config.dataDir);
 
   // ─── Chat titles (see chat-autotitle.js) ───
   const autoTitler = createAutoTitler({
@@ -4563,6 +4586,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // / paste in the Files tab). Every path, source and destination, has to be
     // inside what this caller may touch; what is safe to do to the disk is
     // decided in file-transfer.js (nothing overwritten, no folder into itself).
+    // ─── What's new (see whatsnew.js, and app/vendor/whatsnew/<version>/) ───
+    // The steps this install has not been shown, decided here so that a page
+    // cannot ask for an edition it should not get (a dev one on production).
+    // The owner only: a collaborator sees one project, not the app's news.
+    if (path === '/api/whatsnew' && req.method === 'GET') {
+      if (isConfined(principal)) return json(res, { ok: true, version: APP_VERSION, steps: [] });
+      try {
+        const editions = whatsNew.listEditions(WHATSNEW_DIR);
+        const state = whatsNew.loadState(WHATSNEW_STATE(), { usedBefore: true });
+        const p = whatsNew.plan({ editions, current: APP_VERSION, channel: serverUpdate.getChannel(), state, all: url.searchParams.get('all') === '1' });
+        return json(res, { ok: true, version: APP_VERSION, steps: p.steps });
+      } catch (err) { return json(res, { ok: false, error: err.message, steps: [] }); }
+    }
+    if (path === '/api/whatsnew/seen' && req.method === 'POST') {
+      if (isConfined(principal)) return json(res, { ok: true });
+      try {
+        whatsNew.markSeen(WHATSNEW_STATE(), { editions: whatsNew.listEditions(WHATSNEW_DIR), current: APP_VERSION, channel: serverUpdate.getChannel() });
+        return json(res, { ok: true });
+      } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
     if (path === '/api/files/transfer' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req));
       const project = getProject(body.project);
