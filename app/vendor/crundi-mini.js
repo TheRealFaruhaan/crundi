@@ -30,6 +30,10 @@
  * bothered it is wary of the cursor too, and backs away when the cursor comes
  * close, or cowers if it has nowhere to go. Keep tapping and it storms off.
  *
+ * In a sleeping chat it does none of that. If it feels like it, it comes and
+ * stands on the Resume button and shows it to you; if the conversation is a
+ * long one it frets, and goes and points at "Compact and resume" instead.
+ *
  * It is the logo. Before it turns up, the head in the top bar grows a body,
  * arms and legs and walks off the screen; when it has left the chat it comes
  * back along the top bar at the pace it left with and folds away into the logo
@@ -235,6 +239,8 @@
     }
     this.vx += (want - this.vx) * Math.min(1, dt * 9);
     this.x += this.vx * dt;
+    // holding on to something that someone else is moving
+    if (this.carry) { var cx = this.carry(); this.vx = 0; this.x = cx; }
     var sp = Math.abs(this.vx);
     this.walk += (clamp(sp / 34, 0, 1) - this.walk) * Math.min(1, dt * 10);
     // How far the legs turn for each pixel travelled. Too little and the feet
@@ -378,6 +384,14 @@
         live();
         var was = a.baseY + a.yOff, sf = surf();
         a.surf = surf; a.baseY = sf ? sf.y : was; a.yOff = Math.min(0, was - a.baseY); a.air = true; a.vy = Math.max(a.vy, 0);
+        return new Promise(function (res, rej) { a.onLand = function () { if (tok !== a.tok) return rej(CANCEL); res(); }; });
+      },
+      // The ground has moved to somewhere higher: jump up onto it.
+      jumpTo: function (surf) {
+        live();
+        var was = a.baseY + a.yOff, sf = surf();
+        a.surf = surf; a.baseY = sf ? sf.y : was; a.yOff = Math.max(0, was - a.baseY); a.air = true;
+        a.vy = -Math.sqrt(2 * G * (a.yOff + 9)); a.vel.squash += 2.4;
         return new Promise(function (res, rej) { a.onLand = function () { if (tok !== a.tok) return rej(CANCEL); res(); }; });
       },
       fx: function (n, dx, dy, o) { live(); a.fx(n, dx, dy, o); },
@@ -965,7 +979,8 @@
     var k = (r.width * 74 / 96) / 50;                     // so its head is exactly the size of the logo's
     var layer = document.createElement('div');
     layer.className = 'cm-top';
-    layer.style.height = Math.ceil(r.bottom + 30) + 'px';
+    var tabs = document.getElementById('tab-bar'), tb = tabs && tabs.offsetParent !== null ? tabs.getBoundingClientRect().bottom : 0;
+    layer.style.height = Math.ceil(Math.max(r.bottom + 30, tb + 26)) + 'px';
     document.body.appendChild(layer);
     var actor = new Actor(layer, 92 * k);
     var home = { x: r.left + r.width * 11 / 96 + 25 * k, y: r.top + r.height * 26 / 96 + 78 * k };
@@ -1023,9 +1038,466 @@
     return LOGO.chain;
   }
 
+
+  // ─── A life in the top bar ───
+  // Mini does not only leave the top bar for a chat. Things up there bother it
+  // too, and it deals with them at the size it is as a logo:
+  //
+  //   five    the five-hour limit is over 90%. Panic. It runs to the end of
+  //           the bar and tries to drag it back, or gets round the far side
+  //           and shoves, with its hands or with its back. The bar does not
+  //           move. It wears itself out and trudges home.
+  //   week    the weekly limit is over 90%. That bar is in the top half, out
+  //           of reach, so it jumps for it. And jumps. And cannot.
+  //   notify  something is waiting for the person and the bell is lit. Some of
+  //           the time, it walks over and points at it.
+  //   update  there is an update. It jumps down onto the tabs, walks along to
+  //           Settings and points at it. If Settings is off the side of a
+  //           narrow screen it hauls the row of tabs along, a little at a time,
+  //           until it is there. Once when the update turns up, then seldom.
+  //
+  // Which variant, how long it keeps at it and what it does when it gives up
+  // are picked at random each time. If a chat needs it while it is out on one
+  // of these, it drops what it is doing and walks off the screen to go there.
+  var TOPKEY = { top: true };
+  var TOP = { busy: false, cut: null, next: { five: 0, week: 0, update: 0 }, seen: {}, timer: 0 };
+  var UPDATE_EVERY = 4 * 3600000;                         // a reminder, not a nag
+  function vis(n) { return n && n.offsetParent !== null ? n : null; }
+  function barEnd(id) {
+    var b = vis(document.getElementById(id)); if (!b || !b.parentNode) return null;
+    var r = b.getBoundingClientRect(), pr = b.parentNode.getBoundingClientRect();
+    if (pr.width < 40 || pr.height < 4) return null;
+    return { x: r.right, pct: r.width / pr.width * 100, top: pr.top, bottom: pr.bottom, left: pr.left, right: pr.right };
+  }
+  function topRead() {
+    var badge = document.getElementById('update-badge');
+    return {
+      five: barEnd('fh-usage'), week: barEnd('wk-usage'),
+      update: !!(badge && badge.offsetParent !== null && badge.style.display !== 'none'),
+      tabs: vis(document.getElementById('tab-bar')),
+      settings: vis(document.querySelector('#tab-bar .tab-btn[data-tab="settings"]')),
+      bell: vis(document.getElementById('approvals-btn')),
+      bells: parseInt((document.getElementById('approvals-count') || {}).textContent, 10) || 0
+    };
+  }
+  // Straining at something that will not give: feet slipping, breath going.
+  async function strain(s, lean, ms, dustDx) {
+    var a = s.a, end = a.time + ms / 1000, i = 0;
+    while (a.time < end) {
+      s.pose({ legL: i % 2 ? 26 : -22, legR: i % 2 ? -22 : 26, lean: lean * (i % 2 ? 1 : 0.72), squash: i % 2 ? 0.93 : 0.97, lid: 0.86, headY: 2 });
+      if (i % 3 === 0) s.fx('dust', 48 + dustDx, GROUND - 3, ';--dx:' + (dustDx > 0 ? 9 : -9) + 'px');
+      if (i % 4 === 1) s.fx('sweat', 48 + dustDx * 0.5, 10);
+      await s.wait(150); i++;
+    }
+    s.pose({ legL: 0, legR: 0 });
+  }
+  async function worn(s) {                                                    // spent
+    s.pose({ armL: 0, armR: 0, lean: 0, squash: 0.9, headY: 5, lid: 0.8, turn: 0, headRot: 0 });
+    s.fx('puff', 64, 34); await s.wait(700);
+    s.fx('puff', 30, 34); await s.wait(600);
+    if (Math.random() < 0.6) { s.pose({ sit: 1, swing: 0, armL: 20, armR: 20, squash: 1 }); await s.wait(rnd(1500, 2400)); s.pose({ sit: 0 }); await s.wait(600); }
+    s.pose({ squash: 1, headY: 0, lid: 0.2 });
+    s.pose({ armR: -118 }); await s.wait(700); s.pose({ armR: 0 }); await s.wait(250);   // wipe its brow
+  }
+  async function sceneFive(s, st, r) {
+    var a = s.a, k = a.k, end = r.five.x, W = window.innerWidth;
+    s.pose({ turn: end > a.x ? 0.8 : -0.8, eyeX: 0 }); await s.wait(500);     // it has seen the number
+    s.pose({ lid: -0.35, headY: -2, armL: 150, armR: 150, shake: 0.9 }); s.fx('bang', 48, -14);
+    await s.wait(620);
+    var roomRight = Math.min(W, r.five.right) - end;
+    var ways = ['pull', 'pull'];
+    if (roomRight > 34 * k + 8) { ways.push('push', 'push', 'back', 'back'); }
+    var rounds = 1 + Math.floor(Math.random() * 2);
+    for (var n = 0; n < rounds; n++) {
+      var way = pick(ways);
+      if (way === 'pull') {                                                   // get hold of the end and heave it back
+        await s.walkTo(clamp(end - 24 * k, 12, W - 12), 150);
+        s.pose({ shake: 0, lid: 0, turn: 0.8, armR: 86, armL: -82, headY: 0 }); await s.wait(320);
+        for (var i = 0; i < 3; i++) {
+          s.pose({ lean: -20, squash: 0.92 }); await strain(s, -20, rnd(900, 1400), 14);
+          s.pose({ lean: -6, squash: 1, lid: 0.3 }); await s.wait(260);
+        }
+      } else if (way === 'push') {                                            // round the far side, hands on it, shove
+        await s.walkTo(clamp(end + 24 * k, 12, W - 12), 150);
+        s.pose({ shake: 0, lid: 0, turn: -0.8, armL: 86, armR: -82, headY: 0 }); await s.wait(320);
+        for (var j = 0; j < 3; j++) { await strain(s, -19, rnd(900, 1400), 14); s.pose({ lean: -5, squash: 1, lid: 0.3 }); await s.wait(260); }
+      } else {                                                                // put its back into it
+        await s.walkTo(clamp(end + 17 * k, 12, W - 12), 150);
+        s.pose({ shake: 0, lid: 0, turn: 0.8, armL: 26, armR: 26, headRot: -9, headY: 0 }); await s.wait(360);
+        for (var m = 0; m < 3; m++) { await strain(s, -17, rnd(1000, 1500), 14); s.pose({ lean: -6, squash: 1, lid: 0.3 }); await s.wait(260); }
+      }
+      await worn(s);
+      if (n < rounds - 1) { s.pose({ turn: end > a.x ? 0.8 : -0.8, lid: 0.45 }); await s.wait(700); }   // look at it. right. again.
+    }
+    var after = Math.random();
+    if (after < 0.34) {                                                       // kick it, regret it
+      s.pose({ turn: end > a.x ? 0.7 : -0.7, lid: 0.5 }); await s.wait(300);
+      s.pose({ legR: end > a.x ? -70 : 70 }); await s.wait(170); s.fxAt('ring', end, a.baseY - 8 * k);
+      s.pose({ legR: 0, lid: -0.35 }); s.fx('bang', 48, -14);
+      for (var h = 0; h < 4; h++) await s.hop(5);
+    } else if (after < 0.67) { s.pose({ turn: 0 }); await shrug(s); }         // to you: I tried
+    else { s.pose({ turn: end > a.x ? 0.7 : -0.7 }); await shakeHead(s); }
+    return 'tired';
+  }
+  async function sceneWeek(s, st, r) {
+    var a = s.a, k = a.k, end = r.week.x, W = window.innerWidth;
+    s.pose({ eyeY: -4.5, headRot: -7 }); await s.wait(700);                   // up there
+    s.pose({ lid: -0.3 }); s.fx('bang', 48, -14); await s.wait(420);
+    s.pose({ lid: 0, eyeY: 0, headRot: 0 });
+    await s.walkTo(clamp(end - 6 * k, 12, W - 12), 120);
+    var tries = 3 + Math.floor(Math.random() * 3);
+    for (var i = 0; i < tries; i++) {
+      s.pose({ squash: 0.86, armL: 30, armR: 30, eyeY: -4.5 }); await s.wait(220);        // crouch
+      s.pose({ squash: 1, armL: 170, armR: 170 });
+      await s.hop(7 + i * 1.2);                                               // not high enough. never high enough.
+      s.pose({ armL: 0, armR: 0 }); await s.wait(rnd(160, 320));
+    }
+    var after = Math.random();
+    if (after < 0.4) {                                                        // on tiptoe, trembling
+      s.pose({ squash: 1.09, armR: 172, headY: -3, shake: 0.3, eyeY: -4.5 }); await s.wait(1500);
+      s.pose({ squash: 1, armR: 0, headY: 0, shake: 0, eyeY: 0 });
+    } else if (after < 0.7) {                                                 // shake a fist at it
+      s.pose({ armR: 158, shake: 0.55, lid: 0.5, eyeY: -4 }); s.fx('anger', 76, 6); await s.wait(1100);
+      s.pose({ armR: 0, shake: 0, lid: 0, eyeY: 0 });
+    }
+    await worn(s);
+    return 'tired';
+  }
+  async function sceneUpdate(s, st, r) {
+    var a = s.a, k = a.k, W = window.innerWidth, tabs = r.tabs, btn = r.settings;
+    if (!tabs || !btn) return 'calm';
+    function floor() { var b = tabs.getBoundingClientRect(); return { y: b.bottom - 1, l: -200, r: W + 200 }; }
+    function seen() { var b = btn.getBoundingClientRect(), t = tabs.getBoundingClientRect(); return b.left >= t.left - 2 && b.right <= Math.min(t.right, W) + 2; }
+    s.pose({ eyeY: 4, headY: 3 }); await s.wait(600);                         // what is that down there
+    s.pose({ eyeY: 0, headY: 0, armL: 120, armR: 120 }); await s.wait(200);
+    await s.fallTo(floor);
+    s.pose({ armL: 0, armR: 0 }); await s.wait(380);
+    // Settings is off the side: haul the tabs along until it is not.
+    for (var n = 0; n < 9 && !seen(); n++) {
+      var t = tabs.getBoundingClientRect(), from = clamp(Math.min(t.right, W) - 26, 30, W - 14);
+      await s.walkTo(from, 70);
+      s.pose({ turn: 0.75, armR: 86, armL: -82 }); await s.wait(300);         // get a grip on it
+      var x0 = a.x, base = tabs.scrollLeft, going = s.walkTo(from - rnd(42, 58), 13);
+      a.t.turn = 0.75;                                                        // backwards, leaning into it
+      var i = 0, set = tabs.scrollLeft, fate = null;
+      while (a.tx !== null) {
+        // Somebody else has hold of the tabs: the person is dragging them.
+        if (Math.abs(tabs.scrollLeft - set) > 2) { fate = await carried(set); break; }
+        set = tabs.scrollLeft = base + (x0 - a.x);
+        set = tabs.scrollLeft;                                                // what it actually became (it stops at the end)
+        s.pose({ lean: i % 2 ? -19 : -13, squash: i % 2 ? 0.93 : 0.97, lid: 0.85, headY: 2 });
+        if (i % 5 === 0) s.fx('sweat', 40, 10);
+        if (i % 4 === 0) s.fx('dust', 62, GROUND - 3, ';--dx:9px');
+        await s.wait(120); i++;
+      }
+      if (fate === 'flung') return await stompBack();
+      if (fate === null) { await going; }
+      s.pose({ lean: 0, squash: 1, lid: 0.3, armL: 0, armR: 0, headY: 0, turn: 0, shake: 0, legL: 0, legR: 0 }); await s.wait(260);
+      if (fate === 'dropped') { await shakeHead(s); continue; }               // let go of. dizzy. right, where was it
+      if (!seen()) { s.fx('puff', 64, 34); s.pose({ squash: 0.92, headY: 4, lid: 0.7 }); await s.wait(rnd(600, 1000)); s.pose({ squash: 1, headY: 0, lid: 0 }); }
+    }
+    // It was holding the tabs and the person dragged them. It goes where they
+    // go, hanging on. Dragged far enough, or flicked hard enough, it leaves the
+    // screen with them.
+    async function carried(gripScroll) {
+      var gripX = a.x, prev = tabs.scrollLeft, still = 0, v = 0;
+      a.tx = null; a.onArrive = null;
+      a.carry = function () { return gripX - (tabs.scrollLeft - gripScroll); };
+      s.pose({ lid: -0.35, armR: 86, armL: -82, turn: 0.75, shake: 0.35, squash: 1, headY: -1 }); s.fx('bang', 48, -14);
+      try {
+        while (still < 6) {
+          await s.wait(70);
+          var cur = tabs.scrollLeft, d = cur - prev;
+          if (d) { v = -d / 0.07; still = 0; s.pose({ lean: clamp(d * 2.2, -34, 34), legL: clamp(d * 3, -50, 50), legR: clamp(d * 3 + 14, -50, 50) }); }
+          else still++;
+          prev = cur;
+          if (a.x < -30 || a.x > W + 30) return 'flung';
+          // the tabs hit the end of their travel while it was still going fast
+          if (!d && Math.abs(v) > 260) {
+            a.carry = null;
+            s.pose({ armL: 160, armR: 160, shake: 1, lean: v > 0 ? 30 : -30 });
+            await s.walkTo(v > 0 ? W + 60 : -60, clamp(Math.abs(v), 300, 700));
+            return 'flung';
+          }
+          if (still > 2) v = 0;
+        }
+      } finally { a.carry = null; }
+      return 'dropped';
+    }
+    // Thrown off the screen. It comes back along the top bar, not pleased, has
+    // a word, and goes home: the person is busy, the update can wait.
+    async function stompBack() {
+      var from = a.x < W / 2 ? -46 : W + 46;
+      s.rest(); s.pose({ alpha: 0 }); await s.wait(rnd(1100, 1900));
+      a.surf = a.homeSurf; a.baseY = st.home.y; a.yOff = 0; a.air = false; a.x = from; a.vx = 0;
+      s.pose({ alpha: 1, lid: 0.5, armL: -34, armR: -34 });
+      var going2 = s.walkTo(st.home.x + (from < 0 ? 0 : 0), 46), n2 = 0;
+      while (a.tx !== null) { if (n2 % 6 === 0) s.fx('anger', 76, 4); n2++; await s.wait(160); }
+      await going2;
+      s.pose({ turn: 0 }); await s.wait(500);                                 // at you
+      var w2 = Math.random();
+      if (w2 < 0.4) { s.pose({ armL: 0, armR: 158, shake: 0.55, lean: 4 }); await s.wait(1000); s.pose({ shake: 0, armR: 0, lean: 0 }); }
+      else if (w2 < 0.75) { await shakeHead(s); }
+      else { steam(s); await s.hop(5); await s.hop(5); }
+      s.pose({ armL: 0, armR: 0, lid: 0 }); await s.wait(300);
+      return 'calm';
+    }
+    var b = btn.getBoundingClientRect(), bx = (b.left + b.right) / 2, by = (b.top + b.bottom) / 2;
+    var side = bx - 22 * k > 12 ? -1 : 1;
+    await s.walkTo(clamp(bx + side * 22 * k, 10, W - 10), 66);
+    var arm = side < 0 ? 'armR' : 'armL', o = { turn: side < 0 ? 0.6 : -0.6, eyeY: -1 };
+    for (var rep2 = 0; rep2 < 2; rep2++) {
+      o[arm] = 104; s.pose(o); await s.wait(320);
+      for (var j = 0; j < 3; j++) { o[arm] = 92; s.pose(o); await s.wait(130); s.fxAt('ring', bx, by); o[arm] = 110; s.pose(o); await s.wait(180); }
+      s.pose({ turn: 0, eyeY: 0 }); await s.wait(700);                        // look at you. this. here.
+      if (rep2 === 0) { await s.hop(6); await s.hop(6); }
+    }
+    o = {}; o[arm] = 0; s.pose(o); await s.wait(300);
+    // and back upstairs
+    await s.jumpTo(st.actor.homeSurf);
+    await s.wait(260);
+    return 'calm';
+  }
+  // Something is waiting for the person: the bell in the top bar is lit.
+  async function sceneNotify(s, st, r) {
+    var a = s.a, k = a.k, W = window.innerWidth, btn = r.bell; if (!btn) return 'calm';
+    function at() { var b = btn.getBoundingClientRect(); return b.width ? { x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2, l: b.left, r: b.right } : null; }
+    var t = at(); if (!t) return 'calm';
+    s.pose({ turn: t.x > a.x ? 0.8 : -0.8, lid: -0.2 }); await s.wait(650);   // oh, that is new
+    var side = t.l - 24 * k > 12 ? -1 : 1;
+    await s.walkTo(clamp((side < 0 ? t.l : t.r) + side * 20 * k, 10, W - 10), 96);
+    var arm = side < 0 ? 'armR' : 'armL', o = { turn: side < 0 ? 0.6 : -0.6 };
+    var how = Math.random();
+    for (var n = 0; n < 2; n++) {
+      o[arm] = 100; s.pose(o); await s.wait(300);
+      for (var i = 0; i < 3; i++) { o[arm] = 88; s.pose(o); await s.wait(130); var u = at(); if (u) s.fxAt('ring', u.x, u.y); o[arm] = 106; s.pose(o); await s.wait(170); }
+      s.pose({ turn: 0 }); await s.wait(650);                                 // you. look.
+      if (n === 0) {
+        if (how < 0.35) { await s.hop(6); await s.hop(6); }
+        else if (how < 0.7) { s.pose({ armL: -118, armR: -118, squash: 1.06, headY: -2 }); await s.wait(700); s.pose({ armL: 0, armR: 0, squash: 1, headY: 0 }); }   // hands round its mouth: oi
+        else await wave(s, 3);
+        o.turn = side < 0 ? 0.6 : -0.6;
+      }
+    }
+    o = {}; o[arm] = 0; s.pose(o); await s.wait(300);
+    return 'calm';
+  }
+  var TOPSCENES = { five: sceneFive, week: sceneWeek, update: sceneUpdate, notify: sceneNotify };
+  function topOuting(kind, r) {
+    if (HOLDER || LOGO.away || TOP.busy) return false;
+    var mark = logoMark(); if (!mark) return false;
+    var st = logoStage(mark); if (!st) return false;
+    var a = st.actor, cut = false;
+    a.homeSurf = a.surf;
+    HOLDER = TOPKEY; TOP.busy = true; LOGO.away = true;
+    a.x = st.home.x; a.v.grow = 0; a.t.grow = 0; a.v.alpha = 1; a.t.alpha = 1; a.draw();
+    mark.style.visibility = 'hidden';
+    function free() { st.done(); TOP.busy = false; TOP.cut = null; if (HOLDER === TOPKEY) HOLDER = null; }
+    // A chat wants it: leave from wherever it is, by the nearest edge. The
+    // logo stays out; the chat brings it home.
+    TOP.cut = function () {
+      if (cut) return; cut = true;
+      a.play(async function (s) {
+        s.rest(); s.pose({ sit: 0, swing: 0, grow: 1 });
+        if (a.air) await new Promise(function (res) { a.onLand = res; });
+        s.pose({ lid: -0.3 }); s.fx('bang', 48, -14); await s.wait(300);      // oh. needed elsewhere
+        s.pose({ lid: 0 });
+        await s.walkTo(a.x < window.innerWidth / 2 ? -46 : window.innerWidth + 46, 120);
+      }).then(free, free);
+    };
+    a.play(async function (s) {
+      await s.wait(260);
+      s.pose({ grow: 1 }); await s.wait(950);
+      var mood = await TOPSCENES[kind](s, st, r);
+      // home: slowly if it is worn out, head down
+      s.rest();
+      if (mood === 'tired') s.pose({ headY: 2.6, eyeY: 3.4, lid: 0.3, armSwing: 0.3 });
+      await s.walkTo(st.home.x, mood === 'tired' ? 30 : 62);
+      s.pose({ headY: 0, eyeY: 0, lid: 0, armSwing: 1, turn: 0 });
+      await s.wait(300);
+      if (mood === 'tired') await sigh(s);
+      s.pose({ grow: 0, squash: 1, headRot: 0, lean: 0 });
+      await s.wait(820);
+    }).then(function () {
+      if (cut) return;
+      mark.style.visibility = ''; LOGO.away = false; free();
+    });
+    return true;
+  }
+  function topTick() {
+    if (document.hidden || HOLDER || LOGO.away || TOP.busy || REDUCED) return;
+    if (!logoMark()) return;
+    var r = topRead(), t = Date.now(), ready = [];
+    function due(kind, on, first, again) {
+      if (!on) { TOP.seen[kind] = false; return; }
+      if (!TOP.seen[kind]) { TOP.seen[kind] = true; if (TOP.next[kind] < t + first[0]) TOP.next[kind] = t + rnd(first[0], first[1]); }
+      if (t >= TOP.next[kind]) ready.push([kind, again]);
+    }
+    due('five', r.five && r.five.pct >= 90, [6000, 20000], [7 * 60000, 16 * 60000]);
+    due('week', r.week && r.week.pct >= 90, [15000, 45000], [12 * 60000, 25 * 60000]);
+    // The update reminder is remembered across reloads, so reloading the page
+    // does not bring it straight back.
+    var last = 0; try { last = +localStorage.getItem('crundi_mini_update_at') || 0; } catch (e) { /* private mode */ }
+    if (r.update && r.tabs && r.settings && t - last >= UPDATE_EVERY) due('update', true, [20000, 45000], [UPDATE_EVERY, UPDATE_EVERY * 1.5]);
+    else TOP.seen.update = false;
+    // A notification: only sometimes, and only when one has just arrived.
+    var nb = r.bell ? Math.max(1, r.bells) : 0;
+    if (nb > (TOP.bells || 0) && t >= (TOP.next.notify || 0)) {
+      if (Math.random() < 0.55) { TOP.seen.notify = true; TOP.next.notify = t + rnd(8000, 30000); TOP.bellDue = true; }
+      else TOP.next.notify = t + rnd(10 * 60000, 20 * 60000);                 // not this time
+    }
+    TOP.bells = nb;
+    if (TOP.bellDue && !r.bell) TOP.bellDue = false;
+    if (TOP.bellDue && t >= TOP.next.notify) ready.push(['notify', [20 * 60000, 40 * 60000]]);
+    if (!ready.length) return;
+    var go = pick(ready);
+    if (topOuting(go[0], r)) {
+      TOP.next[go[0]] = t + rnd(go[1][0], go[1][1]);
+      if (go[0] === 'notify') TOP.bellDue = false;
+      if (go[0] === 'update') { try { localStorage.setItem('crundi_mini_update_at', String(t)); } catch (e) { /* private mode */ } }
+    }
+  }
+  function topStart() { if (!TOP.timer && !REDUCED) TOP.timer = setInterval(topTick, 3000); }
+
   // There is one Mini. With several chats on screen, whichever needs it first
   // has it, and the others wait until it has left.
   var HOLDER = null;
+
+
+  // ─── A sleeping chat ───
+  // A chat that has been closed and is waiting to be resumed is drawn dimmed
+  // behind a card with a Resume button. There is no message box to point at
+  // there, and nothing is waiting, so none of the usual scenes belong in it.
+  // What Mini does instead, when it feels like it: comes and stands on the
+  // Resume button and shows it to you. If the card warns that the conversation
+  // is a long one, that worries it, and it climbs down to "Compact and resume"
+  // and makes a case for that instead.
+  async function sceneParked(s, layerW, get) {
+    var a = s.a, sf = s.surf(); if (!sf) return;
+    await enter(s, Math.random() < 0.5 ? -40 : layerW + 40, (sf.l + sf.r) / 2, 62);
+    await s.wait(300);
+    s.pose({ eyeX: -3, eyeY: -2 }); await s.wait(600); s.pose({ eyeX: 3 }); await s.wait(600);   // dark in here
+    s.pose({ eyeX: 0, eyeY: 0 });
+    if (Math.random() < 0.5) { s.pose({ lid: 0.7, armL: 150, armR: 150, headY: -2 }); await s.wait(900); s.pose({ lid: 0, armL: 0, armR: 0, headY: 0 }); }   // a yawn: it is catching
+    async function press(where) {                                             // this one. press this.
+      var t = where(); if (!t) return;
+      s.pose({ headY: 4, eyeY: 4.5, armL: 26, armR: 26 }); await s.wait(500);
+      for (var i = 0; i < 2; i++) { await s.hop(6); var u = where(); if (u) s.fxAt('ring', u.x, u.y); }
+      s.pose({ headY: 0, eyeY: 0, armL: 0, armR: 0 }); await s.wait(300);
+      var arm = Math.random() < 0.5 ? 'armL' : 'armR', o = {}; o[arm] = 24; s.pose(o); await s.wait(250);
+      for (var j = 0; j < 3; j++) { o[arm] = 14; s.pose(o); await s.wait(140); o[arm] = 30; s.pose(o); await s.wait(160); }
+      o[arm] = 0; s.pose(o); await s.wait(500);
+    }
+    await press(get.resume);
+    // A long conversation: that warning is right under its feet.
+    if (get.compact()) {
+      s.pose({ headY: 6, eyeY: 4.5, squash: 0.93 }); await s.wait(1100);      // read it
+      s.pose({ headY: -2, eyeY: 0, squash: 1, lid: -0.35 }); s.fx('bang', 48, -12); await s.wait(500);
+      s.fx('sweat', 72, 14);
+      s.pose({ armL: -118, armR: -118, lid: 0.3, headY: 3 }); await s.wait(900);   // hands to its face
+      s.pose({ armL: 0, armR: 0, headY: 0, lid: 0 });
+      await pace(s, 2, 40);
+      var cs = get.compactSurf();
+      if (cs) {
+        s.pose({ headY: 5, eyeY: 4.5 }); await s.wait(500);
+        s.pose({ headY: 0, eyeY: 0, armL: 120, armR: 120 }); await s.wait(200);
+        var held = { y: cs.y, l: -100, r: layerW + 100 };
+        await s.fallTo(function () { var f = get.compactSurf(); return f ? { y: f.y, l: -100, r: layerW + 100 } : held; });
+        a.surf = get.compactSurf;
+        s.pose({ armL: 0, armR: 0 }); await s.wait(300);
+        var c2 = get.compactSurf(); if (c2) await s.walkTo((c2.l + c2.r) / 2, 50);
+        for (;;) {
+          await press(get.compact);
+          s.pose({ armL: -60, armR: -60, headRot: 7, eyeY: -2 }); await s.wait(1300);     // please
+          s.pose({ armL: 0, armR: 0, headRot: 0, eyeY: 0 });
+          await s.wait(rnd(2500, 5000));
+          if (Math.random() < 0.4) await watch(s);
+        }
+      }
+    }
+    // Nothing to worry about: keep it company. Point now and then, and in the
+    // end sit down on the button and doze off along with the chat.
+    for (var n = 0; n < 3; n++) {
+      await s.wait(rnd(2200, 4200));
+      if (n === 1) await wave(s, 3); else await press(get.resume);
+    }
+    await s.hop(5);
+    s.pose({ sit: 1, swing: 0.6, armL: 8, armR: 8 }); await s.wait(2600);
+    s.pose({ lid: 0.5, headY: 2 }); await s.wait(900);
+    a.autoBlink = false;
+    s.pose({ lid: 0.94, headRot: 13, headY: 4, swing: 0 });
+    for (;;) { s.fx('z', 66, 2, ';--dx:10px'); await s.wait(1500); }
+  }
+  function attachParked(veil, o) {
+    addStyle();
+    var layer = document.createElement('div');
+    layer.className = 'cm-layer';
+    veil.appendChild(layer);
+    var me = {}, actor = null, scene = null, leaving = false, dead = false;
+    var since = Date.now(), wantAt = since + rnd(35000, 110000);              // if it feels like it, and not at once
+    function width() { return layer.clientWidth || 300; }
+    function box(node) {
+      if (!node || !node.isConnected || node.offsetParent === null) return null;
+      var r = node.getBoundingClientRect(), b = layer.getBoundingClientRect();
+      return r.width ? { l: r.left - b.left, r: r.right - b.left, t: r.top - b.top, b: r.bottom - b.top } : null;
+    }
+    function q(sel) { return veil.querySelector(sel); }
+    function topOf(sel) { return function () { var b = box(q(sel)); return b ? { y: b.t, l: b.l + 6, r: b.r - 6 } : null; }; }
+    function mid(sel) { return function () { var b = box(q(sel)); return b ? { x: (b.l + b.r) / 2, y: (b.t + b.b) / 2 } : null; }; }
+    var CMP = '.pk-alt[data-mode="compact"]';
+    var get = { resume: mid('.pk-resume'), compact: mid(CMP), compactSurf: topOf(CMP) };
+    function gone() {
+      var sp = actor ? actor.lastSpeed : 0;
+      if (actor) { actor.destroy(); actor = null; }
+      scene = null; leaving = false;
+      if (HOLDER !== me) return;
+      logoReturn(sp).then(function () { if (HOLDER === me && !scene) HOLDER = null; });
+    }
+    function leave() {
+      if (!actor || leaving) return;
+      leaving = true;
+      var a = actor, held = { y: a.baseY, l: -100, r: width() + 100 };
+      a.surf = function () { return held; };
+      a.play(function (s) { return sceneBye(s, width()); }).then(function () { if (actor === a) gone(); });
+    }
+    function onMini(e) { return !!(actor && e.target && actor.el.contains(e.target)); }
+    function acted(e) { if (e && onMini(e)) return; since = Date.now(); wantAt = since + rnd(60000, 180000); if (scene === 'parked') leave(); }
+    function tapped(e) {
+      if (!onMini(e) || leaving || scene !== 'parked') return;
+      e.preventDefault(); e.stopPropagation();
+      var a = actor, w = width(), list = [ANNOYED[0], ANNOYED[1], ANNOYED[3]], f = pick(list);
+      a.tx = null; a.autoBlink = true;
+      a.play(async function (s) { s.rest(); s.pose({ sit: 0, swing: 0 }); await s.wait(300); await f(s, w); s.rest(); await s.wait(600); leaving = true; await sceneBye(s, w); }).then(function () { if (actor === a) gone(); });
+    }
+    veil.addEventListener('pointerdown', acted, { passive: true, capture: true });
+    layer.addEventListener('pointerdown', tapped);
+    layer.addEventListener('click', function (e) { if (onMini(e)) { e.preventDefault(); e.stopPropagation(); } });
+    function tick() {
+      if (dead || document.hidden) return;
+      var btn = q('.pk-resume'), ok = btn && btn.offsetParent !== null && !btn.disabled;
+      if (scene === 'parked' && !ok) { leave(); return; }
+      if (scene || !ok || HOLDER || Date.now() < wantAt) return;
+      HOLDER = me; scene = 'coming';
+      logoLeave().then(function () {
+        if (dead) return;
+        var b = q('.pk-resume');
+        if (!b || b.offsetParent === null) { scene = null; gone(); return; }
+        actor = new Actor(layer, 50);
+        scene = 'parked'; leaving = false;
+        actor.surf = topOf('.pk-resume');
+        actor.play(function (s) { return sceneParked(s, width(), get); });
+        wantAt = Date.now() + 15 * 60000;                                     // not again for a good while
+      });
+    }
+    var timer = setInterval(tick, 500);
+    return {
+      destroy: function () { dead = true; clearInterval(timer); veil.removeEventListener('pointerdown', acted, { capture: true }); gone(); if (HOLDER === me) HOLDER = null; if (layer.parentNode) layer.parentNode.removeChild(layer); },
+      trigger: function () { wantAt = 0; tick(); },
+      poke: function () { if (actor) tapped({ target: actor.el, preventDefault: function () {}, stopPropagation: function () {} }); },
+      scene: function () { return leaving ? 'leaving' : scene; },
+      actor: function () { return actor; }
+    };
+  }
 
   // ─── Watching a chat, and deciding when Mini belongs in it ───
   // nudge counts from when Claude finished (or the last thing the person did),
@@ -1035,6 +1507,9 @@
   function attach(root, o) {
     o = o || {};
     if (REDUCED && !o.force) return { destroy: function () {}, trigger: function () {} };
+    // A sleeping chat is not a chat to wait in: it has its own, smaller part.
+    var cell = root.closest ? root.closest('.parked-cell') : null, veil = cell && cell.querySelector('.pk-veil');
+    if (cell) return veil ? attachParked(veil, o) : { destroy: function () {}, trigger: function () {} };
     addStyle();
     // The layer fills the chat. That needs the chat to be the box it is measured
     // against, which it is not unless it is positioned.
@@ -1131,6 +1606,7 @@
     }
     var coming = null;
     function start(name) {
+      if (HOLDER === TOPKEY) { if (TOP.cut) TOP.cut(); return; }   // it is busy in the top bar: call it away
       if (HOLDER && HOLDER !== me) return;      // it is busy in another chat
       HOLDER = me;
       // First it has to get here: out of the logo and off the top bar.
@@ -1330,7 +1806,7 @@
       }
       lastSig = sig;
       if (scene) return;
-      if (HOLDER && HOLDER !== me) return;
+      if (HOLDER && HOLDER !== me && HOLDER !== TOPKEY) return;
 
       if (hasQ && t - since.queue >= delay.queue) start('queue');
       else if (hasS && st === 'idle' && t - since.sit >= delay.sit) start('sit');
@@ -1371,5 +1847,8 @@
     };
   }
 
-  window.CrundiMini = { attach: attach, Actor: Actor, delays: DELAY, _acts: { pace: pace } };
+  window.CrundiMini = { attach: attach, Actor: Actor, delays: DELAY, _acts: { pace: pace },
+    // the top bar: starts by itself; `go` is for the demo page and for tests
+    top: { start: topStart, go: function (kind) { var ok = topOuting(kind, topRead()); if (ok) { TOP.seen[kind] = true; TOP.next[kind] = Date.now() + 10 * 60000; } return ok; }, busy: function () { return TOP.busy; } } };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', topStart); else topStart();
 })();
