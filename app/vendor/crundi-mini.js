@@ -28,6 +28,8 @@
  * bothered it is wary of the cursor too, and backs away when the cursor comes
  * close, or cowers if it has nowhere to go. Keep tapping and it storms off.
  *
+ * There is only ever one Mini on the page, however many chats are open.
+ *
  * Only the robot itself takes a tap; the layer it lives on lets everything
  * else through. It does not appear at all for someone who has asked for
  * reduced motion.
@@ -206,6 +208,10 @@
     // where the ground is
     var sf = this.surf ? this.surf() : null;
     if (sf) {
+      // The ground rising (a card growing) carries it up. The ground dropping
+      // by more than a step (the card it was on went, another is below) is a
+      // fall of exactly that height, not a slide.
+      if (!this.air && sf.y - this.baseY > 10 && this.v.alpha > 0.5) { this.yOff = this.baseY - sf.y; this.baseY = sf.y; this.air = true; this.vy = 0; }
       this.baseY += (sf.y - this.baseY) * Math.min(1, dt * 18);
       if (this.clampX && this.tx !== null) this.tx = clamp(this.tx, sf.l, sf.r);
     }
@@ -503,6 +509,28 @@
     }
   }
 
+  // Another message has landed on the pile under its feet.
+  async function another(s, count) {
+    var a = s.a;
+    a.tx = null;
+    s.pose({ lid: -0.35, headY: -2, armL: 30, armR: 30 }); s.fx('bang', 48, -12);       // what was that
+    await s.wait(360);
+    s.pose({ lid: 0, headY: 6, eyeY: 4.5, squash: 0.93, armL: 22, armR: 22 });          // look down at it
+    await s.wait(820);
+    s.pose({ headY: 0, eyeY: 0, squash: 1, armL: 0, armR: 0 });
+    await s.wait(200);
+    if (count >= 3) {                                                                   // this is getting silly
+      s.pose({ armL: 150, armR: 150, headRot: -8, eyeY: -4 }); await s.wait(760);
+      s.pose({ armL: 0, armR: 0, headRot: 0, eyeY: 0 });
+      await sigh(s);
+    } else {
+      s.pose({ armL: -118, headY: 3, lid: 0.9, headRot: -6 }); await s.wait(900);       // hand over its face
+      s.pose({ armL: 0, headY: 0, lid: 0, headRot: 0 }); await s.wait(300);
+      await shakeHead(s);
+    }
+    await knock(s);                                                                     // and knock again, harder
+  }
+
   // A suggested reply is waiting. Sit on its corner.
   async function sceneSit(s, layerW) {
     var sf = s.surf(); if (!sf) return;
@@ -790,6 +818,10 @@
     s.pose({ alpha: 0 }); await s.wait(200);
   }
 
+  // There is one Mini. With several chats on screen, whichever needs it first
+  // has it, and the others wait until it has left.
+  var HOLDER = null;
+
   // ─── Watching a chat, and deciding when Mini belongs in it ───
   var DELAY = { queue: 12000, sit: 25000, nudge: 90000 };
 
@@ -841,8 +873,11 @@
       if (!actor) actor = new Actor(layer, mobile() ? 50 : 54);
       return actor;
     }
-    function gone() { if (actor) { actor.destroy(); actor = null; } scene = null; leaving = false; }
+    var me = {};
+    function gone() { if (actor) { actor.destroy(); actor = null; } scene = null; leaving = false; if (HOLDER === me) HOLDER = null; }
     function start(name) {
+      if (HOLDER && HOLDER !== me) return;      // it is busy in another chat
+      HOLDER = me;
       var a = ensure();
       scene = name; leaving = false;
       a.autoBlink = true;
@@ -960,7 +995,16 @@
       if (scene === 'queue' && !hasQ) leave('fall');
       else if (scene === 'sit' && !hasS) leave('fall');
       else if (scene === 'nudge' && (st !== 'idle' || typed || hasQ || hasS)) leave('bye');
+      // More was queued while it stood there: it notices.
+      var sig = queueSig();
+      if (scene === 'queue' && !leaving && actor && lastSig && sig.n && (sig.n > lastSig.n || sig.len > lastSig.len + 2) && !actor.air) {
+        var a = actor, cnt = sig.lines;
+        a.autoBlink = true;
+        a.play(async function (s) { s.rest(); await another(s, cnt); s.rest(); await s.wait(500); await queueLoop(s, 1 + Math.floor(Math.random() * 6)); });
+      }
+      lastSig = sig;
       if (scene) return;
+      if (HOLDER && HOLDER !== me) return;
 
       if (hasQ && t - since.queue >= delay.queue) start('queue');
       else if (hasS && st === 'idle' && t - since.sit >= delay.sit) start('sit');
@@ -968,6 +1012,17 @@
         sawWork = !!o.eager;          // once per finished turn, not on a loop
         start('nudge');
       }
+    }
+    var lastSig = null;
+    function queueSig() {
+      var list = root.querySelectorAll('.cc-queue'), n = 0, len = 0, lines = 0;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].offsetParent === null) continue;
+        n++;
+        var b = list[i].querySelector('.cc-queue-body'), txt = b ? b.textContent : '';
+        len += txt.length; lines += txt ? txt.split('\n').length : 0;
+      }
+      return { n: n, len: len, lines: lines };
     }
     var timer = setInterval(tick, 400);
     since.idle = now();
@@ -981,7 +1036,7 @@
         if (layer.parentNode) layer.parentNode.removeChild(layer);
       },
       // For the demo page and for tests: start a scene now, or poke it.
-      trigger: function (name) { if (scene) gone(); start(name); },
+      trigger: function (name) { if (scene) gone(); lastSig = queueSig(); start(name); },
       scare: function (x) { wary = now(); lastFlee = 0; if (actor) moved({ clientX: layer.getBoundingClientRect().left + (x === undefined ? actor.x + 20 : x), clientY: layer.getBoundingClientRect().top + actor.baseY - 20, pointerType: 'mouse' }); },
       poke: function () { if (actor) tapped({ target: actor.el, preventDefault: function () {}, stopPropagation: function () {} }); },
       scene: function () { return leaving ? 'leaving' : scene; },
