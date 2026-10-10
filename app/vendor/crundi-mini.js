@@ -1647,8 +1647,40 @@
       var sp = actor ? actor.lastSpeed : 0;
       if (actor) { actor.destroy(); actor = null; }
       scene = null; leaving = false;
-      if (HOLDER !== me) return;
+      if (HOLDER !== me || handing) return;
       logoReturn(sp).then(function () { if (HOLDER === me && !scene) HOLDER = null; });
+    }
+    // Resumed. The card it was standing on is taken away with everything in
+    // it, this layer included, so it cannot leave from here: it would just
+    // vanish. It is picked up exactly where it was last seen and put on a
+    // layer of the page itself, to be glad about it and run off properly.
+    var handing = false, lastAt = null;
+    function handOver() {
+      if (handing || !actor || !lastAt) { gone(); return; }
+      handing = true;
+      var old = actor, top = document.createElement('div');
+      top.className = 'cm-top'; top.style.height = '100%';
+      document.body.appendChild(top);
+      var a = new Actor(top, 50), key;
+      for (key in old.v) { a.v[key] = old.v[key]; a.t[key] = old.t[key]; }
+      a.x = lastAt.x; a.baseY = lastAt.y; a.clampX = false; a.el.style.pointerEvents = 'none';
+      var floor = { y: lastAt.y, l: -200, r: window.innerWidth + 200 };
+      a.surf = function () { return floor; };
+      a.v.alpha = 1; a.t.alpha = 1; a.autoBlink = true;
+      old.destroy(); actor = null; scene = null; leaving = false;
+      function done() {
+        a.destroy(); if (top.parentNode) top.parentNode.removeChild(top);
+        handing = false;
+        logoReturn(215).then(function () { if (HOLDER === me) HOLDER = null; });
+      }
+      a.play(async function (s) {
+        s.rest(); s.pose({ sit: 0, swing: 0, lid: -0.35, headY: -2 }); s.fx('bang', 48, -12);   // it is awake!
+        await s.wait(420);
+        s.pose({ lid: 0.5, armL: 160, armR: 160, headY: 0 });
+        await s.hop(11); s.fx('spark', 20, 2); await s.hop(11); s.fx('spark', 76, 2);
+        s.pose({ armL: 0, armR: 0, lid: 0 }); await s.wait(200);
+        await runOff(s, window.innerWidth);
+      }).then(done, done);
     }
     function leave() {
       if (!actor || leaving) return;
@@ -1672,7 +1704,8 @@
     function tick() {
       if (dead || document.hidden) return;
       var btn = q('.pk-resume'), ok = btn && btn.offsetParent !== null && !btn.disabled;
-      if (scene === 'parked' && !ok) { leave(); return; }
+      if (actor && layer.isConnected && layer.clientWidth) { var lb = layer.getBoundingClientRect(); lastAt = { x: lb.left + actor.x, y: lb.top + actor.baseY + actor.yOff }; }
+      if (scene === 'parked' && !leaving && (!ok || !veil.isConnected)) { handOver(); return; }
       if (scene || !ok || HOLDER || Date.now() < wantAt) return;
       HOLDER = me; scene = 'coming';
       logoLeave().then(function () {
@@ -1688,7 +1721,12 @@
     }
     var timer = setInterval(tick, 500);
     return {
-      destroy: function () { dead = true; clearInterval(timer); veil.removeEventListener('pointerdown', acted, { capture: true }); gone(); if (HOLDER === me) HOLDER = null; if (layer.parentNode) layer.parentNode.removeChild(layer); },
+      destroy: function () {
+        dead = true; clearInterval(timer); veil.removeEventListener('pointerdown', acted, { capture: true });
+        // being destroyed while it stands there is what resuming looks like from in here
+        if (actor && scene === 'parked' && !leaving) handOver(); else { gone(); if (HOLDER === me && !handing) HOLDER = null; }
+        if (layer.parentNode) layer.parentNode.removeChild(layer);
+      },
       trigger: function () { wantAt = 0; tick(); },
       poke: function () { if (actor) tapped({ target: actor.el, preventDefault: function () {}, stopPropagation: function () {} }); },
       scene: function () { return leaving ? 'leaving' : scene; },
