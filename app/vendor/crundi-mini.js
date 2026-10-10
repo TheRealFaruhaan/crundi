@@ -322,6 +322,7 @@
       rest: function (keep) { live(); for (var key in REST) if (key !== 'alpha' && key !== 'sit' && !(keep && keep[key])) a.t[key] = REST[key]; },
       walkTo: function (x, speed) {
         live();
+        a.t.sit = 0; a.t.swing = 0;                // nothing walks sitting down
         a.speed = speed || 55; a.tx = x;
         a.t.turn = x > a.x ? 0.8 : -0.8;
         return new Promise(function (res, rej) {
@@ -968,7 +969,14 @@
     function userActed(e) { if (e && onMini(e)) return; since.idle = now(); if (scene === 'nudge') leave('bye'); }
     var taps = [], lastKind = -1;
     var wary = 0, lastFlee = 0;                    // goes up with every tap, wears off with time
+    // Back to what it was doing. Anything but the sitting scene is done on its
+    // feet, so if it was annoyed while sitting it stands up first; otherwise the
+    // next act would be played from the seat, a little lower than it walks.
     function resume(s, was, asleep) {
+      if (was !== 'sit' && !asleep && actor && actor.t.sit > 0.5) {
+        s.pose({ sit: 0, swing: 0, armL: 0, armR: 0 });
+        return s.wait(650).then(function () { return resume(s, was, false); });
+      }
       if (was === 'queue') return queueLoop(s, 2 + Math.floor(Math.random() * 6), env);
       if (was === 'sit') return (actor.t.sit < 0.5 ? takeSeat(s) : Promise.resolve()).then(function () { s.pose({ sit: 1, swing: 1, armL: 10, armR: 10 }); return sitLoop(s, Math.floor(Math.random() * 6)); });
       return nudgeLoop(s, aim, asleep ? 99 : 1 + Math.floor(Math.random() * 7), mobile() ? null : sendAt);
@@ -1027,10 +1035,18 @@
         s.rest({ lid: 1 });
         if (asleep) await grumpyWake(s);
         else await list[k](s, w);
+        // However it took it, it gets to its feet afterwards: nobody stays
+        // sitting comfortably next to whoever just poked them.
+        if (a.t.sit > 0.5) {
+          s.pose({ sit: 0, swing: 0, lid: 0.4, armL: -34, armR: -34, turn: 0, headRot: 0 });
+          await s.wait(700);
+          await tapFoot(s);
+        }
         s.rest();
         await s.wait(500);
-        // back to what it was doing, picking up somewhere in the middle
-        await resume(s, was, asleep);
+        // then back to what it was doing, picking up somewhere in the middle
+        // (on a suggestion that means sitting down again, in its own time)
+        await resume(s, was, false);
       });
     }
     layer.addEventListener('pointerdown', tapped);
