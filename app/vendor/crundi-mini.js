@@ -1051,6 +1051,9 @@
   //           of reach, so it jumps for it. And jumps. And cannot.
   //   notify  something is waiting for the person and the bell is lit. Some of
   //           the time, it walks over and points at it.
+  //   project where the sidebar is beside the work, instead of the bell it may
+  //           go down to the project that is waiting: a jump, or a careful,
+  //           frightened climb with its back to you. And back up the same way.
   //   update  there is an update. It jumps down onto the tabs, walks along to
   //           Settings and points at it. If Settings is off the side of a
   //           narrow screen it hauls the row of tabs along, a little at a time,
@@ -1069,6 +1072,18 @@
     if (pr.width < 40 || pr.height < 4) return null;
     return { x: r.right, pct: r.width / pr.width * 100, top: pr.top, bottom: pr.bottom, left: pr.left, right: pr.right };
   }
+  // A project row in the sidebar that is waiting for an answer, on screen, on a
+  // layout wide enough to have the sidebar beside the work (folded or not).
+  function waitingProject() {
+    if (window.innerWidth < 900) return null;
+    var list = document.querySelectorAll('.sidebar .sidebar-item.ts-input');
+    for (var i = 0; i < list.length; i++) {
+      var n = list[i]; if (n.offsetParent === null) continue;
+      var b = n.getBoundingClientRect();
+      if (b.width > 20 && b.top > 40 && b.bottom < window.innerHeight - 8) return n;
+    }
+    return null;
+  }
   function topRead() {
     var badge = document.getElementById('update-badge');
     return {
@@ -1077,6 +1092,7 @@
       tabs: vis(document.getElementById('tab-bar')),
       settings: vis(document.querySelector('#tab-bar .tab-btn[data-tab="settings"]')),
       bell: vis(document.getElementById('approvals-btn')),
+      project: waitingProject(),
       bells: parseInt((document.getElementById('approvals-count') || {}).textContent, 10) || 0
     };
   }
@@ -1282,7 +1298,71 @@
     o = {}; o[arm] = 0; s.pose(o); await s.wait(300);
     return 'calm';
   }
-  var TOPSCENES = { five: sceneFive, week: sceneWeek, update: sceneUpdate, notify: sceneNotify };
+  // Hand over hand, not falling: to a ledge lower down or one higher up, with
+  // its back to you and not enjoying it.
+  async function climbTo(s, surf, speed) {
+    var a = s.a, was = a.baseY + a.yOff, sf = surf(); if (!sf) return;
+    a.onLand = null; a.air = false; a.vy = 0;
+    a.surf = surf; a.baseY = sf.y; a.yOff = was - sf.y;
+    var down = a.yOff < 0, i = 0, pauseAt = Math.abs(a.yOff) * rnd(0.35, 0.6), looked = false;
+    s.pose({ turn: 2.1, shake: 0.22, lid: 0.3 });
+    await s.wait(500);
+    while (Math.abs(a.yOff) > 1.5) {
+      var step = Math.min(Math.abs(a.yOff), (speed || 34) * 0.06);
+      a.yOff += down ? step : -step;
+      s.pose(i % 2 ? { armL: 158, armR: 112, legL: -14, legR: 12 } : { armL: 112, armR: 158, legL: 12, legR: -14 });
+      if (!looked && Math.abs(a.yOff) < pauseAt) {                            // do not look down. it looked down.
+        looked = true;
+        s.pose({ turn: 1.15, headY: 3, eyeY: 4, shake: 0.5, lid: -0.3 }); s.fx('sweat', 72, 14);
+        await s.wait(rnd(800, 1300));
+        s.pose({ turn: 2.1, headY: 0, eyeY: 0, shake: 0.22, lid: 0.3 });
+        await s.wait(300);
+      }
+      await s.wait(i % 2 ? 130 : 60); i++;
+    }
+    a.yOff = 0;
+    s.pose({ turn: 0, shake: 0, lid: 0, armL: 0, armR: 0, legL: 0, legR: 0 });
+    await s.wait(300);
+    s.fx('puff', 64, 34); s.pose({ squash: 0.93, headY: 3 }); await s.wait(500); s.pose({ squash: 1, headY: 0 });   // made it
+  }
+  // A project in the sidebar needs an answer. Go down there and stand by it.
+  async function sceneProject(s, st, r) {
+    var a = s.a, k = a.k, W = window.innerWidth, row = r.project; if (!row) return 'calm';
+    function rowBox() { var b = row.isConnected && row.offsetParent !== null ? row.getBoundingClientRect() : null; return b && b.width ? b : null; }
+    var b0 = rowBox(); if (!b0) return 'calm';
+    st.layer.style.height = '100%';
+    var narrow = b0.width < 90;                                               // the sidebar is folded to icons
+    function spotX() { var b = rowBox() || b0; return narrow ? b.right + 12 * k : clamp(b.right - 20 * k, b.left + 40, W - 12); }
+    function ledge() { var b = rowBox() || b0; return { y: b.bottom - 1, l: -200, r: W + 200 }; }
+    s.pose({ eyeY: 4, headY: 3, turn: -0.4 }); await s.wait(700);             // someone down there wants something
+    s.pose({ eyeY: 0, headY: 0, turn: 0 });
+    await s.walkTo(spotX(), 70);
+    var careful = Math.random() < 0.5;
+    if (careful) {
+      s.pose({ headY: 5, eyeY: 4.5, shake: 0.3 }); s.fx('sweat', 72, 14); await s.wait(900);   // a long way
+      s.pose({ headY: 0, eyeY: 0 });
+      await climbTo(s, ledge, 36);
+    } else {
+      s.pose({ squash: 0.88, armL: 30, armR: 30 }); await s.wait(260);
+      s.pose({ squash: 1, armL: 150, armR: 150 });
+      await s.fallTo(ledge);
+      s.pose({ armL: 0, armR: 0 }); await s.wait(360);
+    }
+    function target() { var b = rowBox(); if (!b) return null; var d = row.querySelector('.dot'), db = d && d.offsetParent !== null ? d.getBoundingClientRect() : null; return db && db.width ? { x: db.left + db.width / 2, y: db.top + db.height / 2 } : { x: b.left + Math.min(20, b.width / 2), y: (b.top + b.bottom) / 2 }; }
+    for (var n = 0; n < 2; n++) {
+      var o = { turn: -0.6, armL: 98 }; s.pose(o); await s.wait(320);
+      for (var i = 0; i < 3; i++) { s.pose({ armL: 86 }); await s.wait(130); var t = target(); if (t) s.fxAt('ring', t.x, t.y); s.pose({ armL: 104 }); await s.wait(170); }
+      s.pose({ turn: 0 }); await s.wait(700);                                 // this one. it is waiting for you.
+      if (n === 0) { if (Math.random() < 0.5) { await s.hop(6); await s.hop(6); } else { s.pose({ armL: 0 }); await wave(s, 3); } }
+    }
+    s.pose({ armL: 0 }); await s.wait(300);
+    // back up: a big jump, or the long way
+    if (Math.random() < 0.5) { s.pose({ squash: 0.8, armL: 30, armR: 30, eyeY: -4.5 }); await s.wait(420); s.pose({ squash: 1, armL: 170, armR: 170, eyeY: 0 }); await s.jumpTo(a.homeSurf); s.pose({ armL: 0, armR: 0 }); }
+    else await climbTo(s, a.homeSurf, 40);
+    await s.wait(260);
+    return careful ? 'tired' : 'calm';
+  }
+  var TOPSCENES = { five: sceneFive, week: sceneWeek, update: sceneUpdate, notify: sceneNotify, project: sceneProject };
   function topOuting(kind, r) {
     if (HOLDER || LOGO.away || TOP.busy) return false;
     var mark = logoMark(); if (!mark) return false;
@@ -1341,19 +1421,20 @@
     if (r.update && r.tabs && r.settings && t - last >= UPDATE_EVERY) due('update', true, [20000, 45000], [UPDATE_EVERY, UPDATE_EVERY * 1.5]);
     else TOP.seen.update = false;
     // A notification: only sometimes, and only when one has just arrived.
-    var nb = r.bell ? Math.max(1, r.bells) : 0;
+    var nb = (r.bell ? Math.max(1, r.bells) : 0) + (r.project ? document.querySelectorAll('.sidebar .sidebar-item.ts-input').length : 0);
     if (nb > (TOP.bells || 0) && t >= (TOP.next.notify || 0)) {
       if (Math.random() < 0.55) { TOP.seen.notify = true; TOP.next.notify = t + rnd(8000, 30000); TOP.bellDue = true; }
       else TOP.next.notify = t + rnd(10 * 60000, 20 * 60000);                 // not this time
     }
     TOP.bells = nb;
-    if (TOP.bellDue && !r.bell) TOP.bellDue = false;
-    if (TOP.bellDue && t >= TOP.next.notify) ready.push(['notify', [20 * 60000, 40 * 60000]]);
+    if (TOP.bellDue && !r.bell && !r.project) TOP.bellDue = false;
+    // the bell, or (where there is a sidebar) the project itself: either
+    if (TOP.bellDue && t >= TOP.next.notify) ready.push([r.project && (!r.bell || Math.random() < 0.6) ? 'project' : 'notify', [20 * 60000, 40 * 60000]]);
     if (!ready.length) return;
     var go = pick(ready);
     if (topOuting(go[0], r)) {
       TOP.next[go[0]] = t + rnd(go[1][0], go[1][1]);
-      if (go[0] === 'notify') TOP.bellDue = false;
+      if (go[0] === 'notify' || go[0] === 'project') { TOP.bellDue = false; TOP.next.notify = TOP.next[go[0]]; }
       if (go[0] === 'update') { try { localStorage.setItem('crundi_mini_update_at', String(t)); } catch (e) { /* private mode */ } }
     }
   }
