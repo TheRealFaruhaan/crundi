@@ -1156,11 +1156,14 @@
       if (way === 'pull') {                                                   // get hold of the end and heave it back
         // Hands on the end of the bar, feet nearer it than the hands, leaning
         // away: where it stands is worked out from where the hands must be.
-        await s.walkTo(clamp(end - 14 * k, 12, W - 12), 150);
-        s.pose({ shake: 0, lid: 0, turn: 0.8, reach: 1, armR: 90, armL: -80, headY: 0 }); await s.wait(360);
+        // Feet planted almost at the end of the bar, body thrown right back,
+        // arms out straight to the edge: the whole of it is one line pulling.
+        await s.walkTo(clamp(end - 5 * k, 12, W - 12), 150);
+        s.pose({ shake: 0, lid: 0, turn: 0.8, reach: 1, armR: 100, armL: -92, headY: 0 }); await s.wait(360);   // take hold
         for (var i = 0; i < heaves; i++) {
-          s.pose({ lean: -20, squash: 0.92 }); await strain(s, -20, rnd(700, 1600), 14);
-          s.pose({ lean: -6, squash: 1, lid: 0.3 }); await s.wait(rnd(200, 420));
+          s.pose({ lean: -34, squash: 0.94, armR: 124, armL: -114, headRot: -8 });                               // and lean
+          await strain(s, -34, rnd(800, 1700), 14);
+          s.pose({ lean: -12, squash: 1, lid: 0.3, armR: 104, armL: -96, headRot: 0 }); await s.wait(rnd(200, 420));
         }
       } else if (way === 'push') {                                            // round the far side, hands on it, shove
         // Hands flat on the end of the bar, feet well back, leaning into it.
