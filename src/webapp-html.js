@@ -2862,6 +2862,8 @@ export function getWebappHtml(botUsername) {
     .mindmap-inner { position: relative; min-width: 100%; min-height: 100%; }
     /* Scaled content layer (zoom). Base-sized; transform: scale applied via JS. */
     .mm-scale { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+    /* A zoom step from the keyboard glides; the wheel and a pinch stay direct. */
+    .mindmap-canvas.mm-zooming .mm-scale { transition: transform 0.18s ease; }
     .mindmap-edges { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
     .mm-node {
       /* --mm-shift: set while a node near the top is opened up (hovered or
@@ -15060,7 +15062,7 @@ export function getWebappHtml(botUsername) {
 
       const draftHtml = (n) => '<div class="mm-node mm-draft" style="left:' + px(pos[n.id].x) + 'px" data-node="' + DRAFT + '">'
         + '<textarea class="mm-draft-input" rows="1" maxlength="2000" placeholder="New idea" autocomplete="off" spellcheck="true"></textarea>'
-        + '<div class="mm-draft-hint"><b>Enter</b> next \u00b7 <b>Tab</b> nested \u00b7 <b>Shift+Enter</b> new line</div></div>';
+        + '<div class="mm-draft-hint"><b>Enter</b> save \u00b7 <b>Ctrl+Enter</b> next \u00b7 <b>Tab</b> nested</div></div>';
       const nodeHtml = (n) => {
         if (n.draft) return draftHtml(n);
         if (n.drop) return '<div class="mm-node mm-placeholder" style="left:' + px(pos[n.id].x) + 'px;height:' + Math.max(30, Math.round(mmDropAt.h || 40)) + 'px" data-node="' + DROP + '"></div>';
@@ -15365,27 +15367,42 @@ export function getWebappHtml(botUsername) {
       if (mmDelArmed && e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt') mmDisarmDelete();
       // Escape with nothing being typed lets go of the ring.
       if (e.key === 'Escape' && !mmEdit && !mmDraft && mmSel) { e.preventDefault(); mmClearSel(); return; }
-      // Ctrl+Enter with the ring on an idea: edit it. (The same keys in the
-      // text box end the edit, so it works as a switch.)
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !mmEdit && !mmDraft && (!a || a === document.body) && mmSel) {
-        const el = mmNodeEl(mmSel);
-        if (el) { e.preventDefault(); mmStartEdit(el); }
+      // Ctrl and + or - zoom the map, about its middle. (Otherwise the browser
+      // would zoom the whole page.) These work while typing too.
+      const plus = e.key === '+' || e.key === '=' || e.code === 'NumpadAdd', minus = e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract';
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (plus || minus)) {
+        const c = document.getElementById('mindmap-canvas');
+        if (!c) return;
+        e.preventDefault(); e.stopPropagation();
+        const r = c.getBoundingClientRect();
+        c.classList.add('mm-zooming');
+        setMindmapZoom(mindmapZoom * (plus ? 1.2 : 1 / 1.2), r.left + r.width / 2, r.top + r.height / 2);
+        clearTimeout(c._mmZoomT); c._mmZoomT = setTimeout(() => c.classList.remove('mm-zooming'), 220);
         return;
       }
-      // With the ring on an idea and nothing being typed, the keys do what
-      // they do in a text box: Enter starts the next idea at its level, Tab
-      // one nested under it, Shift+Tab one a level out.
-      if (!e.altKey && !e.ctrlKey && !e.metaKey && !mmEdit && !mmDraft && (!a || a === document.body) && mmSel) {
-        const n = mindmapNodes.find(x => x.id === mmSel), el = mmNodeEl(mmSel);
-        if (!n || !el || n.pending) return;
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmStartDraft(n.parentId || null, n.id); }
-        else if (e.key === 'Tab') {
-          e.preventDefault();
-          const par = n.parentId ? mindmapNodes.find(x => x.id === n.parentId) : null;
-          if (!e.shiftKey) mmStartDraft(n.id, null);
-          else if (par) mmStartDraft(par.parentId || null, par.id);
-          else mmStartDraft(null, n.id);
-        }
+      if (mmEdit || mmDraft || (a && a !== document.body) || !mmSel || e.altKey || e.metaKey) return;
+      // From here on: the ring is on an idea and nothing is being typed.
+      const n = mindmapNodes.find(x => x.id === mmSel), el = mmNodeEl(mmSel);
+      if (!n || !el || n.pending) return;
+      if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); mmStartDraft(n.parentId || null, n.id); return; }   // the next idea at its level
+      if (e.ctrlKey) return;
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmStartEdit(el); return; }                          // edit it (Enter again saves)
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const par = n.parentId ? mindmapNodes.find(x => x.id === n.parentId) : null;
+        if (!e.shiftKey) mmStartDraft(n.id, null);
+        else if (par) mmStartDraft(par.parentId || null, par.id);
+        else mmStartDraft(null, n.id);
+        return;
+      }
+      // + unfolds what is under it, - folds it away. Each only does its own
+      // half, so pressing one twice changes nothing the second time.
+      if (plus || minus) {
+        const hasKids = mindmapNodes.some(x => x.parentId === n.id);
+        if (!hasKids || !!mindmapCollapsed[n.id] === minus) return;
+        e.preventDefault();
+        mindmapCollapsed[n.id] = minus;
+        renderMindmap();
       }
     }, true);
 
@@ -15425,8 +15442,10 @@ export function getWebappHtml(botUsername) {
         ta.addEventListener('input', grow);
         ta.addEventListener('keydown', (e) => {
           if (e.isComposing) return;
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); mmDraftCommit('next'); }
+          else if (e.key === 'Enter' && !e.shiftKey) {
             // Save this one and stop adding, with the ring left on it.
+            // (Ctrl+Enter, above, saves and opens the next.)
             e.preventDefault(); e.stopPropagation();
             const had = !!ta.value.trim();
             if (had) mmDraftCommit('next');
@@ -15434,7 +15453,6 @@ export function getWebappHtml(botUsername) {
             mmEndDraft();
             if (saved) mmSelect(saved, false);
           }
-          else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmDraftCommit('next'); }
           else if (e.key === 'Tab') { e.preventDefault(); mmDraftCommit(e.shiftKey ? 'up' : 'nested'); }
           else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); mmEndDraft(); }
         });
@@ -15476,9 +15494,10 @@ export function getWebappHtml(botUsername) {
         if (e.isComposing) return;
         // Enter, Tab and Shift+Tab do here what they do while adding: save
         // this idea and open the next one (same level, nested, one level out).
-        // Ctrl+Enter is the switch for editing: here it saves and stops, ring still on the idea.
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); mmFinishEdit(true); mmSelect(id, false); }
-        else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); mmFinishEdit(true); mmStartDraft(n.parentId || null, n.id); }
+        // Enter is the switch for editing: here it saves and stops, ring still
+        // on the idea. Ctrl+Enter saves and starts the next idea at this level.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); mmFinishEdit(true); mmStartDraft(n.parentId || null, n.id); }
+        else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); mmFinishEdit(true); mmSelect(id, false); }
         // Escape: the edit is thrown away and the idea reads as it did.
         else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); mmFinishEdit(false); }
         else if (e.key === 'Tab') {
@@ -15790,8 +15809,9 @@ export function getWebappHtml(botUsername) {
       let h = '';
       h += '<h4>Adding ideas</h4>';
       h += row(word('+ Add idea'), 'Start a new top-level idea, typed in place. A dashed "add idea" box starts one under that idea.', '');
-      h += row(key('Enter'), 'Save it and start the next idea at the same level.',
-        mmDiagram(T.concat([[1, 2, 'next idea', 'new']]), [[0, 1], [0, 2], [0, 3, 1]], 'You typed "Hotel" and pressed Enter: the next box opens below it, under the same parent.'));
+      h += row(key('Enter'), 'Save it and stop adding. The ring stays on it.', '');
+      h += row(key('Ctrl+Enter'), 'Save it and start the next idea at the same level.',
+        mmDiagram(T.concat([[1, 2, 'next idea', 'new']]), [[0, 1], [0, 2], [0, 3, 1]], 'You typed "Hotel" and pressed Ctrl+Enter: the next box opens below it, under the same parent.'));
       h += row(key('Tab'), 'Save it and start an idea nested under it.',
         mmDiagram(T.concat([[2, 1, 'nested idea', 'new']]), [[0, 1], [0, 2], [2, 3, 1]], 'You typed "Hotel" and pressed Tab: the next box opens one level in, under "Hotel".'));
       h += row(key('Shift+Tab'), 'Save it and start an idea one level out, beside its parent. From the top level, a new top-level idea.',
@@ -15800,7 +15820,8 @@ export function getWebappHtml(botUsername) {
       h += row(key('Esc'), 'Close the box without saving what is in it. Clicking elsewhere does the same.', '');
       h += '<h4>Editing</h4>';
       h += row(word('Click'), 'Edit the idea where it is. It opens to about seven lines, then scrolls.', '');
-      h += row(key('Enter'), 'Save the edit and start the next idea at the same level, as when adding. Clicking elsewhere just saves.', '');
+      h += row(key('Enter'), 'Save the edit and stop. Clicking elsewhere saves it too.', '');
+      h += row(key('Ctrl+Enter'), 'Save the edit and start the next idea at the same level, as when adding.', '');
       h += row(key('Esc'), 'Throw the edit away; the idea reads as it did.', '');
       h += row(key('Tab') + '<span class="mmh-or">or</span>' + key('Shift+Tab'), 'Save the edit and carry on adding: nested under it, or one level out.', '');
       h += row(word('Double-click'), 'Open the details: notes, a link to a task, media, delete.', '');
@@ -15810,9 +15831,9 @@ export function getWebappHtml(botUsername) {
       h += row(key('Ctrl+Shift+Left'), 'Its parent.', '');
       h += row(key('Ctrl+Shift+Right'), 'The middle idea under it (the earlier of the two middles when there is an even number).',
         mmDiagram([[0, 1, 'Trip', 'held'], [1, 0, 'Flights'], [1, 1, 'Hotel', 'new'], [1, 2, 'Visa']], [[0, 1], [0, 2], [0, 3]], 'From "Trip", Ctrl+Shift+Right lands on "Hotel", the middle of its three.'));
-      h += row(key('Enter') + '<span class="mmh-or">,</span>' + key('Tab') + '<span class="mmh-or">,</span>' + key('Shift+Tab'), 'With the ring on an idea and nothing being typed, these start a new idea just as they do while typing: at its level, nested under it, or one level out.', '');
+      h += row(key('Enter'), 'With the ring on an idea: switch editing on. Enter again saves and switches it off. While editing, Ctrl+Shift and an arrow saves and takes the editing with you.', '');
+      h += row(key('Ctrl+Enter') + '<span class="mmh-or">,</span>' + key('Tab') + '<span class="mmh-or">,</span>' + key('Shift+Tab'), 'With the ring on an idea and nothing being typed, these start a new idea just as they do while typing: at its level, nested under it, or one level out.', '');
       h += row(key('Esc'), 'Let go of the ring. A click anywhere that is not an idea does the same.', '');
-      h += row(key('Ctrl+Enter'), 'Switch editing on and off for the idea the ring is on: start editing it, or save and stop. While editing, Ctrl+Shift and an arrow saves and takes the editing with you.', '');
       h += row(key('Delete'), 'With the ring on an idea: the ring turns amber and says what would go. Press Delete again while it is amber to delete the idea and everything under it. Any other key, a click, or a few seconds cancels.',
         mmDiagram([[0, 0, 'Trip'], [1, 0, 'Hotel', 'held'], [2, 0, 'Near beach'], [1, 1, 'Visa']], [[0, 1], [1, 2], [0, 3]], 'With the ring on "Hotel", Delete twice removes "Hotel" and "Near beach". "Visa" stays.'));
       h += '<h4>Moving ideas</h4>';
@@ -15823,6 +15844,8 @@ export function getWebappHtml(botUsername) {
       h += row(word('Drag onto a chat or terminal'), 'Puts a reference to the idea in the message.', '');
       h += '<h4>Looking around</h4>';
       h += row(key('Ctrl+Scroll') + '<span class="mmh-or">or</span>' + word('pinch'), 'Zoom, around the pointer.', '');
+      h += row('<span class="mmh-combo"><kbd>Ctrl</kbd><span class="mmh-plus">+</span><kbd>+</kbd></span><span class="mmh-or">or</span><span class="mmh-combo"><kbd>Ctrl</kbd><span class="mmh-plus">+</span><kbd>\u2212</kbd></span>', 'Zoom in or out, about the middle of the map.', '');
+      h += row('<span class="mmh-combo"><kbd>+</kbd></span><span class="mmh-or">or</span><span class="mmh-combo"><kbd>\u2212</kbd></span>', 'With the ring on an idea: + unfolds what is under it, \u2212 folds it away.', '');
       h += row(word('\u2212 / +'), 'The small button on an idea folds or unfolds what is under it.',
         mmDiagram([[0, 0, 'Trip  +', 'held'], [1, 0, 'Flights'], [1, 1, 'Hotel']], [[0, 1, 1], [0, 2, 1]], 'Folded, "Trip" keeps its ideas but hides them until you unfold it.'));
       h += row(word('Hover'), 'Shows the whole of a long idea.', '');
