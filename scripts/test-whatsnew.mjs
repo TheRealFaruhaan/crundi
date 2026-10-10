@@ -3,6 +3,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compareVersions, isPrerelease, listEditions, plan, loadState, markSeen, parseVersion } from '../src/whatsnew.js';
 
 let failed = 0;
@@ -57,16 +58,18 @@ markSeen(f1, { editions: E, current: '1.19.26', channel: 'production' });
 ok(loadState(f1).fresh === false && !loadState(f1).ids.includes('voice-dev'), 'a new install is an ordinary one from then on');
 
 // ─── what ships ───
-const real = new URL('../app/vendor/whatsnew/', import.meta.url);
-const R = listEditions(real.pathname);
+// fileURLToPath, not URL.pathname: on Windows the latter is "/D:/..." and names nothing.
+const realDir = fileURLToPath(new URL('../app/vendor/whatsnew/', import.meta.url));
+const R = listEditions(realDir);
 ok(R.length > 0, 'there is at least one edition in the repo');
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 ok(R.every((e) => e.steps.every((s) => s.art && s.body && s.tag)), 'every step that ships has an animation, a tag and a line of text', R.flatMap((e) => e.steps.filter((s) => !s.art || !s.body || !s.tag).map((s) => e.version + '/' + s.id)).join(', '));
 const allIds = R.filter((e) => !isPrerelease(e.version)).flatMap((e) => e.steps.map((s) => s.id));
 ok(new Set(allIds).size === allIds.length, 'no step id is used twice across the released editions', allIds.join(','));
 ok(R.every((e) => e.steps.every((s) => !/<script|javascript:|\son[a-z]+\s*=/i.test(s.art))), 'the animations are markup and styles only: no scripts');
-ok(R.every((e) => readdirSync(new URL(e.version + '/', real).pathname).filter((n) => n.endsWith('.html')).every((n) => e.steps.some((s) => readFileSync(new URL(e.version + '/' + n, real).pathname, 'utf8') === s.art))), 'no animation file is left over without a step');
-ok(compareVersions(R[R.length - 1].version, pkg) <= 0 || isPrerelease(pkg), `the newest edition (${R[R.length - 1].version}) is not ahead of the package version (${pkg})`);
+ok(R.every((e) => readdirSync(join(realDir, e.version)).filter((n) => n.endsWith('.html')).every((n) => e.steps.some((s) => readFileSync(join(realDir, e.version, n), 'utf8') === s.art))), 'no animation file is left over without a step');
+const newest = R.length ? R[R.length - 1].version : '';
+ok(!!newest && (compareVersions(newest, pkg) <= 0 || isPrerelease(pkg)), `the newest edition (${newest || 'none found'}) is not ahead of the package version (${pkg})`);
 
 try { rmSync(t, { recursive: true, force: true }); } catch { /* leave it */ }
 console.log(failed ? `\n${failed} FAILED` : '\nAll whats-new checks passed.');
