@@ -1328,17 +1328,58 @@
       var from = a.x < W / 2 ? -46 : W + 46;
       s.rest(); s.pose({ alpha: 0 }); await s.wait(rnd(1100, 1900));
       a.surf = a.homeSurf; a.baseY = st.home.y; a.yOff = 0; a.air = false; a.x = from; a.vx = 0;
-      s.pose({ alpha: 1, lid: 0.5, armL: -34, armR: -34 });
-      var going2 = s.walkTo(st.home.x + (from < 0 ? 0 : 0), 46), n2 = 0;
-      while (a.tx !== null) { if (n2 % 6 === 0) s.fx('anger', 76, 4); n2++; await s.wait(160); }
-      await going2;
-      s.pose({ turn: 0 }); await s.wait(500);                                 // at you
-      var w2 = Math.random();
-      if (w2 < 0.4) { s.pose({ armL: 0, armR: 158, shake: 0.55, lean: 4 }); await s.wait(1000); s.pose({ shake: 0, armR: 0, lean: 0 }); }
-      else if (w2 < 0.75) { await shakeHead(s); }
-      else { steam(s); await s.hop(5); await s.hop(5); }
-      s.pose({ armL: 0, armR: 0, lid: 0 }); await s.wait(300);
-      return 'calm';
+      // Half the time it comes back cross. The other half it comes back with
+      // its head still going round, and half of those times it does not make
+      // it all the way before its legs give out.
+      var how = TOP.force === 'cross' || TOP.force === 'dizzy' || TOP.force === 'faint' ? TOP.force : null;   // tests may ask for one
+      if (how ? how === 'cross' : Math.random() < 0.5) {
+        s.pose({ alpha: 1, lid: 0.5, armL: -34, armR: -34 });
+        var going2 = s.walkTo(st.home.x, 46), n2 = 0;
+        while (a.tx !== null) { if (n2 % 6 === 0) s.fx('anger', 76, 4); n2++; await s.wait(160); }
+        await going2;
+        s.pose({ turn: 0 }); await s.wait(500);                               // at you
+        var w2 = deal('flung-cross', 3);
+        if (w2 === 0) { s.pose({ armL: 0, armR: 158, shake: 0.55, lean: 4 }); await s.wait(1000); s.pose({ shake: 0, armR: 0, lean: 0 }); }
+        else if (w2 === 1) { await shakeHead(s); }
+        else { steam(s); await s.hop(5); await s.hop(5); }
+        s.pose({ armL: 0, armR: 0, lid: 0 }); await s.wait(300);
+        return 'calm';
+      }
+      var faint = how ? how === 'faint' : Math.random() < 0.5;
+      var stopAt = faint ? from + (st.home.x - from) * rnd(0.35, 0.7) : st.home.x;
+      async function stagger(to) {                                            // not in a straight line
+        var g = s.walkTo(to, 24), i = 0;
+        while (a.tx !== null) {
+          s.pose({ lean: i % 2 ? 13 : -13, headRot: i % 2 ? -11 : 11, lid: 0.62, armL: i % 2 ? 40 : 8, armR: i % 2 ? 8 : 40, eyeX: i % 2 ? 2.5 : -2.5 });
+          if (i % 2 === 0) s.fx('spark', i % 4 ? 70 : 26, -8);
+          if (i % 5 === 4 && a.tx !== null) { var keep = a.tx; a.tx = null; await s.wait(rnd(350, 650)); if (a.tx === null) { g = s.walkTo(keep, 24); } }   // stop. which way was it
+          await s.wait(260); i++;
+        }
+        await g;
+        s.pose({ lean: 0, headRot: 0, armL: 0, armR: 0, eyeX: 0 });
+      }
+      s.pose({ alpha: 1, lid: 0.62 });
+      await stagger(stopAt);
+      if (faint) {
+        s.pose({ turn: 0, lid: 0.3, headRot: 9 }); await s.wait(500);         // oh
+        s.pose({ lid: 0.94, lean: 22, armL: 30, armR: 30 }); await s.wait(260);
+        s.pose({ lean: 88, squash: 0.96 });                                   // and over it goes
+        a.vel.squash -= 1.5; s.fx('dust', 78, GROUND - 3, ';--dx:9px');
+        await s.wait(700);
+        var out = rnd(3200, 5600), t0 = a.time;
+        while ((a.time - t0) * 1000 < out) { s.fx('spark', rnd(60, 86), rnd(50, 70)); await s.wait(700); }
+        s.pose({ lid: 0.6 }); await s.wait(350); s.pose({ lid: 0.94 }); await s.wait(300);     // coming round
+        s.pose({ lid: 0.4, lean: 30 }); await s.wait(500);
+        s.pose({ lean: 0, squash: 1, sit: 1, armL: 20, armR: 20 }); await s.wait(700);        // sitting up
+        await shakeHead(s);
+        s.pose({ sit: 0, lid: 0.2 }); await s.wait(600);
+        s.pose({ armR: -118 }); await s.wait(700); s.pose({ armR: 0 }); await s.wait(250);    // a hand to its head
+        await s.walkTo(st.home.x, 34);
+      } else {
+        await shakeHead(s);                                                   // clear it
+      }
+      s.pose({ turn: 0, lid: 0, armL: 0, armR: 0 }); await s.wait(300);
+      return 'tired';
     }
     var b = btn.getBoundingClientRect(), bx = (b.left + b.right) / 2, by = (b.top + b.bottom) / 2;
     var side = bx - 22 * k > 12 ? -1 : 1;
