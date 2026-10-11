@@ -1,7 +1,6 @@
 // The compact chat: one conversation and nothing else, at /chat/<id>.
 //
-// This is what sits inside a chat bubble on a phone, and inside picture in
-// picture. It is the same chat as in the workbench, drawn by the same
+// This is what sits inside a chat bubble on a phone. It is the same chat as in the workbench, drawn by the same
 // component (app/vendor/claude-chat.js), with a small header in place of the
 // whole application round it. It is its own page and not a mode of the main
 // one because a bubble has to open at once, and the main page is seventeen
@@ -62,9 +61,6 @@ button{font:inherit;color:inherit}
 #cp-toast.error{border-color:var(--red)}
 #cp-conn{display:none;padding:4px 10px;font-size:12px;text-align:center;color:var(--text-secondary);background:var(--bg-tertiary);flex:none}
 #cp-conn.on{display:block}
-/* Picture in picture: no room for a header or a message box, and nothing in
-   it can be typed into anyway. The app sets this when it shrinks the window. */
-body.cp-pip #cp-head,body.cp-pip .cc-composer,body.cp-pip #cp-menu{display:none}
 @media (prefers-reduced-motion:reduce){#cp-dot.working{animation:none}}
 </style>
 </head>

@@ -256,7 +256,6 @@ class MainActivity : Activity() {
         @JavascriptInterface fun can(): String = listOfNotNull(
             "settings", "download",
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) "bubble" else null,
-            if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) "pip" else null,
         ).joinToString(",")
 
         /** "App settings" in the sidebar. */
@@ -286,10 +285,6 @@ class MainActivity : Activity() {
             }
         }
 
-        /** "Floating window" in a chat's menu: the chat, small, over whatever else is on screen. */
-        @JavascriptInterface fun openPip(chatId: String) {
-            runOnUiThread { withChat(chatId) { chat -> startActivity(Notifier.chatIntent(this@MainActivity, chat, pip = true)) } }
-        }
     }
 
     private fun download(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {

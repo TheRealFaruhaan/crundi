@@ -7123,7 +7123,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }, true);
 
     // What the phone app round this page can do, if there is one: a list such
-    // as "bubble,pip" from its bridge. Empty in a browser, where neither
+    // as "bubble,settings" from its bridge. Empty in a browser, where neither
     // exists, so the buttons below are simply not drawn.
     const NATIVE_CAN = (() => {
       try { return (window.CrundiNative && window.CrundiNative.can) ? String(window.CrundiNative.can()).split(',') : []; } catch (e) { return []; }
@@ -7137,7 +7137,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function nativeChatBtns(t) {
       let h = '';
       if (NATIVE_CAN.indexOf('bubble') >= 0) h += '<button class="term-font-btn" data-action="chat-bubble" data-tid="' + t.id + '" title="Open this chat as a floating bubble">Bubble</button>';
-      if (NATIVE_CAN.indexOf('pip') >= 0) h += '<button class="term-font-btn" data-action="chat-pip" data-tid="' + t.id + '" title="Open this chat in a small floating window">Float</button>';
       return h;
     }
 
@@ -14037,10 +14036,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
           break;
         case 'chat-bubble':
           try { window.CrundiNative.openBubble(String(d.tid)); } catch (err) { toast('This app cannot open a bubble', 'error'); }
-          closeHeadMenus(null);
-          break;
-        case 'chat-pip':
-          try { window.CrundiNative.openPip(String(d.tid)); } catch (err) { toast('This app cannot open a floating window', 'error'); }
           closeHeadMenus(null);
           break;
         case 'chat-plan': {

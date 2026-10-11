@@ -3,7 +3,7 @@
  *
  * One conversation, full height, with a small header: back, the project's
  * mark, the chat's title, the project under it, a menu. It is what a chat
- * bubble on a phone shows, and what picture in picture shows.
+ * bubble on a phone shows.
  *
  * The conversation itself is not drawn here. window.CrundiChat (claude-chat.js)
  * does that, exactly as it does in the workbench; this file is the host it
@@ -234,11 +234,6 @@
     if (act === 'open') openMain('/?chat=' + encodeURIComponent(sid));
     if (act === 'stop') apiFetch('/api/ui-sessions/' + encodeURIComponent(sid) + '/interrupt', { method: 'POST' }).then(function (r) { if (!r.ok) toast('Could not stop it', 'error'); }).catch(function () { toast('Could not stop it', 'error'); });
   };
-  // The app shrinks the window for picture in picture and says so; the page
-  // drops everything that cannot be used at that size.
-  window.crundiSetPip = function (on) { document.body.classList.toggle('cp-pip', !!on); };
-  if (/[?&]pip=1/.test(location.search)) window.crundiSetPip(true);
-
   // ─── Start ───
   function start() {
     if (!sid || !/^[A-Za-z0-9_-]{1,80}$/.test(sid)) { note('Not a chat', 'This address does not name a chat.', 'Open Crundi', function () { openMain('/'); }); return; }

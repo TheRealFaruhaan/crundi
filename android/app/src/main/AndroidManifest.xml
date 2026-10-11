@@ -40,15 +40,13 @@
 
         <!-- One chat by itself. Android needs all of this before it will put
              an activity in a bubble: it must be resizable, embeddable, and
-             able to exist several times at once (one per chat). The same
-             activity floats as picture in picture. -->
+             able to exist several times at once (one per chat). -->
         <activity
             android:name=".ChatActivity"
             android:exported="false"
             android:resizeableActivity="true"
             android:allowEmbedded="true"
             android:documentLaunchMode="always"
-            android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
             android:windowSoftInputMode="adjustResize" />
 

@@ -175,6 +175,29 @@ class SettingsActivity : Activity() {
         }
         list.addView(Ui.button(this, "Connect another server", true) { startActivity(Intent(this, PairActivity::class.java)) }, Ui.wide(this, 6))
 
+        // ─── Finding out why a notification did not arrive ───
+        if (Push.available) {
+            list.addView(heading("Notification check"))
+            row("Show a test notification", "Made on this phone, with no server involved. If this does not appear, the phone is hiding Crundi's notifications.", null, "Show") { Notifier.localTest(this); draw() }
+            row("Register again", "Gives each paired server this phone's address and keys afresh.", null, "Register") {
+                PushLog.add(this, "Asked to register again")
+                Push.registerAll(this, force = true)
+                list.postDelayed({ draw() }, 2500)
+            }
+            val lines = PushLog.lines(this)
+            list.addView(TextView(this).apply {
+                text = if (lines.isEmpty()) "Nothing has happened yet. When a notification arrives, or fails to, it is noted here." else lines.takeLast(25).reversed().joinToString("\n")
+                setTextColor(getColor(R.color.text_dim))
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                typeface = Typeface.MONOSPACE
+                setLineSpacing(0f, 1.3f)
+                setTextIsSelectable(true)
+                val p = Ui.dp(this@SettingsActivity, 12)
+                setPadding(p, p, p, p)
+                background = GradientDrawable().apply { cornerRadius = Ui.dp(this@SettingsActivity, 12).toFloat(); setColor(getColor(R.color.surface)); setStroke(Ui.dp(this@SettingsActivity, 1), getColor(R.color.border)) }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = Ui.dp(this@SettingsActivity, 8) })
+        }
+
         // ─── The app ───
         list.addView(heading("About"))
         row("Updates", "This copy updates from ${Updater.WHERE}.", null, "Open") { Updater.open(this) }

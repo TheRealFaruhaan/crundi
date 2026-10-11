@@ -19,16 +19,33 @@ class PushService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        val sealed = message.data["c"] ?: return
-        for (server in Servers.all(applicationContext)) {
-            val keys = Push.keysOf(server) ?: continue
-            val text = PushBox.open(sealed, keys) ?: continue
-            val payload = try { JSONObject(text) } catch (e: Exception) { return }
-            // A change of state draws the live card and makes no sound;
-            // anything else is a notification.
-            if (payload.optBoolean("silent") && payload.optString("kind") == "state") LiveCards.onState(applicationContext, server, payload)
-            else Notifier.show(applicationContext, server, payload)
-            return
+        val app = applicationContext
+        try {
+            val sealed = message.data["c"]
+            if (sealed == null) { PushLog.add(app, "A message arrived with nothing in it"); return }
+            val servers = Servers.all(app)
+            for (server in servers) {
+                val keys = Push.keysOf(server) ?: continue
+                val text = PushBox.open(sealed, keys) ?: continue
+                val payload = JSONObject(text)
+                val kind = payload.optString("kind")
+                // A change of state draws the live card and makes no sound;
+                // anything else is a notification.
+                if (payload.optBoolean("silent") && kind == "state") {
+                    PushLog.add(app, "From ${server.host}: a chat is now ${payload.optString("state")}")
+                    LiveCards.onState(app, server, payload)
+                } else {
+                    PushLog.add(app, "From ${server.host}: a notification ($kind)")
+                    Notifier.show(app, server, payload)
+                }
+                return
+            }
+            // Sealed for a key this phone does not have. Registering again
+            // gives every server the keys it does have.
+            PushLog.add(app, "A message arrived (${sealed.length} characters) that none of ${servers.size} paired server's keys could open. Registering again.")
+            Push.registerAll(app, force = true)
+        } catch (e: Exception) {
+            PushLog.add(app, "A message arrived and handling it failed: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 }

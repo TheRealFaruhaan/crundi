@@ -103,9 +103,9 @@ object Notifier {
             flags(false),
         )
 
-    fun chatIntent(ctx: Context, chat: ChatRef, pip: Boolean = false): Intent =
-        Intent(ctx, ChatActivity::class.java).setAction("chat:${chat.key}${if (pip) ":pip" else ""}")
-            .putExtra(EXTRA_SERVER, chat.serverId).putExtra(EXTRA_CHAT, chat.id).putExtra(ChatActivity.EXTRA_TITLE, chat.title).putExtra(ChatActivity.EXTRA_PIP, pip)
+    fun chatIntent(ctx: Context, chat: ChatRef): Intent =
+        Intent(ctx, ChatActivity::class.java).setAction("chat:${chat.key}")
+            .putExtra(EXTRA_SERVER, chat.serverId).putExtra(EXTRA_CHAT, chat.id).putExtra(ChatActivity.EXTRA_TITLE, chat.title)
 
     /** Tell Android this chat is a conversation. Needed before it can be a bubble, and cheap to repeat. */
     private fun publishShortcut(ctx: Context, chat: ChatRef, person: Person) {
@@ -167,8 +167,23 @@ object Notifier {
     private fun plain(text: String): String = text.replace(Regex("""(\*\*|__|`{1,3})"""), "").replace(Regex("""(?m)^#{1,6}\s+"""), "").trim()
 
     private fun post(ctx: Context, id: Int, b: NotificationCompat.Builder) {
-        // Refused permission is the person's answer, not an error.
+        // Refused permission is the person's answer, not an error, but it is
+        // worth a line: "nothing appeared" needs a reason somebody can find.
+        if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) { PushLog.add(ctx, "Not shown: notifications are turned off for Crundi"); return }
         runCatching { NotificationManagerCompat.from(ctx).notify(id, b.build()) }
+            .onFailure { PushLog.add(ctx, "Android refused to show a notification: ${it.javaClass.simpleName}: ${it.message}") }
+    }
+
+    /** A notification made here, on the phone, with no server involved: it proves or disproves the last step by itself. */
+    fun localTest(ctx: Context) {
+        post(
+            ctx, "localtest".hashCode(),
+            NotificationCompat.Builder(ctx, SERVER)
+                .setSmallIcon(R.drawable.ic_stat).setColor(ctx.getColor(R.color.accent))
+                .setContentTitle("Crundi").setContentText("This phone can show Crundi's notifications.")
+                .setAutoCancel(true),
+        )
+        PushLog.add(ctx, "Showed a test notification made on this phone")
     }
 
     /** A notification that has just arrived, opened and parsed. */

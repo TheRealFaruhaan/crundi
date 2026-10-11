@@ -51,25 +51,40 @@ object Push {
     }
 
     /** Ask Google for this phone's token, then make sure every paired server has it. */
-    fun registerAll(ctx: Context) {
+    fun registerAll(ctx: Context, force: Boolean = false) {
         if (!init(ctx)) return
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             val token = if (task.isSuccessful) task.result else null
-            if (token.isNullOrEmpty()) { Log.w(TAG, "No push token from Google: ${task.exception?.message}"); return@addOnCompleteListener }
-            onToken(ctx, token)
+            if (token.isNullOrEmpty()) {
+                PushLog.add(ctx, "Google gave no address for this phone: ${task.exception?.message ?: "unknown reason"}")
+                Log.w(TAG, "No push token from Google: ${task.exception?.message}")
+                return@addOnCompleteListener
+            }
+            onToken(ctx, token, force)
         }
     }
 
-    /** A token, new or old: give it to each server that does not have it yet. */
-    fun onToken(ctx: Context, token: String) {
+    private val registering = Any()
+
+    /**
+     * A token, new or old: give it to each server that does not have it yet.
+     *
+     * One at a time. On a first start this is called twice at once, by the
+     * app asking for its token and by Google announcing the same token. Side
+     * by side, each made its own key pair for the server, and the pair the
+     * phone ended up keeping was not always the pair the server was last
+     * given: everything then arrived sealed for a key the phone no longer
+     * had, and nothing was ever shown. `force` registers again regardless.
+     */
+    fun onToken(ctx: Context, token: String, force: Boolean = false) {
         val app = ctx.applicationContext
-        Bg.run({
+        Bg.run({ synchronized(registering) {
             for (listed in Servers.all(app)) {
                 // Work on a fresh copy each time: a renewal inside the call
                 // below rewrites the stored server, and an older copy saved
                 // over it would bring a spent login back.
                 var server = Servers.byId(app, listed.id) ?: continue
-                if (server.pushToken == token && keysOf(server) != null) continue
+                if (!force && server.pushToken == token && keysOf(server) != null && server.pushBuild == BuildConfig.VERSION_CODE) continue
                 if (keysOf(server) == null) {
                     val k = PushBox.generate()
                     server.pushPrivate = Base64.getEncoder().encodeToString(k.privatePkcs8)
@@ -84,11 +99,14 @@ object Push {
                 if (r.ok) {
                     server = Servers.byId(app, server.id) ?: continue
                     server.pushToken = token
+                    server.pushBuild = BuildConfig.VERSION_CODE
                     Servers.save(app, server)
+                    PushLog.add(app, "Registered with ${server.host}")
                 } else {
+                    PushLog.add(app, "${server.host} did not take the registration (${r.status}${if (r.error != null) ": ${r.error}" else ""})")
                     Log.w(TAG, "${server.host} did not take the registration: ${r.status} ${r.error ?: ""}")
                 }
             }
-        }) { }
+        } }) { }
     }
 }

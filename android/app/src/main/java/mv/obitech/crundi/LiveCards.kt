@@ -140,7 +140,7 @@ object LiveCards {
                 .setTimeoutAfter(DONE_SHOWN_MS)
                 .setShortCriticalText("Done")
                 .setContentIntent(open(ctx, justFinished, id))
-            runCatching { nm.notify(id, done.build()) }
+            runCatching { nm.notify(id, done.build()) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
             return
         }
 
@@ -177,7 +177,7 @@ object LiveCards {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             ))
         }
-        runCatching { nm.notify(id, b.build()) }
+        runCatching { nm.notify(id, b.build()) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
     }
 
     private fun base(ctx: Context, e: Entry, project: String): NotificationCompat.Builder {

@@ -67,7 +67,6 @@ ok(html.indexOf('claude-chat.js') < html.indexOf('crundi-chat-page.js'), 'the ch
 ok(!/\son[a-z]+=/.test(html.replace(/<style>[\s\S]*?<\/style>/, '')), 'and no handler is written into the markup');
 for (const id of ['cp-back', 'cp-mark', 'cp-title', 'cp-proj', 'cp-more', 'cp-chat', 'cp-note', 'cp-menu']) ok(html.includes(`id="${id}"`), 'the page has its ' + id);
 ok(getChatPageHtml({ version: '"><script>x</script>', rootCss: '', tag: () => '"><b>' }).match(/<script\b/g).length === 3, 'nothing passed in can add markup');
-ok(html.includes('body.cp-pip #cp-head') && html.includes('.cc-composer'), 'picture in picture hides the header and the message box');
 
 // ─── Its script ───
 const js = readFileSync(join(root, 'app', 'vendor', 'crundi-chat-page.js'), 'utf8');
@@ -87,8 +86,9 @@ ok(/const about = chat \? \{ chat, url: `\/chat\/\$\{term\.id\}` \} : \{\};/.tes
 const cv = await import('../src/client-version.js');
 ok(cv.isGated('/chat/abc') === false, 'a client too old for the server can still load the page that tells it so');
 // The phone app's two extras in a chat's menu.
-ok(main.includes('data-action="chat-bubble"') && main.includes('data-action="chat-pip"') && main.includes("case 'chat-bubble':") && main.includes("case 'chat-pip':"), 'a chat\'s menu can offer Bubble and Float, and both are wired');
-ok(/NATIVE_CAN\.indexOf\('bubble'\) >= 0\) h \+=/.test(main) && /NATIVE_CAN\.indexOf\('pip'\) >= 0\) h \+=/.test(main) && main.includes('window.CrundiNative.can'), 'but only where the app round the page says it can: in a browser neither is drawn');
+ok(main.includes('data-action="chat-bubble"') && main.includes("case 'chat-bubble':"), 'a chat\'s menu can offer Bubble, and it is wired');
+ok(/NATIVE_CAN\.indexOf\('bubble'\) >= 0\) h \+=/.test(main) && main.includes('window.CrundiNative.can'), 'but only where the app round the page says it can: in a browser it is not drawn');
+ok(!/chat-pip|openPip|cp-pip|crundiSetPip/.test(main + html + js), 'the floating window is gone: bubbles are the one way a chat floats');
 const check = readFileSync(join(root, 'scripts', 'check-syntax.mjs'), 'utf8');
 ok(check.includes("'crundi-chat-page.js'"), 'the page\'s script is in the syntax check');
 

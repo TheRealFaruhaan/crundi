@@ -378,10 +378,27 @@ and the Linux desktop client.
     permission request is waiting. The notification says what Claude wants to
     do; Approve needs the phone unlocked. Questions and plans are never
     offered as yes or no.
-- **Still not built:** buttons inside the floating window, and the What's New
+- **Still not built:** the What's New
   steps for notifications, bubbles and the live card (held until they have
   been seen working).
-- **Next:** try all of it on a real phone.
+- **First test on the owner's phone (app 1.0.0-dev.3): nothing arrived.** No
+  notification, no live card. The server had the phone registered and Google
+  accepted every message, so the fault was on the phone. A likely cause was
+  found and fixed in app 1.0.0-dev.4: on a first start the app registered
+  twice at once, each time with a new key pair, and could keep one pair while
+  the server held the other, after which nothing it received could be opened.
+  Registration is now one at a time, repeats once per app build, and repeats
+  itself whenever a message arrives that no paired server's keys can open.
+  **This is a likely cause, not a proven one.**
+- **App settings has a notification check** (1.0.0-dev.4): a test notification
+  made on the phone, a Register again button, and a log of what arrived and
+  what became of it, with no message text or tokens in it. If notifications
+  still fail, that log says at which step.
+- **The floating window (picture in picture) was removed** at the owner's
+  request. Bubbles are the one way a chat floats.
+- **Release builds are shrunk with R8** from 1.0.0-dev.4. The page calls into
+  the app by name; `proguard-rules.pro` keeps those names.
+- **Next:** try 1.0.0-dev.4 on the phone and read the notification log.
 
 ## API notes for the app
 

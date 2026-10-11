@@ -75,6 +75,9 @@ class Server(
     var pushPublic: String = "",
     var pushAuth: String = "",
     var pushToken: String = "",
+    // Which build of the app last registered. A new build registers again,
+    // which also puts right a registration an older build got wrong.
+    var pushBuild: Int = 0,
 ) {
     val host: String get() = baseUrl.substringAfter("://")
     val insecure: Boolean get() = baseUrl.startsWith("http://")
@@ -82,14 +85,14 @@ class Server(
     fun toJson() = JSONObject().apply {
         put("id", id); put("baseUrl", baseUrl); put("username", username); put("deviceName", deviceName)
         put("bgToken", bgToken); put("bgRefresh", bgRefresh); put("pageToken", pageToken); put("pageRefresh", pageRefresh)
-        put("pushPrivate", pushPrivate); put("pushPublic", pushPublic); put("pushAuth", pushAuth); put("pushToken", pushToken)
+        put("pushPrivate", pushPrivate); put("pushPublic", pushPublic); put("pushAuth", pushAuth); put("pushToken", pushToken); put("pushBuild", pushBuild)
     }
 
     companion object {
         fun fromJson(o: JSONObject) = Server(
             o.getString("id"), o.getString("baseUrl"), o.optString("username"), o.optString("deviceName"),
             o.optString("bgToken"), o.optString("bgRefresh"), o.optString("pageToken"), o.optString("pageRefresh"),
-            o.optString("pushPrivate"), o.optString("pushPublic"), o.optString("pushAuth"), o.optString("pushToken"),
+            o.optString("pushPrivate"), o.optString("pushPublic"), o.optString("pushAuth"), o.optString("pushToken"), o.optInt("pushBuild"),
         )
     }
 }
