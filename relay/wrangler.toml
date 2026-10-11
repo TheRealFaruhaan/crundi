@@ -1,0 +1,36 @@
+# The Crundi push relay. See src/index.js and ../android/RELAY.md.
+#
+# Deployed by .github/workflows/relay.yml when anything under relay/ changes
+# on main. Nothing secret is in this file: the admin token and the Firebase
+# service account are Worker secrets (`wrangler secret put`), never committed.
+name = "crundi-push-relay"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+workers_dev = false
+
+# The address servers are built to use (DEFAULT_RELAY_URL in src/mobile-push.js).
+routes = [
+  { pattern = "cr-rl-pub1.faruhaan.com", custom_domain = true },
+]
+
+[vars]
+RELAY_NAME = "Crundi"
+CONTACT_TELEGRAM = "TheRealFaruhaan"
+
+# Issued keys, stored by hash.
+[[kv_namespaces]]
+binding = "KEYS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Requests per key per minute. Counted per Cloudflare location and
+# deliberately approximate: it stops a runaway server, it is not accounting.
+[[ratelimits]]
+name = "PER_KEY"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+# No request logging is switched on. A log line would hold a server's address
+# and the time of each of its notifications, which nobody needs kept.

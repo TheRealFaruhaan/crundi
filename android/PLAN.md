@@ -22,8 +22,9 @@ code, not from building any of it.
 - **The relay refuses anything without a key.** Keys are issued by hand, one
   per server, and entered in that server's settings. To get one, a server owner
   contacts the publisher on Telegram: `@TheRealFaruhaan`.
-- **Relay hosting:** Cloudflare Workers. Relay code lives in a separate private
-  repo.
+- **Relay hosting:** Cloudflare Workers. The relay's code is in this repo, in
+  `relay/`. A GitHub Action tests and deploys it when a push to `main` changes
+  that folder, and at no other time.
 - **The published app works with the published relay only**, at
   `https://cr-rl-pub1.faruhaan.com`. Anyone wanting their own relay ships
   their own build of the app with their own push credentials; their users ask
@@ -230,8 +231,13 @@ and the Linux desktop client.
   against a stand-in relay; no real relay exists yet.
 - **Held back with the pairing screen:** the "Mobile push" section in Settings
   (key field, who to ask, Test button). The routes behind it exist.
-- **Next:** the relay itself (stage 2), then the compact chat view and bridge
-  detection.
+- **Done, not yet deployed:** the relay (`relay/`): key checking, issuing and
+  revoking, rate limit, sending to Android through Firebase. iOS sending is a
+  stub.
+- **Waiting on:** the first deploy (needs the Cloudflare token approved), and
+  a Firebase service account before anything reaches a phone.
+- **Next:** the compact chat view and bridge detection, then the Android
+  shell.
 
 ## API notes for the app
 

@@ -1,0 +1,70 @@
+# The push relay (relay/), tested and deployed to Cloudflare.
+#
+# Runs only when the relay itself changes: a push to main that touches
+# nothing under relay/ does not build it and does not deploy it. The relay is
+# one deployment that every server uses, so it follows main and never dev; to
+# put a change out before it is merged, run this by hand on the branch that
+# has it (Actions → this workflow → Run workflow).
+#
+# Needs one repository secret, CLOUDFLARE_API_TOKEN (Workers and DNS edit).
+# The relay's own secrets (ADMIN_TOKEN, FCM_SERVICE_ACCOUNT) live in
+# Cloudflare and are not touched here: a deploy keeps them as they are.
+name: Relay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'relay/**'
+      - '.github/workflows/relay.yml'
+  pull_request:
+    paths:
+      - 'relay/**'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy after the tests pass'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node relay/test.mjs
+
+  deploy:
+    needs: test
+    # Never from a pull request: that would deploy somebody's unmerged change.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Deploy
+        working-directory: relay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy
+      - name: Check it answers
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS https://cr-rl-pub1.faruhaan.com/v1/info | grep -q '"ok":true'; then exit 0; fi
+            sleep 5
+          done
+          echo "The relay did not answer after deploying" >&2
+          exit 1
