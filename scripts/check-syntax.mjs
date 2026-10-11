@@ -47,6 +47,7 @@ const files = [
   ...walk(join(root, 'scripts')),
   join(root, 'app', 'vendor', 'claude-chat.js'),
   join(root, 'app', 'vendor', 'crundi-widgets.js'),
+  join(root, 'app', 'vendor', 'crundi-chat-page.js'),
 ];
 
 for (const f of files) {

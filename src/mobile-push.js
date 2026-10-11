@@ -248,6 +248,7 @@ function clip(text, maxBytes) {
 
 /** What the phone decrypts. `v` is this shape's version; add fields, keep these. */
 export function buildPayload(text, meta = {}) {
+  const c = meta.chat;
   return JSON.stringify({
     v: 1,
     title: clip(meta.title || 'Crundi', 120),
@@ -255,6 +256,15 @@ export function buildPayload(text, meta = {}) {
     kind: String(meta.tag || 'crundi').slice(0, 40),
     url: String(meta.url || '/').slice(0, 300),
     at: Date.now(),
+    // Present when the notification is about one chat. It is what lets the
+    // phone file it under that chat's bubble, name it and draw its head,
+    // without asking the server anything first.
+    ...(c && c.id ? { chat: {
+      id: String(c.id).slice(0, 80),
+      title: clip(c.title || 'Chat', 120),
+      project: clip(c.project || '', 80),
+      mark: c.mark ? { initials: String(c.mark.initials || '').slice(0, 4), color: String(c.mark.color || '').slice(0, 9), colorDeep: String(c.mark.colorDeep || '').slice(0, 9) } : null,
+    } } : {}),
   });
 }
 
@@ -298,7 +308,9 @@ export async function send(text, meta = {}, { fetchImpl = fetch } = {}) {
       payload: encryptFor(payload, d.keys.p256dh, d.keys.auth).toString('base64url'),
       ttl: TTL_S,
       priority: 'high',
-      collapse: String(meta.tag || 'crundi').slice(0, 40),
+      // Per chat where there is one: a second chat finishing must not
+      // replace the first one's undelivered notification.
+      collapse: (String(meta.tag || 'crundi') + (meta.chat?.id ? '.' + String(meta.chat.id).replace(/[^A-Za-z0-9._-]/g, '') : '')).slice(0, 40),
     }));
     let r;
     try {

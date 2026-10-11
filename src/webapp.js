@@ -70,6 +70,8 @@ import { toSvg as crundiCodeSvg } from './crundi-code.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import * as mobilePush from './mobile-push.js';
+import { getChatPageHtml } from './chat-page.js';
+import { projectMark } from './project-mark.js';
 import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
@@ -394,6 +396,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
 
   let htmlCache = getWebappHtml(config.botUsername || '', APP_VERSION);
+  // The compact chat page borrows the main page's palette, so it is built
+  // from the main page and rebuilt whenever that is.
+  let chatPageCache = '';
+  function chatPageHtml() {
+    if (!chatPageCache) {
+      const root = /:root\s*\{[^}]*\}/.exec(htmlCache);
+      chatPageCache = getChatPageHtml({
+        version: APP_VERSION,
+        rootCss: root ? root[0] : '',
+        tag: (file) => { try { const st = statSync(join(VENDOR_DIR, file)); return Math.floor(st.mtimeMs).toString(36) + '-' + st.size.toString(36); } catch { return APP_VERSION; } },
+      });
+    }
+    return chatPageCache;
+  }
 
   // ─── Auth: Telegram Login Widget ───
 
@@ -1232,10 +1248,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (cur !== pv && (cur === 'idle' || cur === 'needs-input') && !term.background && !term.collaborator) {
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
-      if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
+      // Which chat this is about, for a channel that can do something with
+      // it: the phone app files the notification under that chat's bubble and
+      // opens /chat/<id> from it. Only chats have that page; a terminal does not.
+      const chat = term.kind === 'ui'
+        ? { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: projectMark(term.project || '') }
+        : null;
+      const about = chat ? { chat, url: `/chat/${term.id}` } : {};
+      if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`, about);
       else {
         const fin = finishedMessage(term, name, proj);
-        notifyEvent('finished', fin.text, { markdown: fin.markdown });
+        notifyEvent('finished', fin.text, { markdown: fin.markdown, ...about });
       }
     }
     broadcastState();
@@ -2049,6 +2072,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Serve web app
     if (path === '/' && req.method === 'GET') {
       html(res, htmlCache);
+      return;
+    }
+    // One conversation by itself: what a chat bubble on a phone shows (see
+    // chat-page.js). The page is the same for every chat and holds nothing
+    // private; which chat, and whether the caller may see it, is settled by
+    // the API calls it goes on to make.
+    if (/^\/chat\/[A-Za-z0-9_-]{1,80}\/?$/.test(path) && req.method === 'GET') {
+      html(res, chatPageHtml());
       return;
     }
 
@@ -3442,7 +3473,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // The chat counterpart to /api/terminals. Same {project,title,order} shape,
     // but the conversation itself streams over the WebSocket rather than bytes.
     if (path === '/api/ui-sessions' && req.method === 'GET') {
-      return json(res, { sessions: claudeUi ? claudeUi.list() : [] });
+      // `mark` is the project's tile (project-mark.js), worked out here so
+      // every client draws the same one without carrying the recipe.
+      return json(res, { sessions: (claudeUi ? claudeUi.list() : []).map((s) => ({ ...s, mark: projectMark(s.project) })) });
     }
 
     // ─── Deferred chat messages ───
@@ -6149,7 +6182,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     getInternalApiKey() { return internalApiKey; },
 
     /** Regenerate the HTML cache with an updated bot username (call after bot.init). */
-    refreshHtml(botUsername) { htmlCache = getWebappHtml(botUsername, APP_VERSION); },
+    refreshHtml(botUsername) { htmlCache = getWebappHtml(botUsername, APP_VERSION); chatPageCache = ''; },
 
     /** Broadcast state update to all connected SSE clients. */
     broadcastState,

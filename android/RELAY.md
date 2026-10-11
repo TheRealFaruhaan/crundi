@@ -110,6 +110,12 @@ All are JSON, `{ "ok": false, "error": "<code>" }`.
 ```
 
 - `v` is the version of this shape. Fields are added, never renamed or removed.
+- `chat` is present when the notification is about one chat:
+  `{ "id", "title", "project", "mark": { "initials", "color", "colorDeep" } }`.
+  The app files the notification under that chat's bubble and opens
+  `/chat/<id>` from it. `url` is that page's path.
+- With a chat, the collapse tag is `<kind>.<chat id>`, so one chat's
+  notification does not replace another's.
 - `kind` is the event: `finished`, `needsInput`, `serviceDown`, `test` and so
   on. It doubles as the collapse tag.
 - `body` is cut to 1800 bytes so the whole message stays inside the 4096 bytes

@@ -278,8 +278,22 @@ and the Linux desktop client.
   app.
 - **Auto-deploy starts when `dev` is merged:** GitHub only runs the workflow
   once it is on `main`.
-- **Next:** the compact chat view and bridge detection, then the Android
-  shell.
+- **Done:** the compact chat, at `/chat/<id>` (`src/chat-page.js`,
+  `app/vendor/crundi-chat-page.js`). Its own small page, drawing the
+  conversation with the same component the workbench uses. `?pip=1`, or
+  `window.crundiSetPip(true)`, switches it to the picture-in-picture layout.
+- **Done:** project marks (`src/project-mark.js`). Projects had no picture, so
+  each gets a tile: its initials on a colour worked out from its name. The
+  app's Kotlin copy must give the same values; the test pins them.
+- **Done:** a chat's notifications say which chat they are about (id, title,
+  project, mark) and point at its page.
+- **Done:** the bridge contract. Inside the app, `window.CrundiNative` may
+  offer `session()`, `saveSession(json)`, `close()`, `openMain(path)` and
+  `chatState(json)`. Each is optional, so the page is the same page in a
+  browser.
+- **Stage 1 is complete** apart from the screens held back until there is an
+  app (Connect a phone, Mobile push settings, the What's New step).
+- **Next:** the Android shell (stage 3).
 
 ## API notes for the app
 

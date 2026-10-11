@@ -133,6 +133,20 @@ try { p1.open(m2.payload); crossed = true; } catch { /* as it should be */ }
 ok(!crossed, 'and one phone cannot open another\'s');
 ok(mp.devices().every((d) => d.lastOkAt > 0) && mp.status().lastError === '', 'a delivery is remembered against each phone');
 
+// A notification about one chat says which, so the phone can file it.
+r = relay(allSent);
+const MARK = { initials: 'C', hue: 316, color: '#b93195', colorDeep: '#8c2170' };
+await mp.send('Done.', { tag: 'finished', url: '/chat/abc123', chat: { id: 'abc123', title: 'Fix the login redirect', project: 'crundi', mark: MARK } }, { fetchImpl: r.fetchImpl });
+const about = p1.open(r.seen[0].body.messages[0].payload);
+ok(about.chat && about.chat.id === 'abc123' && about.chat.title === 'Fix the login redirect' && about.chat.project === 'crundi' && about.url === '/chat/abc123', 'a notification about a chat carries its id, title and project');
+ok(about.chat.mark.initials === 'C' && about.chat.mark.color === '#b93195' && about.chat.mark.colorDeep === '#8c2170', 'and the project\'s mark, so the phone can draw the bubble\'s head without asking');
+ok(r.seen[0].body.messages[0].collapse === 'finished.abc123' && !JSON.stringify(r.seen[0].body).includes('Fix the login'), 'it collapses per chat, and the relay still reads none of it');
+ok(!('chat' in got1), 'a notification that is not about a chat has no chat in it');
+r = relay(allSent);
+await mp.send('x', { tag: 'finished', chat: { id: 'x'.repeat(200), title: 'T'.repeat(500), project: 'p', mark: null } }, { fetchImpl: r.fetchImpl });
+const big = p1.open(r.seen[0].body.messages[0].payload);
+ok(big.chat.id.length === 80 && Buffer.byteLength(big.chat.title) <= 120 && big.chat.mark === null && r.seen[0].body.messages[0].collapse.length <= 40, 'over-long chat details are cut to size');
+
 // Long text, and text that is mostly multi-byte.
 r = relay(allSent);
 await mp.send('漢'.repeat(4000), { tag: 'finished' }, { fetchImpl: r.fetchImpl });
