@@ -335,6 +335,9 @@ and the Linux desktop client.
     client's browser is always used, which cannot reach the server's own
     localhost.
   - The phone app as a browser host, so the Browser pane works in it.
+  - Whenever an MCP tool changes, the instructions that describe it change
+    with it: the tool's own description, the system prompt text the server
+    gives Claude, and the `crundi` skill's reference pages.
 - **Next:** try notifications and bubbles on a real phone.
 
 ## API notes for the app
