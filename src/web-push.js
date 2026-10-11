@@ -228,4 +228,11 @@ export async function send(text, meta = {}) {
   return delivered > 0;
 }
 
+/**
+ * Encrypt text for one subscriber's keys. Exported for mobile-push.js: a
+ * phone makes the same kind of key pair a browser does, so the same sealing
+ * serves both, and only the way the ciphertext travels differs.
+ */
+export const encryptFor = (plaintext, p256dh, auth) => encryptPayload(plaintext, p256dh, auth);
+
 export const __testing = { encryptPayload, hkdf, derToJose, b64u, unb64u };

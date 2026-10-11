@@ -69,6 +69,7 @@ import { toSvg as qrSvg } from './qr.js';
 import { toSvg as crundiCodeSvg } from './crundi-code.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
+import * as mobilePush from './mobile-push.js';
 import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
@@ -452,6 +453,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     for (const [t, e] of refreshTokens) if (gone.has(e.familyId)) refreshTokens.delete(t);
     for (const fid of gone) families.delete(fid);
     saveSessions();   // a revoked login must not come back on restart
+    // A phone that has been cut off must stop being told things as well.
+    if (m?.device?.id) mobilePush.removeDevice(m.device.id);
   }
 
   /** Every sign-in still able to authenticate, newest activity first. */
@@ -1106,6 +1109,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         : 'For browsers. The desktop app cannot do Web Push - use the Desktop app channel.';
     },
     send: (text, meta) => webPush.send(text, meta),
+  });
+
+  channels.register({
+    id: 'mobile',
+    label: 'Phone app',
+    enabledByDefault: true,
+    available: () => mobilePush.hasKey() && mobilePush.devices().length > 0,
+    unavailableReason: () => (!mobilePush.hasKey()
+      ? `This server has no push key yet. Ask @${mobilePush.KEY_CONTACT.telegram} on Telegram for one, then enter it here.`
+      : 'No phone has been paired and allowed to receive notifications yet.'),
+    describe: () => {
+      const n = mobilePush.devices().length;
+      return n ? `${n} phone${n === 1 ? '' : 's'} registered.` : 'Notifications in the Crundi app on your phone.';
+    },
+    send: (text, meta) => mobilePush.send(text, meta),
   });
 
   // Single entry point for every Telegram notification. Honors the per-event
@@ -4225,6 +4243,46 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { body = null; }
       return json(res, webPush.removeSubscription(body?.endpoint));
+    }
+
+    // ─── Phone app push ───
+    // All past the route policy, which lists none of these for collaborators:
+    // what is sent through here is the owner's notifications, and a
+    // collaborator's phone has no business receiving them.
+    if (path === '/api/push/mobile' && req.method === 'GET') {
+      return json(res, { ok: true, ...mobilePush.status() });
+    }
+    if (path === '/api/push/mobile/key' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as no key */ }
+      const r = mobilePush.setKey(body.key, body.relayUrl);
+      if (!r.ok) return json(res, r, 400);
+      // Say straight away whether the relay accepts it, rather than letting
+      // the first missed notification be how anyone finds out.
+      const check = await mobilePush.checkKey();
+      return json(res, { ok: true, accepted: check.ok, label: check.label || '', error: check.ok ? '' : check.error, ...mobilePush.status() });
+    }
+    if (path === '/api/push/mobile/key' && req.method === 'DELETE') {
+      mobilePush.clearKey();
+      return json(res, { ok: true, ...mobilePush.status() });
+    }
+    if (path === '/api/push/mobile/test' && req.method === 'POST') {
+      const check = await mobilePush.checkKey();
+      if (!check.ok) return json(res, { ok: false, error: check.error });
+      if (!mobilePush.devices().length) return json(res, { ok: true, keyOk: true, sent: false, note: 'The key is good. No phone is registered yet, so nothing was sent.' });
+      const sent = await mobilePush.send('Notifications are working.', { title: 'Crundi', tag: 'test' });
+      return json(res, { ok: sent, keyOk: true, sent, error: sent ? '' : (mobilePush.status().lastError || 'The relay did not take the test notification.') });
+    }
+    // The phone itself, registering or withdrawing. WHICH phone is read off
+    // the login making the request: one device cannot register as another.
+    if ((path === '/api/push/mobile/register' || path === '/api/push/mobile/unregister') && req.method === 'POST') {
+      const device = families.get(tokens.get(extractToken(req))?.familyId)?.device;
+      if (!device?.id) return json(res, { ok: false, error: 'Only a paired device can register for push' }, 403);
+      if (path.endsWith('/unregister')) return json(res, mobilePush.removeDevice(device.id));
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as unusable */ }
+      const r = mobilePush.registerDevice({ deviceId: device.id, name: device.name }, body);
+      return json(res, r, r.ok ? 200 : 400);
     }
 
     if (path === '/api/push/test' && req.method === 'POST') {

@@ -217,8 +217,15 @@ and the Linux desktop client.
   UI, the `/pair` landing page a phone's camera opens, and the What's New step.
   Showing a pairing screen before there is an app to scan it would advertise
   something nobody can use.
-- **Next:** mobile push channel and the relay key setting, then the compact
-  chat view and bridge detection.
+- **Done:** the Crundi code, with its ending (`src/crundi-code.js`).
+- **Done:** the server's side of phone push (`src/mobile-push.js`): the
+  "Phone app" notification channel, the relay key, device registration, and
+  the contract the relay must meet (`android/RELAY.md`). Run end to end
+  against a stand-in relay; no real relay exists yet.
+- **Held back with the pairing screen:** the "Mobile push" section in Settings
+  (key field, who to ask, Test button). The routes behind it exist.
+- **Next:** the relay itself (stage 2), then the compact chat view and bridge
+  detection.
 
 ## API notes for the app
 

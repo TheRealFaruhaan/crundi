@@ -50,6 +50,7 @@ export const MIN_CLIENT = Object.freeze({
 export const CAPABILITIES = Object.freeze([
   'handshake',
   'pairing',
+  'mobile-push',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));
