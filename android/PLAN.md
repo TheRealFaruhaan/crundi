@@ -231,11 +231,16 @@ and the Linux desktop client.
   against a stand-in relay; no real relay exists yet.
 - **Held back with the pairing screen:** the "Mobile push" section in Settings
   (key field, who to ask, Test button). The routes behind it exist.
-- **Done, not yet deployed:** the relay (`relay/`): key checking, issuing and
-  revoking, rate limit, sending to Android through Firebase. iOS sending is a
-  stub.
-- **Waiting on:** the first deploy (needs the Cloudflare token approved), and
-  a Firebase service account before anything reaches a phone.
+- **Done and live:** the relay (`relay/`), at
+  `https://cr-rl-pub1.faruhaan.com`: key checking, issuing and revoking, rate
+  limit, sending to Android through Firebase project `obitech-crundi`. Google
+  accepts the relay's credentials (a send to a made-up device token came back
+  `INVALID_ARGUMENT`, which is Google rejecting the token, not the relay). iOS
+  sending is a stub.
+- **Not yet proven:** a notification reaching a real phone. That needs the
+  app.
+- **Auto-deploy starts when `dev` is merged:** GitHub only runs the workflow
+  once it is on `main`.
 - **Next:** the compact chat view and bridge detection, then the Android
   shell.
 
