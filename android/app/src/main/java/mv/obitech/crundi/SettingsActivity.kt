@@ -136,6 +136,12 @@ class SettingsActivity : Activity() {
             row("Bubbles", state + if (Build.MANUFACTURER.equals("samsung", true)) "\nOn Samsung, also set Notifications, Advanced settings, Floating notifications to Bubbles." else "", good, "Manage") {
                 runCatching { startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)) }.onFailure { notificationSettings() }
             }
+            val prefs = getSharedPreferences("crundi", Context.MODE_PRIVATE)
+            val onLeave = prefs.getBoolean(MainActivity.PREF_BUBBLE_ON_LEAVE, true)
+            row("Bubbles when you leave", if (onLeave) "On. Chats that are working or waiting on you get a bubble when you leave the app." else "Off. Bubbles appear only when you ask for one, or a chat notifies.", null, if (onLeave) "Turn off" else "Turn on") {
+                prefs.edit().putBoolean(MainActivity.PREF_BUBBLE_ON_LEAVE, !onLeave).apply()
+                draw()
+            }
         } else row("Bubbles", "Need Android 11 or newer.", null, null, null)
 
         when (LiveCards.chipAllowed(this)) {

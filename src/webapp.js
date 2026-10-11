@@ -1913,7 +1913,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
   const dismissedChatCards = new Set();
 
+  // ─── Requests that have been dealt with ───
+  // A phone shows "Claude wants to run a command with a secret" until
+  // somebody swipes it away, long after it was approved on a computer. Each
+  // kind of request is counted here; when the last one of a kind is answered,
+  // by anyone, anywhere, phones are told to take that notification down.
+  const waitingKinds = { secretRequest: 0, collabPermission: 0 };
+  function tellPhonesAnswered() {
+    let now;
+    try { now = { secretRequest: pendingSecretRequests.size, collabPermission: approvals.pending().length }; } catch { return; }
+    const cleared = Object.keys(now).filter((k) => waitingKinds[k] > 0 && now[k] === 0);
+    Object.assign(waitingKinds, now);
+    if (!cleared.length || !channels.isEnabled('mobile')) return;
+    mobilePush.send('', { tag: 'clear', silent: true, clear: cleared }).catch(() => { /* not worth a log line */ });
+  }
+
   function broadcastApprovals() {
+    tellPhonesAnswered();
     // Owners only: a collaborator's own pending requests reach them through
     // /api/collab/me, and this list names other people's work.
     const payload = `event: approvals\ndata: ${JSON.stringify(approvalsSnapshot())}\n\n`;

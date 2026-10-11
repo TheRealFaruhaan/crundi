@@ -421,7 +421,8 @@ and the Linux desktop client.
   notifications, whether the card meets Android's rules, and whether Android
   promoted it. Samsung has had its own live notification system limited to
   approved apps; whether that is what stands in the way is not known yet.
-- **Asked for, not built: notifications that go away once attended to.**
+- **Was asked for, and is now built (see below): notifications that go away
+  once attended to.** The request as it was made:
   - A request notification (a secret, a permission) should disappear once it
     has been answered, wherever it was answered.
   - A chat's notification should disappear once that chat has been opened.
@@ -456,6 +457,26 @@ and the Linux desktop client.
   it again behind a loading screen. The app now asks the loaded page for the
   chat (`window.crundiOpenChat(id)`), and loads an address only if the page
   is too old to be asked.
+- **Rebuilt as the same app 1.0.0-dev.6 (it had not been uploaded), with
+  server 1.20.0-dev.9. None of this has run on a phone:**
+  - **What Claude shows in a chat is drawn in a bubble too.** Files to
+    download, pictures, video, sound and frames were invisible there, because
+    the compact page never loaded the code that draws them. That code now
+    lives in `crundi-widgets.js` (`toolMedia`) and both pages use it. A
+    bubble can save files.
+  - **Notifications take themselves down.** A chat's, when the chat is on
+    screen in the app (the page reports which chats are really in view) or
+    when the chat starts working again, which means somebody answered it. A
+    request's (a secret, a collaborator's permission), when the last waiting
+    request of that kind has been answered anywhere; the server sends phones
+    a silent "clear".
+  - **A chat open in the main window loses its bubble**, so its own head is
+    not floating over it.
+  - **Bubbles for active chats when leaving the app.** Chats that are
+    working, waiting, or waiting on the person get a closed bubble as the app
+    is left. On by default; App settings turns it off.
+  - **Approval requests vibrate.** They went to the quiet Server channel;
+    they have a Requests channel of their own now.
 - **Next:** see whether the chip appears on the phone with 1.0.0-dev.6.
 
 ## API notes for the app

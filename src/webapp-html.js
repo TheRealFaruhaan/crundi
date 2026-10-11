@@ -6720,52 +6720,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function widgetToolExtra(t, entry) {
       if (!widgetsOn() || !entry || entry.status !== 'done' || entry.isError) return null;
       const name = String(entry.name || '');
-      // Pictures Claude showed with show_image. Only the stored names are
-      // taken from the result, and only if they look like ours; the caption
-      // is set as text.
-      // Things Claude showed with show_image / show_video / show_audio /
-      // show_file. Only stored names and ids are taken from the result, and
-      // only if they look like ours; every word shown is set as text.
-      if (/show_(image|video|audio|file|embed)$/.test(name)) {
-        let r = null;
-        try { r = JSON.parse(String(entry.result || '')); } catch { return null; }
-        const sid = encodeURIComponent(t.id);
-        const NAME = /^[0-9a-f]{16}([.]poster)?[.](png|jpg|gif|webp|mp4|webm|mov|mp3|wav|ogg|m4a|flac|weba)$/;
-        const EMBED = /^[0-9a-f]{16}[.]embed$/;
-        const num = (v, max) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n <= max ? n : 0; };
-        // 1.19.19 answered show_image with { images: [{ name, caption }] }.
-        const raw = r && Array.isArray(r.items) ? r.items : ((r && Array.isArray(r.images)) ? r.images.map(i => ({ ...i, kind: 'image' })) : []);
-        const items = [];
-        for (const i of raw) {
-          if (!i) continue;
-          const base = { caption: String(i.caption || '').slice(0, 200), filename: String(i.filename || '').slice(0, 200), size: num(i.size, 1e13) };
-          if (i.kind === 'embed') {
-            // A frame: either an https address that is not this site's own (a
-            // frame of our own origin could act as us), or stored HTML, which
-            // the frame gets as text and runs with no origin at all.
-            const e = { ...base, kind: 'embed', title: String(i.title || '').slice(0, 200), provider: String(i.provider || '').slice(0, 60), w: num(i.w, 100), h: num(i.h, 100), height: num(i.height, 1200), width: num(i.width, 2000) };
-            if (i.name) {
-              if (!EMBED.test(String(i.name))) continue;
-              e.htmlUrl = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.name);
-            } else {
-              let u = null; try { u = new URL(String(i.src || '')); } catch { u = null; }
-              if (!u || u.protocol !== 'https:' || u.host === location.host) continue;
-              e.src = u.href;
-            }
-            let open = null; try { open = new URL(String(i.url || '')); } catch { open = null; }
-            if (open && open.protocol === 'https:') e.openUrl = open.href;
-            items.push(e);
-          } else if (i.kind === 'file') {
-            if (!/^[0-9a-f]{16}$/.test(String(i.id || ''))) continue;
-            items.push({ ...base, kind: 'file', url: '/api/chat-media/file?session=' + sid + '&id=' + i.id });
-          } else if (['image', 'video', 'audio'].includes(i.kind) && NAME.test(String(i.name || ''))) {
-            const it = { ...base, kind: i.kind, url: '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.name), w: num(i.w, 20000), h: num(i.h, 20000), duration: num(i.duration, 1e6) };
-            if (i.poster && NAME.test(String(i.poster))) it.posterUrl = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.poster);
-            items.push(it);
-          }
-        }
-        return items.length ? window.CrundiWidgets.mediaNode(items, String((r && r.caption) || '').slice(0, 300)) : null;
-      }
+      // Pictures, video, sound, files and frames Claude showed in the chat
+      // are drawn by the widgets file, which the compact chat page shares.
+      if (/show_(image|video|audio|file|embed)$/.test(name)) return window.CrundiWidgets.toolMedia(t.id, entry);
       const id = String((entry.input && entry.input.id) || '').toLowerCase();
       if (!id) return null;
       if (/widget_render$/.test(name)) return window.CrundiWidgets.shotsNode(t.project || currentProject, id);
@@ -7159,6 +7116,25 @@ export function getWebappHtml(botUsername, appVersion = '') {
         reveal();
       }
       return true;
+    }
+    // Tell the phone app which chats are actually on screen, so it can take
+    // their notifications down: a notification for a chat you are reading is
+    // only clutter. "On screen" is measured, not assumed. On a phone the
+    // chats of a project are stacked, and one further down the page has not
+    // been seen just because it exists.
+    if (window.CrundiNative && window.CrundiNative.seen) {
+      setInterval(() => {
+        if (document.visibilityState !== 'visible' || currentTab !== 'workbench') return;
+        for (const id of chatViews.keys()) {
+          const cell = document.querySelector('[data-cellkey="live:' + id + '"]');
+          if (!cell) continue;
+          const r = cell.getBoundingClientRect();
+          const shown = Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0);
+          if (r.height > 0 && shown / Math.min(r.height, window.innerHeight) >= 0.4) {
+            try { window.CrundiNative.seen(String(id)); } catch (e) { /* the app's problem */ }
+          }
+        }
+      }, 3000);
     }
     window.crundiOpenChat = (sid) => {
       let tries = 0;

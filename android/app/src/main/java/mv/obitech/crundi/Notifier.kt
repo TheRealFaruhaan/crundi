@@ -57,6 +57,11 @@ object Notifier {
     const val CHATS = "chats.v2"
     private const val CHATS_OLD = "chats"
     const val SERVER = "server"
+    // Something is waiting on the person: a secret to release, a permission
+    // to grant. These interrupt, and vibrate, where news about a service does
+    // not. (A chat that needs you already goes to the Chats channel.)
+    const val REQUESTS = "requests"
+    private val REQUEST_KINDS = setOf("secretRequest", "collabPermission", "needsInput")
     const val EXTRA_SERVER = "server"
     const val EXTRA_PATH = "path"
     const val EXTRA_CHAT = "chat"
@@ -75,7 +80,12 @@ object Notifier {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setAllowBubbles(true)
         }
         val server = NotificationChannel(SERVER, "Server", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "Services, updates and everything else" }
-        nm.createNotificationChannels(listOf(chats, server))
+        val requests = NotificationChannel(REQUESTS, "Requests", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Claude is waiting for your approval"
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 180, 120, 180)
+        }
+        nm.createNotificationChannels(listOf(chats, requests, server))
     }
 
     /** The chat's mark as a picture: its initials on its project's colour. */
@@ -234,6 +244,31 @@ object Notifier {
         PushLog.add(ctx, "Showed a test notification made on this phone")
     }
 
+    // ─── Taking notifications down once they have been attended to ───
+
+    /**
+     * A chat is being looked at, or has moved on: its notification can go.
+     * Unless it is a bubble. A bubble IS its notification, and cancelling one
+     * takes the bubble off the screen; Android hides a bubble's entry in the
+     * shade by itself when the bubble is opened.
+     */
+    fun clearChat(ctx: Context, serverId: String, chatId: String, evenBubble: Boolean = false) {
+        val id = "chat:$serverId:$chatId".hashCode()
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val showing = nm.activeNotifications.firstOrNull { it.id == id }?.notification ?: return
+        // `evenBubble` is for the main window: a chat open there does not
+        // also need its own head floating over it.
+        if (!evenBubble && (showing.flags and android.app.Notification.FLAG_BUBBLE) != 0) return
+        nm.cancel(id)
+    }
+
+    /** Every request of these kinds has been answered somewhere: take those notifications down. */
+    fun clearKinds(ctx: Context, server: Server, payload: JSONObject) {
+        val kinds = payload.optJSONArray("clear") ?: return
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        for (i in 0 until kinds.length()) nm.cancel("srv:${server.id}:${kinds.optString(i)}".hashCode())
+    }
+
     /** A notification that has just arrived, opened and parsed. */
     fun show(ctx: Context, server: Server, payload: JSONObject) {
         val body = plain(payload.optString("body"))
@@ -245,7 +280,7 @@ object Notifier {
             val kind = payload.optString("kind", "crundi")
             post(
                 ctx, "srv:${server.id}:$kind".hashCode(),
-                NotificationCompat.Builder(ctx, SERVER)
+                NotificationCompat.Builder(ctx, if (kind in REQUEST_KINDS) REQUESTS else SERVER)
                     .setSmallIcon(R.drawable.ic_stat).setColor(ctx.getColor(R.color.accent))
                     .setContentTitle(payload.optString("title", "Crundi")).setContentText(body)
                     .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setSubText(server.host)
@@ -317,7 +352,7 @@ object Notifier {
      * is exactly when the menu can be pressed.
      * @return null if it was posted, or a sentence saying why it cannot be.
      */
-    fun bubble(ctx: Context, chat: ChatRef): String? {
+    fun bubble(ctx: Context, chat: ChatRef, expand: Boolean = true): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return "Bubbles need Android 11 or newer."
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return "Allow notifications for Crundi first: a bubble is a kind of notification."
@@ -334,7 +369,7 @@ object Notifier {
                 .setDesiredHeight(640)
                 // Open straight away, and without a second copy in the shade:
                 // the person asked for the bubble, not for a notification.
-                .setAutoExpandBubble(true)
+                .setAutoExpandBubble(expand)
                 .setSuppressNotification(true)
                 .build()
         )

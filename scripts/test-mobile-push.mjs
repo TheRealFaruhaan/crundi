@@ -170,6 +170,13 @@ ok(p1.open(r.seen[0].body.messages[0].payload).suggestion === '', 'and an empty 
 ok(!('suggestion' in about), 'an ordinary notification carries no suggestion field');
 ok(/claudeUi\.onSuggestion\(\(sid, text\) => \{\s+if \(!channels\.isEnabled\('mobile'\)\) return;/.test(srv), 'the server passes suggestions on only while the Phone app channel is on');
 
+// Requests that have been dealt with.
+r = relay(allSent);
+await mp.send('', { tag: 'clear', silent: true, clear: ['secretRequest'] }, { fetchImpl: r.fetchImpl });
+const clr = p1.open(r.seen[0].body.messages[0].payload);
+ok(clr.kind === 'clear' && clr.silent === true && Array.isArray(clr.clear) && clr.clear[0] === 'secretRequest' && clr.body === '', 'when a kind of request has been answered, phones are told to take it down');
+ok(/const cleared = Object\.keys\(now\)\.filter\(\(k\) => waitingKinds\[k\] > 0 && now\[k\] === 0\);/.test(srv), 'only when the LAST waiting request of that kind is answered, not on every change');
+
 // A permission request the phone can answer.
 r = relay(allSent);
 await mp.send('Claude needs your input.', { tag: 'needsInput', chat: { id: 'abc123', title: 'T', project: 'crundi', mark: MARK }, prompt: { requestId: 'req_1', tool: 'Bash', summary: 'npm run build' } }, { fetchImpl: r.fetchImpl });

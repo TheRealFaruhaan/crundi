@@ -3,7 +3,6 @@ package mv.obitech.crundi
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -11,14 +10,12 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
-import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -219,7 +216,7 @@ class MainActivity : Activity() {
                 requestPermissions(missing.toTypedArray(), REQ_PERMISSION)
             }
         }
-        view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ -> download(url, userAgent, contentDisposition, mimeType) }
+        view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ -> Downloads.start(this, url, userAgent, contentDisposition, mimeType) }
         // What the page may ask of the app. Nothing here returns anything
         // private: these are reachable from any frame in the page, including
         // ones showing other people's content, so they are limited to things
@@ -288,21 +285,23 @@ class MainActivity : Activity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) "bubble" else null,
         ).joinToString(",")
 
+        /** The page saying a chat is on screen: its notification has done its job. */
+        @JavascriptInterface fun seen(chatId: String) {
+            val s = server ?: return
+            if (!Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) return
+            // Bubble and all: the chat is open right here.
+            runOnUiThread { Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true) }
+        }
+
         /** "App settings" in the sidebar. */
-        @JavascriptInterface fun openSettings() { runOnUiThread { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) } }
+        @JavascriptInterface fun openSettings() { runOnUiThread { startActivity(Intent(this@MainActivity, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)) } }
 
         /**
          * Save a file from the server. The page gives a full address on the
          * server; the phone's own downloader fetches it into Downloads.
          */
         @JavascriptInterface fun download(url: String, name: String) {
-            val s = server ?: return
-            // Only the paired server's own files: this is callable from any
-            // frame in the page, and must not become a way to make the phone
-            // fetch an address of a frame's choosing.
-            if (!url.startsWith(s.baseUrl + "/")) return
-            val clean = name.filter { it.code >= 32 && it !in "\\/:*?\"<>|" }.trim().take(120).ifEmpty { "download" }
-            runOnUiThread { download(url, web?.settings?.userAgentString, "attachment; filename=\"$clean\"", null) }
+            runOnUiThread { Downloads.fromPage(this@MainActivity, server, url, name, web?.settings?.userAgentString) }
         }
 
         /** "Open as bubble" in a chat's menu. */
@@ -315,30 +314,6 @@ class MainActivity : Activity() {
             }
         }
 
-    }
-
-    private fun download(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            // A file the page made in memory. The phone's downloader cannot
-            // reach that; the page hands real addresses over (see `download`
-            // on the bridge), so this is only an old page or an unusual link.
-            Toast.makeText(this, "This kind of file cannot be saved by the app. Update the server, or open Crundi in a browser to save it.", Toast.LENGTH_LONG).show()
-            return
-        }
-        val name = URLUtil.guessFileName(url, contentDisposition, mimeType)
-        val req = DownloadManager.Request(Uri.parse(url)).apply {
-            setTitle(name)
-            setMimeType(mimeType)
-            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("Cookie", it) }
-            if (userAgent != null) addRequestHeader("User-Agent", userAgent)
-            // Before Android 10 the shared Downloads folder needs a permission
-            // this app does not otherwise want; its own folder does not.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-            else setDestinationInExternalFilesDir(this@MainActivity, Environment.DIRECTORY_DOWNLOADS, name)
-        }
-        (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-        Toast.makeText(this, "Downloading $name", Toast.LENGTH_SHORT).show()
     }
 
     @Deprecated("The platform's own result call; enough for the file chooser.")
@@ -363,6 +338,21 @@ class MainActivity : Activity() {
         if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) req.grant(req.resources) else req.deny()
     }
 
+    /**
+     * The person is leaving the app (home, or another app) while chats are
+     * still at work. Put a bubble up for each, closed, so that what is
+     * running stays one touch away. It has to be done here, on the way out:
+     * Android lets an app raise a bubble only while it is still in front.
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        val s = server ?: return
+        // Picking a file also "leaves" for a moment. That is not leaving.
+        if (fileCallback != null || pendingPermission != null) return
+        if (!getSharedPreferences("crundi", Context.MODE_PRIVATE).getBoolean(PREF_BUBBLE_ON_LEAVE, true)) return
+        for (chat in LiveCards.active(this, s.id)) Notifier.bubble(this, chat, expand = false)
+    }
+
     private fun goBack() {
         val w = web
         if (w != null && w.visibility == View.VISIBLE && w.canGoBack()) w.goBack() else moveTaskToBack(true)
@@ -381,5 +371,6 @@ class MainActivity : Activity() {
         private const val REQ_FILE = 2
         private const val REQ_PERMISSION = 3
         private const val REQ_NOTIFY = 4
+        const val PREF_BUBBLE_ON_LEAVE = "bubble.onleave"
     }
 }

@@ -261,6 +261,9 @@ export function buildPayload(text, meta = {}) {
     // began. `silent` means draw it and make no sound; an app that does not
     // know about it sees an empty body and shows nothing.
     ...(meta.silent ? { silent: true, state: String(meta.state || '').slice(0, 20), since: Number(meta.since) || 0 } : {}),
+    // Kinds of request that have all been answered (kind "clear"): the phone
+    // takes those notifications down.
+    ...(Array.isArray(meta.clear) ? { clear: meta.clear.map((k) => String(k).slice(0, 40)).slice(0, 10) } : {}),
     // The chat's suggested next message (kind "suggestion"), to offer on its
     // notification. Empty takes the offer away.
     ...(meta.suggestion !== undefined ? { suggestion: clip(meta.suggestion || '', 300) } : {}),

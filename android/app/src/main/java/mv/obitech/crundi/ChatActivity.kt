@@ -72,7 +72,14 @@ class ChatActivity : Activity() {
             @JavascriptInterface fun close() { runOnUiThread { finish() } }
             @JavascriptInterface fun openMain(path: String) { runOnUiThread { this@ChatActivity.openMain(path) } }
             @JavascriptInterface fun chatState(json: String) { /* the bubble's label comes from its notification */ }
+            @JavascriptInterface fun seen(id: String) { if (id == chatId) runOnUiThread { Notifier.clearChat(this@ChatActivity, serverId, chatId) } }
+            /** A file Claude offered in the chat: save it, exactly as the main window would. */
+            @JavascriptInterface fun download(url: String, name: String) {
+                runOnUiThread { Downloads.fromPage(this@ChatActivity, Servers.byId(this@ChatActivity, serverId), url, name, web?.settings?.userAgentString) }
+            }
         }, "CrundiNative")
+        view.settings.mediaPlaybackRequiresUserGesture = false
+        view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ -> Downloads.start(this, url, userAgent, contentDisposition, mimeType) }
         root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
         view.loadUrl("${server.baseUrl}/chat/$chatId")

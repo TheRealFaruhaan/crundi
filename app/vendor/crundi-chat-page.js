@@ -18,6 +18,8 @@
  *   CrundiNative.close()             the back arrow: put the bubble away
  *   CrundiNative.openMain(path)      "Open in Crundi": show this in the full app
  *   CrundiNative.chatState(json)     title, project, state: for the bubble's own label
+ *   CrundiNative.download(url, name) save a file of the server's to the phone
+ *   CrundiNative.seen(chatId)        this chat is on screen: its notification can go
  */
 (function () {
   'use strict';
@@ -106,6 +108,25 @@
     });
   }
 
+  // ─── What Claude shows in the chat ───
+  // Pictures, video, sound, files to download and live frames are drawn by
+  // the widgets file, the same one the workbench uses. It needs a host for
+  // three things a page has to do for it.
+  function mediaUrl(u) { return u + (u.indexOf('?') < 0 ? '?' : '&') + 'token=' + encodeURIComponent(token || ''); }
+  function download(o) {
+    var abs = new URL(mediaUrl(o.url), location.href).href;
+    // In the app, the phone's own downloader saves it to Downloads. In a
+    // browser, an ordinary download link does.
+    if (bridge('download', abs, String(o.name || 'download')) !== undefined) { toast('Downloading ' + (o.name || 'file')); return; }
+    var a = document.createElement('a');
+    a.href = abs; a.download = String(o.name || 'download'); a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  function toolExtra(entry) {
+    if (!window.CrundiWidgets || !window.CrundiWidgets.toolMedia) return null;
+    try { return window.CrundiWidgets.toolMedia(sid, entry); } catch (e) { return null; }
+  }
+
   // ─── The edges ───
   var toastTimer = 0;
   function toast(msg, type) {
@@ -177,6 +198,8 @@
   function wsSend(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
   function present() {
     var active = document.visibilityState === 'visible';
+    // This chat is being looked at: its notification can come down.
+    if (active && view) bridge('seen', sid);
     wsSend({ type: 'presence', active: active, engaged: active, project: meta.project || '' });
   }
   function connect() {
@@ -248,6 +271,12 @@
     if (!token && !refreshToken) { note('Signed out', 'Sign in to Crundi to see this chat.', 'Sign in', function () { openMain('/'); }); return; }
     (token ? Promise.resolve(true) : refreshSession()).then(function () { return loadMeta(); }).then(function (found) {
       if (!found || stopped) return;
+      if (window.CrundiWidgets) {
+        window.CrundiWidgets.configure({
+          apiFetch: apiFetch, toast: toast, isMobile: function () { return true; },
+          mediaUrl: mediaUrl, refreshAuth: refreshSession, download: download,
+        });
+      }
       view = window.CrundiChat.mount($('cp-chat'), {
         sessionId: sid,
         project: meta.project,
@@ -255,6 +284,7 @@
         apiUpload: apiUpload,
         toast: toast,
         wsSend: wsSend,
+        toolExtra: toolExtra,
         onChatMeta: function (patch) { if (patch && typeof patch.title === 'string' && patch.title) { meta.title = patch.title; paintHead(); } },
       });
       connect();

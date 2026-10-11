@@ -62,11 +62,11 @@ const html = getChatPageHtml({ version: '1.20.0-dev.1', rootCss, tag: (f) => 'ta
 ok(html.startsWith('<!DOCTYPE html>') && html.includes('data-version="1.20.0-dev.1"'), 'the page says which server version built it');
 ok(html.includes('--bg-primary: #0a0a0f') && html.includes('--accent: #6366f1'), 'it carries the main page\'s palette, taken from the main page');
 const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
-ok(scripts.length === 3 && scripts.every((m) => /\bsrc="\/vendor\/[a-z-]+\.js\?v=tag-[a-z-]+\.js"/.test(m[1]) && m[2] === ''), 'every script is a file, with a version on its address; none is written into the page');
+ok(scripts.length === 4 && scripts.every((m) => /\bsrc="\/vendor\/[a-z-]+\.js\?v=tag-[a-z-]+\.js"/.test(m[1]) && m[2] === ''), 'every script is a file, with a version on its address; none is written into the page');
 ok(html.indexOf('claude-chat.js') < html.indexOf('crundi-chat-page.js'), 'the chat component loads before the page that hosts it');
 ok(!/\son[a-z]+=/.test(html.replace(/<style>[\s\S]*?<\/style>/, '')), 'and no handler is written into the markup');
 for (const id of ['cp-back', 'cp-mark', 'cp-title', 'cp-proj', 'cp-more', 'cp-chat', 'cp-note', 'cp-menu']) ok(html.includes(`id="${id}"`), 'the page has its ' + id);
-ok(getChatPageHtml({ version: '"><script>x</script>', rootCss: '', tag: () => '"><b>' }).match(/<script\b/g).length === 3, 'nothing passed in can add markup');
+ok(getChatPageHtml({ version: '"><script>x</script>', rootCss: '', tag: () => '"><b>' }).match(/<script\b/g).length === 4, 'nothing passed in can add markup');
 
 // ─── Its script ───
 const js = readFileSync(join(root, 'app', 'vendor', 'crundi-chat-page.js'), 'utf8');
@@ -85,6 +85,17 @@ ok(server.includes("mark: chatMark(s.project, s.title)") && server.includes("mar
 ok(/const about = chat \? \{ chat, url: `\/chat\/\$\{term\.id\}` \} : \{\};/.test(server), 'a chat\'s notifications say which chat, and point at its page');
 const cv = await import('../src/client-version.js');
 ok(cv.isGated('/chat/abc') === false, 'a client too old for the server can still load the page that tells it so');
+// What Claude shows in a chat is drawn the same in both pages.
+const widgets = readFileSync(join(root, 'app', 'vendor', 'crundi-widgets.js'), 'utf8');
+ok(widgets.includes('function toolMedia(sessionId, entry)') && widgets.includes('toolMedia: toolMedia'), 'pictures, files and frames Claude shows are parsed in one shared place');
+ok(main.includes('return window.CrundiWidgets.toolMedia(t.id, entry);') && !main.includes('const EMBED = /^[0-9a-f]{16}[.]embed$/'), 'the workbench uses it, and keeps no copy of its own');
+ok(html.includes('/vendor/crundi-widgets.js') && js.includes('toolExtra: toolExtra') && js.includes('window.CrundiWidgets.toolMedia(sid, entry)'), 'the compact chat loads it and draws them too: a file offered there used to be invisible');
+ok(js.includes("bridge('download', abs") && js.includes("a.download = String(o.name || 'download')"), 'a file is saved by the phone inside the app, and by a plain link in a browser');
+
+// A chat that is being read loses its notification.
+ok(main.includes('window.CrundiNative.seen(String(id))') && /shown \/ Math\.min\(r\.height, window\.innerHeight\) >= 0\.4/.test(main), 'the workbench tells the app which chats are really on screen, measured, not assumed');
+ok(js.includes("bridge('seen', sid)"), 'and so does the compact chat');
+
 // Going to a chat without loading the page again.
 ok(main.includes('window.crundiOpenChat = (sid) =>') && /if \(!done && \+\+tries < 24\) setTimeout\(attempt, 250\);/.test(main), 'the app can ask the loaded page for a chat, and the page keeps trying while its chats are still arriving');
 
