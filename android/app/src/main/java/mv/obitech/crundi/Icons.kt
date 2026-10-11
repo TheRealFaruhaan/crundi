@@ -115,10 +115,11 @@ object Icons {
      * The icon as a head: square for a launcher-cut shape (`adaptive`), which
      * wants the picture inside the middle two thirds, or already round.
      *
-     * An icon that is a tile of its own (a square, or a rounded one, as app
-     * icons are) fills the head. One that is a shape on nothing is set on a
-     * plain ground chosen to show it: light behind a dark mark, dark behind
-     * a light one.
+     * The picture always fills the head and is cut to its shape, corners
+     * lost. Only what is BEHIND it differs: a tile (a square, or a rounded
+     * one, as app icons are) has its own edge colour carried on behind it; a
+     * shape on nothing has a plain ground chosen to show it, light behind a
+     * dark mark and dark behind a light one.
      */
     fun head(icon: Bitmap, size: Int, adaptive: Boolean): Bitmap {
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -143,33 +144,24 @@ object Icons {
         // shape it is cut to reaches past it.
         val edge = small.getPixel(1, 12) or 0xFF000000.toInt()
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        // Always the whole head, edge to edge, cut to its shape: whatever
+        // the picture has in its corners is lost, and that is the bargain.
+        // Something still has to be behind a picture with clear parts: its
+        // own edge colour if it is a tile, a plain ground if it is a shape.
+        val behind = if (covers) edge else ground
         if (adaptive) {
-            // The launcher keeps the middle two thirds and cuts the rest
-            // away, to a circle or to a rounder square.
-            if (covers) {
-                // Fill the head: the tile is drawn just larger than what is
-                // kept, on its own colour, so nothing else shows round it.
-                c.drawColor(edge)
-                val inset = size * 0.11f
-                c.drawBitmap(icon, null, RectF(inset, inset, size - inset, size - inset), paint)
-            } else {
-                // A shape on nothing: set on a plain ground, well inside.
-                c.drawColor(ground)
-                val inset = size * 0.24f
-                c.drawBitmap(icon, null, RectF(inset, inset, size - inset, size - inset), paint)
-            }
+            // The launcher keeps the middle two thirds of this bitmap and
+            // cuts its shape out of that. The picture is stretched to
+            // exactly those two thirds: no margin, and no zoom beyond it.
+            c.drawColor(behind)
+            val inset = size / 6f
+            c.drawBitmap(icon, null, RectF(inset, inset, size - inset, size - inset), paint)
             return out
         }
-        if (covers) {
-            c.drawCircle(size / 2f, size / 2f, size / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = edge })
-            val scaled = Bitmap.createScaledBitmap(icon, size, size, true)
-            paint.shader = BitmapShader(scaled, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-            c.drawCircle(size / 2f, size / 2f, size / 2f, paint)
-        } else {
-            c.drawCircle(size / 2f, size / 2f, size / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ground })
-            val inset = size * 0.2f
-            c.drawBitmap(icon, null, RectF(inset, inset, size - inset, size - inset), paint)
-        }
+        c.drawCircle(size / 2f, size / 2f, size / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = behind })
+        val scaled = Bitmap.createScaledBitmap(icon, size, size, true)
+        paint.shader = BitmapShader(scaled, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        c.drawCircle(size / 2f, size / 2f, size / 2f, paint)
         return out
     }
 }
