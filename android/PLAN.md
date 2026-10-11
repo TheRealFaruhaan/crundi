@@ -24,6 +24,11 @@ code, not from building any of it.
   contacts the publisher on Telegram: `@TheRealFaruhaan`.
 - **Relay hosting:** Cloudflare Workers. Relay code lives in a separate private
   repo.
+- **The published app works with the published relay only**, at
+  `https://cr-rl-pub1.faruhaan.com`. Anyone wanting their own relay ships
+  their own build of the app with their own push credentials; their users ask
+  them for keys. Bringing your own Firebase project to the published app is
+  not supported. `android/RELAY.md` documents it.
 - **App code:** this folder, on the `dev` branch.
 - **Versions are checked in both directions** (see below).
 - **Two Android builds.** `github` is built by CI and updates itself from
@@ -96,8 +101,9 @@ Details that follow from how the server works today:
    own server directly.
 
 - Encryption reuses the web push scheme already in `src/web-push.js`.
-- The relay address is a server setting, so a fork can run its own app and
-  relay.
+- The relay address is a server setting, for a custom build of the app with
+  its own relay. Changing it drops the stored key, and the relay names its
+  own contact for keys.
 - A server with no key still works fully while the app is open; alerts fall
   back to Telegram and web push.
 - An optional foreground service shows live progress while a chat is working.

@@ -76,6 +76,20 @@ Checks a key without sending anything. Used when a key is entered in Settings.
 { "ok": true, "label": "Faruhaan dev server" }
 ```
 
+## `GET /v1/info`
+
+No key. This is what a server reads before it has one, to tell its owner who
+to ask.
+
+```json
+{ "ok": true, "name": "Acme Crundi", "contact": { "telegram": "acme_ops", "url": "https://acme.example/push", "text": "Email ops@acme.example for a key." } }
+```
+
+- Every field of `contact` is optional. Give at least one.
+- The server shows only a Telegram name, an `https` link and a short line of
+  plain text, and discards anything else.
+- The published relay is not asked: its contact is built into the server.
+
 ## Errors
 
 All are JSON, `{ "ok": false, "error": "<code>" }`.
@@ -119,6 +133,47 @@ After pairing, the app's background login calls the server (not the relay):
   withdraws it. Revoking the device in the sessions list also removes it.
 - Collaborators' devices cannot register in v1: what is sent is the owner's
   notifications.
+
+## Running your own relay
+
+You can, but **not for the published app.** A relay works only with the app
+whose push keys it holds:
+
+- Google issues an Android device token for one Firebase project, and only
+  that project can send to it.
+- Apple issues an iOS device token for one app and one developer account, and
+  only that account's key can send to it.
+
+The published app's tokens are therefore usable by the published relay and by
+nothing else. A second relay for the same app would be refused by Google and
+Apple, however it was configured. So your own relay means your own build of
+the app.
+
+What that involves:
+
+1. **Build the app under your own identity.** Your own Android application ID
+   and iOS bundle ID, signed with your own keys, distributed by you.
+2. **Create the push credentials for it.** A Firebase project with that
+   Android app in it, and an Apple push key for that bundle ID.
+3. **Deploy a relay that meets this contract** and holds those credentials.
+4. **Issue keys.** One per server, by whatever means you choose. Have
+   `GET /v1/info` say how to ask you for one.
+5. **Point each server at it.** In the server's push settings, set the relay
+   address to yours (`POST /api/push/mobile/relay` with `{ "relayUrl" }`),
+   then enter the key you issued.
+
+What the server does for a custom relay:
+
+- It reads `GET /v1/info` and shows your contact in Settings, in place of the
+  publisher's.
+- **Changing the relay address removes the stored key.** A key belongs to the
+  relay that issued it; sending it to a different relay would hand that
+  relay's operator a working key to someone else's.
+- The address must be `https`. Plain `http` is accepted only for `localhost`
+  and `127.0.0.1`, for testing.
+
+People using your build ask you for a key, not the publisher of the original
+app. People using the published app cannot use your relay at all.
 
 ## Open
 

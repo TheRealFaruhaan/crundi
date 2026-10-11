@@ -1117,7 +1117,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     enabledByDefault: true,
     available: () => mobilePush.hasKey() && mobilePush.devices().length > 0,
     unavailableReason: () => (!mobilePush.hasKey()
-      ? `This server has no push key yet. Ask @${mobilePush.KEY_CONTACT.telegram} on Telegram for one, then enter it here.`
+      ? `This server has no push key yet. ${mobilePush.keyHelp()}`
       : 'No phone has been paired and allowed to receive notifications yet.'),
     describe: () => {
       const n = mobilePush.devices().length;
@@ -4252,11 +4252,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/push/mobile' && req.method === 'GET') {
       return json(res, { ok: true, ...mobilePush.status() });
     }
+    // For a custom build of the app, which has its own relay. Changing it
+    // drops the key (see setRelay), and the relay is asked who runs it so
+    // Settings can say who to get a key from.
+    if (path === '/api/push/mobile/relay' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as the published relay */ }
+      const r = mobilePush.setRelay(body.relayUrl);
+      if (!r.ok) return json(res, r, 400);
+      const info = await mobilePush.refreshRelayInfo();
+      return json(res, { ok: true, reachable: info.ok, error: info.ok ? '' : info.error, ...mobilePush.status() });
+    }
     if (path === '/api/push/mobile/key' && req.method === 'POST') {
       let body = {};
       try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as no key */ }
       const r = mobilePush.setKey(body.key, body.relayUrl);
       if (!r.ok) return json(res, r, 400);
+      if (body.relayUrl) await mobilePush.refreshRelayInfo();
       // Say straight away whether the relay accepts it, rather than letting
       // the first missed notification be how anyone finds out.
       const check = await mobilePush.checkKey();

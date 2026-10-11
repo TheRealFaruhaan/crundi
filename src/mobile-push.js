@@ -29,11 +29,18 @@ import { join } from 'node:path';
 import { config } from './config.js';
 import { encryptFor } from './web-push.js';
 
-// Where the published app's relay lives. A fork that ships its own app runs
-// its own relay and changes this in Settings.
+// Where the published app's relay lives.
+//
+// A relay only works with the app whose push keys it holds: Google issues a
+// device token for one Firebase project and Apple for one app and developer
+// account, and neither will take a push for it from anyone else. So this is
+// not a setting for choosing between relays for the same app. Another relay
+// means another build of the app, published by whoever runs that relay, and
+// its users ask THEM for a key. android/RELAY.md has the whole of it.
 export const DEFAULT_RELAY_URL = 'https://cr-rl-pub1.faruhaan.com';
-// Who to ask for a key. Shown in Settings next to the empty field.
-export const KEY_CONTACT = Object.freeze({ telegram: 'TheRealFaruhaan', url: 'https://t.me/TheRealFaruhaan' });
+// Who to ask for a key to the published relay. Shown in Settings next to the
+// empty field. A custom relay says for itself who to ask (GET /v1/info).
+export const KEY_CONTACT = Object.freeze({ telegram: 'TheRealFaruhaan', url: 'https://t.me/TheRealFaruhaan', text: '' });
 
 const FILE = () => join(config.dataDir, 'mobile-push.json');
 const PLATFORMS = new Set(['android', 'ios']);
@@ -54,10 +61,10 @@ function load() {
   try {
     if (existsSync(FILE())) {
       const d = JSON.parse(readFileSync(FILE(), 'utf-8'));
-      if (d && typeof d === 'object') { store = { relayUrl: '', relayKey: '', devices: [], ...d }; return store; }
+      if (d && typeof d === 'object') { store = { relayUrl: '', relayKey: '', relayInfo: null, devices: [], ...d }; return store; }
     }
   } catch { /* start empty */ }
-  store = { relayUrl: '', relayKey: '', devices: [] };
+  store = { relayUrl: '', relayKey: '', relayInfo: null, devices: [] };
   return store;
 }
 
@@ -92,6 +99,34 @@ export const relayUrl = () => load().relayUrl || DEFAULT_RELAY_URL;
 export const hasKey = () => !!load().relayKey;
 export const devices = () => load().devices.map(({ id, name, platform, addedAt, lastOkAt }) => ({ id, name, platform, addedAt, lastOkAt: lastOkAt || 0 }));
 
+// What a relay says about who runs it is shown to the owner, so it is cut
+// down to things that are safe to show: a Telegram name, an https link, a
+// short line of plain text.
+function cleanContact(c) {
+  const telegram = /^[A-Za-z0-9_]{4,32}$/.test(String(c?.telegram || '').replace(/^@/, '')) ? String(c.telegram).replace(/^@/, '') : '';
+  let url = '';
+  try { const u = new URL(String(c?.url || '')); if (u.protocol === 'https:' && u.href.length <= 200) url = u.href; } catch { /* no link */ }
+  const text = String(c?.text || '').replace(/[\u0000-\u001f\u007f<>]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return telegram || url || text ? { telegram, url: url || (telegram ? `https://t.me/${telegram}` : ''), text } : null;
+}
+
+/** Who to ask for a key to the relay in use, or null if that relay has not said. */
+export function contact() {
+  const s = load();
+  return s.relayUrl ? (s.relayInfo?.contact || null) : KEY_CONTACT;
+}
+
+/** One sentence telling the owner how to get a key, for wherever one is missing. */
+export function keyHelp() {
+  const c = contact();
+  if (c?.telegram) return `Ask @${c.telegram} on Telegram for one, then enter it in Settings.`;
+  if (c?.text) return `${c.text} Then enter the key in Settings.`;
+  if (c?.url) return `Ask for one at ${c.url}, then enter it in Settings.`;
+  let host = relayUrl();
+  try { host = new URL(host).host; } catch { /* shown as it is */ }
+  return `Ask whoever runs ${host} for one, then enter it in Settings.`;
+}
+
 /** Everything Settings shows. Never the key itself, only enough to recognise it. */
 export function status() {
   const s = load();
@@ -100,24 +135,65 @@ export function status() {
     keyHint: s.relayKey ? '…' + s.relayKey.slice(-4) : '',
     relayUrl: relayUrl(),
     customRelay: !!s.relayUrl,
-    contact: KEY_CONTACT,
+    relayName: s.relayUrl ? (s.relayInfo?.name || '') : '',
+    contact: contact(),
+    keyHelp: keyHelp(),
     devices: devices(),
     lastError,
   };
+}
+
+/**
+ * Point this server at another relay, or back at the published one ('').
+ *
+ * For a custom build of the app only: see the note on DEFAULT_RELAY_URL. The
+ * key is dropped on any change. A key belongs to the relay that issued it,
+ * and sending it to a different one would hand that relay's operator a
+ * working key to somebody else's.
+ */
+export function setRelay(url) {
+  const s = load();
+  const wanted = String(url ?? '').trim();
+  let next = '';
+  if (wanted) {
+    const clean = cleanRelayUrl(wanted);
+    if (!clean) return { ok: false, error: 'The relay address must be an https address.' };
+    next = clean === DEFAULT_RELAY_URL ? '' : clean;
+  }
+  if (next !== s.relayUrl) { s.relayUrl = next; s.relayKey = ''; s.relayInfo = null; lastError = ''; }
+  return save() ? { ok: true } : { ok: false, error: 'Could not save the relay address' };
+}
+
+/**
+ * Ask a custom relay who runs it, so Settings can say who to ask for a key.
+ * No key is sent: this is what is read BEFORE there is one.
+ */
+export async function refreshRelayInfo({ fetchImpl = fetch } = {}) {
+  const s = load();
+  if (!s.relayUrl) return { ok: true };
+  try {
+    const res = await fetchImpl(s.relayUrl + '/v1/info', { method: 'GET', headers: {}, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const d = res.status === 200 ? await res.json() : null;
+    if (!d?.ok) return { ok: false, error: `That address did not answer as a Crundi push relay (${res.status}).` };
+    s.relayInfo = { name: String(d.name || '').replace(/[\u0000-\u001f\u007f<>]/g, ' ').trim().slice(0, 60), contact: cleanContact(d.contact) };
+    save();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: `Could not reach that relay: ${err.message}` };
+  }
 }
 
 /** Store the key the publisher issued (and, for a fork, its own relay address). */
 export function setKey(key, url) {
   const k = String(key || '').trim();
   if (!KEY_RE.test(k)) return { ok: false, error: 'That does not look like a push key. Paste it exactly as it was given to you.' };
-  const s = load();
-  if (url !== undefined && url !== null && String(url).trim() !== '') {
-    const clean = cleanRelayUrl(url);
-    if (!clean) return { ok: false, error: 'The relay address must be an https address.' };
-    s.relayUrl = clean === DEFAULT_RELAY_URL ? '' : clean;
-  } else if (url === '') {
-    s.relayUrl = '';
+  // Given with a relay address, the two are set together: the key is for
+  // that relay. setRelay drops whatever key was there if the address changes.
+  if (url !== undefined && url !== null) {
+    const r = setRelay(url);
+    if (!r.ok) return r;
   }
+  const s = load();
   s.relayKey = k;
   lastError = '';
   return save() ? { ok: true } : { ok: false, error: 'Could not save the key' };

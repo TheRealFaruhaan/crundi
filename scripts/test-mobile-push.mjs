@@ -52,7 +52,7 @@ function relay(answer) {
     seen.push(req);
     const a = typeof answer === 'function' ? answer(req) : answer;
     if (a instanceof Error) throw a;
-    return { status: a.status, headers: { get: (h) => (h === 'retry-after' ? a.retryAfter || null : null) }, json: async () => a.body };
+    return { status: a.status, headers: { get: (h) => (h === 'retry-after' ? a.retryAfter || null : null) }, json: async () => { if (a.body === undefined) throw new Error('no body'); return a.body; } };
   };
   return { seen, fetchImpl };
 }
@@ -62,7 +62,7 @@ const token = (n) => `fcm-token-${n}-` + 'x'.repeat(120);
 
 // ─── Nothing without a key ───
 const p1 = phone();
-ok(mp.status().hasKey === false && mp.status().contact.telegram === 'TheRealFaruhaan', 'a new server has no key, and says who to ask for one');
+ok(mp.status().hasKey === false && mp.status().contact.telegram === 'TheRealFaruhaan' && /TheRealFaruhaan/.test(mp.status().keyHelp), 'a new server has no key, and says who to ask for one');
 ok(mp.registerDevice({ deviceId: 'dev1', name: 'Pixel 8 Pro' }, { platform: 'android', token: token(1), keys: p1.keys }).ok, 'a paired phone can register before there is a key');
 let r = relay(allSent);
 ok(await mp.send('hello', {}, { fetchImpl: r.fetchImpl }) === false && r.seen.length === 0, 'with no key, nothing is sent to the relay at all');
@@ -81,6 +81,29 @@ ok(mp.setKey(KEY, 'https://user:pw@relay.example.com').ok === false && mp.setKey
 ok(mp.setKey(KEY, 'https://relay.example.org/crundi/').ok && mp.status().relayUrl === 'https://relay.example.org/crundi' && mp.status().customRelay, 'a fork can point at its own relay');
 ok(mp.cleanRelayUrl('http://127.0.0.1:9000') === 'http://127.0.0.1:9000' && mp.cleanRelayUrl('http://localhost:9000/') === 'http://localhost:9000', 'plain http is allowed to this machine only, for testing');
 ok(mp.setKey(KEY, '').ok && mp.status().customRelay === false, 'and can go back to the published one');
+
+
+// ─── Somebody else's relay (a custom build of the app) ───
+{
+  ok(mp.contact().telegram === 'TheRealFaruhaan' && /@TheRealFaruhaan on Telegram/.test(mp.keyHelp()), 'for the published relay, the publisher is who to ask');
+  ok(mp.setRelay('https://relay.example.org').ok && mp.status().customRelay && mp.status().hasKey === false, 'changing the relay drops the key: it belongs to the relay that issued it');
+  ok(mp.contact() === null && /whoever runs relay\.example\.org/.test(mp.keyHelp()) && !/Faruhaan/.test(mp.keyHelp()), 'and the publisher is no longer who to ask');
+  let rr = relay({ status: 200, body: { ok: true, name: 'Acme Crundi', contact: { telegram: '@acme_ops', text: 'Email ops@acme.example for a key.' } } });
+  ok((await mp.refreshRelayInfo({ fetchImpl: rr.fetchImpl })).ok && rr.seen[0].url === 'https://relay.example.org/v1/info' && rr.seen[0].auth === undefined, 'the relay is asked who runs it, and no key is sent to ask');
+  ok(mp.contact().telegram === 'acme_ops' && mp.contact().url === 'https://t.me/acme_ops' && mp.status().relayName === 'Acme Crundi' && /@acme_ops on Telegram/.test(mp.keyHelp()), 'Settings then names that relay\'s own contact');
+  rr = relay({ status: 200, body: { ok: true, name: '<b>x</b>', contact: { telegram: 'no spaces allowed', url: 'javascript:alert(1)', text: '<script>alert(1)</script> call us' } } });
+  await mp.refreshRelayInfo({ fetchImpl: rr.fetchImpl });
+  ok(mp.contact().telegram === '' && mp.contact().url === '' && !/[<>]/.test(mp.contact().text + mp.status().relayName), 'what a relay says about itself is cut down to what is safe to show');
+  rr = relay({ status: 404, body: { ok: false } });
+  ok((await mp.refreshRelayInfo({ fetchImpl: rr.fetchImpl })).ok === false, 'an address that is not a relay says so');
+  ok((await mp.refreshRelayInfo({ fetchImpl: relay(new Error('ENOTFOUND')).fetchImpl })).ok === false, 'and one that cannot be reached is not an exception');
+  mp.setKey(KEY);
+  ok(mp.setRelay('https://relay.example.org').ok && mp.status().hasKey, 'setting the same relay again keeps the key');
+  ok(mp.setRelay('http://relay.example.org').ok === false && mp.status().hasKey, 'a refused address changes nothing');
+  ok(mp.setRelay('').ok && mp.status().customRelay === false && mp.status().hasKey === false && mp.contact().telegram === 'TheRealFaruhaan', 'going back to the published relay drops that key too, and the publisher is who to ask again');
+  ok(mp.setRelay(mp.DEFAULT_RELAY_URL + '/').ok && mp.status().customRelay === false, 'the published address typed out is not a custom relay');
+  mp.setKey(KEY);
+}
 
 r = relay({ status: 200, body: { ok: true, label: 'Test server' } });
 let chk = await mp.checkKey({ fetchImpl: r.fetchImpl });
@@ -166,7 +189,7 @@ const gate = src.indexOf('if (principal && !mayAccess(principal, req.method, pat
 ok(gate > 0 && src.indexOf("path === '/api/push/mobile'") > gate, 'every phone push route is behind the login and the collaborator policy');
 const { mayAccess, ROLE_COLLABORATOR } = await import('../src/access-policy.js');
 const collab = { username: 'g', role: ROLE_COLLABORATOR, collabKey: 'tg:g', projects: ['p'], roots: {} };
-ok(['/api/push/mobile', '/api/push/mobile/key', '/api/push/mobile/register', '/api/push/mobile/test'].every((p) => !mayAccess(collab, 'POST', p) && !mayAccess(collab, 'GET', p)), 'and none of them is open to a collaborator');
+ok(['/api/push/mobile', '/api/push/mobile/key', '/api/push/mobile/relay', '/api/push/mobile/register', '/api/push/mobile/test'].every((p) => !mayAccess(collab, 'POST', p) && !mayAccess(collab, 'GET', p)), 'and none of them is open to a collaborator');
 
 rmSync(dataDir, { recursive: true, force: true });
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
