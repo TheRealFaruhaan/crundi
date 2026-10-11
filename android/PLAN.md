@@ -183,8 +183,9 @@ What the reference shows, and what Crundi's version is:
 - **A row of round heads along the top, one per conversation, and a `+`.**
   One head per Crundi chat. The row, the `+` overflow and the small app badge
   on each head are drawn by Android, not by the app.
-- **The head's picture.** Telegram uses the contact's avatar. Crundi uses the
-  project's mark, so chats in different projects can be told apart.
+- **The head's picture.** Telegram uses the contact's avatar. Crundi uses a
+  mark: the project's colour with the chat's initials on it, so chats in one
+  project share a colour and can still be told apart.
 - **Tapping a head opens that chat in a floating panel** with its own header
   (back, picture, title, a line under it, a menu), the messages, and the
   message box at the bottom. Crundi's panel is the existing chat in a compact

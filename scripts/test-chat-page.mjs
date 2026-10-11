@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getChatPageHtml } from '../src/chat-page.js';
-import { projectMark, markInitials, markHue } from '../src/project-mark.js';
+import { projectMark, chatMark, markInitials, markHue } from '../src/project-mark.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 let failed = 0;
@@ -46,6 +46,15 @@ ok(markInitials('one two three four') === 'OT' && markInitials('x') === 'X', 'at
   ok(worst >= 3, `white on the lightest tile there can be still reads (${worst.toFixed(2)} to 1)`);
 }
 
+// A chat wears its project's colour and its own letters.
+{
+  const a = chatMark('crundi', 'Fix login redirect'), b = chatMark('crundi', 'Add tests'), other = chatMark('dhivo-socials', 'Fix login redirect');
+  ok(a.initials === 'FL' && b.initials === 'AT' && a.color === b.color && a.color === projectMark('crundi').color, 'two chats in one project share its colour and differ by their initials');
+  ok(other.initials === 'FL' && other.color !== a.color, 'the same title in another project is another colour');
+  ok(chatMark('crundi', 'Chat').initials === 'C' && chatMark('crundi', '').initials === 'C' && chatMark('crundi', '  ---  ').initials === 'C', 'a chat nobody has named yet wears the project\'s letters');
+  ok(chatMark('crundi', 'Android app scoping').initials === 'AA', 'the letters come from the first two words of the title');
+}
+
 // ─── The page ───
 const main = readFileSync(join(root, 'src', 'webapp-html.js'), 'utf8');
 const rootCss = /:root\s*\{[^}]*\}/.exec(main)[0];
@@ -73,7 +82,7 @@ const server = readFileSync(join(root, 'src', 'webapp.js'), 'utf8');
 const routeAt = server.indexOf('html(res, chatPageHtml())');
 ok(routeAt > 0 && routeAt < server.indexOf('// ─── PWA: manifest + service worker ───'), 'the server serves the page at /chat/<id>, before anything that needs a login');
 ok(/\^\\\/chat\\\/\[A-Za-z0-9_-\]\{1,80\}/.test(server), 'only for an address shaped like a chat id');
-ok(server.includes("mark: projectMark(s.project)"), 'the chat list gives each chat its project\'s mark');
+ok(server.includes("mark: chatMark(s.project, s.title)") && server.includes("mark: chatMark(term.project || '', term.title)"), 'the chat list and a chat\'s notifications carry the same mark');
 ok(/const about = chat \? \{ chat, url: `\/chat\/\$\{term\.id\}` \} : \{\};/.test(server), 'a chat\'s notifications say which chat, and point at its page');
 const cv = await import('../src/client-version.js');
 ok(cv.isGated('/chat/abc') === false, 'a client too old for the server can still load the page that tells it so');

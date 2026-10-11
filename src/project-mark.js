@@ -58,3 +58,19 @@ export function projectMark(name) {
   for (let i = 0; i < 12 && 1.05 / (luminance(color) + 0.05) < 3; i++) { l = Math.round((l - 0.02) * 100) / 100; color = hslToHex(hue, 0.58, l); }
   return { initials: markInitials(name), hue, color, colorDeep: hslToHex(hue, 0.62, Math.round(l * 74) / 100) };
 }
+
+/**
+ * A chat's mark: the project's colour with the CHAT's initials on it.
+ *
+ * Several chats in one project would otherwise wear the same tile, and a row
+ * of identical bubble heads tells nobody which is which. The colour still
+ * says which project; the letters say which chat. A chat nobody has named
+ * yet ("Chat") falls back to the project's own letters.
+ */
+export function chatMark(project, title) {
+  const base = projectMark(project);
+  const t = String(title || '').trim();
+  const named = t && t.toLowerCase() !== 'chat';
+  const initials = named ? markInitials(t) : base.initials;
+  return { ...base, initials: initials === '?' ? base.initials : initials };
+}

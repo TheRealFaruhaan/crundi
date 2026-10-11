@@ -71,7 +71,7 @@ import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import * as mobilePush from './mobile-push.js';
 import { getChatPageHtml } from './chat-page.js';
-import { projectMark } from './project-mark.js';
+import { chatMark } from './project-mark.js';
 import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
@@ -1252,7 +1252,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // it: the phone app files the notification under that chat's bubble and
       // opens /chat/<id> from it. Only chats have that page; a terminal does not.
       const chat = term.kind === 'ui'
-        ? { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: projectMark(term.project || '') }
+        ? { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: chatMark(term.project || '', term.title) }
         : null;
       const about = chat ? { chat, url: `/chat/${term.id}` } : {};
       if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`, about);
@@ -3473,9 +3473,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // The chat counterpart to /api/terminals. Same {project,title,order} shape,
     // but the conversation itself streams over the WebSocket rather than bytes.
     if (path === '/api/ui-sessions' && req.method === 'GET') {
-      // `mark` is the project's tile (project-mark.js), worked out here so
-      // every client draws the same one without carrying the recipe.
-      return json(res, { sessions: (claudeUi ? claudeUi.list() : []).map((s) => ({ ...s, mark: projectMark(s.project) })) });
+      // `mark` is the chat's tile (project-mark.js): the project's colour,
+      // the chat's initials. Worked out here so every client draws the same
+      // one without carrying the recipe.
+      return json(res, { sessions: (claudeUi ? claudeUi.list() : []).map((s) => ({ ...s, mark: chatMark(s.project, s.title) })) });
     }
 
     // ─── Deferred chat messages ───
