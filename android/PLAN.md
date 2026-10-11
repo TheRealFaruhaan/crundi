@@ -294,7 +294,20 @@ and the Linux desktop client.
   browser.
 - **Stage 1 is complete** apart from the screens held back until there is an
   app (Connect a phone, Mobile push settings, the What's New step).
-- **Next:** the Android shell (stage 3).
+- **Done:** the Phone app section in Settings (`app/vendor/crundi-phone.js`):
+  the Connect a phone dialog, which shows the Crundi code, waits, and plays
+  the ending; and the push key box. The What's New step is still held back,
+  until there is a build people can download.
+- **Done, first cut of the Android shell** (`android/app`): pairing by scan or
+  pasted link, the version check both ways, the server's page in a web view
+  signed in from the pairing, file picking, downloads, camera and microphone
+  for the page, both build flavours. Both compile and the unit tests pass.
+  **Not yet run on a phone.**
+- **Not in the shell yet:** a way to switch or remove servers once paired
+  (only reachable from an error screen), biometric lock, a release signing
+  key, signed release builds on GitHub, Play's in-app update flow (the play
+  build opens the store page), and the owner's Update server button.
+- **Next:** try it on a real phone; then notifications (stage 4).
 
 ## API notes for the app
 

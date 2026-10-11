@@ -1,0 +1,7 @@
+.gradle/
+build/
+local.properties
+*.keystore
+*.jks
+# Copied in from ../src at build time, so there is one copy to edit.
+app/src/main/assets/crundi-code.js
