@@ -123,9 +123,92 @@
     document.body.appendChild(a); a.click(); a.remove();
   }
   function toolExtra(entry) {
-    if (!window.CrundiWidgets || !window.CrundiWidgets.toolMedia) return null;
-    try { return window.CrundiWidgets.toolMedia(sid, entry); } catch (e) { return null; }
+    var W = window.CrundiWidgets;
+    if (!W || !entry) return null;
+    try {
+      var media = W.toolMedia ? W.toolMedia(sid, entry) : null;
+      if (media) return media;
+      // A panel Claude built and placed in the chat, or the pictures it took
+      // of one: the workbench draws these under the tool call, so this does.
+      if (entry.status !== 'done' || entry.isError) return null;
+      var id = String((entry.input && entry.input.id) || '').toLowerCase();
+      var name = String(entry.name || '');
+      if (!id || !meta.project) return null;
+      if (/widget_render$/.test(name) && W.shotsNode) return W.shotsNode(meta.project, id);
+      if (/widget_open$/.test(name) && entry.input.slot === 'inline' && W.inlineNode) return W.inlineNode(meta.project, id);
+    } catch (e) { /* draw the tool call without its extra */ }
+    return null;
   }
+
+  // ─── A secret Claude is asking for ───
+  // The main page shows these wherever you are. This page had no such thing,
+  // so a request raised from a chat open in a bubble was simply invisible: it
+  // sat for three minutes and failed. Requests from this chat (and ones no
+  // chat is named for) are shown over the top of it, with the same two
+  // answers: approve with the PIN, or deny.
+  var asks = [], askArmed = '', askError = '', askShown = '';
+  function loadAsks() {
+    if (stopped || !view || document.visibilityState !== 'visible') return;
+    apiFetch('/api/secrets').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      if (!d) return;
+      asks = (d.requests || []).filter(function (r) { return r.sessionId ? r.sessionId === sid : (!r.project || r.project === meta.project); });
+      drawAsks();
+    }).catch(function () { /* the next look will do */ });
+  }
+  function askPost(body) {
+    return apiFetch('/api/secrets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); }).catch(function (e) { return { ok: false, error: e.message }; });
+  }
+  function drawAsks() {
+    var host = $('cp-ask');
+    if (askArmed && !asks.some(function (r) { return r.id === askArmed; })) { askArmed = ''; askError = ''; }
+    // Rebuilt only when something changed: rebuilding under someone who is
+    // half-way through a PIN would eat the digits.
+    var sig = asks.map(function (r) { return r.id; }).join(',') + '|' + askArmed + '|' + askError;
+    if (sig === askShown) return;
+    askShown = sig;
+    host.textContent = '';
+    host.className = asks.length ? 'on' : '';
+    asks.forEach(function (r) {
+      var run = r.kind === 'run';
+      var card = document.createElement('div'); card.className = 'cp-ask-card';
+      var add = function (cls, text) { var n = document.createElement('div'); n.className = cls; n.textContent = text; card.appendChild(n); return n; };
+      add('cp-ask-head', (run ? 'Run a command with ' : 'Release ') + r.secretName);
+      if (r.reason) add('cp-ask-why', r.reason);
+      if (run) { add('cp-ask-cmd', r.command); add('cp-ask-why', 'The value is bound to $' + r.envName + ' and never shown to Claude.'); }
+      else add('cp-ask-why', 'Claude will be able to read this value.');
+      var row = document.createElement('div'); row.className = 'cp-ask-row';
+      var btn = function (text, cls, fn) { var b = document.createElement('button'); b.type = 'button'; b.textContent = text; if (cls) b.className = cls; b.onclick = fn; row.appendChild(b); return b; };
+      if (askArmed === r.id) {
+        var pin = document.createElement('input');
+        pin.setAttribute('inputmode', 'numeric'); pin.setAttribute('maxlength', '6'); pin.setAttribute('autocomplete', 'off');
+        pin.placeholder = 'PIN'; pin.setAttribute('aria-label', '6-digit PIN');
+        row.appendChild(pin);
+        var unlock = function () {
+          var v = String(pin.value || '').trim();
+          if (!/^[0-9]{6}$/.test(v)) { askError = 'Enter a 6-digit PIN'; drawAsks(); return; }
+          askPost({ action: 'approve', reqId: r.id, pin: v }).then(function (d) {
+            // A wrong PIN leaves the request waiting on purpose, so the card
+            // stays and says why.
+            if (!d || !d.ok) { askError = (d && d.error) || 'Wrong PIN'; askShown = ''; drawAsks(); return; }
+            askArmed = ''; askError = ''; toast('Approved'); loadAsks();
+          });
+        };
+        pin.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); unlock(); } });
+        btn('Unlock', 'go', unlock);
+        btn('Cancel', '', function () { askArmed = ''; askError = ''; drawAsks(); });
+        setTimeout(function () { try { pin.focus(); } catch (e) { /* not focusable yet */ } }, 30);
+      } else {
+        btn('Approve', 'go', function () { askArmed = r.id; askError = ''; drawAsks(); });
+        btn('Deny', '', function () { askPost({ action: 'deny', reqId: r.id }).then(loadAsks); });
+      }
+      card.appendChild(row);
+      if (askArmed === r.id && askError) add('cp-ask-err', askError);
+      host.appendChild(card);
+    });
+  }
+  setInterval(loadAsks, 2500);
+  document.addEventListener('visibilitychange', loadAsks);
 
   // ─── The edges ───
   var toastTimer = 0;
@@ -255,13 +338,49 @@
     if (bridge('close') !== undefined) return;
     if (history.length > 1) history.back(); else location.href = '/';
   };
-  var menu = $('cp-menu');
-  $('cp-more').onclick = function (e) { e.stopPropagation(); menu.className = menu.className === 'on' ? '' : 'on'; menu.querySelector('[data-do="stop"]').disabled = meta.state !== 'working'; };
+  // Renaming is done in the header itself: the title becomes a box to type
+  // in. A dialog would be the obvious way, and a web view inside an app
+  // shows none unless the app builds one, so the obvious way does nothing.
+  function renameHere() {
+    var t = $('cp-title');
+    if (t.querySelector('input')) return;
+    var box = document.createElement('input');
+    box.value = meta.title || '';
+    box.setAttribute('aria-label', 'Chat name');
+    box.setAttribute('maxlength', '80');
+    box.style.cssText = 'width:100%;font:inherit;font-weight:650;color:var(--text-primary);background:var(--bg-primary);border:1px solid var(--accent);border-radius:6px;padding:2px 6px;';
+    t.textContent = '';
+    t.appendChild(box);
+    var done = false;
+    var finish = function (save) {
+      if (done) return;
+      done = true;
+      var next = String(box.value || '').trim();
+      paintHead();
+      if (!save || !next || next === meta.title) return;
+      apiFetch('/api/ui-sessions/' + encodeURIComponent(sid) + '/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: next }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { if (d && d.ok === false) toast(d.error || 'Could not rename it', 'error'); else loadMeta(); })
+        .catch(function () { toast('Could not rename it', 'error'); });
+    };
+    box.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); });
+    box.addEventListener('blur', function () { finish(true); });
+    setTimeout(function () { try { box.focus(); box.select(); } catch (e) { /* not focusable yet */ } }, 30);
+  }
+
+  var menu = $('cp-menu'), hasPlan = false;
+  $('cp-more').onclick = function (e) {
+    e.stopPropagation();
+    menu.className = menu.className === 'on' ? '' : 'on';
+    menu.querySelector('[data-do="stop"]').disabled = meta.state !== 'working';
+    menu.querySelector('[data-do="plan"]').style.display = hasPlan ? '' : 'none';
+  };
   document.addEventListener('click', function () { menu.className = ''; });
   menu.onclick = function (e) {
     var act = e.target && e.target.getAttribute && e.target.getAttribute('data-do');
-    if (act === 'open') openMain('/?chat=' + encodeURIComponent(sid));
-    if (act === 'stop') apiFetch('/api/ui-sessions/' + encodeURIComponent(sid) + '/interrupt', { method: 'POST' }).then(function (r) { if (!r.ok) toast('Could not stop it', 'error'); }).catch(function () { toast('Could not stop it', 'error'); });
+    if (act === 'open') openMain('/chat/' + encodeURIComponent(sid));
+    if (act === 'plan' && view && view.togglePlan) view.togglePlan();
+    if (act === 'rename') renameHere();
   };
   // ─── Start ───
   function start() {
@@ -275,7 +394,9 @@
         window.CrundiWidgets.configure({
           apiFetch: apiFetch, toast: toast, isMobile: function () { return true; },
           mediaUrl: mediaUrl, refreshAuth: refreshSession, download: download,
+          liveChats: function () { return [sid]; },
         });
+        try { window.CrundiWidgets.setProject(meta.project || ''); } catch (e) { /* panels then simply do not draw */ }
       }
       view = window.CrundiChat.mount($('cp-chat'), {
         sessionId: sid,
@@ -285,7 +406,13 @@
         toast: toast,
         wsSend: wsSend,
         toolExtra: toolExtra,
-        onChatMeta: function (patch) { if (patch && typeof patch.title === 'string' && patch.title) { meta.title = patch.title; paintHead(); } },
+        onChatMeta: function (patch) {
+          if (!patch) return;
+          if (typeof patch.title === 'string' && patch.title) { meta.title = patch.title; paintHead(); }
+          // Whether there is a plan to show. The workbench has a pill for it
+          // in the chat's header; here it is a line in the menu.
+          if ('plan' in patch) hasPlan = !!patch.plan;
+        },
       });
       connect();
     });

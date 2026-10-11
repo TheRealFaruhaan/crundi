@@ -269,6 +269,12 @@ object Notifier {
         for (i in 0 until kinds.length()) nm.cancel("srv:${server.id}:${kinds.optString(i)}".hashCode())
     }
 
+    /** Chats whose own request has been answered: their notifications have nothing left to say. */
+    fun clearChats(ctx: Context, server: Server, payload: JSONObject) {
+        val chats = payload.optJSONArray("chats") ?: return
+        for (i in 0 until chats.length()) chats.optString(i).takeIf { it.isNotEmpty() }?.let { clearChat(ctx, server.id, it) }
+    }
+
     /** A notification that has just arrived, opened and parsed. */
     fun show(ctx: Context, server: Server, payload: JSONObject) {
         val body = plain(payload.optString("body"))

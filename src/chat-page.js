@@ -59,6 +59,19 @@ button{font:inherit;color:inherit}
 #cp-toast{position:fixed;left:50%;bottom:calc(86px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:40;max-width:86vw;padding:9px 14px;border-radius:8px;background:var(--bg-tertiary);border:1px solid var(--border);font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s}
 #cp-toast.on{opacity:1}
 #cp-toast.error{border-color:var(--red)}
+/* A secret Claude is asking for. It sits over the top of the chat, where it
+   cannot be missed: an unanswered one times out and fails the work. */
+#cp-ask{flex:none;display:none;flex-direction:column;gap:8px;padding:10px;background:var(--bg-secondary);border-bottom:1px solid var(--border);max-height:60vh;overflow:auto}
+#cp-ask.on{display:flex}
+.cp-ask-card{border:1px solid var(--yellow);background:var(--yellow-dim);border-radius:var(--radius);padding:12px}
+.cp-ask-head{font-weight:650;font-size:14px}
+.cp-ask-why{font-size:12.5px;color:var(--text-secondary);margin-top:4px;line-height:1.4}
+.cp-ask-cmd{font-family:var(--mono);font-size:12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;margin-top:8px;white-space:pre-wrap;word-break:break-word;max-height:28vh;overflow:auto}
+.cp-ask-row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.cp-ask-row button{padding:9px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-tertiary);cursor:pointer;font-size:14px}
+.cp-ask-row button.go{background:var(--accent);border-color:var(--accent);color:#fff}
+.cp-ask-row input{flex:1;min-width:110px;padding:9px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font:inherit;font-size:16px;letter-spacing:3px}
+.cp-ask-err{color:var(--red);font-size:12.5px;margin-top:6px}
 #cp-conn{display:none;padding:4px 10px;font-size:12px;text-align:center;color:var(--text-secondary);background:var(--bg-tertiary);flex:none}
 #cp-conn.on{display:block}
 @media (prefers-reduced-motion:reduce){#cp-dot.working{animation:none}}
@@ -73,12 +86,15 @@ button{font:inherit;color:inherit}
     <button class="cp-btn" id="cp-more" type="button" aria-label="More" aria-haspopup="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
   </div>
   <div id="cp-conn" role="status">Reconnecting…</div>
+  <div id="cp-ask" role="alert"></div>
   <div id="cp-body">
     <div id="cp-chat" class="chat-mount"></div>
     <div id="cp-note" role="status"></div>
   </div>
 </div>
 <div id="cp-menu" role="menu">
+  <button type="button" data-do="plan" role="menuitem" style="display:none">Show the plan</button>
+  <button type="button" data-do="rename" role="menuitem">Rename chat</button>
   <button type="button" data-do="stop" role="menuitem">Stop Claude</button>
   <button type="button" data-do="open" role="menuitem">Open in Crundi</button>
 </div>

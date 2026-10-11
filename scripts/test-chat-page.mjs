@@ -89,12 +89,23 @@ ok(cv.isGated('/chat/abc') === false, 'a client too old for the server can still
 const widgets = readFileSync(join(root, 'app', 'vendor', 'crundi-widgets.js'), 'utf8');
 ok(widgets.includes('function toolMedia(sessionId, entry)') && widgets.includes('toolMedia: toolMedia'), 'pictures, files and frames Claude shows are parsed in one shared place');
 ok(main.includes('return window.CrundiWidgets.toolMedia(t.id, entry);') && !main.includes('const EMBED = /^[0-9a-f]{16}[.]embed$/'), 'the workbench uses it, and keeps no copy of its own');
-ok(html.includes('/vendor/crundi-widgets.js') && js.includes('toolExtra: toolExtra') && js.includes('window.CrundiWidgets.toolMedia(sid, entry)'), 'the compact chat loads it and draws them too: a file offered there used to be invisible');
+ok(html.includes('/vendor/crundi-widgets.js') && js.includes('toolExtra: toolExtra') && js.includes('W.toolMedia(sid, entry)'), 'the compact chat loads it and draws them too: a file offered there used to be invisible');
 ok(js.includes("bridge('download', abs") && js.includes("a.download = String(o.name || 'download')"), 'a file is saved by the phone inside the app, and by a plain link in a browser');
 
 // A chat that is being read loses its notification.
 ok(main.includes('window.CrundiNative.seen(String(id))') && /shown \/ Math\.min\(r\.height, window\.innerHeight\) >= 0\.4/.test(main), 'the workbench tells the app which chats are really on screen, measured, not assumed');
 ok(js.includes("bridge('seen', sid)"), 'and so does the compact chat');
+
+// A secret Claude asks for can be answered from the compact chat.
+ok(html.includes('id="cp-ask"') && js.includes("apiFetch('/api/secrets')") && js.includes("action: 'approve', reqId: r.id, pin: v") && js.includes("action: 'deny', reqId: r.id"), 'the compact chat shows a secret request and can approve it with the PIN, or deny it');
+ok(js.includes("r.sessionId ? r.sessionId === sid : (!r.project || r.project === meta.project)"), 'it shows the requests of its own chat, and ones no chat is named for');
+ok(/if \(sig === askShown\) return;/.test(js), 'and does not rebuild the card under someone typing a PIN');
+
+// The rest of what the workbench gives a chat.
+ok(js.includes('W.shotsNode(meta.project, id)') && js.includes('W.inlineNode(meta.project, id)') && js.includes('window.CrundiWidgets.setProject(meta.project'), 'panels Claude places in the chat are drawn in the compact chat too');
+ok(html.includes('data-do="plan"') && js.includes("if ('plan' in patch) hasPlan = !!patch.plan;") && js.includes('view.togglePlan()'), 'the plan can be shown, when there is one');
+ok(html.includes('data-do="rename"') && js.includes("'/rename'") && !/window\.(prompt|confirm|alert)\(/.test(js), 'and the chat can be renamed, without a dialog a web view in an app would not show');
+ok(js.includes("openMain('/chat/' + encodeURIComponent(sid))"), '"Open in Crundi" names the chat in a way the app can act on');
 
 // Going to a chat without loading the page again.
 ok(main.includes('window.crundiOpenChat = (sid) =>') && /if \(!done && \+\+tries < 24\) setTimeout\(attempt, 250\);/.test(main), 'the app can ask the loaded page for a chat, and the page keeps trying while its chats are still arriving');

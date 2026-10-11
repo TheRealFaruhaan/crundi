@@ -264,6 +264,8 @@ export function buildPayload(text, meta = {}) {
     // Kinds of request that have all been answered (kind "clear"): the phone
     // takes those notifications down.
     ...(Array.isArray(meta.clear) ? { clear: meta.clear.map((k) => String(k).slice(0, 40)).slice(0, 10) } : {}),
+    // Chats whose own request has been answered: their notifications go too.
+    ...(Array.isArray(meta.chats) && meta.chats.length ? { chats: meta.chats.map((k) => String(k).slice(0, 80)).slice(0, 20) } : {}),
     // The chat's suggested next message (kind "suggestion"), to offer on its
     // notification. Empty takes the offer away.
     ...(meta.suggestion !== undefined ? { suggestion: clip(meta.suggestion || '', 300) } : {}),

@@ -6,7 +6,13 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.pm.PackageManager
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -24,6 +30,7 @@ class ChatActivity : Activity() {
     private var web: WebView? = null
     private var serverId = ""
     private var chatId = ""
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,6 +85,39 @@ class ChatActivity : Activity() {
                 runOnUiThread { Downloads.fromPage(this@ChatActivity, Servers.byId(this@ChatActivity, serverId), url, name, web?.settings?.userAgentString) }
             }
         }, "CrundiNative")
+        // The same things the main window lets a page do: pick a file to
+        // attach, and use the camera or microphone once Android has allowed
+        // it. Without this a web view does neither, silently: the attach
+        // button in a bubble simply did nothing.
+        view.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(v: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                fileCallback?.onReceiveValue(null)
+                fileCallback = callback
+                return try {
+                    @Suppress("DEPRECATION")
+                    startActivityForResult(params.createIntent().apply { putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.mode == FileChooserParams.MODE_OPEN_MULTIPLE) }, REQ_FILE)
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    fileCallback = null
+                    false
+                }
+            }
+
+            override fun onPermissionRequest(request: PermissionRequest) {
+                val o = request.origin
+                if (!(o.scheme == base.scheme && o.host == base.host && o.port == base.port)) { request.deny(); return }
+                // Only what Android has already allowed the app. Asking for a
+                // new permission is done from the main window, not a bubble.
+                val ok = request.resources.all {
+                    when (it) {
+                        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                        else -> false
+                    }
+                }
+                if (ok) request.grant(request.resources) else request.deny()
+            }
+        }
         view.settings.mediaPlaybackRequiresUserGesture = false
         view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ -> Downloads.start(this, url, userAgent, contentDisposition, mimeType) }
         root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -93,6 +133,16 @@ class ChatActivity : Activity() {
         )
     }
 
+    @Deprecated("The platform's own result call; enough for the file chooser.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_FILE) return
+        val picked = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+            ?: data?.clipData?.let { clip -> Array(clip.itemCount) { clip.getItemAt(it).uri } }
+        fileCallback?.onReceiveValue(picked)
+        fileCallback = null
+    }
+
     @Deprecated("Still what a plain Activity is given for the back gesture.")
     override fun onBackPressed() { finish() }
 
@@ -104,5 +154,6 @@ class ChatActivity : Activity() {
 
     companion object {
         const val EXTRA_TITLE = "title"
+        private const val REQ_FILE = 2
     }
 }

@@ -1807,6 +1807,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // token" are different decisions, and only one of them can be made
       // without seeing the command.
       kind: r.kind || 'get', command: r.command || '', envName: r.envName || '',
+      // The chat that asked, when one did: that chat shows the request.
+      sessionId: r.sessionId || '',
     }));
   }
 
@@ -1919,13 +1921,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // kind of request is counted here; when the last one of a kind is answered,
   // by anyone, anywhere, phones are told to take that notification down.
   const waitingKinds = { secretRequest: 0, collabPermission: 0 };
+  let waitingSecretChats = new Set();   // chats with a secret request outstanding
   function tellPhonesAnswered() {
     let now;
     try { now = { secretRequest: pendingSecretRequests.size, collabPermission: approvals.pending().length }; } catch { return; }
     const cleared = Object.keys(now).filter((k) => waitingKinds[k] > 0 && now[k] === 0);
     Object.assign(waitingKinds, now);
-    if (!cleared.length || !channels.isEnabled('mobile')) return;
-    mobilePush.send('', { tag: 'clear', silent: true, clear: cleared }).catch(() => { /* not worth a log line */ });
+    // A request raised by a chat is shown on that chat's own notification,
+    // so it is taken down by chat: each chat that had one and now has none.
+    const chatsNow = new Set([...pendingSecretRequests.values()].map((r) => r.sessionId).filter(Boolean));
+    const chatsDone = [...waitingSecretChats].filter((id) => !chatsNow.has(id));
+    waitingSecretChats = chatsNow;
+    if ((!cleared.length && !chatsDone.length) || !channels.isEnabled('mobile')) return;
+    mobilePush.send('', { tag: 'clear', silent: true, clear: cleared, chats: chatsDone }).catch(() => { /* not worth a log line */ });
   }
 
   function broadcastApprovals() {
@@ -1945,7 +1953,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * The value is never cached — every request is independent and needs its own
    * PIN entry.
    */
-  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '' }) {
+  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '', sessionId = '' }) {
     return new Promise((resolve) => {
       const id = randomBytes(8).toString('hex');
       const timer = setTimeout(() => {
@@ -1955,7 +1963,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }, SECRET_REQUEST_TIMEOUT_MS);
 
       pendingSecretRequests.set(id, {
-        id, secretId, secretName, projectAlias, reason, kind, command, envName,
+        id, secretId, secretName, projectAlias, reason, kind, command, envName, sessionId,
         createdAt: new Date().toISOString(),
         timer,
         fulfill: (value) => {
@@ -1980,7 +1988,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const what = kind === 'run'
         ? `🔐 Claude wants to RUN a command with secret "${secretName}"${from}.\n\n${command}\n\n(the value is bound to $${envName} and never shown to Claude)${why}`
         : `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}`;
-      notifyEvent('secretRequest', `${what}\n\nApprove it in Crundi — the prompt appears in the chat itself, or under Secrets.`);
+      // When a chat asked, the notification is that chat's: on a phone it
+      // lands on the chat's own conversation and bubble, and opens the chat,
+      // where the request is waiting with its PIN box.
+      const asking = sessionId && claudeUi ? claudeUi.list().find((x) => x.id === sessionId) : null;
+      const about = asking && !asking.collaborator
+        ? { url: `/chat/${asking.id}`, chat: { id: asking.id, title: asking.longTitle || asking.title || 'Chat', project: asking.project || '', mark: chatMark(asking.project || '', asking.title) } }
+        : {};
+      notifyEvent('secretRequest', `${what}\n\nApprove it in Crundi — the prompt appears in the chat itself, or under Secrets.`, about);
     });
   }
 
@@ -5591,6 +5606,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           secretName: meta.name,
           projectAlias: a.alias || '',
           reason: a.reason || '',
+          sessionId: String(a.sessionId || ''),
         });
         return json(res, result);
       }
@@ -5611,6 +5627,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           secretName: meta.meta.name,
           projectAlias: a.alias || '',
           reason: a.reason || '',
+          sessionId: String(a.sessionId || ''),
           kind: 'run',
           command,
           envName,

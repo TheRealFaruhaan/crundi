@@ -177,6 +177,14 @@ const clr = p1.open(r.seen[0].body.messages[0].payload);
 ok(clr.kind === 'clear' && clr.silent === true && Array.isArray(clr.clear) && clr.clear[0] === 'secretRequest' && clr.body === '', 'when a kind of request has been answered, phones are told to take it down');
 ok(/const cleared = Object\.keys\(now\)\.filter\(\(k\) => waitingKinds\[k\] > 0 && now\[k\] === 0\);/.test(srv), 'only when the LAST waiting request of that kind is answered, not on every change');
 
+// A secret request raised by a chat belongs to that chat.
+r = relay(allSent);
+await mp.send('', { tag: 'clear', silent: true, clear: [], chats: ['abc123'] }, { fetchImpl: r.fetchImpl });
+ok(p1.open(r.seen[0].body.messages[0].payload).chats[0] === 'abc123', 'when a chat\'s own request is answered, phones are told which chat');
+ok(/notifyEvent\('secretRequest', [^;]+, about\);/.test(srv) && /sessionId: String\(a\.sessionId \|\| ''\),/.test(srv), 'a secret request carries the chat that asked, so its notification is that chat\'s');
+const bridgeSrc = readFileSync(join(root, 'src', 'mcp-stdio.js'), 'utf8');
+ok(/if \(name === 'secret_get' \|\| name === 'secret_run'\) \{\s+delete args\.sessionId;/.test(bridgeSrc), 'which chat is asking is the tool process\'s own, never something Claude can say');
+
 // A permission request the phone can answer.
 r = relay(allSent);
 await mp.send('Claude needs your input.', { tag: 'needsInput', chat: { id: 'abc123', title: 'T', project: 'crundi', mark: MARK }, prompt: { requestId: 'req_1', tool: 'Bash', summary: 'npm run build' } }, { fetchImpl: r.fetchImpl });

@@ -40,6 +40,7 @@ class PushService : FirebaseMessagingService() {
                 } else if (payload.optBoolean("silent") && kind == "clear") {
                     PushLog.add(app, "From ${server.host}: requests answered, notifications taken down")
                     Notifier.clearKinds(app, server, payload)
+                    Notifier.clearChats(app, server, payload)
                 } else if (payload.optBoolean("silent") && kind == "suggestion") {
                     PushLog.add(app, "From ${server.host}: a suggested reply ${if (payload.optString("suggestion").isEmpty()) "withdrawn" else "offered"}")
                     Notifier.suggest(app, server, payload)

@@ -477,6 +477,22 @@ and the Linux desktop client.
     is left. On by default; App settings turns it off.
   - **Approval requests vibrate.** They went to the quiet Server channel;
     they have a Requests channel of their own now.
+- **The owner's rule: anything built for a chat must also work in the bubble.**
+  Two pages draw a chat (the workbench, and the compact page a bubble shows).
+  What lives inside the shared chat component reaches both; what the
+  workbench does around a chat as its host does not, and each such gap was
+  found on the phone as a silent failure. Added to the compact page and the
+  bubble's window in server 1.20.0-dev.10 and the rebuilt app 1.0.0-dev.6:
+  - The secret approval prompt, with the PIN. A request raised from a chat in
+    a bubble used to be invisible there and time out.
+  - A secret request now knows which chat asked (the tool process says so,
+    Claude cannot), so its notification is that chat's and reaches its bubble.
+  - The attach button, camera and microphone in a bubble.
+  - Panels Claude places in a chat, the plan, renaming.
+  - **Still missing from the compact page:** resuming a chat that was closed
+    by a server restart (it says "Chat closed" and offers the main app),
+    opening a file path from a message, and the owner's inbox of
+    collaborators' requests.
 - **Next:** see whether the chip appears on the phone with 1.0.0-dev.6.
 
 ## API notes for the app
