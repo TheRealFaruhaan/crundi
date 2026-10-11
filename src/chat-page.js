@@ -45,8 +45,13 @@ button{font:inherit;color:inherit}
 #cp-dot.needs-input{background:var(--accent-hover)}
 #cp-dot.idle{background:var(--green)}
 @keyframes cp-pulse{50%{opacity:.35}}
-#cp-body{flex:1;min-height:0;position:relative}
-#cp-chat{position:absolute;inset:0}
+/* A column, so a panel docked to this chat can sit above the conversation
+   (crundi-widgets.js puts it there), exactly as it does in the workbench. */
+#cp-body{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+#cp-chat{flex:1 1 0;min-height:0;min-width:0;position:relative}
+/* Every icon in the app is an inline SVG sized by this one rule. The main
+   page has it; without it here a panel's icon filled the whole bubble. */
+.ic{width:1em;height:1em;display:inline-block;vertical-align:-0.125em;flex-shrink:0;pointer-events:none}
 #cp-note{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:28px;text-align:center;color:var(--text-secondary);font-size:14px;line-height:1.5;background:var(--bg-primary)}
 #cp-note.on{display:flex}
 #cp-note b{color:var(--text-primary);font-size:16px;font-weight:650}

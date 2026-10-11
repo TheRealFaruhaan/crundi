@@ -493,7 +493,34 @@ and the Linux desktop client.
     by a server restart (it says "Chat closed" and offers the main app),
     opening a file path from a message, and the owner's inbox of
     collaborators' requests.
-- **Next:** see whether the chip appears on the phone with 1.0.0-dev.6.
+- **Proven on the owner's phone with app 1.0.0-dev.6: the live card shows as
+  a live notification on Samsung** (One UI 8.5). The undocumented
+  `android.ongoingActivityNoti.automation` extra is what did it; it may stop
+  working in a later One UI.
+- **In app 1.0.0-dev.7 and server 1.20.0-dev.11, not yet proven on a phone:**
+  - The live card's glow on Samsung was heavy, on the lock screen too. The
+    glow is Samsung's. Two things within reach were changed: the card no
+    longer sets an accent colour, and it is not posted again when what it
+    says has not changed. Whether either lightens the glow is not known.
+  - A panel in a bubble drew with an icon the size of the bubble: the compact
+    page lacked the one rule that sizes every icon. A panel docked to a chat
+    now sits above the conversation there, with live updates from the
+    server's event stream, which also brings secret requests at once.
+  - The Bubble button now sends the app to the background, since a chat open
+    in the main window loses its bubble.
+  - **A bubble closed by itself when a message was sent from it**, not every
+    time. Not reproduced off the phone, so the cause is not proven. Three ways
+    the app could take a bubble down from underneath were closed: a suggested
+    reply being withdrawn (which happens on send) no longer posts a bubble's
+    notification again; the main window's "this chat is on screen" counts
+    only while that window has the focus, not while it is merely drawn under
+    a bubble; and nothing clears a chat's notification while that chat's own
+    window exists, which the app now tracks itself rather than asking Android
+    whether the notification is a bubble. Each time the app does take a
+    bubble down it writes a line to the log in App settings, with the reason.
+    Unexplained: when this happened, the chat was also missing from the live
+    card. If it recurs with no line in the log, the app did not close it.
+- **Next:** see how the live card looks on the phone with 1.0.0-dev.7.
 
 ## API notes for the app
 

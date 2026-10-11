@@ -30,6 +30,7 @@ class ChatActivity : Activity() {
     private var web: WebView? = null
     private var serverId = ""
     private var chatId = ""
+    private var openKey = ""
     private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -39,6 +40,8 @@ class ChatActivity : Activity() {
         chatId = intent.getStringExtra(Notifier.EXTRA_CHAT).orEmpty()
         val server = Servers.byId(this, serverId)
         if (server == null || !Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) { finish(); return }
+        openKey = "$serverId:$chatId"
+        opened(openKey)
         // In the list of recent apps this window is the chat, not "Crundi"
         // again: its own name, so it can be told from the main window.
         intent.getStringExtra(EXTRA_TITLE)?.let {
@@ -79,7 +82,7 @@ class ChatActivity : Activity() {
             @JavascriptInterface fun close() { runOnUiThread { finish() } }
             @JavascriptInterface fun openMain(path: String) { runOnUiThread { this@ChatActivity.openMain(path) } }
             @JavascriptInterface fun chatState(json: String) { /* the bubble's label comes from its notification */ }
-            @JavascriptInterface fun seen(id: String) { if (id == chatId) runOnUiThread { Notifier.clearChat(this@ChatActivity, serverId, chatId) } }
+            @JavascriptInterface fun seen(id: String) { if (id == chatId) runOnUiThread { Notifier.clearChat(this@ChatActivity, serverId, chatId, why = "its own window reported it seen") } }
             /** A file Claude offered in the chat: save it, exactly as the main window would. */
             @JavascriptInterface fun download(url: String, name: String) {
                 runOnUiThread { Downloads.fromPage(this@ChatActivity, Servers.byId(this@ChatActivity, serverId), url, name, web?.settings?.userAgentString) }
@@ -147,6 +150,7 @@ class ChatActivity : Activity() {
     override fun onBackPressed() { finish() }
 
     override fun onDestroy() {
+        if (openKey.isNotEmpty()) closed(openKey)
         web?.destroy()
         web = null
         super.onDestroy()
@@ -155,5 +159,13 @@ class ChatActivity : Activity() {
     companion object {
         const val EXTRA_TITLE = "title"
         private const val REQ_FILE = 2
+
+        // Which chats have a window of their own right now. Counted, since
+        // Android can build a second window for a chat before it has taken
+        // the first one down.
+        private val open = HashMap<String, Int>()
+        private fun opened(key: String) = synchronized(open) { open[key] = (open[key] ?: 0) + 1 }
+        private fun closed(key: String) = synchronized(open) { val n = (open[key] ?: 0) - 1; if (n > 0) open[key] = n else open.remove(key) }
+        fun isOpen(serverId: String, chatId: String): Boolean = synchronized(open) { open.containsKey("$serverId:$chatId") }
     }
 }

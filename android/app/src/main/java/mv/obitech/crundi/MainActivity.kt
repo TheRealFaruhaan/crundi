@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private var server: Server? = null
     // Where to go once the page is up: set by a tapped notification.
     private var pendingPath: String? = null
+    // Until when a "this chat is on screen" from the page is ignored: a bubble was just asked for.
+    @Volatile private var bubbleAskedUntil = 0L
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingPermission: PermissionRequest? = null
 
@@ -289,8 +291,18 @@ class MainActivity : Activity() {
         @JavascriptInterface fun seen(chatId: String) {
             val s = server ?: return
             if (!Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) return
-            // Bubble and all: the chat is open right here.
-            runOnUiThread { Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true) }
+            // Bubble and all: the chat is open right here. Unless the bubble
+            // was asked for a moment ago, from this very screen: then the app
+            // is on its way out, and this is the last look before it goes.
+            if (System.currentTimeMillis() < bubbleAskedUntil) return
+            runOnUiThread {
+                // With a bubble open over it this window is still drawn, and
+                // its page still counts itself visible, but nobody is
+                // reading it: the bubble has the focus. Taking the bubble
+                // down from underneath is exactly the wrong way round.
+                if (!hasWindowFocus()) return@runOnUiThread
+                Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true, why = "the same chat is open in the main window")
+            }
         }
 
         /** "App settings" in the sidebar. */
@@ -309,7 +321,12 @@ class MainActivity : Activity() {
             runOnUiThread {
                 withChat(chatId) { chat ->
                     val problem = Notifier.bubble(this@MainActivity, chat)
-                    if (problem != null) Toast.makeText(this@MainActivity, problem, Toast.LENGTH_LONG).show()
+                    if (problem != null) { Toast.makeText(this@MainActivity, problem, Toast.LENGTH_LONG).show(); return@withChat }
+                    // The point of a bubble is to carry on with something
+                    // else while the chat floats, so the app steps aside. It
+                    // has to: a chat open in this window loses its bubble.
+                    bubbleAskedUntil = System.currentTimeMillis() + 6000
+                    moveTaskToBack(true)
                 }
             }
         }

@@ -167,6 +167,12 @@ object Notifier {
         rememberSuggestion(ctx, chat, payload.optString("suggestion"))
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val showing = nm.activeNotifications.firstOrNull { it.id == chat.notificationId }?.notification ?: return
+        // A bubble shows the suggestion itself, above its message box, and
+        // has no notification in the shade to put it under. Posting the
+        // notification again there changes nothing anyone can see, and it
+        // happens at the very moment a message is sent (the suggestion is
+        // withdrawn), which is when bubbles were seen to close.
+        if (isBubble(ctx, chat, showing)) return
         val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(showing) ?: return
         // Quietly: the notification is already there, this only adds to it.
         post(ctx, chat.notificationId, chatBuilder(ctx, chat, style, person(ctx, chat)).setOnlyAlertOnce(true).setSilent(true))
@@ -252,15 +258,29 @@ object Notifier {
      * takes the bubble off the screen; Android hides a bubble's entry in the
      * shade by itself when the bubble is opened.
      */
-    fun clearChat(ctx: Context, serverId: String, chatId: String, evenBubble: Boolean = false) {
+    fun clearChat(ctx: Context, serverId: String, chatId: String, evenBubble: Boolean = false, why: String = "") {
         val id = "chat:$serverId:$chatId".hashCode()
+        // The chat's own window is open, which is to say its bubble is. What
+        // Android reports about the notification is not asked at all here:
+        // the window existing is the fact, and nothing takes it down but the
+        // main window showing the same chat.
+        val windowOpen = ChatActivity.isOpen(serverId, chatId)
+        if (windowOpen && !evenBubble) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val showing = nm.activeNotifications.firstOrNull { it.id == id }?.notification ?: return
         // `evenBubble` is for the main window: a chat open there does not
         // also need its own head floating over it.
-        if (!evenBubble && (showing.flags and android.app.Notification.FLAG_BUBBLE) != 0) return
+        val bubble = (showing.flags and android.app.Notification.FLAG_BUBBLE) != 0
+        if (!evenBubble && bubble) return
         nm.cancel(id)
+        // A bubble going away is worth a line: "it closed by itself" needs a
+        // reason somebody can find.
+        if (bubble || windowOpen) PushLog.add(ctx, "Took a chat's bubble down: $why")
     }
+
+    /** Is this chat floating as a bubble, or open in its own window? */
+    private fun isBubble(ctx: Context, chat: ChatRef, showing: android.app.Notification?): Boolean =
+        ChatActivity.isOpen(chat.serverId, chat.id) || (showing != null && (showing.flags and android.app.Notification.FLAG_BUBBLE) != 0)
 
     /** Every request of these kinds has been answered somewhere: take those notifications down. */
     fun clearKinds(ctx: Context, server: Server, payload: JSONObject) {
@@ -272,7 +292,7 @@ object Notifier {
     /** Chats whose own request has been answered: their notifications have nothing left to say. */
     fun clearChats(ctx: Context, server: Server, payload: JSONObject) {
         val chats = payload.optJSONArray("chats") ?: return
-        for (i in 0 until chats.length()) chats.optString(i).takeIf { it.isNotEmpty() }?.let { clearChat(ctx, server.id, it) }
+        for (i in 0 until chats.length()) chats.optString(i).takeIf { it.isNotEmpty() }?.let { clearChat(ctx, server.id, it, why = "its request was answered") }
     }
 
     /** A notification that has just arrived, opened and parsed. */

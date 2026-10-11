@@ -36,7 +36,7 @@ class PushService : FirebaseMessagingService() {
                     LiveCards.onState(app, server, payload)
                     // Working again means somebody has answered it, here or
                     // on another device: what its notification said is done.
-                    if (payload.optString("state") == "working") payload.optJSONObject("chat")?.optString("id")?.takeIf { it.isNotEmpty() }?.let { Notifier.clearChat(app, server.id, it) }
+                    if (payload.optString("state") == "working") payload.optJSONObject("chat")?.optString("id")?.takeIf { it.isNotEmpty() }?.let { Notifier.clearChat(app, server.id, it, why = "it started working") }
                 } else if (payload.optBoolean("silent") && kind == "clear") {
                     PushLog.add(app, "From ${server.host}: requests answered, notifications taken down")
                     Notifier.clearKinds(app, server, payload)

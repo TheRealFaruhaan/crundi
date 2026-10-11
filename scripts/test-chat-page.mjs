@@ -107,6 +107,11 @@ ok(html.includes('data-do="plan"') && js.includes("if ('plan' in patch) hasPlan 
 ok(html.includes('data-do="rename"') && js.includes("'/rename'") && !/window\.(prompt|confirm|alert)\(/.test(js), 'and the chat can be renamed, without a dialog a web view in an app would not show');
 ok(js.includes("openMain('/chat/' + encodeURIComponent(sid))"), '"Open in Crundi" names the chat in a way the app can act on');
 
+// A panel docked to the chat, and the icons everything is drawn with.
+ok(/\.ic\{width:1em;height:1em;/.test(html), 'the compact page sizes icons as the main page does: without it a panel\'s icon filled the bubble');
+ok(js.includes("window.CrundiWidgets.syncDock($('cp-body'), sid)") && /#cp-body\{[^}]*display:flex;flex-direction:column/.test(html), 'a panel docked to the chat sits above the conversation, as in the workbench');
+ok(js.includes("new EventSource('/api/events?token='") && js.includes("es.addEventListener('widget'") && js.includes("es.addEventListener('secret-requests'"), 'it listens to the server for panel updates and for secret requests as they are raised');
+
 // Going to a chat without loading the page again.
 ok(main.includes('window.crundiOpenChat = (sid) =>') && /if \(!done && \+\+tries < 24\) setTimeout\(attempt, 250\);/.test(main), 'the app can ask the loaded page for a chat, and the page keeps trying while its chats are still arriving');
 

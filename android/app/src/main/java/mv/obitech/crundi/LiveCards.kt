@@ -173,10 +173,17 @@ object LiveCards {
         // No Stop here. A notification is too easy to touch by accident for
         // something that throws away a turn of work; stopping is done in the
         // chat, where it is deliberate.
+        // Posting a card again replays whatever entrance the phone gives a
+        // live card, so it is posted only when what it says has changed.
+        val says = "$title|$lines|${needs.size}|${working.size}|${first.since}|${working.firstOrNull { it.state == "working" } != null}"
+        if (lastSaid[id] == says && (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications.any { it.id == id }) return
+        lastSaid[id] = says
         val built = b.build()
         runCatching { nm.notify(id, built) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
         noteChip(ctx, id, built)
     }
+
+    private val lastSaid = HashMap<Int, String>()
 
     // Whether the phone gave the card its chip, said once per change, so that
     // "it is in the panel but not in the status bar" has an answer.
@@ -198,7 +205,11 @@ object LiveCards {
     private fun base(ctx: Context, e: Entry, project: String): NotificationCompat.Builder {
         return NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
-            .setColor(ctx.getColor(R.color.accent))
+            // No colour of its own. On Samsung the live card is drawn with a
+            // glow, and a bright accent made it a heavy one, on the lock
+            // screen as well. Left uncoloured, the phone uses its plain
+            // outline. The glow itself is Samsung's and not something the
+            // app draws or can switch off.
             // No picture. The project's mark was here, and on a Samsung phone
             // it was drawn half off the edge of the card. The project's name
             // is in the line at the top either way.

@@ -210,6 +210,34 @@
   setInterval(loadAsks, 2500);
   document.addEventListener('visibilitychange', loadAsks);
 
+  // ─── Panels docked to this chat, and what the server announces ───
+  // A panel Claude docks to a chat sits above the conversation. The widgets
+  // file draws it; it has to be told when the list of panels changes and
+  // when one has new data, which the server announces on its event stream.
+  function dock() {
+    if (!view || !window.CrundiWidgets || !window.CrundiWidgets.syncDock) return;
+    try { window.CrundiWidgets.syncDock($('cp-body'), sid); } catch (e) { /* the chat still works without its panel */ }
+  }
+  var es = null;
+  function listen() {
+    if (es) { try { es.close(); } catch (e) { /* already closed */ } es = null; }
+    if (stopped || !window.EventSource) return;
+    es = new EventSource('/api/events?token=' + encodeURIComponent(token));
+    es.addEventListener('widget', function (e) {
+      try { var d = JSON.parse(e.data); if (window.CrundiWidgets) { window.CrundiWidgets.handleEvent(d); dock(); } } catch (x) { /* a malformed frame must not stop the stream */ }
+    });
+    // A secret request the moment it is raised, not at the next look.
+    es.addEventListener('secret-requests', function () { loadAsks(); });
+    es.onerror = function () {
+      // The stream is checked at connect, with a token that lasts fifteen
+      // minutes. A browser retries with the same address for ever, so it is
+      // closed here and opened again with a fresh token.
+      try { es.close(); } catch (x) { /* already closed */ }
+      es = null;
+      setTimeout(function () { if (!stopped) refreshSession().then(listen); }, 5000);
+    };
+  }
+
   // ─── The edges ───
   var toastTimer = 0;
   function toast(msg, type) {
@@ -395,8 +423,9 @@
           apiFetch: apiFetch, toast: toast, isMobile: function () { return true; },
           mediaUrl: mediaUrl, refreshAuth: refreshSession, download: download,
           liveChats: function () { return [sid]; },
+          onChange: function () { dock(); }, onChrome: function () { dock(); },
         });
-        try { window.CrundiWidgets.setProject(meta.project || ''); } catch (e) { /* panels then simply do not draw */ }
+        try { Promise.resolve(window.CrundiWidgets.setProject(meta.project || '')).then(dock); } catch (e) { /* panels then simply do not draw */ }
       }
       view = window.CrundiChat.mount($('cp-chat'), {
         sessionId: sid,
@@ -415,6 +444,7 @@
         },
       });
       connect();
+      listen();
     });
   }
   start();
