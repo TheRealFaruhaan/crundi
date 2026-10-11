@@ -1,0 +1,30 @@
+<div class="wna a-picon">
+  <div class="row r1"><span class="tile"><b>SH</b><i class="pic p1"><u></u></i></span><span class="nm">shop</span></div>
+  <div class="row r2"><span class="tile"><b>WB</b><i class="pic p2"><u></u></i></span><span class="nm">weather-bot</span></div>
+  <div class="row r3"><span class="tile"><b>NT</b></span><span class="nm">notes</span></div>
+  <div class="head h1"><b>SH</b><i class="pic p1"><u></u></i></div>
+  <div class="head h2"><b>WB</b><i class="pic p2"><u></u></i></div>
+  <style>
+    .a-picon .row{position:absolute;left:56px;width:300px;height:64px;border-radius:14px;display:flex;align-items:center;gap:16px;padding:0 14px;border:1px solid var(--border);background:var(--bg-card)}
+    .a-picon .r1{top:60px}.a-picon .r2{top:140px}.a-picon .r3{top:220px}
+    .a-picon .nm{font-size:15px;font-weight:600;color:var(--text-primary)}
+    .a-picon .tile,.a-picon .head{position:relative;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-picon .tile{width:40px;height:40px}
+    .a-picon .tile b,.a-picon .head b{font:700 12px var(--mono,monospace);color:var(--text-secondary);letter-spacing:.04em}
+    .a-picon .head{position:absolute;left:440px;width:84px;height:84px;box-shadow:0 14px 34px rgba(0,0,0,.5)}
+    .a-picon .head b{font-size:24px}
+    .a-picon .h1{top:70px}.a-picon .h2{top:190px}
+    .a-picon .pic{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0;scale:.6}
+    .a-picon .p1{background:#0f766e;animation:apc-in 9s ease infinite}
+    .a-picon .p1 u{width:46%;height:38%;border:3px solid #fff;border-top-width:7px;border-radius:5px;text-decoration:none}
+    .a-picon .p2{background:#f59e0b;animation:apc-in2 9s ease infinite}
+    .a-picon .p2 u{width:44%;height:44%;border-radius:50%;background:#fff;text-decoration:none}
+    .a-picon .r1 .tile,.a-picon .h1{animation:apc-ring 9s ease infinite}
+    .a-picon .r2 .tile,.a-picon .h2{animation:apc-ring2 9s ease infinite}
+    @keyframes apc-in{0%,18%{opacity:0;scale:.6}26%,90%{opacity:1;scale:1}100%{opacity:0;scale:1}}
+    @keyframes apc-in2{0%,38%{opacity:0;scale:.6}46%,90%{opacity:1;scale:1}100%{opacity:0;scale:1}}
+    @keyframes apc-ring{0%,18%{border-color:var(--border)}24%{border-color:var(--accent)}34%,100%{border-color:var(--border)}}
+    @keyframes apc-ring2{0%,38%{border-color:var(--border)}44%{border-color:var(--accent)}54%,100%{border-color:var(--border)}}
+    @media (prefers-reduced-motion:reduce){.a-picon *{animation:none!important}.a-picon .pic{opacity:1;scale:1}}
+  </style>
+</div>

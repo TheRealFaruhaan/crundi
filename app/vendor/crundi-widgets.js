@@ -38,6 +38,8 @@
   function svg(body) { return '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>'; }
   var IC = {
     panel: svg('<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
+    // A sheet of paper: what a file is drawn as where the page has no icon per kind of file.
+    file: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>'),
     x: svg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
     refresh: svg('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/>'),
     up: svg('<polyline points="18 15 12 9 6 15"/>'),
@@ -1190,7 +1192,7 @@
 
   function fileItem(it) {
     var card = el('div', 'wg-mfile');
-    var ic = el('span', 'wg-mfile-ic', cfg.fileIcon ? cfg.fileIcon(it.filename || 'file') : IC.panel);
+    var ic = el('span', 'wg-mfile-ic', cfg.fileIcon ? cfg.fileIcon(it.filename || 'file') : IC.file);
     var meta = el('span', 'wg-mfile-meta');
     var n = el('span', 'wg-mfile-n'); n.textContent = it.filename || 'File'; n.title = it.filename || '';
     var sz = el('span', 'wg-mfile-s'); sz.textContent = fmtBytes(it.size) + (it.caption ? ' · ' + it.caption : '');
@@ -1614,6 +1616,67 @@
     refresh().then(function () { if (tabState.el && tabState.selected === d.id) showPane(tabState.pane); });
   }
 
+  /**
+   * What Claude showed in a chat with show_image, show_video, show_audio,
+   * show_file or show_embed, as something to put under that tool call. Null
+   * for any other tool, or one that failed.
+   *
+   * It lives here, not in a page, because two pages draw chats: the
+   * workbench, and the compact chat a phone's bubble opens. The compact page
+   * once had no way to draw any of this, and a file Claude offered there
+   * simply did not appear.
+   *
+   * Only stored names and ids are taken from the result, and only if they
+   * look like ours; every word shown is set as text.
+   */
+  function toolMedia(sessionId, entry) {
+    if (!entry || entry.status !== 'done' || entry.isError) return null;
+    if (!/show_(image|video|audio|file|embed)$/.test(String(entry.name || ''))) return null;
+    var r = null;
+    try { r = JSON.parse(String(entry.result || '')); } catch (e) { return null; }
+    var sid = encodeURIComponent(sessionId);
+    var NAME = /^[0-9a-f]{16}([.]poster)?[.](png|jpg|gif|webp|mp4|webm|mov|mp3|wav|ogg|m4a|flac|weba)$/;
+    var EMBED = /^[0-9a-f]{16}[.]embed$/;
+    var num = function (v, max) { var n = Number(v); return isFinite(n) && n > 0 && n <= max ? n : 0; };
+    // 1.19.19 answered show_image with { images: [{ name, caption }] }.
+    var raw = r && Array.isArray(r.items) ? r.items
+      : ((r && Array.isArray(r.images)) ? r.images.map(function (i) { var c = {}; for (var k in i) c[k] = i[k]; c.kind = 'image'; return c; }) : []);
+    var items = [];
+    raw.forEach(function (i) {
+      if (!i) return;
+      var base = { caption: String(i.caption || '').slice(0, 200), filename: String(i.filename || '').slice(0, 200), size: num(i.size, 1e13) };
+      if (i.kind === 'embed') {
+        // A frame: either an https address that is not this site's own (a
+        // frame of our own origin could act as us), or stored HTML, which
+        // the frame gets as text and runs with no origin at all.
+        base.kind = 'embed';
+        base.title = String(i.title || '').slice(0, 200); base.provider = String(i.provider || '').slice(0, 60);
+        base.w = num(i.w, 100); base.h = num(i.h, 100); base.height = num(i.height, 1200); base.width = num(i.width, 2000);
+        if (i.name) {
+          if (!EMBED.test(String(i.name))) return;
+          base.htmlUrl = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.name);
+        } else {
+          var u = null; try { u = new URL(String(i.src || '')); } catch (e) { u = null; }
+          if (!u || u.protocol !== 'https:' || u.host === location.host) return;
+          base.src = u.href;
+        }
+        var open = null; try { open = new URL(String(i.url || '')); } catch (e) { open = null; }
+        if (open && open.protocol === 'https:') base.openUrl = open.href;
+        items.push(base);
+      } else if (i.kind === 'file') {
+        if (!/^[0-9a-f]{16}$/.test(String(i.id || ''))) return;
+        base.kind = 'file'; base.url = '/api/chat-media/file?session=' + sid + '&id=' + i.id;
+        items.push(base);
+      } else if (['image', 'video', 'audio'].indexOf(i.kind) >= 0 && NAME.test(String(i.name || ''))) {
+        base.kind = i.kind; base.url = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.name);
+        base.w = num(i.w, 20000); base.h = num(i.h, 20000); base.duration = num(i.duration, 1e6);
+        if (i.poster && NAME.test(String(i.poster))) base.posterUrl = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.poster);
+        items.push(base);
+      }
+    });
+    return items.length ? mediaNode(items, String((r && r.caption) || '').slice(0, 300)) : null;
+  }
+
   window.CrundiWidgets = {
     configure: function (o) { for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) cfg[k] = o[k]; injectStyles(); },
     setProject: function (alias) {
@@ -1637,6 +1700,7 @@
     inlineNode: inlineNode,
     shotsNode: shotsNode,
     mediaNode: mediaNode,
+    toolMedia: toolMedia,
     setChipHost: function (n) { chipEl = n; renderChips(); },
     mountPicker: mountPicker,
     mountTab: mountTab,

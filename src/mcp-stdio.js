@@ -444,6 +444,14 @@ async function handleToolCall(name, args) {
     args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
 
+  // Which chat is asking for a secret is this process's own, never an
+  // argument. The server uses it to put the request where the person will
+  // see it: in that chat, and on that chat's notification and bubble.
+  if (name === 'secret_get' || name === 'secret_run') {
+    delete args.sessionId;
+    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+  }
+
   // A widget remembers which chat made it: that is the chat it docks beside,
   // and the one whose activity a "session" source reports.
   if (name === 'widget_open' && process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;

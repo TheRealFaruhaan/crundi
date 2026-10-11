@@ -1,0 +1,44 @@
+{
+  "steps": [
+    {
+      "id": "phone-pair",
+      "tag": "Phone app",
+      "title": "Connect a phone",
+      "body": "Crundi now has an Android app, and pairing it takes a few seconds. Open Settings, choose Connect a phone, and point the phone at the picture it shows. No password is typed on the phone, and the phone appears by name under your signed-in devices, where you can cut it off.",
+      "art": "phone-pair.html",
+      "artTitle": "Settings"
+    },
+    {
+      "id": "phone-notify",
+      "tag": "Phone app",
+      "title": "Answer from the notification",
+      "body": "When Claude finishes or needs you, the phone says so, under that chat's name. Reply right there without opening anything, tap the suggested reply, or approve and deny a request. A notification goes away by itself once you have dealt with it, on the phone or anywhere else.",
+      "art": "phone-notify.html",
+      "artTitle": "Notifications"
+    },
+    {
+      "id": "phone-bubbles",
+      "tag": "Phone app",
+      "title": "Chats that float",
+      "body": "A chat can float over whatever else you are doing, as a bubble. Open one from a chat's menu, or leave the app while Claude is working and the chats that are busy follow you out. Tap a bubble for the whole conversation: files, pictures, panels and all.",
+      "art": "phone-bubbles.html",
+      "artTitle": "Bubbles"
+    },
+    {
+      "id": "phone-live",
+      "tag": "Phone app",
+      "title": "See Claude working",
+      "body": "While Claude works, a card on the phone shows which chats are at it and since when, and says so plainly when one needs you. One card for each project. On Android 16 it is a live notification, with a chip in the status bar.",
+      "art": "phone-live.html",
+      "artTitle": "Live card"
+    },
+    {
+      "id": "project-icons",
+      "tag": "Projects",
+      "title": "Projects wear their own icon",
+      "body": "A project that has an icon in its folder (a favicon, an app icon) now shows it in place of its letters: in the sidebar, beside the project's name, and on the phone app's bubbles and notifications. Nothing to set up. It is looked for each time you open a chat there, and a project without one keeps its letters.",
+      "art": "project-icons.html",
+      "artTitle": "Projects"
+    }
+  ]
+}

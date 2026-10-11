@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Crundi head, from assets/logo-head.svg: an indigo head with two eyes
+     cut out of it, and the amber antenna. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="96dp" android:height="96dp"
+    android:viewportWidth="96" android:viewportHeight="96">
+    <path android:pathData="M48,27V17" android:strokeColor="#FBBF24" android:strokeWidth="5.5" android:strokeLineCap="round" />
+    <path android:pathData="M48,13m-6.5,0a6.5,6.5 0,1 1,13 0a6.5,6.5 0,1 1,-13 0" android:fillColor="#FBBF24" />
+    <path android:fillType="evenOdd"
+        android:pathData="M34,26H62A23,23 0,0 1,85 49V60A23,23 0,0 1,62 83H34A23,23 0,0 1,11 60V49A23,23 0,0 1,34 26ZM37.2,43A5.2,5.2 0,0 0,32 48.2V55.8A5.2,5.2 0,0 0,37.2 61H37.3A5.2,5.2 0,0 0,42.5 55.8V48.2A5.2,5.2 0,0 0,37.3 43ZM58.7,43A5.2,5.2 0,0 0,53.5 48.2V55.8A5.2,5.2 0,0 0,58.7 61H58.8A5.2,5.2 0,0 0,64 55.8V48.2A5.2,5.2 0,0 0,58.8 43Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="14" android:startY="14" android:endX="82" android:endY="82">
+                <item android:offset="0" android:color="#818CF8" />
+                <item android:offset="1" android:color="#4F46E5" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

@@ -37,7 +37,7 @@ import { registerService, listRegisteredForProject, updateRegistered, getRegiste
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
-import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt } from './project-store.js';
+import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt, getProjectIconFile, setProjectIconFile } from './project-store.js';
 import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
@@ -63,8 +63,16 @@ import { COLLAB_FORWARD_COOKIE, mintCollabForwardToken, readCollabForwardToken, 
 import { spawn as spawnOwnerCommand } from 'node:child_process';
 import * as serverUpdate from './server-update.js';
 import * as whatsNew from './whatsnew.js';
+import * as clientVersion from './client-version.js';
+import { createPairing, pairingLink, cleanDevice } from './pairing.js';
+import { toSvg as qrSvg } from './qr.js';
+import { toSvg as crundiCodeSvg, doneClass as crundiCodeDoneClass, DONE_MS as CRUNDI_CODE_DONE_MS } from './crundi-code.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
+import * as mobilePush from './mobile-push.js';
+import { getChatPageHtml } from './chat-page.js';
+import { chatMark } from './project-mark.js';
+import { findProjectIcon, storedIcon, projectIconUrl, readProjectIcon } from './project-icon.js';
 import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
@@ -307,7 +315,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // long-lived bearer token on disk. 0600, same as the credentials themselves.
   const sessionFile = join(config.dataDir, 'sessions.json');
   let forwardKey = '';   // signs the forward cookie; persisted with the sessions
-  const families = new Map();   // familyId -> { username, createdAt, lastSeenAt, userAgent, ip }
+  const families = new Map();   // familyId -> { username, createdAt, lastSeenAt, userAgent, ip, device? }
+  // One-time codes that let a phone become a signed-in device. See pairing.js.
+  const pairing = createPairing();
 
   /**
    * Would anything bring this process back if it stopped?
@@ -386,7 +396,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return base + '/dl/' + token;
   }
 
-  let htmlCache = getWebappHtml(config.botUsername || '');
+  let htmlCache = getWebappHtml(config.botUsername || '', APP_VERSION);
+  // The compact chat page borrows the main page's palette, so it is built
+  // from the main page and rebuilt whenever that is.
+  let chatPageCache = '';
+  function chatPageHtml() {
+    if (!chatPageCache) {
+      const root = /:root\s*\{[^}]*\}/.exec(htmlCache);
+      chatPageCache = getChatPageHtml({
+        version: APP_VERSION,
+        rootCss: root ? root[0] : '',
+        tag: (file) => { try { const st = statSync(join(VENDOR_DIR, file)); return Math.floor(st.mtimeMs).toString(36) + '-' + st.size.toString(36); } catch { return APP_VERSION; } },
+      });
+    }
+    return chatPageCache;
+  }
 
   // ─── Auth: Telegram Login Widget ───
 
@@ -437,10 +461,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const m = families.get(familyId);
     console.log(`[webapp] Revoked session ${String(familyId).slice(0, 8)}`
       + (m?.ip ? ` (${m.ip})` : '') + (m?.userAgent ? ` ${m.userAgent.slice(0, 40)}` : ''));
-    for (const [t, e] of tokens) if (e.familyId === familyId) tokens.delete(t);
-    for (const [t, e] of refreshTokens) if (e.familyId === familyId) refreshTokens.delete(t);
-    families.delete(familyId);
+    // A paired device holds more than one login (the page and the background
+    // code each have their own, see pairDevice). Cutting off the device means
+    // all of them: leaving one behind would leave the phone signed in.
+    const gone = new Set([familyId]);
+    if (m?.device?.id) for (const [fid, f] of families) if (f.device?.id === m.device.id) gone.add(fid);
+    for (const [t, e] of tokens) if (gone.has(e.familyId)) tokens.delete(t);
+    for (const [t, e] of refreshTokens) if (gone.has(e.familyId)) refreshTokens.delete(t);
+    for (const fid of gone) families.delete(fid);
     saveSessions();   // a revoked login must not come back on restart
+    // A phone that has been cut off must stop being told things as well.
+    if (m?.device?.id) mobilePush.removeDevice(m.device.id);
   }
 
   /** Every sign-in still able to authenticate, newest activity first. */
@@ -449,11 +480,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     for (const [, e] of tokens) live.add(e.familyId);
     for (const [, e] of refreshTokens) live.add(e.familyId);
     const out = [];
+    // A paired device is ONE row however many logins it holds: its page login
+    // stands for it, unless only another is left, or the caller is one of them.
+    const shown = new Map();   // device id -> family id
+    for (const fid of live) {
+      const d = families.get(fid)?.device;
+      if (!d?.id) continue;
+      const have = shown.get(d.id);
+      const better = !have || fid === currentFamilyId
+        || (have !== currentFamilyId && d.role === 'page' && families.get(have)?.device?.role !== 'page');
+      if (better) shown.set(d.id, fid);
+    }
     for (const fid of live) {
       const m = families.get(fid) || {};
+      if (m.device?.id && shown.get(m.device.id) !== fid) continue;
       out.push({
         id: fid,
         current: fid === currentFamilyId,
+        device: m.device ? { id: m.device.id, name: m.device.name, platform: m.device.platform } : null,
         username: m.username || '',
         createdAt: m.createdAt || 0,
         lastSeenAt: m.lastSeenAt || 0,
@@ -471,7 +515,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ token: string, refreshToken: string, expiresIn: number }}
    */
-  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '') {
+  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '', device = null) {
     const now = Date.now();
     const token = randomBytes(32).toString('hex');
     const refreshToken = randomBytes(32).toString('hex');
@@ -490,9 +534,29 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       lastSeenAt: now,
       userAgent: req ? String(req.headers['user-agent'] || '').slice(0, 200) : (prev?.userAgent || ''),
       ip: req ? clientIp(req) : (prev?.ip || ''),
+      // Carried across every rotation, or a paired phone would turn back into
+      // an anonymous session the first time it renewed.
+      ...((device || prev?.device) ? { device: device || prev.device } : {}),
     });
     saveSessions();
     return { token, refreshToken, expiresIn: Math.floor(ACCESS_TTL_MS / 1000) };
+  }
+
+  /**
+   * Turn a claimed pairing code into a signed-in device.
+   *
+   * Two logins, not one. Refresh tokens rotate, and replaying a spent one
+   * cuts the login off (rotateRefresh). The page inside the app and the code
+   * that answers a notification with no page open would each hold a copy and
+   * each rotate it, which is exactly that replay. So each gets its own, tied
+   * together by the device id so they are listed and revoked as one.
+   */
+  function pairDevice(who, deviceInfo, req) {
+    const d = cleanDevice(deviceInfo);
+    const id = randomBytes(8).toString('hex');
+    const login = (role) => createSession(who.username, undefined, req, who.collabKey || '', { id, name: d.name, platform: d.platform, role });
+    console.log(`[webapp] Paired device "${d.name}"${d.platform ? ` (${d.platform})` : ''} for ${who.username}`);
+    return { device: { id, name: d.name, platform: d.platform }, sessions: { page: login('page'), background: login('background') } };
   }
 
   /** Best guess at who is calling, honouring the proxy header Crundi sits behind. */
@@ -1064,12 +1128,35 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: (text, meta) => webPush.send(text, meta),
   });
 
+  channels.register({
+    id: 'mobile',
+    label: 'Phone app',
+    enabledByDefault: true,
+    available: () => mobilePush.hasKey() && mobilePush.devices().length > 0,
+    unavailableReason: () => (!mobilePush.hasKey()
+      ? `This server has no push key yet. ${mobilePush.keyHelp()}`
+      : 'No phone has been paired and allowed to receive notifications yet.'),
+    describe: () => {
+      const n = mobilePush.devices().length;
+      return n ? `${n} phone${n === 1 ? '' : 's'} registered.` : 'Notifications in the Crundi app on your phone.';
+    },
+    send: (text, meta) => mobilePush.send(text, meta),
+  });
+
   // Single entry point for every Telegram notification. Honors the per-event
   // policy ('always' | 'away' | 'never') and the presence gate for 'away'.
   function notifyEvent(key, message, meta = {}) {
     const mode = notifyPrefs[key];
     if (mode !== 'always' && mode !== 'away') return;   // 'never' / unknown
-    if (mode === 'away' && anyClientPresent()) return;  // user is already here
+    if (mode === 'away' && anyClientPresent()) {
+      // The owner is here, so nothing needs to ping them. The phone app is
+      // told all the same, marked quiet: its bubbles, its live card and its
+      // list of what happened are kept from these, and a phone that only
+      // heard of things while nobody was at a desk would have gaps in all
+      // three. Quiet means shown without sound or vibration.
+      channels.deliver(message, { tag: key, ...meta, quiet: true }, { only: ['mobile'] }).catch(() => { /* non-fatal */ });
+      return;
+    }
     // Fire and forget: a slow or dead channel must not hold up whatever was
     // being notified about.
     channels.deliver(message, { tag: key, ...meta }).catch(() => { /* non-fatal */ });
@@ -1131,6 +1218,71 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return { text: `✅ ${name} finished${proj}.`, markdown: false };
   }
 
+  // ─── A chat's state, for the phone's live card ───
+  // The phone shows a card for as long as Claude is working: a chip in the
+  // status bar, a line per chat. For that it has to be told when a chat
+  // STARTS working, which no notification says, and when it stops, even if
+  // nobody is away to be pinged. So every change of a chat's state is sent to
+  // the phones, sealed like any notification but marked silent: it draws the
+  // card and makes no sound. It goes to phones only, never to Telegram or a
+  // browser, which have nothing to draw it with.
+  // A chat's mark, with the project's own icon where it has one. The letters
+  // and colour are always there as well: they are what is drawn until the
+  // picture has been fetched, and for ever where it cannot be.
+  function iconUrlOf(project) {
+    if (!project) return '';
+    try { const p = getProjectUnscoped(project); return p && p.path ? projectIconUrl(p.alias || project, p.path, p.iconFile) : ''; } catch { return ''; }
+  }
+  // Look in the project's folder for its icon and keep the full path of what
+  // is found. Done each time a chat is opened there: that is when somebody is
+  // working in the project, so it is when an icon is most likely to have been
+  // added or replaced, and it keeps the looking off every other path.
+  function lookForIcon(project) {
+    try {
+      const p = project ? getProjectUnscoped(project) : null;
+      if (!p || !p.path) return;
+      const found = findProjectIcon(p.path);
+      if (setProjectIconFile(p.alias || project, found ? found.file : '')) broadcastState();
+    } catch { /* the letters are drawn */ }
+  }
+  // A project nobody has opened a chat in since this was added has never been
+  // looked at. Look once, so its icon does not wait for a chat.
+  function lookOnceForIcons(list) {
+    for (const p of list) if (getProjectIconFile(p.alias) === undefined) { lookForIcon(p.alias); p.iconFile = getProjectIconFile(p.alias) || ''; }
+    return list;
+  }
+  function markOf(project, title) {
+    const mark = chatMark(project || '', title);
+    const icon = iconUrlOf(project);
+    return icon ? { ...mark, icon } : mark;
+  }
+
+  const workingSince = new Map();   // chat id -> when this run of work began
+  const onLiveCard = new Map();     // chat id -> the chat as last told to phones, while it is on a card
+  function sendState(chat, state, since) {
+    if (!channels.isEnabled('mobile')) return;
+    mobilePush.send('', { tag: 'state', silent: true, state, since, url: `/chat/${chat.id}`, chat })
+      .catch(() => { /* a missed card update is not worth a log line per turn */ });
+  }
+  function tellPhonesState(term, state, prev) {
+    if (term.kind !== 'ui' || term.collaborator || term.background) return;
+    if (state === prev) return;
+    const active = state === 'working' || state === 'needs-input' || state === 'waiting';
+    if (active && !workingSince.has(term.id)) workingSince.set(term.id, Date.now());
+    const since = workingSince.get(term.id) || Date.now();
+    const chat = { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) };
+    if (active) onLiveCard.set(term.id, chat); else { workingSince.delete(term.id); onLiveCard.delete(term.id); }
+    sendState(chat, state, since);
+  }
+  // A chat closed while it was on a card never reports "idle": it is simply
+  // gone. Say so for it, or its line would sit on the phone until it expired.
+  function tellPhonesGone(sid) {
+    const chat = onLiveCard.get(sid);
+    workingSince.delete(sid);
+    if (!onLiveCard.delete(sid) || !chat) return;
+    sendState(chat, 'idle', Date.now());
+  }
+
   function handleAgentState(tid, state, ts = 0) {
     // Terminal cells report via the lifecycle hook; UI (chat) cells report
     // straight off the stream-json message flow. Both land here so the status
@@ -1148,6 +1300,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
     if (state === 'working' || state === 'needs-input') limitWarmer.markActivity();
+    tellPhonesState(term, state, prev);
     // 'waiting' (turn over, parked on a background trigger) is still a turn
     // ending, so it is normalised to 'idle' HERE ONLY — scheduling and pings
     // behave exactly as they did before the state existed. Normalising `prev`
@@ -1170,10 +1323,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (cur !== pv && (cur === 'idle' || cur === 'needs-input') && !term.background && !term.collaborator) {
       const name = term.title || 'Claude';
       const proj = term.project ? ` (${term.project})` : '';
-      if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`);
+      // Which chat this is about, for a channel that can do something with
+      // it: the phone app files the notification under that chat's bubble and
+      // opens /chat/<id> from it. Only chats have that page; a terminal does not.
+      const chat = term.kind === 'ui'
+        ? { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) }
+        : null;
+      const about = chat ? { chat, url: `/chat/${term.id}` } : {};
+      // One permission request waiting: say what it is, so a phone can offer
+      // Approve and Deny on the notification. With more than one the answer
+      // would be ambiguous, so none is offered and the chat has to be opened.
+      if (chat && cur === 'needs-input' && claudeUi && claudeUi.pendingFor) {
+        const asks = claudeUi.pendingFor(term.id);
+        if (asks.length === 1) about.prompt = asks[0];
+      }
+      if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`, about);
       else {
         const fin = finishedMessage(term, name, proj);
-        notifyEvent('finished', fin.text, { markdown: fin.markdown });
+        notifyEvent('finished', fin.text, { markdown: fin.markdown, ...about });
       }
     }
     broadcastState();
@@ -1264,7 +1431,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     try { stopLapsedCollaboratorServices(); } catch { /* next minute */ }
   }, 60_000);
   if (collabChatSweep.unref) collabChatSweep.unref();
-  if (claudeUi) claudeUi.onSessionGone((sid) => { approvals.dropSession(sid); broadcastApprovals(); });
+  if (claudeUi) claudeUi.onSessionGone((sid) => { approvals.dropSession(sid); broadcastApprovals(); tellPhonesGone(sid); });
+  // A chat's suggested next message, for the phone: it is offered on that
+  // chat's notification, where the chat page offers it above the message box.
+  // Sent silently, like a change of state, and to phones only. An empty one
+  // takes the offer away again (the suggestion was used or dismissed).
+  if (claudeUi && claudeUi.onSuggestion) claudeUi.onSuggestion((sid, text) => {
+    if (!channels.isEnabled('mobile')) return;
+    const term = claudeUi.list().find((x) => x.id === sid);
+    if (!term || term.collaborator || term.background) return;
+    mobilePush.send('', {
+      tag: 'suggestion', silent: true, suggestion: String(text || ''), url: `/chat/${sid}`,
+      chat: { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) },
+    }).catch(() => { /* not worth a log line */ });
+  });
 
   // A card answered in the chat must leave the inbox at once, not whenever the
   // page next reconnects. Coalesced: one answer can clear several cards.
@@ -1667,6 +1847,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // token" are different decisions, and only one of them can be made
       // without seeing the command.
       kind: r.kind || 'get', command: r.command || '', envName: r.envName || '',
+      // The chat that asked, when one did: that chat shows the request.
+      sessionId: r.sessionId || '',
     }));
   }
 
@@ -1773,7 +1955,29 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
   const dismissedChatCards = new Set();
 
+  // ─── Requests that have been dealt with ───
+  // A phone shows "Claude wants to run a command with a secret" until
+  // somebody swipes it away, long after it was approved on a computer. Each
+  // kind of request is counted here; when the last one of a kind is answered,
+  // by anyone, anywhere, phones are told to take that notification down.
+  const waitingKinds = { secretRequest: 0, collabPermission: 0 };
+  let waitingSecretChats = new Set();   // chats with a secret request outstanding
+  function tellPhonesAnswered() {
+    let now;
+    try { now = { secretRequest: pendingSecretRequests.size, collabPermission: approvals.pending().length }; } catch { return; }
+    const cleared = Object.keys(now).filter((k) => waitingKinds[k] > 0 && now[k] === 0);
+    Object.assign(waitingKinds, now);
+    // A request raised by a chat is shown on that chat's own notification,
+    // so it is taken down by chat: each chat that had one and now has none.
+    const chatsNow = new Set([...pendingSecretRequests.values()].map((r) => r.sessionId).filter(Boolean));
+    const chatsDone = [...waitingSecretChats].filter((id) => !chatsNow.has(id));
+    waitingSecretChats = chatsNow;
+    if ((!cleared.length && !chatsDone.length) || !channels.isEnabled('mobile')) return;
+    mobilePush.send('', { tag: 'clear', silent: true, clear: cleared, chats: chatsDone }).catch(() => { /* not worth a log line */ });
+  }
+
   function broadcastApprovals() {
+    tellPhonesAnswered();
     // Owners only: a collaborator's own pending requests reach them through
     // /api/collab/me, and this list names other people's work.
     const payload = `event: approvals\ndata: ${JSON.stringify(approvalsSnapshot())}\n\n`;
@@ -1789,7 +1993,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * The value is never cached — every request is independent and needs its own
    * PIN entry.
    */
-  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '' }) {
+  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '', sessionId = '' }) {
     return new Promise((resolve) => {
       const id = randomBytes(8).toString('hex');
       const timer = setTimeout(() => {
@@ -1799,7 +2003,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }, SECRET_REQUEST_TIMEOUT_MS);
 
       pendingSecretRequests.set(id, {
-        id, secretId, secretName, projectAlias, reason, kind, command, envName,
+        id, secretId, secretName, projectAlias, reason, kind, command, envName, sessionId,
         createdAt: new Date().toISOString(),
         timer,
         fulfill: (value) => {
@@ -1824,7 +2028,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const what = kind === 'run'
         ? `🔐 Claude wants to RUN a command with secret "${secretName}"${from}.\n\n${command}\n\n(the value is bound to $${envName} and never shown to Claude)${why}`
         : `🔐 Claude is requesting access to secret "${secretName}"${from}.${why}`;
-      notifyEvent('secretRequest', `${what}\n\nApprove it in Crundi — the prompt appears in the chat itself, or under Secrets.`);
+      // When a chat asked, the notification is that chat's: on a phone it
+      // lands on the chat's own conversation and bubble, and opens the chat,
+      // where the request is waiting with its PIN box.
+      const asking = sessionId && claudeUi ? claudeUi.list().find((x) => x.id === sessionId) : null;
+      const about = asking && !asking.collaborator
+        ? { url: `/chat/${asking.id}`, chat: { id: asking.id, title: asking.longTitle || asking.title || 'Chat', project: asking.project || '', mark: markOf(asking.project || '', asking.title) } }
+        : {};
+      notifyEvent('secretRequest', `${what}\n\nApprove it in Crundi — the prompt appears in the chat itself, or under Secrets.`, about);
     });
   }
 
@@ -1841,6 +2052,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const a = sch.action || {};
     if (a.kind !== 'chat') return { ok: false, error: 'That schedule is not a chat job' };
 
+    lookForIcon(sch.project);
     const created = await claudeUi.create(sch.project, {
       title: (sch.name || 'Scheduled chat') + ' (setup)',
       cwd: a.cwd || '',
@@ -1917,7 +2129,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     res.writeHead(status, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Crundi-Client, X-Crundi-Web',
     });
     res.end(JSON.stringify(data));
   }
@@ -1966,15 +2178,35 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Crundi-Client, X-Crundi-Web',
       });
       res.end();
       return;
     }
 
+    // ─── Client versions ───
+    // Before anything that needs a login: an out-of-date client has to be able
+    // to ask what is wrong with it. See client-version.js; the shape of this
+    // answer is frozen.
+    if (path === clientVersion.HANDSHAKE_PATH && req.method === 'GET') {
+      return json(res, clientVersion.handshake(req, APP_VERSION));
+    }
+    if (clientVersion.isGated(path)) {
+      const refusal = clientVersion.refusalFor(clientVersion.identifyClient(req));
+      if (refusal) return json(res, clientVersion.refusalBody(refusal, APP_VERSION), 426);
+    }
+
     // Serve web app
     if (path === '/' && req.method === 'GET') {
       html(res, htmlCache);
+      return;
+    }
+    // One conversation by itself: what a chat bubble on a phone shows (see
+    // chat-page.js). The page is the same for every chat and holds nothing
+    // private; which chat, and whether the caller may see it, is settled by
+    // the API calls it goes on to make.
+    if (/^\/chat\/[A-Za-z0-9_-]{1,80}\/?$/.test(path) && req.method === 'GET') {
+      html(res, chatPageHtml());
       return;
     }
 
@@ -2370,6 +2602,72 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result, result.ok ? 200 : 401);
     }
 
+    // ─── Pairing a device ───
+    // Deliberately NOT under /api/auth/: that prefix stays open to a client
+    // too old for this server, and an app that old should be told to update
+    // before it is given a login, not after.
+    if (path === '/api/pair/start' && req.method === 'POST') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* optional */ }
+      // The address to pair with is the one this caller is using right now: it
+      // is known to work from where they are, which a configured public URL is
+      // not (a LAN address, a tunnel that has since moved).
+      let base = '';
+      try { const u = new URL(String(body.origin || '')); if (/^https?:$/.test(u.protocol)) base = u.origin; } catch { /* fall through */ }
+      if (!base) base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port }) || '';
+      if (!base) return json(res, { ok: false, error: 'This server does not know its own address yet.' }, 409);
+      const started = pairing.start({ username: principal.username, collabKey: principal.collabKey || '' });
+      if (!started.ok) return json(res, started, 429);
+      const link = pairingLink(base, started.code);
+      // Two pictures of the same link. `mark` is the Crundi code, the one that
+      // is shown; it is null for an address it cannot carry (too long, or not
+      // a plain host name), and `qr` is what is shown then, and what a phone's
+      // own camera can read.
+      return json(res, {
+        ok: true, code: started.code, link, mark: crundiCodeSvg(link), qr: qrSvg(link),
+        // How the page plays the mark's ending once the phone is in.
+        doneClass: crundiCodeDoneClass(), doneMs: CRUNDI_CODE_DONE_MS,
+        expiresIn: started.expiresIn, server: base, insecure: base.startsWith('http://'),
+      });
+    }
+    if (path === '/api/pair/cancel' && req.method === 'POST') {
+      if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* nothing to cancel */ }
+      return json(res, { ok: true, cancelled: pairing.cancel(body.code) });
+    }
+    // Asked every second or two by the screen showing the code, so it can
+    // play its ending the moment the phone is in. POST, not GET: a code that
+    // is still good has no business in a query string, where access logs and
+    // proxies keep it.
+    if (path === '/api/pair/status' && req.method === 'POST') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as expired */ }
+      return json(res, { ok: true, ...pairing.status(body.code, { username: principal.username, collabKey: principal.collabKey || '' }) });
+    }
+    // No login: the code IS the credential. One answer for every failure, so
+    // it cannot be used to learn whether a code ever existed.
+    if (path === '/api/pair/claim' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* treated as a bad code */ }
+      const who = pairing.claim(body.code, body.device);
+      if (!who) return json(res, { ok: false, error: 'This pairing code is not valid. It may have expired or been used already.' }, 403);
+      // A collaborator whose access ended while the code was on screen. The
+      // code is forgotten outright, or the screen showing it would be told it
+      // had worked.
+      if (who.collabKey && !collaborators.liveByIdentity(who.collabKey).length) {
+        pairing.cancel(body.code);
+        return json(res, { ok: false, error: 'This pairing code is not valid. It may have expired or been used already.' }, 403);
+      }
+      if (!who.collabKey) setForwardCookie(res);
+      const paired = pairDevice(who, body.device, req);
+      return json(res, { ok: true, username: who.username, ...paired, server: clientVersion.handshake(req, APP_VERSION).server });
+    }
+
     // ─── SSE endpoint ───
     if (path === '/api/events' && req.method === 'GET') {
       if (!validateToken(req)) {
@@ -2639,9 +2937,32 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const mine = listProjects()
           .filter(p => principal.projects.includes(String(p.alias || '').toLowerCase()))
           .map(p => ({ ...p, path: principal.roots[String(p.alias || '').toLowerCase()] || p.path }));
-        return json(res, { projects: mine });
+        return json(res, { projects: lookOnceForIcons(mine).map(({ iconFile, ...p }) => ({ ...p, icon: projectIconUrl(p.alias, p.path, iconFile) })) });
       }
-      return json(res, { projects: listProjects() });
+      return json(res, { projects: lookOnceForIcons(listProjects()).map(({ iconFile, ...p }) => ({ ...p, icon: projectIconUrl(p.alias, p.path, iconFile) })) });
+    }
+
+    // The project's own icon, found in its folder (see project-icon.js). The
+    // address carries the file's time and size, so what is fetched under one
+    // address never changes and can be kept for good.
+    if (path === '/api/project-icon' && req.method === 'GET') {
+      const p = getProject(url.searchParams.get('project') || '');
+      const icon = p && p.path ? storedIcon(getProjectUnscoped(p.alias)?.path || p.path, getProjectIconFile(p.alias)) : null;
+      if (!icon) { res.writeHead(404); res.end('Not found'); return; }
+      try {
+        const { body, type } = readProjectIcon(icon);
+        res.writeHead(200, {
+          'Content-Type': type,
+          'Content-Length': body.length,
+          'Cache-Control': 'private, max-age=31536000, immutable',
+          'X-Content-Type-Options': 'nosniff',
+          // A drawing is a document, and one opened by itself could run
+          // script as this site. It is only ever shown as a picture.
+          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        });
+        res.end(body);
+      } catch { res.writeHead(404); res.end('Not found'); }
+      return;
     }
 
     // Persist the sidebar order (array of aliases).
@@ -3304,7 +3625,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // The chat counterpart to /api/terminals. Same {project,title,order} shape,
     // but the conversation itself streams over the WebSocket rather than bytes.
     if (path === '/api/ui-sessions' && req.method === 'GET') {
-      return json(res, { sessions: claudeUi ? claudeUi.list() : [] });
+      // `mark` is the chat's tile (project-mark.js): the project's colour,
+      // the chat's initials. Worked out here so every client draws the same
+      // one without carrying the recipe.
+      return json(res, { sessions: (claudeUi ? claudeUi.list() : []).map((s) => ({ ...s, mark: markOf(s.project, s.title) })) });
     }
 
     // ─── Deferred chat messages ───
@@ -3413,6 +3737,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         };
       }
       const result = await claudeUi.create(body.project, body);
+      lookForIcon(body.project);
       broadcastState();
       return json(res, result);
     }
@@ -4107,6 +4432,58 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, webPush.removeSubscription(body?.endpoint));
     }
 
+    // ─── Phone app push ───
+    // All past the route policy, which lists none of these for collaborators:
+    // what is sent through here is the owner's notifications, and a
+    // collaborator's phone has no business receiving them.
+    if (path === '/api/push/mobile' && req.method === 'GET') {
+      return json(res, { ok: true, ...mobilePush.status() });
+    }
+    // For a custom build of the app, which has its own relay. Changing it
+    // drops the key (see setRelay), and the relay is asked who runs it so
+    // Settings can say who to get a key from.
+    if (path === '/api/push/mobile/relay' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as the published relay */ }
+      const r = mobilePush.setRelay(body.relayUrl);
+      if (!r.ok) return json(res, r, 400);
+      const info = await mobilePush.refreshRelayInfo();
+      return json(res, { ok: true, reachable: info.ok, error: info.ok ? '' : info.error, ...mobilePush.status() });
+    }
+    if (path === '/api/push/mobile/key' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as no key */ }
+      const r = mobilePush.setKey(body.key, body.relayUrl);
+      if (!r.ok) return json(res, r, 400);
+      if (body.relayUrl) await mobilePush.refreshRelayInfo();
+      // Say straight away whether the relay accepts it, rather than letting
+      // the first missed notification be how anyone finds out.
+      const check = await mobilePush.checkKey();
+      return json(res, { ok: true, accepted: check.ok, label: check.label || '', error: check.ok ? '' : check.error, ...mobilePush.status() });
+    }
+    if (path === '/api/push/mobile/key' && req.method === 'DELETE') {
+      mobilePush.clearKey();
+      return json(res, { ok: true, ...mobilePush.status() });
+    }
+    if (path === '/api/push/mobile/test' && req.method === 'POST') {
+      const check = await mobilePush.checkKey();
+      if (!check.ok) return json(res, { ok: false, error: check.error });
+      if (!mobilePush.devices().length) return json(res, { ok: true, keyOk: true, sent: false, note: 'The key is good. No phone is registered yet, so nothing was sent.' });
+      const sent = await mobilePush.send('Notifications are working.', { title: 'Crundi', tag: 'test' });
+      return json(res, { ok: sent, keyOk: true, sent, error: sent ? '' : (mobilePush.status().lastError || 'The relay did not take the test notification.') });
+    }
+    // The phone itself, registering or withdrawing. WHICH phone is read off
+    // the login making the request: one device cannot register as another.
+    if ((path === '/api/push/mobile/register' || path === '/api/push/mobile/unregister') && req.method === 'POST') {
+      const device = families.get(tokens.get(extractToken(req))?.familyId)?.device;
+      if (!device?.id) return json(res, { ok: false, error: 'Only a paired device can register for push' }, 403);
+      if (path.endsWith('/unregister')) return json(res, mobilePush.removeDevice(device.id));
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as unusable */ }
+      const r = mobilePush.registerDevice({ deviceId: device.id, name: device.name }, body);
+      return json(res, r, r.ok ? 200 : 400);
+    }
+
     if (path === '/api/push/test' && req.method === 'POST') {
       const ok = await webPush.send('Notifications are working.', { title: 'Crundi', tag: 'test' });
       return json(res, ok
@@ -4485,6 +4862,31 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         matches.sort((a, b) => a.type === b.type ? a.rel.localeCompare(b.rel) : a.type === 'dir' ? -1 : 1);
         return json(res, { ok: true, entries: matches, truncated: matches.length >= CAP, gitignoreApplied: isGit });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    // Where a path written in a chat actually is. Claude writes paths three
+    // ways: whole ("/home/me/proj/a.js"), from the project ("assets/a.png"),
+    // and from the project with a slash in front ("/assets/a.png"), which
+    // reads as a whole path and is not one. Each reading is tried in turn
+    // and the first that exists is answered, in the form the other file
+    // routes take.
+    if (path === '/api/files/resolve' && req.method === 'GET') {
+      const project = getProject(url.searchParams.get('project'));
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      const raw = String(url.searchParams.get('path') || '').trim().replace(/:\d+(:\d+)?$/, '');
+      if (!raw || raw.length > 1024) return json(res, { ok: false, error: 'File not found' }, 404);
+      const tries = [raw];
+      const fromProject = raw.replace(/^(\.\/)+/, '').replace(/^[/\\]+/, '');
+      if (fromProject && fromProject !== raw) tries.push(fromProject);
+      for (const t of tries) {
+        try {
+          const full = resolveFsPath(project, t, principal);
+          if (!existsSync(full)) continue;
+          const st = statSync(full);
+          return json(res, { ok: true, file: t, dir: st.isDirectory(), size: st.size });
+        } catch { /* try the next reading */ }
+      }
+      return json(res, { ok: false, error: 'File not found' }, 404);
     }
 
     if (path === '/api/files/read' && req.method === 'GET') {
@@ -5294,6 +5696,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           secretName: meta.name,
           projectAlias: a.alias || '',
           reason: a.reason || '',
+          sessionId: String(a.sessionId || ''),
         });
         return json(res, result);
       }
@@ -5314,6 +5717,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           secretName: meta.meta.name,
           projectAlias: a.alias || '',
           reason: a.reason || '',
+          sessionId: String(a.sessionId || ''),
           kind: 'run',
           command,
           envName,
@@ -5556,6 +5960,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname !== '/ws') {
+        socket.destroy();
+        return;
+      }
+      // An out-of-date client is turned away here as well, or the socket
+      // would be the way round the gate on the HTTP routes.
+      if (clientVersion.refusalFor(clientVersion.identifyClient(req))) {
+        socket.write('HTTP/1.1 426 Upgrade Required\r\n\r\n');
         socket.destroy();
         return;
       }
@@ -5952,7 +6363,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     getInternalApiKey() { return internalApiKey; },
 
     /** Regenerate the HTML cache with an updated bot username (call after bot.init). */
-    refreshHtml(botUsername) { htmlCache = getWebappHtml(botUsername); },
+    refreshHtml(botUsername) { htmlCache = getWebappHtml(botUsername, APP_VERSION); chatPageCache = ''; },
 
     /** Broadcast state update to all connected SSE clients. */
     broadcastState,

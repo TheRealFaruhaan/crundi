@@ -521,8 +521,20 @@
       var t = trim(pth);
       return pre + hold('<a class="cc-path" data-path="' + t[0] + '" title="Open ' + t[0] + '">' + t[0] + '</a>') + t[1];
     });
+    // Relative ones too: "./assets/icon.svg", "../x/y", and "assets/icon.svg".
+    // The last only with a real file extension on the end, so "and/or",
+    // "client/server" and a date written 10/12 are left as words.
+    out = out.replace(/(^|[\s(\[>]|&quot;|&#39;)((?:\.{1,2}\/)?(?:[\w.@+~%,=-]+\/)+[\w.@+~%,=-]+(?::\d+(?::\d+)?)?)/g, function (m, pre, pth) {
+      var t = trim(pth);
+      var bare = t[0].replace(/:\d+(:\d+)?$/, '');
+      if (!/^\.{1,2}\//.test(bare) && !FILE_EXT.test(bare)) return m;
+      return pre + hold('<a class="cc-path" data-path="' + t[0] + '" title="Open ' + t[0] + '">' + t[0] + '</a>') + t[1];
+    });
     return out.replace(/\u0002(\d+)\u0002/g, function (m, i) { return held[+i]; });
   }
+
+  // What a file's name ends in, for telling a path from two words and a slash.
+  var FILE_EXT = /\.(js|mjs|cjs|ts|tsx|jsx|json|md|txt|log|py|sh|bash|yml|yaml|toml|ini|conf|cfg|env|html|htm|css|scss|xml|svg|png|jpe?g|gif|webp|ico|pdf|csv|sql|go|rs|rb|php|java|kt|kts|gradle|swift|c|h|cc|cpp|hpp|vue|lock|dockerfile|service)$/i;
 
   /** A code span that is just a file path (src/a.js, ./x/y.md, /etc/z) is openable. */
   function looksLikePath(c) {

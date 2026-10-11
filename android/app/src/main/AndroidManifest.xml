@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Asked for only when it is used: scanning the pairing picture, and a
+         page that wants the camera or microphone. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The live card's chip in the status bar (Android 16 and later). -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- Plain http is allowed because a server on a home network often has
+         nothing else. The app never uses it without the person saying so
+         first (PairActivity), and says "not private" for as long as it does. -->
+    <application
+        android:name=".CrundiApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Crundi"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".PairActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".ScanActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".SettingsActivity" android:exported="false" android:label="App settings" />
+        <!-- The live card's Bubble button: shows nothing, opens the bubble, goes. -->
+        <activity
+            android:name=".BubbleActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
+
+        <!-- One chat by itself. Android needs all of this before it will put
+             an activity in a bubble: it must be resizable, embeddable, and
+             able to exist several times at once (one per chat). -->
+        <activity
+            android:name=".ChatActivity"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:allowEmbedded="true"
+            android:documentLaunchMode="always"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+
+        <service android:name=".PushService" android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <receiver android:name=".ReplyReceiver" android:exported="false" />
+        <receiver android:name=".DecisionReceiver" android:exported="false" />
+
+        <!-- Firebase is set up by hand in Push.init, from values read at build
+             time, so its own automatic start is switched off: it would look
+             for a resource file this project deliberately does not have. -->
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider"
+            xmlns:tools="http://schemas.android.com/tools"
+            tools:node="remove" />
+    </application>
+</manifest>

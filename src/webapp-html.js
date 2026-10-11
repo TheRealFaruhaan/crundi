@@ -39,7 +39,7 @@ function vendorTag(file) {
   return String(Date.now()); // unknown file: never cache it wrongly
 }
 
-export function getWebappHtml(botUsername) {
+export function getWebappHtml(botUsername, appVersion = '') {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -467,6 +467,14 @@ export function getWebappHtml(botUsername) {
       letter-spacing: 0.03em; font-family: var(--mono);
       transition: border-color 0.14s, color 0.14s, box-shadow 0.14s, background 0.14s;
     }
+    /* A project's own icon, where its folder has one: in the round tile of
+       the collapsed rail, and small beside the name otherwise. */
+    .sidebar-item .proj-initials.has-ico { background: var(--bg-primary); overflow: hidden; padding: 0; }
+    .sidebar-item .proj-initials img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .sidebar-item .proj-ico { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; flex-shrink: 0; }
+    .sidebar.collapsed .sidebar-item .proj-ico { display: none; }
+    #current-project-ico { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; flex-shrink: 0; display: none; }
+    #current-project-ico.on { display: inline-block; }
     .sidebar-list {
       flex: 1;
       overflow-y: auto;
@@ -3508,6 +3516,7 @@ export function getWebappHtml(botUsername) {
       <button class="hamburger" data-action="toggle-sidebar"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <span class="logo">${headSvg('tb', 'cb-idle')}<span class="logo-text">${wordSvg()}</span></span>
       <span class="separator">/</span>
+      <img id="current-project-ico" alt="">
       <span class="project-name" id="current-project">No project</span>
       <span class="spacer"></span>
       <span class="wg-chips" id="wg-chips" style="display:none"></span>
@@ -3531,6 +3540,7 @@ export function getWebappHtml(botUsername) {
         </div>
         <div class="sidebar-list" id="project-list"></div>
         <div class="sidebar-footer">
+          <button data-action="app-settings" id="app-settings-btn" title="Settings for the app on this phone" style="display:none;margin-bottom:8px;"><span class="add-label">App settings</span></button>
           <button data-action="add-project" title="Add project"><span class="add-plus">+</span><span class="add-label"> Add project</span></button>
         </div>
       </div>
@@ -3822,6 +3832,7 @@ export function getWebappHtml(botUsername) {
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
   <script src="/vendor/crundi-whatsnew.js?v=${vendorTag('crundi-whatsnew.js')}"><\/script>
+  <script src="/vendor/crundi-phone.js?v=${vendorTag('crundi-phone.js')}"><\/script>
   <script>
   (function() {
     'use strict';
@@ -4060,7 +4071,7 @@ export function getWebappHtml(botUsername) {
       for (const x of list) {
         h += '<div class="maint-row">'
           + '<div class="maint-text">'
-          + '<div class="maint-label">' + escHtml(describeAgent(x.userAgent))
+          + '<div class="maint-label">' + escHtml(x.device && x.device.name ? x.device.name + ' (Crundi app)' : describeAgent(x.userAgent))
           + (x.current ? '<span class="maint-root">this device</span>' : '') + '</div>'
           + '<div class="maint-desc">'
           + (x.ip ? escHtml(x.ip) + ' · ' : '')
@@ -4872,13 +4883,111 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // ─── Client version gate ───
+    // The server states the oldest client it will talk to and answers 426 below
+    // that (src/client-version.js). Two things can be out of date here: this
+    // PAGE, which a reload fixes, and the desktop or phone SHELL around it,
+    // which somebody has to update. PAGE_VERSION is the server version this
+    // page was built by, sent with every call so the server can tell.
+    const PAGE_VERSION = '${String(appVersion).replace(/[^0-9A-Za-z.+-]/g, '')}';
+    let clientRefused = false;
+
+    function onClientRefused(body) {
+      if (clientRefused || !body || body.error !== 'client_too_old') return;
+      const kind = (body.client && body.client.kind) || '';
+      if (kind === 'web') {
+        // The page is served network-first, so a reload IS the update. Once per
+        // minimum, though: if the reload did not help, reloading again will not
+        // either, and a page that reloads forever cannot even say why.
+        let tried = true;
+        try {
+          tried = sessionStorage.getItem('crundi_gate_reload') === String(body.minimum);
+          sessionStorage.setItem('crundi_gate_reload', String(body.minimum));
+        } catch (e) { /* no storage: do not risk a loop */ }
+        if (!tried) { clientRefused = true; location.reload(); return; }
+      }
+      clientRefused = true;
+      showUpdateRequired(body, kind);
+    }
+
+    function showUpdateRequired(body, kind) {
+      if (document.getElementById('update-required')) return;
+      const have = (body.client && body.client.version) || 'unknown';
+      const el = (tag, css, text) => { const n = document.createElement(tag); if (css) n.style.cssText = css; if (text) n.textContent = text; return n; };
+      const wrap = el('div', 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:var(--bg-primary);padding:20px;');
+      wrap.id = 'update-required';
+      wrap.setAttribute('role', 'alertdialog');
+      const box = el('div', 'background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:28px;width:100%;max-width:420px;');
+      box.appendChild(el('h3', 'margin:0 0 12px;font-size:1.1rem;color:var(--text-primary);', 'Update required'));
+      const what = kind === 'web' ? 'This page' : kind === 'desktop' ? 'This Crundi client' : 'This app';
+      box.appendChild(el('p', 'margin:0 0 8px;color:var(--text-secondary);font-size:0.9rem;line-height:1.5;',
+        what + ' is version ' + have + '. This server needs version ' + body.minimum + ' or newer.'));
+      const status = el('p', 'margin:0 0 18px;color:var(--text-muted);font-size:0.82rem;line-height:1.5;min-height:1.2em;');
+      box.appendChild(status);
+      const row = el('div', 'display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;');
+      const btnCss = 'padding:9px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font:inherit;font-size:0.88rem;cursor:pointer;';
+      const primaryCss = btnCss + 'background:var(--accent);border-color:var(--accent);color:#fff;';
+      const updater = kind === 'desktop' && window.api && window.api.checkForUpdates ? window.api : null;
+
+      if (updater) {
+        const check = el('button', btnCss, 'Check for update');
+        const install = el('button', primaryCss, 'Install update');
+        install.style.display = 'none';
+        // The version the server needs may be a dev build, which a client
+        // following production releases is never offered. Without a way to
+        // follow dev builds from HERE, such a client would sit on this screen
+        // with nothing to find and no way to reach its own settings.
+        const needsDev = String(body.minimum).indexOf('-') >= 0;
+        const toDev = el('button', btnCss, 'Switch to dev builds');
+        toDev.style.display = 'none';
+        const show = (s) => {
+          if (!s) return;
+          const found = s.available || s.downloaded || s.downloading;
+          const offerDev = !found && needsDev && s.channel !== 'dev' && !!updater.setUpdateChannel;
+          if (s.downloaded) status.textContent = 'Version ' + (s.version || '') + ' is ready to install.';
+          else if (s.downloading) status.textContent = 'Downloading the update: ' + Math.round(s.percent || 0) + '%';
+          else if (s.available) status.textContent = 'Version ' + (s.version || '') + ' is available.';
+          else if (offerDev) status.textContent = 'The version this server needs is a dev build, and this client follows production releases only. Switch it to dev builds to get the update.';
+          else status.textContent = 'No newer client was found yet. If the server was only just updated, the client build may still be on its way: check again in a few minutes.';
+          install.style.display = (s.available || s.downloaded) ? '' : 'none';
+          toDev.style.display = offerDev ? '' : 'none';
+        };
+        toDev.onclick = () => {
+          status.textContent = 'Switching to dev builds...';
+          Promise.resolve(updater.setUpdateChannel('dev')).then(() => check.onclick()).catch(() => { status.textContent = 'Could not switch the update channel.'; });
+        };
+        check.onclick = () => {
+          status.textContent = 'Checking for an update...';
+          Promise.resolve(updater.checkForUpdates()).then(show).catch(() => { status.textContent = 'Could not check for an update.'; });
+        };
+        install.onclick = () => { try { updater.installUpdate(); } catch (e) { status.textContent = 'Could not start the update.'; } };
+        if (updater.onUpdateStatus) { try { updater.onUpdateStatus(show); } catch (e) { /* status stays manual */ } }
+        row.appendChild(check); row.appendChild(toDev); row.appendChild(install);
+        check.onclick();
+      } else if (kind === 'web') {
+        status.textContent = 'Reloading did not bring the newer page. Close this tab or window and open Crundi again.';
+        const again = el('button', primaryCss, 'Reload');
+        again.onclick = () => { try { sessionStorage.removeItem('crundi_gate_reload'); } catch (e) { /* ignore */ } location.reload(); };
+        row.appendChild(again);
+      } else {
+        status.textContent = kind === 'desktop'
+          ? 'Open the client\u2019s own update option, or install the newest client.'
+          : 'Update the app, then open it again.';
+      }
+      box.appendChild(row);
+      wrap.appendChild(box);
+      document.body.appendChild(wrap);
+    }
+
     // ─── API ───
     function apiFetch(path, opts = {}, _retried = false) {
-      if (token) {
-        opts.headers = opts.headers || {};
-        opts.headers['Authorization'] = 'Bearer ' + token;
-      }
+      opts.headers = opts.headers || {};
+      if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+      if (PAGE_VERSION) opts.headers['X-Crundi-Web'] = PAGE_VERSION;
       return fetch(path, opts).then(res => {
+        // 426: the server will not talk to a client this old. Read a COPY of
+        // the body so whoever called still gets a response they can read.
+        if (res.status === 426) { res.clone().json().then(onClientRefused).catch(() => {}); return res; }
         // A 401 means the access token aged out. Renew once and replay. Bodies
         // here are strings/JSON (never streams), so the request is safe to
         // re-send; _retried stops a revoked session from looping.
@@ -5540,7 +5649,34 @@ export function getWebappHtml(botUsername) {
       return (ini || '?').toUpperCase();
     }
 
+    // A project's own icon. Fetched once per address as this page's login
+    // and kept as a picture in memory: the address changes when the file
+    // does, so a new icon is simply a new entry. Until it has arrived, and
+    // for good if it cannot be had, the project keeps its letters.
+    const projIcons = new Map();
+    function projIconSrc(u) {
+      if (!u) return '';
+      if (projIcons.has(u)) return projIcons.get(u) || '';
+      projIcons.set(u, '');
+      apiFetch(u).then(r => (r && r.ok ? r.blob() : null)).then(b => {
+        if (!b || !b.size) return;
+        projIcons.set(u, URL.createObjectURL(b));
+        renderProjects();
+        paintProjectIcon();
+      }).catch(() => { /* the letters stay */ });
+      return '';
+    }
+    function paintProjectIcon() {
+      const img = $('#current-project-ico');
+      if (!img) return;
+      const p = projects.find(x => x.alias === currentProject);
+      const src = p ? projIconSrc(p.icon) : '';
+      if (src && img.getAttribute('src') !== src) img.src = src;
+      img.classList.toggle('on', !!src);
+    }
+
     function renderProjects() {
+      paintProjectIcon();
       const list = $('#project-list');
       list.innerHTML = '';
       for (const p of projects) {
@@ -5579,8 +5715,12 @@ export function getWebappHtml(botUsername) {
           : '';
         // Per-terminal close lives on each terminal's header now; the project
         // row only shows a "has terminals" dot + the remove-project control.
-        item.innerHTML = '<span class="proj-initials" aria-hidden="true">' + escHtml(projectInitials(p.name || p.alias)) + '</span>'
+        const icoSrc = projIconSrc(p.icon);
+        item.innerHTML = (icoSrc
+            ? '<span class="proj-initials has-ico" aria-hidden="true"><img src="' + escHtml(icoSrc) + '" alt=""></span>'
+            : '<span class="proj-initials" aria-hidden="true">' + escHtml(projectInitials(p.name || p.alias)) + '</span>')
           + '<span class="dot"></span>'
+          + (icoSrc ? '<img class="proj-ico" src="' + escHtml(icoSrc) + '" alt="">' : '')
           + '<span class="name">' + escHtml(p.name || p.alias) + '</span>'
           + sched
           + heart
@@ -6471,9 +6611,18 @@ export function getWebappHtml(botUsername) {
           .filter(x => x.path && (p === x.path || p.startsWith(String(x.path).replace(/\\/+$/, '') + '/')))
           .sort((a, b) => b.path.length - a.path.length)[0];
         if (owner) return feOpen(owner.alias, p.slice(String(owner.path).replace(/\\/+$/, '').length + 1));
-        return feOpen(chatProject || currentProject, p);
       }
-      return feOpen(chatProject || currentProject, p);
+      // Anything else is asked about first: a path with a slash in front is
+      // as often meant from the project ("/assets/a.png") as from the disk.
+      const proj = chatProject || currentProject;
+      apiFetch('/api/files/resolve?project=' + encodeURIComponent(proj) + '&path=' + encodeURIComponent(p))
+        .then(r => r.json())
+        .then(d => {
+          if (!d || !d.ok) { toast('File not found: ' + p, 'error'); return; }
+          if (d.dir) { toast('That is a folder: ' + p); return; }
+          feOpen(proj, d.file);
+        })
+        .catch(() => feOpen(proj, p));
     }
 
     // Mount the Claude chat renderer (served from /vendor/claude-chat.js) into a
@@ -6620,52 +6769,9 @@ export function getWebappHtml(botUsername) {
     function widgetToolExtra(t, entry) {
       if (!widgetsOn() || !entry || entry.status !== 'done' || entry.isError) return null;
       const name = String(entry.name || '');
-      // Pictures Claude showed with show_image. Only the stored names are
-      // taken from the result, and only if they look like ours; the caption
-      // is set as text.
-      // Things Claude showed with show_image / show_video / show_audio /
-      // show_file. Only stored names and ids are taken from the result, and
-      // only if they look like ours; every word shown is set as text.
-      if (/show_(image|video|audio|file|embed)$/.test(name)) {
-        let r = null;
-        try { r = JSON.parse(String(entry.result || '')); } catch { return null; }
-        const sid = encodeURIComponent(t.id);
-        const NAME = /^[0-9a-f]{16}([.]poster)?[.](png|jpg|gif|webp|mp4|webm|mov|mp3|wav|ogg|m4a|flac|weba)$/;
-        const EMBED = /^[0-9a-f]{16}[.]embed$/;
-        const num = (v, max) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n <= max ? n : 0; };
-        // 1.19.19 answered show_image with { images: [{ name, caption }] }.
-        const raw = r && Array.isArray(r.items) ? r.items : ((r && Array.isArray(r.images)) ? r.images.map(i => ({ ...i, kind: 'image' })) : []);
-        const items = [];
-        for (const i of raw) {
-          if (!i) continue;
-          const base = { caption: String(i.caption || '').slice(0, 200), filename: String(i.filename || '').slice(0, 200), size: num(i.size, 1e13) };
-          if (i.kind === 'embed') {
-            // A frame: either an https address that is not this site's own (a
-            // frame of our own origin could act as us), or stored HTML, which
-            // the frame gets as text and runs with no origin at all.
-            const e = { ...base, kind: 'embed', title: String(i.title || '').slice(0, 200), provider: String(i.provider || '').slice(0, 60), w: num(i.w, 100), h: num(i.h, 100), height: num(i.height, 1200), width: num(i.width, 2000) };
-            if (i.name) {
-              if (!EMBED.test(String(i.name))) continue;
-              e.htmlUrl = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.name);
-            } else {
-              let u = null; try { u = new URL(String(i.src || '')); } catch { u = null; }
-              if (!u || u.protocol !== 'https:' || u.host === location.host) continue;
-              e.src = u.href;
-            }
-            let open = null; try { open = new URL(String(i.url || '')); } catch { open = null; }
-            if (open && open.protocol === 'https:') e.openUrl = open.href;
-            items.push(e);
-          } else if (i.kind === 'file') {
-            if (!/^[0-9a-f]{16}$/.test(String(i.id || ''))) continue;
-            items.push({ ...base, kind: 'file', url: '/api/chat-media/file?session=' + sid + '&id=' + i.id });
-          } else if (['image', 'video', 'audio'].includes(i.kind) && NAME.test(String(i.name || ''))) {
-            const it = { ...base, kind: i.kind, url: '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.name), w: num(i.w, 20000), h: num(i.h, 20000), duration: num(i.duration, 1e6) };
-            if (i.poster && NAME.test(String(i.poster))) it.posterUrl = '/api/chat-media?session=' + sid + '&name=' + encodeURIComponent(i.poster);
-            items.push(it);
-          }
-        }
-        return items.length ? window.CrundiWidgets.mediaNode(items, String((r && r.caption) || '').slice(0, 300)) : null;
-      }
+      // Pictures, video, sound, files and frames Claude showed in the chat
+      // are drawn by the widgets file, which the compact chat page shares.
+      if (/show_(image|video|audio|file|embed)$/.test(name)) return window.CrundiWidgets.toolMedia(t.id, entry);
       const id = String((entry.input && entry.input.id) || '').toLowerCase();
       if (!id) return null;
       if (/widget_render$/.test(name)) return window.CrundiWidgets.shotsNode(t.project || currentProject, id);
@@ -7022,6 +7128,79 @@ export function getWebappHtml(botUsername) {
       closeHeadMenus(null);
     }, true);
 
+    // What the phone app round this page can do, if there is one: a list such
+    // as "bubble,settings" from its bridge. Empty in a browser, where neither
+    // exists, so the buttons below are simply not drawn.
+    const NATIVE_CAN = (() => {
+      try { return (window.CrundiNative && window.CrundiNative.can) ? String(window.CrundiNative.can()).split(',') : []; } catch (e) { return []; }
+    })();
+    // The app's own settings (permissions, paired servers) are a screen of the
+    // app's, not of this page. The way to it is here, where a hand already is.
+    if (NATIVE_CAN.indexOf('settings') >= 0) {
+      const b = document.getElementById('app-settings-btn');
+      if (b) b.style.display = '';
+    }
+    // "Go to this chat", asked from outside the page: the phone app calls it
+    // when a notification is tapped or a bubble says "open in Crundi". The
+    // alternative was for the app to load an address, which threw this whole
+    // page away and built it again to show one chat.
+    //
+    // It can be asked before the page knows its chats (the app was not
+    // running), so it is remembered and tried again until the chat is there,
+    // for a few seconds.
+    function goToChat(sid) {
+      const goTerm = terminals.find(t => String(t.id) === String(sid));
+      if (!goTerm) return false;
+      const reveal = () => {
+        const cell = document.querySelector('[data-cellkey="live:' + sid + '"]');
+        if (cell) {
+          cell.scrollIntoView({ block: 'center' });
+          const v = chatViews.get(sid); if (v && v.focus) v.focus();
+        }
+      };
+      if (goTerm.project && String(goTerm.project).toLowerCase() !== String(currentProject || '').toLowerCase()) {
+        Promise.resolve(selectProject(goTerm.project)).then(() => requestAnimationFrame(reveal));
+      } else {
+        switchTab('workbench');
+        reveal();
+      }
+      return true;
+    }
+    // Tell the phone app which chats are actually on screen, so it can take
+    // their notifications down: a notification for a chat you are reading is
+    // only clutter. "On screen" is measured, not assumed. On a phone the
+    // chats of a project are stacked, and one further down the page has not
+    // been seen just because it exists.
+    if (window.CrundiNative && window.CrundiNative.seen) {
+      setInterval(() => {
+        if (document.visibilityState !== 'visible' || currentTab !== 'workbench') return;
+        for (const id of chatViews.keys()) {
+          const cell = document.querySelector('[data-cellkey="live:' + id + '"]');
+          if (!cell) continue;
+          const r = cell.getBoundingClientRect();
+          const shown = Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0);
+          if (r.height > 0 && shown / Math.min(r.height, window.innerHeight) >= 0.4) {
+            try { window.CrundiNative.seen(String(id)); } catch (e) { /* the app's problem */ }
+          }
+        }
+      }, 3000);
+    }
+    window.crundiOpenChat = (sid) => {
+      let tries = 0;
+      const attempt = () => {
+        let done = false;
+        try { done = goToChat(String(sid)); } catch (e) { done = false; }
+        if (!done && ++tries < 24) setTimeout(attempt, 250);
+      };
+      attempt();
+      return true;
+    };
+    function nativeChatBtns(t) {
+      let h = '';
+      if (NATIVE_CAN.indexOf('bubble') >= 0) h += '<button class="term-font-btn" data-action="chat-bubble" data-tid="' + t.id + '" title="Open this chat as a floating bubble">Bubble</button>';
+      return h;
+    }
+
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
@@ -7035,7 +7214,7 @@ export function getWebappHtml(botUsername) {
       const fontBtns = '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
         + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
         + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
-      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns : fontBtns) + pinBtnHtml();
+      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns + nativeChatBtns(t) : fontBtns) + pinBtnHtml();
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
         + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename"' + (t.longTitle ? ' data-long="' + escHtml(t.longTitle) + '"' : '') + '>' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
@@ -8340,6 +8519,7 @@ export function getWebappHtml(botUsername) {
         xhr.open('POST', path);
         xhr.setRequestHeader('Content-Type', 'application/json');
         if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+        if (PAGE_VERSION) xhr.setRequestHeader('X-Crundi-Web', PAGE_VERSION);
         xhr.upload.onprogress = (ev) => {
           if (ev.lengthComputable && onProgress) onProgress(ev.loaded / ev.total);
         };
@@ -8348,7 +8528,13 @@ export function getWebappHtml(botUsername) {
         xhr.upload.onload = () => { if (onProgress) onProgress(1); };
         xhr.onload = () => {
           try { resolve(JSON.parse(xhr.responseText)); }
-          catch { reject(new Error('Bad response from the server')); }
+          catch {
+            // Not JSON, so not this server's own answer: something between
+            // here and it (a proxy, a firewall) answered instead. Say what
+            // came back, or "bad response" is all anyone has to go on.
+            const said = String(xhr.responseText || '').replace(/<[^>]*>/g, ' ').split(' ').filter(Boolean).join(' ').slice(0, 80);
+            reject(new Error('The upload was answered with HTTP ' + xhr.status + (said ? ' (' + said + ')' : ', and nothing else') + ', not by Crundi. Something between this device and the server may have blocked it.'));
+          }
         };
         xhr.onerror = () => reject(new Error('Network error'));
         xhr.onabort = () => reject(new Error('Upload cancelled'));
@@ -8474,13 +8660,16 @@ export function getWebappHtml(botUsername) {
     // ─── WebSocket ───
     function connectWS() {
       clearTimeout(reconnectTimer);
+      // Refused for being out of date: the socket is refused too, and retrying
+      // behind the update screen would only knock on a closed door.
+      if (clientRefused) return;
       // Detach the previous socket's handlers BEFORE closing it, so replacing a
       // (possibly still-open) socket can't fire a stray onclose that schedules
       // another reconnect — which would loop every few seconds and flap the badge.
       if (ws) { ws.onopen = ws.onmessage = ws.onerror = null; ws.onclose = null; try { ws.close(); } catch {} }
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = proto + '//' + location.host + '/ws?token=' + encodeURIComponent(token);
+      const url = proto + '//' + location.host + '/ws?token=' + encodeURIComponent(token) + (PAGE_VERSION ? '&web=' + encodeURIComponent(PAGE_VERSION) : '');
       ws = new WebSocket(url);
 
       ws.onopen = () => {
@@ -9757,6 +9946,18 @@ export function getWebappHtml(botUsername) {
     /** @param {{url:string, name:string, size?:number}} o  url is an /api path; the sign-in header is added here. */
     async function crundiDownload(o) {
       const name = String(o.name || 'download');
+      // Inside the phone app, the phone does the download: it goes to the
+      // Downloads folder with the system's own progress and "open" button.
+      // What this page would otherwise do (fetch the file, then save it from
+      // memory) ends in an address only this page can read, which the phone
+      // has no way to fetch.
+      if (window.CrundiNative && window.CrundiNative.download && typeof NATIVE_CAN !== 'undefined' && NATIVE_CAN.indexOf('download') >= 0) {
+        try {
+          const abs = new URL(o.url + (o.url.indexOf('?') < 0 ? '?' : '&') + 'token=' + encodeURIComponent(token || ''), location.href).href;
+          window.CrundiNative.download(abs, name);
+          return;
+        } catch (err) { /* fall through to the page's own way */ }
+      }
       if (Number(o.size) > DL_INAPP_MAX) {
         // Too big to hold in memory: let the browser stream it to disk itself.
         const a = document.createElement('a');
@@ -13352,6 +13553,20 @@ export function getWebappHtml(botUsername) {
         // Signing out had no button and no endpoint, so a session could not be
         // ended from the browser at all — and sign-ins survive restarts now, so
         // not even a restart ended one.
+        // The phone app: pair one, and give this server the key that lets
+        // notifications reach it. Both are drawn by app/vendor/crundi-phone.js.
+        // Not for a collaborator: what is sent to a phone is the owner's.
+        if (userRole !== 'collaborator' && window.CrundiPhone) {
+          html += '<div class="info-section" id="phone-section"><h4>Phone app</h4>'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+            + '<div style="font-size:0.72rem;color:var(--text-muted);max-width:60ch;">'
+            + 'Pair the Crundi app on a phone with this server. It shows a picture for the phone to scan, so no password is typed on the phone.</div>'
+            + '<button type="button" class="kanban-btn" data-action="phone-connect">Connect a phone</button>'
+            + '</div>'
+            + '<div class="ctr-head" style="margin-top:12px;"><span style="flex:1;font-size:0.78rem;color:var(--text-secondary);">Notifications on the phone</span></div>'
+            + '<div id="phone-push"></div>'
+            + '</div>';
+        }
         html += '<div class="info-section"><h4>Session</h4>'
           + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
           + '<div style="font-size:0.72rem;color:var(--text-muted);max-width:60ch;">'
@@ -13366,6 +13581,8 @@ export function getWebappHtml(botUsername) {
           + '</div>';
 
         panel.innerHTML = html;
+        const pushHost = document.getElementById('phone-push');
+        if (pushHost && window.CrundiPhone) window.CrundiPhone.renderPush(pushHost, { apiFetch, toast });
         renderSkillsSection();
         renderBackupSection();
         renderServerUpdate();
@@ -13565,6 +13782,15 @@ export function getWebappHtml(botUsername) {
           break;
         case 'sess-toggle':
           toggleSessions();
+          break;
+        case 'phone-connect':
+          if (window.CrundiPhone) {
+            window.CrundiPhone.connect({
+              apiFetch, toast,
+              // A new phone is a new signed-in device; refresh the list if it is open.
+              onPaired: () => { if (sessOpen) loadSessions(); },
+            });
+          }
           break;
         case 'sess-revoke':
           revokeSession(d.id, e.target.closest('button'));
@@ -13872,6 +14098,13 @@ export function getWebappHtml(botUsername) {
           if (d.id) collabAction(d.action, d.id);
           break;
         case 'collab-merge': collabAskMerge(e.target.closest('.topbar-act')); break;
+        case 'app-settings':
+          try { window.CrundiNative.openSettings(); } catch (err) { toast('This app has no settings screen', 'error'); }
+          break;
+        case 'chat-bubble':
+          try { window.CrundiNative.openBubble(String(d.tid)); } catch (err) { toast('This app cannot open a bubble', 'error'); }
+          closeHeadMenus(null);
+          break;
         case 'chat-plan': {
           e.stopPropagation();
           const view = chatViews.get(d.tid);

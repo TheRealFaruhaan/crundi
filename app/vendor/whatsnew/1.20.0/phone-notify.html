@@ -1,0 +1,24 @@
+<div class="wna a-pnot">
+  <div class="card">
+    <span class="mark">AS</span>
+    <div class="tx"><b>App scoping</b><span>Done. Tests pass, nothing committed yet.</span></div>
+    <div class="acts"><i class="chip">Commit it</i><i class="reply"><u></u></i></div>
+  </div>
+  <div class="sent">Commit it</div>
+  <style>
+    .a-pnot .card{position:absolute;box-sizing:border-box;left:90px;top:96px;width:460px;border-radius:22px;border:1px solid var(--border);background:var(--bg-card);box-shadow:0 18px 44px rgba(0,0,0,.5);padding:18px 20px 16px 84px;animation:apn-card 10s ease infinite}
+    .a-pnot .mark{position:absolute;left:20px;top:18px;width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 15px var(--mono,monospace);color:#fff;background:linear-gradient(135deg,#a855f7,#7c3aed)}
+    .a-pnot .tx b{display:block;font-size:15px;font-weight:650;color:var(--text-primary);margin-bottom:4px}
+    .a-pnot .tx span{font-size:13.5px;color:var(--text-secondary)}
+    .a-pnot .acts{display:flex;align-items:center;gap:10px;margin-top:16px}
+    .a-pnot .chip{font-style:normal;font-size:13px;font-weight:550;color:var(--text-primary);padding:8px 14px;border-radius:999px;border:1px dashed var(--accent);background:var(--accent-dim);animation:apn-chip 10s ease infinite}
+    .a-pnot .reply{flex:1;height:36px;border-radius:999px;border:1px solid var(--border);background:var(--bg-secondary);display:flex;align-items:center;padding:0 14px}
+    .a-pnot .reply u{width:1.5px;height:16px;background:var(--accent);text-decoration:none;animation:apn-caret 1s steps(2) infinite}
+    .a-pnot .sent{position:absolute;left:360px;top:300px;padding:10px 16px;border-radius:16px 16px 4px 16px;background:var(--accent);color:#fff;font-size:14px;font-weight:550;opacity:0;animation:apn-sent 10s ease infinite}
+    @keyframes apn-card{0%,6%{translate:0 -40px;opacity:0}14%,62%{translate:0 0;opacity:1}72%,100%{translate:0 -30px;opacity:0}}
+    @keyframes apn-chip{0%,34%{scale:1;background:var(--accent-dim)}38%{scale:.92;background:var(--accent)}44%,100%{scale:1;background:var(--accent-dim)}}
+    @keyframes apn-sent{0%,40%{opacity:0;translate:0 12px}48%,88%{opacity:1;translate:0 0}96%,100%{opacity:0;translate:0 0}}
+    @keyframes apn-caret{0%{opacity:1}100%{opacity:0}}
+    @media (prefers-reduced-motion:reduce){.a-pnot *{animation:none!important}.a-pnot .card,.a-pnot .sent{opacity:1}}
+  </style>
+</div>

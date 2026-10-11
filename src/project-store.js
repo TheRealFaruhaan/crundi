@@ -32,6 +32,38 @@ export function setProjectOrder(aliases) {
   return { ok: true };
 }
 
+// Each project's own icon: the full path of the file found in its folder, or
+// '' where it was looked for and there is none. Kept beside the registry for
+// the reason the order is: most projects are folders found by themselves, and
+// writing one into projects.json would turn it into a registered project.
+const ICONS_FILE = () => join(config.dataDir, 'project-icons.json');
+let iconsCache = null;
+function loadIcons() {
+  if (iconsCache) return iconsCache;
+  const file = ICONS_FILE();
+  try { const o = existsSync(file) ? JSON.parse(readFileSync(file, 'utf-8')) : {}; iconsCache = o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { iconsCache = {}; }
+  return iconsCache;
+}
+
+/** The stored icon path of a project: a path, '' for "looked, none", undefined for "never looked". */
+export function getProjectIconFile(alias) {
+  const v = loadIcons()[String(alias || '').toLowerCase()];
+  return typeof v === 'string' ? v : undefined;
+}
+
+/** Record what was found for a project. Written only when it differs. */
+export function setProjectIconFile(alias, file) {
+  const key = String(alias || '').toLowerCase();
+  if (!key) return false;
+  const icons = loadIcons();
+  const next = String(file || '');
+  if (icons[key] === next) return false;
+  icons[key] = next;
+  ensureDataDir();
+  try { writeFileSync(ICONS_FILE(), JSON.stringify(icons, null, 2)); } catch { /* it is found again next time */ }
+  return true;
+}
+
 function load() {
   const file = FILE();
   if (!existsSync(file)) return {};
@@ -82,6 +114,7 @@ export function listProjects() {
   // to the end, alphabetically by name.
   const order = loadOrder();
   const rank = (a) => { const i = order.indexOf(a.alias); return i === -1 ? Infinity : i; };
+  for (const p of Object.values(result)) p.iconFile = getProjectIconFile(p.alias) || '';
   return Object.values(result).sort((a, b) => {
     const d = rank(a) - rank(b);
     return d !== 0 ? d : String(a.name).localeCompare(String(b.name));
@@ -94,7 +127,7 @@ export function getProject(alias) {
 
   // Check registered first
   const map = load();
-  if (map[key]) return normalize(key, map[key]);
+  if (map[key]) return { ...normalize(key, map[key]), iconFile: getProjectIconFile(key) || '' };
 
   // Check auto-discovered
   if (config.projectsDir && existsSync(config.projectsDir)) {
@@ -103,7 +136,7 @@ export function getProject(alias) {
         if (entry.toLowerCase() === key) {
           const fullPath = join(config.projectsDir, entry);
           if (statSync(fullPath).isDirectory()) {
-            return { alias: key, path: fullPath, name: entry };
+            return { alias: key, path: fullPath, name: entry, iconFile: getProjectIconFile(key) || '' };
           }
         }
       }

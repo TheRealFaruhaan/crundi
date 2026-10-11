@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Crundi for Android: privacy policy</title>
+<meta name="description" content="What the Crundi Android app does with your data." />
+<meta name="theme-color" content="#0a0a0f" />
+<link rel="icon" href="assets/favicon.ico" />
+<style>
+  body{margin:0;background:#0a0a0f;color:#d6d6e0;font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  main{max-width:720px;margin:0 auto;padding:48px 22px 80px}
+  h1{font-size:30px;line-height:1.2;color:#fff;margin:0 0 6px}
+  h2{font-size:19px;color:#fff;margin:38px 0 8px}
+  p,li{color:#c3c3d0}
+  .when{color:#8b8ba0;font-size:14px;margin:0 0 28px}
+  a{color:#a5b4fc}
+  code{font:14px ui-monospace,Menlo,Consolas,monospace;background:#16161f;border:1px solid #26263a;border-radius:6px;padding:1px 6px}
+  ul{padding-left:22px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Crundi for Android: privacy policy</h1>
+  <p class="when">Last updated 12 October 2026. App package <code>mv.obitech.crundi</code>, published by Obitech.</p>
+
+  <p>Crundi for Android is a client for a Crundi server that you run yourself. It shows that server on your phone. The short version: the app has no account with us, sends us none of your content, and contains no advertising or analytics.</p>
+
+  <h2>What the app talks to</h2>
+  <ul>
+    <li><b>Your own server.</b> Everything you see and type in the app goes between your phone and the Crundi server you paired it with, at the address you gave it. We do not operate that server and cannot see what passes between it and your phone.</li>
+    <li><b>Google's Firebase Cloud Messaging</b>, to deliver notifications. Google gives the app a messaging token that identifies this installation of the app, and delivers messages addressed to it. See <a href="https://firebase.google.com/support/privacy">Firebase's privacy information</a>.</li>
+    <li><b>The Crundi push relay</b> at <code>cr-rl-pub1.obitech.mv</code>, which we operate. Your server hands it a notification to pass on to Google for your phone.</li>
+  </ul>
+
+  <h2>What we can and cannot see</h2>
+  <p>A notification is encrypted on your server with a key that only your phone holds, before it leaves your server. The relay, and Google, pass on a sealed message they cannot read. The relay receives:</p>
+  <ul>
+    <li>the messaging token of the phone the notification is for;</li>
+    <li>the sealed notification;</li>
+    <li>the push key your server was issued, which says which server is sending.</li>
+  </ul>
+  <p>The relay does not keep notifications or tokens after passing them on, and request logging is switched off. It keeps a record of each push key: a label naming who it was issued to, and whether it has been revoked.</p>
+
+  <h2>What is kept on your phone</h2>
+  <ul>
+    <li>The address of each server you paired, and the sign-in tokens that server issued to this phone, stored encrypted.</li>
+    <li>The keys used to open notifications.</li>
+    <li>A short log of recent notification deliveries, to help you see why one did not arrive. It stays on the phone.</li>
+    <li>Icons of your projects, fetched from your server.</li>
+  </ul>
+  <p>Removing a server in the app's settings, or uninstalling the app, removes these.</p>
+
+  <h2>Permissions</h2>
+  <ul>
+    <li><b>Notifications</b>: to tell you when a chat finishes or needs you.</li>
+    <li><b>Camera</b>: to scan the pairing picture, and, if you choose to, to take a photo to attach in a chat on your server.</li>
+    <li><b>Microphone</b>: only if a page of your own server asks for it and you allow it.</li>
+  </ul>
+  <p>Photos and files you attach are sent to your own server and nowhere else.</p>
+
+  <h2>What we do not do</h2>
+  <ul>
+    <li>No advertising, and no advertising identifiers.</li>
+    <li>No analytics or usage tracking in the app.</li>
+    <li>No selling or sharing of data with anyone.</li>
+    <li>No account with us: there is nothing of yours for us to hold or delete.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>The app is a tool for people who run their own server. It is not directed at children.</p>
+
+  <h2>Deleting your data</h2>
+  <p>Your content lives on your own server, under your control. To stop a phone receiving notifications, remove it under Settings, Phone app, on your server, or uninstall the app. To have a push key removed from the relay, contact us.</p>
+
+  <h2>Contact</h2>
+  <p>Telegram: <a href="https://t.me/TheRealFaruhaan">@TheRealFaruhaan</a>. Issues and source code: <a href="https://github.com/TheRealFaruhaan/crundi">github.com/TheRealFaruhaan/crundi</a>.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the new version is published at this address with a new date.</p>
+</main>
+</body>
+</html>

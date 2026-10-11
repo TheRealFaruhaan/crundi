@@ -1,0 +1,298 @@
+package mv.obitech.crundi
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * The live card: what is showing while Claude works.
+ *
+ * One card per project, for as long as that project has a chat that is
+ * working or waiting on the person. In the status bar it is a chip (how long
+ * one chat has been at it, how many are, or that one needs you); opened, it
+ * is a line per chat with the time it started, the ones that need action
+ * first and marked. It opens the chat and does nothing else: there is no
+ * Stop on it.
+ *
+ * Android calls this a Live Update, and is strict about it: an ongoing
+ * notification with a title, in one of the system's own styles, that asks to
+ * be promoted. No custom layout is allowed, so the card says what the
+ * owner's sketch says in the shape Android gives it. On a phone older than
+ * Android 16, or with promotion switched off, the same card is an ordinary
+ * ongoing notification without the chip.
+ *
+ * The server sends a silent message each time a chat's state changes (see
+ * tellPhonesState in webapp.js). What is known is kept on disk, because each
+ * message says one chat's state and the card needs all of them.
+ */
+object LiveCards {
+    const val CHANNEL = "live"
+    private const val PREFS = "crundi.live"
+    private const val KEY = "chats"
+    // A chat that stopped reporting (the server restarted, the chat was
+    // closed) must not sit in the status bar for ever.
+    private const val STALE_MS = 6 * 60 * 60 * 1000L
+    private const val DONE_SHOWN_MS = 6000L
+
+    fun channel(ctx: Context) {
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        // Default importance, silenced: a card must not be MIN to be promoted,
+        // and must never make a sound, since it changes many times a minute.
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Live card", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "While Claude is working"
+            setSound(null, null)
+            enableVibration(false)
+            setShowBadge(false)
+        })
+    }
+
+    private class Entry(val serverId: String, val chatId: String, val title: String, val project: String, val initials: String, val color: String, val colorDeep: String, val state: String, val since: Long, val at: Long, val icon: String = "") {
+        val active get() = state == "working" || state == "waiting" || state == "needs-input"
+        val needs get() = state == "needs-input"
+        fun json() = JSONObject().put("serverId", serverId).put("chatId", chatId).put("title", title).put("project", project).put("initials", initials).put("color", color).put("colorDeep", colorDeep).put("state", state).put("since", since).put("at", at).put("icon", icon)
+    }
+
+    private fun load(ctx: Context): MutableMap<String, Entry> {
+        val out = mutableMapOf<String, Entry>()
+        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return out
+        runCatching {
+            val o = JSONObject(raw)
+            for (k in o.keys()) {
+                val e = o.getJSONObject(k)
+                out[k] = Entry(e.getString("serverId"), e.getString("chatId"), e.optString("title", "Chat"), e.optString("project"), e.optString("initials", "C"), e.optString("color", "#6366f1"), e.optString("colorDeep", "#4f46e5"), e.optString("state"), e.optLong("since"), e.optLong("at"), e.optString("icon"))
+            }
+        }
+        return out
+    }
+
+    private fun save(ctx: Context, map: Map<String, Entry>) {
+        val o = JSONObject()
+        for ((k, e) in map) o.put(k, e.json())
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, o.toString()).apply()
+    }
+
+    private fun cardId(serverId: String, project: String) = "live:$serverId:$project".hashCode()
+
+    /** A silent message from the server: one chat's state has changed. */
+    @Synchronized
+    fun onState(ctx: Context, server: Server, payload: JSONObject) {
+        val chat = payload.optJSONObject("chat") ?: return
+        val id = chat.optString("id")
+        if (id.isEmpty()) return
+        val ref = ChatRef.from(server.id, chat)
+        val map = load(ctx)
+        val now = System.currentTimeMillis()
+        map.entries.removeAll { now - it.value.at > STALE_MS }
+        val state = payload.optString("state")
+        val entry = Entry(server.id, id, ref.title, ref.project, ref.initials, ref.color, ref.colorDeep, state, payload.optLong("since", now).takeIf { it > 0 } ?: now, now, ref.icon)
+        val wasActive = map[ref.key]?.active == true
+        if (entry.active) map[ref.key] = entry else map.remove(ref.key)
+        save(ctx, map)
+        render(ctx, server.id, ref.project, map, justFinished = if (!entry.active && wasActive) entry else null)
+    }
+
+    /** The chats of a server that are working, waiting, or waiting on the person, as last heard. */
+    @Synchronized
+    fun active(ctx: Context, serverId: String): List<ChatRef> {
+        val now = System.currentTimeMillis()
+        return load(ctx).values.filter { it.serverId == serverId && it.active && now - it.at <= STALE_MS }
+            .map { ChatRef(it.serverId, it.chatId, it.title, it.project, it.initials, it.color, it.colorDeep, it.icon) }
+    }
+
+    /** Forget everything about a server: it was removed from this phone. */
+    @Synchronized
+    fun forget(ctx: Context, serverId: String) {
+        val map = load(ctx)
+        val projects = map.values.filter { it.serverId == serverId }.map { it.project }.toSet()
+        map.entries.removeAll { it.value.serverId == serverId }
+        save(ctx, map)
+        val nm = NotificationManagerCompat.from(ctx)
+        for (p in projects) nm.cancel(cardId(serverId, p))
+    }
+
+    private fun clock(ms: Long) = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
+
+    private fun render(ctx: Context, serverId: String, project: String, map: Map<String, Entry>, justFinished: Entry?) {
+        val id = cardId(serverId, project)
+        val nm = NotificationManagerCompat.from(ctx)
+        val mine = map.values.filter { it.serverId == serverId && it.project == project }
+        val needs = mine.filter { it.needs }.sortedBy { it.since }
+        val working = mine.filter { !it.needs }.sortedBy { it.since }
+        val ordered = needs + working
+
+        if (ordered.isEmpty()) {
+            if (justFinished == null) { nm.cancel(id); return }
+            // The last chat of this project has finished. Say so for a moment,
+            // then go: a card that vanished without a word would leave the
+            // person wondering whether it finished or failed.
+            val done = base(ctx, justFinished, project)
+                .setContentTitle("Claude finished")
+                .setContentText(justFinished.title)
+                .setOngoing(false).setAutoCancel(true)
+                .setTimeoutAfter(DONE_SHOWN_MS)
+                .setShortCriticalText("Done")
+                .setContentIntent(open(ctx, justFinished, id))
+            runCatching { nm.notify(id, done.build()) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
+            return
+        }
+
+        val first = ordered.first()
+        val title = when {
+            needs.size == 1 -> "Claude needs you"
+            needs.size > 1 -> "${needs.size} chats need you"
+            working.size == 1 -> "Claude is working"
+            else -> "${working.size} chats working"
+        }
+        val lines = ordered.joinToString("\n") { e ->
+            (if (e.needs) "!  " else "") + clock(e.since) + "   " + e.title + (if (e.needs) "  · needs you" else if (e.state == "waiting") "  · waiting" else "")
+        }
+        val b = base(ctx, first, project)
+            .setContentTitle(title)
+            .setContentText(if (ordered.size == 1) first.title else lines.lineSequence().first())
+            .setStyle(NotificationCompat.BigTextStyle().bigText(lines))
+            .setOngoing(true)
+            .setRequestPromotedOngoing(true)
+            .setTimeoutAfter(STALE_MS)
+            .setContentIntent(open(ctx, first, id))
+            .addAction(0, if (needs.isNotEmpty()) "Open" else "Open chat", open(ctx, first, id))
+        // The same chat as a bubble, for carrying on with something else.
+        // Android draws a notification's buttons as words on most phones,
+        // whatever icon they are given, so it has both.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) b.addAction(R.drawable.ic_bubble, "Bubble", bubble(ctx, first, id))
+        // The chip. Seven characters or fewer is all Android promises to show.
+        when {
+            needs.isNotEmpty() -> b.setShortCriticalText("Action")
+            working.size == 1 -> b.setUsesChronometer(true).setWhen(first.since).setShowWhen(true)
+            else -> b.setShortCriticalText("${working.size} chats")
+        }
+        // No Stop here. A notification is too easy to touch by accident for
+        // something that throws away a turn of work; stopping is done in the
+        // chat, where it is deliberate.
+        // Posting a card again replays whatever entrance the phone gives a
+        // live card, so it is posted only when what it says has changed.
+        val says = "${first.icon}|$title|$lines|${needs.size}|${working.size}|${first.since}|${working.firstOrNull { it.state == "working" } != null}"
+        if (lastSaid[id] == says && (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications.any { it.id == id }) return
+        lastSaid[id] = says
+        samsungIcon(ctx, b, first)
+        val built = b.build()
+        runCatching { nm.notify(id, built) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
+        noteChip(ctx, id, built)
+    }
+
+    /**
+     * Samsung only, and a guess. One UI reads extras of its own from a live
+     * card; these two are reported to carry the picture for the status bar
+     * chip and for the Now Bar. Whether they also change the picture at the
+     * left of the card, or do anything at all without Samsung's own style
+     * (which must not be set, see below), is not known. Anywhere else, and
+     * if the names are wrong, they are ignored.
+     */
+    private fun samsungIcon(ctx: Context, b: NotificationCompat.Builder, e: Entry) {
+        if (!samsungLive(ctx)) return
+        val icon = Icons.cached(ctx, e.serverId, e.icon) ?: return
+        val head = runCatching { Icons.head(icon, Ui.dp(ctx, 48), adaptive = false) }.getOrNull() ?: return
+        val asIcon = android.graphics.drawable.Icon.createWithBitmap(head)
+        b.addExtras(android.os.Bundle().apply {
+            putParcelable("android.ongoingActivityNoti.chipIcon", asIcon)
+            putParcelable("android.ongoingActivityNoti.nowbarIcon", asIcon)
+        })
+    }
+
+    /**
+     * Whether to ask One UI for its live treatment (Now Bar, status bar
+     * chip). It comes with a moving glow round the card, which Samsung draws
+     * and the app cannot change, and which the owner found heavy on the
+     * phone. Off, the card is an ordinary ongoing notification there.
+     */
+    const val PREF_SAMSUNG_LIVE = "live.samsung"
+    val onSamsung get() = Build.MANUFACTURER.equals("samsung", true)
+    fun samsungLive(ctx: Context) = ctx.getSharedPreferences("crundi", Context.MODE_PRIVATE).getBoolean(PREF_SAMSUNG_LIVE, true)
+
+    /** Draw every card again, as it now should be: a setting that changes how they look was changed. */
+    @Synchronized
+    fun refresh(ctx: Context) {
+        val map = load(ctx)
+        lastSaid.clear()
+        for ((serverId, project) in map.values.map { it.serverId to it.project }.toSet()) render(ctx, serverId, project, map, justFinished = null)
+    }
+
+    private val lastSaid = HashMap<Int, String>()
+
+    // Whether the phone gave the card its chip, said once per change, so that
+    // "it is in the panel but not in the status bar" has an answer.
+    private var lastChipNote = ""
+    private fun noteChip(ctx: Context, id: Int, built: android.app.Notification) {
+        val note = when {
+            Build.VERSION.SDK_INT < 36 -> "Live card shown without a status bar chip: this phone runs Android ${Build.VERSION.RELEASE}, and the chip needs Android 16"
+            else -> {
+                val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val allowed = runCatching { nm.canPostPromotedNotifications() }.getOrDefault(false)
+                val fits = runCatching { built.hasPromotableCharacteristics() }.getOrDefault(false)
+                val promoted = nm.activeNotifications.firstOrNull { it.id == id }?.notification?.let { (it.flags and 0x00040000) != 0 }
+                "Live card: chip allowed for Crundi = $allowed, card meets Android's rules = $fits, Android promoted it = ${promoted ?: "unknown"}"
+            }
+        }
+        if (note != lastChipNote) { lastChipNote = note; PushLog.add(ctx, note) }
+    }
+
+    private fun base(ctx: Context, e: Entry, project: String): NotificationCompat.Builder {
+        return NotificationCompat.Builder(ctx, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat)
+            // No colour of its own. On Samsung the live card is drawn with a
+            // glow, and a bright accent made it a heavy one, on the lock
+            // screen as well. Left uncoloured, the phone uses its plain
+            // outline. The glow itself is Samsung's and not something the
+            // app draws or can switch off.
+            // No large picture. That is a SECOND picture, on the right of the
+            // card, and what was asked for is the one on the left to change.
+            // The one on the left is not the app's to set: a phone draws it
+            // from the app's own icon (Samsung) or the small icon (others).
+            // See `samsungIcon` for the one thing that can be tried.
+            .setSubText(project.ifEmpty { "Crundi" })
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // Samsung only. Android promoted this card on the owner's phone
+            // (the log said so) and One UI still showed it as an ordinary
+            // notification: its Now Bar and status bar chip are kept for apps
+            // on Samsung's own list. This extra is reported, by another app's
+            // developers, to let a card that Android has already promoted
+            // through on One UI 8.5 and later. It is undocumented, does
+            // nothing anywhere else, and may stop working. The related
+            // "android.ongoingActivityNoti.style" must NOT be set: it sends
+            // the card down a different path and undoes this.
+            // It also brings One UI's moving glow, so it can be switched off
+            // in App settings.
+            .apply { if (samsungLive(ctx)) addExtras(android.os.Bundle().apply { putBoolean("android.ongoingActivityNoti.automation", true) }) }
+    }
+
+    private fun open(ctx: Context, e: Entry, code: Int): PendingIntent = PendingIntent.getActivity(
+        ctx, code,
+        Intent(ctx, MainActivity::class.java).setAction("open:${e.serverId}:/chat/${e.chatId}").putExtra(Notifier.EXTRA_SERVER, e.serverId).putExtra(Notifier.EXTRA_PATH, "/chat/${e.chatId}")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun bubble(ctx: Context, e: Entry, code: Int): PendingIntent = PendingIntent.getActivity(
+        ctx, code,
+        Intent(ctx, BubbleActivity::class.java).setAction("bubble:${e.serverId}:${e.chatId}").putExtra(Notifier.EXTRA_SERVER, e.serverId).putExtra(Notifier.EXTRA_CHAT, e.chatId)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    /** Whether the phone will show the chip at all. Null when the phone is too old to have one. */
+    fun chipAllowed(ctx: Context): Boolean? {
+        if (Build.VERSION.SDK_INT < 36) return null
+        return runCatching { (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canPostPromotedNotifications() }.getOrNull()
+    }
+}

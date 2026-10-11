@@ -1,0 +1,54 @@
+# The Android app (android/), built and tested.
+#
+# Runs only when the app changes, or the one server file it carries
+# (src/crundi-code.js, the reader for the pairing picture). It builds the
+# `github` flavour, the one that updates itself from GitHub releases. The
+# `play` flavour is NOT built here on purpose: that build is made by hand for
+# the Play Store, and contains no code that knows about GitHub.
+#
+# What comes out is a debug build, kept as a workflow artifact for trying on a
+# phone. Signed release builds attached to a GitHub release come later, once
+# there is a signing key in the repository's secrets.
+name: Android
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - 'src/crundi-code.js'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'src/crundi-code.js'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test and build
+        working-directory: android
+        run: ./gradlew --no-daemon testGithubDebugUnitTest assembleGithubDebug
+      - name: The play flavour still compiles, and still knows nothing of GitHub
+        working-directory: android
+        run: |
+          ./gradlew --no-daemon assemblePlayDebug
+          if unzip -p app/build/outputs/apk/play/debug/app-play-debug.apk 'classes*.dex' | grep -aq 'github.com/TheRealFaruhaan'; then
+            echo "The play build contains the GitHub update code" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crundi-android-github-debug
+          path: android/app/build/outputs/apk/github/debug/app-github-debug.apk
+          if-no-files-found: error
