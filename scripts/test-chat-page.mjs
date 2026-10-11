@@ -90,6 +90,8 @@ const widgets = readFileSync(join(root, 'app', 'vendor', 'crundi-widgets.js'), '
 ok(widgets.includes('function toolMedia(sessionId, entry)') && widgets.includes('toolMedia: toolMedia'), 'pictures, files and frames Claude shows are parsed in one shared place');
 ok(main.includes('return window.CrundiWidgets.toolMedia(t.id, entry);') && !main.includes('const EMBED = /^[0-9a-f]{16}[.]embed$/'), 'the workbench uses it, and keeps no copy of its own');
 ok(html.includes('/vendor/crundi-widgets.js') && js.includes('toolExtra: toolExtra') && js.includes('W.toolMedia(sid, entry)'), 'the compact chat loads it and draws them too: a file offered there used to be invisible');
+ok(widgets.includes("cfg.fileIcon(it.filename || 'file') : IC.file") && /file: svg\(/.test(widgets), 'a file offered in the compact chat is drawn as a file, not as the panels icon');
+ok(js.includes('return r === undefined ? true : r'), 'a call the app answered with nothing still counts as done, so the page does not do it again');
 ok(js.includes("bridge('download', abs") && js.includes("a.download = String(o.name || 'download')"), 'a file is saved by the phone inside the app, and by a plain link in a browser');
 
 // A chat that is being read loses its notification.

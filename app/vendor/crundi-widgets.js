@@ -38,6 +38,8 @@
   function svg(body) { return '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>'; }
   var IC = {
     panel: svg('<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
+    // A sheet of paper: what a file is drawn as where the page has no icon per kind of file.
+    file: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>'),
     x: svg('<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>'),
     refresh: svg('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/>'),
     up: svg('<polyline points="18 15 12 9 6 15"/>'),
@@ -1190,7 +1192,7 @@
 
   function fileItem(it) {
     var card = el('div', 'wg-mfile');
-    var ic = el('span', 'wg-mfile-ic', cfg.fileIcon ? cfg.fileIcon(it.filename || 'file') : IC.panel);
+    var ic = el('span', 'wg-mfile-ic', cfg.fileIcon ? cfg.fileIcon(it.filename || 'file') : IC.file);
     var meta = el('span', 'wg-mfile-meta');
     var n = el('span', 'wg-mfile-n'); n.textContent = it.filename || 'File'; n.title = it.filename || '';
     var sz = el('span', 'wg-mfile-s'); sz.textContent = fmtBytes(it.size) + (it.caption ? ' · ' + it.caption : '');

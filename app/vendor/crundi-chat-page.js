@@ -31,7 +31,11 @@
   var $ = function (id) { return document.getElementById(id); };
   var bridge = function (name) {
     if (!native || typeof native[name] !== 'function') return undefined;
-    try { return native[name].apply(native, Array.prototype.slice.call(arguments, 1)); } catch (e) { return undefined; }
+    // "undefined" has to mean one thing only: the app has no such call, so
+    // the page must do it itself. Most of the app's calls return nothing,
+    // which is undefined too, and read that way a call that WORKED was done
+    // a second time by the page: a file saved twice, once by each.
+    try { var r = native[name].apply(native, Array.prototype.slice.call(arguments, 1)); return r === undefined ? true : r; } catch (e) { return undefined; }
   };
 
   // ─── Sign-in ───
@@ -41,7 +45,7 @@
   var token = '', refreshToken = '';
   function readSession() {
     var fromApp = bridge('session');
-    if (fromApp) {
+    if (typeof fromApp === 'string' && fromApp) {
       try { var s = JSON.parse(fromApp); token = s.token || ''; refreshToken = s.refreshToken || ''; return; } catch (e) { /* fall through */ }
     }
     try { token = localStorage.getItem('crundi_token') || ''; refreshToken = localStorage.getItem('crundi_refresh') || ''; } catch (e) { /* no storage */ }
