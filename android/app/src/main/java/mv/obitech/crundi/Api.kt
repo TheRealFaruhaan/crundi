@@ -63,6 +63,26 @@ object Api {
         JSONObject().put("code", link.code).put("device", JSONObject().put("name", deviceName).put("platform", "android")),
     )
 
+    private val authLock = Any()
+
+    /**
+     * A call as this app's own login, renewing it once if it has aged out.
+     *
+     * One at a time, on purpose. A renewal spends the refresh token it used;
+     * two calls renewing side by side would have the second present a spent
+     * token, which the server takes for a stolen one and answers by cutting
+     * the login off.
+     */
+    fun authed(ctx: android.content.Context, serverId: String, method: String, path: String, body: JSONObject? = null): Reply = synchronized(authLock) {
+        val server = Servers.byId(ctx, serverId) ?: return Reply(0, null)
+        var r = request(method, server.baseUrl + path, body, server.bgToken)
+        if (r.status == 401 && refresh(server)) {
+            Servers.save(ctx, server)
+            r = request(method, server.baseUrl + path, body, server.bgToken)
+        }
+        r
+    }
+
     /**
      * Renew this app's own login. Every renewal retires the refresh token it
      * used, so the new pair must be saved before anything else is tried.

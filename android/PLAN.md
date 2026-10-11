@@ -318,7 +318,24 @@ and the Linux desktop client.
   secret.
 - **First release route:** an internal testing track in the Play Console,
   from a signed `play` bundle.
-- **Next:** try it on a real phone; then notifications (stage 4).
+- **Proven on a phone:** pairing. Scanning the Crundi code with the camera,
+  claiming it, and coming up signed in all worked on the owner's phone.
+- **Built, not yet proven on a phone: notifications, bubbles and the floating
+  window** (app 1.0.0-dev.2). The phone registers with each server, opens what
+  the server seals (tested against a message the real server sealed), shows
+  chat notifications as conversations with a reply box, and can float a chat
+  as a bubble or as picture in picture. A chat's menu in the web UI gets
+  Bubble and Float when the page is inside the app (`CrundiNative.can()`).
+- **Not built:** approve and deny buttons on a "needs you" notification, and
+  buttons inside the floating window. Their What's New step waits until the
+  feature has been seen working.
+- **Asked for, not started:**
+  - Browser tools should let Claude choose where the browser runs: on the
+    server, or on a named attached client (PC, phone). Today an attached
+    client's browser is always used, which cannot reach the server's own
+    localhost.
+  - The phone app as a browser host, so the Browser pane works in it.
+- **Next:** try notifications and bubbles on a real phone.
 
 ## API notes for the app
 

@@ -7121,6 +7121,19 @@ export function getWebappHtml(botUsername, appVersion = '') {
       closeHeadMenus(null);
     }, true);
 
+    // What the phone app round this page can do, if there is one: a list such
+    // as "bubble,pip" from its bridge. Empty in a browser, where neither
+    // exists, so the buttons below are simply not drawn.
+    const NATIVE_CAN = (() => {
+      try { return (window.CrundiNative && window.CrundiNative.can) ? String(window.CrundiNative.can()).split(',') : []; } catch (e) { return []; }
+    })();
+    function nativeChatBtns(t) {
+      let h = '';
+      if (NATIVE_CAN.indexOf('bubble') >= 0) h += '<button class="term-font-btn" data-action="chat-bubble" data-tid="' + t.id + '" title="Open this chat as a floating bubble">Bubble</button>';
+      if (NATIVE_CAN.indexOf('pip') >= 0) h += '<button class="term-font-btn" data-action="chat-pip" data-tid="' + t.id + '" title="Open this chat in a small floating window">Float</button>';
+      return h;
+    }
+
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
@@ -7134,7 +7147,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const fontBtns = '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
         + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
         + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
-      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns : fontBtns) + pinBtnHtml();
+      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns + nativeChatBtns(t) : fontBtns) + pinBtnHtml();
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
         + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename"' + (t.longTitle ? ' data-long="' + escHtml(t.longTitle) + '"' : '') + '>' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
@@ -14000,6 +14013,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (d.id) collabAction(d.action, d.id);
           break;
         case 'collab-merge': collabAskMerge(e.target.closest('.topbar-act')); break;
+        case 'chat-bubble':
+          try { window.CrundiNative.openBubble(String(d.tid)); } catch (err) { toast('This app cannot open a bubble', 'error'); }
+          closeHeadMenus(null);
+          break;
+        case 'chat-pip':
+          try { window.CrundiNative.openPip(String(d.tid)); } catch (err) { toast('This app cannot open a floating window', 'error'); }
+          closeHeadMenus(null);
+          break;
         case 'chat-plan': {
           e.stopPropagation();
           const view = chatViews.get(d.tid);

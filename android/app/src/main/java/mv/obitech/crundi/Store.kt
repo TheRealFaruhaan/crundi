@@ -68,6 +68,13 @@ class Server(
     var bgRefresh: String,
     var pageToken: String = "",
     var pageRefresh: String = "",
+    // Notifications from this server are sealed for these keys (see PushBox).
+    // One pair per server: whichever pair opens a message says which server
+    // sent it. `pushToken` is the Google token last given to this server.
+    var pushPrivate: String = "",
+    var pushPublic: String = "",
+    var pushAuth: String = "",
+    var pushToken: String = "",
 ) {
     val host: String get() = baseUrl.substringAfter("://")
     val insecure: Boolean get() = baseUrl.startsWith("http://")
@@ -75,12 +82,14 @@ class Server(
     fun toJson() = JSONObject().apply {
         put("id", id); put("baseUrl", baseUrl); put("username", username); put("deviceName", deviceName)
         put("bgToken", bgToken); put("bgRefresh", bgRefresh); put("pageToken", pageToken); put("pageRefresh", pageRefresh)
+        put("pushPrivate", pushPrivate); put("pushPublic", pushPublic); put("pushAuth", pushAuth); put("pushToken", pushToken)
     }
 
     companion object {
         fun fromJson(o: JSONObject) = Server(
             o.getString("id"), o.getString("baseUrl"), o.optString("username"), o.optString("deviceName"),
             o.optString("bgToken"), o.optString("bgRefresh"), o.optString("pageToken"), o.optString("pageRefresh"),
+            o.optString("pushPrivate"), o.optString("pushPublic"), o.optString("pushAuth"), o.optString("pushToken"),
         )
     }
 }
@@ -120,6 +129,8 @@ object Servers {
 
     fun currentId(ctx: Context): String = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_CURRENT, "") ?: ""
     fun setCurrent(ctx: Context, id: String) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_CURRENT, id).apply()
+
+    fun byId(ctx: Context, id: String): Server? = all(ctx).firstOrNull { it.id == id }
 
     fun current(ctx: Context): Server? {
         val list = all(ctx)

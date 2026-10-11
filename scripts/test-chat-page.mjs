@@ -86,6 +86,9 @@ ok(server.includes("mark: chatMark(s.project, s.title)") && server.includes("mar
 ok(/const about = chat \? \{ chat, url: `\/chat\/\$\{term\.id\}` \} : \{\};/.test(server), 'a chat\'s notifications say which chat, and point at its page');
 const cv = await import('../src/client-version.js');
 ok(cv.isGated('/chat/abc') === false, 'a client too old for the server can still load the page that tells it so');
+// The phone app's two extras in a chat's menu.
+ok(main.includes('data-action="chat-bubble"') && main.includes('data-action="chat-pip"') && main.includes("case 'chat-bubble':") && main.includes("case 'chat-pip':"), 'a chat\'s menu can offer Bubble and Float, and both are wired');
+ok(/NATIVE_CAN\.indexOf\('bubble'\) >= 0\) h \+=/.test(main) && /NATIVE_CAN\.indexOf\('pip'\) >= 0\) h \+=/.test(main) && main.includes('window.CrundiNative.can'), 'but only where the app round the page says it can: in a browser neither is drawn');
 const check = readFileSync(join(root, 'scripts', 'check-syntax.mjs'), 'utf8');
 ok(check.includes("'crundi-chat-page.js'"), 'the page\'s script is in the syntax check');
 

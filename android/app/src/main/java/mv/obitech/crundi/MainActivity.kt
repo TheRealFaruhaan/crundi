@@ -43,6 +43,8 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private var web: WebView? = null
     private var server: Server? = null
+    // Where to go once the page is up: set by a tapped notification.
+    private var pendingPath: String? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingPermission: PermissionRequest? = null
 
@@ -50,13 +52,30 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         root = FrameLayout(this).apply { setBackgroundColor(getColor(R.color.bg)); fitsSystemWindows = true }
         setContentView(root)
+        take(intent)
         open()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // Back from pairing: there may be a different server to show.
-        if (server?.id != Servers.current(this)?.id) open()
+        setIntent(intent)
+        take(intent)
+        val path = pendingPath
+        // Back from pairing, or sent to another server by a notification:
+        // there may be a different server to show.
+        if (server?.id != Servers.current(this)?.id) { open(); return }
+        // Same server, already showing: just go where the notification points.
+        val s = server
+        if (path != null && s != null && web?.visibility == View.VISIBLE) { pendingPath = null; web?.loadUrl(s.baseUrl + path) }
+    }
+
+    /** Read where an intent wants to go: which server, and which of its pages. */
+    private fun take(intent: Intent?) {
+        val id = intent?.getStringExtra(Notifier.EXTRA_SERVER).orEmpty()
+        val path = intent?.getStringExtra(Notifier.EXTRA_PATH).orEmpty()
+        if (id.isNotEmpty() && Servers.byId(this, id) != null) Servers.setCurrent(this, id)
+        // A path on the server and nothing else.
+        if (path.startsWith("/") && !path.startsWith("//")) pendingPath = path
     }
 
     /** Show the current server, or the pairing screen if there is none. */
@@ -181,12 +200,41 @@ class MainActivity : Activity() {
         // First load after pairing: hand the page its login, then forget our
         // copy. A refresh token is spent by using it, so two holders of one
         // would cut each other off; from here on it is the page's alone.
-        val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else "/"
+        val start = pendingPath ?: "/"
+        pendingPath = null
+        val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else start
         if (s.pageToken.isNotEmpty()) {
             s.pageToken = ""; s.pageRefresh = ""
             Servers.save(this, s)
         }
         view.loadUrl(s.baseUrl + handoff)
+        askToNotify()
+        Push.registerAll(this)
+    }
+
+    /** Android 13 and later ask the person before an app may notify. Asked once, here, when there is a server to be notified by. */
+    private fun askToNotify() {
+        if (!Push.available || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences("crundi", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("asked.notify", false)) return
+        prefs.edit().putBoolean("asked.notify", true).apply()
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+    }
+
+    /** Look a chat up on the server, for its name and mark, then hand it on. */
+    private fun withChat(chatId: String, then: (ChatRef) -> Unit) {
+        val s = server ?: return
+        if (!Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) return
+        Bg.run({ Api.authed(applicationContext, s.id, "GET", "/api/ui-sessions") }) { result ->
+            val sessions = result.getOrNull()?.json?.optJSONArray("sessions")
+            var found: ChatRef? = null
+            if (sessions != null) for (i in 0 until sessions.length()) {
+                val x = sessions.getJSONObject(i)
+                if (x.optString("id") == chatId) found = ChatRef.from(s.id, org.json.JSONObject().put("id", chatId).put("title", x.optString("longTitle").ifEmpty { x.optString("title") }).put("project", x.optString("project")).put("mark", x.optJSONObject("mark")))
+            }
+            if (found == null) Toast.makeText(this, "That chat could not be found on the server.", Toast.LENGTH_LONG).show() else then(found)
+        }
     }
 
     private inner class Bridge {
@@ -201,8 +249,29 @@ class MainActivity : Activity() {
             runOnUiThread { web?.loadUrl(s.baseUrl + path) }
         }
 
-        /** The compact chat saying what it is showing. Used by the bubble, when there is one. */
-        @JavascriptInterface fun chatState(json: String) { /* nothing listens yet */ }
+        /** The compact chat saying what it is showing. */
+        @JavascriptInterface fun chatState(json: String) { /* nothing listens here */ }
+
+        /** What this build of the app can do, so the page offers only that: a comma-separated list. */
+        @JavascriptInterface fun can(): String = listOfNotNull(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) "bubble" else null,
+            if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) "pip" else null,
+        ).joinToString(",")
+
+        /** "Open as bubble" in a chat's menu. */
+        @JavascriptInterface fun openBubble(chatId: String) {
+            runOnUiThread {
+                withChat(chatId) { chat ->
+                    val problem = Notifier.bubble(this@MainActivity, chat)
+                    if (problem != null) Toast.makeText(this@MainActivity, problem, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+        /** "Floating window" in a chat's menu: the chat, small, over whatever else is on screen. */
+        @JavascriptInterface fun openPip(chatId: String) {
+            runOnUiThread { withChat(chatId) { chat -> startActivity(Notifier.chatIntent(this@MainActivity, chat, pip = true)) } }
+        }
     }
 
     private fun download(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
@@ -265,5 +334,6 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_FILE = 2
         private const val REQ_PERMISSION = 3
+        private const val REQ_NOTIFY = 4
     }
 }

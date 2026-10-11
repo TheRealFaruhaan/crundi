@@ -1,6 +1,27 @@
+import groovy.json.JsonSlurper
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// Firebase's description of this app, for notifications. It is read from
+// google-services.json if that file is here, and the file is not in the repo
+// (see .gitignore). Without it the app builds and runs with notifications
+// switched off, which is what a build from a fresh clone gets.
+@Suppress("UNCHECKED_CAST")
+val firebase: Map<String, String> = run {
+    val f = file("google-services.json")
+    if (!f.exists()) return@run emptyMap()
+    val root = JsonSlurper().parse(f) as Map<String, Any?>
+    val info = root["project_info"] as Map<String, Any?>
+    val client = (root["client"] as List<Map<String, Any?>>).first()
+    mapOf(
+        "PROJECT_ID" to info["project_id"].toString(),
+        "SENDER_ID" to info["project_number"].toString(),
+        "APP_ID" to ((client["client_info"] as Map<String, Any?>)["mobilesdk_app_id"]).toString(),
+        "API_KEY" to ((client["api_key"] as List<Map<String, Any?>>).first()["current_key"]).toString(),
+    )
 }
 
 android {
@@ -11,8 +32,8 @@ android {
         applicationId = "mv.obitech.crundi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0-dev.1"
+        versionCode = 2
+        versionName = "1.0.0-dev.2"
 
         // The oldest server this app can work with. The server holds the
         // mirror of this (MIN_CLIENT in src/client-version.js) and each side
@@ -20,6 +41,9 @@ android {
         // break: the Play Store updates the app by itself and nobody updates
         // a server by itself, so "app newer than server" is the normal case.
         buildConfigField("String", "MIN_SERVER", "\"1.20.0-dev.1\"")
+        for (k in listOf("PROJECT_ID", "SENDER_ID", "APP_ID", "API_KEY")) {
+            buildConfigField("String", "FIREBASE_$k", "\"${firebase[k] ?: ""}\"")
+        }
     }
 
     // How the app was installed decides where it looks for updates, and it is
@@ -90,6 +114,8 @@ tasks.named("preBuild") { dependsOn(copyCrundiCode) }
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("com.google.firebase:firebase-messaging:24.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }
