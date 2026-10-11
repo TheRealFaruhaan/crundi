@@ -48,11 +48,26 @@
     var small = el('div', 'font-size:0.74rem;color:var(--text-muted);text-align:center;min-height:1.2em;');
     var swap = el('button', LINK, '');
     swap.type = 'button';
+    // For the phone that is showing this page: it cannot be pointed at its
+    // own screen. The link is the same code the picture holds, and the app
+    // takes it pasted in.
+    var copy = el('button', LINK, 'Copy the pairing link instead');
+    copy.type = 'button';
+    copy.style.display = 'none';
+    copy.onclick = function () {
+      if (!current || !current.link) return;
+      var said = function (ok) { copy.textContent = ok ? 'Link copied. Paste it in the app.' : 'Could not copy the link.'; setTimeout(function () { copy.textContent = 'Copy the pairing link instead'; }, 2600); };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(current.link).then(function () { said(true); }, function () { said(false); }); return; }
+        var ta = document.createElement('textarea'); ta.value = current.link; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove(); said(ok);
+      } catch (e) { said(false); }
+    };
     var row = el('div', 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:4px;');
     var again = el('button', PRIMARY, 'New code'); again.type = 'button'; again.style.display = 'none';
     var done = el('button', BTN, 'Close'); done.type = 'button';
     row.appendChild(again); row.appendChild(done);
-    [title, pic, line, small, swap, row].forEach(function (n) { box.appendChild(n); });
+    [title, pic, line, small, swap, copy, row].forEach(function (n) { box.appendChild(n); });
     wrap.appendChild(box);
     document.body.appendChild(wrap);
     open = wrap;
@@ -94,6 +109,7 @@
         if (closed) return;
         if (!d || !d.ok) { line.textContent = (d && d.error) || 'Could not get a pairing code.'; again.style.display = ''; return; }
         current = d; code = d.code; showingQr = false;
+        copy.style.display = d.link ? '' : 'none';
         show();
         line.textContent = 'Open the Crundi app on your phone and point it here.';
         var left = d.expiresIn || 300;
@@ -105,7 +121,7 @@
           post(apiFetch, '/api/pair/status', { code: code }).then(function (s) {
             if (closed || !s || !s.ok) return;
             if (s.state === 'paired') return succeed(d, s.device || {});
-            if (s.state === 'expired') { stop(); pic.textContent = 'Expired'; line.textContent = 'That code ran out before a phone used it.'; small.textContent = ''; swap.style.display = 'none'; again.style.display = ''; code = ''; }
+            if (s.state === 'expired') { stop(); pic.textContent = 'Expired'; line.textContent = 'That code ran out before a phone used it.'; small.textContent = ''; swap.style.display = 'none'; copy.style.display = 'none'; again.style.display = ''; code = ''; }
           }).catch(function () { /* the next ask will do */ });
         }, 1500);
       }).catch(function () { if (!closed) { line.textContent = 'Could not reach the server.'; again.style.display = ''; } });
@@ -114,7 +130,7 @@
     function succeed(d, device) {
       paired = true;
       stop();
-      swap.style.display = 'none';
+      swap.style.display = 'none'; copy.style.display = 'none';
       small.textContent = '';
       // The ending is in the Crundi code itself; the QR code has none, so
       // bring the Crundi code back to play it on.

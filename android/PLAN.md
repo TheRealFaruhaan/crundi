@@ -575,7 +575,22 @@ and the Linux desktop client.
   One UI extras so the card is an ordinary notification. The glow round the
   live card is Samsung's, was found heavy, and is thought to come with the
   `automation` extra; the switch is how that is found out.
-- **Next:** see how the live card looks on the phone with 1.0.0-dev.10.
+- **Production: server 1.20.0 and app 1.0.0 (version code 11).** The owner
+  tested dev.14 with app dev.10 and found no noticeable failures. The server
+  now refuses an Android build older than 1.0.0-dev.10. What's New has one
+  edition, 1.20.0, with five steps; the dev editions are gone. The privacy
+  policy is `docs/privacy.html` (https://crundi.faruhaan.com/privacy.html).
+  The way to a public Play listing is `android/store/PLAY_RELEASE.md`.
+- **A demonstration server for Google's reviewers** runs on the owner's dev
+  machine at https://demo.dev.faruhaan.com, from `/home/crundi/crundi-demo/`
+  (outside the repository): the Crundi image, one sample project, its own
+  password and authenticator secret, on a network with no way out. Claude is
+  not signed in there. Connect a phone gained "Copy the pairing link
+  instead" so that a reviewer with one phone can pair.
+- **Not part of 1.0.0:** the GitHub build as a release (no release signing
+  key, not attached to releases), the Play in-app update prompt, a path from
+  the demonstration server to the push relay.
+- **Next:** the Play Console steps in `android/store/PLAY_RELEASE.md`.
 
 ## API notes for the app
 

@@ -28,7 +28,12 @@ What you get:
 
 • Everything your server's web page does, in an app
 • Pairing by scanning a picture, with no password on the phone
+• Notifications when Claude finishes or needs you, with a reply box, a
+  suggested reply, and Approve and Deny for a request
+• Chats that float as bubbles over whatever else you are doing
+• A live card while Claude works, showing which chats are at it
 • Files, photos and the camera, straight into a chat
+• Your projects' own icons on bubbles and notifications
 • A check that the app and your server are compatible, with a clear message
   when one of them needs updating
 
@@ -52,5 +57,18 @@ app has been run on one.
 ## Category and contact
 
 - Category: Tools (or Productivity)
-- A privacy policy address is required before a public release. Internal
-  testing does not need one.
+- Privacy policy: https://crundi.faruhaan.com/privacy.html (the page is
+  `docs/privacy.html`; it is live once that file is on `main`).
+- The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
+
+## Release notes, 1.0.0 (en-US)
+
+```
+The first release of Crundi for Android.
+
+- Pair with your own Crundi server by scanning a picture. No password on the phone.
+- Notifications when Claude finishes or needs you, with reply, a suggested reply, and Approve or Deny.
+- Chats that float as bubbles.
+- A live card while Claude is working.
+- Needs a Crundi server, version 1.20 or newer.
+```

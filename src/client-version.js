@@ -36,8 +36,13 @@ export const MIN_CLIENT = Object.freeze({
   // itself sorts above it.
   web: '1.20.0-dev.1',
   desktop: '1.20.0-dev.1',
-  // No release yet. Set these when the first one ships.
-  android: '',
+  // The first Android release is 1.0.0. The oldest build let in is the last
+  // dev build before it, the first that knows a notification can be marked
+  // quiet: an older one would buzz for everything while the owner is here.
+  // Written as the dev build so the build that was tested is not shut out
+  // of the server it was tested against; 1.0.0 itself sorts above it.
+  android: '1.0.0-dev.10',
+  // No release yet. Set this when the first one ships.
   ios: '',
 });
 
