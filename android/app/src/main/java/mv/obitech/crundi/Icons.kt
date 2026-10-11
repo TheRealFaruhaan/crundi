@@ -65,9 +65,15 @@ object Icons {
             val at = failed[key]
             if (at != null && System.currentTimeMillis() - at < RETRY_MS) return
         }
-        val bytes = runCatching { Api.authedBytes(ctx, serverId, path, MAX_BYTES) }.getOrNull()
-        // Only something the phone can actually draw is kept.
-        val ok = bytes != null && runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull() != null
+        val fetched = runCatching { Api.authedBytes(ctx, serverId, path, MAX_BYTES) }.getOrNull()
+        // Only something the phone can actually draw is kept. A drawing
+        // (.svg) is drawn once, here, and kept as the picture it made.
+        val bytes = when {
+            fetched == null -> null
+            runCatching { BitmapFactory.decodeByteArray(fetched, 0, fetched.size) }.getOrNull() != null -> fetched
+            else -> drawn(fetched)
+        }
+        val ok = bytes != null
         synchronized(this) {
             if (!ok) { failed[key] = System.currentTimeMillis(); return }
             val dir = File(ctx.filesDir, DIR).apply { mkdirs() }
@@ -85,6 +91,22 @@ object Icons {
         }
     }
 
+    /** A drawing (.svg) as a PNG, 256 a side. Null if it is not one, or cannot be drawn. */
+    private fun drawn(bytes: ByteArray): ByteArray? = runCatching {
+        val svg = com.caverock.androidsvg.SVG.getFromInputStream(bytes.inputStream())
+        val side = 256
+        // Without a box of its own a drawing has no shape to be scaled by:
+        // give it the size it says it is.
+        if (svg.documentViewBox == null && svg.documentWidth > 0 && svg.documentHeight > 0) svg.setDocumentViewBox(0f, 0f, svg.documentWidth, svg.documentHeight)
+        svg.setDocumentWidth("100%")
+        svg.setDocumentHeight("100%")
+        val bmp = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
+        svg.renderToCanvas(Canvas(bmp), RectF(0f, 0f, side.toFloat(), side.toFloat()))
+        val out = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        out.toByteArray()
+    }.getOrNull()
+
     /** Forget a server's icons: it was removed from this phone. Its files are small and are simply left to be replaced. */
     @Synchronized
     fun forget(serverId: String) { memory.keys.removeAll { it.startsWith("$serverId|") }; failed.keys.removeAll { it.startsWith("$serverId|") } }
@@ -93,10 +115,10 @@ object Icons {
      * The icon as a head: square for a launcher-cut shape (`adaptive`), which
      * wants the picture inside the middle two thirds, or already round.
      *
-     * An icon that fills its square (a photo, an app icon with its own
-     * background) is drawn edge to edge. One with clear corners is a shape
-     * on nothing, and is set on a plain ground chosen to show it: light
-     * behind a dark mark, dark behind a light one.
+     * An icon that is a tile of its own (a square, or a rounded one, as app
+     * icons are) fills the head. One that is a shape on nothing is set on a
+     * plain ground chosen to show it: light behind a dark mark, dark behind
+     * a light one.
      */
     fun head(icon: Bitmap, size: Int, adaptive: Boolean): Bitmap {
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -110,32 +132,43 @@ object Icons {
             if (corner && a < 40) clear++
             if (a > 128) { lum += (0.2126 * Color.red(p) + 0.7152 * Color.green(p) + 0.0722 * Color.blue(p)) / 255.0; seen++ }
         }
-        val solid = clear < 6
+        // Opaque at the middle of all four sides: the picture is a tile of
+        // its own (a square, or one with rounded corners, as most app icons
+        // are), and its corners are clear only because they are rounded.
+        fun opaque(x: Int, y: Int) = Color.alpha(small.getPixel(x, y)) > 200
+        val tile = opaque(1, 12) && opaque(22, 12) && opaque(12, 1) && opaque(12, 22)
+        val covers = clear < 6 || tile
         val ground = if (seen > 0 && lum / seen > 0.6) 0xFF15151C.toInt() else 0xFFF4F4F7.toInt()
-        val full = RectF(0f, 0f, size.toFloat(), size.toFloat())
+        // What a tile is made of at its edge, to carry on with where the
+        // shape it is cut to reaches past it.
+        val edge = small.getPixel(1, 12) or 0xFF000000.toInt()
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         if (adaptive) {
-            if (solid) {
-                // Edge to edge, but the launcher cuts the outer sixth away:
-                // keep the whole picture inside what survives the cut.
-                c.drawColor(small.getPixel(1, 1) or 0xFF000000.toInt())
-                val inset = size * 0.14f
+            // The launcher keeps the middle two thirds and cuts the rest
+            // away, to a circle or to a rounder square.
+            if (covers) {
+                // Fill the head: the tile is drawn just larger than what is
+                // kept, on its own colour, so nothing else shows round it.
+                c.drawColor(edge)
+                val inset = size * 0.11f
                 c.drawBitmap(icon, null, RectF(inset, inset, size - inset, size - inset), paint)
             } else {
+                // A shape on nothing: set on a plain ground, well inside.
                 c.drawColor(ground)
                 val inset = size * 0.24f
                 c.drawBitmap(icon, null, RectF(inset, inset, size - inset, size - inset), paint)
             }
             return out
         }
-        if (solid) {
+        if (covers) {
+            c.drawCircle(size / 2f, size / 2f, size / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = edge })
             val scaled = Bitmap.createScaledBitmap(icon, size, size, true)
             paint.shader = BitmapShader(scaled, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
             c.drawCircle(size / 2f, size / 2f, size / 2f, paint)
         } else {
             c.drawCircle(size / 2f, size / 2f, size / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ground })
             val inset = size * 0.2f
-            c.drawBitmap(icon, null, RectF(inset, inset, full.right - inset, full.bottom - inset), paint)
+            c.drawBitmap(icon, null, RectF(inset, inset, size - inset, size - inset), paint)
         }
         return out
     }

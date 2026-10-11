@@ -32,8 +32,8 @@ android {
         applicationId = "mv.obitech.crundi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.0.0-dev.8"
+        versionCode = 9
+        versionName = "1.0.0-dev.9"
 
         // The oldest server this app can work with. The server holds the
         // mirror of this (MIN_CLIENT in src/client-version.js) and each side
@@ -122,6 +122,9 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("com.google.firebase:firebase-messaging:24.1.0")
+    // Draws a project's icon when it is a drawing (.svg): Android itself
+    // reads pictures made of dots only, and many a favicon is not one.
+    implementation("com.caverock:androidsvg-aar:1.4")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

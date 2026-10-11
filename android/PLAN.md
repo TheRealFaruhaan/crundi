@@ -542,8 +542,10 @@ and the Linux desktop client.
   converted in memory; nothing is written into the project). The phone
   fetches an address once, as its own login, keeps one file per project
   (`Icons.kt`), and draws only from what is kept. Everywhere, a missing,
-  removed or unreadable icon falls back to the letters. A drawing (.svg)
-  shows in the pages but not on the phone, which cannot draw one. With an
+  removed or unreadable icon falls back to the letters. A drawing (.svg) is turned into a picture on the phone (app 1.0.0-dev.9, with the
+  androidsvg library), once per version of the icon. An icon that is a tile of
+  its own (rounded corners) fills a bubble's head; it was first set small on
+  white. With an
   icon, every chat of a project has the same bubble head; the letters that
   told them apart are gone there. The live card has NO large picture: that is a second
   picture on the right, and the owner wanted the one on the left changed,
