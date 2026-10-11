@@ -13,7 +13,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Crundi — your machine, reachable from anywhere</title>
-<meta name="description" content="Crundi is a self-hosted remote workbench for your projects — agent terminals, files, git, kanban, mindmap, scheduling and more. Reach it from a browser, the desktop app, or a Telegram bot." />
+<meta name="description" content="Crundi is a self-hosted remote workbench for your projects — Claude chats, agent terminals, files, git, kanban, mindmap, scheduling and more. Reach it from a browser, the Android app, the desktop app, or a Telegram bot." />
 <meta name="theme-color" content="#0a0a0f" />
 <link rel="icon" href="assets/favicon.ico" />
 <link rel="apple-touch-icon" href="assets/logo.png" />
@@ -154,7 +154,8 @@ nav.scrolled{background:rgba(10,10,15,.72);backdrop-filter:blur(16px);border-bot
 @keyframes blink{50%{opacity:0}}
 
 /* ---------- access modes ---------- */
-.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.modes{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+@media(max-width:1040px){.modes{grid-template-columns:repeat(2,1fr)}}
 .mode{background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:16px;padding:30px;transition:.25s;position:relative;overflow:hidden}
 .mode:hover{border-color:var(--accent);transform:translateY(-4px)}
 .mode .mi{width:46px;height:46px;border-radius:12px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;color:var(--accent-hover);margin-bottom:18px}
@@ -165,6 +166,7 @@ nav.scrolled{background:rgba(10,10,15,.72);backdrop-filter:blur(16px);border-bot
 
 /* ---------- feature grid ---------- */
 .fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.feat p a{color:inherit;text-decoration:underline;text-underline-offset:3px}
 .feat{background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:14px;padding:24px;transition:.22s}
 .feat:hover{border-color:var(--border);background:var(--bg-secondary);transform:translateY(-3px)}
 .feat .fi{width:40px;height:40px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--border-subtle);display:flex;align-items:center;justify-content:center;color:var(--accent-hover);margin-bottom:16px}
@@ -272,6 +274,7 @@ footer{border-top:1px solid var(--border-subtle);padding:56px 0 40px;margin-top:
       <a href="#features">Features</a>
       <a href="#showcase">Tour</a>
       <a href="#mobile">Mobile</a>
+      <a href="#android">Phone app</a>
       <a href="#telegram">Telegram</a>
     </div>
     <div class="nav-spacer"></div>
@@ -293,9 +296,9 @@ footer{border-top:1px solid var(--border-subtle);padding:56px 0 40px;margin-top:
 <!-- HERO -->
 <section class="hero">
   <div class="wrap">
-    <span class="eyebrow">Self-hosted remote workbench</span>
+    <span class="eyebrow">Self-hosted Claude workbench</span>
     <h1>Your machine. <span class="grad">Anywhere</span> you are.</h1>
-    <p class="sub">Crundi turns your PC into a remote workbench — agent terminals, files, git, kanban, mindmap, scheduling and more — reachable from a browser, the desktop app, or a Telegram chat.</p>
+    <p class="sub">Crundi turns your own machine, Windows or Linux, into a remote workbench — Claude chats and agent terminals, files, git, kanban, mindmap, scheduling and more — reachable from a browser, the desktop app, the Android app, or a Telegram chat.</p>
     <div class="hero-cta">
       <a class="btn btn-primary" href="https://github.com/TheRealFaruhaan/crundi/releases/latest" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -330,20 +333,25 @@ footer{border-top:1px solid var(--border-subtle);padding:56px 0 40px;margin-top:
 <section class="section" id="access">
   <div class="wrap">
     <div class="section-head reveal">
-      <span class="eyebrow">Three ways in</span>
+      <span class="eyebrow">Four ways in</span>
       <h2>Reach it however you're working</h2>
-      <p>One self-hosted server, three front doors. Pick up exactly where you left off from any of them.</p>
+      <p>One self-hosted server, four front doors. Pick up exactly where you left off from any of them.</p>
     </div>
     <div class="modes stagger">
       <div class="mode">
         <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></div>
         <h3>Any browser</h3>
-        <p>Open the full workbench from any device on your network or over a Cloudflare tunnel. Nothing to install.</p>
+        <p>Open the full workbench from any device: on your network, over a Cloudflare tunnel, or on your own domain with a real certificate. Nothing to install.</p>
       </div>
       <div class="mode">
         <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
         <h3>Desktop app</h3>
         <p>A native Windows app with tray controls, launch-at-startup and seamless one-click auto-updates.</p>
+      </div>
+      <div class="mode">
+        <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg></div>
+        <h3>Android app</h3>
+        <p>Pair your phone by pointing it at a picture. Then notifications you can answer, chats that float as bubbles, and a live card while Claude works.</p>
       </div>
       <div class="mode">
         <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21.5 4 2.5 11.5l6 2 2.5 6.5 3-4.5 5 3.5z"/><path d="M8.5 13.5 21.5 4"/></svg></div>
@@ -359,10 +367,12 @@ footer{border-top:1px solid var(--border-subtle);padding:56px 0 40px;margin-top:
   <div class="wrap">
     <div class="section-head reveal">
       <span class="eyebrow">Everything in one place</span>
-      <h2>A whole workbench, not a single tool</h2>
-      <p>Crundi gathers the things you actually do during a project into one dark, fast, panel-based surface.</p>
+      <h2>Chat with Claude, with a whole workbench around it</h2>
+      <p>Start a chat in a project and work the way you would at your desk. Everything else you reach for during a project sits beside it, in one dark, fast, panel-based surface.</p>
     </div>
     <div class="fgrid stagger">
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a8 8 0 0 1-8 8H4l2.2-2.9A8 8 0 1 1 21 12z"/><path d="M8.5 11h7M8.5 14.5h4"/></svg></div><h3>Claude chats</h3><p>The heart of Crundi: a proper chat with Claude Code, on your machine and your own subscription. Plans, approvals, attachments, queued messages, a suggested next reply, and pictures, video and files shown right in the conversation.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></div><h3>Live panels</h3><p>Claude can build a panel beside the chat: progress on a long job, a chart from a file or database, a status board. It stays open and updates by itself.</p></div>
       <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 3 3-3 3M13 15h5"/></svg></div><h3>Agent terminals</h3><p>Spawn multiple AI-agent terminals per project. Resize, rename and reorder — full xterm with newline-key control.</p></div>
       <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div><h3>File browser</h3><p>Navigate, search, upload, copy and download files with drag-and-drop and auto-scroll across panels.</p></div>
       <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="9" r="3"/><path d="M6 9v6M9 9a9 9 0 0 0 9 3"/></svg></div><h3>Git</h3><p>See status, stage, diff and commit right inside the workbench, project by project.</p></div>
@@ -482,6 +492,24 @@ footer{border-top:1px solid var(--border-subtle);padding:56px 0 40px;margin-top:
 </section>
 
 <!-- TELEGRAM -->
+<section class="section" id="android" style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="eyebrow">Android app</span>
+      <h2>Your server, as an app on your phone</h2>
+      <p>One app for everyone, connected to your own server and nobody else's. No account with us, no password typed on the phone. Needs Crundi 1.20 or newer.</p>
+    </div>
+    <div class="fgrid stagger">
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg></div><h3>Pair in seconds</h3><p>Open Settings on your server, choose Connect a phone, and point the phone at the picture it shows. The phone appears by name among your devices, where you can cut it off.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></div><h3>Answer from the notification</h3><p>When Claude finishes or needs you, reply right there, tap the suggested reply, or approve and deny a request. A notification clears itself once you have dealt with it anywhere.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="14" r="6"/><path d="M14.5 5.2a4.5 4.5 0 0 1 5.3 5.3"/></svg></div><h3>Chats that float</h3><p>A chat can float over whatever else you are doing, as a bubble. Leave the app while Claude is working and the busy chats follow you out.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="10" rx="5"/><circle cx="8" cy="12" r="1.5"/><path d="M12 12h5"/></svg></div><h3>See Claude working</h3><p>A card shows which chats are at it and since when, one per project, and says so plainly when one needs you. A live notification on Android 16.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><h3>Sealed end to end</h3><p>A notification is encrypted on your server for your phone alone. The relay that passes it on, and Google, carry a message they cannot read.</p></div>
+      <div class="feat"><div class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/></svg></div><h3>On its way to Google Play</h3><p>The app is in testing on Google Play and will be listed there once Google has reviewed it. <a href="privacy.html">Privacy policy</a>.</p></div>
+    </div>
+  </div>
+</section>
+
 <section class="section" id="telegram" style="padding-top:0">
   <div class="wrap">
     <div class="tg reveal">
@@ -510,7 +538,7 @@ footer{border-top:1px solid var(--border-subtle);padding:56px 0 40px;margin-top:
     <div class="cta reveal">
       <span class="eyebrow" style="justify-content:center">Free &amp; open source</span>
       <h2>Take your desk with you.</h2>
-      <p>Install Crundi on your Windows machine and reach it from anywhere. Auto-updates keep it fresh.</p>
+      <p>Install Crundi on your Windows or Linux machine, or run it in Docker, and reach it from anywhere. Updates are one click.</p>
       <div class="cta-btns">
         <a class="btn btn-primary" href="https://github.com/TheRealFaruhaan/crundi/releases/latest" target="_blank" rel="noopener">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -543,12 +571,14 @@ footer{border-top:1px solid var(--border-subtle);padding:56px 0 40px;margin-top:
           <a href="#features">Features</a>
           <a href="#showcase">Tour</a>
           <a href="#mobile">Mobile</a>
+          <a href="#android">Phone app</a>
         </div>
         <div class="foot-col">
           <h4>Project</h4>
           <a href="https://github.com/TheRealFaruhaan/crundi" target="_blank" rel="noopener">GitHub repo</a>
           <a href="https://github.com/TheRealFaruhaan/crundi/releases/latest" target="_blank" rel="noopener">Releases</a>
           <a href="https://github.com/TheRealFaruhaan/crundi/issues" target="_blank" rel="noopener">Report an issue</a>
+          <a href="privacy.html">Privacy (Android app)</a>
         </div>
         <div class="foot-col">
           <h4>Support</h4>

@@ -17,6 +17,8 @@ Agents and the access channel are pluggable. Today the available agent is **Clau
 - **Tools** — headless browser automation, screenshots/window capture, a secrets vault (PIN-gated), and an agent usage meter.
 - **Skills** — upload, edit and remove Claude skills from Settings: for every project on the machine or for one. Takes a `.zip` / `.skill` archive or a single `SKILL.md`. Updates to Crundi replace only the skills it ships; yours are left alone.
 - **MCP server** — exposes project-scoped tools (kanban, mindmap, schedule, services, terminals, browser, screenshots, secrets, skills, notifications) so agents can drive Crundi.
+- **Chats** — a chat UI for Claude Code on your own subscription: plans, permission requests, attachments, queued messages, a suggested next reply, and media and live panels shown in the conversation.
+- **Android app** — pairs with your server by scanning a picture; notifications you can answer, chats that float as bubbles, and a live card while Claude works. Source in [`android/`](android/); [privacy policy](https://crundi.faruhaan.com/privacy.html).
 - **Desktop app** (Electron) + **mobile-friendly** web UI.
 
 ## Requirements
