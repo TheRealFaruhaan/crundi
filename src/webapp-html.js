@@ -39,7 +39,7 @@ function vendorTag(file) {
   return String(Date.now()); // unknown file: never cache it wrongly
 }
 
-export function getWebappHtml(botUsername) {
+export function getWebappHtml(botUsername, appVersion = '') {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4872,13 +4872,96 @@ export function getWebappHtml(botUsername) {
       }
     }
 
+    // ─── Client version gate ───
+    // The server states the oldest client it will talk to and answers 426 below
+    // that (src/client-version.js). Two things can be out of date here: this
+    // PAGE, which a reload fixes, and the desktop or phone SHELL around it,
+    // which somebody has to update. PAGE_VERSION is the server version this
+    // page was built by, sent with every call so the server can tell.
+    const PAGE_VERSION = '${String(appVersion).replace(/[^0-9A-Za-z.+-]/g, '')}';
+    let clientRefused = false;
+
+    function onClientRefused(body) {
+      if (clientRefused || !body || body.error !== 'client_too_old') return;
+      const kind = (body.client && body.client.kind) || '';
+      if (kind === 'web') {
+        // The page is served network-first, so a reload IS the update. Once per
+        // minimum, though: if the reload did not help, reloading again will not
+        // either, and a page that reloads forever cannot even say why.
+        let tried = true;
+        try {
+          tried = sessionStorage.getItem('crundi_gate_reload') === String(body.minimum);
+          sessionStorage.setItem('crundi_gate_reload', String(body.minimum));
+        } catch (e) { /* no storage: do not risk a loop */ }
+        if (!tried) { clientRefused = true; location.reload(); return; }
+      }
+      clientRefused = true;
+      showUpdateRequired(body, kind);
+    }
+
+    function showUpdateRequired(body, kind) {
+      if (document.getElementById('update-required')) return;
+      const have = (body.client && body.client.version) || 'unknown';
+      const el = (tag, css, text) => { const n = document.createElement(tag); if (css) n.style.cssText = css; if (text) n.textContent = text; return n; };
+      const wrap = el('div', 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:var(--bg-primary);padding:20px;');
+      wrap.id = 'update-required';
+      wrap.setAttribute('role', 'alertdialog');
+      const box = el('div', 'background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:28px;width:100%;max-width:420px;');
+      box.appendChild(el('h3', 'margin:0 0 12px;font-size:1.1rem;color:var(--text-primary);', 'Update required'));
+      const what = kind === 'web' ? 'This page' : kind === 'desktop' ? 'This Crundi client' : 'This app';
+      box.appendChild(el('p', 'margin:0 0 8px;color:var(--text-secondary);font-size:0.9rem;line-height:1.5;',
+        what + ' is version ' + have + '. This server needs version ' + body.minimum + ' or newer.'));
+      const status = el('p', 'margin:0 0 18px;color:var(--text-muted);font-size:0.82rem;line-height:1.5;min-height:1.2em;');
+      box.appendChild(status);
+      const row = el('div', 'display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;');
+      const btnCss = 'padding:9px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font:inherit;font-size:0.88rem;cursor:pointer;';
+      const primaryCss = btnCss + 'background:var(--accent);border-color:var(--accent);color:#fff;';
+      const updater = kind === 'desktop' && window.api && window.api.checkForUpdates ? window.api : null;
+
+      if (updater) {
+        const check = el('button', btnCss, 'Check for update');
+        const install = el('button', primaryCss, 'Install update');
+        install.style.display = 'none';
+        const show = (s) => {
+          if (!s) return;
+          if (s.downloaded) status.textContent = 'Version ' + (s.version || '') + ' is ready to install.';
+          else if (s.downloading) status.textContent = 'Downloading the update: ' + Math.round(s.percent || 0) + '%';
+          else if (s.available) status.textContent = 'Version ' + (s.version || '') + ' is available.';
+          else status.textContent = 'No newer client was found. Check that this client follows the same update channel as the server.';
+          install.style.display = (s.available || s.downloaded) ? '' : 'none';
+        };
+        check.onclick = () => {
+          status.textContent = 'Checking for an update...';
+          Promise.resolve(updater.checkForUpdates()).then(show).catch(() => { status.textContent = 'Could not check for an update.'; });
+        };
+        install.onclick = () => { try { updater.installUpdate(); } catch (e) { status.textContent = 'Could not start the update.'; } };
+        if (updater.onUpdateStatus) { try { updater.onUpdateStatus(show); } catch (e) { /* status stays manual */ } }
+        row.appendChild(check); row.appendChild(install);
+        check.onclick();
+      } else if (kind === 'web') {
+        status.textContent = 'Reloading did not bring the newer page. Close this tab or window and open Crundi again.';
+        const again = el('button', primaryCss, 'Reload');
+        again.onclick = () => { try { sessionStorage.removeItem('crundi_gate_reload'); } catch (e) { /* ignore */ } location.reload(); };
+        row.appendChild(again);
+      } else {
+        status.textContent = kind === 'desktop'
+          ? 'Open the client\u2019s own update option, or install the newest client.'
+          : 'Update the app, then open it again.';
+      }
+      box.appendChild(row);
+      wrap.appendChild(box);
+      document.body.appendChild(wrap);
+    }
+
     // ─── API ───
     function apiFetch(path, opts = {}, _retried = false) {
-      if (token) {
-        opts.headers = opts.headers || {};
-        opts.headers['Authorization'] = 'Bearer ' + token;
-      }
+      opts.headers = opts.headers || {};
+      if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+      if (PAGE_VERSION) opts.headers['X-Crundi-Web'] = PAGE_VERSION;
       return fetch(path, opts).then(res => {
+        // 426: the server will not talk to a client this old. Read a COPY of
+        // the body so whoever called still gets a response they can read.
+        if (res.status === 426) { res.clone().json().then(onClientRefused).catch(() => {}); return res; }
         // A 401 means the access token aged out. Renew once and replay. Bodies
         // here are strings/JSON (never streams), so the request is safe to
         // re-send; _retried stops a revoked session from looping.
@@ -8340,6 +8423,7 @@ export function getWebappHtml(botUsername) {
         xhr.open('POST', path);
         xhr.setRequestHeader('Content-Type', 'application/json');
         if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+        if (PAGE_VERSION) xhr.setRequestHeader('X-Crundi-Web', PAGE_VERSION);
         xhr.upload.onprogress = (ev) => {
           if (ev.lengthComputable && onProgress) onProgress(ev.loaded / ev.total);
         };
@@ -8474,13 +8558,16 @@ export function getWebappHtml(botUsername) {
     // ─── WebSocket ───
     function connectWS() {
       clearTimeout(reconnectTimer);
+      // Refused for being out of date: the socket is refused too, and retrying
+      // behind the update screen would only knock on a closed door.
+      if (clientRefused) return;
       // Detach the previous socket's handlers BEFORE closing it, so replacing a
       // (possibly still-open) socket can't fire a stray onclose that schedules
       // another reconnect — which would loop every few seconds and flap the badge.
       if (ws) { ws.onopen = ws.onmessage = ws.onerror = null; ws.onclose = null; try { ws.close(); } catch {} }
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = proto + '//' + location.host + '/ws?token=' + encodeURIComponent(token);
+      const url = proto + '//' + location.host + '/ws?token=' + encodeURIComponent(token) + (PAGE_VERSION ? '&web=' + encodeURIComponent(PAGE_VERSION) : '');
       ws = new WebSocket(url);
 
       ws.onopen = () => {

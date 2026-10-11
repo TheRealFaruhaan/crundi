@@ -63,6 +63,7 @@ import { COLLAB_FORWARD_COOKIE, mintCollabForwardToken, readCollabForwardToken, 
 import { spawn as spawnOwnerCommand } from 'node:child_process';
 import * as serverUpdate from './server-update.js';
 import * as whatsNew from './whatsnew.js';
+import * as clientVersion from './client-version.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
@@ -386,7 +387,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return base + '/dl/' + token;
   }
 
-  let htmlCache = getWebappHtml(config.botUsername || '');
+  let htmlCache = getWebappHtml(config.botUsername || '', APP_VERSION);
 
   // ─── Auth: Telegram Login Widget ───
 
@@ -1917,7 +1918,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     res.writeHead(status, {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Crundi-Client, X-Crundi-Web',
     });
     res.end(JSON.stringify(data));
   }
@@ -1966,10 +1967,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Crundi-Client, X-Crundi-Web',
       });
       res.end();
       return;
+    }
+
+    // ─── Client versions ───
+    // Before anything that needs a login: an out-of-date client has to be able
+    // to ask what is wrong with it. See client-version.js; the shape of this
+    // answer is frozen.
+    if (path === clientVersion.HANDSHAKE_PATH && req.method === 'GET') {
+      return json(res, clientVersion.handshake(req, APP_VERSION));
+    }
+    if (clientVersion.isGated(path)) {
+      const refusal = clientVersion.refusalFor(clientVersion.identifyClient(req));
+      if (refusal) return json(res, clientVersion.refusalBody(refusal, APP_VERSION), 426);
     }
 
     // Serve web app
@@ -5559,6 +5572,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         socket.destroy();
         return;
       }
+      // An out-of-date client is turned away here as well, or the socket
+      // would be the way round the gate on the HTTP routes.
+      if (clientVersion.refusalFor(clientVersion.identifyClient(req))) {
+        socket.write('HTTP/1.1 426 Upgrade Required\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       // Auth check
       if (!validateToken(req)) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
@@ -5952,7 +5972,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     getInternalApiKey() { return internalApiKey; },
 
     /** Regenerate the HTML cache with an updated bot username (call after bot.init). */
-    refreshHtml(botUsername) { htmlCache = getWebappHtml(botUsername); },
+    refreshHtml(botUsername) { htmlCache = getWebappHtml(botUsername, APP_VERSION); },
 
     /** Broadcast state update to all connected SSE clients. */
     broadcastState,
