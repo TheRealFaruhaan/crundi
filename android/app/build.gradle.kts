@@ -38,9 +38,31 @@ android {
         }
     }
 
+    // Release builds are signed with the upload key. Where the key is and
+    // what opens it come from the environment, never from this repo:
+    //   CRUNDI_UPLOAD_STORE_FILE      the keystore file
+    //   CRUNDI_UPLOAD_STORE_PASSWORD  its password (also the key's)
+    //   CRUNDI_UPLOAD_KEY_ALIAS       the key's name in it (default: upload)
+    // Without them a release build still compiles, unsigned, and cannot be
+    // installed or uploaded: a build signed by accident with nothing is the
+    // one mistake this arrangement cannot make.
+    val uploadStore = System.getenv("CRUNDI_UPLOAD_STORE_FILE").orEmpty()
+    val uploadPassword = System.getenv("CRUNDI_UPLOAD_STORE_PASSWORD").orEmpty()
+    signingConfigs {
+        if (uploadStore.isNotEmpty() && uploadPassword.isNotEmpty()) {
+            create("upload") {
+                storeFile = file(uploadStore)
+                storePassword = uploadPassword
+                keyAlias = System.getenv("CRUNDI_UPLOAD_KEY_ALIAS") ?: "upload"
+                keyPassword = uploadPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("upload")
         }
     }
     buildFeatures {
