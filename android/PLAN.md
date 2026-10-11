@@ -421,6 +421,13 @@ and the Linux desktop client.
   notifications, whether the card meets Android's rules, and whether Android
   promoted it. Samsung has had its own live notification system limited to
   approved apps; whether that is what stands in the way is not known yet.
+- **Asked for, not built: notifications that go away once attended to.**
+  - A request notification (a secret, a permission) should disappear once it
+    has been answered, wherever it was answered.
+  - A chat's notification should disappear once that chat has been opened.
+  - Needs: the app clearing a chat's notification when its page is opened in
+    the app, and the server sending phones a silent "clear" when a request is
+    resolved or a chat is read somewhere else.
 - **Next:** read that log line from the phone.
 
 ## API notes for the app
