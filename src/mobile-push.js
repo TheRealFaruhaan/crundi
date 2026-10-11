@@ -31,7 +31,7 @@ import { encryptFor } from './web-push.js';
 
 // Where the published app's relay lives. A fork that ships its own app runs
 // its own relay and changes this in Settings.
-export const DEFAULT_RELAY_URL = 'https://push.crundi.faruhaan.com';
+export const DEFAULT_RELAY_URL = 'https://cr-rl-pub1.faruhaan.com';
 // Who to ask for a key. Shown in Settings next to the empty field.
 export const KEY_CONTACT = Object.freeze({ telegram: 'TheRealFaruhaan', url: 'https://t.me/TheRealFaruhaan' });
 

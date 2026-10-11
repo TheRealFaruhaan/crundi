@@ -122,8 +122,7 @@ After pairing, the app's background login calls the server (not the relay):
 
 ## Open
 
-- The default relay address in `src/mobile-push.js`
-  (`https://push.crundi.faruhaan.com`) is a proposal. It has to be changed to
-  wherever the relay is actually deployed before a release.
+- The default relay address is `https://cr-rl-pub1.faruhaan.com`
+  (`DEFAULT_RELAY_URL` in `src/mobile-push.js`). Nothing is deployed there yet.
 - Rate limits per key are the relay's to choose. Suggested start: 60 a minute,
   5000 a day.
