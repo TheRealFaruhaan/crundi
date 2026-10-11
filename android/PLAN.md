@@ -346,7 +346,29 @@ and the Linux desktop client.
   - Whenever an MCP tool changes, the instructions that describe it change
     with it: the tool's own description, the system prompt text the server
     gives Claude, and the `crundi` skill's reference pages.
-- **Next:** try notifications and bubbles on a real phone.
+- **Built since app 1.0.0-dev.2, not yet released:**
+  - **App settings**, a screen of the app's own, reached from "App settings"
+    at the foot of the sidebar: notifications, bubbles, camera, microphone and
+    files, each with how it stands and a button to change it; the paired
+    servers, with open, remove and connect another; where updates come from.
+  - **Downloads.** Inside the app the page now hands the phone a real address
+    and the phone's own downloader saves it to Downloads. Before, the page
+    saved from memory to an address only it could read, and the app answered
+    "This file cannot be saved from here yet".
+- **The live card, as agreed from the owner's sketch and demos:**
+  - Chip: elapsed time for one working chat, a count for several, "Needs you"
+    when any chat is waiting on the person (it takes over the chip), "Done"
+    briefly at the end.
+  - Card: one line per chat with the time it started and its name; a chat
+    that needs action is marked and listed first; Open and Stop.
+  - Android does not allow a custom layout on a live card (no RemoteViews; the
+    standard, big text, call, progress and metric styles only), so the
+    sketch's layout is carried as content in the system's shape, with the
+    chat's mark as the picture.
+  - Needs: `android.permission.POST_PROMOTED_NOTIFICATIONS`, an ongoing
+    notification with a title that asks to be promoted, and the server
+    telling the phone when a chat starts working.
+- **Next:** try notifications and bubbles on a real phone; then the live card.
 
 ## API notes for the app
 

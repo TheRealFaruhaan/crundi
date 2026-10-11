@@ -254,9 +254,27 @@ class MainActivity : Activity() {
 
         /** What this build of the app can do, so the page offers only that: a comma-separated list. */
         @JavascriptInterface fun can(): String = listOfNotNull(
+            "settings", "download",
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) "bubble" else null,
             if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) "pip" else null,
         ).joinToString(",")
+
+        /** "App settings" in the sidebar. */
+        @JavascriptInterface fun openSettings() { runOnUiThread { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) } }
+
+        /**
+         * Save a file from the server. The page gives a full address on the
+         * server; the phone's own downloader fetches it into Downloads.
+         */
+        @JavascriptInterface fun download(url: String, name: String) {
+            val s = server ?: return
+            // Only the paired server's own files: this is callable from any
+            // frame in the page, and must not become a way to make the phone
+            // fetch an address of a frame's choosing.
+            if (!url.startsWith(s.baseUrl + "/")) return
+            val clean = name.filter { it.code >= 32 && it !in "\\/:*?\"<>|" }.trim().take(120).ifEmpty { "download" }
+            runOnUiThread { download(url, web?.settings?.userAgentString, "attachment; filename=\"$clean\"", null) }
+        }
 
         /** "Open as bubble" in a chat's menu. */
         @JavascriptInterface fun openBubble(chatId: String) {
@@ -276,7 +294,10 @@ class MainActivity : Activity() {
 
     private fun download(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
         if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            Toast.makeText(this, "This file cannot be saved from here yet.", Toast.LENGTH_LONG).show()
+            // A file the page made in memory. The phone's downloader cannot
+            // reach that; the page hands real addresses over (see `download`
+            // on the bridge), so this is only an old page or an unusual link.
+            Toast.makeText(this, "This kind of file cannot be saved by the app. Update the server, or open Crundi in a browser to save it.", Toast.LENGTH_LONG).show()
             return
         }
         val name = URLUtil.guessFileName(url, contentDisposition, mimeType)

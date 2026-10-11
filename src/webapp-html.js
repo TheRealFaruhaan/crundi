@@ -3531,6 +3531,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         </div>
         <div class="sidebar-list" id="project-list"></div>
         <div class="sidebar-footer">
+          <button data-action="app-settings" id="app-settings-btn" title="Settings for the app on this phone" style="display:none;margin-bottom:8px;"><span class="add-label">App settings</span></button>
           <button data-action="add-project" title="Add project"><span class="add-plus">+</span><span class="add-label"> Add project</span></button>
         </div>
       </div>
@@ -7127,6 +7128,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
     const NATIVE_CAN = (() => {
       try { return (window.CrundiNative && window.CrundiNative.can) ? String(window.CrundiNative.can()).split(',') : []; } catch (e) { return []; }
     })();
+    // The app's own settings (permissions, paired servers) are a screen of the
+    // app's, not of this page. The way to it is here, where a hand already is.
+    if (NATIVE_CAN.indexOf('settings') >= 0) {
+      const b = document.getElementById('app-settings-btn');
+      if (b) b.style.display = '';
+    }
     function nativeChatBtns(t) {
       let h = '';
       if (NATIVE_CAN.indexOf('bubble') >= 0) h += '<button class="term-font-btn" data-action="chat-bubble" data-tid="' + t.id + '" title="Open this chat as a floating bubble">Bubble</button>';
@@ -9873,6 +9880,18 @@ export function getWebappHtml(botUsername, appVersion = '') {
     /** @param {{url:string, name:string, size?:number}} o  url is an /api path; the sign-in header is added here. */
     async function crundiDownload(o) {
       const name = String(o.name || 'download');
+      // Inside the phone app, the phone does the download: it goes to the
+      // Downloads folder with the system's own progress and "open" button.
+      // What this page would otherwise do (fetch the file, then save it from
+      // memory) ends in an address only this page can read, which the phone
+      // has no way to fetch.
+      if (window.CrundiNative && window.CrundiNative.download && typeof NATIVE_CAN !== 'undefined' && NATIVE_CAN.indexOf('download') >= 0) {
+        try {
+          const abs = new URL(o.url + (o.url.indexOf('?') < 0 ? '?' : '&') + 'token=' + encodeURIComponent(token || ''), location.href).href;
+          window.CrundiNative.download(abs, name);
+          return;
+        } catch (err) { /* fall through to the page's own way */ }
+      }
       if (Number(o.size) > DL_INAPP_MAX) {
         // Too big to hold in memory: let the browser stream it to disk itself.
         const a = document.createElement('a');
@@ -14013,6 +14032,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (d.id) collabAction(d.action, d.id);
           break;
         case 'collab-merge': collabAskMerge(e.target.closest('.topbar-act')); break;
+        case 'app-settings':
+          try { window.CrundiNative.openSettings(); } catch (err) { toast('This app has no settings screen', 'error'); }
+          break;
         case 'chat-bubble':
           try { window.CrundiNative.openBubble(String(d.tid)); } catch (err) { toast('This app cannot open a bubble', 'error'); }
           closeHeadMenus(null);

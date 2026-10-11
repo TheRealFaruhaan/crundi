@@ -34,6 +34,7 @@
 
         <activity android:name=".PairActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ScanActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".SettingsActivity" android:exported="false" android:label="App settings" />
 
         <!-- One chat by itself. Android needs all of this before it will put
              an activity in a bubble: it must be resizable, embeddable, and
