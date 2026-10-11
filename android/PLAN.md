@@ -330,6 +330,14 @@ and the Linux desktop client.
   buttons inside the floating window. Their What's New step waits until the
   feature has been seen working.
 - **Asked for, not started:**
+  - **Live updates** (what iOS calls live activities), for the next app
+    release: while Claude is working in a chat, a chip in the status bar and
+    an entry on the lock screen, as sports scores and timers have. The owner's
+    reference is a live score chip on a Samsung phone. On Android this is an
+    ongoing notification asked to be "promoted"; it is new in Android 16 and
+    older phones show it as an ordinary ongoing notification. It needs the
+    server to tell the phone when a chat STARTS working, not only when it
+    stops, which no notification does today.
   - Browser tools should let Claude choose where the browser runs: on the
     server, or on a named attached client (PC, phone). Today an attached
     client's browser is always used, which cannot reach the server's own
