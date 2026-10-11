@@ -66,7 +66,7 @@ import * as whatsNew from './whatsnew.js';
 import * as clientVersion from './client-version.js';
 import { createPairing, pairingLink, cleanDevice } from './pairing.js';
 import { toSvg as qrSvg } from './qr.js';
-import { toSvg as crundiCodeSvg } from './crundi-code.js';
+import { toSvg as crundiCodeSvg, doneClass as crundiCodeDoneClass, DONE_MS as CRUNDI_CODE_DONE_MS } from './crundi-code.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import * as mobilePush from './mobile-push.js';
@@ -2500,6 +2500,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // own camera can read.
       return json(res, {
         ok: true, code: started.code, link, mark: crundiCodeSvg(link), qr: qrSvg(link),
+        // How the page plays the mark's ending once the phone is in.
+        doneClass: crundiCodeDoneClass(), doneMs: CRUNDI_CODE_DONE_MS,
         expiresIn: started.expiresIn, server: base, insecure: base.startsWith('http://'),
       });
     }

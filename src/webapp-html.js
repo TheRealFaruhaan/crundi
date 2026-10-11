@@ -3822,6 +3822,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
   <script src="/vendor/crundi-whatsnew.js?v=${vendorTag('crundi-whatsnew.js')}"><\/script>
+  <script src="/vendor/crundi-phone.js?v=${vendorTag('crundi-phone.js')}"><\/script>
   <script>
   (function() {
     'use strict';
@@ -4060,7 +4061,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       for (const x of list) {
         h += '<div class="maint-row">'
           + '<div class="maint-text">'
-          + '<div class="maint-label">' + escHtml(describeAgent(x.userAgent))
+          + '<div class="maint-label">' + escHtml(x.device && x.device.name ? x.device.name + ' (Crundi app)' : describeAgent(x.userAgent))
           + (x.current ? '<span class="maint-root">this device</span>' : '') + '</div>'
           + '<div class="maint-desc">'
           + (x.ip ? escHtml(x.ip) + ' · ' : '')
@@ -13439,6 +13440,20 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // Signing out had no button and no endpoint, so a session could not be
         // ended from the browser at all — and sign-ins survive restarts now, so
         // not even a restart ended one.
+        // The phone app: pair one, and give this server the key that lets
+        // notifications reach it. Both are drawn by app/vendor/crundi-phone.js.
+        // Not for a collaborator: what is sent to a phone is the owner's.
+        if (userRole !== 'collaborator' && window.CrundiPhone) {
+          html += '<div class="info-section" id="phone-section"><h4>Phone app</h4>'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+            + '<div style="font-size:0.72rem;color:var(--text-muted);max-width:60ch;">'
+            + 'Pair the Crundi app on a phone with this server. It shows a picture for the phone to scan, so no password is typed on the phone.</div>'
+            + '<button type="button" class="kanban-btn" data-action="phone-connect">Connect a phone</button>'
+            + '</div>'
+            + '<div class="ctr-head" style="margin-top:12px;"><span style="flex:1;font-size:0.78rem;color:var(--text-secondary);">Notifications on the phone</span></div>'
+            + '<div id="phone-push"></div>'
+            + '</div>';
+        }
         html += '<div class="info-section"><h4>Session</h4>'
           + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
           + '<div style="font-size:0.72rem;color:var(--text-muted);max-width:60ch;">'
@@ -13453,6 +13468,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '</div>';
 
         panel.innerHTML = html;
+        const pushHost = document.getElementById('phone-push');
+        if (pushHost && window.CrundiPhone) window.CrundiPhone.renderPush(pushHost, { apiFetch, toast });
         renderSkillsSection();
         renderBackupSection();
         renderServerUpdate();
@@ -13652,6 +13669,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
           break;
         case 'sess-toggle':
           toggleSessions();
+          break;
+        case 'phone-connect':
+          if (window.CrundiPhone) {
+            window.CrundiPhone.connect({
+              apiFetch, toast,
+              // A new phone is a new signed-in device; refresh the list if it is open.
+              onPaired: () => { if (sessOpen) loadSessions(); },
+            });
+          }
           break;
         case 'sess-revoke':
           revokeSession(d.id, e.target.closest('button'));

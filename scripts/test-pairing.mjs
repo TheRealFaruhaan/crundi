@@ -121,5 +121,16 @@ ok(statusAt > 0 && /validateToken\(req\)/.test(src.slice(statusAt, statusAt + 30
 ok(/pairing\.cancel\(body\.code\);\s+return json\(res, \{ ok: false/.test(src), 'a claim refused after the code was spent is not left looking like a success');
 ok(cv.CAPABILITIES.includes('pairing'), 'the handshake says this server can pair');
 
+// ─── The screen that shows the code ───
+const pageSrc = readFileSync(join(root, 'src', 'webapp-html.js'), 'utf8');
+const phone = readFileSync(join(root, 'app', 'vendor', 'crundi-phone.js'), 'utf8');
+ok(pageSrc.includes('data-action="phone-connect"') && pageSrc.includes("case 'phone-connect':") && pageSrc.includes('/vendor/crundi-phone.js'), 'Settings has a Connect a phone button, and it is wired to the dialog');
+ok(/if \(userRole !== 'collaborator' && window\.CrundiPhone\)/.test(pageSrc), 'the section is not drawn for a collaborator');
+ok(/doneClass: crundiCodeDoneClass\(\), doneMs: CRUNDI_CODE_DONE_MS/.test(src), 'the server tells the page how to play the ending');
+ok(phone.includes("'/api/pair/start'") && phone.includes("'/api/pair/status'") && phone.includes("'/api/pair/cancel'") && phone.includes('svg.classList.add(d.doneClass)'), 'the dialog asks for a code, watches it, plays the ending, and takes back a code it closes on');
+ok(/if \(code && !paired\) post\(apiFetch, '\/api\/pair\/cancel'/.test(phone), 'a code is only withdrawn if no phone used it');
+ok(phone.includes("'/api/push/mobile/key'") && phone.includes("input.type = 'password'") && !/keyHint[^;]*input\.value/.test(phone), 'the push key is entered in a masked field and never filled back in');
+ok(pageSrc.includes("x.device && x.device.name ? x.device.name + ' (Crundi app)'"), 'a paired phone is listed by its name among the signed-in devices');
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);
