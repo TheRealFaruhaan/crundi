@@ -121,7 +121,12 @@ object Icons {
      * shape on nothing has a plain ground chosen to show it, light behind a
      * dark mark and dark behind a light one.
      */
-    fun head(icon: Bitmap, size: Int, adaptive: Boolean): Bitmap {
+    fun head(source: Bitmap, size: Int, adaptive: Boolean): Bitmap {
+        // A picture that is not quite square is not squeezed into one: the
+        // middle square of it is taken, and what overhangs is lost.
+        val side = minOf(source.width, source.height)
+        val icon = if (source.width == source.height) source
+            else Bitmap.createBitmap(source, (source.width - side) / 2, (source.height - side) / 2, side, side)
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
         val small = Bitmap.createScaledBitmap(icon, 24, 24, true)
@@ -144,14 +149,14 @@ object Icons {
         // shape it is cut to reaches past it.
         val edge = small.getPixel(1, 12) or 0xFF000000.toInt()
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        // Always the whole head, edge to edge, cut to its shape: whatever
-        // the picture has in its corners is lost, and that is the bargain.
+        // Always the whole head, edge to edge, in its own proportions, cut to
+        // shape: whatever the picture has in its corners is lost.
         // Something still has to be behind a picture with clear parts: its
         // own edge colour if it is a tile, a plain ground if it is a shape.
         val behind = if (covers) edge else ground
         if (adaptive) {
             // The launcher keeps the middle two thirds of this bitmap and
-            // cuts its shape out of that. The picture is stretched to
+            // cuts its shape out of that. The picture is scaled to
             // exactly those two thirds: no margin, and no zoom beyond it.
             c.drawColor(behind)
             val inset = size / 6f
