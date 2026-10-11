@@ -7134,6 +7134,42 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const b = document.getElementById('app-settings-btn');
       if (b) b.style.display = '';
     }
+    // "Go to this chat", asked from outside the page: the phone app calls it
+    // when a notification is tapped or a bubble says "open in Crundi". The
+    // alternative was for the app to load an address, which threw this whole
+    // page away and built it again to show one chat.
+    //
+    // It can be asked before the page knows its chats (the app was not
+    // running), so it is remembered and tried again until the chat is there,
+    // for a few seconds.
+    function goToChat(sid) {
+      const goTerm = terminals.find(t => String(t.id) === String(sid));
+      if (!goTerm) return false;
+      const reveal = () => {
+        const cell = document.querySelector('[data-cellkey="live:' + sid + '"]');
+        if (cell) {
+          cell.scrollIntoView({ block: 'center' });
+          const v = chatViews.get(sid); if (v && v.focus) v.focus();
+        }
+      };
+      if (goTerm.project && String(goTerm.project).toLowerCase() !== String(currentProject || '').toLowerCase()) {
+        Promise.resolve(selectProject(goTerm.project)).then(() => requestAnimationFrame(reveal));
+      } else {
+        switchTab('workbench');
+        reveal();
+      }
+      return true;
+    }
+    window.crundiOpenChat = (sid) => {
+      let tries = 0;
+      const attempt = () => {
+        let done = false;
+        try { done = goToChat(String(sid)); } catch (e) { done = false; }
+        if (!done && ++tries < 24) setTimeout(attempt, 250);
+      };
+      attempt();
+      return true;
+    };
     function nativeChatBtns(t) {
       let h = '';
       if (NATIVE_CAN.indexOf('bubble') >= 0) h += '<button class="term-font-btn" data-action="chat-bubble" data-tid="' + t.id + '" title="Open this chat as a floating bubble">Bubble</button>';

@@ -450,6 +450,12 @@ and the Linux desktop client.
     worked; the cause was not found. The server logged nothing and handles
     20 MB uploads in a test, and the site is behind Cloudflare, so the likely
     answer is that something other than Crundi replied that once.
+- **Coming to the main window no longer reloads it** (app 1.0.0-dev.6, server
+  1.20.0-dev.8). A tapped notification, or "Open Crundi" from a bubble, used
+  to load an address in the main window, which threw the page away and built
+  it again behind a loading screen. The app now asks the loaded page for the
+  chat (`window.crundiOpenChat(id)`), and loads an address only if the page
+  is too old to be asked.
 - **Next:** see whether the chip appears on the phone with 1.0.0-dev.6.
 
 ## API notes for the app

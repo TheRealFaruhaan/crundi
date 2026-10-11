@@ -85,6 +85,9 @@ ok(server.includes("mark: chatMark(s.project, s.title)") && server.includes("mar
 ok(/const about = chat \? \{ chat, url: `\/chat\/\$\{term\.id\}` \} : \{\};/.test(server), 'a chat\'s notifications say which chat, and point at its page');
 const cv = await import('../src/client-version.js');
 ok(cv.isGated('/chat/abc') === false, 'a client too old for the server can still load the page that tells it so');
+// Going to a chat without loading the page again.
+ok(main.includes('window.crundiOpenChat = (sid) =>') && /if \(!done && \+\+tries < 24\) setTimeout\(attempt, 250\);/.test(main), 'the app can ask the loaded page for a chat, and the page keeps trying while its chats are still arriving');
+
 // The phone app's two extras in a chat's menu.
 ok(main.includes('data-action="chat-bubble"') && main.includes("case 'chat-bubble':"), 'a chat\'s menu can offer Bubble, and it is wired');
 ok(/NATIVE_CAN\.indexOf\('bubble'\) >= 0\) h \+=/.test(main) && main.includes('window.CrundiNative.can'), 'but only where the app round the page says it can: in a browser it is not drawn');

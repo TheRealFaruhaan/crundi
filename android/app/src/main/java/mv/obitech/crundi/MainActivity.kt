@@ -60,13 +60,38 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         take(intent)
-        val path = pendingPath
         // Back from pairing, or sent to another server by a notification:
         // there may be a different server to show.
         if (server?.id != Servers.current(this)?.id) { open(); return }
-        // Same server, already showing: just go where the notification points.
-        val s = server
-        if (path != null && s != null && web?.visibility == View.VISIBLE) { pendingPath = null; web?.loadUrl(s.baseUrl + path) }
+        // Same server, already showing: go there without loading anything.
+        if (web?.visibility == View.VISIBLE) go()
+    }
+
+    /**
+     * Go where the last intent pointed, in the page that is already loaded.
+     *
+     * Loading the address would work, and did, but it threw the whole page
+     * away to show one chat: a loading screen every time a bubble or a
+     * notification led here. A chat is opened by asking the page for it; the
+     * front page needs nothing at all. Only an address this cannot handle,
+     * or a page too old to be asked, is loaded.
+     */
+    private fun go() {
+        val path = pendingPath ?: return
+        val s = server ?: return
+        val w = web ?: return
+        pendingPath = null
+        val chat = Regex("^/chat/([A-Za-z0-9_-]{1,80})/?$").find(path)?.groupValues?.get(1)
+        val onMainPage = Uri.parse(w.url ?: "").path.let { it == null || it == "/" || it.isEmpty() }
+        when {
+            chat != null && onMainPage ->
+                w.evaluateJavascript("(function(){try{return !!(window.crundiOpenChat&&window.crundiOpenChat('$chat'))}catch(e){return false}})()") { answer ->
+                    if (answer != "true") w.loadUrl(s.baseUrl + path)
+                }
+            chat != null -> { pendingPath = path; w.loadUrl(s.baseUrl + "/") }      // the page will be asked once it has loaded
+            path == "/" || path.startsWith("/?") -> if (!onMainPage) w.loadUrl(s.baseUrl + "/")
+            else -> w.loadUrl(s.baseUrl + path)
+        }
     }
 
     /** Read where an intent wants to go: which server, and which of its pages. */
@@ -145,6 +170,11 @@ class MainActivity : Activity() {
         val base = Uri.parse(s.baseUrl)
 
         view.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(v: WebView, url: String?) {
+                // A chat asked for before the page existed: ask now.
+                if (pendingPath != null) go()
+            }
+
             override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
                 // The server's own pages stay here. Anything else is somebody
@@ -200,9 +230,9 @@ class MainActivity : Activity() {
         // First load after pairing: hand the page its login, then forget our
         // copy. A refresh token is spent by using it, so two holders of one
         // would cut each other off; from here on it is the page's alone.
-        val start = pendingPath ?: "/"
-        pendingPath = null
-        val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else start
+        // Always the front page. If an intent pointed at a chat, the page is
+        // asked for it once it has loaded (see go).
+        val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else "/"
         if (s.pageToken.isNotEmpty()) {
             s.pageToken = ""; s.pageRefresh = ""
             Servers.save(this, s)
