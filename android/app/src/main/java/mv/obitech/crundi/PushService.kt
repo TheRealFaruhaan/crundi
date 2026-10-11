@@ -49,7 +49,7 @@ class PushService : FirebaseMessagingService() {
                     PushLog.add(app, "From ${server.host}: a suggested reply ${if (payload.optString("suggestion").isEmpty()) "withdrawn" else "offered"}")
                     Notifier.suggest(app, server, payload)
                 } else {
-                    PushLog.add(app, "From ${server.host}: a notification ($kind)")
+                    PushLog.add(app, "From ${server.host}: a notification ($kind)${if (payload.optBoolean("quiet")) ", quiet: you are at Crundi" else ""}")
                     Notifier.show(app, server, payload)
                 }
                 return

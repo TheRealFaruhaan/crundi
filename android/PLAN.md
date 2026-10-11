@@ -554,7 +554,28 @@ and the Linux desktop client.
   the project's icon is passed in two of One UI's own extras
   (`android.ongoingActivityNoti.chipIcon`, `.nowbarIcon`); whether they do
   anything is not known.
-- **Next:** see how the live card looks on the phone with 1.0.0-dev.8.
+- **File paths in a chat (server 1.20.0-dev.14).** Only whole paths were
+  links. Now `assets/a.png` and `./assets/a.png` are too (a bare one only
+  with a real file extension), and `/assets/a.png`, which was opened as a
+  path from the disk's root and not found, is tried from the project.
+  `/api/files/resolve` says which reading exists. The compact chat opens a
+  path as well, which it never did: a plain view of the file (picture, text,
+  or a download), not an editor. Tried against a test server, not on a phone.
+- **The phone is always told (server 1.20.0-dev.14, app 1.0.0-dev.10).** An
+  event set to "When away" used to reach nothing while the owner was at
+  Crundi. It now still goes to the phone app, and only there, marked
+  `quiet`: shown without sound or vibration, bubble and all. "Never" still
+  sends nothing. An app older than dev.10 ignores the mark and buzzes.
+  Whether a quiet notification still opens its bubble on One UI is expected
+  and not yet seen.
+- **App 1.0.0-dev.10 also:** the keyboard is told each kind of picture by
+  name as well as "any picture" (Samsung's clipboard panel listed copied
+  text and no copied pictures; this is a guess at why); and on a Samsung
+  phone App settings has "Live notification on Samsung", which drops the
+  One UI extras so the card is an ordinary notification. The glow round the
+  live card is Samsung's, was found heavy, and is thought to come with the
+  `automation` extra; the switch is how that is found out.
+- **Next:** see how the live card looks on the phone with 1.0.0-dev.10.
 
 ## API notes for the app
 

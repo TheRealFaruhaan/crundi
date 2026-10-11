@@ -144,6 +144,20 @@ class SettingsActivity : Activity() {
             }
         } else row("Bubbles", "Need Android 11 or newer.", null, null, null)
 
+        if (LiveCards.onSamsung) {
+            val prefs = getSharedPreferences("crundi", Context.MODE_PRIVATE)
+            val live = LiveCards.samsungLive(this)
+            row(
+                "Live notification on Samsung",
+                if (live) "On. The card is in the Now Bar and the status bar, with One UI's glow round it."
+                else "Off. The card is an ordinary notification: no Now Bar, no status bar chip, and no glow.",
+                null, if (live) "Turn off" else "Turn on",
+            ) {
+                prefs.edit().putBoolean(LiveCards.PREF_SAMSUNG_LIVE, !live).apply()
+                LiveCards.refresh(applicationContext)
+                draw()
+            }
+        }
         when (LiveCards.chipAllowed(this)) {
             true -> row("Live card", "While Claude works, a chip in the status bar and a card on the lock screen." + if (Build.MANUFACTURER.equals("samsung", true)) "\nOn Samsung this may also need Developer options, Live notifications for all apps, turned on." else "", true, "Manage") { liveSettings() }
             false -> row("Live card", "The status bar chip is turned off. The card still shows among your notifications.", false, "Allow") { liveSettings() }

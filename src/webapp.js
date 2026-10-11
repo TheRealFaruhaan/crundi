@@ -1148,7 +1148,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   function notifyEvent(key, message, meta = {}) {
     const mode = notifyPrefs[key];
     if (mode !== 'always' && mode !== 'away') return;   // 'never' / unknown
-    if (mode === 'away' && anyClientPresent()) return;  // user is already here
+    if (mode === 'away' && anyClientPresent()) {
+      // The owner is here, so nothing needs to ping them. The phone app is
+      // told all the same, marked quiet: its bubbles, its live card and its
+      // list of what happened are kept from these, and a phone that only
+      // heard of things while nobody was at a desk would have gaps in all
+      // three. Quiet means shown without sound or vibration.
+      channels.deliver(message, { tag: key, ...meta, quiet: true }, { only: ['mobile'] }).catch(() => { /* non-fatal */ });
+      return;
+    }
     // Fire and forget: a slow or dead channel must not hold up whatever was
     // being notified about.
     channels.deliver(message, { tag: key, ...meta }).catch(() => { /* non-fatal */ });
@@ -4854,6 +4862,31 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         matches.sort((a, b) => a.type === b.type ? a.rel.localeCompare(b.rel) : a.type === 'dir' ? -1 : 1);
         return json(res, { ok: true, entries: matches, truncated: matches.length >= CAP, gitignoreApplied: isGit });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    // Where a path written in a chat actually is. Claude writes paths three
+    // ways: whole ("/home/me/proj/a.js"), from the project ("assets/a.png"),
+    // and from the project with a slash in front ("/assets/a.png"), which
+    // reads as a whole path and is not one. Each reading is tried in turn
+    // and the first that exists is answered, in the form the other file
+    // routes take.
+    if (path === '/api/files/resolve' && req.method === 'GET') {
+      const project = getProject(url.searchParams.get('project'));
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      const raw = String(url.searchParams.get('path') || '').trim().replace(/:\d+(:\d+)?$/, '');
+      if (!raw || raw.length > 1024) return json(res, { ok: false, error: 'File not found' }, 404);
+      const tries = [raw];
+      const fromProject = raw.replace(/^(\.\/)+/, '').replace(/^[/\\]+/, '');
+      if (fromProject && fromProject !== raw) tries.push(fromProject);
+      for (const t of tries) {
+        try {
+          const full = resolveFsPath(project, t, principal);
+          if (!existsSync(full)) continue;
+          const st = statSync(full);
+          return json(res, { ok: true, file: t, dir: st.isDirectory(), size: st.size });
+        } catch { /* try the next reading */ }
+      }
+      return json(res, { ok: false, error: 'File not found' }, 404);
     }
 
     if (path === '/api/files/read' && req.method === 'GET') {

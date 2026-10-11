@@ -97,10 +97,12 @@ export function list() {
  * One channel failing must not stop the others: a dead Telegram token should
  * not silently cost you your browser notifications too.
  */
-export async function deliver(text, meta = {}) {
+export async function deliver(text, meta = {}, { only = null } = {}) {
   const results = [];
   for (const ch of registry.values()) {
     if (!isEnabled(ch.id)) continue;
+    // `only` names the channels this one is for; the rest are passed over.
+    if (only && !only.includes(ch.id)) continue;
     try {
       const r = await ch.send(text, meta);
       results.push({ id: ch.id, ok: r !== false });

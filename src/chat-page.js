@@ -55,6 +55,15 @@ button{font:inherit;color:inherit}
 .ic{width:1em;height:1em;display:inline-block;vertical-align:-0.125em;flex-shrink:0;pointer-events:none}
 #cp-note{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:28px;text-align:center;color:var(--text-secondary);font-size:14px;line-height:1.5;background:var(--bg-primary)}
 #cp-note.on{display:flex}
+#cp-file{position:absolute;inset:0;display:none;flex-direction:column;background:var(--bg-primary);z-index:5}
+#cp-file.on{display:flex}
+#cp-file-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);background:var(--bg-secondary)}
+#cp-file-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12px var(--mono,monospace);color:var(--text-primary);direction:rtl;text-align:left}
+#cp-file-head button{flex:none;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:12px;cursor:pointer}
+#cp-file-body{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch}
+#cp-file-body pre{margin:0;padding:12px;font:12px/1.5 var(--mono,monospace);color:var(--text-primary);white-space:pre;tab-size:2}
+#cp-file-body img{display:block;max-width:100%;margin:12px auto;background:repeating-conic-gradient(var(--bg-secondary) 0 25%,var(--bg-card) 0 50%) 0 0/16px 16px}
+#cp-file-body .msg{padding:28px;text-align:center;color:var(--text-secondary);font-size:13px;line-height:1.5}
 #cp-note b{color:var(--text-primary);font-size:16px;font-weight:650}
 #cp-note button{padding:9px 18px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer}
 #cp-menu{position:absolute;right:8px;top:calc(52px + env(safe-area-inset-top));z-index:30;display:none;min-width:190px;padding:6px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md)}
@@ -96,6 +105,10 @@ button{font:inherit;color:inherit}
   <div id="cp-body">
     <div id="cp-chat" class="chat-mount"></div>
     <div id="cp-note" role="status"></div>
+    <div id="cp-file" role="dialog" aria-label="File">
+      <div id="cp-file-head"><span id="cp-file-name"></span><button type="button" id="cp-file-save">Download</button><button type="button" id="cp-file-close">Close</button></div>
+      <div id="cp-file-body"></div>
+    </div>
   </div>
 </div>
 <div id="cp-menu" role="menu">

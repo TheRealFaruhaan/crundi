@@ -197,6 +197,7 @@ object LiveCards {
      * if the names are wrong, they are ignored.
      */
     private fun samsungIcon(ctx: Context, b: NotificationCompat.Builder, e: Entry) {
+        if (!samsungLive(ctx)) return
         val icon = Icons.cached(ctx, e.serverId, e.icon) ?: return
         val head = runCatching { Icons.head(icon, Ui.dp(ctx, 48), adaptive = false) }.getOrNull() ?: return
         val asIcon = android.graphics.drawable.Icon.createWithBitmap(head)
@@ -204,6 +205,24 @@ object LiveCards {
             putParcelable("android.ongoingActivityNoti.chipIcon", asIcon)
             putParcelable("android.ongoingActivityNoti.nowbarIcon", asIcon)
         })
+    }
+
+    /**
+     * Whether to ask One UI for its live treatment (Now Bar, status bar
+     * chip). It comes with a moving glow round the card, which Samsung draws
+     * and the app cannot change, and which the owner found heavy on the
+     * phone. Off, the card is an ordinary ongoing notification there.
+     */
+    const val PREF_SAMSUNG_LIVE = "live.samsung"
+    val onSamsung get() = Build.MANUFACTURER.equals("samsung", true)
+    fun samsungLive(ctx: Context) = ctx.getSharedPreferences("crundi", Context.MODE_PRIVATE).getBoolean(PREF_SAMSUNG_LIVE, true)
+
+    /** Draw every card again, as it now should be: a setting that changes how they look was changed. */
+    @Synchronized
+    fun refresh(ctx: Context) {
+        val map = load(ctx)
+        lastSaid.clear()
+        for ((serverId, project) in map.values.map { it.serverId to it.project }.toSet()) render(ctx, serverId, project, map, justFinished = null)
     }
 
     private val lastSaid = HashMap<Int, String>()
@@ -252,7 +271,9 @@ object LiveCards {
             // nothing anywhere else, and may stop working. The related
             // "android.ongoingActivityNoti.style" must NOT be set: it sends
             // the card down a different path and undoes this.
-            .addExtras(android.os.Bundle().apply { putBoolean("android.ongoingActivityNoti.automation", true) })
+            // It also brings One UI's moving glow, so it can be switched off
+            // in App settings.
+            .apply { if (samsungLive(ctx)) addExtras(android.os.Bundle().apply { putBoolean("android.ongoingActivityNoti.automation", true) }) }
     }
 
     private fun open(ctx: Context, e: Entry, code: Int): PendingIntent = PendingIntent.getActivity(

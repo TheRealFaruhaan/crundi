@@ -94,6 +94,8 @@ ok(main.includes('return window.CrundiWidgets.toolMedia(t.id, entry);') && !main
 ok(html.includes('/vendor/crundi-widgets.js') && js.includes('toolExtra: toolExtra') && js.includes('W.toolMedia(sid, entry)'), 'the compact chat loads it and draws them too: a file offered there used to be invisible');
 ok(widgets.includes("cfg.fileIcon(it.filename || 'file') : IC.file") && /file: svg\(/.test(widgets), 'a file offered in the compact chat is drawn as a file, not as the panels icon');
 ok(!/handleEvent\(d\);\s*dock\(\)/.test(js), 'a panel event is not docked from stale data before the fresh list arrives');
+ok(js.includes('openPath: openPath') && js.includes("'/api/files/resolve?project='") && html.includes('id="cp-file"'), 'a file path in the compact chat opens, as it does in the workbench');
+ok(server.includes("path === '/api/files/resolve'") && server.includes("replace(/^[/\\\\]+/, '')"), 'the server says where a path is, trying it from the project when it is not on the disk as written');
 ok(js.includes('return r === undefined ? true : r'), 'a call the app answered with nothing still counts as done, so the page does not do it again');
 ok(js.includes("bridge('download', abs") && js.includes("a.download = String(o.name || 'download')"), 'a file is saved by the phone inside the app, and by a plain link in a browser');
 

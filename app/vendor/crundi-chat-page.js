@@ -126,6 +126,65 @@
     a.href = abs; a.download = String(o.name || 'download'); a.rel = 'noopener';
     document.body.appendChild(a); a.click(); a.remove();
   }
+  // ─── A file path in the chat ───
+  // The workbench opens one in its editor. There is no editor here, so it is
+  // shown: a picture as a picture, text as text, anything else as something
+  // to download. Where the path really is is the server's to say: Claude
+  // writes them whole, from the project, and from the project with a slash
+  // in front, and only the server can tell which of those exists.
+  var FILE_PICS = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', bmp: 'image/bmp', avif: 'image/avif' };
+  var fileShown = null, filePic = '';
+  function closeFile() {
+    $('cp-file').className = '';
+    $('cp-file-body').textContent = '';
+    if (filePic) { try { URL.revokeObjectURL(filePic); } catch (e) { /* already gone */ } filePic = ''; }
+    fileShown = null;
+  }
+  function fileMsg(text) { var d = document.createElement('div'); d.className = 'msg'; d.textContent = text; $('cp-file-body').textContent = ''; $('cp-file-body').appendChild(d); }
+  function showFile(file, size) {
+    closeFile();
+    var q = 'project=' + encodeURIComponent(meta.project || '') + '&file=' + encodeURIComponent(file);
+    var name = file.split('/').pop() || 'file';
+    var mine = fileShown = { url: '/api/files/download?' + q, name: name };
+    $('cp-file-name').textContent = file;
+    $('cp-file').className = 'on';
+    fileMsg('Loading…');
+    var ext = (name.indexOf('.') >= 0 ? name.slice(name.lastIndexOf('.') + 1) : '').toLowerCase();
+    if (FILE_PICS[ext]) {
+      apiFetch('/api/files/download?' + q).then(function (r) { return r.ok ? r.blob() : null; }).then(function (b) {
+        if (fileShown !== mine) return;
+        if (!b) { fileMsg('This file could not be read.'); return; }
+        filePic = URL.createObjectURL(new Blob([b], { type: FILE_PICS[ext] }));
+        var img = document.createElement('img'); img.alt = name; img.src = filePic;
+        $('cp-file-body').textContent = ''; $('cp-file-body').appendChild(img);
+      }).catch(function () { if (fileShown === mine) fileMsg('This file could not be read.'); });
+      return;
+    }
+    if (Number(size) > 1024 * 1024) { fileMsg('This file is too large to show here. It can be downloaded.'); return; }
+    apiFetch('/api/files/read?' + q).then(function (r) { return r.json(); }).then(function (d) {
+      if (fileShown !== mine) return;
+      if (!d || !d.ok) { fileMsg((d && d.error) || 'This file could not be read.'); return; }
+      // Not text after all: say so, where a page of nonsense would be shown.
+      if (/\u0000/.test(String(d.content).slice(0, 4000))) { fileMsg('This is not a text file. It can be downloaded.'); return; }
+      var pre = document.createElement('pre'); pre.textContent = d.content;
+      $('cp-file-body').textContent = ''; $('cp-file-body').appendChild(pre);
+    }).catch(function () { if (fileShown === mine) fileMsg('This file could not be read.'); });
+  }
+  function openPath(raw) {
+    var p = String(raw || '').trim();
+    if (!p) return;
+    apiFetch('/api/files/resolve?project=' + encodeURIComponent(meta.project || '') + '&path=' + encodeURIComponent(p))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) { toast('File not found: ' + p, 'error'); return; }
+        if (d.dir) { toast('That is a folder: ' + p); return; }
+        showFile(d.file, d.size);
+      })
+      .catch(function () { toast('Could not open ' + p, 'error'); });
+  }
+  $('cp-file-close').onclick = closeFile;
+  $('cp-file-save').onclick = function () { if (fileShown) download(fileShown); };
+
   function toolExtra(entry) {
     var W = window.CrundiWidgets;
     if (!W || !entry) return null;
@@ -400,6 +459,8 @@
 
   // ─── Buttons ───
   $('cp-back').onclick = function () {
+    // A file being shown is what is in front: back puts that away first.
+    if (fileShown) { closeFile(); return; }
     if (bridge('close') !== undefined) return;
     if (history.length > 1) history.back(); else location.href = '/';
   };
@@ -472,6 +533,7 @@
         toast: toast,
         wsSend: wsSend,
         toolExtra: toolExtra,
+        openPath: openPath,
         onChatMeta: function (patch) {
           if (!patch) return;
           if (typeof patch.title === 'string' && patch.title) { meta.title = patch.title; paintHead(); }

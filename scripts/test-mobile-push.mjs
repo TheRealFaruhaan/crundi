@@ -254,5 +254,17 @@ const collab = { username: 'g', role: ROLE_COLLABORATOR, collabKey: 'tg:g', proj
 ok(['/api/push/mobile', '/api/push/mobile/key', '/api/push/mobile/relay', '/api/push/mobile/register', '/api/push/mobile/test'].every((p) => !mayAccess(collab, 'POST', p) && !mayAccess(collab, 'GET', p)), 'and none of them is open to a collaborator');
 
 rmSync(dataDir, { recursive: true, force: true });
+// Quiet: told while the owner is already at Crundi.
+{
+  const quiet = JSON.parse(mp.buildPayload('done', { tag: 'finished', quiet: true }));
+  const loud = JSON.parse(mp.buildPayload('done', { tag: 'finished' }));
+  ok(quiet.quiet === true && !('quiet' in loud), 'a notification sent while the owner is present says so, and no other does');
+  const { readFileSync } = await import('node:fs');
+  const webapp = readFileSync(new URL('../src/webapp.js', import.meta.url), 'utf8');
+  ok(/if \(mode === 'away' && anyClientPresent\(\)\) \{[\s\S]{0,700}quiet: true \}, \{ only: \['mobile'\] \}/.test(webapp), 'while the owner is present, only the phone app is told, and quietly');
+  const channels = await import('../src/notify-channels.js');
+  ok(/only && !only\.includes\(ch\.id\)/.test(String(channels.deliver)), 'a delivery can be for named channels only');
+}
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

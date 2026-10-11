@@ -26,7 +26,12 @@ import androidx.core.view.inputmethod.InputConnectionCompat
  */
 @SuppressLint("ViewConstructor")
 class CrundiWebView(context: Context) : WebView(context) {
-    private val accepts = arrayOf("image/*")
+    // "Any picture", and then each kind by name. The first is the proper way
+    // to say it and is enough for a keyboard that matches kinds as Android
+    // does. Some compare the words exactly (Samsung's clipboard panel listed
+    // copied text here and no copied pictures), and to those only a kind
+    // named outright counts.
+    private val accepts = arrayOf("image/*", "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp", "image/heic", "image/heif")
 
     init {
         ViewCompat.setOnReceiveContentListener(this, accepts) { _, payload ->

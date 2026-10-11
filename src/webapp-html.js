@@ -6611,9 +6611,18 @@ export function getWebappHtml(botUsername, appVersion = '') {
           .filter(x => x.path && (p === x.path || p.startsWith(String(x.path).replace(/\\/+$/, '') + '/')))
           .sort((a, b) => b.path.length - a.path.length)[0];
         if (owner) return feOpen(owner.alias, p.slice(String(owner.path).replace(/\\/+$/, '').length + 1));
-        return feOpen(chatProject || currentProject, p);
       }
-      return feOpen(chatProject || currentProject, p);
+      // Anything else is asked about first: a path with a slash in front is
+      // as often meant from the project ("/assets/a.png") as from the disk.
+      const proj = chatProject || currentProject;
+      apiFetch('/api/files/resolve?project=' + encodeURIComponent(proj) + '&path=' + encodeURIComponent(p))
+        .then(r => r.json())
+        .then(d => {
+          if (!d || !d.ok) { toast('File not found: ' + p, 'error'); return; }
+          if (d.dir) { toast('That is a folder: ' + p); return; }
+          feOpen(proj, d.file);
+        })
+        .catch(() => feOpen(proj, p));
     }
 
     // Mount the Claude chat renderer (served from /vendor/claude-chat.js) into a

@@ -315,6 +315,7 @@ object Notifier {
                     .setContentTitle(payload.optString("title", "Crundi")).setContentText(body)
                     .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setSubText(server.host)
                     .setWhen(at).setAutoCancel(true)
+                    .apply { if (payload.optBoolean("quiet")) setSilent(true) }
                     .setContentIntent(openMain(ctx, server.id, url, "srv:${server.id}:$kind".hashCode())),
             )
             return
@@ -334,6 +335,9 @@ object Notifier {
         val prompt = payload.optJSONObject("prompt")?.takeIf { it.optString("requestId").isNotEmpty() }
         style.addMessage(if (prompt != null) "$body\n${prompt.optString("tool")}: ${prompt.optString("summary")}" else body, at, who)
         val b = chatBuilder(ctx, chat, style, who).setWhen(at)
+        // The owner is at Crundi already (the server says so): the bubble
+        // and the notification are still wanted, a buzz in the pocket is not.
+        if (payload.optBoolean("quiet")) b.setSilent(true)
         if (prompt != null) {
             fun decide(behavior: String, code: Int) = PendingIntent.getBroadcast(
                 ctx, chat.notificationId + code,
