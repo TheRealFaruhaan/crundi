@@ -51,8 +51,16 @@ curl -sX POST $R/admin/keys/revoke -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' -d '{"id":"<id from the list>"}'
 ```
 
-The relay stores a hash of each key, with its label. A revoked key is refused
-from the next request; nobody else's is affected.
+The relay stores a hash of each key, with its label. Revoking affects nobody
+else's key.
+
+The store behind it (Cloudflare KV) is eventually consistent, which shows in
+two places:
+
+- **A revoked key can keep working for up to about a minute**, until
+  Cloudflare's cached copy of its record expires. Prompt, not instant.
+- **The list can lag a new key by up to a minute.** Issuing and revoking do
+  not depend on the list, so both work straight away.
 
 ## Limits
 

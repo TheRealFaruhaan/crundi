@@ -158,6 +158,25 @@ ok(r.status === 403 && r.data.error === 'key_revoked' && g.sends().length === 0 
 ok((await call(env, 'GET', '/v1/key', { key: second.key })).status === 200, 'the other servers\' keys still work');
 ok((await call(env, 'POST', '/admin/keys/revoke', { key: ADMIN, body: { id: 'nope' } })).status === 404, 'revoking a key that does not exist says so');
 
+// ─── The key store lags, as the real one does ───
+{
+  // A list that has not caught up with what was just written.
+  const slow = newEnv();
+  const realList = slow.KEYS.list.bind(slow.KEYS);
+  slow.KEYS.list = async () => ({ keys: [], list_complete: true });
+  const fresh = (await call(slow, 'POST', '/admin/keys', { key: ADMIN, body: { label: 'Just issued' } })).data;
+  ok((await call(slow, 'GET', '/admin/keys', { key: ADMIN })).data.keys.length === 0, 'setup: the list does not show the new key yet');
+  const gone = await call(slow, 'POST', '/admin/keys/revoke', { key: ADMIN, body: { id: fresh.id } });
+  ok(gone.status === 200 && gone.data.revokedAt > 0 && (await call(slow, 'GET', '/v1/key', { key: fresh.key })).status === 403, 'a key can be revoked the moment it is issued, before the list has caught up');
+  // A key stored before id records were written is still found.
+  slow.KEYS.list = realList;
+  const old = (await call(slow, 'POST', '/admin/keys', { key: ADMIN, body: { label: 'Old' } })).data;
+  slow.KEYS.map.delete('id:' + old.id);
+  ok((await call(slow, 'POST', '/admin/keys/revoke', { key: ADMIN, body: { id: old.id } })).status === 200 && (await call(slow, 'GET', '/v1/key', { key: old.key })).status === 403, 'and one from before that shortcut existed is still found');
+  ok((await call(slow, 'GET', '/admin/keys', { key: ADMIN })).data.keys.every((k) => k.label), 'the shortcut records do not show up as keys in the list');
+  ok((await call(slow, 'POST', '/admin/keys/revoke', { key: ADMIN, body: { id: '../../etc' } })).status === 404, 'an id that is not an id is not looked up');
+}
+
 // ─── Rate limit ───
 let allowed = 2;
 const limited = { ...env, PER_KEY: { limit: async ({ key }) => ({ success: key.length === 64 && allowed-- > 0 }) } };

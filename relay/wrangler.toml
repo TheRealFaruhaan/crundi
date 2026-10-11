@@ -20,7 +20,7 @@ CONTACT_TELEGRAM = "TheRealFaruhaan"
 # Issued keys, stored by hash.
 [[kv_namespaces]]
 binding = "KEYS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "6816ee8efc1b4ab797d4ec4654e19b17"
 
 # Requests per key per minute. Counted per Cloudflare location and
 # deliberately approximate: it stops a runaway server, it is not accounting.

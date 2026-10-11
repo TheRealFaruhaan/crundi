@@ -19,7 +19,8 @@ Every request carries `Authorization: Bearer <key>`.
 
 - A key is issued by hand, one per server, with a label saying who it is for.
 - The relay stores only a hash of it.
-- No key, an unknown key or a revoked key gets no service at all.
+- No key, an unknown key or a revoked key gets no service at all. A
+  revocation takes effect within about a minute, not instantly.
 - Keys match `[A-Za-z0-9._~-]{20,200}`. Suggested form: `crp_` followed by 40
   random base62 characters.
 

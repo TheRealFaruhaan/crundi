@@ -50,6 +50,13 @@ function bearer(request) {
 // Stored as  key:<sha256 of the key>  ->  { id, label, createdAt, revokedAt }.
 // The id is the start of the hash: enough to point at a key in a list
 // without the list being of any use to someone who reads it.
+//
+// The store is Cloudflare KV, which is eventually consistent, and that shapes
+// two things here. A LIST can lag a write by up to a minute, so a key just
+// issued may not be in it yet; revoking therefore does not search the list,
+// it follows a second record,  id:<id> -> <hash>,  written with the key. And
+// a READ may be served from a cache for up to a minute, so a revoked key can
+// go on working for about that long. Revoking is prompt, not instant.
 async function lookupKey(env, key) {
   if (!KEY_RE.test(key)) return null;
   const hash = await sha256(key);
@@ -64,6 +71,7 @@ async function issueKey(env, label) {
   const hash = await sha256(key);
   const record = { id: hash.slice(0, 12), label: String(label || '').replace(/[\u0000-\u001f\u007f<>]/g, ' ').trim().slice(0, 80) || 'Unlabelled', createdAt: Date.now(), revokedAt: 0 };
   await env.KEYS.put('key:' + hash, JSON.stringify(record));
+  await env.KEYS.put('id:' + record.id, hash);
   return { key, ...record };
 }
 
@@ -82,15 +90,23 @@ async function listKeys(env) {
 }
 
 async function revokeKey(env, id) {
+  if (!/^[a-f0-9]{12}$/.test(id)) return null;
+  const mark = async (name, record) => {
+    if (!record.revokedAt) { record.revokedAt = Date.now(); await env.KEYS.put(name, JSON.stringify(record)); }
+    return record;
+  };
+  const hash = await env.KEYS.get('id:' + id);
+  if (hash) {
+    const record = await env.KEYS.get('key:' + hash, 'json');
+    if (record) return mark('key:' + hash, record);
+  }
+  // A key from before the id records existed: look for it the slow way.
   let cursor;
   do {
     const page = await env.KEYS.list({ prefix: 'key:', cursor });
     for (const k of page.keys) {
       const record = await env.KEYS.get(k.name, 'json');
-      if (record && record.id === id) {
-        if (!record.revokedAt) { record.revokedAt = Date.now(); await env.KEYS.put(k.name, JSON.stringify(record)); }
-        return record;
-      }
+      if (record && record.id === id) return mark(k.name, record);
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
