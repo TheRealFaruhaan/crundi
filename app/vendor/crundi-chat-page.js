@@ -228,7 +228,11 @@
     if (stopped || !window.EventSource) return;
     es = new EventSource('/api/events?token=' + encodeURIComponent(token));
     es.addEventListener('widget', function (e) {
-      try { var d = JSON.parse(e.data); if (window.CrundiWidgets) { window.CrundiWidgets.handleEvent(d); dock(); } } catch (x) { /* a malformed frame must not stop the stream */ }
+      // Not followed by dock(): the widgets file fetches the panels again
+      // and calls onChange or onChrome when it has them, which docks. Docking
+      // here as well ran on what was known BEFORE the change, so a panel just
+      // collapsed was drawn open again and then collapsed a second time.
+      try { var d = JSON.parse(e.data); if (window.CrundiWidgets) window.CrundiWidgets.handleEvent(d); } catch (x) { /* a malformed frame must not stop the stream */ }
     });
     // A secret request the moment it is raised, not at the next look.
     es.addEventListener('secret-requests', function () { loadAsks(); });
