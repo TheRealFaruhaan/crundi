@@ -527,7 +527,28 @@ and the Linux desktop client.
     draws notification buttons as words on most phones, so the icon it was
     given (`ic_bubble`) will probably not be what shows. Whether Samsung
     expands the bubble or only shows its head is not known.
-- **Next:** see how the live card looks on the phone with 1.0.0-dev.7.
+- **Project icons (server 1.20.0-dev.13, app 1.0.0-dev.8), not yet seen on a
+  phone.** A project with an obvious icon in its folder wears it in place of
+  its letters: sidebar and top bar of the main window, the compact chat's
+  header, a bubble's head, the chat's picture on a notification, the live
+  card. `src/project-icon.js` looks in the usual folders for the usual names
+  (icon, favicon, apple-touch-icon, app icon, logo), and takes only a real
+  picture that is square and not tiny, so a wordmark or a screenshot is
+  passed over. It looks each time a chat is opened in the project, and once
+  for a project never looked at; the full path found is kept in
+  `project-icons.json` beside the project list. The address handed out ends
+  in the file's time and size, which is how a changed icon is noticed. A
+  `.ico` leaves the server as a PNG (the one inside it, or its bitmap
+  converted in memory; nothing is written into the project). The phone
+  fetches an address once, as its own login, keeps one file per project
+  (`Icons.kt`), and draws only from what is kept. Everywhere, a missing,
+  removed or unreadable icon falls back to the letters. A drawing (.svg)
+  shows in the pages but not on the phone, which cannot draw one. With an
+  icon, every chat of a project has the same bubble head; the letters that
+  told them apart are gone there. The live card's large picture was taken
+  off earlier because Samsung drew it half off the card; it is back only
+  for projects with an icon, and may need the same treatment.
+- **Next:** see how the live card looks on the phone with 1.0.0-dev.8.
 
 ## API notes for the app
 

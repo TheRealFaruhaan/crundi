@@ -24,7 +24,7 @@ import androidx.core.graphics.drawable.IconCompat
 import org.json.JSONObject
 
 /** One chat, as much of it as a notification or a bubble needs. */
-class ChatRef(val serverId: String, val id: String, val title: String, val project: String, val initials: String, val color: String, val colorDeep: String) {
+class ChatRef(val serverId: String, val id: String, val title: String, val project: String, val initials: String, val color: String, val colorDeep: String, val icon: String = "") {
     /** Android's name for this conversation: the same wherever it is mentioned, or its bubble and its notifications will not find each other. */
     val key: String get() = "chat:$serverId:$id"
     val notificationId: Int get() = key.hashCode()
@@ -35,6 +35,7 @@ class ChatRef(val serverId: String, val id: String, val title: String, val proje
             return ChatRef(
                 serverId, chat.optString("id"), chat.optString("title", "Chat").ifEmpty { "Chat" }, chat.optString("project"),
                 mark?.optString("initials")?.ifEmpty { null } ?: "C", mark?.optString("color")?.ifEmpty { null } ?: "#6366f1", mark?.optString("colorDeep")?.ifEmpty { null } ?: "#4f46e5",
+                mark?.optString("icon").orEmpty(),
             )
         }
     }
@@ -91,6 +92,9 @@ object Notifier {
     /** The chat's mark as a picture: its initials on its project's colour. */
     fun markBitmap(ctx: Context, chat: ChatRef, adaptive: Boolean): Bitmap {
         val size = Ui.dp(ctx, 108)
+        // The project's own icon where it has one and the phone has it kept;
+        // the letters on the project's colour otherwise.
+        Icons.cached(ctx, chat.serverId, chat.icon)?.let { icon -> runCatching { Icons.head(icon, size, adaptive) }.getOrNull()?.let { return it } }
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val a = runCatching { Color.parseColor(chat.color) }.getOrDefault(0xFF6366F1.toInt())

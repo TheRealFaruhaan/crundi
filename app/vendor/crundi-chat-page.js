@@ -293,10 +293,39 @@
     $('cp-dot').className = meta.state || '';
     var m = meta.mark;
     if (m) {
-      $('cp-mark').textContent = m.initials;
-      $('cp-mark').style.background = 'linear-gradient(135deg,' + m.color + ',' + m.colorDeep + ')';
+      var mark = $('cp-mark'), pic = m.icon ? markIcon(m.icon) : '';
+      if (pic) {
+        // The project's own icon. Only touched when it is a different one:
+        // this runs on every change of state.
+        if (mark.getAttribute('data-icon') !== pic) {
+          mark.textContent = '';
+          var img = document.createElement('img');
+          img.alt = ''; img.src = pic;
+          mark.appendChild(img);
+          mark.setAttribute('data-icon', pic);
+          mark.style.background = 'var(--bg-primary)';
+        }
+      } else {
+        mark.removeAttribute('data-icon');
+        mark.textContent = m.initials;
+        mark.style.background = 'linear-gradient(135deg,' + m.color + ',' + m.colorDeep + ')';
+      }
     }
     bridge('chatState', JSON.stringify({ id: sid, title: meta.title, project: meta.project, state: meta.state, mark: meta.mark || null }));
+  }
+  // The project's icon, fetched once per address as this page's login. The
+  // address changes when the file does. Until it arrives, and for good if it
+  // cannot be had (the file was removed, the server is older), the letters.
+  var markIcons = {};
+  function markIcon(u) {
+    if (Object.prototype.hasOwnProperty.call(markIcons, u)) return markIcons[u];
+    markIcons[u] = '';
+    apiFetch(u).then(function (r) { return r && r.ok ? r.blob() : null; }).then(function (b) {
+      if (!b || !b.size) return;
+      markIcons[u] = URL.createObjectURL(b);
+      paintHead();
+    }).catch(function () { /* the letters stay */ });
+    return '';
   }
   function loadMeta() {
     return apiFetch('/api/ui-sessions').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {

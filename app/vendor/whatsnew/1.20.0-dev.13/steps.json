@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "id": "project-icons",
+      "tag": "Projects",
+      "title": "Projects wear their own icon",
+      "body": "A project that has an icon in its folder (a favicon, an app icon) now shows it in place of its letters: in the sidebar, beside the project's name, and on the phone app's bubbles and live card. Nothing to set up. It is looked for each time you open a chat there, and a project without one keeps its letters.",
+      "art": "project-icons.html",
+      "artTitle": "Projects"
+    }
+  ]
+}

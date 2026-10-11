@@ -255,7 +255,18 @@ class MainActivity : Activity() {
     private fun withChat(chatId: String, then: (ChatRef) -> Unit) {
         val s = server ?: return
         if (!Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) return
-        Bg.run({ Api.authed(applicationContext, s.id, "GET", "/api/ui-sessions") }) { result ->
+        Bg.run({
+            val r = Api.authed(applicationContext, s.id, "GET", "/api/ui-sessions")
+            // While still off the main thread: have the project's icon kept,
+            // so the bubble's head is drawn with it the first time.
+            r.json?.optJSONArray("sessions")?.let { list ->
+                for (i in 0 until list.length()) {
+                    val x = list.optJSONObject(i) ?: continue
+                    if (x.optString("id") == chatId) x.optJSONObject("mark")?.optString("icon")?.takeIf { it.isNotEmpty() }?.let { runCatching { Icons.ensure(applicationContext, s.id, it) } }
+                }
+            }
+            r
+        }) { result ->
             val sessions = result.getOrNull()?.json?.optJSONArray("sessions")
             var found: ChatRef? = null
             if (sessions != null) for (i in 0 until sessions.length()) {

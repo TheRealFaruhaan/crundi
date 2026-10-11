@@ -65,6 +65,34 @@ object Api {
 
     private val authLock = Any()
 
+    /** A file of the server's, as this app's own login. Null for anything but a plain success within the size given. */
+    fun authedBytes(ctx: android.content.Context, serverId: String, path: String, maxBytes: Int): ByteArray? = synchronized(authLock) {
+        val server = Servers.byId(ctx, serverId) ?: return null
+        fun once(): Pair<Int, ByteArray?> {
+            val c = URL(server.baseUrl + path).openConnection() as HttpURLConnection
+            try {
+                c.connectTimeout = 6_000
+                c.readTimeout = 8_000
+                c.instanceFollowRedirects = false
+                c.setRequestProperty("X-Crundi-Client", CLIENT_TAG)
+                c.setRequestProperty("User-Agent", "Crundi $UA_SUFFIX")
+                c.setRequestProperty("Authorization", "Bearer ${server.bgToken}")
+                val status = c.responseCode
+                if (status != 200) return Pair(status, null)
+                if (c.contentLength > maxBytes) return Pair(status, null)
+                val out = java.io.ByteArrayOutputStream()
+                c.inputStream.use { ins ->
+                    val buf = ByteArray(16 * 1024)
+                    while (true) { val n = ins.read(buf); if (n < 0) break; out.write(buf, 0, n); if (out.size() > maxBytes) return Pair(status, null) }
+                }
+                return Pair(status, out.toByteArray())
+            } finally { c.disconnect() }
+        }
+        var r = once()
+        if (r.first == 401 && refresh(server)) { Servers.save(ctx, server); r = once() }
+        r.second
+    }
+
     /**
      * A call as this app's own login, renewing it once if it has aged out.
      *

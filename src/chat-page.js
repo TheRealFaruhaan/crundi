@@ -37,6 +37,7 @@ button{font:inherit;color:inherit}
 .cp-btn:active{background:var(--bg-hover)}
 .cp-btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #cp-mark{width:38px;height:38px;flex:none;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;letter-spacing:.3px;color:#fff;background:var(--bg-tertiary)}
+#cp-mark img{width:100%;height:100%;object-fit:cover;border-radius:12px;display:block}
 #cp-names{flex:1;min-width:0;line-height:1.25}
 #cp-title{font-size:15px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #cp-sub{font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px}

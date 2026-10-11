@@ -55,10 +55,10 @@ object LiveCards {
         })
     }
 
-    private class Entry(val serverId: String, val chatId: String, val title: String, val project: String, val initials: String, val color: String, val colorDeep: String, val state: String, val since: Long, val at: Long) {
+    private class Entry(val serverId: String, val chatId: String, val title: String, val project: String, val initials: String, val color: String, val colorDeep: String, val state: String, val since: Long, val at: Long, val icon: String = "") {
         val active get() = state == "working" || state == "waiting" || state == "needs-input"
         val needs get() = state == "needs-input"
-        fun json() = JSONObject().put("serverId", serverId).put("chatId", chatId).put("title", title).put("project", project).put("initials", initials).put("color", color).put("colorDeep", colorDeep).put("state", state).put("since", since).put("at", at)
+        fun json() = JSONObject().put("serverId", serverId).put("chatId", chatId).put("title", title).put("project", project).put("initials", initials).put("color", color).put("colorDeep", colorDeep).put("state", state).put("since", since).put("at", at).put("icon", icon)
     }
 
     private fun load(ctx: Context): MutableMap<String, Entry> {
@@ -68,7 +68,7 @@ object LiveCards {
             val o = JSONObject(raw)
             for (k in o.keys()) {
                 val e = o.getJSONObject(k)
-                out[k] = Entry(e.getString("serverId"), e.getString("chatId"), e.optString("title", "Chat"), e.optString("project"), e.optString("initials", "C"), e.optString("color", "#6366f1"), e.optString("colorDeep", "#4f46e5"), e.optString("state"), e.optLong("since"), e.optLong("at"))
+                out[k] = Entry(e.getString("serverId"), e.getString("chatId"), e.optString("title", "Chat"), e.optString("project"), e.optString("initials", "C"), e.optString("color", "#6366f1"), e.optString("colorDeep", "#4f46e5"), e.optString("state"), e.optLong("since"), e.optLong("at"), e.optString("icon"))
             }
         }
         return out
@@ -93,7 +93,7 @@ object LiveCards {
         val now = System.currentTimeMillis()
         map.entries.removeAll { now - it.value.at > STALE_MS }
         val state = payload.optString("state")
-        val entry = Entry(server.id, id, ref.title, ref.project, ref.initials, ref.color, ref.colorDeep, state, payload.optLong("since", now).takeIf { it > 0 } ?: now, now)
+        val entry = Entry(server.id, id, ref.title, ref.project, ref.initials, ref.color, ref.colorDeep, state, payload.optLong("since", now).takeIf { it > 0 } ?: now, now, ref.icon)
         val wasActive = map[ref.key]?.active == true
         if (entry.active) map[ref.key] = entry else map.remove(ref.key)
         save(ctx, map)
@@ -105,7 +105,7 @@ object LiveCards {
     fun active(ctx: Context, serverId: String): List<ChatRef> {
         val now = System.currentTimeMillis()
         return load(ctx).values.filter { it.serverId == serverId && it.active && now - it.at <= STALE_MS }
-            .map { ChatRef(it.serverId, it.chatId, it.title, it.project, it.initials, it.color, it.colorDeep) }
+            .map { ChatRef(it.serverId, it.chatId, it.title, it.project, it.initials, it.color, it.colorDeep, it.icon) }
     }
 
     /** Forget everything about a server: it was removed from this phone. */
@@ -179,7 +179,7 @@ object LiveCards {
         // chat, where it is deliberate.
         // Posting a card again replays whatever entrance the phone gives a
         // live card, so it is posted only when what it says has changed.
-        val says = "$title|$lines|${needs.size}|${working.size}|${first.since}|${working.firstOrNull { it.state == "working" } != null}"
+        val says = "${first.icon}|$title|$lines|${needs.size}|${working.size}|${first.since}|${working.firstOrNull { it.state == "working" } != null}"
         if (lastSaid[id] == says && (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications.any { it.id == id }) return
         lastSaid[id] = says
         val built = b.build()
@@ -214,9 +214,11 @@ object LiveCards {
             // screen as well. Left uncoloured, the phone uses its plain
             // outline. The glow itself is Samsung's and not something the
             // app draws or can switch off.
-            // No picture. The project's mark was here, and on a Samsung phone
-            // it was drawn half off the edge of the card. The project's name
-            // is in the line at the top either way.
+            // The project's own icon, where it has one. The lettered mark was
+            // here once and was taken off: on a Samsung phone it was drawn
+            // half off the edge of the card. A project with no icon therefore
+            // still has no picture, and its name is in the line at the top.
+            .apply { Icons.cached(ctx, e.serverId, e.icon)?.let { icon -> runCatching { Icons.head(icon, Ui.dp(ctx, 48), adaptive = false) }.getOrNull()?.let { setLargeIcon(it) } } }
             .setSubText(project.ifEmpty { "Crundi" })
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOnlyAlertOnce(true)

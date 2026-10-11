@@ -29,6 +29,10 @@ class PushService : FirebaseMessagingService() {
                 val text = PushBox.open(sealed, keys) ?: continue
                 val payload = JSONObject(text)
                 val kind = payload.optString("kind")
+                // The project's icon, if this is the first this phone has
+                // heard of it (or of this version of it). Fetched here, off
+                // the main thread, so that whatever draws next finds it kept.
+                payload.optJSONObject("chat")?.optJSONObject("mark")?.optString("icon")?.takeIf { it.isNotEmpty() }?.let { runCatching { Icons.ensure(app, server.id, it) } }
                 // A change of state draws the live card and makes no sound;
                 // anything else is a notification.
                 if (payload.optBoolean("silent") && kind == "state") {

@@ -25,6 +25,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs';
+import { isProjectIconUrl } from './project-icon.js';
 import { join } from 'node:path';
 import { config } from './config.js';
 import { encryptFor } from './web-push.js';
@@ -283,7 +284,7 @@ export function buildPayload(text, meta = {}) {
       id: String(c.id).slice(0, 80),
       title: clip(c.title || 'Chat', 120),
       project: clip(c.project || '', 80),
-      mark: c.mark ? { initials: String(c.mark.initials || '').slice(0, 4), color: String(c.mark.color || '').slice(0, 9), colorDeep: String(c.mark.colorDeep || '').slice(0, 9) } : null,
+      mark: c.mark ? { initials: String(c.mark.initials || '').slice(0, 4), color: String(c.mark.color || '').slice(0, 9), colorDeep: String(c.mark.colorDeep || '').slice(0, 9), ...(isProjectIconUrl(c.mark.icon) ? { icon: c.mark.icon } : {}) } : null,
     } } : {}),
   });
 }

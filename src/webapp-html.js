@@ -467,6 +467,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
       letter-spacing: 0.03em; font-family: var(--mono);
       transition: border-color 0.14s, color 0.14s, box-shadow 0.14s, background 0.14s;
     }
+    /* A project's own icon, where its folder has one: in the round tile of
+       the collapsed rail, and small beside the name otherwise. */
+    .sidebar-item .proj-initials.has-ico { background: var(--bg-primary); overflow: hidden; padding: 0; }
+    .sidebar-item .proj-initials img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .sidebar-item .proj-ico { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; flex-shrink: 0; }
+    .sidebar.collapsed .sidebar-item .proj-ico { display: none; }
+    #current-project-ico { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; flex-shrink: 0; display: none; }
+    #current-project-ico.on { display: inline-block; }
     .sidebar-list {
       flex: 1;
       overflow-y: auto;
@@ -3508,6 +3516,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       <button class="hamburger" data-action="toggle-sidebar"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <span class="logo">${headSvg('tb', 'cb-idle')}<span class="logo-text">${wordSvg()}</span></span>
       <span class="separator">/</span>
+      <img id="current-project-ico" alt="">
       <span class="project-name" id="current-project">No project</span>
       <span class="spacer"></span>
       <span class="wg-chips" id="wg-chips" style="display:none"></span>
@@ -5640,7 +5649,34 @@ export function getWebappHtml(botUsername, appVersion = '') {
       return (ini || '?').toUpperCase();
     }
 
+    // A project's own icon. Fetched once per address as this page's login
+    // and kept as a picture in memory: the address changes when the file
+    // does, so a new icon is simply a new entry. Until it has arrived, and
+    // for good if it cannot be had, the project keeps its letters.
+    const projIcons = new Map();
+    function projIconSrc(u) {
+      if (!u) return '';
+      if (projIcons.has(u)) return projIcons.get(u) || '';
+      projIcons.set(u, '');
+      apiFetch(u).then(r => (r && r.ok ? r.blob() : null)).then(b => {
+        if (!b || !b.size) return;
+        projIcons.set(u, URL.createObjectURL(b));
+        renderProjects();
+        paintProjectIcon();
+      }).catch(() => { /* the letters stay */ });
+      return '';
+    }
+    function paintProjectIcon() {
+      const img = $('#current-project-ico');
+      if (!img) return;
+      const p = projects.find(x => x.alias === currentProject);
+      const src = p ? projIconSrc(p.icon) : '';
+      if (src && img.getAttribute('src') !== src) img.src = src;
+      img.classList.toggle('on', !!src);
+    }
+
     function renderProjects() {
+      paintProjectIcon();
       const list = $('#project-list');
       list.innerHTML = '';
       for (const p of projects) {
@@ -5679,8 +5715,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
           : '';
         // Per-terminal close lives on each terminal's header now; the project
         // row only shows a "has terminals" dot + the remove-project control.
-        item.innerHTML = '<span class="proj-initials" aria-hidden="true">' + escHtml(projectInitials(p.name || p.alias)) + '</span>'
+        const icoSrc = projIconSrc(p.icon);
+        item.innerHTML = (icoSrc
+            ? '<span class="proj-initials has-ico" aria-hidden="true"><img src="' + escHtml(icoSrc) + '" alt=""></span>'
+            : '<span class="proj-initials" aria-hidden="true">' + escHtml(projectInitials(p.name || p.alias)) + '</span>')
           + '<span class="dot"></span>'
+          + (icoSrc ? '<img class="proj-ico" src="' + escHtml(icoSrc) + '" alt="">' : '')
           + '<span class="name">' + escHtml(p.name || p.alias) + '</span>'
           + sched
           + heart

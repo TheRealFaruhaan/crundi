@@ -225,6 +225,7 @@ class SettingsActivity : Activity() {
                     runCatching { Api.authed(app, s.id, "POST", "/api/auth/logout") }
                 }) {
                     LiveCards.forget(app, s.id)
+                    Icons.forget(s.id)
                     Servers.remove(app, s.id)
                     if (Servers.all(app).isEmpty()) {
                         startActivity(Intent(this, PairActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK))

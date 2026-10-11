@@ -37,7 +37,7 @@ import { registerService, listRegisteredForProject, updateRegistered, getRegiste
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import * as terminalsMod from './terminals.js';
-import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt } from './project-store.js';
+import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt, getProjectIconFile, setProjectIconFile } from './project-store.js';
 import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
@@ -72,6 +72,7 @@ import * as webPush from './web-push.js';
 import * as mobilePush from './mobile-push.js';
 import { getChatPageHtml } from './chat-page.js';
 import { chatMark } from './project-mark.js';
+import { findProjectIcon, storedIcon, projectIconUrl, readProjectIcon } from './project-icon.js';
 import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
@@ -1217,6 +1218,37 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // the phones, sealed like any notification but marked silent: it draws the
   // card and makes no sound. It goes to phones only, never to Telegram or a
   // browser, which have nothing to draw it with.
+  // A chat's mark, with the project's own icon where it has one. The letters
+  // and colour are always there as well: they are what is drawn until the
+  // picture has been fetched, and for ever where it cannot be.
+  function iconUrlOf(project) {
+    if (!project) return '';
+    try { const p = getProjectUnscoped(project); return p && p.path ? projectIconUrl(p.alias || project, p.path, p.iconFile) : ''; } catch { return ''; }
+  }
+  // Look in the project's folder for its icon and keep the full path of what
+  // is found. Done each time a chat is opened there: that is when somebody is
+  // working in the project, so it is when an icon is most likely to have been
+  // added or replaced, and it keeps the looking off every other path.
+  function lookForIcon(project) {
+    try {
+      const p = project ? getProjectUnscoped(project) : null;
+      if (!p || !p.path) return;
+      const found = findProjectIcon(p.path);
+      if (setProjectIconFile(p.alias || project, found ? found.file : '')) broadcastState();
+    } catch { /* the letters are drawn */ }
+  }
+  // A project nobody has opened a chat in since this was added has never been
+  // looked at. Look once, so its icon does not wait for a chat.
+  function lookOnceForIcons(list) {
+    for (const p of list) if (getProjectIconFile(p.alias) === undefined) { lookForIcon(p.alias); p.iconFile = getProjectIconFile(p.alias) || ''; }
+    return list;
+  }
+  function markOf(project, title) {
+    const mark = chatMark(project || '', title);
+    const icon = iconUrlOf(project);
+    return icon ? { ...mark, icon } : mark;
+  }
+
   const workingSince = new Map();   // chat id -> when this run of work began
   const onLiveCard = new Map();     // chat id -> the chat as last told to phones, while it is on a card
   function sendState(chat, state, since) {
@@ -1230,7 +1262,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const active = state === 'working' || state === 'needs-input' || state === 'waiting';
     if (active && !workingSince.has(term.id)) workingSince.set(term.id, Date.now());
     const since = workingSince.get(term.id) || Date.now();
-    const chat = { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: chatMark(term.project || '', term.title) };
+    const chat = { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) };
     if (active) onLiveCard.set(term.id, chat); else { workingSince.delete(term.id); onLiveCard.delete(term.id); }
     sendState(chat, state, since);
   }
@@ -1287,7 +1319,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // it: the phone app files the notification under that chat's bubble and
       // opens /chat/<id> from it. Only chats have that page; a terminal does not.
       const chat = term.kind === 'ui'
-        ? { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: chatMark(term.project || '', term.title) }
+        ? { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) }
         : null;
       const about = chat ? { chat, url: `/chat/${term.id}` } : {};
       // One permission request waiting: say what it is, so a phone can offer
@@ -1402,7 +1434,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (!term || term.collaborator || term.background) return;
     mobilePush.send('', {
       tag: 'suggestion', silent: true, suggestion: String(text || ''), url: `/chat/${sid}`,
-      chat: { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: chatMark(term.project || '', term.title) },
+      chat: { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) },
     }).catch(() => { /* not worth a log line */ });
   });
 
@@ -1993,7 +2025,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // where the request is waiting with its PIN box.
       const asking = sessionId && claudeUi ? claudeUi.list().find((x) => x.id === sessionId) : null;
       const about = asking && !asking.collaborator
-        ? { url: `/chat/${asking.id}`, chat: { id: asking.id, title: asking.longTitle || asking.title || 'Chat', project: asking.project || '', mark: chatMark(asking.project || '', asking.title) } }
+        ? { url: `/chat/${asking.id}`, chat: { id: asking.id, title: asking.longTitle || asking.title || 'Chat', project: asking.project || '', mark: markOf(asking.project || '', asking.title) } }
         : {};
       notifyEvent('secretRequest', `${what}\n\nApprove it in Crundi — the prompt appears in the chat itself, or under Secrets.`, about);
     });
@@ -2012,6 +2044,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const a = sch.action || {};
     if (a.kind !== 'chat') return { ok: false, error: 'That schedule is not a chat job' };
 
+    lookForIcon(sch.project);
     const created = await claudeUi.create(sch.project, {
       title: (sch.name || 'Scheduled chat') + ' (setup)',
       cwd: a.cwd || '',
@@ -2896,9 +2929,32 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const mine = listProjects()
           .filter(p => principal.projects.includes(String(p.alias || '').toLowerCase()))
           .map(p => ({ ...p, path: principal.roots[String(p.alias || '').toLowerCase()] || p.path }));
-        return json(res, { projects: mine });
+        return json(res, { projects: lookOnceForIcons(mine).map(({ iconFile, ...p }) => ({ ...p, icon: projectIconUrl(p.alias, p.path, iconFile) })) });
       }
-      return json(res, { projects: listProjects() });
+      return json(res, { projects: lookOnceForIcons(listProjects()).map(({ iconFile, ...p }) => ({ ...p, icon: projectIconUrl(p.alias, p.path, iconFile) })) });
+    }
+
+    // The project's own icon, found in its folder (see project-icon.js). The
+    // address carries the file's time and size, so what is fetched under one
+    // address never changes and can be kept for good.
+    if (path === '/api/project-icon' && req.method === 'GET') {
+      const p = getProject(url.searchParams.get('project') || '');
+      const icon = p && p.path ? storedIcon(getProjectUnscoped(p.alias)?.path || p.path, getProjectIconFile(p.alias)) : null;
+      if (!icon) { res.writeHead(404); res.end('Not found'); return; }
+      try {
+        const { body, type } = readProjectIcon(icon);
+        res.writeHead(200, {
+          'Content-Type': type,
+          'Content-Length': body.length,
+          'Cache-Control': 'private, max-age=31536000, immutable',
+          'X-Content-Type-Options': 'nosniff',
+          // A drawing is a document, and one opened by itself could run
+          // script as this site. It is only ever shown as a picture.
+          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        });
+        res.end(body);
+      } catch { res.writeHead(404); res.end('Not found'); }
+      return;
     }
 
     // Persist the sidebar order (array of aliases).
@@ -3564,7 +3620,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // `mark` is the chat's tile (project-mark.js): the project's colour,
       // the chat's initials. Worked out here so every client draws the same
       // one without carrying the recipe.
-      return json(res, { sessions: (claudeUi ? claudeUi.list() : []).map((s) => ({ ...s, mark: chatMark(s.project, s.title) })) });
+      return json(res, { sessions: (claudeUi ? claudeUi.list() : []).map((s) => ({ ...s, mark: markOf(s.project, s.title) })) });
     }
 
     // ─── Deferred chat messages ───
@@ -3673,6 +3729,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         };
       }
       const result = await claudeUi.create(body.project, body);
+      lookForIcon(body.project);
       broadcastState();
       return json(res, result);
     }
