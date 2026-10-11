@@ -4923,13 +4923,28 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const check = el('button', btnCss, 'Check for update');
         const install = el('button', primaryCss, 'Install update');
         install.style.display = 'none';
+        // The version the server needs may be a dev build, which a client
+        // following production releases is never offered. Without a way to
+        // follow dev builds from HERE, such a client would sit on this screen
+        // with nothing to find and no way to reach its own settings.
+        const needsDev = String(body.minimum).indexOf('-') >= 0;
+        const toDev = el('button', btnCss, 'Switch to dev builds');
+        toDev.style.display = 'none';
         const show = (s) => {
           if (!s) return;
+          const found = s.available || s.downloaded || s.downloading;
+          const offerDev = !found && needsDev && s.channel !== 'dev' && !!updater.setUpdateChannel;
           if (s.downloaded) status.textContent = 'Version ' + (s.version || '') + ' is ready to install.';
           else if (s.downloading) status.textContent = 'Downloading the update: ' + Math.round(s.percent || 0) + '%';
           else if (s.available) status.textContent = 'Version ' + (s.version || '') + ' is available.';
-          else status.textContent = 'No newer client was found. Check that this client follows the same update channel as the server.';
+          else if (offerDev) status.textContent = 'The version this server needs is a dev build, and this client follows production releases only. Switch it to dev builds to get the update.';
+          else status.textContent = 'No newer client was found yet. If the server was only just updated, the client build may still be on its way: check again in a few minutes.';
           install.style.display = (s.available || s.downloaded) ? '' : 'none';
+          toDev.style.display = offerDev ? '' : 'none';
+        };
+        toDev.onclick = () => {
+          status.textContent = 'Switching to dev builds...';
+          Promise.resolve(updater.setUpdateChannel('dev')).then(() => check.onclick()).catch(() => { status.textContent = 'Could not switch the update channel.'; });
         };
         check.onclick = () => {
           status.textContent = 'Checking for an update...';
@@ -4937,7 +4952,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         };
         install.onclick = () => { try { updater.installUpdate(); } catch (e) { status.textContent = 'Could not start the update.'; } };
         if (updater.onUpdateStatus) { try { updater.onUpdateStatus(show); } catch (e) { /* status stays manual */ } }
-        row.appendChild(check); row.appendChild(install);
+        row.appendChild(check); row.appendChild(toDev); row.appendChild(install);
         check.onclick();
       } else if (kind === 'web') {
         status.textContent = 'Reloading did not bring the newer page. Close this tab or window and open Crundi again.';

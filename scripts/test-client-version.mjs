@@ -116,6 +116,7 @@ ok(gateAt > 0 && gateAt < server.indexOf("// Serve web app"), 'the server checks
 ok(/refusalFor\(clientVersion\.identifyClient\(req\)\)\) \{\s+socket\.write\('HTTP\/1\.1 426/.test(server), 'and before it accepts a socket');
 const page = readFileSync(join(root, 'src', 'webapp-html.js'), 'utf8');
 ok(page.includes("opts.headers['X-Crundi-Web'] = PAGE_VERSION") && page.includes('res.status === 426'), 'the page sends its version and handles a refusal');
+ok(page.includes("const needsDev = String(body.minimum).indexOf('-') >= 0;") && page.includes("updater.setUpdateChannel('dev')") && page.includes("s.channel !== 'dev'"), 'a client on production releases, refused for want of a dev build, is offered the dev channel from the refusal screen');
 
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

@@ -296,8 +296,8 @@ and the Linux desktop client.
   app (Connect a phone, Mobile push settings, the What's New step).
 - **Done:** the Phone app section in Settings (`app/vendor/crundi-phone.js`):
   the Connect a phone dialog, which shows the Crundi code, waits, and plays
-  the ending; and the push key box. The What's New step is still held back,
-  until there is a build people can download.
+  the ending; and the push key box. Its What's New step is in the
+  `1.20.0-dev.1` edition.
 - **Done, first cut of the Android shell** (`android/app`): pairing by scan or
   pasted link, the version check both ways, the server's page in a web view
   signed in from the pairing, file picking, downloads, camera and microphone
