@@ -1392,6 +1392,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }, 60_000);
   if (collabChatSweep.unref) collabChatSweep.unref();
   if (claudeUi) claudeUi.onSessionGone((sid) => { approvals.dropSession(sid); broadcastApprovals(); tellPhonesGone(sid); });
+  // A chat's suggested next message, for the phone: it is offered on that
+  // chat's notification, where the chat page offers it above the message box.
+  // Sent silently, like a change of state, and to phones only. An empty one
+  // takes the offer away again (the suggestion was used or dismissed).
+  if (claudeUi && claudeUi.onSuggestion) claudeUi.onSuggestion((sid, text) => {
+    if (!channels.isEnabled('mobile')) return;
+    const term = claudeUi.list().find((x) => x.id === sid);
+    if (!term || term.collaborator || term.background) return;
+    mobilePush.send('', {
+      tag: 'suggestion', silent: true, suggestion: String(text || ''), url: `/chat/${sid}`,
+      chat: { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: chatMark(term.project || '', term.title) },
+    }).catch(() => { /* not worth a log line */ });
+  });
 
   // A card answered in the chat must leave the inbox at once, not whenever the
   // page next reconnects. Coalesced: one answer can clear several cards.

@@ -398,7 +398,30 @@ and the Linux desktop client.
   request. Bubbles are the one way a chat floats.
 - **Release builds are shrunk with R8** from 1.0.0-dev.4. The page calls into
   the app by name; `proguard-rules.pro` keeps those names.
-- **Next:** try 1.0.0-dev.4 on the phone and read the notification log.
+- **Proven on the owner's phone with app 1.0.0-dev.4:** notifications arrive,
+  with the reply box, and the live card shows in the notification panel. So
+  the registration race was the fault, or at least a fault.
+- **Reported from that test, and addressed in app 1.0.0-dev.5 and server
+  1.20.0-dev.6 (none of these fixes proven on a phone yet):**
+  - No vibration. The first Chats channel was made without it and Android
+    does not let a channel be changed, so there is a new channel (`chats.v2`)
+    with vibration, and the old one is removed.
+  - The chat's suggested next message is now offered on its notification, as
+    a choice under it. The server sends it to phones silently when it appears
+    and when it goes. Android's own guessed replies are switched off.
+  - The live card's picture was drawn half off the card on Samsung. It is
+    removed; the project's name is in the card's top line.
+  - Pasting a picture from the keyboard. The app's web view now tells the
+    keyboard it takes images, and hands one over to the page as a paste.
+- **Open: the live card is not treated as a live update on the owner's
+  Samsung.** It shows in the panel as an ordinary ongoing notification, with
+  no status bar chip and not under the live category. The card asks for
+  promotion as Android 16 documents. 1.0.0-dev.5 writes to the notification
+  log which Android version the phone runs, whether Crundi may post promoted
+  notifications, whether the card meets Android's rules, and whether Android
+  promoted it. Samsung has had its own live notification system limited to
+  approved apps; whether that is what stands in the way is not known yet.
+- **Next:** read that log line from the phone.
 
 ## API notes for the app
 

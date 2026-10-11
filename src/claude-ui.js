@@ -1512,6 +1512,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (!text || s.state !== 'idle') return;
     s.suggestion = { text, uuid: msg.uuid || genId() };
     s.emitter.emit('event', { type: 'suggestion', suggestion: s.suggestion });
+    if (suggestionCb) { try { suggestionCb(s.id, text); } catch { /* the listener's problem */ } }
   }
 
   /** Drop the current suggestion and tell subscribers. */
@@ -1519,6 +1520,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (!s.suggestion) return;
     s.suggestion = null;
     s.emitter.emit('event', { type: 'suggestion', suggestion: null });
+    if (suggestionCb) { try { suggestionCb(s.id, ''); } catch { /* the listener's problem */ } }
   }
 
   /** The user closed the suggestion bubble. */
@@ -2036,6 +2038,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   /** Told when a collaborator's chat dies, so its escalations can be dropped. */
   let sessionGoneCb = null;
   function onSessionGone(cb) { sessionGoneCb = cb; }
+  // Told whenever a chat's suggested next message appears or goes ('' when it
+  // goes). The server passes it on to phones, which offer it on the chat's
+  // notification as something to tap.
+  let suggestionCb = null;
+  function onSuggestion(cb) { suggestionCb = cb; }
 
   function handleControlRequest(s, msg) {
     const req = msg.request || {};
@@ -2698,7 +2705,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
+    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },

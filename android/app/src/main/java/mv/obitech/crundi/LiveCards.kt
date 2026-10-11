@@ -82,13 +82,6 @@ object LiveCards {
 
     private fun cardId(serverId: String, project: String) = "live:$serverId:$project".hashCode()
 
-    /** "my-cool project" -> "MC": the project's own letters, for the card's picture. */
-    private fun projectInitials(name: String): String {
-        val words = name.split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }
-        if (words.isEmpty()) return "C"
-        return (words[0].take(1) + (words.getOrNull(1)?.take(1) ?: "")).uppercase()
-    }
-
     /** A silent message from the server: one chat's state has changed. */
     @Synchronized
     fun onState(ctx: Context, server: Server, payload: JSONObject) {
@@ -177,15 +170,35 @@ object LiveCards {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             ))
         }
-        runCatching { nm.notify(id, b.build()) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
+        val built = b.build()
+        runCatching { nm.notify(id, built) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
+        noteChip(ctx, id, built)
+    }
+
+    // Whether the phone gave the card its chip, said once per change, so that
+    // "it is in the panel but not in the status bar" has an answer.
+    private var lastChipNote = ""
+    private fun noteChip(ctx: Context, id: Int, built: android.app.Notification) {
+        val note = when {
+            Build.VERSION.SDK_INT < 36 -> "Live card shown without a status bar chip: this phone runs Android ${Build.VERSION.RELEASE}, and the chip needs Android 16"
+            else -> {
+                val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val allowed = runCatching { nm.canPostPromotedNotifications() }.getOrDefault(false)
+                val fits = runCatching { built.hasPromotableCharacteristics() }.getOrDefault(false)
+                val promoted = nm.activeNotifications.firstOrNull { it.id == id }?.notification?.let { (it.flags and 0x00040000) != 0 }
+                "Live card: chip allowed for Crundi = $allowed, card meets Android's rules = $fits, Android promoted it = ${promoted ?: "unknown"}"
+            }
+        }
+        if (note != lastChipNote) { lastChipNote = note; PushLog.add(ctx, note) }
     }
 
     private fun base(ctx: Context, e: Entry, project: String): NotificationCompat.Builder {
-        val mark = ChatRef(e.serverId, e.chatId, e.title, project, projectInitials(project), e.color, e.colorDeep)
         return NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
             .setColor(ctx.getColor(R.color.accent))
-            .setLargeIcon(Notifier.markBitmap(ctx, mark, adaptive = false))
+            // No picture. The project's mark was here, and on a Samsung phone
+            // it was drawn half off the edge of the card. The project's name
+            // is in the line at the top either way.
             .setSubText(project.ifEmpty { "Crundi" })
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOnlyAlertOnce(true)

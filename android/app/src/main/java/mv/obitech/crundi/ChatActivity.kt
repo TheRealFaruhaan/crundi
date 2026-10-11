@@ -35,7 +35,7 @@ class ChatActivity : Activity() {
         intent.getStringExtra(EXTRA_TITLE)?.let { if (it.isNotEmpty()) title = it }
 
         val root = FrameLayout(this).apply { setBackgroundColor(getColor(R.color.bg)); fitsSystemWindows = true }
-        val view = WebView(this)
+        val view = CrundiWebView(this)
         web = view
         view.setBackgroundColor(getColor(R.color.bg))
         view.settings.apply {

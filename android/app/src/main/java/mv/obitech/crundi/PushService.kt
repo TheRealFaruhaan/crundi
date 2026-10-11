@@ -34,6 +34,9 @@ class PushService : FirebaseMessagingService() {
                 if (payload.optBoolean("silent") && kind == "state") {
                     PushLog.add(app, "From ${server.host}: a chat is now ${payload.optString("state")}")
                     LiveCards.onState(app, server, payload)
+                } else if (payload.optBoolean("silent") && kind == "suggestion") {
+                    PushLog.add(app, "From ${server.host}: a suggested reply ${if (payload.optString("suggestion").isEmpty()) "withdrawn" else "offered"}")
+                    Notifier.suggest(app, server, payload)
                 } else {
                     PushLog.add(app, "From ${server.host}: a notification ($kind)")
                     Notifier.show(app, server, payload)

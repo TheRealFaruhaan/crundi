@@ -111,7 +111,7 @@ class SettingsActivity : Activity() {
         list.removeAllViews()
         list.addView(Ui.title(this, "App settings").apply { gravity = Gravity.START })
         list.addView(TextView(this).apply {
-            text = "Crundi ${BuildConfig.VERSION_NAME} (${BuildConfig.STORE})"
+            text = "Crundi ${BuildConfig.VERSION_NAME} (${BuildConfig.STORE})  ·  Android ${Build.VERSION.RELEASE} (${Build.MANUFACTURER} ${Build.MODEL})"
             setTextColor(getColor(R.color.text_dim)); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(Ui.dp(this@SettingsActivity, 2), Ui.dp(this@SettingsActivity, 4), 0, 0)
         })

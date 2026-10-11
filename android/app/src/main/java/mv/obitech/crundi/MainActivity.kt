@@ -128,7 +128,7 @@ class MainActivity : Activity() {
     private fun showPage(s: Server) {
         root.findViewWithTag<View>("notice")?.let { root.removeView(it) }
         web?.let { root.removeView(it); it.destroy() }
-        val view = WebView(this)
+        val view = CrundiWebView(this)
         web = view
         view.setBackgroundColor(getColor(R.color.bg))
         view.settings.apply {

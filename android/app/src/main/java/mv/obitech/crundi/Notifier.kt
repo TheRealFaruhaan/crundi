@@ -51,7 +51,11 @@ class ChatRef(val serverId: String, val id: String, val title: String, val proje
  * All three are made here, from one ChatRef.
  */
 object Notifier {
-    const val CHATS = "chats"
+    // "chats" was the first channel, made without vibration. Android does not
+    // let an app change a channel it has already made, so the fix is a new
+    // channel and the removal of the old one.
+    const val CHATS = "chats.v2"
+    private const val CHATS_OLD = "chats"
     const val SERVER = "server"
     const val EXTRA_SERVER = "server"
     const val EXTRA_PATH = "path"
@@ -63,8 +67,11 @@ object Notifier {
 
     fun channels(ctx: Context) {
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        runCatching { nm.deleteNotificationChannel(CHATS_OLD) }
         val chats = NotificationChannel(CHATS, "Chats", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "Claude finished, or needs you"
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 180, 120, 180)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setAllowBubbles(true)
         }
         val server = NotificationChannel(SERVER, "Server", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "Services, updates and everything else" }
@@ -121,8 +128,43 @@ object Notifier {
         runCatching { ShortcutManagerCompat.pushDynamicShortcut(ctx, shortcut) }
     }
 
+    // ─── The chat's suggested next message ───
+    // The chat page offers one above the message box ("Suggested, tap to
+    // send"). The same one is offered on the chat's notification, as a
+    // choice under it. It arrives by itself, a moment after Claude finishes,
+    // so it is kept here until the notification is drawn or redrawn.
+    private const val SUGGEST_PREFS = "crundi.suggest"
+    private const val SUGGEST_FRESH_MS = 30 * 60 * 1000L
+
+    private fun suggestionFor(ctx: Context, chat: ChatRef): String? {
+        val raw = ctx.getSharedPreferences(SUGGEST_PREFS, Context.MODE_PRIVATE).getString(chat.key, null) ?: return null
+        val at = raw.substringBefore('|').toLongOrNull() ?: return null
+        if (System.currentTimeMillis() - at > SUGGEST_FRESH_MS) return null
+        return raw.substringAfter('|').takeIf { it.isNotBlank() }
+    }
+
+    private fun rememberSuggestion(ctx: Context, chat: ChatRef, text: String) {
+        val e = ctx.getSharedPreferences(SUGGEST_PREFS, Context.MODE_PRIVATE).edit()
+        if (text.isBlank()) e.remove(chat.key) else e.putString(chat.key, "${System.currentTimeMillis()}|$text")
+        e.apply()
+    }
+
+    /** A suggestion has arrived, or been withdrawn (empty). Redraw the chat's notification if it is showing. */
+    fun suggest(ctx: Context, server: Server, payload: JSONObject) {
+        val chatJson = payload.optJSONObject("chat") ?: return
+        if (chatJson.optString("id").isEmpty()) return
+        val chat = ChatRef.from(server.id, chatJson)
+        rememberSuggestion(ctx, chat, payload.optString("suggestion"))
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val showing = nm.activeNotifications.firstOrNull { it.id == chat.notificationId }?.notification ?: return
+        val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(showing) ?: return
+        // Quietly: the notification is already there, this only adds to it.
+        post(ctx, chat.notificationId, chatBuilder(ctx, chat, style, person(ctx, chat)).setOnlyAlertOnce(true).setSilent(true))
+    }
+
     private fun chatBuilder(ctx: Context, chat: ChatRef, style: NotificationCompat.MessagingStyle, person: Person): NotificationCompat.Builder {
         publishShortcut(ctx, chat, person)
+        val suggestion = suggestionFor(ctx, chat)
         val reply = PendingIntent.getBroadcast(
             ctx, chat.notificationId,
             Intent(ctx, ReplyReceiver::class.java).setAction("reply:${chat.key}").putExtra(EXTRA_SERVER, chat.serverId).putExtra(EXTRA_CHAT, chat.id),
@@ -140,10 +182,16 @@ object Notifier {
             .setContentIntent(openMain(ctx, chat.serverId, "/chat/${chat.id}", chat.notificationId))
             .addAction(
                 NotificationCompat.Action.Builder(R.drawable.ic_stat, "Reply", reply)
-                    .addRemoteInput(RemoteInput.Builder(KEY_REPLY).setLabel("Message Claude").build())
+                    .addRemoteInput(
+                        RemoteInput.Builder(KEY_REPLY).setLabel("Message Claude")
+                            .apply { if (suggestion != null) setChoices(arrayOf<CharSequence>(suggestion)) }
+                            .build()
+                    )
                     .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
                     .setShowsUserInterface(false)
-                    .setAllowGeneratedReplies(true)
+                    // Android's own guesses at a reply (a thumbs up, "OK")
+                    // are for people. To Claude they are noise at best.
+                    .setAllowGeneratedReplies(false)
                     .build()
             )
         // What the bubble opens: this chat by itself, in the compact page.
@@ -251,6 +299,8 @@ object Notifier {
 
     /** After a reply typed into the notification: show it as said, or say why it was not. */
     fun afterReply(ctx: Context, chat: ChatRef, text: String, problem: String?) {
+        // Something has been said: the suggestion was for the turn before.
+        rememberSuggestion(ctx, chat, "")
         val who = person(ctx, chat)
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val showing = nm.activeNotifications.firstOrNull { it.id == chat.notificationId }?.notification

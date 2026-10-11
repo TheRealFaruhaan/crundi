@@ -159,6 +159,17 @@ ok(/tellPhonesState\(term, state, prev\);/.test(srv) && /if \(term\.kind !== 'ui
 ok(/if \(!channels\.isEnabled\('mobile'\)\) return;\s+mobilePush\.send\(''/.test(srv), 'and only while the Phone app channel is on');
 ok(/claudeUi\.onSessionGone\(\(sid\) => \{[^}]*tellPhonesGone\(sid\);/.test(srv), 'a chat closed while on a card is reported as finished, so its line does not linger');
 
+// The chat's suggested next message.
+r = relay(allSent);
+await mp.send('', { tag: 'suggestion', silent: true, suggestion: 'Now a background one', chat: { id: 'abc123', title: 'T', project: 'crundi', mark: MARK } }, { fetchImpl: r.fetchImpl });
+const sug = p1.open(r.seen[0].body.messages[0].payload);
+ok(sug.kind === 'suggestion' && sug.silent === true && sug.suggestion === 'Now a background one' && sug.chat.id === 'abc123' && sug.body === '', 'a suggested reply is sent silently, for its chat');
+r = relay(allSent);
+await mp.send('', { tag: 'suggestion', silent: true, suggestion: '', chat: { id: 'abc123', title: 'T', project: 'crundi', mark: MARK } }, { fetchImpl: r.fetchImpl });
+ok(p1.open(r.seen[0].body.messages[0].payload).suggestion === '', 'and an empty one takes the offer away');
+ok(!('suggestion' in about), 'an ordinary notification carries no suggestion field');
+ok(/claudeUi\.onSuggestion\(\(sid, text\) => \{\s+if \(!channels\.isEnabled\('mobile'\)\) return;/.test(srv), 'the server passes suggestions on only while the Phone app channel is on');
+
 // A permission request the phone can answer.
 r = relay(allSent);
 await mp.send('Claude needs your input.', { tag: 'needsInput', chat: { id: 'abc123', title: 'T', project: 'crundi', mark: MARK }, prompt: { requestId: 'req_1', tool: 'Bash', summary: 'npm run build' } }, { fetchImpl: r.fetchImpl });
