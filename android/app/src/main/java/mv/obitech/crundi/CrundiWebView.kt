@@ -52,6 +52,11 @@ class CrundiWebView(context: Context) : WebView(context) {
         Bg.run({
             val mime = ctx.contentResolver.getType(uri) ?: "image/png"
             val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+            // A screenshot copied as a PNG can be several megabytes, which is
+            // a slow upload on a phone for no gain. Past a size it is sent as
+            // a JPEG, no larger than a phone screen needs. Smaller pictures
+            // go exactly as they are.
+            if (bytes.size > SHRINK_OVER && mime != "image/gif") shrink(bytes)?.let { return@run Pair("image/jpeg", it) }
             Pair(mime, bytes)
         }) { result ->
             val (mime, bytes) = result.getOrNull() ?: Pair("", ByteArray(0))
@@ -75,5 +80,22 @@ class CrundiWebView(context: Context) : WebView(context) {
         }
     }
 
-    companion object { private const val MAX_BYTES = 12 * 1024 * 1024 }
+    private fun shrink(bytes: ByteArray): ByteArray? = try {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 2 * LONG_SIDE) sample *= 2
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+        val long = maxOf(bmp.width, bmp.height)
+        val fitted = if (long > LONG_SIDE) android.graphics.Bitmap.createScaledBitmap(bmp, bmp.width * LONG_SIDE / long, bmp.height * LONG_SIDE / long, true) else bmp
+        java.io.ByteArrayOutputStream().also { fitted.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }.toByteArray()
+    } catch (e: Throwable) {
+        null
+    }
+
+    companion object {
+        private const val MAX_BYTES = 12 * 1024 * 1024
+        private const val SHRINK_OVER = 1536 * 1024
+        private const val LONG_SIDE = 2560
+    }
 }

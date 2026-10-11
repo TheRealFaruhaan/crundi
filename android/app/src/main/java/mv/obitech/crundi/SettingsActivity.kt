@@ -139,7 +139,7 @@ class SettingsActivity : Activity() {
         } else row("Bubbles", "Need Android 11 or newer.", null, null, null)
 
         when (LiveCards.chipAllowed(this)) {
-            true -> row("Live card", "While Claude works, a chip in the status bar and a card on the lock screen.", true, "Manage") { liveSettings() }
+            true -> row("Live card", "While Claude works, a chip in the status bar and a card on the lock screen." + if (Build.MANUFACTURER.equals("samsung", true)) "\nOn Samsung this may also need Developer options, Live notifications for all apps, turned on." else "", true, "Manage") { liveSettings() }
             false -> row("Live card", "The status bar chip is turned off. The card still shows among your notifications.", false, "Allow") { liveSettings() }
             null -> row("Live card", "Shown among your notifications while Claude works. The status bar chip needs Android 16 or newer.", null, null, null)
         }

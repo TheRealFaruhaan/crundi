@@ -3,7 +3,6 @@ package mv.obitech.crundi
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -21,7 +20,8 @@ import java.util.Locale
  * working or waiting on the person. In the status bar it is a chip (how long
  * one chat has been at it, how many are, or that one needs you); opened, it
  * is a line per chat with the time it started, the ones that need action
- * first and marked.
+ * first and marked. It opens the chat and does nothing else: there is no
+ * Stop on it.
  *
  * Android calls this a Live Update, and is strict about it: an ongoing
  * notification with a title, in one of the system's own styles, that asks to
@@ -162,14 +162,9 @@ object LiveCards {
             working.size == 1 -> b.setUsesChronometer(true).setWhen(first.since).setShowWhen(true)
             else -> b.setShortCriticalText("${working.size} chats")
         }
-        // Stopping only means something for a chat that is actually running.
-        working.firstOrNull { it.state == "working" }?.let { w ->
-            b.addAction(0, if (working.size == 1) "Stop" else "Stop ${w.title.take(18)}", PendingIntent.getBroadcast(
-                ctx, ("stop:" + w.serverId + ":" + w.chatId).hashCode(),
-                Intent(ctx, StopReceiver::class.java).setAction("stop:${w.serverId}:${w.chatId}").putExtra(Notifier.EXTRA_SERVER, w.serverId).putExtra(Notifier.EXTRA_CHAT, w.chatId),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            ))
-        }
+        // No Stop here. A notification is too easy to touch by accident for
+        // something that throws away a turn of work; stopping is done in the
+        // chat, where it is deliberate.
         val built = b.build()
         runCatching { nm.notify(id, built) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
         noteChip(ctx, id, built)
@@ -204,6 +199,16 @@ object LiveCards {
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // Samsung only. Android promoted this card on the owner's phone
+            // (the log said so) and One UI still showed it as an ordinary
+            // notification: its Now Bar and status bar chip are kept for apps
+            // on Samsung's own list. This extra is reported, by another app's
+            // developers, to let a card that Android has already promoted
+            // through on One UI 8.5 and later. It is undocumented, does
+            // nothing anywhere else, and may stop working. The related
+            // "android.ongoingActivityNoti.style" must NOT be set: it sends
+            // the card down a different path and undoes this.
+            .addExtras(android.os.Bundle().apply { putBoolean("android.ongoingActivityNoti.automation", true) })
     }
 
     private fun open(ctx: Context, e: Entry, code: Int): PendingIntent = PendingIntent.getActivity(
@@ -217,18 +222,5 @@ object LiveCards {
     fun chipAllowed(ctx: Context): Boolean? {
         if (Build.VERSION.SDK_INT < 36) return null
         return runCatching { (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canPostPromotedNotifications() }.getOrNull()
-    }
-}
-
-/** "Stop" on the live card: interrupt that chat, with the app's own login. */
-class StopReceiver : BroadcastReceiver() {
-    override fun onReceive(ctx: Context, intent: Intent) {
-        val serverId = intent.getStringExtra(Notifier.EXTRA_SERVER).orEmpty()
-        val chatId = intent.getStringExtra(Notifier.EXTRA_CHAT).orEmpty()
-        if (serverId.isEmpty() || chatId.isEmpty()) return
-        val pending = goAsync()
-        // The card is redrawn by the state change the server sends once the
-        // chat has actually stopped, so nothing is drawn here.
-        Bg.run({ Api.authed(ctx.applicationContext, serverId, "POST", "/api/ui-sessions/$chatId/interrupt") }) { pending.finish() }
     }
 }

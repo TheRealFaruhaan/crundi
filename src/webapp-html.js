@@ -8467,7 +8467,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
         xhr.upload.onload = () => { if (onProgress) onProgress(1); };
         xhr.onload = () => {
           try { resolve(JSON.parse(xhr.responseText)); }
-          catch { reject(new Error('Bad response from the server')); }
+          catch {
+            // Not JSON, so not this server's own answer: something between
+            // here and it (a proxy, a firewall) answered instead. Say what
+            // came back, or "bad response" is all anyone has to go on.
+            const said = String(xhr.responseText || '').replace(/<[^>]*>/g, ' ').split(' ').filter(Boolean).join(' ').slice(0, 80);
+            reject(new Error('The upload was answered with HTTP ' + xhr.status + (said ? ' (' + said + ')' : ', and nothing else') + ', not by Crundi. Something between this device and the server may have blocked it.'));
+          }
         };
         xhr.onerror = () => reject(new Error('Network error'));
         xhr.onabort = () => reject(new Error('Upload cancelled'));

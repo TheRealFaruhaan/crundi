@@ -56,7 +56,6 @@
             </intent-filter>
         </service>
         <receiver android:name=".ReplyReceiver" android:exported="false" />
-        <receiver android:name=".StopReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:exported="false" />
 
         <!-- Firebase is set up by hand in Push.init, from values read at build

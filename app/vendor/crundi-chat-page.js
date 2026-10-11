@@ -93,7 +93,13 @@
       if (VERSION) xhr.setRequestHeader('X-Crundi-Web', VERSION);
       xhr.upload.onprogress = function (ev) { if (ev.lengthComputable && onProgress) onProgress(ev.loaded / ev.total); };
       xhr.upload.onload = function () { if (onProgress) onProgress(1); };
-      xhr.onload = function () { try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(new Error('Bad response from the server')); } };
+      xhr.onload = function () {
+        try { resolve(JSON.parse(xhr.responseText)); } catch (e) {
+          // Not JSON, so something between here and the server answered instead.
+          var said = String(xhr.responseText || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+          reject(new Error('The upload was answered with HTTP ' + xhr.status + (said ? ' (' + said + ')' : ', and nothing else') + ', not by Crundi. Something between this device and the server may have blocked it.'));
+        }
+      };
       xhr.onerror = function () { reject(new Error('Network error')); };
       xhr.onabort = function () { reject(new Error('Upload cancelled')); };
       xhr.send(JSON.stringify(payload));

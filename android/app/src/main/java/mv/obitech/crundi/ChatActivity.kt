@@ -32,7 +32,15 @@ class ChatActivity : Activity() {
         chatId = intent.getStringExtra(Notifier.EXTRA_CHAT).orEmpty()
         val server = Servers.byId(this, serverId)
         if (server == null || !Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) { finish(); return }
-        intent.getStringExtra(EXTRA_TITLE)?.let { if (it.isNotEmpty()) title = it }
+        // In the list of recent apps this window is the chat, not "Crundi"
+        // again: its own name, so it can be told from the main window.
+        intent.getStringExtra(EXTRA_TITLE)?.let {
+            if (it.isNotEmpty()) {
+                title = it
+                @Suppress("DEPRECATION")
+                setTaskDescription(android.app.ActivityManager.TaskDescription(it))
+            }
+        }
 
         val root = FrameLayout(this).apply { setBackgroundColor(getColor(R.color.bg)); fitsSystemWindows = true }
         val view = CrundiWebView(this)

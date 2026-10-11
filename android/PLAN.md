@@ -428,7 +428,29 @@ and the Linux desktop client.
   - Needs: the app clearing a chat's notification when its page is opened in
     the app, and the server sending phones a silent "clear" when a request is
     resolved or a chat is read somewhere else.
-- **Next:** read that log line from the phone.
+- **The log line came back (S24 Ultra, One UI 8.5, Android 16):** chip
+  allowed = true, card meets Android's rules = true, Android promoted it =
+  true. So Android does treat the card as a live update, and Samsung still
+  shows it as an ordinary notification: no chip, not in the Now Bar. Samsung
+  keeps those for apps on its own list.
+- **Tried in app 1.0.0-dev.6, unproven:** the undocumented Samsung extra
+  `android.ongoingActivityNoti.automation = true`, reported by another app's
+  developers to let an already-promoted card through on One UI 8.5 and later.
+  Some One UI builds also have a developer option, "Live notifications for
+  all apps". If neither works, the chip is Samsung's to grant and not
+  something the app can do.
+- **Also in 1.0.0-dev.6 and server 1.20.0-dev.7:**
+  - No Stop on the live card, at the owner's request: nothing that stops or
+    closes a chat is reachable straight from a notification.
+  - A bubble's window is named after its chat in the recent apps list.
+  - A pasted picture over about 1.5 MB is sent as a JPEG no larger than 2560
+    pixels on its long side.
+  - A failed upload now says which HTTP status answered and what it said. One
+    pasted upload failed with "Bad response from the server" and later ones
+    worked; the cause was not found. The server logged nothing and handles
+    20 MB uploads in a test, and the site is behind Cloudflare, so the likely
+    answer is that something other than Crundi replied that once.
+- **Next:** see whether the chip appears on the phone with 1.0.0-dev.6.
 
 ## API notes for the app
 
