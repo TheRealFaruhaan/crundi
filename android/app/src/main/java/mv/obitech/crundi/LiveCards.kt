@@ -164,6 +164,10 @@ object LiveCards {
             .setTimeoutAfter(STALE_MS)
             .setContentIntent(open(ctx, first, id))
             .addAction(0, if (needs.isNotEmpty()) "Open" else "Open chat", open(ctx, first, id))
+        // The same chat as a bubble, for carrying on with something else.
+        // Android draws a notification's buttons as words on most phones,
+        // whatever icon they are given, so it has both.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) b.addAction(R.drawable.ic_bubble, "Bubble", bubble(ctx, first, id))
         // The chip. Seven characters or fewer is all Android promises to show.
         when {
             needs.isNotEmpty() -> b.setShortCriticalText("Action")
@@ -234,6 +238,13 @@ object LiveCards {
         ctx, code,
         Intent(ctx, MainActivity::class.java).setAction("open:${e.serverId}:/chat/${e.chatId}").putExtra(Notifier.EXTRA_SERVER, e.serverId).putExtra(Notifier.EXTRA_PATH, "/chat/${e.chatId}")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun bubble(ctx: Context, e: Entry, code: Int): PendingIntent = PendingIntent.getActivity(
+        ctx, code,
+        Intent(ctx, BubbleActivity::class.java).setAction("bubble:${e.serverId}:${e.chatId}").putExtra(Notifier.EXTRA_SERVER, e.serverId).putExtra(Notifier.EXTRA_CHAT, e.chatId)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 

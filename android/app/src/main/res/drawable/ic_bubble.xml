@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A chat head: a round head with a small one tucked behind it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
+        android:pathData="M10,13m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round"
+        android:pathData="M14.5,4.6a4.5,4.5 0,0 1,6 6" />
+</vector>

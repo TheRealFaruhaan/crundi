@@ -520,6 +520,13 @@ and the Linux desktop client.
     bubble down it writes a line to the log in App settings, with the reason.
     Unexplained: when this happened, the chat was also missing from the live
     card. If it recurs with no line in the log, the app did not close it.
+  - **The live card has a Bubble button** beside Open chat, for the same chat
+    (the first line of the card). It goes through `BubbleActivity`, a window
+    that shows nothing and finishes at once, so that the app is in front
+    when the bubble is posted and Android may open it expanded. Android
+    draws notification buttons as words on most phones, so the icon it was
+    given (`ic_bubble`) will probably not be what shows. Whether Samsung
+    expands the bubble or only shows its head is not known.
 - **Next:** see how the live card looks on the phone with 1.0.0-dev.7.
 
 ## API notes for the app
