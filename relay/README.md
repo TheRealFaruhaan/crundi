@@ -5,7 +5,7 @@ Google (and later Apple). What it must do is written in
 [`../android/RELAY.md`](../android/RELAY.md); why it exists is at the top of
 [`src/index.js`](src/index.js).
 
-It runs at `https://cr-rl-pub1.faruhaan.com`.
+It runs at `https://cr-rl-pub1.obitech.mv`.
 
 ## Deploying
 
@@ -37,7 +37,7 @@ every Android message `failed` with `android_not_configured`.
 One per server, issued by hand. `$ADMIN` is the admin token.
 
 ```bash
-R=https://cr-rl-pub1.faruhaan.com
+R=https://cr-rl-pub1.obitech.mv
 
 # Issue. The key is shown once, here, and cannot be shown again.
 curl -sX POST $R/admin/keys -H "Authorization: Bearer $ADMIN" \

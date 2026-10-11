@@ -1,4 +1,4 @@
-package com.crundi.app
+package mv.obitech.crundi
 
 /**
  * Version order, the same as the server's (compareVersions in src/whatsnew.js):

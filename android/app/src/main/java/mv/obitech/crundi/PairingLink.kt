@@ -1,4 +1,4 @@
-package com.crundi.app
+package mv.obitech.crundi
 
 /**
  * The link a pairing picture carries: https://server/pair#<24 hex>.

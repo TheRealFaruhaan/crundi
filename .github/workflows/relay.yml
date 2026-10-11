@@ -63,7 +63,7 @@ jobs:
       - name: Check it answers
         run: |
           for i in 1 2 3 4 5; do
-            if curl -fsS https://cr-rl-pub1.faruhaan.com/v1/info | grep -q '"ok":true'; then exit 0; fi
+            if curl -fsS https://cr-rl-pub1.obitech.mv/v1/info | grep -q '"ok":true'; then exit 0; fi
             sleep 5
           done
           echo "The relay did not answer after deploying" >&2

@@ -1,4 +1,4 @@
-package com.crundi.app
+package mv.obitech.crundi
 
 import android.content.ActivityNotFoundException
 import android.content.Context

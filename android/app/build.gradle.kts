@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.crundi.app"
+    namespace = "mv.obitech.crundi"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.crundi.app"
+        applicationId = "mv.obitech.crundi"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

@@ -10,7 +10,7 @@ workers_dev = false
 
 # The address servers are built to use (DEFAULT_RELAY_URL in src/mobile-push.js).
 routes = [
-  { pattern = "cr-rl-pub1.faruhaan.com", custom_domain = true },
+  { pattern = "cr-rl-pub1.obitech.mv", custom_domain = true },
 ]
 
 [vars]

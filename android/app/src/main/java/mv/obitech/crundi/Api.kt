@@ -1,4 +1,4 @@
-package com.crundi.app
+package mv.obitech.crundi
 
 import android.os.Handler
 import android.os.Looper

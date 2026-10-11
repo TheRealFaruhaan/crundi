@@ -37,7 +37,7 @@ import { encryptFor } from './web-push.js';
 // not a setting for choosing between relays for the same app. Another relay
 // means another build of the app, published by whoever runs that relay, and
 // its users ask THEM for a key. android/RELAY.md has the whole of it.
-export const DEFAULT_RELAY_URL = 'https://cr-rl-pub1.faruhaan.com';
+export const DEFAULT_RELAY_URL = 'https://cr-rl-pub1.obitech.mv';
 // Who to ask for a key to the published relay. Shown in Settings next to the
 // empty field. A custom relay says for itself who to ask (GET /v1/info).
 export const KEY_CONTACT = Object.freeze({ telegram: 'TheRealFaruhaan', url: 'https://t.me/TheRealFaruhaan', text: '' });

@@ -1,4 +1,4 @@
-package com.crundi.app
+package mv.obitech.crundi
 
 import org.json.JSONObject
 

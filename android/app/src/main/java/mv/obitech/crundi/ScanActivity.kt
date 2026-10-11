@@ -1,4 +1,4 @@
-package com.crundi.app
+package mv.obitech.crundi
 
 import android.Manifest
 import android.annotation.SuppressLint

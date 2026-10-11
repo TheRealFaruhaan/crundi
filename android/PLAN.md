@@ -26,7 +26,7 @@ code, not from building any of it.
   `relay/`. A GitHub Action tests and deploys it when a push to `main` changes
   that folder, and at no other time.
 - **The published app works with the published relay only**, at
-  `https://cr-rl-pub1.faruhaan.com`. Anyone wanting their own relay ships
+  `https://cr-rl-pub1.obitech.mv`. Anyone wanting their own relay ships
   their own build of the app with their own push credentials; their users ask
   them for keys. Bringing your own Firebase project to the published app is
   not supported. `android/RELAY.md` documents it.
@@ -270,7 +270,7 @@ and the Linux desktop client.
 - **Held back with the pairing screen:** the "Mobile push" section in Settings
   (key field, who to ask, Test button). The routes behind it exist.
 - **Done and live:** the relay (`relay/`), at
-  `https://cr-rl-pub1.faruhaan.com`: key checking, issuing and revoking, rate
+  `https://cr-rl-pub1.obitech.mv`: key checking, issuing and revoking, rate
   limit, sending to Android through Firebase project `obitech-crundi`. Google
   accepts the relay's credentials (a send to a made-up device token came back
   `INVALID_ARGUMENT`, which is Google rejecting the token, not the relay). iOS
@@ -307,6 +307,17 @@ and the Linux desktop client.
   (only reachable from an error screen), biometric lock, a release signing
   key, signed release builds on GitHub, Play's in-app update flow (the play
   build opens the store page), and the owner's Update server button.
+- **Names settled:** the app is `mv.obitech.crundi` (the publisher's
+  developer account is obitech.mv), registered under that name in Firebase
+  project `obitech-crundi`. The relay is at `https://cr-rl-pub1.obitech.mv`;
+  its first address, on faruhaan.com, no longer answers. The Windows desktop
+  app keeps its own id (`com.crundi.app` in `package.json`): changing an id
+  that is already installed would break its updates.
+- **`android/app/google-services.json`** is on the build machine and not in
+  the repo. Notifications will need it at build time; CI will need it as a
+  secret.
+- **First release route:** an internal testing track in the Play Console,
+  from a signed `play` bundle.
 - **Next:** try it on a real phone; then notifications (stage 4).
 
 ## API notes for the app

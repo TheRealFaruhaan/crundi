@@ -184,7 +184,7 @@ app. People using the published app cannot use your relay at all.
 
 ## Open
 
-- The default relay address is `https://cr-rl-pub1.faruhaan.com`
+- The default relay address is `https://cr-rl-pub1.obitech.mv`
   (`DEFAULT_RELAY_URL` in `src/mobile-push.js`). Nothing is deployed there yet.
 - Rate limits per key are the relay's to choose. Suggested start: 60 a minute,
   5000 a day.
