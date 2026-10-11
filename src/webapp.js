@@ -64,6 +64,8 @@ import { spawn as spawnOwnerCommand } from 'node:child_process';
 import * as serverUpdate from './server-update.js';
 import * as whatsNew from './whatsnew.js';
 import * as clientVersion from './client-version.js';
+import { createPairing, pairingLink, cleanDevice } from './pairing.js';
+import { toSvg as qrSvg } from './qr.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
@@ -308,7 +310,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // long-lived bearer token on disk. 0600, same as the credentials themselves.
   const sessionFile = join(config.dataDir, 'sessions.json');
   let forwardKey = '';   // signs the forward cookie; persisted with the sessions
-  const families = new Map();   // familyId -> { username, createdAt, lastSeenAt, userAgent, ip }
+  const families = new Map();   // familyId -> { username, createdAt, lastSeenAt, userAgent, ip, device? }
+  // One-time codes that let a phone become a signed-in device. See pairing.js.
+  const pairing = createPairing();
 
   /**
    * Would anything bring this process back if it stopped?
@@ -438,9 +442,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const m = families.get(familyId);
     console.log(`[webapp] Revoked session ${String(familyId).slice(0, 8)}`
       + (m?.ip ? ` (${m.ip})` : '') + (m?.userAgent ? ` ${m.userAgent.slice(0, 40)}` : ''));
-    for (const [t, e] of tokens) if (e.familyId === familyId) tokens.delete(t);
-    for (const [t, e] of refreshTokens) if (e.familyId === familyId) refreshTokens.delete(t);
-    families.delete(familyId);
+    // A paired device holds more than one login (the page and the background
+    // code each have their own, see pairDevice). Cutting off the device means
+    // all of them: leaving one behind would leave the phone signed in.
+    const gone = new Set([familyId]);
+    if (m?.device?.id) for (const [fid, f] of families) if (f.device?.id === m.device.id) gone.add(fid);
+    for (const [t, e] of tokens) if (gone.has(e.familyId)) tokens.delete(t);
+    for (const [t, e] of refreshTokens) if (gone.has(e.familyId)) refreshTokens.delete(t);
+    for (const fid of gone) families.delete(fid);
     saveSessions();   // a revoked login must not come back on restart
   }
 
@@ -450,11 +459,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     for (const [, e] of tokens) live.add(e.familyId);
     for (const [, e] of refreshTokens) live.add(e.familyId);
     const out = [];
+    // A paired device is ONE row however many logins it holds: its page login
+    // stands for it, unless only another is left, or the caller is one of them.
+    const shown = new Map();   // device id -> family id
+    for (const fid of live) {
+      const d = families.get(fid)?.device;
+      if (!d?.id) continue;
+      const have = shown.get(d.id);
+      const better = !have || fid === currentFamilyId
+        || (have !== currentFamilyId && d.role === 'page' && families.get(have)?.device?.role !== 'page');
+      if (better) shown.set(d.id, fid);
+    }
     for (const fid of live) {
       const m = families.get(fid) || {};
+      if (m.device?.id && shown.get(m.device.id) !== fid) continue;
       out.push({
         id: fid,
         current: fid === currentFamilyId,
+        device: m.device ? { id: m.device.id, name: m.device.name, platform: m.device.platform } : null,
         username: m.username || '',
         createdAt: m.createdAt || 0,
         lastSeenAt: m.lastSeenAt || 0,
@@ -472,7 +494,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ token: string, refreshToken: string, expiresIn: number }}
    */
-  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '') {
+  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '', device = null) {
     const now = Date.now();
     const token = randomBytes(32).toString('hex');
     const refreshToken = randomBytes(32).toString('hex');
@@ -491,9 +513,29 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       lastSeenAt: now,
       userAgent: req ? String(req.headers['user-agent'] || '').slice(0, 200) : (prev?.userAgent || ''),
       ip: req ? clientIp(req) : (prev?.ip || ''),
+      // Carried across every rotation, or a paired phone would turn back into
+      // an anonymous session the first time it renewed.
+      ...((device || prev?.device) ? { device: device || prev.device } : {}),
     });
     saveSessions();
     return { token, refreshToken, expiresIn: Math.floor(ACCESS_TTL_MS / 1000) };
+  }
+
+  /**
+   * Turn a claimed pairing code into a signed-in device.
+   *
+   * Two logins, not one. Refresh tokens rotate, and replaying a spent one
+   * cuts the login off (rotateRefresh). The page inside the app and the code
+   * that answers a notification with no page open would each hold a copy and
+   * each rotate it, which is exactly that replay. So each gets its own, tied
+   * together by the device id so they are listed and revoked as one.
+   */
+  function pairDevice(who, deviceInfo, req) {
+    const d = cleanDevice(deviceInfo);
+    const id = randomBytes(8).toString('hex');
+    const login = (role) => createSession(who.username, undefined, req, who.collabKey || '', { id, name: d.name, platform: d.platform, role });
+    console.log(`[webapp] Paired device "${d.name}"${d.platform ? ` (${d.platform})` : ''} for ${who.username}`);
+    return { device: { id, name: d.name, platform: d.platform }, sessions: { page: login('page'), background: login('background') } };
   }
 
   /** Best guess at who is calling, honouring the proxy header Crundi sits behind. */
@@ -2381,6 +2423,49 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { parsed = JSON.parse(body); } catch { /* ignore */ }
       const result = rotateRefresh(parsed?.refreshToken, req);
       return json(res, result, result.ok ? 200 : 401);
+    }
+
+    // ─── Pairing a device ───
+    // Deliberately NOT under /api/auth/: that prefix stays open to a client
+    // too old for this server, and an app that old should be told to update
+    // before it is given a login, not after.
+    if (path === '/api/pair/start' && req.method === 'POST') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* optional */ }
+      // The address to pair with is the one this caller is using right now: it
+      // is known to work from where they are, which a configured public URL is
+      // not (a LAN address, a tunnel that has since moved).
+      let base = '';
+      try { const u = new URL(String(body.origin || '')); if (/^https?:$/.test(u.protocol)) base = u.origin; } catch { /* fall through */ }
+      if (!base) base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port }) || '';
+      if (!base) return json(res, { ok: false, error: 'This server does not know its own address yet.' }, 409);
+      const started = pairing.start({ username: principal.username, collabKey: principal.collabKey || '' });
+      if (!started.ok) return json(res, started, 429);
+      const link = pairingLink(base, started.code);
+      return json(res, { ok: true, code: started.code, link, svg: qrSvg(link), expiresIn: started.expiresIn, server: base, insecure: base.startsWith('http://') });
+    }
+    if (path === '/api/pair/cancel' && req.method === 'POST') {
+      if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* nothing to cancel */ }
+      return json(res, { ok: true, cancelled: pairing.cancel(body.code) });
+    }
+    // No login: the code IS the credential. One answer for every failure, so
+    // it cannot be used to learn whether a code ever existed.
+    if (path === '/api/pair/claim' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* treated as a bad code */ }
+      const who = pairing.claim(body.code);
+      if (!who) return json(res, { ok: false, error: 'This pairing code is not valid. It may have expired or been used already.' }, 403);
+      // A collaborator whose access ended while the code was on screen.
+      if (who.collabKey && !collaborators.liveByIdentity(who.collabKey).length) {
+        return json(res, { ok: false, error: 'This pairing code is not valid. It may have expired or been used already.' }, 403);
+      }
+      if (!who.collabKey) setForwardCookie(res);
+      const paired = pairDevice(who, body.device, req);
+      return json(res, { ok: true, username: who.username, ...paired, server: clientVersion.handshake(req, APP_VERSION).server });
     }
 
     // ─── SSE endpoint ───

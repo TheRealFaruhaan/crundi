@@ -183,4 +183,29 @@ and the Linux desktop client.
 - **Done:** handshake and version gate on the server, the page's reload and
   "Update required" screen, strict first minimums (`src/client-version.js`,
   `scripts/test-client-version.mjs`).
-- **Next:** pairing and the device registry.
+- **Done:** pairing on the server. One-time codes, the QR code, two logins per
+  device, devices named in the sessions list and revoked as one
+  (`src/pairing.js`, `src/qr.js`, `/api/pair/start`, `/api/pair/claim`,
+  `/api/pair/cancel`).
+- **Held back until the app can pair:** the "Connect a phone" screen in the web
+  UI, the `/pair` landing page a phone's camera opens, and the What's New step.
+  Showing a pairing screen before there is an app to scan it would advertise
+  something nobody can use.
+- **Next:** mobile push channel and the relay key setting, then the compact
+  chat view and bridge detection.
+
+## API notes for the app
+
+- `GET /api/handshake` with `X-Crundi-Client: android-play/1.0.0` (or
+  `android-github/...`). No login. Check `client.accepted`, then compare
+  `server.version` with the app's own minimum.
+- The QR code holds `https://<server>/pair#<code>`. The code is in the
+  fragment so it is never sent to a server by a browser.
+- `POST /api/pair/claim` with `{ code, device: { name, platform } }` returns
+  `{ username, device, sessions: { page, background }, server }`. Each session
+  is `{ token, refreshToken, expiresIn }`. Give `page` to the web view and keep
+  `background` for native calls; never share one between the two.
+- Access tokens last 15 minutes. `POST /api/auth/refresh` with
+  `{ refreshToken }` returns a new pair and retires the old refresh token.
+- HTTP 426 with `error: "client_too_old"` on any call means the app is below
+  the server's minimum.
