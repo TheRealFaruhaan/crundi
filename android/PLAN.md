@@ -545,9 +545,13 @@ and the Linux desktop client.
   removed or unreadable icon falls back to the letters. A drawing (.svg)
   shows in the pages but not on the phone, which cannot draw one. With an
   icon, every chat of a project has the same bubble head; the letters that
-  told them apart are gone there. The live card's large picture was taken
-  off earlier because Samsung drew it half off the card; it is back only
-  for projects with an icon, and may need the same treatment.
+  told them apart are gone there. The live card has NO large picture: that is a second
+  picture on the right, and the owner wanted the one on the left changed,
+  not another added. The one on the left is drawn by the phone from the
+  app's own icon and there is no documented way to change it. As a guess,
+  the project's icon is passed in two of One UI's own extras
+  (`android.ongoingActivityNoti.chipIcon`, `.nowbarIcon`); whether they do
+  anything is not known.
 - **Next:** see how the live card looks on the phone with 1.0.0-dev.8.
 
 ## API notes for the app

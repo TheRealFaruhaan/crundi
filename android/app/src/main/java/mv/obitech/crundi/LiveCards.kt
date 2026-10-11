@@ -182,9 +182,28 @@ object LiveCards {
         val says = "${first.icon}|$title|$lines|${needs.size}|${working.size}|${first.since}|${working.firstOrNull { it.state == "working" } != null}"
         if (lastSaid[id] == says && (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications.any { it.id == id }) return
         lastSaid[id] = says
+        samsungIcon(ctx, b, first)
         val built = b.build()
         runCatching { nm.notify(id, built) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
         noteChip(ctx, id, built)
+    }
+
+    /**
+     * Samsung only, and a guess. One UI reads extras of its own from a live
+     * card; these two are reported to carry the picture for the status bar
+     * chip and for the Now Bar. Whether they also change the picture at the
+     * left of the card, or do anything at all without Samsung's own style
+     * (which must not be set, see below), is not known. Anywhere else, and
+     * if the names are wrong, they are ignored.
+     */
+    private fun samsungIcon(ctx: Context, b: NotificationCompat.Builder, e: Entry) {
+        val icon = Icons.cached(ctx, e.serverId, e.icon) ?: return
+        val head = runCatching { Icons.head(icon, Ui.dp(ctx, 48), adaptive = false) }.getOrNull() ?: return
+        val asIcon = android.graphics.drawable.Icon.createWithBitmap(head)
+        b.addExtras(android.os.Bundle().apply {
+            putParcelable("android.ongoingActivityNoti.chipIcon", asIcon)
+            putParcelable("android.ongoingActivityNoti.nowbarIcon", asIcon)
+        })
     }
 
     private val lastSaid = HashMap<Int, String>()
@@ -214,11 +233,11 @@ object LiveCards {
             // screen as well. Left uncoloured, the phone uses its plain
             // outline. The glow itself is Samsung's and not something the
             // app draws or can switch off.
-            // The project's own icon, where it has one. The lettered mark was
-            // here once and was taken off: on a Samsung phone it was drawn
-            // half off the edge of the card. A project with no icon therefore
-            // still has no picture, and its name is in the line at the top.
-            .apply { Icons.cached(ctx, e.serverId, e.icon)?.let { icon -> runCatching { Icons.head(icon, Ui.dp(ctx, 48), adaptive = false) }.getOrNull()?.let { setLargeIcon(it) } } }
+            // No large picture. That is a SECOND picture, on the right of the
+            // card, and what was asked for is the one on the left to change.
+            // The one on the left is not the app's to set: a phone draws it
+            // from the app's own icon (Samsung) or the small icon (others).
+            // See `samsungIcon` for the one thing that can be tried.
             .setSubText(project.ifEmpty { "Crundi" })
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOnlyAlertOnce(true)
