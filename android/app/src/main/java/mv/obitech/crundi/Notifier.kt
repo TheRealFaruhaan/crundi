@@ -58,6 +58,8 @@ object Notifier {
     const val EXTRA_CHAT = "chat"
     const val EXTRA_NOTIFICATION = "notification"
     const val KEY_REPLY = "reply"
+    const val EXTRA_REQUEST = "request"
+    const val EXTRA_BEHAVIOR = "behavior"
 
     fun channels(ctx: Context) {
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -198,8 +200,38 @@ object Notifier {
         val showing = nm.activeNotifications.firstOrNull { it.id == chat.notificationId }?.notification
         val style = showing?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) } ?: NotificationCompat.MessagingStyle(me())
         style.setConversationTitle(if (chat.project.isNotEmpty()) "${chat.title} · ${chat.project}" else chat.title)
-        style.addMessage(body, at, who)
-        post(ctx, chat.notificationId, chatBuilder(ctx, chat, style, who).setWhen(at))
+        // One permission request waiting: say exactly what it is, then offer
+        // yes and no. What is being approved has to be readable right here,
+        // because this may be answered without the chat ever being opened.
+        val prompt = payload.optJSONObject("prompt")?.takeIf { it.optString("requestId").isNotEmpty() }
+        style.addMessage(if (prompt != null) "$body\n${prompt.optString("tool")}: ${prompt.optString("summary")}" else body, at, who)
+        val b = chatBuilder(ctx, chat, style, who).setWhen(at)
+        if (prompt != null) {
+            fun decide(behavior: String, code: Int) = PendingIntent.getBroadcast(
+                ctx, chat.notificationId + code,
+                Intent(ctx, DecisionReceiver::class.java).setAction("decide:${chat.key}:$behavior")
+                    .putExtra(EXTRA_SERVER, chat.serverId).putExtra(EXTRA_CHAT, chat.id).putExtra(EXTRA_REQUEST, prompt.optString("requestId")).putExtra(EXTRA_BEHAVIOR, behavior),
+                flags(false),
+            )
+            b.addAction(
+                NotificationCompat.Action.Builder(R.drawable.ic_stat, "Approve", decide("allow", 1))
+                    // Letting Claude run something is not for whoever picks
+                    // the phone up: the phone must be unlocked first.
+                    .setAuthenticationRequired(true).setShowsUserInterface(false).build()
+            )
+            b.addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat, "Deny", decide("deny", 2)).setShowsUserInterface(false).build())
+        }
+        post(ctx, chat.notificationId, b)
+    }
+
+    /** After Approve or Deny: say what was done, or why it could not be, and take the two buttons away. */
+    fun afterDecision(ctx: Context, chat: ChatRef, outcome: String) {
+        val who = person(ctx, chat)
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val showing = nm.activeNotifications.firstOrNull { it.id == chat.notificationId }?.notification
+        val style = showing?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) } ?: NotificationCompat.MessagingStyle(me())
+        style.addMessage(outcome, System.currentTimeMillis(), null as Person?)
+        post(ctx, chat.notificationId, chatBuilder(ctx, chat, style, who).setOnlyAlertOnce(true).setSilent(true))
     }
 
     /** After a reply typed into the notification: show it as said, or say why it was not. */

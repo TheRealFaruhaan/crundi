@@ -256,6 +256,18 @@ export function buildPayload(text, meta = {}) {
     kind: String(meta.tag || 'crundi').slice(0, 40),
     url: String(meta.url || '/').slice(0, 300),
     at: Date.now(),
+    // A change of a chat's state, for the phone's live card: `state` is
+    // working, needs-input, waiting or idle, `since` is when this run of work
+    // began. `silent` means draw it and make no sound; an app that does not
+    // know about it sees an empty body and shows nothing.
+    ...(meta.silent ? { silent: true, state: String(meta.state || '').slice(0, 20), since: Number(meta.since) || 0 } : {}),
+    // One permission request the chat is waiting on, when there is exactly
+    // one: what the phone needs to offer Approve and Deny.
+    ...(meta.prompt && meta.prompt.requestId ? { prompt: {
+      requestId: String(meta.prompt.requestId).slice(0, 120),
+      tool: String(meta.prompt.tool || '').slice(0, 60),
+      summary: clip(meta.prompt.summary || '', 400),
+    } } : {}),
     // Present when the notification is about one chat. It is what lets the
     // phone file it under that chat's bubble, name it and draw its head,
     // without asking the server anything first.

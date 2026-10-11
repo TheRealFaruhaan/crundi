@@ -147,6 +147,28 @@ await mp.send('x', { tag: 'finished', chat: { id: 'x'.repeat(200), title: 'T'.re
 const big = p1.open(r.seen[0].body.messages[0].payload);
 ok(big.chat.id.length === 80 && Buffer.byteLength(big.chat.title) <= 120 && big.chat.mark === null && r.seen[0].body.messages[0].collapse.length <= 40, 'over-long chat details are cut to size');
 
+// A change of state, for the live card.
+r = relay(allSent);
+await mp.send('', { tag: 'state', silent: true, state: 'working', since: 1791740000000, url: '/chat/abc123', chat: { id: 'abc123', title: 'Fix the login redirect', project: 'crundi', mark: MARK } }, { fetchImpl: r.fetchImpl });
+const st = p1.open(r.seen[0].body.messages[0].payload);
+ok(st.kind === 'state' && st.silent === true && st.state === 'working' && st.since === 1791740000000 && st.body === '' && st.chat.id === 'abc123', 'a change of state says which chat, what state, and since when, and carries no text');
+ok(r.seen[0].body.messages[0].collapse === 'state.abc123', 'only the latest state of a chat waits for a phone that is offline');
+ok(!('silent' in about) && !('state' in about), 'an ordinary notification is not marked silent');
+const srv = readFileSync(join(root, 'src', 'webapp.js'), 'utf8');
+ok(/tellPhonesState\(term, state, prev\);/.test(srv) && /if \(term\.kind !== 'ui' \|\| term\.collaborator \|\| term\.background\) return;/.test(srv), 'the server reports every change of an owner chat\'s state, and nobody else\'s');
+ok(/if \(!channels\.isEnabled\('mobile'\)\) return;\s+mobilePush\.send\(''/.test(srv), 'and only while the Phone app channel is on');
+ok(/claudeUi\.onSessionGone\(\(sid\) => \{[^}]*tellPhonesGone\(sid\);/.test(srv), 'a chat closed while on a card is reported as finished, so its line does not linger');
+
+// A permission request the phone can answer.
+r = relay(allSent);
+await mp.send('Claude needs your input.', { tag: 'needsInput', chat: { id: 'abc123', title: 'T', project: 'crundi', mark: MARK }, prompt: { requestId: 'req_1', tool: 'Bash', summary: 'npm run build' } }, { fetchImpl: r.fetchImpl });
+const ask = p1.open(r.seen[0].body.messages[0].payload);
+ok(ask.prompt && ask.prompt.requestId === 'req_1' && ask.prompt.tool === 'Bash' && ask.prompt.summary === 'npm run build', 'a notification about one waiting request says what Claude wants to do');
+ok(!('prompt' in about), 'and one that is not about a request offers nothing to approve');
+const ui = readFileSync(join(root, 'src', 'claude-ui.js'), 'utf8');
+ok(/tool === 'AskUserQuestion' \|\| tool === 'ExitPlanMode'\) continue;/.test(ui), 'a question or a plan is never offered as a yes or no');
+ok(/if \(asks\.length === 1\) about\.prompt = asks\[0\];/.test(srv), 'nor is anything offered when more than one request is waiting');
+
 // Long text, and text that is mostly multi-byte.
 r = relay(allSent);
 await mp.send('漢'.repeat(4000), { tag: 'finished' }, { fetchImpl: r.fetchImpl });

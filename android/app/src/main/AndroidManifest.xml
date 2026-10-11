@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The live card's chip in the status bar (Android 16 and later). -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Plain http is allowed because a server on a home network often has
@@ -56,6 +58,8 @@
             </intent-filter>
         </service>
         <receiver android:name=".ReplyReceiver" android:exported="false" />
+        <receiver android:name=".StopReceiver" android:exported="false" />
+        <receiver android:name=".DecisionReceiver" android:exported="false" />
 
         <!-- Firebase is set up by hand in Push.init, from values read at build
              time, so its own automatic start is switched off: it would look

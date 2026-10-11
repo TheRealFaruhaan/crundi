@@ -368,7 +368,20 @@ and the Linux desktop client.
   - Needs: `android.permission.POST_PROMOTED_NOTIFICATIONS`, an ongoing
     notification with a title that asks to be promoted, and the server
     telling the phone when a chat starts working.
-- **Next:** try notifications and bubbles on a real phone; then the live card.
+- **Built, in app 1.0.0-dev.3 and server 1.20.0-dev.4, not yet proven on a
+  phone:**
+  - **The live card.** One per project. The server sends a silent message
+    whenever an owner chat's state changes, and when a chat on a card is
+    closed; the app keeps what it has been told and redraws that project's
+    card. Open and Stop on it. App settings shows whether the chip is allowed.
+  - **Approve and Deny** on a "needs you" notification, when exactly one
+    permission request is waiting. The notification says what Claude wants to
+    do; Approve needs the phone unlocked. Questions and plans are never
+    offered as yes or no.
+- **Still not built:** buttons inside the floating window, and the What's New
+  steps for notifications, bubbles and the live card (held until they have
+  been seen working).
+- **Next:** try all of it on a real phone.
 
 ## API notes for the app
 

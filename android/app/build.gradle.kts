@@ -32,8 +32,8 @@ android {
         applicationId = "mv.obitech.crundi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.0-dev.2"
+        versionCode = 3
+        versionName = "1.0.0-dev.3"
 
         // The oldest server this app can work with. The server holds the
         // mirror of this (MIN_CLIENT in src/client-version.js) and each side
@@ -114,7 +114,7 @@ tasks.named("preBuild") { dependsOn(copyCrundiCode) }
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
-    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.core:core-ktx:1.17.0")
     implementation("com.google.firebase:firebase-messaging:24.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

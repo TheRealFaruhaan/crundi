@@ -91,6 +91,9 @@ class SettingsActivity : Activity() {
     private fun has(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
     private fun appDetails() = startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+    private fun liveSettings() {
+        runCatching { startActivity(Intent("android.settings.MANAGE_APP_PROMOTED_NOTIFICATIONS").putExtra(Settings.EXTRA_APP_PACKAGE, packageName)) }.onFailure { notificationSettings() }
+    }
     private fun notificationSettings() = startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
 
     /** Ask for a permission if Android will still show the question; otherwise send the person to where it can be changed. */
@@ -134,6 +137,12 @@ class SettingsActivity : Activity() {
                 runCatching { startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)) }.onFailure { notificationSettings() }
             }
         } else row("Bubbles", "Need Android 11 or newer.", null, null, null)
+
+        when (LiveCards.chipAllowed(this)) {
+            true -> row("Live card", "While Claude works, a chip in the status bar and a card on the lock screen.", true, "Manage") { liveSettings() }
+            false -> row("Live card", "The status bar chip is turned off. The card still shows among your notifications.", false, "Allow") { liveSettings() }
+            null -> row("Live card", "Shown among your notifications while Claude works. The status bar chip needs Android 16 or newer.", null, null, null)
+        }
 
         row("Camera", if (has(Manifest.permission.CAMERA)) "Allowed. Used to scan the pairing picture, and when a page asks for it." else "Not allowed. Needed to scan the pairing picture.", has(Manifest.permission.CAMERA), if (has(Manifest.permission.CAMERA)) "Manage" else "Allow") {
             if (has(Manifest.permission.CAMERA)) appDetails() else ask(Manifest.permission.CAMERA, 2)
@@ -186,6 +195,7 @@ class SettingsActivity : Activity() {
                     runCatching { Api.authed(app, s.id, "POST", "/api/push/mobile/unregister") }
                     runCatching { Api.authed(app, s.id, "POST", "/api/auth/logout") }
                 }) {
+                    LiveCards.forget(app, s.id)
                     Servers.remove(app, s.id)
                     if (Servers.all(app).isEmpty()) {
                         startActivity(Intent(this, PairActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK))

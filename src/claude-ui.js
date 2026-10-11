@@ -2285,6 +2285,33 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * @param {boolean} [answer.always]       also apply the CLI's permission suggestions
    * @param {string} [answer.message]       denial reason shown to Claude
    */
+  /**
+   * The permission requests a chat is waiting on, for somewhere that can only
+   * offer yes or no (a notification on a phone). Each is what Claude wants to
+   * do, in a line: the tool, and the command, file or address it is for.
+   *
+   * Questions and plans are left out on purpose. They are answered with
+   * words or a choice, and "allow" is not an answer to either.
+   */
+  function pendingFor(id) {
+    const s = sessions.get(id);
+    if (!s) return [];
+    const out = [];
+    for (const [requestId, p] of s.pending) {
+      const req = p && p.request;
+      const tool = String((req && req.tool_name) || '');
+      if (!tool || tool === 'AskUserQuestion' || tool === 'ExitPlanMode') continue;
+      const input = req.input || {};
+      const detail = typeof input.command === 'string' ? input.command
+        : typeof input.file_path === 'string' ? input.file_path
+          : typeof input.url === 'string' ? input.url
+            : typeof input.host === 'string' ? input.host
+              : JSON.stringify(input);
+      out.push({ requestId: String(requestId), tool, summary: String(detail).slice(0, 300) });
+    }
+    return out;
+  }
+
   function respond(id, { requestId, behavior, updatedInput, always, message } = {}) {
     const s = sessions.get(id);
     if (!s) return { ok: false, error: `No session "${id}"` };
@@ -2670,7 +2697,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
-    sendMessage, cancelMessage, respond, answerClosed, interrupt, setPermissionMode, setModel,
+    sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },

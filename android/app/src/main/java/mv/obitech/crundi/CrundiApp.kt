@@ -7,5 +7,6 @@ class CrundiApp : Application() {
         super.onCreate()
         Push.init(this)
         Notifier.channels(this)
+        LiveCards.channel(this)
     }
 }

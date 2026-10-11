@@ -24,7 +24,10 @@ class PushService : FirebaseMessagingService() {
             val keys = Push.keysOf(server) ?: continue
             val text = PushBox.open(sealed, keys) ?: continue
             val payload = try { JSONObject(text) } catch (e: Exception) { return }
-            Notifier.show(applicationContext, server, payload)
+            // A change of state draws the live card and makes no sound;
+            // anything else is a notification.
+            if (payload.optBoolean("silent") && payload.optString("kind") == "state") LiveCards.onState(applicationContext, server, payload)
+            else Notifier.show(applicationContext, server, payload)
             return
         }
     }

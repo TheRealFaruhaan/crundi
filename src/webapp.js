@@ -1209,6 +1209,40 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return { text: `✅ ${name} finished${proj}.`, markdown: false };
   }
 
+  // ─── A chat's state, for the phone's live card ───
+  // The phone shows a card for as long as Claude is working: a chip in the
+  // status bar, a line per chat. For that it has to be told when a chat
+  // STARTS working, which no notification says, and when it stops, even if
+  // nobody is away to be pinged. So every change of a chat's state is sent to
+  // the phones, sealed like any notification but marked silent: it draws the
+  // card and makes no sound. It goes to phones only, never to Telegram or a
+  // browser, which have nothing to draw it with.
+  const workingSince = new Map();   // chat id -> when this run of work began
+  const onLiveCard = new Map();     // chat id -> the chat as last told to phones, while it is on a card
+  function sendState(chat, state, since) {
+    if (!channels.isEnabled('mobile')) return;
+    mobilePush.send('', { tag: 'state', silent: true, state, since, url: `/chat/${chat.id}`, chat })
+      .catch(() => { /* a missed card update is not worth a log line per turn */ });
+  }
+  function tellPhonesState(term, state, prev) {
+    if (term.kind !== 'ui' || term.collaborator || term.background) return;
+    if (state === prev) return;
+    const active = state === 'working' || state === 'needs-input' || state === 'waiting';
+    if (active && !workingSince.has(term.id)) workingSince.set(term.id, Date.now());
+    const since = workingSince.get(term.id) || Date.now();
+    const chat = { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: chatMark(term.project || '', term.title) };
+    if (active) onLiveCard.set(term.id, chat); else { workingSince.delete(term.id); onLiveCard.delete(term.id); }
+    sendState(chat, state, since);
+  }
+  // A chat closed while it was on a card never reports "idle": it is simply
+  // gone. Say so for it, or its line would sit on the phone until it expired.
+  function tellPhonesGone(sid) {
+    const chat = onLiveCard.get(sid);
+    workingSince.delete(sid);
+    if (!onLiveCard.delete(sid) || !chat) return;
+    sendState(chat, 'idle', Date.now());
+  }
+
   function handleAgentState(tid, state, ts = 0) {
     // Terminal cells report via the lifecycle hook; UI (chat) cells report
     // straight off the stream-json message flow. Both land here so the status
@@ -1226,6 +1260,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const prev = agentStates.get(tid);
     agentStates.set(tid, state);
     if (state === 'working' || state === 'needs-input') limitWarmer.markActivity();
+    tellPhonesState(term, state, prev);
     // 'waiting' (turn over, parked on a background trigger) is still a turn
     // ending, so it is normalised to 'idle' HERE ONLY — scheduling and pings
     // behave exactly as they did before the state existed. Normalising `prev`
@@ -1255,6 +1290,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         ? { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: chatMark(term.project || '', term.title) }
         : null;
       const about = chat ? { chat, url: `/chat/${term.id}` } : {};
+      // One permission request waiting: say what it is, so a phone can offer
+      // Approve and Deny on the notification. With more than one the answer
+      // would be ambiguous, so none is offered and the chat has to be opened.
+      if (chat && cur === 'needs-input' && claudeUi && claudeUi.pendingFor) {
+        const asks = claudeUi.pendingFor(term.id);
+        if (asks.length === 1) about.prompt = asks[0];
+      }
       if (cur === 'needs-input') notifyEvent('needsInput', `⏳ ${name} needs your input${proj}.`, about);
       else {
         const fin = finishedMessage(term, name, proj);
@@ -1349,7 +1391,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     try { stopLapsedCollaboratorServices(); } catch { /* next minute */ }
   }, 60_000);
   if (collabChatSweep.unref) collabChatSweep.unref();
-  if (claudeUi) claudeUi.onSessionGone((sid) => { approvals.dropSession(sid); broadcastApprovals(); });
+  if (claudeUi) claudeUi.onSessionGone((sid) => { approvals.dropSession(sid); broadcastApprovals(); tellPhonesGone(sid); });
 
   // A card answered in the chat must leave the inbox at once, not whenever the
   // page next reconnects. Coalesced: one answer can clear several cards.
