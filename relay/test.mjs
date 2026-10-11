@@ -90,13 +90,17 @@ ok(r.status === 200 && r.data.ok && r.data.label === 'Faruhaan dev server', 'a g
 let g = google();
 r = await call(env, 'POST', '/v1/push', { key: KEY, g, body: { messages: [msg(), msg({ token: 'fcm-token-' + 'y'.repeat(120), priority: 'normal', collapse: 'needsInput' })] } });
 ok(r.status === 200 && r.data.ok && r.data.results.length === 2 && r.data.results.every((x) => x.status === 'sent'), 'two messages in, two results out, in order');
-const sends = g.sends();
-ok(sends.length === 2 && sends[0].url === 'https://fcm.googleapis.com/v1/projects/crundi-test/messages:send' && sends[0].headers.Authorization === 'Bearer ya29.test-access', 'each goes to Google for the right project, with a Google access token');
+// The messages go out side by side, so which reaches Google first is not
+// fixed. Tell them apart by their token, not by the order they arrived in.
+const byToken = (t) => g.sends().find((c) => JSON.parse(c.body).message.token === t);
+const sends = [byToken(msg().token), byToken('fcm-token-' + 'y'.repeat(120))];
+ok(g.sends().length === 2 && sends[0] && sends[1] && sends[0].url === 'https://fcm.googleapis.com/v1/projects/crundi-test/messages:send' && sends[0].headers.Authorization === 'Bearer ya29.test-access', 'each goes to Google for the right project, with a Google access token');
 const sentBody = JSON.parse(sends[0].body).message;
 ok(sentBody.token === msg().token && sentBody.data.c === msg().payload && Object.keys(sentBody.data).length === 1, 'the ciphertext is passed on exactly as it came, as the only data');
 ok(!sentBody.notification && sentBody.android.priority === 'HIGH' && sentBody.android.ttl === '14400s' && sentBody.android.collapse_key === 'finished', 'as a data message, with the priority, lifetime and collapse tag asked for');
 ok(JSON.parse(sends[1].body).message.android.priority === 'NORMAL', 'normal priority is honoured');
 ok(!JSON.stringify(sends.map((s) => s.body)).includes(KEY), 'the server\'s key is not passed on to Google');
+ok(g.calls.filter((c) => c.url.includes('oauth2')).length === 1, 'two messages at once still ask Google for one token, not one each');
 
 // The token request really is a signed assertion Google would accept.
 const tokenCall = g.calls.find((c) => c.url.includes('oauth2'));

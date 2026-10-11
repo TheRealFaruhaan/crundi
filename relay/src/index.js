@@ -257,6 +257,12 @@ export async function handle(request, env, { fetchImpl = fetch } = {}) {
     if (!Array.isArray(list) || !list.length || list.length > MAX_MESSAGES) return fail(400, 'bad_request');
     const messages = list.map(cleanMessage);
     if (messages.some((m) => !m)) return fail(400, 'bad_request');
+    // Get the Google token once, before the messages go out side by side.
+    // Otherwise, on an instance with none cached, each of them would ask for
+    // its own.
+    if (messages.some((m) => m.platform === 'android')) {
+      try { await fcmToken(env, fetchImpl); } catch { /* each message then reports its own failure */ }
+    }
     const results = await Promise.all(messages.map(async (m) => {
       try {
         return m.platform === 'android' ? await sendAndroid(env, m, fetchImpl) : await sendIos(env, m, fetchImpl);
