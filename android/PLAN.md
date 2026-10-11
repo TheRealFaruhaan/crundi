@@ -172,6 +172,43 @@ What a client does when the server is too old:
 Not coming to the phone: the pieces that exist only in the desktop client (the
 embedded browser panel, RDP setup, Windows startup, local server controls).
 
+## Bubbles: the reference
+
+The owner's reference is Telegram's floating chat heads on Android (a
+screenshot of them open over Crundi). That is Android's Bubbles API, and it is
+the main way a chat should be reachable on the phone.
+
+What the reference shows, and what Crundi's version is:
+
+- **A row of round heads along the top, one per conversation, and a `+`.**
+  One head per Crundi chat. The row, the `+` overflow and the small app badge
+  on each head are drawn by Android, not by the app.
+- **The head's picture.** Telegram uses the contact's avatar. Crundi uses the
+  project's mark, so chats in different projects can be told apart.
+- **Tapping a head opens that chat in a floating panel** with its own header
+  (back, picture, title, a line under it, a menu), the messages, and the
+  message box at the bottom. Crundi's panel is the existing chat in a compact
+  layout: chat title, project name under it, the same messages and composer.
+- **It floats over whatever is on screen**, including Crundi itself.
+
+What Android requires for a chat to become a bubble:
+
+- Each chat is a *conversation*: a long-lived shortcut plus a messaging-style
+  notification that carries bubble details. So bubbles sit on top of the
+  notification work and cannot come before it.
+- A bubble appears when that chat notifies, or when the user asks for it from
+  inside the app ("Open as bubble"). An app cannot put one up unprompted from
+  the background.
+- The user can turn bubbles off per app or per conversation, and Android then
+  shows an ordinary notification. On Samsung phones, floating notifications
+  must be set to "Bubbles" in the system's notification settings.
+
+What this needs from the server:
+
+- The compact chat layout (the panel's content).
+- Each chat notification must say which chat it is about: its id, title and
+  project. The payload in `RELAY.md` does not carry that yet.
+
 ## Build order
 
 1. **Server groundwork (3 to 4 days).** Handshake and version gate. Pairing
