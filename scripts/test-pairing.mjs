@@ -13,7 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPairing, pairingLink, parsePairingLink, cleanDevice, CODE_TTL_MS } from '../src/pairing.js';
+import { createPairing, pairingLink, parsePairingLink, cleanDevice, CODE_TTL_MS, CLAIMED_TTL_MS } from '../src/pairing.js';
 import { mayAccess, ROLE_COLLABORATOR, ROLE_OWNER } from '../src/access-policy.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,7 +24,7 @@ const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) faile
 let t = 1_000_000;
 const p = createPairing({ now: () => t });
 const a = p.start({ username: 'owner' });
-ok(a.ok && /^[a-f0-9]{32}$/.test(a.code) && a.expiresIn === CODE_TTL_MS / 1000, 'a code is 128 random bits and says how long it lasts');
+ok(a.ok && /^[a-f0-9]{24}$/.test(a.code) && a.expiresIn === CODE_TTL_MS / 1000, 'a code is 96 random bits and says how long it lasts');
 ok(p.start({ username: 'owner' }).code !== a.code, 'two codes are never the same');
 ok(p.start({ username: '' }).ok === false, 'nobody signed in, no code');
 let who = p.claim(a.code);
@@ -55,6 +55,34 @@ ok(made === 50 && refused && /Too many/.test(refused.error), 'the number waiting
 t += CODE_TTL_MS;
 ok(flood.size() === 0 && flood.start({ username: 'owner' }).ok, 'and expired ones make room again');
 
+// ─── Telling the screen that it worked ───
+{
+  let now = 5_000_000;
+  const q = createPairing({ now: () => now });
+  const owner = { username: 'owner', collabKey: '' };
+  const s = q.start(owner);
+  let st = q.status(s.code, owner);
+  ok(st.state === 'waiting' && st.expiresIn === CODE_TTL_MS / 1000, 'a code not yet used is waiting, and says for how long');
+  ok(q.status(s.code, { username: 'someone-else', collabKey: '' }).state === 'expired', 'to anyone but whoever asked for it, it does not exist');
+  ok(q.status(s.code, { username: 'owner', collabKey: 'tg:guest' }).state === 'expired', 'nor to a collaborator who happens to share the name');
+  ok(q.status('f'.repeat(24), owner).state === 'expired' && q.status(null, owner).state === 'expired', 'a code that never existed reads the same as one that ran out');
+  const got = q.claim(s.code, { name: 'Pixel 8 Pro', platform: 'android' });
+  ok(got && got.device.name === 'Pixel 8 Pro', 'claiming records which device it was');
+  st = q.status(s.code, owner);
+  ok(st.state === 'paired' && st.device.name === 'Pixel 8 Pro' && st.device.platform === 'android', 'and the screen is told it worked, and what connected');
+  ok(q.claim(s.code, { name: 'Second phone' }) === null && q.status(s.code, owner).device.name === 'Pixel 8 Pro', 'a spent code still cannot be claimed again, and its story does not change');
+  ok(q.size() === 0, 'a spent code does not count against the number waiting');
+  now += CLAIMED_TTL_MS;
+  ok(q.status(s.code, owner).state === 'expired', 'and is forgotten soon after');
+  const s2 = q.start(owner);
+  q.claim(s2.code, {}); q.cancel(s2.code);
+  ok(q.status(s2.code, owner).state === 'expired', 'a claim that fell through is forgotten outright, not reported as a success');
+  now += CODE_TTL_MS;
+  const s3 = q.start(owner);
+  now += CODE_TTL_MS;
+  ok(q.status(s3.code, owner).state === 'expired', 'an unused code that ran out is expired');
+}
+
 // ─── The link in the QR code ───
 const link = pairingLink('https://dev.example.com/', a.code);
 ok(link === `https://dev.example.com/pair#${a.code}`, 'the link is the server address with the code in the fragment');
@@ -75,7 +103,7 @@ ok(cleanDevice({ platform: 'toaster' }).platform === '' && cleanDevice({ platfor
 
 // ─── Who may ask for a code ───
 const collab = { username: 'guest', role: ROLE_COLLABORATOR, collabKey: 'tg:guest', projects: ['p'], roots: {} };
-ok(mayAccess(collab, 'POST', '/api/pair/start') && mayAccess(collab, 'POST', '/api/pair/cancel'), 'a collaborator may pair their own phone');
+ok(mayAccess(collab, 'POST', '/api/pair/start') && mayAccess(collab, 'POST', '/api/pair/cancel') && mayAccess(collab, 'POST', '/api/pair/status'), 'a collaborator may pair their own phone');
 ok(mayAccess({ username: 'o', role: ROLE_OWNER }, 'POST', '/api/pair/start'), 'and so may the owner');
 
 // ─── Wired in the way the comments promise ───
@@ -88,6 +116,9 @@ const claimBody = src.slice(claimAt, src.indexOf('\n    }\n', claimAt));
 ok(claimAt > 0 && !/validateToken\(req\)/.test(claimBody), 'claiming needs the code and no login');
 const cv = await import('../src/client-version.js');
 ok(cv.isGated('/api/pair/claim') && cv.isGated('/api/pair/start'), 'an app too old for this server is refused before it is given a login');
+const statusAt = src.indexOf("path === '/api/pair/status' && req.method === 'POST'");
+ok(statusAt > 0 && /validateToken\(req\)/.test(src.slice(statusAt, statusAt + 300)), 'asking what became of a code needs a login, and is a POST so the code stays out of logs');
+ok(/pairing\.cancel\(body\.code\);\s+return json\(res, \{ ok: false/.test(src), 'a claim refused after the code was spent is not left looking like a success');
 ok(cv.CAPABILITIES.includes('pairing'), 'the handshake says this server can pair');
 
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');

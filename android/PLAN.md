@@ -38,13 +38,39 @@ code, not from building any of it.
 
 ## Pairing
 
-1. The web UI shows a "Connect a phone" screen with a QR code: the server
-   address and a one-time code that expires in a few minutes.
+1. The web UI shows a "Connect a phone" screen with a Crundi code: the logo
+   with five rings of dashes turning round it. It carries the server address
+   and a one-time code that expires in a few minutes.
 2. The app scans it and swaps the code for a login, kept in the phone's
    keystore. No password or 2FA code is typed on the phone.
 3. On the phone itself, the mobile web UI offers "Open in app", which hands
    over the same code by link.
 4. Fallback: type the server address and sign in normally inside the app.
+
+### The Crundi code
+
+- Our own format, not a QR code (`src/crundi-code.js`, which both draws it and
+  reads it). The app reads it with that same file, run on camera frames.
+- Two plain rings locate it and give its tilt. Five data rings lie between;
+  one amber dash in each marks where that ring starts, so the rings can turn
+  independently and the phone can be held at any angle.
+- Reed-Solomon parity: partial damage is corrected, and a bad read is refused.
+- A QR code of the same link is still returned by the server (`qr`). It is the
+  fallback for an address the Crundi code cannot carry (longer than 46
+  characters, or an IPv6 address), and the only thing a phone's own camera
+  app can read.
+- Four sizes now, the largest for host names of about 61 symbols. Common
+  pieces of names (`.trycloudflare.com`, `.ts.net`, `.com`, `192.168.` and so
+  on) cost one symbol each, so a Cloudflare quick tunnel address fits. The
+  list of pieces is part of the format: add to its end, never reorder it.
+- **It has an ending.** The screen showing the code asks
+  `POST /api/pair/status` with `{ code }` every second or two. When the answer
+  is `{ state: "paired", device }`, it adds the class from `doneClass()` to the
+  `<svg>`: the rings wind into the logo, the outer ring closes and turns
+  green, and a tick appears. After that the picture is no longer scannable.
+- **Not yet proven on a real camera.** It reads back from browser screenshots
+  at tilts up to 45 degrees and from simulated blur, grain and glare, but no
+  phone has pointed at a screen yet.
 
 Details that follow from how the server works today:
 
@@ -199,7 +225,9 @@ and the Linux desktop client.
 - `GET /api/handshake` with `X-Crundi-Client: android-play/1.0.0` (or
   `android-github/...`). No login. Check `client.accepted`, then compare
   `server.version` with the app's own minimum.
-- The QR code holds `https://<server>/pair#<code>`. The code is in the
+- The Crundi code (and the fallback QR code) holds `https://<server>/pair#<code>`.
+  `decodeImage({ data, width, height })` in `src/crundi-code.js` returns
+  `{ link }` from an RGBA camera frame, or null. The code is in the
   fragment so it is never sent to a server by a browser.
 - `POST /api/pair/claim` with `{ code, device: { name, platform } }` returns
   `{ username, device, sessions: { page, background }, server }`. Each session

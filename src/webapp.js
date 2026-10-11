@@ -66,6 +66,7 @@ import * as whatsNew from './whatsnew.js';
 import * as clientVersion from './client-version.js';
 import { createPairing, pairingLink, cleanDevice } from './pairing.js';
 import { toSvg as qrSvg } from './qr.js';
+import { toSvg as crundiCodeSvg } from './crundi-code.js';
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import { createChatSchedule } from './chat-schedule.js';
@@ -2444,7 +2445,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const started = pairing.start({ username: principal.username, collabKey: principal.collabKey || '' });
       if (!started.ok) return json(res, started, 429);
       const link = pairingLink(base, started.code);
-      return json(res, { ok: true, code: started.code, link, svg: qrSvg(link), expiresIn: started.expiresIn, server: base, insecure: base.startsWith('http://') });
+      // Two pictures of the same link. `mark` is the Crundi code, the one that
+      // is shown; it is null for an address it cannot carry (too long, or not
+      // a plain host name), and `qr` is what is shown then, and what a phone's
+      // own camera can read.
+      return json(res, {
+        ok: true, code: started.code, link, mark: crundiCodeSvg(link), qr: qrSvg(link),
+        expiresIn: started.expiresIn, server: base, insecure: base.startsWith('http://'),
+      });
     }
     if (path === '/api/pair/cancel' && req.method === 'POST') {
       if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
@@ -2452,15 +2460,29 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* nothing to cancel */ }
       return json(res, { ok: true, cancelled: pairing.cancel(body.code) });
     }
+    // Asked every second or two by the screen showing the code, so it can
+    // play its ending the moment the phone is in. POST, not GET: a code that
+    // is still good has no business in a query string, where access logs and
+    // proxies keep it.
+    if (path === '/api/pair/status' && req.method === 'POST') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as expired */ }
+      return json(res, { ok: true, ...pairing.status(body.code, { username: principal.username, collabKey: principal.collabKey || '' }) });
+    }
     // No login: the code IS the credential. One answer for every failure, so
     // it cannot be used to learn whether a code ever existed.
     if (path === '/api/pair/claim' && req.method === 'POST') {
       let body = {};
       try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* treated as a bad code */ }
-      const who = pairing.claim(body.code);
+      const who = pairing.claim(body.code, body.device);
       if (!who) return json(res, { ok: false, error: 'This pairing code is not valid. It may have expired or been used already.' }, 403);
-      // A collaborator whose access ended while the code was on screen.
+      // A collaborator whose access ended while the code was on screen. The
+      // code is forgotten outright, or the screen showing it would be told it
+      // had worked.
       if (who.collabKey && !collaborators.liveByIdentity(who.collabKey).length) {
+        pairing.cancel(body.code);
         return json(res, { ok: false, error: 'This pairing code is not valid. It may have expired or been used already.' }, 403);
       }
       if (!who.collabKey) setForwardCookie(res);

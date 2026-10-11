@@ -7,15 +7,24 @@
 // A code is a bearer token for whoever asked for it, which is why it is
 // narrow: random, single use, minutes long, and kept in memory only, so a
 // restart forgets every one of them.
+//
+// A spent code is remembered for a little while longer, only so the screen
+// that is showing it can be told "that worked, it was this device" and play
+// its ending instead of sitting there until it times out.
 
 import { randomBytes } from 'node:crypto';
 
 export const CODE_TTL_MS = 5 * 60 * 1000;
+// How long a spent code can still be asked about.
+export const CLAIMED_TTL_MS = 2 * 60 * 1000;
 // Far more than anyone needs at once. It is a ceiling on what a signed-in
 // caller in a loop can make the server hold, nothing else.
 const MAX_PENDING = 50;
 
-const CODE_RE = /^[a-f0-9]{32}$/;
+// 96 random bits. Enough several times over for something that works once and
+// dies in five minutes, and short enough to leave the Crundi code room for the
+// server's name (crundi-code.js).
+const CODE_RE = /^[a-f0-9]{24}$/;
 const PLATFORMS = new Set(['android', 'ios', 'desktop']);
 
 /**
@@ -48,12 +57,15 @@ export function cleanDevice(d) {
 }
 
 export function createPairing({ now = () => Date.now(), ttlMs = CODE_TTL_MS } = {}) {
-  const pending = new Map();   // code -> { username, collabKey, expiresAt }
+  const pending = new Map();   // code -> { username, collabKey, expiresAt, device: null | { name, platform } }
 
   function sweep() {
     const t = now();
     for (const [code, e] of pending) if (t >= e.expiresAt) pending.delete(code);
   }
+
+  /** Codes still waiting to be used. */
+  function waiting() { sweep(); let n = 0; for (const e of pending.values()) if (!e.device) n++; return n; }
 
   return {
     /**
@@ -63,10 +75,10 @@ export function createPairing({ now = () => Date.now(), ttlMs = CODE_TTL_MS } = 
     start({ username, collabKey = '' }) {
       sweep();
       if (!username) return { ok: false, error: 'Not signed in' };
-      if (pending.size >= MAX_PENDING) return { ok: false, error: 'Too many pairing codes are waiting. Try again in a few minutes.' };
-      const code = randomBytes(16).toString('hex');
+      if (waiting() >= MAX_PENDING) return { ok: false, error: 'Too many pairing codes are waiting. Try again in a few minutes.' };
+      const code = randomBytes(12).toString('hex');
       const expiresAt = now() + ttlMs;
-      pending.set(code, { username, collabKey, expiresAt });
+      pending.set(code, { username, collabKey, expiresAt, device: null });
       return { ok: true, code, expiresAt, expiresIn: Math.floor(ttlMs / 1000) };
     },
 
@@ -75,19 +87,34 @@ export function createPairing({ now = () => Date.now(), ttlMs = CODE_TTL_MS } = 
      * anything, so two claims racing cannot both win.
      * @returns {{ username: string, collabKey: string } | null}
      */
-    claim(code) {
+    claim(code, device) {
       sweep();
       const key = String(code || '');
       if (!CODE_RE.test(key)) return null;
       const e = pending.get(key);
-      if (!e) return null;
-      pending.delete(key);
-      return { username: e.username, collabKey: e.collabKey };
+      if (!e || e.device) return null;
+      e.device = cleanDevice(device);
+      e.expiresAt = now() + CLAIMED_TTL_MS;
+      return { username: e.username, collabKey: e.collabKey, device: e.device };
     },
 
-    /** Withdraw a code that was shown and not used (the dialog was closed). */
+    /**
+     * What became of a code, for the screen that is showing it. Only whoever
+     * asked for the code gets an answer; to anyone else it does not exist,
+     * the same as one that never did.
+     * @returns {{ state: 'waiting', expiresIn: number } | { state: 'paired', device: object } | { state: 'expired' }}
+     */
+    status(code, { username, collabKey = '' }) {
+      sweep();
+      const e = pending.get(String(code || ''));
+      if (!e || e.username !== username || e.collabKey !== collabKey) return { state: 'expired' };
+      if (e.device) return { state: 'paired', device: { ...e.device } };
+      return { state: 'waiting', expiresIn: Math.max(0, Math.ceil((e.expiresAt - now()) / 1000)) };
+    },
+
+    /** Withdraw a code: one shown and not used, or one whose claim fell through. */
     cancel(code) { return pending.delete(String(code || '')); },
 
-    size() { sweep(); return pending.size; },
+    size: waiting,
   };
 }

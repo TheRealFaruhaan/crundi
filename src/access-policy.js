@@ -51,6 +51,7 @@ const COLLABORATOR_ROUTES = [
   ['POST', '/api/auth/sessions/revoke'],    // scoped: their own families
   ['POST', '/api/pair/start'],             // pre-gate anyway. The phone they pair becomes THEM:
   ['POST', '/api/pair/cancel'],            // the same person, the same confinement, nothing more
+  ['POST', '/api/pair/status'],            // answers only for a code they asked for themselves
   ['GET', '/api/status'],                   // scoped: trimmed for collaborators
   ['GET', '/api/state'],                    // scoped: buildState filters by principal
   ['GET', '/api/events'],                   // scoped: same filter as /api/state
