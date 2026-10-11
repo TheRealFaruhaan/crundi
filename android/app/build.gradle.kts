@@ -85,7 +85,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Shrunk and renamed by R8. The build puts the mapping that undoes
+            // the renaming into the bundle, so the Play Console can show crash
+            // reports with real names. See proguard-rules.pro for what must
+            // not be renamed.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("upload")
         }
     }
