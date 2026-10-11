@@ -107,7 +107,9 @@ ok(mayAccess(collab, 'POST', '/api/pair/start') && mayAccess(collab, 'POST', '/a
 ok(mayAccess({ username: 'o', role: ROLE_OWNER }, 'POST', '/api/pair/start'), 'and so may the owner');
 
 // ─── Wired in the way the comments promise ───
-const src = readFileSync(join(root, 'src', 'webapp.js'), 'utf8');
+// Line endings normalised: a Windows checkout has CRLF, and the search for the
+// end of the claim route below is for a bare LF.
+const src = readFileSync(join(root, 'src', 'webapp.js'), 'utf8').split(/\r?\n/).join('\n');
 ok(/login\('page'\), background: login\('background'\)/.test(src), 'a paired device gets two logins, one per role');
 ok(/if \(m\?\.device\?\.id\) for \(const \[fid, f\] of families\) if \(f\.device\?\.id === m\.device\.id\) gone\.add\(fid\)/.test(src), 'revoking one login of a device revokes all of them');
 ok(/\.\.\.\(\(device \|\| prev\?\.device\) \? \{ device: device \|\| prev\.device \} : \{\}\)/.test(src), 'the device survives a token rotation');
