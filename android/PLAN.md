@@ -587,9 +587,18 @@ and the Linux desktop client.
   password and authenticator secret, on a network with no way out. Claude is
   not signed in there. Connect a phone gained "Copy the pairing link
   instead" so that a reviewer with one phone can pair.
-- **Not part of 1.0.0:** the GitHub build as a release (no release signing
-  key, not attached to releases), the Play in-app update prompt, a path from
-  the demonstration server to the push relay.
+- **The GitHub build is a release asset.** A version tag makes the `github`
+  flavour as a signed release APK and attaches it to that tag's release as
+  `Crundi-Android-<app version>.apk` (the `release` job in
+  `.github/workflows/android.yml`; it can also be run by hand for a release
+  that already exists). It is signed with a key of its own,
+  `crundi-github.jks`, kept beside the upload key on the build machine and,
+  with its password and `google-services.json`, in the repository's secrets.
+  The workflow refuses an APK whose certificate is not the one it names. It
+  is not the Play key, so a phone moves between the two installs only by
+  uninstalling. Each flavour is signed by its own key in `build.gradle.kts`.
+- **Not part of 1.0.0:** the Play in-app update prompt, a path from the
+  demonstration server to the push relay.
 - **Next:** the Play Console steps in `android/store/PLAY_RELEASE.md`.
 
 ## API notes for the app

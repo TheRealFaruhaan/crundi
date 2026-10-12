@@ -62,23 +62,31 @@ android {
         }
     }
 
-    // Release builds are signed with the upload key. Where the key is and
-    // what opens it come from the environment, never from this repo:
+    // Release builds are signed, each flavour with its own key, and where a
+    // key is and what opens it come from the environment, never from this
+    // repo. The `play` build is signed with the upload key, the one Google
+    // knows:
     //   CRUNDI_UPLOAD_STORE_FILE      the keystore file
     //   CRUNDI_UPLOAD_STORE_PASSWORD  its password (also the key's)
     //   CRUNDI_UPLOAD_KEY_ALIAS       the key's name in it (default: upload)
-    // Without them a release build still compiles, unsigned, and cannot be
+    // The `github` build, the APK attached to a GitHub release, is signed
+    // with a key of its own (CRUNDI_GITHUB_STORE_FILE, _STORE_PASSWORD,
+    // _KEY_ALIAS, default: github). It is a different key on purpose: this
+    // one has to live in the repository's secrets for the release workflow to
+    // use, and a leak there must not be a leak of the key Play trusts.
+    // Without its key a release build still compiles, unsigned, and cannot be
     // installed or uploaded: a build signed by accident with nothing is the
     // one mistake this arrangement cannot make.
-    val uploadStore = System.getenv("CRUNDI_UPLOAD_STORE_FILE").orEmpty()
-    val uploadPassword = System.getenv("CRUNDI_UPLOAD_STORE_PASSWORD").orEmpty()
     signingConfigs {
-        if (uploadStore.isNotEmpty() && uploadPassword.isNotEmpty()) {
-            create("upload") {
-                storeFile = file(uploadStore)
-                storePassword = uploadPassword
-                keyAlias = System.getenv("CRUNDI_UPLOAD_KEY_ALIAS") ?: "upload"
-                keyPassword = uploadPassword
+        for ((name, env) in listOf("upload" to "UPLOAD", "github" to "GITHUB")) {
+            val store = System.getenv("CRUNDI_${env}_STORE_FILE").orEmpty()
+            val password = System.getenv("CRUNDI_${env}_STORE_PASSWORD").orEmpty()
+            if (store.isEmpty() || password.isEmpty()) continue
+            create(name) {
+                storeFile = file(store)
+                storePassword = password
+                keyAlias = System.getenv("CRUNDI_${env}_KEY_ALIAS") ?: name
+                keyPassword = password
             }
         }
     }
@@ -92,9 +100,17 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("upload")
+            // No key here: a build type's key would win over the flavour's,
+            // and the flavours (below) are what decide it.
         }
     }
+
+    // Which key signs which flavour. Set here, after both the flavours and
+    // the keys exist. A debug build is not touched by this: its build type
+    // carries the debug key, and a build type's key wins.
+    productFlavors.getByName("play").signingConfig = signingConfigs.findByName("upload")
+    productFlavors.getByName("github").signingConfig = signingConfigs.findByName("github")
+
     buildFeatures {
         buildConfig = true
     }

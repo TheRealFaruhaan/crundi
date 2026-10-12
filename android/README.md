@@ -20,7 +20,9 @@ Needs JDK 17 and the Android SDK (platform 36). From this folder:
 
 ## Two builds
 
-- **`github`** updates itself from GitHub releases. CI builds this one.
+- **`github`** updates itself from GitHub releases. CI builds this one, and
+  on a version tag attaches it, signed, to the release as
+  `Crundi-Android-<version>.apk`.
 - **`play`** is for the Play Store and is built by hand. It contains no code
   that knows about GitHub: `src/github/` is not compiled into it.
 
