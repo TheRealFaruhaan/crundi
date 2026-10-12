@@ -597,6 +597,19 @@ and the Linux desktop client.
   The workflow refuses an APK whose certificate is not the one it names. It
   is not the Play key, so a phone moves between the two installs only by
   uninstalling. Each flavour is signed by its own key in `build.gradle.kts`.
+- **1.0.1: the app signs in by pairing and nothing else.** A phone lost its
+  pairing (the server took a renewal offered twice for a stolen token and
+  cut the device off), a password typed into the page brought the page back,
+  and what was left looked signed in and did half its job: no notifications,
+  and every bubble answered "chat could not be found". Now the server
+  refuses every sign-in from the app that is not pairing (`isUnpairedSignIn`
+  in `src/client-version.js`), the page shows the app "Pair this phone" in
+  place of a sign-in form, and the app has a pair-again path that replaces
+  the dead pairing (`PairActivity.EXTRA_AGAIN`, the bridge's `pair()`). The
+  bubble lookup says which of three things went wrong. And the cause: a
+  renewal whose answer never arrived is answered again when the spent token
+  comes back, as long as nothing that first answer issued was ever used
+  (`rotateRefresh`); the server logs why a login was revoked.
 - **Not part of 1.0.0:** the Play in-app update prompt, a path from the
   demonstration server to the push relay.
 - **Next:** the Play Console steps in `android/store/PLAY_RELEASE.md`.

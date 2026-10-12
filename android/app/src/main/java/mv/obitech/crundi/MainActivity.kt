@@ -273,11 +273,33 @@ class MainActivity : Activity() {
                 val x = sessions.getJSONObject(i)
                 if (x.optString("id") == chatId) found = ChatRef.from(s.id, org.json.JSONObject().put("id", chatId).put("title", x.optString("longTitle").ifEmpty { x.optString("title") }).put("project", x.optString("project")).put("mark", x.optJSONObject("mark")))
             }
-            if (found == null) Toast.makeText(this, "That chat could not be found on the server.", Toast.LENGTH_LONG).show() else then(found)
+            if (found != null) { then(found); return@run }
+            // Three different failures, and they used to read the same. The
+            // one that matters most is the app's own sign-in having ended:
+            // then nothing here works until the phone is paired again.
+            val reply = result.getOrNull()
+            when {
+                reply != null && (reply.status == 401 || reply.status == 403) -> pairAgain("This phone is no longer paired with ${s.host}. Pair it again to use bubbles and notifications.")
+                sessions == null -> Toast.makeText(this, "Could not reach ${s.host}. Check the connection and try again.", Toast.LENGTH_LONG).show()
+                else -> Toast.makeText(this, "That chat is no longer open on the server.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
+    /** Send the person to pair this phone with this server again. */
+    private fun pairAgain(why: String = "") {
+        val s = server ?: return
+        if (why.isNotEmpty()) Toast.makeText(this, why, Toast.LENGTH_LONG).show()
+        startActivity(Intent(this, PairActivity::class.java).putExtra(PairActivity.EXTRA_AGAIN, s.id))
+    }
+
     private inner class Bridge {
+        /** "Pair this phone", on the screen the page shows in place of a sign-in form. */
+        @JavascriptInterface fun pair() { runOnUiThread { pairAgain() } }
+
+        /** The page saying it is signed out. Nothing to do yet: the person is looking at that screen, and its button is pair(). */
+        @JavascriptInterface fun unpaired() { }
+
         /** The back arrow in the compact chat. Here there is no bubble to put away, so it is plain back. */
         @JavascriptInterface fun close() { runOnUiThread { goBack() } }
 
@@ -294,7 +316,7 @@ class MainActivity : Activity() {
 
         /** What this build of the app can do, so the page offers only that: a comma-separated list. */
         @JavascriptInterface fun can(): String = listOfNotNull(
-            "settings", "download",
+            "settings", "download", "pair",
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) "bubble" else null,
         ).joinToString(",")
 

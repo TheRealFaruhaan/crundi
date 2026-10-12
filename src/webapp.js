@@ -456,11 +456,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
 
   /** Drop every token belonging to one login. Used on logout and on reuse detection. */
-  function revokeFamily(familyId) {
-    // Logged because "why was I signed out?" is otherwise unanswerable.
+  function revokeFamily(familyId, why = '') {
+    // Logged, with the reason, because "why was I signed out?" is otherwise
+    // unanswerable: a sign-out, a revocation from another device and a
+    // refresh token taken for stolen all used to read the same here.
     const m = families.get(familyId);
     console.log(`[webapp] Revoked session ${String(familyId).slice(0, 8)}`
-      + (m?.ip ? ` (${m.ip})` : '') + (m?.userAgent ? ` ${m.userAgent.slice(0, 40)}` : ''));
+      + (m?.device?.name ? ` on paired device "${m.device.name}"` : '')
+      + (m?.ip ? ` (${m.ip})` : '') + (m?.userAgent ? ` ${m.userAgent.slice(0, 40)}` : '')
+      + (why ? `: ${why}` : ''));
     // A paired device holds more than one login (the page and the background
     // code each have their own, see pairDevice). Cutting off the device means
     // all of them: leaving one behind would leave the phone signed in.
@@ -515,15 +519,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ token: string, refreshToken: string, expiresIn: number }}
    */
-  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '', device = null) {
+  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '', device = null, parent = '') {
     const now = Date.now();
     const token = randomBytes(32).toString('hex');
     const refreshToken = randomBytes(32).toString('hex');
     // collabKey rides on BOTH tokens so a refresh cannot quietly promote a
     // collaborator to an owner session: the new access token is minted from
     // the refresh record, and the record remembers which it was.
-    tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS, collabKey });
-    refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false, collabKey });
+    // `parent` is the refresh token this pair was renewed from, when it was.
+    // The first time either of the pair is used, the parent learns that its
+    // answer arrived (see answerArrived and the replay rule in rotateRefresh).
+    tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS, collabKey, ...(parent ? { parent } : {}) });
+    refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false, collabKey, ...(parent ? { parent } : {}) });
     // Remember enough about the sign-in to recognise it in a list later. "A
     // session" tells you nothing; "Chrome on Android, from this address, last
     // seen an hour ago" is something you can decide about.
@@ -573,6 +580,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ ok: true, token, refreshToken, expiresIn } | { ok: false, error: string }}
    */
+  /** A token from a renewal has been used: whoever renewed did get the answer. */
+  function answerArrived(entry) {
+    if (!entry.parent) return;
+    const spent = refreshTokens.get(entry.parent);
+    if (spent) spent.answered = true;
+    delete entry.parent;   // said once; nothing more to say
+  }
+
   function rotateRefresh(rt, req = null) {
     const entry = rt && refreshTokens.get(rt);
     if (!entry) return { ok: false, error: 'Invalid refresh token' };
@@ -588,9 +603,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // later — the shape an actually-stolen token has — still cuts the login.
       const age = Date.now() - (entry.usedAt || 0);
       if (entry.usedAt && age <= REPLAY_GRACE_MS) {
-        return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '') };
+        return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '', null, rt) };
       }
-      revokeFamily(entry.familyId);
+      // A third case, and the one that signed a phone out for nothing: the
+      // renewal was asked for and the ANSWER never arrived (the network went
+      // as it was sent; a phone moving between Wi-Fi and mobile data does
+      // this). The client still holds the spent token, because it was never
+      // given another, and offers it again whenever it is next online, which
+      // can be long after the grace above. What tells this from a theft is
+      // that nothing the renewal issued has ever been used. If the pair had
+      // reached its owner it would have been used at once; an unused pair
+      // means there is no second holder to protect. So the login carries on.
+      // The moment a pair IS used, the spent token is marked answered, and
+      // any later replay of it is cut off as before.
+      if (entry.answered === false) {
+        console.log(`[webapp] A renewal for session ${String(entry.familyId).slice(0, 8)} was asked for again ${Math.round(age / 1000)}s later; its first answer was never used, so it is answered again`);
+        return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '', null, rt) };
+      }
+      revokeFamily(entry.familyId, 'a spent refresh token was presented again');
       return { ok: false, error: 'Refresh token reused' };
     }
     if (Date.now() >= entry.expiresAt) {
@@ -602,15 +632,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // passes expiresAt.
     entry.used = true;
     entry.usedAt = Date.now();   // how the grace above tells a race from a theft
+    // Not yet known to have arrived. Written out as false, not left unset:
+    // tokens spent before this rule existed carry no such field, and those
+    // keep the strict treatment rather than being taken for unanswered.
+    entry.answered = false;
+    answerArrived(entry);
     // createSession saves, which also records this one as spent - so a replay
     // after a restart is still caught and still revokes the family.
     // A collaborator whose time ran out must not be able to refresh their way
     // into another 15 minutes; active() is the same check the request gate makes.
     if (entry.collabKey && !collaborators.liveByIdentity(entry.collabKey).length) {
-      revokeFamily(entry.familyId);
+      revokeFamily(entry.familyId, 'the collaborator access ended');
       return { ok: false, error: 'That collaborator access has ended' };
     }
-    return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '') };
+    return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '', null, rt) };
   }
 
   /** Spent refresh tokens are retained for replay detection; drop them at expiry. */
@@ -652,6 +687,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // worth a disk write per request; the periodic refresh persists it.
     const fam = families.get(entry.familyId);
     if (fam) fam.lastSeenAt = Date.now();
+    answerArrived(entry);
     if (!invitations.length) {
       return { username: entry.username, role: ROLE_OWNER, collabKey: '', projects: [], roots: {} };
     }
@@ -2195,6 +2231,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const refusal = clientVersion.refusalFor(clientVersion.identifyClient(req));
       if (refusal) return json(res, clientVersion.refusalBody(refusal, APP_VERSION), 426);
     }
+    // The phone app signs in by pairing and by nothing else: see
+    // isUnpairedSignIn for what a password typed into it used to leave behind.
+    if (clientVersion.isUnpairedSignIn(req, path)) {
+      console.warn(`[crundi] Refused a sign-in from the phone app at ${path}: it has to be paired`);
+      return json(res, clientVersion.PAIR_REQUIRED, 403);
+    }
 
     // Serve web app
     if (path === '/' && req.method === 'GET') {
@@ -2544,7 +2586,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const entry = tok && tokens.get(tok);
       // Revoke the whole family, not just this access token: the refresh token
       // beside it would mint a new one seconds later otherwise.
-      if (entry?.familyId) revokeFamily(entry.familyId);
+      if (entry?.familyId) revokeFamily(entry.familyId, 'signed out there');
       // And take the forward cookie with it. Leaving it behind would mean
       // signing out of Crundi while every private forward stayed reachable
       // from that browser for another week.
@@ -2581,14 +2623,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // Deliberately spares this device: "sign out everywhere else" that also
         // signs YOU out is a good way to lock yourself out of a remote server.
         for (const sess of listSessions(mine)) {
-          if (sess.id !== mine) { revokeFamily(sess.id); revoked++; }
+          if (sess.id !== mine) { revokeFamily(sess.id, 'signed out everywhere else, from another session'); revoked++; }
         }
       } else {
         const id = String(body.id || '');
         if (!id) return json(res, { ok: false, error: 'No session given' }, 400);
         if (id === mine) return json(res, { ok: false, error: 'That is this device — use Sign out instead.' }, 400);
         if (!listSessions(mine).some((x) => x.id === id)) return json(res, { ok: false, error: 'No such session' }, 404);
-        revokeFamily(id);
+        revokeFamily(id, 'revoked from another session');
         revoked = 1;
       }
       return json(res, { ok: true, revoked });

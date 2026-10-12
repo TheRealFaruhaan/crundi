@@ -17341,6 +17341,31 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (pick) selectProject(pick);
     }
 
+    /** The sign-in screen as the phone app sees it: no form, one way forward. */
+    function showPairAgain() {
+      const box = document.querySelector('#login-screen .login-box');
+      if (!box) return;
+      const can = (typeof NATIVE_CAN !== 'undefined') ? NATIVE_CAN : [];
+      const canPair = can.indexOf('pair') >= 0;
+      box.textContent = '';
+      const add = (tag, text, css) => { const el = document.createElement(tag); el.textContent = text; if (css) el.style.cssText = css; box.appendChild(el); return el; };
+      add('p', 'This phone is not paired with this server', 'font-weight:600;color:var(--text-primary);');
+      add('p', 'Its sign-in ended, or was removed from another device. The app signs in by pairing, not with a password.', 'max-width:300px;');
+      add('p', 'On a computer, or in the browser on this phone, open Crundi, then Settings, then Connect a phone.'
+        + (canPair ? '' : ' In this app, remove this server in the app settings first, then pair again.'), 'max-width:300px;');
+      const btn = add('button', canPair ? 'Pair this phone' : 'Open app settings',
+        'padding:11px 18px;border-radius:var(--radius-sm);border:0;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer;');
+      btn.type = 'button';
+      btn.addEventListener('click', () => {
+        try {
+          if (canPair) window.CrundiNative.pair(); else window.CrundiNative.openSettings();
+        } catch (err) { toast('Open the app settings to pair this phone again', 'error'); }
+      });
+      // The app is told as well, so it can stop offering what cannot work
+      // (bubbles, replies) until the phone is paired again.
+      try { if (canPair && window.CrundiNative.unpaired) window.CrundiNative.unpaired(); } catch (err) { /* an older app */ }
+    }
+
     async function init() {
       if (consumeRedirectToken() && await checkAuth()) {
         showApp(); connectSSE(); checkImport();
@@ -17356,6 +17381,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         clearSession();
         $('#login-screen').style.display = '';
         hideBoot();
+        // Inside the phone app there is no signing in here. The app is two
+        // logins, this page's and its own, and only pairing makes both; a
+        // password typed here would leave an app that looks signed in and
+        // gets no notifications. The server refuses it as well.
+        if (window.CrundiNative || navigator.userAgent.indexOf('CrundiAndroid/') >= 0) { showPairAgain(); return; }
         initLogin();
         $('#password-login').addEventListener('submit', submitPasswordLogin);
         const cf = $('#collab-login');
