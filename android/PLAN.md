@@ -610,6 +610,13 @@ and the Linux desktop client.
   renewal whose answer never arrived is answered again when the spent token
   comes back, as long as nothing that first answer issued was ever used
   (`rotateRefresh`); the server logs why a login was revoked.
+- **1.0.1 also catches up.** A change of a chat's state is sent once, as
+  it happens, so a phone that missed "working" (paired a moment too late,
+  the message lost) showed nothing for that chat. The app now asks the
+  server what is on the cards each time it comes to the front
+  (`GET /api/push/mobile/states`, `LiveCards.catchUp`), draws what it did
+  not know of and takes down what has stopped. It does not open a bubble:
+  those come from notifications.
 - **Not part of 1.0.0:** the Play in-app update prompt, a path from the
   demonstration server to the push relay.
 - **Next:** the Play Console steps in `android/store/PLAY_RELEASE.md`.

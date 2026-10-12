@@ -4526,6 +4526,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, r, r.ok ? 200 : 400);
     }
 
+    // What is on the live cards right now, for a phone that was not told as
+    // it happened: it was not paired yet, it was off, the message was lost.
+    // A change of state is sent once, when it changes, so a phone that missed
+    // "working" showed nothing for that chat until its state changed again.
+    // The app asks this when it is opened and when it is paired. Each entry
+    // has the shape of the message it stands in for.
+    if (path === '/api/push/mobile/states' && req.method === 'GET') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      // The cards are the owner's chats; a collaborator's phone has none.
+      if (principal.role !== ROLE_OWNER) return json(res, { ok: true, at: Date.now(), states: [] });
+      const states = [];
+      for (const [id, chat] of onLiveCard) {
+        const state = agentStates.get(id);
+        if (state !== 'working' && state !== 'needs-input' && state !== 'waiting') continue;
+        states.push({ state, since: workingSince.get(id) || 0, chat });
+      }
+      return json(res, { ok: true, at: Date.now(), states });
+    }
+
     if (path === '/api/push/test' && req.method === 'POST') {
       const ok = await webPush.send('Notifications are working.', { title: 'Crundi', tag: 'test' });
       return json(res, ok

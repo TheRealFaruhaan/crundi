@@ -55,6 +55,24 @@ class MainActivity : Activity() {
         open()
     }
 
+    private var caughtUpAt = 0L
+
+    /**
+     * Each time the app comes to the front: ask the server which chats are at
+     * work. The live card is otherwise drawn only from messages sent as a
+     * state changes, and a phone that missed one (it was paired a moment too
+     * late, or the message never arrived) showed nothing for that chat.
+     */
+    override fun onResume() {
+        super.onResume()
+        val s = server ?: return
+        val now = System.currentTimeMillis()
+        if (now - caughtUpAt < 10_000) return
+        caughtUpAt = now
+        val app = applicationContext
+        Bg.run({ LiveCards.catchUp(app, s.id) }) { }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
