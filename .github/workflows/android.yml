@@ -116,7 +116,10 @@ jobs:
           # app-github-release-unsigned.apk, which installs on nothing.
           [ -f "$apk" ] || { echo "No signed APK came out:" >&2; ls "$out" >&2; exit 1; }
           signer=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
-          got=$("$signer" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          # Shown whole, because how apksigner words a signer differs between
+          # versions of the build tools ("Signer #1", "Signer (minSdkVersion=…").
+          "$signer" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
+          got=$(grep -oE 'certificate SHA-256 digest: [0-9a-f]{64}' "$RUNNER_TEMP/certs.txt" | awk '{print $NF}' | sort -u)
           if [ "$got" != "$SIGNER_SHA256" ]; then
             echo "Signed with the wrong key: $got" >&2
             exit 1
