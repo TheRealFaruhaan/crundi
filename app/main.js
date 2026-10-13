@@ -35,6 +35,10 @@ const assetsDir = app.isPackaged
 // same files. Set before anything asks where userData is.
 if (app.isPackaged && process.platform === 'linux' && existsSync(join(srcDir, 'index.js'))) {
   app.setPath('userData', join(app.getPath('appData'), 'crundi-desktop'));
+  // Electron makes its usual folder by itself but not one it was pointed at,
+  // and until it existed the first lines of the log (written below, before
+  // the app is ready) had nowhere to go and were lost.
+  try { mkdirSync(app.getPath('userData'), { recursive: true }); } catch { /* the log says so later */ }
 }
 
 // Crundi data directory — separate from old "Claude Telegram Bot" app
