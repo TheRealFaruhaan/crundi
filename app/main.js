@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { spawn, execFileSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
@@ -27,6 +27,15 @@ const srcDir = join(appRoot, 'src');
 const assetsDir = app.isPackaged
   ? join(dirname(app.getPath('exe')), 'resources', 'assets')
   : join(__dirname, '..', 'assets');
+
+// On Linux the all-in-one app keeps its settings in a folder of its own.
+// Left alone it would use ~/.config/crundi, which is exactly where a server
+// installed with install.sh keeps its .env and data: the two would be one
+// installation run twice, each starting a server on the same port over the
+// same files. Set before anything asks where userData is.
+if (app.isPackaged && process.platform === 'linux' && existsSync(join(srcDir, 'index.js'))) {
+  app.setPath('userData', join(app.getPath('appData'), 'crundi-desktop'));
+}
 
 // Crundi data directory — separate from old "Claude Telegram Bot" app
 const userDataDir = app.isPackaged ? app.getPath('userData') : join(__dirname, '..');
@@ -126,7 +135,8 @@ function createWindow() {
     minWidth: 800,
     minHeight: 500,
     title: 'Crundi',
-    icon: join(assetsDir, 'icon.ico'),
+    // An .ico is a Windows file; everywhere else the window takes a PNG.
+    icon: join(assetsDir, process.platform === 'win32' ? 'icon.ico' : 'icon_256x256.png'),
     frame: false,
     titleBarStyle: 'hidden',
     backgroundColor: '#0a0a0f',
@@ -195,6 +205,9 @@ function createTray() {
   tray.setToolTip('Crundi');
   updateTrayMenu();
   tray.on('double-click', () => showWindow());
+  // Linux trays report a single click, where they report a click at all
+  // (an AppIndicator shows only the menu, which has Open in it).
+  if (process.platform === 'linux') tray.on('click', () => showWindow());
 }
 
 function updateTrayMenu() {
@@ -330,6 +343,58 @@ function writeClientConfig(cfg) {
   }
 }
 
+// ─── Running the server on Linux and macOS ───
+//
+// Started from a desktop launcher, an app does not get the PATH a terminal
+// has: nothing from ~/.bashrc or ~/.profile, so no ~/.local/bin, no nvm, no
+// npm-global. The server finds `claude`, `git` and everything else it runs
+// through PATH, and with the launcher's bare one it finds none of what the
+// person installed for themselves. So the PATH is asked of their own login
+// shell, once, and what it says goes in front of what we were given.
+let shellPathCache;
+function loginShellPath() {
+  if (process.platform === 'win32') return '';
+  if (shellPathCache !== undefined) return shellPathCache;
+  shellPathCache = '';
+  try {
+    const sh = process.env.SHELL || '/bin/bash';
+    // Marked on both sides: an interactive shell may print a greeting, and
+    // only what is between the marks is the PATH.
+    const out = execFileSync(sh, ['-ilc', 'printf "__CRUNDI__%s__CRUNDI__" "$PATH"'], {
+      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const m = /__CRUNDI__([\s\S]*?)__CRUNDI__/.exec(out);
+    if (m) shellPathCache = m[1].trim();
+  } catch (err) {
+    appendLog(`[electron] Could not ask the login shell for its PATH: ${err.message}`);
+  }
+  return shellPathCache;
+}
+
+/** The Node that ships inside the Linux package, or '' where none does. */
+function bundledNode() {
+  if (!app.isPackaged) return '';
+  const p = join(process.resourcesPath, 'node', 'bin', 'node');
+  return existsSync(p) ? p : '';
+}
+
+/** PATH for the server: the login shell's, then ours, then the usual per-user places, then the bundled Node. */
+function serverPath() {
+  const sep = process.platform === 'win32' ? ';' : ':';
+  const parts = [];
+  const add = (list) => { for (const d of String(list || '').split(sep)) if (d && !parts.includes(d)) parts.push(d); };
+  add(loginShellPath());
+  add(process.env.PATH);
+  if (process.platform !== 'win32') {
+    add([join(homedir(), '.local', 'bin'), '/usr/local/bin'].join(sep));
+    // Last, so a Node the person installed is the one their tools get; this
+    // one is there so that `node` exists at all on a machine without it.
+    const node = bundledNode();
+    if (node) add(dirname(node));
+  }
+  return parts.join(sep);
+}
+
 function startBot() {
   if (botProcess) return;
 
@@ -380,7 +445,10 @@ function startBot() {
   setBotStatus('starting');
   appendLog('Starting Crundi...');
 
-  const nodeExe = app.isPackaged ? 'node' : process.execPath;
+  // Windows runs the server with the Node on the machine. The Linux package
+  // carries its own, the one its native modules were built against, so the
+  // server starts on a machine with no Node and never meets one too old.
+  const nodeExe = app.isPackaged ? (bundledNode() || 'node') : process.execPath;
   const entryScript = join(srcDir, 'index.js');
   appendLog(`[electron] node: ${nodeExe}`);
   appendLog(`[electron] script: ${entryScript}`);
@@ -394,6 +462,7 @@ function startBot() {
     DOTENV_PATH: envPath,
     DATA_DIR: dataDir,
   };
+  if (process.platform !== 'win32') spawnEnv.PATH = serverPath();
   // Dev mode (npm run dev → electron . --dev): use a separate port and skip
   // Cloudflare so it never collides with a production instance on 8888.
   const isDev = !app.isPackaged && process.argv.includes('--dev');
@@ -616,6 +685,8 @@ function versionGt(a, b) {
   return false;
 }
 
+const UPDATE_FILE_SUFFIX = process.platform === 'linux' ? '-linux' : process.platform === 'darwin' ? '-mac' : '';
+
 /** The newest release of either kind carrying this build's update file. */
 async function pickDevRelease() {
   const { owner, repo, channel } = feedInfo();
@@ -626,7 +697,10 @@ async function pickDevRelease() {
   if (!res.ok) throw new Error('GitHub returned ' + res.status);
   let best = null;
   for (const r of await res.json()) {
-    if (r.draft || !(r.assets || []).some(a => a.name === channel + '.yml')) continue;
+    // The update file is latest.yml / client.yml on Windows and carries the
+    // platform in its name elsewhere (latest-linux.yml), which is how one
+    // release holds a build for each without them reading each other's.
+    if (r.draft || !(r.assets || []).some(a => a.name === channel + UPDATE_FILE_SUFFIX + '.yml')) continue;
     const v = String(r.tag_name || '').replace(/^v/, '');
     if (!best || versionGt(v, best.version)) best = { tag: r.tag_name, version: v, prerelease: !!r.prerelease };
   }
@@ -771,11 +845,35 @@ function setAutoUpdate(enabled) {
 }
 
 // ─── Launch at Windows startup (OS login-item; OS is the source of truth) ───
+//
+// Linux has no login items in Electron. What every desktop there reads is a
+// .desktop file in ~/.config/autostart, so that file is the setting: there
+// means on, absent means off.
+function autostartFile() {
+  return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'autostart', `${app.getName()}.desktop`);
+}
 function getLaunchAtStartup() {
+  if (process.platform === 'linux') return existsSync(autostartFile());
   try { return !!app.getLoginItemSettings().openAtLogin; } catch { return false; }
 }
 function setLaunchAtStartup(enabled) {
   try {
+    if (process.platform === 'linux') {
+      const file = autostartFile();
+      if (!enabled) { try { unlinkSync(file); } catch { /* was not there */ } }
+      else {
+        mkdirSync(dirname(file), { recursive: true });
+        // An AppImage runs from a mount that is gone after it exits; the
+        // file that was started is the one to start again.
+        const exe = process.env.APPIMAGE || app.getPath('exe');
+        writeFileSync(file, [
+          '[Desktop Entry]', 'Type=Application', `Name=${app.getName()}`,
+          `Exec="${exe.replace(/(["\\`$])/g, '\\$1')}"`, 'Terminal=false', 'X-GNOME-Autostart-enabled=true', '',
+        ].join('\n'), 'utf8');
+      }
+      appendLog('[startup] Launch at login ' + (enabled ? 'enabled' : 'disabled'));
+      return;
+    }
     app.setLoginItemSettings({ openAtLogin: !!enabled });
     appendLog('[startup] Launch at login ' + (enabled ? 'enabled' : 'disabled'));
   } catch (e) { appendLog('[startup] error: ' + (e.message || e)); }
@@ -1083,6 +1181,13 @@ ipcMain.handle('clipboard:getFilePaths', () => {
       const str = raw.toString('utf16le').replace(/\0+$/, '');
       return str.split('\0').filter(Boolean);
     }
+  }
+  if (process.platform === 'linux') {
+    // Files copied in a Linux file manager are a list of file:// addresses.
+    try {
+      const raw = clipboard.readBuffer('text/uri-list').toString('utf8');
+      return raw.split(/\r?\n/).filter((l) => l.startsWith('file://')).map((l) => { try { return fileURLToPath(l.trim()); } catch { return ''; } }).filter(Boolean);
+    } catch { /* nothing copied */ }
   }
   return [];
 });

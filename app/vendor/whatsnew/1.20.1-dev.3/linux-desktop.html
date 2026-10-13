@@ -1,0 +1,37 @@
+<div class="wna a-lnx">
+  <div class="pkg k1"><i></i><b>Crundi<br><u>.deb</u></b><span>with a server</span></div>
+  <div class="pkg k2"><i></i><b>Crundi Client<br><u>.deb</u></b><span>client only</span></div>
+  <div class="win">
+    <div class="bar"><s></s><s></s><s></s><em>Crundi</em></div>
+    <div class="body"><div class="side"><p></p><p></p><p></p></div><div class="main"><p class="l1"></p><p class="l2"></p><p class="l3"></p></div></div>
+  </div>
+  <div class="tray"><i></i></div>
+  <style>
+    .a-lnx .pkg{position:absolute;left:44px;width:178px;height:92px;border-radius:14px;border:1px solid var(--border);background:var(--bg-card);padding:14px 14px 0 58px;box-sizing:border-box}
+    .a-lnx .k1{top:80px;animation:alx-pick 10s ease infinite}
+    .a-lnx .k2{top:202px;animation:alx-pick2 10s ease infinite}
+    .a-lnx .pkg i{position:absolute;left:14px;top:18px;width:32px;height:38px;border-radius:5px;border:2px solid var(--text-secondary);border-top-width:9px;box-sizing:border-box}
+    .a-lnx .pkg b{display:block;font-size:14px;font-weight:600;color:var(--text-primary);line-height:1.3}
+    .a-lnx .pkg u{text-decoration:none;font:500 12px var(--mono,monospace);color:var(--text-secondary)}
+    .a-lnx .pkg span{display:block;margin-top:6px;font-size:11px;color:var(--text-muted)}
+    .a-lnx .win{position:absolute;left:268px;top:70px;width:300px;height:212px;border-radius:12px;border:1px solid var(--border);background:var(--bg-secondary);overflow:hidden;box-shadow:0 18px 40px rgba(0,0,0,.45);opacity:0;scale:.92;animation:alx-win 10s ease infinite}
+    .a-lnx .bar{height:30px;display:flex;align-items:center;gap:6px;padding:0 12px;border-bottom:1px solid var(--border);background:var(--bg-card)}
+    .a-lnx .bar s{width:9px;height:9px;border-radius:50%;background:var(--border);text-decoration:none}
+    .a-lnx .bar em{margin-left:8px;font-style:normal;font-size:12px;font-weight:600;color:var(--text-secondary)}
+    .a-lnx .body{display:flex;height:182px}
+    .a-lnx .side{width:78px;border-right:1px solid var(--border);padding:14px 10px;box-sizing:border-box}
+    .a-lnx .side p{height:9px;border-radius:5px;background:var(--border);margin:0 0 11px}
+    .a-lnx .side p:first-child{background:var(--accent);opacity:.75}
+    .a-lnx .main{flex:1;padding:16px 14px}
+    .a-lnx .main p{height:10px;border-radius:5px;background:var(--border);margin:0 0 12px;transform-origin:left;scale:0 1;animation:alx-line 10s ease infinite}
+    .a-lnx .l1{width:82%}.a-lnx .l2{width:60%;animation-delay:.25s!important}.a-lnx .l3{width:72%;animation-delay:.5s!important}
+    .a-lnx .tray{position:absolute;left:268px;top:300px;width:300px;height:30px;border-radius:9px;border:1px solid var(--border);background:var(--bg-card)}
+    .a-lnx .tray i{position:absolute;right:14px;top:7px;width:14px;height:14px;border-radius:4px;background:var(--accent);opacity:.25;animation:alx-tray 10s ease infinite}
+    @keyframes alx-pick{0%,8%{border-color:var(--border)}14%,24%{border-color:var(--accent)}32%,100%{border-color:var(--border)}}
+    @keyframes alx-pick2{0%,54%{border-color:var(--border)}60%,70%{border-color:var(--accent)}78%,100%{border-color:var(--border)}}
+    @keyframes alx-win{0%,18%{opacity:0;scale:.92}26%,44%{opacity:1;scale:1}50%,62%{opacity:0;scale:.92}70%,92%{opacity:1;scale:1}100%{opacity:0;scale:.92}}
+    @keyframes alx-line{0%,26%{scale:0 1}34%,44%{scale:1 1}50%,70%{scale:0 1}78%,92%{scale:1 1}100%{scale:0 1}}
+    @keyframes alx-tray{0%,22%{opacity:.25}28%,46%{opacity:1}52%,66%{opacity:.25}72%,94%{opacity:1}100%{opacity:.25}}
+    @media (prefers-reduced-motion:reduce){.a-lnx *{animation:none!important}.a-lnx .win{opacity:1;scale:1}.a-lnx .main p{scale:1 1}.a-lnx .tray i{opacity:1}}
+  </style>
+</div>

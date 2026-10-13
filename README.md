@@ -34,7 +34,13 @@ Agents and the access channel are pluggable. Today the available agent is **Clau
 
 **Windows — client only:** `Crundi.Client-Setup-<version>.exe` is the desktop app *without* a server. It attaches to one running elsewhere and lends it this machine's GUI, so the browser panel opens in front of you even though the server has no display. Tray → Server… to point it somewhere.
 
-**Linux — recommended:** the native install, not Docker.
+**Ubuntu desktop — everything on one machine:** download `Crundi-<version>-linux-x64.deb` from the [latest release](../../releases/latest) and install it with `sudo apt install ./Crundi-<version>-linux-x64.deb`. It carries its own Node, so the only thing to have installed first is Claude Code. It keeps its settings in `~/.config/crundi-desktop`, apart from a server installed with `install.sh`.
+
+**Ubuntu desktop — client only:** `Crundi-Client-<version>-linux-x64.deb` is the same desktop app without a server, for one running elsewhere. Tray → Server… to point it somewhere.
+
+Both are built for Ubuntu 22.04 and later on x64 (other Debian-family desktops should work), sit in the tray, and update themselves; installing an update asks for your password, as any package does.
+
+**Linux server — recommended:** the native install, not Docker.
 
 ```bash
 ./scripts/install.sh

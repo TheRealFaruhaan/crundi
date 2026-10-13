@@ -115,3 +115,25 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Crundi Client
+
+# ─── Linux (Ubuntu and other Debian-family desktops) ───
+#
+#   npx electron-builder --linux --config build/electron-builder-client.yml
+#
+# A .deb, because that is what installs cleanly on Ubuntu: its install script
+# sets up the sandbox helper that Ubuntu 24.04 otherwise refuses to let an
+# Electron app use. The update file this publishes is client-linux.yml.
+linux:
+  target:
+    - target: deb
+      arch:
+        - x64
+  icon: assets/icon_512x512.png
+  category: Development
+  executableName: crundi-client
+  synopsis: Desktop app for a Crundi server running elsewhere
+  artifactName: Crundi-Client-${version}-linux-x64.${ext}
+
+deb:
+  packageName: crundi-client
+  priority: optional

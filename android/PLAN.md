@@ -39,8 +39,11 @@ code, not from building any of it.
   installed.
 - **iOS later.** Same pairing, same relay, same bridge contract, a Swift shell.
   Until then iPhone users have the home screen web app with web push.
-- **Linux desktop client** after Android is built and tested, in both forms:
-  with a server, and client only.
+- **Linux desktop client** in both forms, with a server and client only:
+  built in 1.20.1-dev.3 as `.deb` packages for Ubuntu (the `desktop-linux`
+  job in `.github/workflows/release-extra.yml`). The all-in-one package
+  carries its own Node and keeps its settings in `~/.config/crundi-desktop`.
+  Not built: an AppImage, arm64, and a macOS app.
 
 ## Pairing
 
