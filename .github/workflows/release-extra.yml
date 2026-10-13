@@ -310,23 +310,28 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb ./dist/Crundi-*-linux-x64.deb ./dist/client/Crundi-Client-*-linux-x64.deb
+          # Everything each app said is printed, pass or fail: the first
+          # version of this step captured the second app's output to read one
+          # line of it, and so showed nothing at all when that app failed.
           started() {
             name="$1"; shift
             home=$(mktemp -d)
             HOME="$home" XDG_CONFIG_HOME="$home/.config" timeout 40 xvfb-run -a "$@" > "$home/out.txt" 2>&1 || true
-            log=$(find "$home/.config" -name crundi.log | head -1)
-            echo "── $name ──"; cat "$log" 2>/dev/null | tail -25 || true
-            if [ -z "$log" ] || ! grep -q 'Window ready-to-show' "$log"; then
-              echo "$name did not get as far as showing its window" >&2; cat "$home/out.txt" >&2; exit 1
+            LOG=$(find "$home/.config" -name crundi.log 2>/dev/null | head -1)
+            echo "── $name ──"
+            echo "config folders: $(ls "$home/.config" 2>/dev/null | tr '\n' ' ')"
+            if [ -n "$LOG" ]; then grep -v 'builder-util-runtime\|^Headers\|^  "\|^}' "$LOG" | tail -40; fi
+            echo "── $name, what it printed ──"; tail -20 "$home/out.txt"
+            if [ -z "$LOG" ] || ! grep -q 'Window ready-to-show' "$LOG"; then
+              echo "$name did not get as far as showing its window" >&2; exit 1
             fi
-            echo "$log"
           }
           started 'the client' crundi-client
-          log=$(started 'the all-in-one app' crundi | tail -1)
+          started 'the all-in-one app' crundi
           # Its own settings folder, never the one a server installed with
           # install.sh uses, and with nothing set up yet it asks, not starts.
-          grep -q 'userDataDir=.*/crundi-desktop' "$log"
-          grep -q 'opening setup wizard' "$log"
+          grep -q 'userDataDir=.*/crundi-desktop' "$LOG" || { echo "the all-in-one app is not using its own settings folder" >&2; exit 1; }
+          grep -q 'opening setup wizard' "$LOG" || { echo "the all-in-one app did not open its setup wizard" >&2; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
