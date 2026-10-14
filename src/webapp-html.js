@@ -139,27 +139,31 @@ export function getWebappHtml(botUsername, appVersion = '') {
     @media (prefers-reduced-motion: reduce) { #boot { transition: none; } }
 
     /* ─── Reconnecting ───
-       Shown when the live connection has been down for more than a moment.
-       It does not take clicks: what is on screen stays readable and
-       scrollable while the robot works on getting the connection back. */
-    #reconn {
-      display: none; position: fixed; left: 50%; top: 50%; z-index: 99990;
-      transform: translate(-50%, -50%);
-      flex-direction: column; align-items: center; gap: 8px;
-      padding: 22px 30px 20px; min-width: 220px; max-width: calc(100vw - 32px); box-sizing: border-box;
-      background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
-      border: 1px solid var(--border); border-radius: 18px;
-      box-shadow: var(--shadow-lg), var(--surface-hi);
-      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
-      pointer-events: none; text-align: center;
+       A thin line along the bottom edge of the top bar, with the status pill
+       saying what it is. Nothing is drawn over the page: what is on screen
+       stays readable and usable while the connection comes back. Amber and
+       moving while it tries, red and still when this device is offline, a
+       moment of green when it is back. */
+    #reconn-line {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 2px; overflow: hidden;
+      pointer-events: none; opacity: 0; transition: opacity 0.3s ease; z-index: 2;
     }
-    #reconn.on { display: flex; animation: reconnIn 0.28s cubic-bezier(0.22,1,0.36,1) both; }
-    @keyframes reconnIn { from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); } to { opacity: 1; transform: translate(-50%, -50%); } }
-    #reconn .cb-mini { width: 84px; height: 84px; }
-    #reconn .rc-t { font-weight: 650; font-size: 0.98rem; color: var(--text-primary); }
-    #reconn .rc-s { font-size: 0.8rem; line-height: 1.45; color: var(--text-secondary); max-width: 240px; }
-    #reconn .rc-s:empty { display: none; }
-    @media (prefers-reduced-motion: reduce) { #reconn.on { animation: none; } }
+    #reconn-line i {
+      position: absolute; top: 0; bottom: 0; left: -40%; width: 40%;
+      background: linear-gradient(90deg, transparent, var(--yellow), transparent);
+      animation: reconnSweep 1.4s ease-in-out infinite;
+    }
+    @keyframes reconnSweep { from { left: -40%; } to { left: 100%; } }
+    #reconn-line.on { opacity: 1; }
+    #reconn-line.offline i { left: 0; width: 100%; background: var(--red); opacity: 0.75; animation: none; }
+    #reconn-line.back { opacity: 1; animation: reconnBack 1.6s ease forwards; }
+    #reconn-line.back i { left: 0; width: 100%; background: var(--green); animation: none; }
+    @keyframes reconnBack { 0%, 50% { opacity: 1; } 100% { opacity: 0; } }
+    #reconn-say { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    @media (prefers-reduced-motion: reduce) {
+      #reconn-line i { left: 0; width: 100%; animation: none; opacity: 0.8; }
+      #reconn-line.back { animation: none; opacity: 0; }
+    }
 
     /* ─── Login Screen ─── */
     #login-screen {
@@ -392,6 +396,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     .topbar .status-badge.connected { background: var(--green-dim); color: var(--green); }
     .topbar .status-badge.disconnected { background: var(--red-dim); color: var(--red); }
+    .topbar .status-badge.reconnecting { background: var(--yellow-dim); color: var(--yellow); }
+    .topbar .status-badge.offline { background: var(--red-dim); color: var(--red); }
     .topbar .tunnel-url {
       color: var(--text-muted);
       font-size: 0.75rem;
@@ -2062,7 +2068,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       /* Reclaim width so badges never overflow: drop the wordmark text (icon
          stays) and collapse the connection badge to just its status dot. */
       .topbar .logo .logo-text { display: none; }
-      .topbar .status-badge.connected, .topbar .status-badge.disconnected {
+      .topbar .status-badge.connected, .topbar .status-badge.disconnected,
+      .topbar .status-badge.reconnecting, .topbar .status-badge.offline {
         font-size: 0; padding: 6px; gap: 0 !important; border-radius: 50%;
       }
       /* A collaborator's Push and Ask to merge carried text labels that ran
@@ -3200,7 +3207,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
     input:focus, textarea:focus, select:focus { outline: none; box-shadow: var(--ring); border-color: var(--accent) !important; }
 
     /* connection badge → live status dot */
-    .topbar .status-badge.connected, .topbar .status-badge.disconnected { display: inline-flex; align-items: center; gap: 6px; }
+    .topbar .status-badge.connected, .topbar .status-badge.disconnected,
+    .topbar .status-badge.reconnecting, .topbar .status-badge.offline { display: inline-flex; align-items: center; gap: 6px; }
+    .topbar .status-badge.reconnecting::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); animation: reconnBlink 1.2s ease-in-out infinite; }
+    .topbar .status-badge.offline::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
+    @keyframes reconnBlink { 50% { opacity: 0.25; } }
     .topbar .status-badge.connected::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: connPulse 2.2s ease-out infinite; }
     .topbar .status-badge.disconnected::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--red); opacity: 0.8; }
     @keyframes connPulse {
@@ -3331,7 +3342,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .toast.success { border-left-color: var(--green); }
 
     @media (prefers-reduced-motion: reduce) {
-      .topbar .status-badge.connected::before { animation: none; }
+      .topbar .status-badge.connected::before, .topbar .status-badge.reconnecting::before { animation: none; }
       .svc-card, .info-section, .secret-item { transition: none; }
       .svc-card:hover, .info-section:hover, .secret-item:hover { transform: none; }
     }
@@ -3343,12 +3354,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
     ${miniSvg('bt', 'cb-load', 'Crundi is loading')}
     ${wordSvg()}
     <div class="boot-note" id="boot-note"></div>
-  </div>
-  <!-- ─── Reconnecting ─── -->
-  <div id="reconn" role="status" aria-live="polite">
-    ${miniSvg('rc', 'cb-load', '')}
-    <div class="rc-t">Reconnecting</div>
-    <div class="rc-s" id="reconn-sub"></div>
   </div>
   <!-- ─── Login Screen ─── -->
   <div id="login-screen">
@@ -3494,6 +3499,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       <button class="topbar-act" id="collab-merge" data-action="collab-merge" title="Ask the owner to merge your branch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span>Ask to merge</span></button>
       <button class="topbar-act" id="approvals-btn" data-action="approvals-toggle" title="Things waiting on you"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12.5"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span class="appr-count" id="approvals-count">0</span></button>
       <span class="status-badge disconnected" id="conn-badge">disconnected</span>
+      <div id="reconn-line" aria-hidden="true"><i></i></div>
+      <span id="reconn-say" role="status" aria-live="polite"></span>
       <div class="win-controls" id="win-controls">
         <button onclick="window.api?.minimize()" title="Minimize">&#x2013;</button>
         <button onclick="window.api?.maximize()" title="Maximize">&#x25A1;</button>
@@ -8604,31 +8611,54 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (btn) { btn.classList.add('active'); btn.textContent = 'Done'; }
     }
 
-    // ─── Reconnecting card ───
+    // ─── Reconnecting line ───
     // A dropped connection that comes straight back (a phone waking, a tab
-    // returning) should not flash anything, so the card waits a moment before
-    // it appears. After a while it says more, since by then it is the network
-    // or the server and not a blip.
-    let reconnShowTimer = null, reconnSlowTimer = null;
-    function reconnSub() {
-      const el = $('#reconn-sub');
-      if (!el) return;
-      el.textContent = navigator.onLine === false ? 'This device is offline.' : 'Still trying. Crundi may be restarting, or the network may be down.';
+    // returning) should not show anything, so the line and the pill wait a
+    // moment before they change. After a while the pill's tooltip and the
+    // screen-reader text say more, since by then it is the network or the
+    // server and not a blip.
+    let reconnShowTimer = null, reconnSlowTimer = null, reconnBackTimer = null, reconnShown = false;
+    function reconnPaint(slow) {
+      const offline = navigator.onLine === false;
+      const badge = $('#conn-badge'), line = $('#reconn-line'), say = $('#reconn-say');
+      const text = offline ? 'This device is offline.'
+        : slow ? 'Still trying. Crundi may be restarting, or the network may be down.' : 'Reconnecting';
+      if (badge) {
+        badge.className = 'status-badge ' + (offline ? 'offline' : 'reconnecting');
+        badge.textContent = offline ? 'offline' : 'reconnecting';
+        badge.title = text;
+      }
+      if (line) line.className = offline ? 'on offline' : 'on';
+      if (say && say.textContent !== text) say.textContent = text;
     }
     function reconnShow() {
-      if (!appReady || reconnShowTimer || $('#reconn').classList.contains('on')) return;
+      if (!appReady || reconnShowTimer || reconnShown) return;
       reconnShowTimer = setTimeout(function () {
         reconnShowTimer = null;
-        $('#reconn-sub').textContent = navigator.onLine === false ? 'This device is offline.' : '';
-        $('#reconn').classList.add('on');
-        reconnSlowTimer = setTimeout(reconnSub, 9000);
+        reconnShown = true;
+        clearTimeout(reconnBackTimer);
+        reconnPaint(false);
+        reconnSlowTimer = setTimeout(function () { reconnPaint(true); }, 9000);
       }, 1200);
     }
     function reconnHide() {
       clearTimeout(reconnShowTimer); clearTimeout(reconnSlowTimer);
       reconnShowTimer = reconnSlowTimer = null;
-      $('#reconn').classList.remove('on');
+      const badge = $('#conn-badge'), line = $('#reconn-line'), say = $('#reconn-say');
+      if (badge) { badge.className = 'status-badge connected'; badge.textContent = 'connected'; badge.title = ''; }
+      if (!reconnShown) return;
+      reconnShown = false;
+      // A moment of green, so the person who saw it go sees it come back.
+      if (line) {
+        line.className = 'back';
+        clearTimeout(reconnBackTimer);
+        reconnBackTimer = setTimeout(function () { line.className = ''; }, 1700);
+      }
+      if (say) say.textContent = 'Connected again.';
     }
+    // Going offline or back online while the line is up changes what it says.
+    window.addEventListener('offline', function () { if (reconnShown) reconnPaint(false); });
+    window.addEventListener('online', function () { if (reconnShown) reconnPaint(false); });
 
     // ─── WebSocket ───
     function connectWS() {
@@ -8646,8 +8676,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       ws = new WebSocket(url);
 
       ws.onopen = () => {
-        $('#conn-badge').className = 'status-badge connected';
-        $('#conn-badge').textContent = 'connected';
         reconnHide();
         // Re-subscribe every mounted terminal. Reset each first so the scrollback
         // the server re-sends on subscribe replaces (not duplicates) the buffer.
@@ -8687,8 +8715,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       };
 
       ws.onclose = () => {
-        $('#conn-badge').className = 'status-badge disconnected';
-        $('#conn-badge').textContent = 'disconnected';
         reconnShow();
         reconnectTimer = setTimeout(connectWS, 3000);
       };

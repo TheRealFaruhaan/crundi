@@ -87,9 +87,21 @@ button{font:inherit;color:inherit}
 .cp-ask-row button.go{background:var(--accent);border-color:var(--accent);color:#fff}
 .cp-ask-row input{flex:1;min-width:110px;padding:9px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font:inherit;font-size:16px;letter-spacing:3px}
 .cp-ask-err{color:var(--red);font-size:12.5px;margin-top:6px}
-#cp-conn{display:none;padding:4px 10px;font-size:12px;text-align:center;color:var(--text-secondary);background:var(--bg-tertiary);flex:none}
-#cp-conn.on{display:block}
-@media (prefers-reduced-motion:reduce){#cp-dot.working{animation:none}}
+/* Reconnecting: a thin line under the header, as on the main page. Waits a
+   moment so a blip shows nothing; amber and moving while it tries, red when
+   the device is offline, a moment of green when it is back. The words are for
+   screen readers. */
+#cp-conn{position:relative;height:2px;margin-top:-2px;overflow:hidden;flex:none;opacity:0;pointer-events:none;z-index:2}
+#cp-conn i{position:absolute;top:0;bottom:0;left:-40%;width:40%;background:linear-gradient(90deg,transparent,#f59e0b,transparent);animation:cp-sweep 1.4s ease-in-out infinite}
+#cp-conn span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+#cp-conn.on{animation:cp-connin .3s ease 1.2s both}
+#cp-conn.offline i{left:0;width:100%;background:#ef4444;opacity:.75;animation:none}
+#cp-conn.back{opacity:1;animation:cp-connback 1.6s ease forwards}
+#cp-conn.back i{left:0;width:100%;background:#10b981;animation:none}
+@keyframes cp-sweep{from{left:-40%}to{left:100%}}
+@keyframes cp-connin{from{opacity:0}to{opacity:1}}
+@keyframes cp-connback{0%,50%{opacity:1}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){#cp-dot.working{animation:none}#cp-conn i{left:0;width:100%;animation:none;opacity:.8}#cp-conn.back{animation:none;opacity:0}}
 </style>
 </head>
 <body data-version="${esc(version)}">
@@ -100,7 +112,7 @@ button{font:inherit;color:inherit}
     <div id="cp-names"><div id="cp-title">Crundi</div><div id="cp-sub"><span id="cp-dot"></span><span id="cp-proj"></span></div></div>
     <button class="cp-btn" id="cp-more" type="button" aria-label="More" aria-haspopup="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
   </div>
-  <div id="cp-conn" role="status">Reconnecting…</div>
+  <div id="cp-conn"><i></i><span role="status" aria-live="polite"></span></div>
   <div id="cp-ask" role="alert"></div>
   <div id="cp-body">
     <div id="cp-chat" class="chat-mount"></div>

@@ -323,7 +323,7 @@
     var p = document.createElement('div'); p.textContent = text; el.appendChild(p);
     if (action) { var btn = document.createElement('button'); btn.type = 'button'; btn.textContent = action; btn.onclick = onAction; el.appendChild(btn); }
     el.className = 'on';
-    $('cp-conn').className = '';
+    connLine('');
   }
   function onRefused(body) {
     if (!body || body.error !== 'client_too_old') return;
@@ -409,6 +409,35 @@
     if (active && view) bridge('seen', sid);
     wsSend({ type: 'presence', active: active, engaged: active, project: meta.project || '' });
   }
+  // The reconnecting line under the header (see #cp-conn in chat-page.js).
+  // 'on' shows it after a short wait, 'back' flashes green if it was showing.
+  var connShowing = false, connBackTimer = null;
+  function connLine(state) {
+    var el = $('cp-conn');
+    if (!el) return;
+    var say = el.querySelector('span');
+    clearTimeout(connBackTimer);
+    if (state === 'on') {
+      var offline = navigator.onLine === false;
+      el.className = offline ? 'on offline' : 'on';
+      connShowing = true;
+      if (say) say.textContent = offline ? 'This device is offline.' : 'Reconnecting';
+      return;
+    }
+    // Shown only once the CSS delay has passed: a blip never painted it.
+    var painted = connShowing && getComputedStyle(el).opacity !== '0';
+    connShowing = false;
+    if (state === 'back' && painted) {
+      el.className = 'back';
+      if (say) say.textContent = 'Connected again.';
+      connBackTimer = setTimeout(function () { el.className = ''; }, 1700);
+    } else {
+      el.className = '';
+    }
+  }
+  window.addEventListener('offline', function () { if (connShowing) connLine('on'); });
+  window.addEventListener('online', function () { if (connShowing) connLine('on'); });
+
   function connect() {
     clearTimeout(retryTimer);
     if (stopped) return;
@@ -417,7 +446,7 @@
     ws = new WebSocket(url);
     ws.onopen = function () {
       everOpen = true; retry = 0;
-      $('cp-conn').className = '';
+      connLine('back');
       // The server replays the conversation on subscribe, which is also how a
       // dropped connection catches up on what it missed.
       if (view) view.resubscribe();
@@ -442,7 +471,7 @@
     };
     ws.onclose = function () {
       if (stopped) return;
-      $('cp-conn').className = 'on';
+      connLine('on');
       retry++;
       // A socket is checked at connect only, and an access token lasts fifteen
       // minutes: a refusal here is usually just a token that has aged out.
