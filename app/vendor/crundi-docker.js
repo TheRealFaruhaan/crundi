@@ -78,6 +78,17 @@
     '.dk-chip.warn{background:var(--yellow-dim);color:var(--yellow)}',
     '.dk-chip.bad{background:var(--red-dim);color:var(--red)}',
     '.dk-chip.link{cursor:pointer}',
+    '.dk-chip .ic{width:11px;height:11px}',
+    '.dk-chip.fwd{background:var(--accent-dim);color:var(--accent-hover,#818cf8)}',
+    '.dk-port{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border-subtle);font-size:.78rem}',
+    '.dk-port:last-child{border-bottom:none}',
+    '.dk-port .k{color:var(--text-muted);min-width:90px}',
+    '.dk-port .v{font-family:var(--mono);flex:1;min-width:0}',
+    '.dk-fwdform{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px;margin:6px 0 4px;border-radius:var(--radius-sm);background:var(--bg-tertiary);border:1px solid var(--border)}',
+    '.dk-fwdform input[type=text],.dk-fwdform select{padding:6px 9px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:.78rem}',
+    '.dk-fwdform input[type=text]{flex:1;min-width:120px;font-family:var(--mono)}',
+    '.dk-fwdform label{display:inline-flex;align-items:center;gap:5px;font-size:.76rem;color:var(--text-secondary)}',
+    '.dk-help{font-size:.74rem;color:var(--text-muted);margin:0 2px 10px;line-height:1.5}',
     '.dk-chip.link:hover{color:var(--text-primary)}',
 
     // Lists
@@ -191,6 +202,7 @@
     '  .dk-row .dk-mid,.dk-row .dk-num.mem{display:none}',
     '  .dk-row .dk-acts{display:none}',
     '  .dk-row.plain{grid-template-columns:minmax(0,1fr) auto}',
+    '  .dk-row.fwdrow .dk-mid{display:flex;grid-column:1/-1;order:3}',
     '  .dk-svc{grid-template-columns:14px minmax(0,1fr) auto}',
     '  .dk-svc .dk-sub.img{display:none}',
     '  .dk-kv{grid-template-columns:minmax(0,1fr)}',
@@ -341,6 +353,7 @@
     { key: 'images', label: 'Images', icon: 'archive' },
     { key: 'volumes', label: 'Volumes', icon: 'hard-drive' },
     { key: 'networks', label: 'Networks', icon: 'network' },
+    { key: 'forwards', label: 'Forwards', icon: 'globe' },
     { key: 'system', label: 'System', icon: 'server' },
   ];
 
@@ -361,6 +374,8 @@
       filter: {},
       data: {},
       detail: null,      // { id, name, tab, ... }
+      // Crundi's forwards, matched to containers by port (see loadForwards).
+      fwd: { list: null, byPort: {}, at: 0, options: null },
       job: null,         // { id, title, text, next, done, code }
       timer: null,
     };
@@ -396,6 +411,7 @@
         images: st.data.images ? st.data.images.length : null,
         volumes: st.data.volumes ? st.data.volumes.length : null,
         networks: st.data.networks ? st.data.networks.length : null,
+        forwards: st.fwd.list ? st.fwd.list.length : null,
       };
       R('seg').innerHTML = VIEWS.map(function (v) {
         var on = !st.detail && st.view === v.key;
@@ -434,12 +450,15 @@
           volumes: '/api/docker/volumes',
           networks: '/api/docker/networks',
           system: '/api/docker/system',
+          forwards: '/api/docker/forwards',
         }[v];
         var d = await getJson(path);
         if (v !== st.view || st.detail) return;   // moved on while it loaded
         if (!d.ok) { body.innerHTML = '<div class="dk-empty">' + icon('docker') + '<b>Docker did not answer</b><span>' + esc(d.error || '') + '</span></div>'; return; }
         st.data[v] = d[v] || d;
         if (v === 'system') loadDisk();
+        if (v === 'forwards') takeForwards(d.forwards || []);
+        if (v === 'containers') loadForwards(false);
         if (v === 'containers') {
           // Stacks count follows from the container labels, so it stays honest
           // on the nav without a second request.
@@ -459,7 +478,7 @@
     function schedule() {
       clearTimeout(st.timer);
       if (!st.visible) return;
-      var every = st.detail ? 4000 : ({ containers: 3000, stacks: 5000 }[st.view] || 0);
+      var every = st.detail ? 4000 : ({ containers: 3000, stacks: 5000, forwards: 10000 }[st.view] || 0);
       if (!every) return;
       st.timer = setTimeout(function () {
         if (!document.hidden) load(false).then(schedule); else schedule();
@@ -468,8 +487,8 @@
 
     function draw() {
       // Never repaint under someone halfway through a confirm or typing.
-      if (body.querySelector('.dk-btn.armed')) return;
-      var fn = { containers: drawContainers, stacks: drawStacks, images: drawImages, volumes: drawVolumes, networks: drawNetworks, system: drawSystem }[st.view];
+      if (body.querySelector('.dk-btn.armed') || body.querySelector('.dk-fwdform')) return;
+      var fn = { containers: drawContainers, stacks: drawStacks, images: drawImages, volumes: drawVolumes, networks: drawNetworks, forwards: drawForwards, system: drawSystem }[st.view];
       var top = body.scrollTop;
       fn();
       body.scrollTop = top;
@@ -506,7 +525,10 @@
       var s = c.stats;
       var chips = '';
       if (c.project) chips += '<span class="dk-chip">' + esc(c.project) + '</span>';
-      c.ports.filter(function (p) { return p.public; }).slice(0, 3).forEach(function (p) { chips += '<span class="dk-chip">' + esc(portText(p)) + '</span>'; });
+      c.ports.filter(function (p) { return p.public; }).slice(0, 3).forEach(function (p) {
+        chips += '<span class="dk-chip">' + esc(portText(p)) + '</span>';
+        (st.fwd.byPort[p.public] || []).forEach(function (fw) { chips += fwdChip(fw); });
+      });
       if (c.health) chips += '<span class="dk-chip ' + (c.health === 'healthy' ? 'ok' : c.health === 'unhealthy' ? 'bad' : 'warn') + '">' + esc(c.health) + '</span>';
       var act = c.running
         ? '<button class="dk-btn icon" data-a="ctr" data-verb="stop" data-arm="Stop?" data-id="' + esc(c.id) + '" title="Stop">' + icon('stop') + '</button>'
@@ -552,6 +574,7 @@
       st.detail.id = d.container.id;
       drawDetail();
       selectDetailTab(st.detail.tab);
+      loadForwards(false);   // its ports show their forwards; redrawn when they arrive
       schedule();
     }
 
@@ -649,9 +672,7 @@
         ['Id', o.id],
       ]) + '</div>';
       h += '</div><div style="height:12px"></div><div class="dk-cols">';
-      h += '<div class="dk-sec"><h5>Ports</h5>' + (o.ports.length
-        ? kv(o.ports.map(function (p) { return [p.private + '/' + p.type, p.public ? (p.ip || '0.0.0.0') + ':' + p.public : 'not published']; }))
-        : '<div class="dk-quiet">No ports.</div>') + '</div>';
+      h += '<div class="dk-sec"><h5>Ports</h5><div data-r="ports">' + portsHtml(o) + '</div></div>';
       h += '<div class="dk-sec"><h5>Networks</h5>' + (o.networks.length
         ? kv(o.networks.map(function (n) { return [n.name, (n.ip || 'no address') + (n.gateway ? '  via ' + n.gateway : '')]; }))
         : '<div class="dk-quiet">Not on any network.</div>') + '</div>';
@@ -1065,6 +1086,177 @@
       body.innerHTML = html;
     }
 
+    // ── Forwards ──
+    //
+    // Crundi's own forwards (name.<domain> or /tunnel/name/ to 127.0.0.1:port),
+    // matched to containers by the host port they publish. The server says
+    // what is behind each forward's port: a running container, a stopped one,
+    // some other program, or nothing at all, which makes the forward an orphan.
+
+    function takeForwards(list) {
+      st.fwd.list = list;
+      st.fwd.at = Date.now();
+      var by = {};
+      list.forEach(function (fw) { (by[fw.port] = by[fw.port] || []).push(fw); });
+      st.fwd.byPort = by;
+    }
+
+    async function loadForwards(force) {
+      if (!force && st.fwd.list && Date.now() - st.fwd.at < 15000) return;
+      st.fwd.at = Date.now();   // one request at a time, not one per poll
+      var d = await getJson('/api/docker/forwards').catch(function () { return null; });
+      if (!d || !d.ok) return;
+      takeForwards(d.forwards || []);
+      drawSeg();
+      if (st.detail) drawPortsNow();
+      else if (st.view === 'containers' || st.view === 'forwards') draw();
+    }
+
+    function fwdChip(fw) {
+      return '<span class="dk-chip fwd link" data-a="open-url" data-url="' + esc(fw.url) + '" title="Forward: ' + esc(fw.url) + (fw.public ? ' (public)' : '') + '">'
+        + icon('external-link') + esc(fw.host) + '</span>';
+    }
+
+    function slug(text) {
+      return String(text || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/, '') || 'app';
+    }
+
+    function portsHtml(o) {
+      if (!o.ports.length) return '<div class="dk-quiet">No ports.</div>';
+      return o.ports.map(function (p) {
+        var where = p.public ? (p.ip || '0.0.0.0') + ':' + p.public : 'not published';
+        var right = '';
+        if (p.public) {
+          var fws = st.fwd.byPort[p.public] || [];
+          right = fws.map(fwdChip).join('')
+            + '<button class="dk-btn" data-a="fwd-add" data-port="' + p.public + '" title="Reach this port through Crundi, by name">' + icon('plus') + (fws.length ? 'Another' : 'Add forward') + '</button>';
+        }
+        return '<div class="dk-port"><span class="k">' + esc(p.private + '/' + p.type) + '</span><span class="v">' + esc(where) + '</span>' + right + '</div>'
+          + '<div data-r="fwdform-' + (p.public || 'x') + '"></div>';
+      }).join('');
+    }
+
+    function drawPortsNow() {
+      var dt = st.detail, box = R2('ports');
+      if (!dt || !dt.data || !box || box.querySelector('.dk-fwdform')) return;   // not under someone typing
+      box.innerHTML = portsHtml(dt.data.overview);
+    }
+
+    async function openFwdForm(port) {
+      var dt = st.detail;
+      var blind = port === 'any';   // from the Forwards view: any port, no container
+      if (!dt && !blind) return;
+      var box = R2('fwdform-' + port);
+      if (!box) return;
+      if (!st.fwd.options) {
+        var o = await getJson('/api/forwards/options').catch(function () { return null; });
+        st.fwd.options = o && o.ok ? o : { choices: [] };
+      }
+      var sub = (st.fwd.options.choices || []).filter(function (c) { return c.id === 'subdomain' && c.available; })[0];
+      var c = blind ? null : dt.data.container;
+      box.innerHTML = '<div class="dk-fwdform">'
+        + (blind ? '<input type="text" data-r="fwdport" inputmode="numeric" placeholder="Port" style="flex:0 0 90px;min-width:80px" autocomplete="off">' : '')
+        + '<input type="text" data-r="fwdname" value="' + esc(blind ? '' : slug(c.service || c.name)) + '" placeholder="name" spellcheck="false" autocomplete="off" title="Lowercase letters, digits and hyphens">'
+        + '<select data-r="fwdmode">' + (sub ? '<option value="subdomain">' + esc('name.' + (sub.suggestedDomain || st.fwd.options.domain || '')) + '</option>' : '')
+        + '<option value="path">/tunnel/name/ on this server</option></select>'
+        + '<label title="Reachable without signing in to Crundi. Leave off unless it has its own sign-in or must take webhooks."><input type="checkbox" data-r="fwdpublic"> Public</label>'
+        + '<label title="The way a service warns when it stops: when its container stops or fails its Docker health check, or, with no container behind it, when nothing answers on the port"><input type="checkbox" data-r="fwdwatch"> Warn if it goes down</label>'
+        + '<button class="dk-btn primary" data-a="fwd-create" data-port="' + port + '">' + icon('check') + 'Create</button>'
+        + '<button class="dk-btn" data-a="fwd-cancel" data-port="' + port + '">Cancel</button>'
+        + '</div><div class="dk-help">' + (blind ? 'Forwards 127.0.0.1 on the port you give: a container\u2019s published port, a dev server, anything listening on this machine.' : 'Forwards 127.0.0.1:' + port + '.')
+        + ' Private unless Public is ticked: only people signed in to Crundi can open it.</div>';
+      var inp = R2(blind ? 'fwdport' : 'fwdname');
+      [R2('fwdport'), R2('fwdname')].forEach(function (el) {
+        if (el) el.addEventListener('keydown', function (e) { if (e.key === 'Enter') createForward(port); if (e.key === 'Escape') { box.innerHTML = ''; } });
+      });
+      if (inp) { inp.focus(); inp.select(); }
+    }
+
+    async function createForward(port) {
+      var dt = st.detail;
+      var blind = port === 'any';
+      var name = R2('fwdname'), mode = R2('fwdmode'), pub = R2('fwdpublic');
+      if ((!dt && !blind) || !name) return;
+      var target = blind ? Number((R2('fwdport') || {}).value) : Number(port);
+      if (!(target >= 1 && target <= 65535)) { toast('Give the port to forward, 1 to 65535', 'error'); var pi = R2('fwdport'); if (pi) pi.focus(); return; }
+      var d = await post('/api/forwards', {
+        name: name.value.trim(), port: target, mode: mode ? mode.value : 'path', public: !!(pub && pub.checked),
+        project: blind ? '' : (dt.data.overview.project || ''),
+        description: blind ? '' : 'Container ' + dt.data.container.name,
+      });
+      if (!d.ok) { toast(d.error || 'Could not create the forward', 'error'); return; }
+      var w = R2('fwdwatch');
+      if (w && w.checked && d.forward) await setForwardWatch(d.forward.host, true, true);
+      toast('Forward ready: ' + (d.forward && d.forward.url || ''), 'success');
+      var box = R2('fwdform-' + port);
+      if (box) box.innerHTML = '';
+      await loadForwards(true);
+      if (blind && st.view === 'forwards' && !st.detail) load(true);
+    }
+
+    var FWD_GROUPS = [
+      { state: 'orphaned', title: 'Nothing behind it', help: 'No container publishes this port and nothing answers on it. Left over from something that is gone, most likely.' },
+      { state: 'stopped', title: 'Container stopped', help: 'The container that publishes this port is not running.' },
+      { state: 'container', title: 'Running container' },
+      { state: 'other', title: 'Another program', help: 'Something on this machine answers on the port, but not a container.' },
+    ];
+
+    function drawForwards() {
+      var list = st.fwd.list || st.data.forwards || [];
+      var f = st.filter.forwards || '';
+      if (!list.length) {
+        body.innerHTML = '<div class="dk-empty">' + icon('globe') + '<b>No forwards</b><span>A forward reaches a port on this machine through Crundi, by name: for a container, or for anything else listening here.</span>'
+          + '<button class="dk-btn primary" data-a="fwd-add" data-port="any">' + icon('plus') + 'Add forward</button><div data-r="fwdform-any" style="width:100%;max-width:640px;text-align:left"></div></div>';
+        return;
+      }
+      var shown = list.filter(function (fw) { return matches(f, [fw.host, fw.url, String(fw.port), fw.project, fw.container ? fw.container.name : '', fw.state]); });
+      var orphans = list.filter(function (fw) { return fw.state === 'orphaned'; });
+      var html = '<div class="dk-toolbar"><span class="dk-quiet">' + list.length + ' forwards' + (orphans.length ? ', ' + orphans.length + ' with nothing behind them' : '') + '</span><span class="dk-spacer"></span>'
+        + '<button class="dk-btn primary" data-a="fwd-add" data-port="any">' + icon('plus') + 'Add forward</button>'
+        + (orphans.length ? '<button class="dk-btn danger" data-a="rm-orphans" data-arm="Remove ' + orphans.length + ' orphaned?">' + icon('trash') + 'Remove orphaned</button>' : '') + '</div>'
+        + '<div data-r="fwdform-any"></div>';
+      FWD_GROUPS.forEach(function (g) {
+        var rows = shown.filter(function (fw) { return fw.state === g.state; });
+        if (!rows.length) return;
+        html += '<div class="dk-group">' + esc(g.title) + ' \u00b7 ' + rows.length + '</div>' + (g.help ? '<div class="dk-help">' + esc(g.help) + '</div>' : '');
+        html += '<div class="dk-list">' + rows.map(function (fw) {
+          var hc = fw.container ? (fw.container.health === 'unhealthy' ? 'bad' : fw.container.running ? 'ok' : '') : '';
+          var ctr = fw.container ? '<span class="dk-chip ' + hc + ' link" data-a="open" data-id="' + esc(fw.container.name) + '" title="' + esc(fw.container.running ? 'Running' + (fw.container.health ? ', ' + fw.container.health : '') : 'Stopped') + '">' + esc(fw.container.name) + (fw.container.health === 'unhealthy' ? ' \u00b7 unhealthy' : '') + '</span>' : '';
+          return '<div class="dk-row plain fwdrow"><div class="dk-main"><div class="dk-name">' + esc(fw.host) + (fw.public ? ' <span class="dk-chip warn">public</span>' : '') + (fw.watch ? ' <span class="dk-chip ok" title="You are warned when this goes down">' + icon('bell') + 'watched</span>' : '') + '</div>'
+            + '<div class="dk-sub">port ' + esc(fw.port) + ' \u00b7 ' + (fw.mode === 'path' ? 'path' : 'subdomain') + (fw.project ? ' \u00b7 ' + esc(fw.project) : '') + (fw.description ? ' \u00b7 ' + esc(fw.description) : '') + '</div></div>'
+            + '<div class="dk-mid">' + ctr + '<span class="dk-chip fwd link" data-a="open-url" data-url="' + esc(fw.url) + '">' + icon('external-link') + 'Open</span></div>'
+            + '<div class="dk-btns"><button class="dk-btn icon' + (fw.watch ? ' primary' : '') + '" data-a="fwd-watch" data-host="' + esc(fw.host) + '" data-on="' + (fw.watch ? '1' : '') + '" title="' + (fw.watch ? 'Stop warning when this goes down' : 'Warn me when this goes down, the way a service warns when it stops: its container stops or fails its Docker health check, or, with no container behind it, nothing answers on the port') + '">' + icon('bell') + '</button>'
+            + '<button class="dk-btn icon danger" data-a="rm-fwd" data-host="' + esc(fw.host) + '" data-arm="Remove?" title="Remove this forward">' + icon('trash') + '</button></div></div>';
+        }).join('') + '</div>';
+      });
+      if (!shown.length) html += '<div class="dk-quiet">Nothing matches the filter.</div>';
+      body.innerHTML = html;
+    }
+
+    async function removeForward(host, quiet) {
+      var res = await api('/api/forwards/' + encodeURIComponent(host), { method: 'DELETE' });
+      var d = await res.json().catch(function () { return { ok: res.ok }; });
+      if (!d.ok && !quiet) toast(d.error || 'Could not remove ' + host, 'error');
+      return !!d.ok;
+    }
+
+    async function setForwardWatch(host, on, quiet) {
+      var res = await api('/api/forwards/' + encodeURIComponent(host), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ watch: on }) });
+      var d = await res.json().catch(function () { return { ok: res.ok }; });
+      if (!d.ok) { toast(d.error || 'Could not change that', 'error'); return false; }
+      if (!quiet) toast(on ? 'You will be warned when ' + host + ' goes down' : 'No longer watching ' + host, 'success');
+      return true;
+    }
+
+    async function removeOrphans() {
+      var orphans = (st.fwd.list || []).filter(function (fw) { return fw.state === 'orphaned'; });
+      var n = 0;
+      for (var i = 0; i < orphans.length; i++) if (await removeForward(orphans[i].host, true)) n++;
+      toast('Removed ' + n + ' orphaned forward' + (n === 1 ? '' : 's'), 'success');
+      st.fwd.at = 0;
+      load(true);
+    }
+
     // ── Networks ──
 
     function drawNetworks() {
@@ -1254,6 +1446,13 @@
         case 'rm-image': if (armed(t)) removeThing('/api/docker/images/remove', { id: t.dataset.id }, 'image'); break;
         case 'rm-volume': if (armed(t)) removeThing('/api/docker/volumes/remove', { name: t.dataset.id }, 'volume'); break;
         case 'rm-network': if (armed(t)) removeThing('/api/docker/networks/remove', { id: t.dataset.id }, 'network'); break;
+        case 'open-url': if (t.dataset.url) window.open(t.dataset.url, '_blank', 'noopener'); break;
+        case 'fwd-add': openFwdForm(t.dataset.port); break;
+        case 'fwd-create': createForward(t.dataset.port); break;
+        case 'fwd-cancel': { var fb = R2('fwdform-' + t.dataset.port); if (fb) fb.innerHTML = ''; } break;
+        case 'rm-fwd': if (armed(t)) removeForward(t.dataset.host).then(function (ok) { if (ok) toast('Removed ' + t.dataset.host, 'success'); st.fwd.at = 0; load(true); }); break;
+        case 'rm-orphans': if (armed(t)) removeOrphans(); break;
+        case 'fwd-watch': setForwardWatch(t.dataset.host, !t.dataset.on).then(function () { st.fwd.at = 0; load(true); }); break;
         case 'job-close': st.job = null; drawJob(); break;
       }
     });

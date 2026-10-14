@@ -23,6 +23,7 @@
  */
 
 import http from 'http';
+import net from 'net';
 import { execFile, spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { createRequire } from 'module';
@@ -301,6 +302,51 @@ export async function listContainers({ stats = false } = {}) {
     }
     list.sort((a, b) => (b.running - a.running) || a.name.localeCompare(b.name));
     return { ok: true, containers: list };
+  });
+}
+
+// ─── Which container is behind a port ───
+//
+// For the Docker tab's view of Crundi's forwards: a forward sends
+// <name>.<domain> to 127.0.0.1:<port>, and that port is very often one a
+// container publishes. Running containers list their published ports; a
+// stopped one does not, but keeps its bindings in its settings, and "this
+// forward belongs to a container that is stopped" is worth saying.
+
+/** Host port -> the container that publishes it, running or not. */
+export async function portOwners() {
+  const owners = new Map();
+  const list = await rawContainers();
+  const note = (port, c, running) => {
+    const p = Number(port);
+    if (!p || (owners.has(p) && owners.get(p).running)) return;   // a running one wins
+    // health: Docker's own health check, read from the status ("Up 2 hours
+    // (unhealthy)"); '' for a container that has none.
+    owners.set(p, { id: short(c.Id), name: nameOf(c), state: c.State, running, health: running ? healthFrom(c.Status) : '', project: (c.Labels || {})['com.docker.compose.project'] || '' });
+  };
+  for (const c of list) {
+    if (c.State !== 'running') continue;
+    for (const p of c.Ports || []) if (p.PublicPort) note(p.PublicPort, c, true);
+  }
+  const stopped = list.filter((c) => c.State !== 'running').slice(0, 60);
+  await pool(stopped, 6, async (c) => {
+    try {
+      const ins = await call('GET', '/containers/' + c.Id + '/json', { timeout: 8000 });
+      const b = (ins && ins.HostConfig && ins.HostConfig.PortBindings) || {};
+      for (const binds of Object.values(b)) for (const x of binds || []) if (x && x.HostPort) note(x.HostPort, c, false);
+    } catch { /* gone meanwhile */ }
+  });
+  return owners;
+}
+
+/** Is anything accepting connections on 127.0.0.1:<port>? Where a forward sends its traffic. */
+export function isListening(port, timeoutMs = 500) {
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: '127.0.0.1', port: Number(port) });
+    const done = (yes) => { sock.removeAllListeners(); sock.destroy(); resolve(yes); };
+    sock.setTimeout(timeoutMs, () => done(false));
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
   });
 }
 

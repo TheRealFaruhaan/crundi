@@ -931,6 +931,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     kanbanTask: 'never', kanbanSubtask: 'never',
     scheduleRun: 'away',
     serviceDown: 'always', serviceUp: 'away',
+    // A watched forward whose port stopped answering, and came back.
+    forwardDown: 'always', forwardUp: 'away',
     mindmapAdd: 'never', mindmapDelete: 'never',
     browserLaunch: 'never', browserStop: 'never',
     secretRequest: 'always',
@@ -1246,6 +1248,53 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
     }
     for (const k of [...prevServiceStatus.keys()]) if (!seen.has(k)) prevServiceStatus.delete(k);
+  }
+
+  // Watched forwards: the same warning a service gives when it stops. When a
+  // container publishes the forward's port, Docker decides: down when that
+  // container stops, or when its own health check says unhealthy. With no
+  // container behind it (a dev server, a forward added by hand), down when
+  // nothing answers on the port. Down only after two bad checks in a row, so
+  // a restart does not set it off; up again on the first good one.
+  const forwardHealth = new Map();   // host -> { up, fails }
+  let forwardCheckBusy = false;
+  async function checkForwardHealth(baseline = false) {
+    if (forwardCheckBusy) return;
+    forwardCheckBusy = true;
+    try {
+      const watched = forwards.list().filter((f) => f.watch);
+      const keep = new Set(watched.map((f) => f.host));
+      for (const h of [...forwardHealth.keys()]) if (!keep.has(h)) forwardHealth.delete(h);
+      if (!watched.length) return;
+      const owners = await dockerMod.portOwners().catch(() => null);
+      await Promise.all(watched.map(async (f) => {
+        const owner = owners && owners.get(Number(f.port));
+        let answers, why;
+        if (owner) {
+          answers = owner.running && owner.health !== 'unhealthy';
+          why = !owner.running ? `container ${owner.name} has stopped` : `container ${owner.name} is unhealthy (Docker health check)`;
+        } else {
+          answers = await dockerMod.isListening(f.port);
+          why = `nothing is listening on port ${f.port}`;
+        }
+        const prev = forwardHealth.get(f.host);
+        if (!prev || baseline) { forwardHealth.set(f.host, { up: answers, fails: answers ? 0 : 2 }); return; }
+        if (answers) {
+          if (!prev.up) console.log(`[forwards] ${f.host} is back${owner ? ` (container ${owner.name} running${owner.health ? ', ' + owner.health : ''})` : ` on port ${f.port}`}`);
+          if (!prev.up) notifyEvent('forwardUp', `▶️ Forward "${f.host}" is back${owner ? `: container ${owner.name} is running${owner.health === 'healthy' ? ' and healthy' : ''}` : ` on port ${f.port}`}.`, { url: f.url });
+          forwardHealth.set(f.host, { up: true, fails: 0 });
+          return;
+        }
+        const fails = prev.fails + 1;
+        if (prev.up && fails >= 2) {
+          console.log(`[forwards] ${f.host} is down: ${why}`);
+          notifyEvent('forwardDown', `⏹️ Forward "${f.host}" is down: ${why}.`, { url: f.url });
+          forwardHealth.set(f.host, { up: false, fails });
+          return;
+        }
+        forwardHealth.set(f.host, { up: prev.up, fails });
+      }));
+    } catch { /* checked again next round */ } finally { forwardCheckBusy = false; }
   }
 
   // Apply a hook-reported state for a terminal; notify on transitions to
@@ -1704,7 +1753,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * a second one. Built in one place so the two can never disagree.
    */
   function buildState() {
-    const projects = listProjects();
+    // With each project's icon address, as /api/projects gives it. Without it
+    // every state push replaced the page's list with one that had no icons,
+    // and the sidebar went back to letters on a desktop, where it redraws
+    // from these pushes. The icon's file path stays here.
+    const projects = lookOnceForIcons(listProjects()).map(({ iconFile, ...p }) => ({ ...p, icon: projectIconUrl(p.alias, p.path, iconFile) }));
     const services = getAllServiceStatus().map(s => ({
       key: s.key, name: s.name, alias: s.alias, command: s.command,
       projectPath: s.projectPath, status: s.status, pid: s.pid,
@@ -4035,6 +4088,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'GET /api/docker/system/df': return sendResult(await dockerMod.diskUsage());
         case 'POST /api/docker/prune': return sendResult(await dockerMod.prune(String(body.kind || '')));
         case 'GET /api/docker/job': return sendResult(dockerMod.jobOutput(q('id'), q('from')));
+        // Crundi's forwards, each with what is behind its port: a container
+        // (running or stopped), some other program, or nothing at all, which
+        // makes it an orphan. Owner-only like the rest of /api/docker.
+        case 'GET /api/docker/forwards': {
+          const owners = await dockerMod.portOwners().catch(() => new Map());
+          const out = await Promise.all(forwards.list().map(async (f) => {
+            const owner = owners.get(Number(f.port)) || null;
+            const listening = await dockerMod.isListening(f.port);
+            const state = owner && owner.running ? 'container' : listening ? 'other' : owner ? 'stopped' : 'orphaned';
+            return { ...f, container: owner, listening, state };
+          }));
+          return json(res, { ok: true, forwards: out, domain: forwards.baseDomain() });
+        }
       }
       return json(res, { ok: false, error: 'Not found' }, 404);
     }
@@ -4351,6 +4417,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { body = null; }
       if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+      // Watching is set on its own, and leaves the project alone.
+      if (Object.prototype.hasOwnProperty.call(body, 'watch')) {
+        const rw = forwards.setWatch(fwdDel[1], body.watch === true);
+        if (rw.ok) forwardHealth.delete(fwdDel[1]);   // a fresh baseline, no stale alert
+        return json(res, rw, rw.ok ? 200 : 404);
+      }
       const want = String(body.project || '').toLowerCase().trim();
       if (want && !getProjectUnscoped(want)) return json(res, { ok: false, error: 'Unknown project' }, 400);
       const r = forwards.setProject(fwdDel[1], want);
@@ -6482,6 +6554,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Service start / crash-stop notifications (independent of SSE clients).
       checkServiceTransitions(); // baseline current statuses (no alerts on first pass)
       setInterval(checkServiceTransitions, 7000);
+      checkForwardHealth(true);  // the same for watched forwards
+      setInterval(checkForwardHealth, 7000);
       limitResets.start();        // likewise: the first tick only takes a baseline
 
       // Ask GitHub whether there is a newer release, now and every six hours.

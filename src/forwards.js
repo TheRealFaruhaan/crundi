@@ -278,6 +278,21 @@ export function setProject(host, project) {
   return { ok: true, forward: { ...f, url: urlFor(f) } };
 }
 
+/**
+ * Watch a forward: warn when nothing answers behind it any more, and when it
+ * answers again (see checkForwardHealth in webapp.js). The same warning a
+ * service gives when it stops, for the many forwards that point at something
+ * Crundi did not start: a container, a dev server run by hand.
+ */
+export function setWatch(host, on) {
+  const s = load();
+  const f = s.forwards.find(x => x.host === host);
+  if (!f) return { ok: false, error: 'Not found' };
+  f.watch = !!on;
+  if (!save()) return { ok: false, error: 'Could not save' };
+  return { ok: true, forward: { ...f, url: urlFor(f) } };
+}
+
 export const PATH_PREFIX = '/tunnel';
 
 /**
