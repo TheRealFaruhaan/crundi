@@ -9101,7 +9101,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // asleep (timers don't fire there, so the proactive refresh was skipped)
       // would make the socket 401 and flap on the 3s reconnect loop. Renew
       // first when either side is actually down.
-      if ((!wsHealthy() || !sseHealthy()) && (refreshToken || APP_LOGIN)) await refreshSession();
+      // Inside the app: check the token instead of renewing it. A dropped
+      // connection is usually the network changing hands, not the login
+      // ageing; apiFetch renews by itself if the check is refused.
+      if ((!wsHealthy() || !sseHealthy()) && APP_LOGIN) await apiFetch('/api/session-check').catch(() => {});
+      else if ((!wsHealthy() || !sseHealthy()) && refreshToken) await refreshSession();
       let reconnected = false;
       if (!wsHealthy()) { connectWS(); reconnected = true; }   // re-subscribes on open
       if (!sseHealthy()) { connectSSE(); reconnected = true; } // server re-pushes state + usage

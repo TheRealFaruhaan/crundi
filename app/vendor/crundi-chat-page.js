@@ -110,6 +110,17 @@
     return refreshing;
   }
 
+  /**
+   * Before connecting again. Inside the app, check the token rather than
+   * renew it: a dropped connection is usually the network changing hands,
+   * and apiFetch renews by itself if the check is refused. Elsewhere, renew
+   * as before.
+   */
+  function reconnectAuth() {
+    if (!APP_LOGIN) return refreshSession();
+    return apiFetch('/api/session-check').then(function () { return true; }, function () { return false; });
+  }
+
   var stopped = false;       // a state nothing on this page can recover from
   function apiFetch(path, opts, retried) {
     opts = opts || {};
@@ -338,7 +349,7 @@
       // closed here and opened again with a fresh token.
       try { es.close(); } catch (x) { /* already closed */ }
       es = null;
-      setTimeout(function () { if (!stopped) refreshSession().then(listen); }, 5000);
+      setTimeout(function () { if (!stopped) reconnectAuth().then(listen); }, 5000);
     };
   }
 
@@ -513,7 +524,7 @@
       // A socket is checked at connect only, and an access token lasts fifteen
       // minutes: a refusal here is usually just a token that has aged out.
       var again = function () { retryTimer = setTimeout(connect, Math.min(15000, 600 * Math.pow(1.7, retry))); };
-      if (!everOpen || retry % 3 === 0) refreshSession().then(again); else again();
+      if (!everOpen || retry % 3 === 0) reconnectAuth().then(again); else again();
     };
     ws.onerror = function () { /* onclose follows and does the work */ };
   }

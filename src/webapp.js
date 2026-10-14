@@ -3004,6 +3004,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Status ───
+    // Is this token still good? Nothing else. A page whose live connection
+    // dropped (a phone moving between Wi-Fi and mobile data) asks this
+    // instead of renewing its login on the off chance: a renewal there,
+    // every few seconds while the network changed hands, was needless churn.
+    // Refused here, the page renews as for any other refusal.
+    if (path === '/api/session-check' && req.method === 'GET') {
+      if (!validateToken(req)) return json(res, { ok: false, error: 'Unauthorized' }, 401);
+      return json(res, { ok: true });
+    }
+
     if (path === '/api/status' && req.method === 'GET') {
       const services = getAllServiceStatus();
       const projects = listProjects();

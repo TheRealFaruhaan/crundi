@@ -147,5 +147,10 @@ ok(/if \(APP_LOGIN\) \{ token = d\.token; scheduleRefresh\(d\.expiresIn\); retur
 ok(page.includes("askAppLogin('renew')") && chatPage.includes("askAppLogin('renew')"), 'they renew by asking the app, never with a refresh token of their own');
 ok(server.includes('entry.spentBy = renewer(req);') && /presented again by \$\{renewer\(req\)\}/.test(server), 'a replayed renewal is logged with who spent it and who brought it back');
 
+// A dropped connection inside the app checks the token; it does not renew it.
+ok(page.includes("APP_LOGIN) await apiFetch('/api/session-check')") && chatPage.includes("return apiFetch('/api/session-check')"), 'a reconnect inside the app checks the login instead of renewing it');
+ok(!/setTimeout\(function \(\) \{ if \(!stopped\) refreshSession\(\)/.test(chatPage) && !/retry % 3 === 0\) refreshSession\(\)/.test(chatPage), 'the bubble page does not renew on every reconnect');
+ok(/path === '\/api\/session-check'[\s\S]{0,120}validateToken\(req\)/.test(server), 'the check is a plain yes or no on the token');
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

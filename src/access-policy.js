@@ -53,6 +53,7 @@ const COLLABORATOR_ROUTES = [
   ['POST', '/api/pair/cancel'],            // the same person, the same confinement, nothing more
   ['POST', '/api/pair/status'],            // answers only for a code they asked for themselves
   ['GET', '/api/status'],                   // scoped: trimmed for collaborators
+  ['GET', '/api/session-check'],            // "is my token still good?": says nothing else
   ['GET', '/api/state'],                    // scoped: buildState filters by principal
   ['GET', '/api/events'],                   // scoped: same filter as /api/state
 
