@@ -567,13 +567,11 @@ function killTree(pid) {
   } catch { /* already gone */ }
 }
 
-// Gracefully stop the server process (it stops services/tunnels/terminals via
+// Gracefully stop the server process (it stops services/tunnels/Claude terminals via
 // the IPC 'shutdown' message — reliable on Windows where SIGTERM isn't catchable),
 // then hard-kill the tree as a guaranteed fallback.
 async function stopServerProcess() {
   // Local (main-process) children first.
-  for (const [, entry] of userTerminals) { try { entry.proc.kill(); } catch { /* ignore */ } }
-  userTerminals.clear();
   for (const [, entry] of browserWindows) { try { entry.win.destroy(); } catch { /* ignore */ } }
   browserWindows.clear();
   if (!botProcess) return;
@@ -1196,140 +1194,8 @@ ipcMain.handle('clipboard:getFilePaths', () => {
   return [];
 });
 
-// ─── User Terminals (node-pty instances for MCP terminal tools) ───
-
+// `require` for the CommonJS-only packages loaded further down (ws).
 const require = createRequire(import.meta.url);
-let pty;
-try { pty = require('node-pty'); } catch { /* node-pty not available */ }
-
-const userTerminals = new Map(); // key → { proc, output[], maxOutput }
-const MAX_TERM_OUTPUT = 500;
-const isWin = process.platform === 'win32';
-
-// Strip ANSI escape codes and control sequences from PTY output
-function stripAnsi(str) {
-  return str
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')   // CSI sequences (colors, cursor, clear)
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC sequences (title etc)
-    .replace(/\x1b[()][0-9A-Z]/g, '')           // Character set selection
-    .replace(/\x1b[>=<]/g, '')                  // Keypad/cursor mode
-    .replace(/\r/g, '')                          // Carriage returns
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ''); // Other control chars (keep \n \t)
-}
-
-const terminalIpcHandlers = {
-  async terminalSpawn(msg) {
-    if (!pty) return { ok: false, error: 'node-pty not available' };
-    const { key, name, command, cwd } = msg;
-    if (userTerminals.has(key)) return { ok: false, error: `Terminal '${name}' already exists` };
-
-    const shell = isWin ? 'cmd.exe' : (process.env.SHELL || '/bin/bash');
-    const shellArgs = command
-      ? (isWin ? ['/c', command] : ['-c', command])
-      : [];
-    const proc = pty.spawn(shell, shellArgs, {
-      name: 'xterm-256color',
-      cols: 120, rows: 30,
-      cwd: cwd || process.cwd(),
-      env: { ...process.env, FORCE_COLOR: '1' },
-    });
-
-    const entry = { proc, output: [], name };
-    userTerminals.set(key, entry);
-
-    proc.onData((data) => {
-      const clean = stripAnsi(data);
-      const lines = clean.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trimEnd();
-        if (trimmed) entry.output.push(trimmed);
-      }
-      while (entry.output.length > MAX_TERM_OUTPUT) entry.output.shift();
-    });
-
-    proc.onExit(({ exitCode }) => {
-      const inst = userTerminals.get(key);
-      if (inst) inst.exited = true;
-      botProcess?.send({ type: 'terminalExited', key, exitCode });
-    });
-
-    return { ok: true, name };
-  },
-
-  async terminalWrite(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    if (entry.exited) return { ok: false, error: 'Terminal has exited' };
-    entry.proc.write(msg.input + '\r');
-    return { ok: true };
-  },
-
-  async terminalOutput(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    const { start, end, countOnly } = msg;
-    const total = entry.output.length;
-    if (countOnly) return { ok: true, total };
-    const s = Math.max(0, start || 0);
-    const e = Math.min(total, end || total);
-    return { ok: true, lines: entry.output.slice(s, e), total };
-  },
-
-  async terminalClose(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    try { entry.proc.kill(); } catch { /* ignore */ }
-    userTerminals.delete(msg.key);
-    return { ok: true };
-  },
-
-  async terminalResize(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    if (entry.exited) return { ok: false, error: 'Terminal has exited' };
-    try { entry.proc.resize(msg.cols || 120, msg.rows || 30); } catch { /* ignore */ }
-    return { ok: true };
-  },
-
-  async terminalWait(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    const pattern = msg.pattern;
-    const timeout = Math.min(msg.timeout || 30000, 60000);
-    const re = new RegExp(pattern);
-
-    // Check existing output first
-    for (const line of entry.output) {
-      if (re.test(line)) return { ok: true, matched: true, line };
-    }
-
-    // Watch for new output
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        resolve({ ok: true, matched: false, line: null });
-      }, timeout);
-
-      const onData = (data) => {
-        const lines = data.split('\n');
-        for (const line of lines) {
-          if (re.test(line)) {
-            cleanup();
-            resolve({ ok: true, matched: true, line });
-            return;
-          }
-        }
-      };
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        entry.proc.removeListener?.('data', onData);
-      };
-
-      entry.proc.onData(onData);
-    });
-  },
-};
 
 // ─── Browser IPC (hidden BrowserWindows for MCP browser tools) ───
 
@@ -1423,17 +1289,6 @@ function handleBotMessage(msg, reply) {
     return;
   }
 
-  // Terminal IPC
-  const termHandler = terminalIpcHandlers[msg.type];
-  if (termHandler) {
-    termHandler(msg).then(result => {
-      send({ type: 'terminalResult', requestId: msg.requestId, ...result });
-    }).catch(err => {
-      send({ type: 'terminalResult', requestId: msg.requestId, ok: false, error: err.message });
-    });
-    return;
-  }
-
   // Browser IPC
   if (!msg.requestId) return;
   const handler = browserIpcHandlers[msg.type];
@@ -1450,9 +1305,9 @@ function handleBotMessage(msg, reply) {
  * Serve a REMOTE server that has registered this app as its native host.
  *
  * Deliberately narrower than the parent-process channel: only the browser
- * handlers are exposed. A named terminal spawned by a remote server should run
- * where that server's code lives, not on the laptop looking at it — bridging it
- * here would silently run commands on the wrong machine.
+ * handlers are exposed. Anything that runs commands belongs where that
+ * server's code lives, not on the laptop looking at it — bridging it here would
+ * silently run commands on the wrong machine.
  */
 function handleNativeHostMessage(msg, reply) {
   if (!msg || !msg.type) return;

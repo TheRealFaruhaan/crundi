@@ -1475,6 +1475,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
     /* Notes: the tab and the panes host crundi-notes.js, which scrolls itself. */
     .notes-tab { overflow: hidden; }
     .widgets-tab { overflow: hidden; }
+    /* Docker: crundi-docker.js scrolls its own body, so its header stays put. */
+    .docker-tab { overflow: hidden; }
+    .tab-btn.dk-absent { display: none !important; }
     .nt-tabbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex: none; }
     .nt-tabbar-t { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); }
     .nt-tabhost { flex: 1; min-height: 0; }
@@ -1612,42 +1615,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       padding: 1px 6px; border-radius: 999px; background: var(--red-dim); color: var(--red);
     }
 
-    /* Containers. The whole row is the control for opening logs, so it gets a
-       pointer and a hover the way a link would. */
-    .ctr-row {
-      display: flex; align-items: center; gap: 10px;
-      padding: 9px 8px; border-radius: var(--radius-sm); cursor: pointer;
-      border-bottom: 1px solid var(--border-subtle);
-    }
-    .ctr-row:last-of-type { border-bottom: none; }
-    .ctr-row:hover { background: var(--bg-hover); }
-    .ctr-row.open { background: var(--bg-tertiary); }
-    .ctr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
-    .ctr-dot.running { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
-    .ctr-dot.unhealthy { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim); }
-    .ctr-main { flex: 1; min-width: 0; }
-    .ctr-name { font-size: 0.82rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ctr-sub {
-      font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
-    }
-    /* Which stack it belongs to. On a shared machine this is the difference
-       between stopping your own container and stopping someone else's. */
-    .ctr-proj {
-      flex: none; font-size: 0.62rem; font-family: var(--mono);
-      padding: 1px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-secondary);
-    }
-    .ctr-logs {
-      max-height: 300px; overflow: auto; margin: 0 0 10px;
-      background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm);
-      padding: 8px; font-family: var(--mono); font-size: 0.72rem; line-height: 1.5;
-      color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
-      user-select: text; -webkit-user-select: text;
-    }
     .ctr-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-    @media (max-width: 640px) {
-      .ctr-sub { white-space: normal; }
-    }
     .svc-btn.confirming { border-color: var(--red); color: var(--red); background: var(--red-dim); }
     @media (max-width: 640px) {
       .maint-row { flex-wrap: wrap; }
@@ -1661,7 +1629,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     /* Action buttons — one consistent button style across the card. The bare
        .svc-actions button selector also covers panels that reuse this row
-       (Terminals, Browsers) without needing the explicit class. */
+       (Browsers) without needing the explicit class. */
     .svc-card .svc-actions, .svc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
     .svc-btn, .svc-actions button {
       display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
@@ -3558,7 +3526,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           <button class="tab-btn" data-tab="widgets" title="Panels built by Claude"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="tab-label">Panels</span></button>
           <button class="tab-btn" data-tab="schedule" title="Schedule"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg><span class="tab-label">Schedule</span></button>
           <button class="tab-btn" data-tab="services" title="Services"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg><span class="tab-label">Services</span></button>
-          <button class="tab-btn" data-tab="terminals" title="Terminals"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><span class="tab-label">Terminals</span></button>
+          <button class="tab-btn" data-tab="docker" title="Docker"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg><span class="tab-label">Docker</span></button>
           <button class="tab-btn" data-tab="browsers" title="Browsers"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browsers</span></button>
           <button class="tab-btn" data-tab="info" title="Info"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span class="tab-label">Info</span></button>
           <button class="tab-btn" data-tab="secrets" title="Secrets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tab-label">Secrets</span> <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
@@ -3641,7 +3609,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="browser-panel tab-panel" id="browser-panel" data-panel="browser"></div>
         <div class="schedule-panel tab-panel" id="schedule-panel" data-panel="schedule"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
-        <div class="services-panel tab-panel" id="terminals-panel" data-panel="terminals"></div>
+        <div class="tab-panel docker-tab" id="docker-panel" data-panel="docker"></div>
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
         <div class="info-panel tab-panel" id="info-panel" data-panel="info"></div>
         <div class="info-panel tab-panel" id="settings-panel" data-panel="settings"></div>
@@ -3830,6 +3798,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/crundi-mini.js?v=${vendorTag('crundi-mini.js')}"><\/script>
   <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
+  <script src="/vendor/crundi-docker.js?v=${vendorTag('crundi-docker.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
   <script src="/vendor/crundi-whatsnew.js?v=${vendorTag('crundi-whatsnew.js')}"><\/script>
   <script src="/vendor/crundi-phone.js?v=${vendorTag('crundi-phone.js')}"><\/script>
@@ -4452,7 +4421,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
     let currentTab = 'workbench';
     let projects = [];
     let terminals = []; // { id, project, title, order, status }
-    let userTerminals = []; // { name, status, alias, command }
     let services = [];
     let scheduledProjects = []; // aliases with at least one enabled schedule
     let reconnectTimer = null;
@@ -4548,6 +4516,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
       maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/>',
       play: '<polygon points="6 4 20 12 6 20 6 4"/>',
       stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+      pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+      zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+      layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+      'hard-drive': '<line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/>',
+      network: '<rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3"/><line x1="12" y1="8" x2="12" y2="13"/>',
     };
     function ic(name) {
       const p = ICON_PATHS[name]; if (!p) return '';
@@ -8686,6 +8659,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // applyHistory() rebuilds the log and re-arms any parked prompt.
         for (const [, c] of chatViews) { try { c.resubscribe(); } catch { /* ignore */ } }
         fitAllTerms();
+        if (window.CrundiDocker) window.CrundiDocker.onReconnect();
         reportPresence(true); // re-assert presence on a fresh socket
       };
 
@@ -8706,6 +8680,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
         }
         if (msg.type === 'server-log') {
           appendServerLog(msg);
+        }
+        if (typeof msg.type === 'string' && msg.type.indexOf('docker-') === 0 && window.CrundiDocker) {
+          window.CrundiDocker.handleMessage(msg);
         }
       };
 
@@ -8774,7 +8751,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
      * that is the control — this exists so they are not shown doors that open
      * onto a 403.
      */
-    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'terminals', 'info', 'settings', 'widgets'];
+    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'info', 'settings', 'widgets'];
     const COLLAB_HIDDEN_WB = ['git'];
 
     function applyRoleToUi() {
@@ -8940,8 +8917,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (state.role && state.role !== userRole) { userRole = state.role; applyRoleToUi(); }
       collabInfo = state.collab || null;
       renderCollabBar();
+      checkDockerPresence();
       terminals = state.terminals || [];
-      userTerminals = state.userTerminals || [];
       if (state.services) services = state.services;   // keep sidebar heartbeat fresh
       if (state.scheduled) scheduledProjects = state.scheduled;
       if (state.projects) projects = state.projects;
@@ -8954,7 +8931,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       autoPickProject();
       renderProjects();
-      renderTerminals();
       // Status dots/badges update in place every push (cheap, no focus loss).
       updateLiveCellHeads();
       // Only rebuild the grid when the terminal SET/layout actually changes -
@@ -9243,10 +9219,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     // ─── Tabs ───
     // Tabs that mean something with no project open. Media and Mindmap have a
-    // global scope of their own; Info, Secrets and Settings are app-level. The
+    // global scope of their own; Docker, Info, Secrets and Settings are
+    // machine- or app-level. The
     // rest are meaningless without a project, so they stay hidden rather than
     // being shown and then erroring.
-    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'info', 'secrets', 'settings'];
+    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'docker', 'info', 'secrets', 'settings'];
 
     function syncTabScope() {
       // Global panels (and their top bar chips) exist with or without a
@@ -9277,12 +9254,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
       parkWbPanels();
       if (currentTab === 'notes' && tab !== 'notes') closeNotesTab();
       if (currentTab === 'widgets' && tab !== 'widgets' && window.CrundiWidgets) window.CrundiWidgets.unmountTab();
+      if (currentTab === 'docker' && tab !== 'docker' && dockerView) dockerView.hide();
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.tab-panel').forEach(p => p.classList.toggle('visible', p.dataset.panel === tab));
       if (tab === 'workbench') { renderTermGrid(); setTimeout(() => { fitAllTerms(); const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
       if (tab === 'services') loadServices();
-      if (tab === 'terminals') renderTerminals();
+      if (tab === 'docker') loadDockerTab();
       if (tab === 'browsers') loadBrowsers();
       if (tab === 'git') loadGitInfo();
       if (tab === 'files') loadFiles();
@@ -11025,134 +11003,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       el.innerHTML = html;
     }
 
-    // ─── Containers ───
-    //
-    // Hidden behind a button: this is a long list on a busy machine and it is
-    // not what Info is mainly for. Logs are fetched per container on demand
-    // rather than up front, because pulling ten log tails to show none of them
-    // is work nobody asked for.
-
     var sreqArmed = null;    // request id whose PIN field is open
     var sreqError = '';      // inline PIN error for that card
-    var ctrOpen = null;      // id whose logs are showing
-    var ctrShown = false;
-
-    async function toggleContainers() {
-      ctrShown = !ctrShown;
-      const btn = $('#ctr-toggle');
-      if (btn) btn.textContent = ctrShown ? 'Hide' : 'Show';
-      const body = $('#ctr-body');
-      if (!body) return;
-      body.style.display = ctrShown ? '' : 'none';
-      if (ctrShown) await loadContainers();
-    }
-
-    async function loadContainers() {
-      const body = $('#ctr-body');
-      if (!body) return;
-      try {
-        const res = await apiFetch('/api/containers');
-        const d = await res.json();
-        renderContainers(d.containers || [], d.error);
-      } catch (err) {
-        body.innerHTML = '<div class="sys-quiet">Could not reach Docker.</div>';
-      }
-    }
-
-    function renderContainers(list, error) {
-      const body = $('#ctr-body');
-      if (!body) return;
-      if (error) { body.innerHTML = '<div class="sys-quiet">' + escHtml(error) + '</div>'; return; }
-      if (!list.length) { body.innerHTML = '<div class="sys-quiet">No containers on this machine.</div>'; return; }
-      var html = '';
-      for (var i = 0; i < list.length; i++) {
-        var c = list[i];
-        var dot = c.running ? (c.health === 'unhealthy' ? 'unhealthy' : 'running') : '';
-        var id = escHtml(c.id);
-        html += '<div class="ctr-row' + (ctrOpen === c.id ? ' open' : '') + '" data-action="ctr-logs" data-id="' + id + '">'
-          + '<span class="ctr-dot ' + dot + '"></span>'
-          + '<div class="ctr-main">'
-          + '<div class="ctr-name">' + escHtml(c.name) + '</div>'
-          + '<div class="ctr-sub">' + escHtml(c.image) + ' \u00b7 ' + escHtml(c.status)
-          + ((c.ips || []).length ? ' \u00b7 ' + escHtml(c.ips.map(function (x) { return x.ip; }).join(', ')) : '')
-          + '</div>'
-          + '</div>'
-          + (c.project ? '<span class="ctr-proj">' + escHtml(c.project) + '</span>' : '')
-          + (c.running
-            ? '<button class="svc-btn danger" data-action="ctr-stop" data-id="' + id + '" data-name="' + escHtml(c.name) + '">Stop</button>'
-            : '<button class="svc-btn" data-action="ctr-start" data-id="' + id + '">Start</button>')
-          + '</div>';
-        if (ctrOpen === c.id) {
-          html += '<div class="ctr-logs" id="ctr-logs-' + id + '">Loading logs\u2026</div>';
-        }
-      }
-      body.innerHTML = html;
-      if (ctrOpen) fetchContainerLogs(ctrOpen);
-    }
-
-    async function showContainerLogs(id) {
-      ctrOpen = (ctrOpen === id) ? null : id;
-      await loadContainers();
-    }
-
-    async function fetchContainerLogs(id) {
-      const pane = document.getElementById('ctr-logs-' + id);
-      if (!pane) return;
-      try {
-        const res = await apiFetch('/api/containers/logs?id=' + encodeURIComponent(id) + '&tail=300');
-        const d = await res.json();
-        if (!d.ok) { pane.textContent = d.error || 'Could not read logs.'; return; }
-        // An empty log is a fact about the container, not a failure to report.
-        pane.textContent = d.text.trim() || 'This container has not logged anything.';
-        pane.scrollTop = pane.scrollHeight;
-      } catch (err) {
-        pane.textContent = 'Could not read logs.';
-      }
-    }
-
-    /** Stopping is two-step: these are often somebody else's containers. */
-    async function containerStop(id, name, btn) {
-      if (!btn) return;
-      if (btn.dataset.armed !== '1') {
-        btn.dataset.armed = '1';
-        btn.classList.add('confirming');
-        btn.textContent = 'Stop ' + (name || 'it') + '?';
-        clearTimeout(btn._armTimer);
-        btn._armTimer = setTimeout(() => {
-          btn.dataset.armed = '';
-          btn.classList.remove('confirming');
-          btn.textContent = 'Stop';
-        }, 6000);
-        return;
-      }
-      clearTimeout(btn._armTimer);
-      btn.disabled = true;
-      btn.textContent = 'Stopping\u2026';
-      try {
-        const res = await apiFetch('/api/containers/stop', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: id }),
-        });
-        const d = await res.json();
-        if (!d.ok) throw new Error(d.error || 'Could not stop it');
-        toast('Stopped ' + d.name, 'success');
-      } catch (err) { toast(err.message, 'error'); }
-      loadContainers();
-    }
-
-    async function containerStart(id, btn) {
-      if (btn) { btn.disabled = true; btn.textContent = 'Starting\u2026'; }
-      try {
-        const res = await apiFetch('/api/containers/start', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: id }),
-        });
-        const d = await res.json();
-        if (!d.ok) throw new Error(d.error || 'Could not start it');
-        toast('Started ' + d.name, 'success');
-      } catch (err) { toast(err.message, 'error'); }
-      loadContainers();
-    }
 
     // ─── Reclaim disk space ───
     //
@@ -12146,121 +11998,28 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const alias = currentProject || '';
         const res = await apiFetch('/api/browsers?alias=' + encodeURIComponent(alias));
         const data = await res.json();
+        browserPlaces = data.places || null;
         renderBrowsers(data.browsers || []);
       } catch (err) {
         toast('Failed to load browsers: ' + err.message, 'error');
       }
     }
 
-    function renderTerminals() {
-      const panel = $('#terminals-panel');
-      if (!panel) return;
-
-      // Merge Claude terminals and user terminals for current project
-      const notParked = terminals.filter(t => t.kind !== 'parked');
-      const claudeTerms = currentProject
-        ? notParked.filter(t => t.project === currentProject)
-        : notParked;
-      const userTerms = currentProject
-        ? userTerminals.filter(t => t.alias === currentProject)
-        : userTerminals;
-
-      const spawnForm = '<div style="padding:0 0 8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
-        + '<input type="text" id="term-spawn-name" placeholder="Terminal name" style="flex:1;min-width:100px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<input type="text" id="term-spawn-cmd" placeholder="Command (optional)" style="flex:2;min-width:140px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<button data-action="term-spawn" style="padding:6px 14px;border-radius:var(--radius-sm);border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:12px;white-space:nowrap;">+ Spawn</button>'
-        + '</div>';
-
-      let cards = '';
-
-      // Claude terminal cards
-      for (const ct of claudeTerms) {
-        const statusClass = ct.status === 'running' ? 'running' : 'stopped';
-        cards += '<div class="svc-card">'
-          + '<div class="svc-header">'
-          + '  <span class="svc-name">Claude: ' + escHtml(ct.project) + '</span>'
-          + '  <span class="svc-status ' + statusClass + '">' + escHtml(ct.status || 'unknown') + (ct.busy ? ' (busy)' : '') + '</span>'
-          + '</div>'
-          + '<div class="svc-meta">Claude Code CLI session</div>'
-          + '</div>';
-      }
-
-      // User terminal cards
-      for (const ut of userTerms) {
-        const statusClass = ut.status === 'running' ? 'running' : 'stopped';
-        const ename = escHtml(ut.name);
-        cards += '<div class="svc-card">'
-          + '<div class="svc-header">'
-          + '  <span class="svc-name">' + ename + '</span>'
-          + '  <span class="svc-status ' + statusClass + '">' + escHtml(ut.status) + '</span>'
-          + '</div>'
-          + (ut.command ? '<div class="svc-meta">' + escHtml(ut.command) + '</div>' : '')
-          + '<div class="svc-actions">'
-          + '<button data-action="term-view-output" data-name="' + ename + '">Output</button>'
-          + (ut.status === 'running' ? '<button class="danger" data-action="term-close-user" data-name="' + ename + '">Close</button>' : '')
-          + '</div>'
-          + '<div class="svc-logs" id="term-logs-' + ename + '"></div>'
-          + '</div>';
-      }
-
-      if (!cards) {
-        panel.innerHTML = spawnForm + '<div class="services-empty">'
-          + '<div class="icon">&gt;_</div>'
-          + '<p>No terminals' + (currentProject ? ' for this project' : '') + '</p>'
-          + '</div>';
-        return;
-      }
-
-      panel.innerHTML = spawnForm + cards;
-    }
-
-    async function termSpawnUser() {
-      const nameEl = document.getElementById('term-spawn-name');
-      const cmdEl = document.getElementById('term-spawn-cmd');
-      if (!nameEl || !nameEl.value.trim()) { toast('Enter a terminal name', 'error'); return; }
-      try {
-        const project = projects.find(p => p.alias === currentProject);
-        const r = await apiFetch('/api/terminals/spawn', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alias: currentProject, name: nameEl.value.trim(), command: cmdEl?.value || undefined, cwd: project?.path }),
-        });
-        const data = await r.json();
-        if (!data.ok) toast(data.error || 'Failed', 'error');
-        else { toast('Terminal spawned'); nameEl.value = ''; if (cmdEl) cmdEl.value = ''; }
-      } catch (e) { toast(e.message, 'error'); }
-    }
-
-    async function termViewOutput(name) {
-      const logsEl = document.getElementById('term-logs-' + name);
-      if (!logsEl) return;
-      if (logsEl.style.display === 'block') { logsEl.style.display = 'none'; return; }
-      try {
-        const r = await apiFetch('/api/terminals/output?alias=' + encodeURIComponent(currentProject) + '&name=' + encodeURIComponent(name));
-        const data = await r.json();
-        if (!data.ok) { toast(data.error, 'error'); return; }
-        const lines = data.lines || [];
-        logsEl.textContent = lines.join('\\n') || '(no output)';
-        logsEl.style.display = 'block';
-        logsEl.scrollTop = logsEl.scrollHeight;
-      } catch (e) { toast(e.message, 'error'); }
-    }
-
-    async function termCloseUser(name) {
-      try {
-        const r = await apiFetch('/api/terminals/close', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alias: currentProject, name }),
-        });
-        const data = await r.json();
-        if (!data.ok) toast(data.error, 'error');
-        else toast('Terminal closed');
-      } catch (e) { toast(e.message, 'error'); }
-    }
+    // Where a new browser may run (server, desktop), from the last listing.
+    let browserPlaces = null;
+    let browserOn = '';
 
     function renderBrowsers(browsers) {
       const panel = $('#browsers-panel');
+      // A choice only when there is one: both this server and a desktop app.
+      const pl = browserPlaces || {};
+      const onSelect = (pl.server && pl.desktop)
+        ? '<select id="browser-on-select" title="Which machine runs it: this server reaches its own localhost, the desktop app reaches your network" style="min-width:130px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;">'
+          + '<option value="">Run on: default</option>'
+          + '<option value="server"' + (browserOn === 'server' ? ' selected' : '') + '>Run on this server</option>'
+          + '<option value="desktop"' + (browserOn === 'desktop' ? ' selected' : '') + '>Run on the desktop app</option>'
+          + '</select>'
+        : '';
 
       // Device selector + open button toolbar
       let deviceOpts = '';
@@ -12282,6 +12041,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
         + '<select id="browser-device-select" style="flex:1;min-width:140px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;">'
         + deviceOpts + '</select>'
+        + onSelect
         + '</div>'
         + '<div style="display:flex;gap:6px;align-items:center;">'
         + '<input type="text" id="browser-new-url" value="http://localhost:3000" placeholder="URL to open" style="flex:1;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
@@ -12303,7 +12063,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         return '<div class="svc-card" data-browser-key="' + ek + '">'
           + '<div class="svc-header">'
           + '  <span class="svc-name">' + escHtml(b.name || b.key || 'browser') + '</span>'
-          + '  <span class="svc-status running">open</span>'
+          + '  <span class="svc-status running">' + (b.on === 'server' ? 'on the server' : b.on === 'desktop' ? 'on the desktop app' : 'open') + '</span>'
           + '</div>'
           + '<div class="svc-meta">'
           + '  <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;">'
@@ -12330,12 +12090,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (!url) { toast('Enter a URL first', 'error'); return; }
       const name = 'browser-' + Date.now();
       const selIdx = parseInt(($('#browser-device-select') || {}).value || '0');
+      const onSel = $('#browser-on-select');
+      browserOn = onSel ? onSel.value : '';
       const profile = DEVICE_PROFILES[selIdx] || DEVICE_PROFILES[0];
       try {
         const res = await apiFetch('/api/browsers/open', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alias: currentProject, name, url, width: profile.w, height: profile.h }),
+          body: JSON.stringify({ alias: currentProject, name, url, width: profile.w, height: profile.h, on: browserOn || undefined }),
         });
         const data = await res.json();
         if (!data.ok) toast(data.error || 'Failed to open browser', 'error');
@@ -12395,38 +12157,41 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
     }
 
-    // ─── User Terminals Panel ───
-    async function loadUserTerminals() {
+    // ─── Docker (app/vendor/crundi-docker.js) ───
+    //
+    // The whole machine's Docker, owner-only. The tab only exists where Docker
+    // is installed: one status call per page load decides, and hides the
+    // button otherwise rather than offering a tab that can only say no.
+    let dockerView = null;
+    let dockerChecked = false;
+
+    async function checkDockerPresence() {
+      if (dockerChecked || userRole === 'collaborator') return;
+      dockerChecked = true;
+      const btn = document.querySelector('.tab-btn[data-tab="docker"]');
       try {
-        const alias = currentProject || '';
-        const res = await apiFetch('/api/user-terminals?alias=' + encodeURIComponent(alias));
-        const data = await res.json();
-        renderUserTerminals(data.terminals || []);
-      } catch (err) {
-        toast('Failed to load terminals: ' + err.message, 'error');
-      }
+        const r = await apiFetch('/api/docker/status');
+        const d = await r.json();
+        if (btn) btn.classList.toggle('dk-absent', !d.installed);
+        if (!d.installed && currentTab === 'docker') switchTab('info');
+      } catch (err) { dockerChecked = false; /* asked again on the next state push */ }
     }
 
-    function renderUserTerminals(terms) {
-      const panel = $('#user-terminals-panel');
-      if (terms.length === 0) {
-        panel.innerHTML = '<div class="services-empty">'
-          + '<div class="icon">' + ic('terminal') + '</div>'
-          + '<p>No user terminals open</p>'
-          + '<p style="font-size:0.8rem;color:var(--text-muted)">Terminals are spawned via Claude Code MCP tools</p>'
-          + '</div>';
-        return;
+    function loadDockerTab() {
+      if (!window.CrundiDocker) { toast('The Docker view did not load. Reload the page.', 'error'); return; }
+      if (!dockerView) {
+        dockerView = window.CrundiDocker.mount(document.getElementById('docker-panel'), {
+          apiFetch: apiFetch,
+          toast: toast,
+          icon: ic,
+          send: (m) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(m)); return true; } return false; },
+          Terminal: window.Terminal,
+          FitAddon: window.FitAddon,
+          termTheme: TERM_THEME,
+          termFont: TERM_FONT_FAMILY,
+        });
       }
-      panel.innerHTML = terms.map(t => {
-        const statusClass = t.status === 'running' ? 'running' : 'stopped';
-        return '<div class="svc-card">'
-          + '<div class="svc-header">'
-          + '  <span class="svc-name">' + escHtml(t.name || t.key || 'terminal') + '</span>'
-          + '  <span class="svc-status ' + statusClass + '">' + escHtml(t.status || 'unknown') + '</span>'
-          + '</div>'
-          + (t.cwd ? '<div class="svc-meta">' + escHtml(t.cwd) + '</div>' : '')
-          + '</div>';
-      }).join('');
+      dockerView.show();
     }
 
     // ─── Info Panel ───
@@ -12476,10 +12241,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
       const sysHtml = '<div class="info-section"><h4>This machine</h4>'
         + '<div id="sys-stats-body"><div class="sys-quiet">Reading the machine\\u2026</div></div></div>'
-        + '<div class="info-section" id="ctr-section" style="display:none">'
-        + '<div class="ctr-head"><h4 style="margin:0;flex:1">Containers</h4>'
-        + '<button class="svc-btn" id="ctr-toggle" data-action="ctr-toggle">Show</button></div>'
-        + '<div id="ctr-body" style="display:none"></div></div>'
         + '<div class="info-section"><h4>Reclaim disk space</h4>'
         + '<div id="maint-body"><div class="sys-quiet">Measuring\\u2026</div></div></div>'
         + '<div class="info-section"><h4>Outside collaborators</h4>'
@@ -12491,21 +12252,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       ensureStatsPolling();
       loadMaintenance();
       loadCollaborators();
-      // The Containers section only appears on a machine that has Docker; the
-      // listing doubles as the availability check, so it costs one call.
-      ctrShown = false;
-      ctrOpen = null;
-      try {
-        const cres = await apiFetch('/api/containers');
-        const cd = await cres.json();
-        if (cd.ok) {
-          const sec = $('#ctr-section');
-          if (sec) sec.style.display = '';
-          const tog = $('#ctr-toggle');
-          if (tog) tog.textContent = 'Show ' + (cd.containers || []).length;
-        }
-      } catch (err) { /* no Docker, no section */ }
-
       // Load server logs
       try {
         const lres = await apiFetch('/api/server-logs');
@@ -13723,10 +13469,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'svc-tunnel-port': svcTunnelSetPort(d.key, d.port); break;
         case 'svc-tunnel-toggle': svcTunnelToggle(d.key, d.enabled === '1', d.port); break;
         case 'svc-delete': svcDelete(d.key); break;
-        case 'ctr-toggle': toggleContainers(); break;
-        case 'ctr-logs': showContainerLogs(d.id); break;
-        case 'ctr-stop': containerStop(d.id, d.name, e.target.closest('button')); break;
-        case 'ctr-start': containerStart(d.id, e.target.closest('button')); break;
         case 'maint-run': runMaintenance(d.id, e.target.closest('button')); break;
         case 'svc-register': showRegisterServiceForm(); break;
         case 'svc-reg-submit': submitRegisterService(); break;
@@ -13956,9 +13698,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
           break;
         }
         case 'copy-logs': copyServerLogs(); break;
-        case 'term-spawn': termSpawnUser(); break;
-        case 'term-view-output': termViewOutput(d.name); break;
-        case 'term-close-user': termCloseUser(d.name); break;
         case 'browser-open': showOpenBrowserForm(); break;
         case 'browser-close': closeBrowserInstance(d.key); break;
         case 'browser-navigate': browserNavigate(d.key); break;

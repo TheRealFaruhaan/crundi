@@ -41,16 +41,12 @@ register_service { name: "worker",
 A process that writes a pidfile or daemonises itself usually needs a
 `stopCommand`; one that stays in the foreground and dies on SIGTERM does not.
 
-For one-off commands use `Bash` directly. Do not use `spawn_terminal` here — see
-below.
+For one-off commands use `Bash` directly.
 
 ## Which MCP tools work here
 
-Headless, so two groups are unavailable:
+Headless, so screen capture is unavailable:
 
-- **Terminal tools** (`spawn_terminal`, `terminal_input`, `terminal_wait`, …)
-  return a graceful error; they need the Electron desktop app. Use `Bash` for
-  commands and a registered service for anything long-lived.
 - **Screen capture** (`capture_window`, `capture_display`, `list_windows`,
   `list_displays`) errors with "needs a machine with a display".
 

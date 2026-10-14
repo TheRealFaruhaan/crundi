@@ -36,7 +36,6 @@ import { decodeImage } from './image-input.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
-import * as terminalsMod from './terminals.js';
 import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt, getProjectIconFile, setProjectIconFile } from './project-store.js';
 import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
@@ -1645,7 +1644,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       terminals: (state.terminals || []).filter(t =>
         t.kind === 'ui' && mine.has(String(t.project || '').toLowerCase())
         && !!t.collaborator && t.collaborator.key === principal.collabKey),
-      userTerminals: [],
       scheduled: [],
     };
   }
@@ -1713,7 +1711,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Parked panes keep their id, so the layout keeps their slot.
       ...panes.listParked(),
     ];
-    const userTerminals = terminalsMod.listTerminals();
     // Project aliases that have at least one enabled schedule (for the sidebar
     // "upcoming schedule" clock indicator).
     const scheduled = [...new Set(schedule.listSchedules().filter(s => s.enabled).map(s => String(s.project || '').toLowerCase()))];
@@ -1722,7 +1719,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       projects,
       services,
       terminals,
-      userTerminals: userTerminals.terminals || [],
       scheduled,
     };
   }
@@ -3937,28 +3933,39 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result, result.ok || result.needsConfirm ? 200 : 400);
     }
 
-    // Docker containers. Every id is resolved against the live listing inside
-    // docker.js before any command runs, so what arrives here is only ever a
-    // lookup key.
-    if (path === '/api/containers' && req.method === 'GET') {
-      return json(res, await dockerMod.listContainers());
-    }
-    if (path === '/api/containers/logs' && req.method === 'GET') {
-      const result = await dockerMod.containerLogs(
-        url.searchParams.get('id') || '',
-        url.searchParams.get('tail') || 200,
-      );
-      return json(res, result, result.ok ? 200 : 404);
-    }
-    if (path === '/api/containers/stop' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await dockerMod.stopContainer(String(body.id || ''));
-      return json(res, result, result.ok ? 200 : 400);
-    }
-    if (path === '/api/containers/start' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await dockerMod.startContainer(String(body.id || ''));
-      return json(res, result, result.ok ? 200 : 400);
+    // ─── Docker tab ───
+    // Owner-only (access-policy refuses /api/docker for collaborators). Every
+    // target the client names is resolved against the engine's live listing
+    // inside docker.js before anything acts on it, so what arrives here is
+    // only ever a lookup key.
+    if (path.startsWith('/api/docker/')) {
+      const sendResult = (r) => json(res, r, r.ok ? 200 : (r.status === 404 ? 404 : 400));
+      const body = req.method === 'POST' ? JSON.parse((await readBody(req)) || '{}') : {};
+      const q = (k) => url.searchParams.get(k) || '';
+      switch (req.method + ' ' + path) {
+        case 'GET /api/docker/status': return json(res, await dockerMod.status({ force: q('force') === '1' }));
+        case 'GET /api/docker/containers': return sendResult(await dockerMod.listContainers({ stats: q('stats') === '1' }));
+        case 'GET /api/docker/containers/detail': return sendResult(await dockerMod.containerDetail(q('id')));
+        case 'GET /api/docker/containers/logs': return sendResult(await dockerMod.containerLogs(q('id'), q('tail') || 500));
+        case 'GET /api/docker/containers/stats': return sendResult(await dockerMod.containerStats(q('id')));
+        case 'POST /api/docker/containers/action': return sendResult(await dockerMod.containerAction(String(body.id || ''), String(body.action || '')));
+        case 'POST /api/docker/containers/rename': return sendResult(await dockerMod.renameContainer(String(body.id || ''), body.name));
+        case 'POST /api/docker/containers/remove': return sendResult(await dockerMod.removeContainer(String(body.id || ''), { force: body.force === true, volumes: body.volumes === true }));
+        case 'GET /api/docker/stacks': return sendResult(await dockerMod.listStacks());
+        case 'POST /api/docker/stacks/action': return sendResult(await dockerMod.stackAction(String(body.name || ''), String(body.action || '')));
+        case 'GET /api/docker/images': return sendResult(await dockerMod.listImages());
+        case 'POST /api/docker/images/remove': return sendResult(await dockerMod.removeImage(String(body.id || ''), { force: body.force === true }));
+        case 'POST /api/docker/images/pull': return sendResult(dockerMod.pullImage(body.reference));
+        case 'GET /api/docker/volumes': return sendResult(await dockerMod.listVolumes());
+        case 'POST /api/docker/volumes/remove': return sendResult(await dockerMod.removeVolume(String(body.name || '')));
+        case 'GET /api/docker/networks': return sendResult(await dockerMod.listNetworks());
+        case 'POST /api/docker/networks/remove': return sendResult(await dockerMod.removeNetwork(String(body.id || '')));
+        case 'GET /api/docker/system': return sendResult(await dockerMod.systemInfo());
+        case 'GET /api/docker/system/df': return sendResult(await dockerMod.diskUsage());
+        case 'POST /api/docker/prune': return sendResult(await dockerMod.prune(String(body.kind || '')));
+        case 'GET /api/docker/job': return sendResult(dockerMod.jobOutput(q('id'), q('from')));
+      }
+      return json(res, { ok: false, error: 'Not found' }, 404);
     }
 
     // Disk maintenance. The catalogue is fixed in maintenance.js; the client
@@ -4118,7 +4125,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // ─── Browsers ───
     if (path === '/api/browsers' && req.method === 'GET') {
       const alias = url.searchParams.get('alias') || '';
-      return json(res, { browsers: browserMod.listBrowsers(alias) });
+      return json(res, { browsers: browserMod.listBrowsers(alias), places: browserMod.browserPlaces() });
     }
 
     if (path === '/api/browsers/open' && req.method === 'POST') {
@@ -4130,6 +4137,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         url: body.url,
         width: body.width || 1280,
         height: body.height || 720,
+        on: body.on === 'server' || body.on === 'desktop' ? body.on : undefined,
       });
       return json(res, result);
     }
@@ -4153,13 +4161,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const key = decodeURIComponent(browserNavMatch[1]);
       const body = JSON.parse(await readBody(req));
       const result = await browserMod.navigateBrowser(key, body.url);
-      return json(res, result);
-    }
-
-    // ─── User Terminals ───
-    if (path === '/api/user-terminals' && req.method === 'GET') {
-      const alias = url.searchParams.get('alias') || '';
-      const result = terminalsMod.listTerminals(alias);
       return json(res, result);
     }
 
@@ -5186,38 +5187,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return;
     }
 
-    // ─── User Terminals (API for Terminals tab) ───
-
-    if (path === '/api/terminals/spawn' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await terminalsMod.spawnTerminal(body.alias || 'default', body.alias || 'default', body.name, { command: body.command, cwd: body.cwd });
-      broadcastState();
-      return json(res, result);
-    }
-
-    if (path === '/api/terminals/input' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await terminalsMod.writeTerminal(body.alias || 'default', body.name, body.input);
-      return json(res, result);
-    }
-
-    if (path === '/api/terminals/output' && req.method === 'GET') {
-      const alias = url.searchParams.get('alias') || 'default';
-      const name = url.searchParams.get('name');
-      const result = await terminalsMod.getTerminalOutput(alias, name, {
-        start: parseInt(url.searchParams.get('start') || '0', 10),
-        end: url.searchParams.get('end') ? parseInt(url.searchParams.get('end'), 10) : undefined,
-      });
-      return json(res, result);
-    }
-
-    if (path === '/api/terminals/close' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await terminalsMod.closeTerminal(body.alias || 'default', body.name);
-      broadcastState();
-      return json(res, result);
-    }
-
     // ─── Git ───
 
     function gitExec(cwd, args) {
@@ -6072,6 +6041,64 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const subs = new Map();
       // …and several chat sessions: id → event handler.
       const uiSubs = new Map();
+      // Docker streams this socket opened, keyed by the client's own ref so
+      // one page can follow several logs and hold several shells at once.
+      const dockerLogs = new Map();     // ref -> stop()
+      const dockerShells = new Map();   // ref -> pty
+      // Refs stopped or closed while still opening: the open finishes after
+      // the stop arrived, and must not leave a stream nobody will end.
+      const dockerCancelled = new Set();
+      const sendWs = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
+      const handleDockerMessage = async (msg) => {
+        const ref = String(msg.ref || '').slice(0, 64);
+        if (!ref) return;
+        switch (msg.type) {
+          case 'docker-logs-follow': {
+            if (dockerLogs.has(ref)) { dockerLogs.get(ref)(); dockerLogs.delete(ref); }
+            const r = await dockerMod.followLogs(msg.id, { tail: msg.tail },
+              (frames) => sendWs({ type: 'docker-logs', ref, frames }),
+              () => { dockerLogs.delete(ref); sendWs({ type: 'docker-logs-end', ref }); });
+            if (!r.ok) { sendWs({ type: 'docker-logs-error', ref, error: r.error }); return; }
+            if (ws.readyState !== 1 || dockerCancelled.delete(ref)) { r.stop(); return; }
+            dockerLogs.set(ref, r.stop);
+            return;
+          }
+          case 'docker-logs-stop': {
+            const stop = dockerLogs.get(ref);
+            if (stop) { dockerLogs.delete(ref); stop(); } else dockerCancelled.add(ref);
+            return;
+          }
+          case 'docker-shell-open': {
+            if (dockerShells.has(ref)) { try { dockerShells.get(ref).kill(); } catch { /* gone */ } dockerShells.delete(ref); }
+            if (dockerShells.size >= 8) { sendWs({ type: 'docker-shell-error', ref, error: 'Too many shells open on this page' }); return; }
+            const r = await dockerMod.spawnShell(msg.id, { cols: msg.cols, rows: msg.rows });
+            if (!r.ok) { sendWs({ type: 'docker-shell-error', ref, error: r.error }); return; }
+            if (ws.readyState !== 1 || dockerCancelled.delete(ref)) { try { r.proc.kill(); } catch { /* gone */ } return; }
+            dockerShells.set(ref, r.proc);
+            r.proc.onData((data) => sendWs({ type: 'docker-shell-data', ref, data }));
+            r.proc.onExit(({ exitCode }) => {
+              if (dockerShells.get(ref) === r.proc) dockerShells.delete(ref);
+              sendWs({ type: 'docker-shell-exit', ref, code: exitCode });
+            });
+            return;
+          }
+          case 'docker-shell-input': {
+            const p = dockerShells.get(ref);
+            if (p && typeof msg.data === 'string') p.write(msg.data);
+            return;
+          }
+          case 'docker-shell-resize': {
+            const p = dockerShells.get(ref);
+            if (p && msg.cols > 0 && msg.rows > 0) { try { p.resize(Math.min(400, msg.cols | 0), Math.min(200, msg.rows | 0)); } catch { /* exited */ } }
+            return;
+          }
+          case 'docker-shell-close': {
+            const p = dockerShells.get(ref);
+            if (p) { dockerShells.delete(ref); try { p.kill(); } catch { /* gone */ } } else dockerCancelled.add(ref);
+            return;
+          }
+        }
+      };
       // Set when this socket is acting as the server's native host (a desktop
       // app lending us its GUI for the browser panel).
       let detachHost = null;
@@ -6154,6 +6181,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           return;
         }
 
+        // ─── Docker: live logs and a shell inside a container ───
+        // Owner-only, like the routes: the daemon is shared and a shell in a
+        // container is root on whatever it mounts.
+        if (typeof msg.type === 'string' && msg.type.startsWith('docker-')) {
+          if (confined) return;
+          handleDockerMessage(msg);
+          return;
+        }
+
         if (!claudeTerminals) return;
         const id = msg.id;
 
@@ -6204,6 +6240,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         uiSubs.clear();
         logSubscribers.delete(ws);
         presentClients.delete(ws);
+        for (const stop of dockerLogs.values()) { try { stop(); } catch { /* gone */ } }
+        dockerLogs.clear();
+        for (const p of dockerShells.values()) { try { p.kill(); } catch { /* gone */ } }
+        dockerShells.clear();
+        dockerCancelled.clear();
         if (detachHost) {
           detachHost();
           detachHost = null;

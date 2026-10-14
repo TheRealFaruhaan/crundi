@@ -1,0 +1,28 @@
+{
+  "steps": [
+    {
+      "id": "docker-tab",
+      "tag": "Docker",
+      "title": "All of Docker, in one tab",
+      "body": "On a machine with Docker, the new Docker tab manages the whole engine. Every container with its live CPU and memory, ready to start, stop, restart, pause or remove. Compose stacks with up, pull, restart and down. Images, volumes and networks, and disk use with a clean-up for each kind. The tab does not appear where Docker is not installed.",
+      "art": "docker-tab.html",
+      "artTitle": "Docker"
+    },
+    {
+      "id": "docker-container",
+      "tag": "Docker",
+      "title": "Inside a container",
+      "body": "Open a container to see everything about it. Its log follows live, with colours and a filter. Charts show CPU, memory, network and disk as they change. A shell opens inside it, in bash when the image has it. Inspect shows the raw details. Values in the environment that look like secrets are hidden in the overview.",
+      "art": "docker-container.html",
+      "artTitle": "scraper-db"
+    },
+    {
+      "id": "browser-run-on",
+      "tag": "Browsers",
+      "title": "Choose where a browser runs",
+      "body": "A browser can run on the server or in your desktop app, and now you choose which. On the server it reaches the dev servers on that machine's localhost. In the desktop app it reaches your own network. Claude makes the same choice when it opens one, so it can check its own dev server even while your desktop app is connected.",
+      "art": "browser-run-on.html",
+      "artTitle": "Browsers"
+    }
+  ]
+}

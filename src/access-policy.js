@@ -156,14 +156,14 @@ const COLLABORATOR_NEVER = [
   /^\/api\/settings/,
   /^\/api\/skills/,        // a skill is instructions Claude runs with the owner's permissions
   /^\/api\/auth\/config/,   // would let them turn auth off
-  /^\/api\/terminals/,      // every PTY path, including /spawn
+  /^\/api\/terminals/,      // every PTY path
   /^\/api\/server-logs/,    // other people's projects scroll past in here
   /^\/api\/maintenance/,
   /^\/api\/update/,
   /^\/api\/claude-update/,
   /^\/api\/import/,
   /^\/api\/tunnel/,         // exposing a port to the public internet
-  /^\/api\/containers/,     // shared docker daemon: other projects' containers
+  /^\/api\/docker/,         // shared docker daemon: other projects' containers, and root by another name
   /^\/api\/mcp\/call/,      // has its own key; collaborators get a scoped one
   /^\/api\/usage/,          // the owner's account spend
   /^\/api\/notify/,

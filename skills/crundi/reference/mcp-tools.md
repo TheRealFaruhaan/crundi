@@ -10,7 +10,6 @@ half of these cannot work on a headless server:
 |---|---|---|---|
 | Messaging, services, forwards, tunnels, stores, secrets, usage | yes | yes | yes |
 | Browser (`browser_*`) | yes — bundled headless browser | yes | yes — app webview |
-| Terminals (`spawn_terminal` …) | **no** — graceful error | **no** | yes |
 | Screen capture (`capture_*`, `list_windows`, `list_displays`) | **no** — needs a display | **no** | yes |
 | `disconnect_rdp` | **no** | **no** | yes — Windows only |
 
@@ -57,8 +56,11 @@ thing behind it has its own authentication.
 
 ## Browser
 
-`browser_open` (`url`, `name?`, `width?`, `height?`) returns a `key` used by all
-the rest. Max 5 per project.
+`browser_open` (`url`, `name?`, `width?`, `height?`, `on?`) returns a `key` used
+by all the rest. Max 5 per project. `on` is `"server"` (this machine: its
+localhost is your dev servers) or `"desktop"` (the person's connected desktop
+app, on their network); omitted, the desktop app when one is connected. Every
+later call on that key runs in the same place; `browser_list` shows where.
 
 Navigation: `browser_navigate`, `browser_go_back`, `browser_go_forward`,
 `browser_wait` (`selector`, `timeout?`), `browser_close`, `browser_list`.
@@ -73,15 +75,8 @@ Inspection: `browser_eval` (`code`), `browser_snapshot` (accessibility tree),
 `browser_network` (`action`: start \| stop \| log \| clear), `browser_cookies`,
 `browser_pdf`.
 
-Paged readers (`browser_console`, `browser_elements`, `browser_network`,
-`terminal_output`) take `start` / `end` / `countOnly` — ask for the count first
+Paged readers (`browser_console`, `browser_elements`, `browser_network`) take `start` / `end` / `countOnly` — ask for the count first
 when output might be huge.
-
-## Terminals — Windows desktop app only
-
-`spawn_terminal` (`name`, `command?`, `cwd?`), `terminal_input` (`name`, `input`),
-`terminal_output` (`name`, paging), `terminal_wait` (`name`, `pattern`,
-`timeout?`), `close_terminal`, `list_terminals`.
 
 ## Screens — needs a desktop session (Windows app)
 

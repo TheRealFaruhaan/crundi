@@ -55,11 +55,22 @@ let nextRequestId = 1;
 // either that parent, or a desktop app connected over the network that has
 // registered itself as one.
 //
-// The rule is simply "the browser opens where the human is". A remote host is
-// only consulted when there is no parent channel, so an all-in-one desktop
-// install behaves exactly as it always did.
+// WHERE a browser runs is the caller's choice, per instance (openBrowser's
+// `on`), because the two answers are different machines on different networks:
+//
+//   'server'   the machine this server runs on — our Electron parent in an
+//              all-in-one install, else a headless browser here. What a dev
+//              server on this machine's localhost needs.
+//   'desktop'  the Crundi desktop app the person is using, attached over the
+//              network (or our own parent, which is the same machine). Where
+//              they can see it, on their network.
+//   (omitted)  as before: a desktop app when one is attached, else headless.
+//
+// The choice is made once, at open, and every later call on that instance goes
+// to the same place: the page only exists where it was opened.
 
 let remoteHost = null;   // { send(msg) } registered by a connected desktop app
+const keyBackend = new Map();   // instance key -> 'parent' | 'remote' | 'headless'
 
 function isElectron() {
   return process.env.ELECTRON_RUN === '1';
@@ -77,6 +88,15 @@ export function setRemoteHost(host) {
 
 export function clearRemoteHost() {
   remoteHost = null;
+  // Pages opened on that app went with it.
+  let dropped = false;
+  for (const [key, where] of keyBackend) {
+    if (where !== 'remote') continue;
+    keyBackend.delete(key);
+    const inst = browsers.get(key);
+    if (inst) { if (inst.idleTimer) clearTimeout(inst.idleTimer); browsers.delete(key); dropped = true; }
+  }
+  if (dropped) emitBrowserUpdate();
   // Anything still in flight can never be answered now — fail it rather than
   // leaving callers hanging until the 40s backstop.
   for (const [id, entry] of pendingRequests) {
@@ -141,19 +161,54 @@ function postToHost(msg) {
   return false;
 }
 
+/** Which places a browser can run right now, for the UI and browser_list. */
+export function browserPlaces() {
+  return {
+    server: hasParentIpc() || headless.isSupported(),
+    desktop: !!remoteHost || hasParentIpc(),
+  };
+}
+
+/**
+ * Turn a caller's `on` into a backend, or explain why it cannot be had.
+ * Returns { backend } or { error }.
+ */
+function chooseBackend(on) {
+  const where = String(on || '').toLowerCase();
+  if (where === 'server') {
+    if (hasParentIpc()) return { backend: 'parent' };
+    if (headless.isSupported()) return { backend: 'headless' };
+    return { error: 'This server has no browser of its own. Re-run the installer to provision a headless one, or use on: "desktop".' };
+  }
+  if (where === 'desktop') {
+    if (remoteHost) return { backend: 'remote' };
+    if (hasParentIpc()) return { backend: 'parent' };
+    return { error: 'No Crundi desktop app is connected to this server. Open the desktop app, or use on: "server".' };
+  }
+  if (where) return { error: 'on must be "server" or "desktop"' };
+  if (hasParentIpc()) return { backend: 'parent' };
+  if (remoteHost) return { backend: 'remote' };
+  if (headless.isSupported()) return { backend: 'headless' };
+  return { error: backendUnavailableReason() };
+}
+
 function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS) {
-  // No desktop app? Drive a headless browser here instead.
-  //
-  // The desktop host still wins whenever one is attached — it owns the visible
-  // windows and the device emulation that genuinely need a display. This only
-  // covers the case that used to be a flat refusal: a server, where fetching a
-  // page or taking a screenshot never needed a desktop in the first place.
-  if (!hasNativeHost() && headless.supports(type) && headless.isSupported()) {
+  // Each instance answers from where it was opened (see the note at the top).
+  // An instance with no record (opened before this choice existed) falls back
+  // to the old order: a desktop app when one is attached, else headless.
+  let backend = payload && payload.key ? keyBackend.get(payload.key) : null;
+  if (!backend) backend = hasNativeHost() ? null : 'headless';
+  if (backend === 'headless') {
+    if (!headless.supports(type) || !headless.isSupported()) {
+      return Promise.reject(new Error('This server has no headless browser for that.'));
+    }
     return headless.handle({ type, ...payload });
   }
 
   return new Promise((resolve, reject) => {
-    if (!hasNativeHost()) {
+    if (backend === 'remote' && !remoteHost) return reject(new Error('The desktop app this browser ran on has disconnected.'));
+    if (backend === 'parent' && !hasParentIpc()) return reject(new Error('The desktop app this browser ran on has gone.'));
+    if (!backend && !hasNativeHost()) {
       return reject(new Error('Browser tools need the Crundi desktop app — run one, or connect it to this server.'));
     }
 
@@ -165,7 +220,10 @@ function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS) {
 
     pendingRequests.set(requestId, { resolve, reject, timer });
     try {
-      postToHost({ type, requestId, ...payload });
+      const msg = { type, requestId, ...payload };
+      if (backend === 'remote') remoteHost.send(msg);
+      else if (backend === 'parent') process.send(msg);
+      else postToHost(msg);
     } catch (err) {
       pendingRequests.delete(requestId);
       clearTimeout(timer);
@@ -184,6 +242,7 @@ function handleIpcMessage(msg) {
       if (inst.idleTimer) clearTimeout(inst.idleTimer);
       browsers.delete(msg.key);
     }
+    keyBackend.delete(msg.key);
     return;
   }
   if (msg.type !== 'browserResult') return;
@@ -227,8 +286,10 @@ function clampDimensions(width, height) {
 
 // ─── Public API ───
 
-export async function openBrowser({ alias, name, url, width, height }) {
+export async function openBrowser({ alias, name, url, width, height, on }) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
+  const chosen = chooseBackend(on);
+  if (chosen.error) return { ok: false, error: chosen.error };
 
   const key = makeKey(alias, name || 'default');
   const dims = clampDimensions(width, height);
@@ -245,11 +306,12 @@ export async function openBrowser({ alias, name, url, width, height }) {
     return { ok: false, error: `Max ${MAX_TOTAL} total browsers reached. Close one first.` };
   }
 
+  keyBackend.set(key, chosen.backend);
   try {
     const result = await sendIpc('browserOpen', {
       key, url, width: dims.width, height: dims.height,
     });
-    if (!result.ok) return { ok: false, error: result.error };
+    if (!result.ok) { keyBackend.delete(key); return { ok: false, error: result.error }; }
 
     // Track locally
     browsers.set(key, {
@@ -267,8 +329,9 @@ export async function openBrowser({ alias, name, url, width, height }) {
     });
     resetIdleTimer(key);
     emitBrowserUpdate();
-    return { ok: true, key };
+    return { ok: true, key, on: placeOf(chosen.backend) };
   } catch (err) {
+    keyBackend.delete(key);
     return { ok: false, error: err.message };
   }
 }
@@ -285,8 +348,16 @@ export async function closeBrowser(key) {
 
   if (inst.idleTimer) clearTimeout(inst.idleTimer);
   browsers.delete(key);
+  keyBackend.delete(key);
   emitBrowserUpdate();
   return { ok: true };
+}
+
+/** 'server' or 'desktop', as a caller would name it. */
+function placeOf(backend) {
+  if (backend === 'remote') return 'desktop';
+  if (backend === 'headless') return 'server';
+  return hasParentIpc() ? 'server' : 'desktop';   // all-in-one: one machine
 }
 
 export async function navigateBrowser(key, url) {
@@ -499,6 +570,7 @@ export function listBrowsers(alias) {
     createdAt: b.createdAt,
     lastActivityAt: b.lastActivityAt,
     consoleLogCount: b.consoleLogs.length,
+    on: placeOf(keyBackend.get(b.key) || (hasNativeHost() ? (hasParentIpc() ? 'parent' : 'remote') : 'headless')),
   }));
 }
 

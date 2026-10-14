@@ -104,7 +104,7 @@ add_forward { name: "app-dev", port: 4300, mode: "subdomain" }
              → https://app-dev.<domain>   (private: needs a Crundi sign-in)
 
 # 4. check it yourself before sending it
-browser_open    { url: "http://127.0.0.1:4300", width: 420, height: 880 }
+browser_open    { url: "http://127.0.0.1:4300", width: 420, height: 880, on: "server" }
 browser_console { key }                                   → no errors
 browser_screenshot { key }
 
@@ -121,7 +121,7 @@ When the thing has a browser UI, drive the real one rather than reasoning about
 it:
 
 ```
-browser_open    { url, width, height }
+browser_open    { url, width, height, on: "server" }   # "server": reaches this machine's localhost
 browser_console { key }                 → did it throw?
 browser_snapshot / browser_elements     → is the DOM what you think?
 browser_screenshot { key }              → what it actually looks like

@@ -1,11 +1,11 @@
 ---
 name: crundi
-description: How to build, run, test and ship a project on a machine running Crundi, working through the Crundi interface — using the crundi MCP tools (services, forwards, tunnels, browser, terminals, secrets, kanban, mindmap, schedules, notifications) instead of shelling out, and running dev servers on ports that are safe to take and reachable by the user. Platform-specific throughout: Linux hosts and Windows hosts differ in paths, shells, service management, port checks and which tools exist at all. Use whenever the crundi MCP server is connected — starting or exposing a dev server or long-running process, previewing work for a user who is on a phone, driving a real browser, handling credentials, or reading/writing board, mindmap or schedule state.
+description: How to build, run, test and ship a project on a machine running Crundi, working through the Crundi interface — using the crundi MCP tools (services, forwards, tunnels, browser, secrets, kanban, mindmap, schedules, notifications) instead of shelling out, and running dev servers on ports that are safe to take and reachable by the user. Platform-specific throughout: Linux hosts and Windows hosts differ in paths, shells, service management, port checks and which tools exist at all. Use whenever the crundi MCP server is connected — starting or exposing a dev server or long-running process, previewing work for a user who is on a phone, driving a real browser, handling credentials, or reading/writing board, mindmap or schedule state.
 ---
 
 # Crundi
 
-Crundi is a self-hosted workbench: it runs projects, background services, terminals
+Crundi is a self-hosted workbench: it runs projects, background services, Claude chats
 and schedules on one machine, and serves a web UI you reach from anywhere. When it
 is running, Claude sessions on that machine get a `crundi` MCP server whose tools
 act on the real machine.
@@ -174,6 +174,13 @@ Check what a page actually does rather than reasoning about it — especially af
 a UI change. Works on both platforms (bundled headless browser, or the desktop
 app's webview). Up to 5 instances per project; close them when done.
 
+`browser_open` takes `on`, which picks the machine: `"server"` runs it where
+Crundi and you run, so `http://127.0.0.1:<port>` is your own dev server;
+`"desktop"` runs it in the person's connected desktop app, on their network.
+Left out, it uses the desktop app when one is connected. Testing a dev server on
+this machine's localhost, say `on: "server"`: on the desktop app, localhost is
+the person's computer, where nothing of yours is listening.
+
 ### Secrets
 
 ```
@@ -210,8 +217,7 @@ than concluding it does not exist.
 
 ### Platform-limited tools
 
-`spawn_terminal` / `terminal_*` and `capture_window` / `capture_display` /
-`list_windows` need a desktop host. On a headless server they return a graceful
+`capture_window` / `capture_display` / `list_windows` need a desktop host. On a headless server they return a graceful
 error. See the availability table in `reference/mcp-tools.md` before reaching for
 them.
 
@@ -219,7 +225,10 @@ them.
 
 `get_usage` — the account's real 5-hour and weekly limit utilisation.
 `syntax_check { files }` — fast parse of files you just wrote, any language.
-`list_forwards`, `list_terminals`, `list_services` — check state before changing it.
+`list_forwards`, `list_services` — check state before changing it.
+
+There are no terminal tools: run commands with your own shell (`Bash`), and
+register anything long-lived as a service.
 
 ## Building, testing and shipping a project here
 

@@ -197,7 +197,7 @@ const A = 'demo';
   ok(parseAs('a\nb\nc\n', 'lines', { tail: 2 }).join() === 'b,c', 'lines: tail');
   ok(parseAs('{"a":1}\n{"a":2}\n{"a"', 'jsonl').length === 2, 'jsonl: a half-written last line is skipped');
   ok(fillTemplate('echo {{a}} {{missing}}', { a: "x'; rm -rf /" }, true) === "echo 'x'\\''; rm -rf /' ''", 'template: command parameters are shell-quoted');
-  ok(!ACTION_TOOLS.has('secret_get') && !ACTION_TOOLS.has('spawn_terminal') && !ACTION_TOOLS.has('widget_open'), 'actions: secrets, terminals and widgets cannot be wired to a button');
+  ok(!ACTION_TOOLS.has('secret_get') && !ACTION_TOOLS.has('widget_open'), 'actions: secrets and widgets cannot be wired to a button');
   const s = summariseSession({ state: 'working', messages: [
     { kind: 'user', text: 'go' },
     { kind: 'tool', name: 'TodoWrite', status: 'done', input: { todos: [{ content: 'a', status: 'completed' }, { content: 'b', status: 'in_progress', activeForm: 'Doing b' }] } },
