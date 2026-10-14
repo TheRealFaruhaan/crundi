@@ -3816,6 +3816,48 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // ─── State ───
     let token = localStorage.getItem('crundi_token');
     let refreshToken = localStorage.getItem('crundi_refresh');
+    // Inside the phone app, with a server that offers it, the app keeps this
+    // page's login and renews it for every page it shows (PageLogin in the
+    // app). The page then holds only the access token, in memory, and asks
+    // the app for a new one over window.CrundiLogin, a channel only this
+    // server's own frames can see. It never holds a refresh token, so no two
+    // pages of the app can spend the same one: that is what used to get a
+    // phone cut off as if its login had been stolen.
+    const APP_LOGIN = !!window.CrundiLogin;
+    if (APP_LOGIN) {
+      token = null; refreshToken = null;
+      // A login this page kept before (a password typed into an older
+      // version) must not linger beside the app's.
+      try { localStorage.removeItem('crundi_token'); localStorage.removeItem('crundi_refresh'); } catch (e) { /* no storage */ }
+    }
+    let appLoginSeq = 0;
+    const appLoginWait = new Map();
+    if (APP_LOGIN) {
+      window.CrundiLogin.onmessage = (e) => {
+        let m = null;
+        try { m = JSON.parse(e.data); } catch (err) { return; }
+        const done = m && appLoginWait.get(m.id);
+        if (!done) return;
+        appLoginWait.delete(m.id);
+        done(m);
+      };
+    }
+    /** Ask the app for the login: op "get" (what it has) or "renew". Resolves null if it does not answer. */
+    function askAppLogin(op) {
+      return new Promise((resolve) => {
+        const id = 'l' + (++appLoginSeq);
+        const timer = setTimeout(() => { appLoginWait.delete(id); resolve(null); }, 30000);
+        appLoginWait.set(id, (m) => { clearTimeout(timer); resolve(m); });
+        try { window.CrundiLogin.postMessage(JSON.stringify({ id, op, stale: token || '' })); }
+        catch (err) { clearTimeout(timer); appLoginWait.delete(id); resolve(null); }
+      });
+    }
+    function takeAppLogin(m) {
+      if (!m || !m.token) return false;
+      token = m.token;
+      scheduleRefresh(m.expiresIn);
+      return true;
+    }
     // One shared in-flight refresh. Without this, a burst of concurrent 401s
     // would each rotate the refresh token; the second rotation would look like
     // a replay to the server and revoke the whole login.
@@ -3824,6 +3866,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // Another tab rotating the session writes the new tokens here. Picking them
     // up as they land keeps this tab from ever holding a spent copy.
     window.addEventListener('storage', (e) => {
+      if (APP_LOGIN) return;
       if (e.key === 'crundi_refresh' && e.newValue) refreshToken = e.newValue;
       if (e.key === 'crundi_token' && e.newValue) token = e.newValue;
     });
@@ -3831,6 +3874,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     function storeSession(d) {
       if (!d || !d.token) return false;
+      // The app keeps the login: nothing of it goes into this page's storage.
+      if (APP_LOGIN) { token = d.token; scheduleRefresh(d.expiresIn); return true; }
       token = d.token;
       localStorage.setItem('crundi_token', token);
       if (d.refreshToken) {
@@ -3865,6 +3910,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     function refreshSession() {
       if (refreshInFlight) return refreshInFlight;
+      if (APP_LOGIN) {
+        refreshInFlight = askAppLogin('renew')
+          .then(m => takeAppLogin(m))
+          .then(ok => { refreshInFlight = null; return ok; });
+        return refreshInFlight;
+      }
       // Take the freshest token, not the one captured at page load. Another tab
       // may have rotated it since, and refreshInFlight only serialises refreshes
       // WITHIN this tab. Sending a copy a sibling already spent looked like a
@@ -9050,7 +9101,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // asleep (timers don't fire there, so the proactive refresh was skipped)
       // would make the socket 401 and flap on the 3s reconnect loop. Renew
       // first when either side is actually down.
-      if ((!wsHealthy() || !sseHealthy()) && refreshToken) await refreshSession();
+      if ((!wsHealthy() || !sseHealthy()) && (refreshToken || APP_LOGIN)) await refreshSession();
       let reconnected = false;
       if (!wsHealthy()) { connectWS(); reconnected = true; }   // re-subscribes on open
       if (!sseHealthy()) { connectSSE(); reconnected = true; } // server re-pushes state + usage
@@ -17132,6 +17183,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
 
     async function init() {
+      // The app's login, before anything asks whether we are signed in.
+      if (APP_LOGIN && !token) {
+        if (!takeAppLogin(await askAppLogin('get'))) takeAppLogin(await askAppLogin('renew'));
+      }
       if (consumeRedirectToken() && await checkAuth()) {
         showApp(); connectSSE(); checkImport();
         return;

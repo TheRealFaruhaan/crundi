@@ -149,7 +149,15 @@ class MainActivity : Activity() {
                     "This server needs updating\n\n${s.host} is version ${verdict.serverVersion.ifEmpty { "unknown" }}. This app needs ${BuildConfig.MIN_SERVER} or newer.\n\nUpdate the server from its own Settings, on a computer. If it is not your server, ask its owner.",
                     "Try again",
                 ) { open() }
-                else -> showPage(s)
+                else -> {
+                    // The page's login is kept by the app when the server
+                    // offers that and this phone's web view can carry it
+                    // safely (see PageLogin). Decided here, at every opening,
+                    // and remembered for the bubbles, which do not ask.
+                    val appLogin = LoginChannel.supported && "app-page-login" in verdict.capabilities
+                    LoginChannel.setOn(applicationContext, s.id, appLogin)
+                    showPage(s, appLogin)
+                }
             }
         }
     }
@@ -167,7 +175,7 @@ class MainActivity : Activity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun showPage(s: Server) {
+    private fun showPage(s: Server, appLogin: Boolean = false) {
         root.findViewWithTag<View>("notice")?.let { root.removeView(it) }
         web?.let { root.removeView(it); it.destroy() }
         val view = CrundiWebView(this)
@@ -244,17 +252,30 @@ class MainActivity : Activity() {
         view.addJavascriptInterface(Bridge(), "CrundiNative")
 
         root.addView(view, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        // First load after pairing: hand the page its login, then forget our
-        // copy. A refresh token is spent by using it, so two holders of one
-        // would cut each other off; from here on it is the page's alone.
         // Always the front page. If an intent pointed at a chat, the page is
         // asked for it once it has loaded (see go).
-        val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else "/"
-        if (s.pageToken.isNotEmpty()) {
-            s.pageToken = ""; s.pageRefresh = ""
-            Servers.save(this, s)
+        if (appLogin) {
+            // The app keeps the page's login and renews it for every page
+            // (PageLogin). A login a pairing has just handed over is taken
+            // into its keeping; the page asks for it over the channel.
+            LoginChannel.attach(view, s)
+            if (s.pageToken.isNotEmpty()) {
+                PageLogin.adopt(applicationContext, s)
+                s.pageToken = ""; s.pageRefresh = ""
+                Servers.save(this, s)
+            }
+            view.loadUrl(s.baseUrl + "/")
+        } else {
+            // An older server: hand the page its login on the first load after
+            // pairing, then forget our copy. A refresh token is spent by using
+            // it, so two holders of one would cut each other off.
+            val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else "/"
+            if (s.pageToken.isNotEmpty()) {
+                s.pageToken = ""; s.pageRefresh = ""
+                Servers.save(this, s)
+            }
+            view.loadUrl(s.baseUrl + handoff)
         }
-        view.loadUrl(s.baseUrl + handoff)
         askToNotify()
         Push.registerAll(this)
     }

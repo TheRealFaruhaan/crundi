@@ -130,5 +130,22 @@ ok(refuseAt > 0 && refuseAt < server.indexOf("// Serve web app"), 'and the serve
 ok(page.includes("navigator.userAgent.indexOf('CrundiAndroid/') >= 0) { showPairAgain(); return; }"), 'the page shows the app a way to pair, not a sign-in form');
 ok(server.includes("entry.answered === false") && server.includes('entry.answered = false;'), 'a renewal whose answer was never used is answered again, and only that one');
 
+
+// ─── The phone app keeps its page's login ───
+// Two pages of the app (the main window, a bubble) each holding the page's
+// refresh token got the phone cut off as if it had been stolen. The app now
+// keeps that login and renews it for all of them.
+const chatPage = readFileSync(join(root, 'app', 'vendor', 'crundi-chat-page.js'), 'utf8');
+ok(cv.CAPABILITIES.includes('app-page-login'), 'the server says it can give the app a page login to keep');
+const pl = server.slice(server.indexOf("path === '/api/pair/page-login'"), server.indexOf('// ─── SSE endpoint ───'));
+ok(pl.length > 0 && /dev\.role !== 'background'/.test(pl), 'only a paired phone\'s own background login may ask for its page login');
+ok(/f\.device\?\.role !== 'page'/.test(pl) && !pl.includes('revokeFamily('), 'it retires that phone\'s old page login alone, not the whole phone');
+ok(/role: 'page' \}\)/.test(pl), 'and the new one is the phone\'s page login, listed and revoked with the phone');
+ok(page.includes('const APP_LOGIN = !!window.CrundiLogin;') && chatPage.includes('var APP_LOGIN = !!window.CrundiLogin;'), 'both pages take the login from the app when it offers one');
+const mainLogin = page.slice(page.indexOf('const APP_LOGIN'), page.indexOf('function clearSession()'));
+ok(/if \(APP_LOGIN\) \{ token = d\.token; scheduleRefresh\(d\.expiresIn\); return true; \}/.test(mainLogin), 'and keep nothing of it in their own storage');
+ok(page.includes("askAppLogin('renew')") && chatPage.includes("askAppLogin('renew')"), 'they renew by asking the app, never with a refresh token of their own');
+ok(server.includes('entry.spentBy = renewer(req);') && /presented again by \$\{renewer\(req\)\}/.test(server), 'a replayed renewal is logged with who spent it and who brought it back');
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

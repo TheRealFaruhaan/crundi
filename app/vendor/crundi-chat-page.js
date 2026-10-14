@@ -15,6 +15,11 @@
  *
  *   CrundiNative.session()        -> '{"token":"…","refreshToken":"…"}' the app's page login
  *   CrundiNative.saveSession(json)   the page renewed it; keep the new one
+ *
+ * And, with a server that offers it, window.CrundiLogin: a message channel
+ * only this server's own frames can see, over which the app hands out the
+ * page login it keeps and renews for every page (PageLogin in the app). The
+ * page then holds the access token only, in memory, and never a refresh token.
  *   CrundiNative.close()             the back arrow: put the bubble away
  *   CrundiNative.openMain(path)      "Open in Crundi": show this in the full app
  *   CrundiNative.chatState(json)     title, project, state: for the bubble's own label
@@ -43,7 +48,35 @@
   // that is signed in to Crundi is signed in here. In the app they come from
   // the bridge, which holds them outside the web view.
   var token = '', refreshToken = '';
+  // See window.CrundiLogin above. The same rule as the main page.
+  var APP_LOGIN = !!window.CrundiLogin;
+  var appSeq = 0, appWait = {};
+  if (APP_LOGIN) {
+    window.CrundiLogin.onmessage = function (e) {
+      var m = null;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      var done = m && appWait[m.id];
+      if (!done) return;
+      delete appWait[m.id];
+      done(m);
+    };
+  }
+  function askAppLogin(op) {
+    return new Promise(function (resolve) {
+      var id = 'l' + (++appSeq);
+      var timer = setTimeout(function () { delete appWait[id]; resolve(null); }, 30000);
+      appWait[id] = function (m) { clearTimeout(timer); resolve(m); };
+      try { window.CrundiLogin.postMessage(JSON.stringify({ id: id, op: op, stale: token || '' })); }
+      catch (err) { clearTimeout(timer); delete appWait[id]; resolve(null); }
+    });
+  }
+  function takeAppLogin(m) {
+    if (!m || !m.token) return false;
+    token = m.token;
+    return true;
+  }
   function readSession() {
+    if (APP_LOGIN) return;   // asked for at start, over the channel
     var fromApp = bridge('session');
     if (typeof fromApp === 'string' && fromApp) {
       try { var s = JSON.parse(fromApp); token = s.token || ''; refreshToken = s.refreshToken || ''; return; } catch (e) { /* fall through */ }
@@ -61,6 +94,10 @@
   var refreshing = null;
   function refreshSession() {
     if (refreshing) return refreshing;
+    if (APP_LOGIN) {
+      refreshing = askAppLogin('renew').then(takeAppLogin).then(function (ok) { refreshing = null; return ok; });
+      return refreshing;
+    }
     // Another tab, or the main page, may have renewed it since this page read
     // it. Sending the spent one would look like a stolen token to the server.
     try { var stored = localStorage.getItem('crundi_refresh'); if (stored && stored !== refreshToken) refreshToken = stored; } catch (e) { /* ignore */ }
@@ -542,8 +579,11 @@
     if (!sid || !/^[A-Za-z0-9_-]{1,80}$/.test(sid)) { note('Not a chat', 'This address does not name a chat.', 'Open Crundi', function () { openMain('/'); }); return; }
     if (!window.CrundiChat) { note('Could not load', 'The chat could not be loaded. Check the connection and try again.', 'Try again', function () { location.reload(); }); return; }
     readSession();
-    if (!token && !refreshToken) { note('Signed out', 'Sign in to Crundi to see this chat.', 'Sign in', function () { openMain('/'); }); return; }
-    (token ? Promise.resolve(true) : refreshSession()).then(function () { return loadMeta(); }).then(function (found) {
+    if (!APP_LOGIN && !token && !refreshToken) { note('Signed out', 'Sign in to Crundi to see this chat.', 'Sign in', function () { openMain('/'); }); return; }
+    var ready = APP_LOGIN
+      ? askAppLogin('get').then(function (m) { return takeAppLogin(m) || refreshSession(); })
+      : (token ? Promise.resolve(true) : refreshSession());
+    ready.then(function () { return loadMeta(); }).then(function (found) {
       if (!found || stopped) return;
       if (window.CrundiWidgets) {
         window.CrundiWidgets.configure({

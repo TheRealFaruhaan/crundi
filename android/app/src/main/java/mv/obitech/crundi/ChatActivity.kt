@@ -125,6 +125,8 @@ class ChatActivity : Activity() {
         view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ -> Downloads.start(this, url, userAgent, contentDisposition, mimeType) }
         root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         setContentView(root)
+        // Its login comes from the app, as the main window's does (PageLogin).
+        if (LoginChannel.on(applicationContext, server.id)) LoginChannel.attach(view, server)
         view.loadUrl("${server.baseUrl}/chat/$chatId")
     }
 

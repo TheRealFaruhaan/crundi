@@ -571,6 +571,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return (fwd || req.socket?.remoteAddress || '').replace(/^::ffff:/, '').slice(0, 45);
   }
 
+  /**
+   * Who is renewing, in a few words, for the log: address, what kind of
+   * client, and which page of ours it was on. A web page's renewal carries a
+   * Referer, which tells the phone's main window ("/") from a bubble
+   * ("/chat/…"); the phone app's own renewals say so in X-Crundi-Page.
+   */
+  function renewer(req) {
+    if (!req) return 'unknown';
+    const c = clientVersion.identifyClient(req);
+    let page = String(req.headers['x-crundi-page'] || '').slice(0, 20);
+    if (!page) {
+      try { page = new URL(String(req.headers.referer || '')).pathname.startsWith('/chat/') ? 'bubble page' : 'main page'; } catch { page = ''; }
+    }
+    return [clientIp(req), c.kind ? c.kind + (c.version ? ' ' + c.version : '') : 'browser', page].filter(Boolean).join(', ');
+  }
+
   /** Back-compat shim: callers that only need an access token. */
   function createToken(username) { return createSession(username).token; }
 
@@ -601,7 +617,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // almost certainly is: issue a fresh pair for the same login. A replay
       // later — the shape an actually-stolen token has — still cuts the login.
       const age = Date.now() - (entry.usedAt || 0);
+      const sid = String(entry.familyId).slice(0, 8);
+      // Every replay is logged with who spent the token and who brought it
+      // back, so a phone signed out "for nothing" can be traced to its cause
+      // (two pages of the app, a lost answer, a network handover) instead of
+      // guessed at.
+      const story = `spent ${(age / 1000).toFixed(1)}s earlier by ${entry.spentBy || 'unknown'}, presented again by ${renewer(req)}`;
       if (entry.usedAt && age <= REPLAY_GRACE_MS) {
+        console.log(`[webapp] Renewal race in session ${sid}: ${story}; answered with a fresh pair`);
         return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '', null, rt) };
       }
       // A third case, and the one that signed a phone out for nothing: the
@@ -616,10 +639,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // The moment a pair IS used, the spent token is marked answered, and
       // any later replay of it is cut off as before.
       if (entry.answered === false) {
-        console.log(`[webapp] A renewal for session ${String(entry.familyId).slice(0, 8)} was asked for again ${Math.round(age / 1000)}s later; its first answer was never used, so it is answered again`);
+        console.log(`[webapp] A renewal for session ${sid} was asked for again (${story}); its first answer was never used, so it is answered again`);
         return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '', null, rt) };
       }
-      revokeFamily(entry.familyId, 'a spent refresh token was presented again');
+      revokeFamily(entry.familyId, `a spent refresh token was presented again (${story}; ${entry.answered ? 'the pair it was swapped for had been used' : 'from before answers were tracked'})`);
       return { ok: false, error: 'Refresh token reused' };
     }
     if (Date.now() >= entry.expiresAt) {
@@ -631,6 +654,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // passes expiresAt.
     entry.used = true;
     entry.usedAt = Date.now();   // how the grace above tells a race from a theft
+    entry.spentBy = renewer(req);   // for the log, if it is ever presented again
     // Not yet known to have arrived. Written out as false, not left unset:
     // tokens spent before this rule existed carry no such field, and those
     // keep the strict treatment rather than being taken for unanswered.
@@ -2704,6 +2728,40 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!who.collabKey) setForwardCookie(res);
       const paired = pairDevice(who, body.device, req);
       return json(res, { ok: true, username: who.username, ...paired, server: clientVersion.handshake(req, APP_VERSION).server });
+    }
+
+    // A page login for a paired phone, asked for by the phone itself.
+    //
+    // The app used to hand its page the page's login once, after which every
+    // page it showed (the main window, each bubble) kept its own copy of the
+    // refresh token and renewed it. Two holders of one refresh token is the
+    // shape of a theft, and the server cut the phone off for it. Now the app
+    // keeps the page login and renews it for all of its pages, one renewal at
+    // a time. A phone paired before that has no page login of its own to
+    // keep, so it asks here, with the app's own (background) login, which
+    // only that phone holds. Any page login that phone had is retired: it
+    // lives in a web view that will not use it again.
+    if (path === '/api/pair/page-login' && req.method === 'POST') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      const entry = tokens.get(extractToken(req));
+      const fam = entry && families.get(entry.familyId);
+      const dev = fam && fam.device;
+      if (!dev || dev.role !== 'background') {
+        return json(res, { ok: false, error: 'Only a paired phone\'s own login can ask for its page login' }, 403);
+      }
+      for (const [fid, f] of [...families]) {
+        if (f.device?.id !== dev.id || f.device?.role !== 'page') continue;
+        // This family only: revokeFamily would take the whole device, the
+        // login asking included.
+        for (const [t, e] of tokens) if (e.familyId === fid) tokens.delete(t);
+        for (const [t, e] of refreshTokens) if (e.familyId === fid) refreshTokens.delete(t);
+        families.delete(fid);
+        console.log(`[webapp] Retired the page login ${String(fid).slice(0, 8)} of paired device "${dev.name}": the app now keeps that login itself`);
+      }
+      const login = createSession(entry.username, undefined, req, entry.collabKey || '', { id: dev.id, name: dev.name, platform: dev.platform, role: 'page' });
+      console.log(`[webapp] Paired device "${dev.name}" was given a page login it keeps itself`);
+      return json(res, { ok: true, ...login });
     }
 
     // ─── SSE endpoint ───

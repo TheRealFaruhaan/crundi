@@ -138,6 +138,7 @@ class PairActivity : Activity() {
             if (old.id == server.id || old.baseUrl != server.baseUrl || old.username != server.username) continue
             LiveCards.forget(applicationContext, old.id)
             Icons.forget(old.id)
+            PageLogin.forget(applicationContext, old.id)
             Servers.remove(this, old.id)
         }
         Servers.save(this, server)

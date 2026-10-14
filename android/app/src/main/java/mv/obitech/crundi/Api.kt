@@ -31,7 +31,7 @@ object Api {
     val CLIENT_TAG = "android-${BuildConfig.STORE}/${BuildConfig.VERSION_NAME}"
     val UA_SUFFIX = "CrundiAndroid/${BuildConfig.VERSION_NAME} (${BuildConfig.STORE})"
 
-    fun request(method: String, url: String, body: JSONObject? = null, bearer: String? = null): Reply {
+    fun request(method: String, url: String, body: JSONObject? = null, bearer: String? = null, headers: Map<String, String> = emptyMap()): Reply {
         val c = URL(url).openConnection() as HttpURLConnection
         try {
             c.requestMethod = method
@@ -42,6 +42,7 @@ object Api {
             c.setRequestProperty("User-Agent", "Crundi $UA_SUFFIX")
             c.setRequestProperty("Accept", "application/json")
             if (bearer != null) c.setRequestProperty("Authorization", "Bearer $bearer")
+            for ((k, v) in headers) c.setRequestProperty(k, v)
             if (body != null) {
                 c.doOutput = true
                 c.setRequestProperty("Content-Type", "application/json")

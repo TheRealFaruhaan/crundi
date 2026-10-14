@@ -56,6 +56,10 @@ export const CAPABILITIES = Object.freeze([
   'handshake',
   'pairing',
   'mobile-push',
+  // The phone app may hold its page's login itself and renew it for every
+  // page it shows (POST /api/pair/page-login gives it one), instead of
+  // handing the page a refresh token of its own. See src/webapp.js.
+  'app-page-login',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));
