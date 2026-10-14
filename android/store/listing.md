@@ -61,6 +61,23 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.0.1 (en-US)
+
+```
+<en-US>
+Fixes and improvements.
+
+- Pair again when a phone's pairing has stopped working, replacing the old one.
+- When a chat cannot open as a bubble, the app now says why.
+- Chats that are already busy appear on the live card as soon as you open the app.
+
+Needs a Crundi server, version 1.20 or newer.
+</en-US>
+```
+
+The live-card catch-up needs server 1.20.1 or newer; against 1.20.0 the
+app skips it without a word, so the requirement stays at 1.20.
+
 ## Release notes, 1.0.0 (en-US)
 
 ```
