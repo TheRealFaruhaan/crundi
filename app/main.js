@@ -126,6 +126,40 @@ function showWindow() {
   }
 }
 
+/**
+ * Show the window and put it in front, for a click on a notification.
+ *
+ * show() and focus() are enough on Windows. GNOME's focus-stealing prevention
+ * refuses a window that raises itself, and shows "Crundi is ready" instead:
+ * the click is the person asking for it, so the app asks for focus outright
+ * and holds the window on top for a moment while the desktop catches up.
+ */
+/**
+ * Show one chat in the main window. The page does the switching
+ * (window.crundiOpenChat, which waits for the chat list if the page is still
+ * loading); the id is checked to be an id before it goes anywhere near code.
+ */
+function openChatInWindow(id) {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) return;
+  const w = mainWindow;
+  if (!w || w.isDestroyed()) return;
+  const run = () => w.webContents.executeJavaScript('window.crundiOpenChat && window.crundiOpenChat(' + JSON.stringify(id) + ')').catch(() => {});
+  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', run); else run();
+}
+
+function bringToFront() {
+  showWindow();
+  const w = mainWindow;
+  if (!w || w.isDestroyed()) return;
+  try { app.focus({ steal: true }); } catch { /* not on this platform */ }
+  if (process.platform === 'linux') {
+    w.setAlwaysOnTop(true);
+    w.show();
+    w.focus();
+    setTimeout(() => { if (!w.isDestroyed()) w.setAlwaysOnTop(false); }, 300);
+  }
+}
+
 function createWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     showWindow();
@@ -164,20 +198,7 @@ function createWindow() {
   appendLog(`[lifecycle] Loading ${htmlPath}`);
   mainWindow.loadFile(htmlPath);
 
-  // Handle file downloads (triggered from webapp iframe)
-  mainWindow.webContents.session.on('will-download', (event, item) => {
-    // Show save dialog instead of silently blocking
-    const fname = item.getFilename();
-    dialog.showSaveDialog(mainWindow, {
-      defaultPath: fname,
-    }).then(({ canceled, filePath }) => {
-      if (canceled || !filePath) {
-        item.cancel();
-      } else {
-        item.setSavePath(filePath);
-      }
-    });
-  });
+  wireDownloads(mainWindow.webContents.session);
 
   mainWindow.once('ready-to-show', () => {
     appendLog('[lifecycle] Window ready-to-show');
@@ -190,6 +211,31 @@ function createWindow() {
       e.preventDefault();
       mainWindow.hide();
     }
+  });
+}
+
+// ─── Downloads ───
+//
+// One Save dialog per download. This used to open a dialog of its own, from a
+// promise, after will-download had returned. A download with no save path set
+// by then gets Electron's own dialog as well, so on Linux every click asked
+// twice and could save the file twice. And the handler was added to the
+// shared session each time the window was made, which a second window (the
+// setup wizard, a reopen) did again, adding another dialog each time. Now the
+// dialog's options are given at once and Electron shows its one dialog, and
+// a session is wired only once.
+const wiredSessions = new WeakSet();
+
+function wireDownloads(ses) {
+  if (!ses || wiredSessions.has(ses)) return;
+  wiredSessions.add(ses);
+  ses.on('will-download', (_event, item) => {
+    let dir = '';
+    try { dir = app.getPath('downloads'); } catch { /* no Downloads folder: the dialog picks */ }
+    item.setSaveDialogOptions({
+      title: 'Save ' + item.getFilename(),
+      defaultPath: dir ? join(dir, item.getFilename()) : item.getFilename(),
+    });
   });
 }
 
@@ -1260,6 +1306,12 @@ function browserActionTimeout(msg) {
  * Chromium has no push service - so the server sends it down the socket the
  * app already holds and it is shown natively here.
  */
+// Shown notifications, held until clicked or closed. A Notification only
+// referenced from inside showServerNotification is collected once it is on
+// screen, and its click handler with it: clicking it then did nothing, which
+// is what it did on Ubuntu.
+const liveNotifications = new Set();
+
 function showServerNotification(msg) {
   try {
     if (!Notification.isSupported()) { appendLog('[notify] not supported on this OS'); return; }
@@ -1267,7 +1319,18 @@ function showServerNotification(msg) {
       title: String(msg.title || 'Crundi').slice(0, 120),
       body: String(msg.body || '').slice(0, 400),
     });
-    n.on('click', () => { try { showWindow(); } catch { /* tray-only is fine */ } });
+    liveNotifications.add(n);
+    const done = () => liveNotifications.delete(n);
+    // The chat it is about, when the server says (older servers do not).
+    const chat = /^\/chat\/([A-Za-z0-9_-]{1,80})$/.exec(String(msg.url || ''));
+    n.on('click', () => {
+      done();
+      try { bringToFront(); } catch { /* tray-only is fine */ }
+      if (chat) openChatInWindow(chat[1]);
+    });
+    n.on('close', done);
+    // Belt and braces: a notification server that never reports either.
+    setTimeout(done, 6 * 60 * 60 * 1000).unref?.();
     n.show();
   } catch (err) {
     appendLog(`[notify] could not show: ${err?.message || err}`);

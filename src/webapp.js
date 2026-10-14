@@ -1170,6 +1170,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: (text, meta = {}) => browserMod.notifyHost({
       title: meta.title || 'Crundi',
       body: String(text).slice(0, 400),
+      // Where a click should take the app: the chat it is about. Only a chat
+      // link is passed on; the app checks it again before using it.
+      ...(typeof meta.url === 'string' && /^\/chat\/[A-Za-z0-9_-]{1,80}$/.test(meta.url) ? { url: meta.url } : {}),
     }),
   });
 
