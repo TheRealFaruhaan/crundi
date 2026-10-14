@@ -83,7 +83,8 @@
     '.dk-port{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border-subtle);font-size:.78rem}',
     '.dk-port:last-child{border-bottom:none}',
     '.dk-port .k{color:var(--text-muted);min-width:90px}',
-    '.dk-port .v{font-family:var(--mono);flex:1;min-width:0}',
+    '.dk-port .v{font-family:var(--mono);flex:1 1 auto;min-width:0;overflow-wrap:anywhere}',
+    '.dk-port .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}',
     '.dk-fwdform{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px;margin:6px 0 4px;border-radius:var(--radius-sm);background:var(--bg-tertiary);border:1px solid var(--border)}',
     '.dk-fwdform input[type=text],.dk-fwdform select{padding:6px 9px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-size:.78rem}',
     '.dk-fwdform input[type=text]{flex:1;min-width:120px;font-family:var(--mono)}',
@@ -203,6 +204,7 @@
     '  .dk-row .dk-acts{display:none}',
     '  .dk-row.plain{grid-template-columns:minmax(0,1fr) auto}',
     '  .dk-row.fwdrow .dk-mid{display:flex;grid-column:1/-1;order:3}',
+    '  .dk-port .acts{flex-basis:100%}',
     '  .dk-svc{grid-template-columns:14px minmax(0,1fr) auto}',
     '  .dk-svc .dk-sub.img{display:none}',
     '  .dk-kv{grid-template-columns:minmax(0,1fr)}',
@@ -1131,7 +1133,7 @@
           right = fws.map(fwdChip).join('')
             + '<button class="dk-btn" data-a="fwd-add" data-port="' + p.public + '" title="Reach this port through Crundi, by name">' + icon('plus') + (fws.length ? 'Another' : 'Add forward') + '</button>';
         }
-        return '<div class="dk-port"><span class="k">' + esc(p.private + '/' + p.type) + '</span><span class="v">' + esc(where) + '</span>' + right + '</div>'
+        return '<div class="dk-port"><span class="k">' + esc(p.private + '/' + p.type) + '</span><span class="v">' + esc(where) + '</span>' + (right ? '<span class="acts">' + right + '</span>' : '') + '</div>'
           + '<div data-r="fwdform-' + (p.public || 'x') + '"></div>';
       }).join('');
     }
@@ -1323,6 +1325,12 @@
     function diskTable(k) {
       var row = function (label, x, kind, arm, note) {
         if (!x) return '';
+        // Docker could not measure this one (see diskUsage): say so in place,
+        // and leave cleaning it available.
+        if (x.error) {
+          return '<tr><td>' + esc(label) + '<div class="dk-sub" title="' + esc(x.detail || '') + '">' + esc(x.error) + '</div></td><td class="n hide-m">\u2014</td><td class="n">\u2014</td><td class="n">\u2014</td>'
+            + '<td class="n"><button class="dk-btn danger" data-a="prune" data-kind="' + kind + '" data-arm="' + esc(arm) + '">' + icon('trash') + 'Clean</button></td></tr>';
+        }
         return '<tr><td>' + esc(label) + (note ? '<div class="dk-sub">' + esc(note) + '</div>' : '') + '</td><td class="n hide-m">' + x.count + '</td><td class="n">' + bytes(x.size) + '</td><td class="n">' + bytes(x.reclaimable) + '</td>'
           + '<td class="n"><button class="dk-btn danger" data-a="prune" data-kind="' + kind + '" data-arm="' + esc(arm) + '"' + (x.reclaimable || kind === 'containers' ? '' : ' disabled') + '>' + icon('trash') + 'Clean</button></td></tr>';
       };

@@ -857,7 +857,25 @@ export async function removeNetwork(id) {
  */
 export async function diskUsage() {
   return guard(async () => {
-    const df = await call('GET', '/system/df', { timeout: 120000 });
+    // Docker measures every container's files for this, and gives up on the
+    // whole report when a file vanishes while it counts: a container busy
+    // writing and deleting (a headless browser's cache, say) makes that
+    // happen often. Once more, then without the containers, so images,
+    // volumes and the build cache are still shown.
+    let df = null;
+    let containersError = '';
+    for (let attempt = 0; attempt < 2 && !df; attempt++) {
+      try { df = await call('GET', '/system/df', { timeout: 120000 }); }
+      catch (err) {
+        containersError = err.message;
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+    if (!df) {
+      df = await call('GET', '/system/df?type=image&type=volume&type=build-cache', { timeout: 120000 });
+    } else {
+      containersError = '';
+    }
     const disk = {};
     if (df) {
       const imgs = df.Images || [];
@@ -867,11 +885,13 @@ export async function diskUsage() {
         reclaimable: imgs.filter((i) => !i.Containers).reduce((s, i) => s + (i.Size || 0), 0),
       };
       const ctrs = df.Containers || [];
-      disk.containers = {
-        count: ctrs.length,
-        size: ctrs.reduce((s, c) => s + (c.SizeRw || 0), 0),
-        reclaimable: ctrs.filter((c) => c.State !== 'running').reduce((s, c) => s + (c.SizeRw || 0), 0),
-      };
+      disk.containers = containersError
+        ? { error: 'Docker could not measure containers just now: a container\'s files changed while it counted. Try again in a moment.', detail: containersError.slice(0, 300) }
+        : {
+          count: ctrs.length,
+          size: ctrs.reduce((s, c) => s + (c.SizeRw || 0), 0),
+          reclaimable: ctrs.filter((c) => c.State !== 'running').reduce((s, c) => s + (c.SizeRw || 0), 0),
+        };
       const vols = df.Volumes || [];
       disk.volumes = {
         count: vols.length,
