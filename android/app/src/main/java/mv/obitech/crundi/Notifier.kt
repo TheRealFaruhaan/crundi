@@ -321,6 +321,10 @@ object Notifier {
             return
         }
         val chat = ChatRef.from(server.id, chatJson)
+        // The person is reading this very chat (in the main window or its open
+        // bubble): a notification, and a bubble spawned by it, would only get
+        // in the way of what is already in front of them.
+        if (OnScreen.showing(chat.key)) { PushLog.add(ctx, "Not shown: ${chat.title} is open on screen"); return }
         val who = person(ctx, chat)
         // Keep what is already showing for this chat and add to it, so two
         // things said in a row read as a conversation, not as one replacing

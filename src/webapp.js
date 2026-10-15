@@ -1385,6 +1385,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (active) onLiveCard.set(term.id, chat); else { workingSince.delete(term.id); onLiveCard.delete(term.id); }
     sendState(chat, state, since);
   }
+  // A chat renamed while it is on a card: the card was drawn with the old
+  // name and is redrawn only when the state changes, which for a chat that
+  // works for hours is not soon. Tell the phones again, same state, new name.
+  function retitleLiveCards() {
+    if (!onLiveCard.size || !claudeUi) return;
+    let sessions = [];
+    try { sessions = claudeUi.list(); } catch { return; }
+    for (const [id, chat] of onLiveCard) {
+      const t = sessions.find((x) => x.id === id);
+      if (!t) continue;
+      const title = t.longTitle || t.title || 'Chat';
+      if (title === chat.title) continue;
+      const next = { ...chat, title, mark: markOf(t.project || chat.project || '', t.title) };
+      onLiveCard.set(id, next);
+      const state = agentStates.get(id);
+      if (state === 'working' || state === 'needs-input' || state === 'waiting') sendState(next, state, workingSince.get(id) || Date.now());
+    }
+  }
   // A chat closed while it was on a card never reports "idle": it is simply
   // gone. Say so for it, or its line would sit on the phone until it expired.
   function tellPhonesGone(sid) {
@@ -1811,7 +1829,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     claudeBin: () => { try { return resolveClaudeBin(); } catch { return null; } },
     currentTitle: (id) => { const m = claudeUi && claudeUi.meta(id); return m && !m.collaborator ? m.title : null; },
     apply: (id, title, long) => claudeUi.rename(id, title, { auto: true, long: long || '' }),
-    onApplied: () => broadcastState(),
+    onApplied: () => { broadcastState(); retitleLiveCards(); },
   });
 
   // ─── Widgets (Claude-authored UI; see widget-api.js) ───
@@ -3968,6 +3986,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (action === 'rename') {
         const result = claudeUi.rename(sid, body.title);
         broadcastState();
+        retitleLiveCards();
         return json(res, result);
       }
       if (action === 'permission-mode') {
@@ -5665,7 +5684,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (a.sessionId && claudeUi && claudeUi.has(String(a.sessionId))) r = claudeUi.rename(String(a.sessionId), t.title, { auto: true, long });
         else if (a.terminalId && claudeTerminals) r = claudeTerminals.rename(String(a.terminalId), t.title, { auto: true, long });
         else return json(res, { ok: false, error: 'This session is not a Crundi chat or terminal, so there is nothing to rename. Carry on without it.' });
-        if (r.ok) broadcastState();
+        if (r.ok) { broadcastState(); retitleLiveCards(); }
         return json(res, r);
       }
 

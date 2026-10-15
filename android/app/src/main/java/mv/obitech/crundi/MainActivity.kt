@@ -63,6 +63,17 @@ class MainActivity : Activity() {
      * state changes, and a phone that missed one (it was paired a moment too
      * late, or the message never arrived) showed nothing for that chat.
      */
+    /** Any touch or key: the hour before the app lets go of its connection starts again (Link). */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        Link.touch(this)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        OnScreen.mainFocused = hasFocus
+    }
+
     override fun onResume() {
         super.onResume()
         val s = server ?: return
@@ -373,6 +384,8 @@ class MainActivity : Activity() {
                 // reading it: the bubble has the focus. Taking the bubble
                 // down from underneath is exactly the wrong way round.
                 if (!hasWindowFocus()) return@runOnUiThread
+                // In front of the person: a notification for it is left out (OnScreen).
+                OnScreen.seenInMain("chat:${s.id}:$chatId")
                 Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true, why = "the same chat is open in the main window")
             }
         }

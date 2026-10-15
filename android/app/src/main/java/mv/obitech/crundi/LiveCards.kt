@@ -78,6 +78,10 @@ object LiveCards {
         val o = JSONObject()
         for ((k, e) in map) o.put(k, e.json())
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, o.toString()).apply()
+        // While a card shows a chat at work, the app stays running and online
+        // (Link), so tapping the card shows the chat without reconnecting.
+        val now = System.currentTimeMillis()
+        Link.hold(ctx, "live", map.values.any { it.active && now - it.at <= STALE_MS })
     }
 
     private fun cardId(serverId: String, project: String) = "live:$serverId:$project".hashCode()

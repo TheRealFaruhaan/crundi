@@ -42,6 +42,9 @@ class ChatActivity : Activity() {
         if (server == null || !Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) { finish(); return }
         openKey = "$serverId:$chatId"
         opened(openKey)
+        // While any bubble is up, the app stays running and online (Link), so
+        // tapping it shows the chat without reconnecting.
+        Link.hold(applicationContext, "bubbles", true)
         // In the list of recent apps this window is the chat, not "Crundi"
         // again: its own name, so it can be told from the main window.
         intent.getStringExtra(EXTRA_TITLE)?.let {
@@ -151,8 +154,27 @@ class ChatActivity : Activity() {
     @Deprecated("Still what a plain Activity is given for the back gesture.")
     override fun onBackPressed() { finish() }
 
+    /** Any touch or key: the hour before the app lets go of its connection starts again (Link). */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        Link.touch(this)
+    }
+
+    // Open (not folded away): this chat is in front of the person, and a
+    // notification for it is left out (OnScreen).
+    override fun onResume() {
+        super.onResume()
+        if (openKey.isNotEmpty()) OnScreen.bubbleOpen("chat:$openKey", true)
+    }
+
+    override fun onPause() {
+        if (openKey.isNotEmpty()) OnScreen.bubbleOpen("chat:$openKey", false)
+        super.onPause()
+    }
+
     override fun onDestroy() {
         if (openKey.isNotEmpty()) closed(openKey)
+        Link.hold(applicationContext, "bubbles", anyOpen())
         web?.destroy()
         web = null
         super.onDestroy()
@@ -168,6 +190,7 @@ class ChatActivity : Activity() {
         private val open = HashMap<String, Int>()
         private fun opened(key: String) = synchronized(open) { open[key] = (open[key] ?: 0) + 1 }
         private fun closed(key: String) = synchronized(open) { val n = (open[key] ?: 0) - 1; if (n > 0) open[key] = n else open.remove(key) }
+        private fun anyOpen() = synchronized(open) { open.isNotEmpty() }
         fun isOpen(serverId: String, chatId: String): Boolean = synchronized(open) { open.containsKey("$serverId:$chatId") }
     }
 }

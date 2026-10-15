@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Staying up and online while a bubble or a live card is showing (Link). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- The live card's chip in the status bar (Android 16 and later). -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -62,6 +65,10 @@
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
+        </service>
+        <service android:name=".LinkService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps an open chat bubble and the live status card of the user's own self-hosted server connected while an AI agent works, so they open at once instead of reconnecting." />
         </service>
         <receiver android:name=".ReplyReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:exported="false" />
