@@ -15,6 +15,11 @@
  *
  *   CrundiNative.session()        -> '{"token":"…","refreshToken":"…"}' the app's page login
  *   CrundiNative.saveSession(json)   the page renewed it; keep the new one
+ *
+ * And, with a server that offers it, window.CrundiLogin: a message channel
+ * only this server's own frames can see, over which the app hands out the
+ * page login it keeps and renews for every page (PageLogin in the app). The
+ * page then holds the access token only, in memory, and never a refresh token.
  *   CrundiNative.close()             the back arrow: put the bubble away
  *   CrundiNative.openMain(path)      "Open in Crundi": show this in the full app
  *   CrundiNative.chatState(json)     title, project, state: for the bubble's own label
@@ -43,7 +48,35 @@
   // that is signed in to Crundi is signed in here. In the app they come from
   // the bridge, which holds them outside the web view.
   var token = '', refreshToken = '';
+  // See window.CrundiLogin above. The same rule as the main page.
+  var APP_LOGIN = !!window.CrundiLogin;
+  var appSeq = 0, appWait = {};
+  if (APP_LOGIN) {
+    window.CrundiLogin.onmessage = function (e) {
+      var m = null;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      var done = m && appWait[m.id];
+      if (!done) return;
+      delete appWait[m.id];
+      done(m);
+    };
+  }
+  function askAppLogin(op) {
+    return new Promise(function (resolve) {
+      var id = 'l' + (++appSeq);
+      var timer = setTimeout(function () { delete appWait[id]; resolve(null); }, 30000);
+      appWait[id] = function (m) { clearTimeout(timer); resolve(m); };
+      try { window.CrundiLogin.postMessage(JSON.stringify({ id: id, op: op, stale: token || '' })); }
+      catch (err) { clearTimeout(timer); delete appWait[id]; resolve(null); }
+    });
+  }
+  function takeAppLogin(m) {
+    if (!m || !m.token) return false;
+    token = m.token;
+    return true;
+  }
   function readSession() {
+    if (APP_LOGIN) return;   // asked for at start, over the channel
     var fromApp = bridge('session');
     if (typeof fromApp === 'string' && fromApp) {
       try { var s = JSON.parse(fromApp); token = s.token || ''; refreshToken = s.refreshToken || ''; return; } catch (e) { /* fall through */ }
@@ -61,6 +94,10 @@
   var refreshing = null;
   function refreshSession() {
     if (refreshing) return refreshing;
+    if (APP_LOGIN) {
+      refreshing = askAppLogin('renew').then(takeAppLogin).then(function (ok) { refreshing = null; return ok; });
+      return refreshing;
+    }
     // Another tab, or the main page, may have renewed it since this page read
     // it. Sending the spent one would look like a stolen token to the server.
     try { var stored = localStorage.getItem('crundi_refresh'); if (stored && stored !== refreshToken) refreshToken = stored; } catch (e) { /* ignore */ }
@@ -71,6 +108,17 @@
       .catch(function () { return false; })
       .then(function (ok) { refreshing = null; return ok; });
     return refreshing;
+  }
+
+  /**
+   * Before connecting again. Inside the app, check the token rather than
+   * renew it: a dropped connection is usually the network changing hands,
+   * and apiFetch renews by itself if the check is refused. Elsewhere, renew
+   * as before.
+   */
+  function reconnectAuth() {
+    if (!APP_LOGIN) return refreshSession();
+    return apiFetch('/api/session-check').then(function () { return true; }, function () { return false; });
   }
 
   var stopped = false;       // a state nothing on this page can recover from
@@ -301,7 +349,7 @@
       // closed here and opened again with a fresh token.
       try { es.close(); } catch (x) { /* already closed */ }
       es = null;
-      setTimeout(function () { if (!stopped) refreshSession().then(listen); }, 5000);
+      setTimeout(function () { if (!stopped) reconnectAuth().then(listen); }, 5000);
     };
   }
 
@@ -323,7 +371,7 @@
     var p = document.createElement('div'); p.textContent = text; el.appendChild(p);
     if (action) { var btn = document.createElement('button'); btn.type = 'button'; btn.textContent = action; btn.onclick = onAction; el.appendChild(btn); }
     el.className = 'on';
-    $('cp-conn').className = '';
+    connLine('');
   }
   function onRefused(body) {
     if (!body || body.error !== 'client_too_old') return;
@@ -409,6 +457,35 @@
     if (active && view) bridge('seen', sid);
     wsSend({ type: 'presence', active: active, engaged: active, project: meta.project || '' });
   }
+  // The reconnecting line under the header (see #cp-conn in chat-page.js).
+  // 'on' shows it after a short wait, 'back' flashes green if it was showing.
+  var connShowing = false, connBackTimer = null;
+  function connLine(state) {
+    var el = $('cp-conn');
+    if (!el) return;
+    var say = el.querySelector('span');
+    clearTimeout(connBackTimer);
+    if (state === 'on') {
+      var offline = navigator.onLine === false;
+      el.className = offline ? 'on offline' : 'on';
+      connShowing = true;
+      if (say) say.textContent = offline ? 'This device is offline.' : 'Reconnecting';
+      return;
+    }
+    // Shown only once the CSS delay has passed: a blip never painted it.
+    var painted = connShowing && getComputedStyle(el).opacity !== '0';
+    connShowing = false;
+    if (state === 'back' && painted) {
+      el.className = 'back';
+      if (say) say.textContent = 'Connected again.';
+      connBackTimer = setTimeout(function () { el.className = ''; }, 1700);
+    } else {
+      el.className = '';
+    }
+  }
+  window.addEventListener('offline', function () { if (connShowing) connLine('on'); });
+  window.addEventListener('online', function () { if (connShowing) connLine('on'); });
+
   function connect() {
     clearTimeout(retryTimer);
     if (stopped) return;
@@ -417,7 +494,7 @@
     ws = new WebSocket(url);
     ws.onopen = function () {
       everOpen = true; retry = 0;
-      $('cp-conn').className = '';
+      connLine('back');
       // The server replays the conversation on subscribe, which is also how a
       // dropped connection catches up on what it missed.
       if (view) view.resubscribe();
@@ -442,12 +519,12 @@
     };
     ws.onclose = function () {
       if (stopped) return;
-      $('cp-conn').className = 'on';
+      connLine('on');
       retry++;
       // A socket is checked at connect only, and an access token lasts fifteen
       // minutes: a refusal here is usually just a token that has aged out.
       var again = function () { retryTimer = setTimeout(connect, Math.min(15000, 600 * Math.pow(1.7, retry))); };
-      if (!everOpen || retry % 3 === 0) refreshSession().then(again); else again();
+      if (!everOpen || retry % 3 === 0) reconnectAuth().then(again); else again();
     };
     ws.onerror = function () { /* onclose follows and does the work */ };
   }
@@ -513,8 +590,11 @@
     if (!sid || !/^[A-Za-z0-9_-]{1,80}$/.test(sid)) { note('Not a chat', 'This address does not name a chat.', 'Open Crundi', function () { openMain('/'); }); return; }
     if (!window.CrundiChat) { note('Could not load', 'The chat could not be loaded. Check the connection and try again.', 'Try again', function () { location.reload(); }); return; }
     readSession();
-    if (!token && !refreshToken) { note('Signed out', 'Sign in to Crundi to see this chat.', 'Sign in', function () { openMain('/'); }); return; }
-    (token ? Promise.resolve(true) : refreshSession()).then(function () { return loadMeta(); }).then(function (found) {
+    if (!APP_LOGIN && !token && !refreshToken) { note('Signed out', 'Sign in to Crundi to see this chat.', 'Sign in', function () { openMain('/'); }); return; }
+    var ready = APP_LOGIN
+      ? askAppLogin('get').then(function (m) { return takeAppLogin(m) || refreshSession(); })
+      : (token ? Promise.resolve(true) : refreshSession());
+    ready.then(function () { return loadMeta(); }).then(function (found) {
       if (!found || stopped) return;
       if (window.CrundiWidgets) {
         window.CrundiWidgets.configure({

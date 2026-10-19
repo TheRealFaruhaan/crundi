@@ -11,6 +11,8 @@
 # Produces:
 #   Crundi-Client-Setup-<version>.exe   desktop app with no server, attaches to one
 #   crundi-server-<version>.zip         headless server for Windows
+#   Crundi-<version>-linux-x64.deb      desktop app for Ubuntu, with a server
+#   Crundi-Client-<version>-linux-x64.deb   desktop app for Ubuntu, client only
 #   ghcr.io/<owner>/crundi:<version>    Linux server image
 name: Release extras
 
@@ -244,6 +246,103 @@ jobs:
           path: dist/crundi-server-linux-*.tar.gz
           if-no-files-found: error
 
+  desktop-linux:
+    name: Linux desktop packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # node_modules is built HERE, on Linux, against this Node: node-pty has
+      # no prebuilt binary for Linux, and cloudflared fetches the Linux one.
+      - run: npm ci
+      - name: Check syntax
+        run: npm run check
+
+      # The all-in-one package carries its own Node, the very one its native
+      # modules were just built against. The server then starts on a machine
+      # that has no Node, or one too old, and never loads a module built for
+      # another version. (build/linux-node is where package.json expects it.)
+      - name: Stage the bundled Node
+        run: |
+          mkdir -p build/linux-node/bin
+          cp "$(command -v node)" build/linux-node/bin/node
+          build/linux-node/bin/node --version
+          build/linux-node/bin/node -e "require('node-pty'); console.log('node-pty loads')"
+          test -s node_modules/cloudflared/bin/cloudflared
+
+      - name: Build the all-in-one package
+        run: npx electron-builder --linux --publish never
+      - name: Build the client package
+        run: npx electron-builder --linux --config build/electron-builder-client.yml --publish never
+
+      - name: Check what is inside them
+        run: |
+          full=$(ls dist/Crundi-*-linux-x64.deb)
+          client=$(ls dist/client/Crundi-Client-*-linux-x64.deb)
+          dpkg-deb -c "$full" > full.txt
+          dpkg-deb -c "$client" > client.txt
+          need() { grep -q "$2" "$1" || { echo "missing from $1: $2" >&2; exit 1; }; }
+          need full.txt 'resources/node/bin/node$'
+          need full.txt 'app.asar.unpacked/src/index.js$'
+          need full.txt 'node_modules/node-pty/build/Release/pty.node$'
+          need full.txt 'node_modules/cloudflared/bin/cloudflared$'
+          need full.txt 'resources/skills/crundi/SKILL.md$'
+          need client.txt 'node_modules/electron-updater/package.json$'
+          # No server in the client: that absence is how the app knows it is one.
+          if grep -q 'app.asar.unpacked/src/index.js$\|resources/node/' client.txt; then
+            echo "the client package contains a server" >&2; exit 1
+          fi
+          # The update files, named for the platform so that one release can
+          # hold Windows and Linux builds without either reading the other's.
+          grep -q "url: $(basename "$full")" dist/latest-linux.yml
+          grep -q "url: $(basename "$client")" dist/client/client-linux.yml
+
+      # Installed and started for real, on a screen that is not there. This is
+      # the check that the package installs on Ubuntu, that Chromium's sandbox
+      # is allowed to start (Ubuntu 24.04 refuses it without the profile the
+      # package installs), and that the app gets as far as showing a window.
+      - name: Install both and start them
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb ./dist/Crundi-*-linux-x64.deb ./dist/client/Crundi-Client-*-linux-x64.deb
+          # Everything each app said is printed, pass or fail: the first
+          # version of this step captured the second app's output to read one
+          # line of it, and so showed nothing at all when that app failed.
+          started() {
+            name="$1"; shift
+            home=$(mktemp -d)
+            HOME="$home" XDG_CONFIG_HOME="$home/.config" timeout 40 xvfb-run -a "$@" > "$home/out.txt" 2>&1 || true
+            LOG=$(find "$home/.config" -name crundi.log 2>/dev/null | head -1)
+            echo "── $name ──"
+            echo "config folders: $(ls "$home/.config" 2>/dev/null | tr '\n' ' ')"
+            if [ -n "$LOG" ]; then grep -v 'builder-util-runtime\|^Headers\|^  "\|^}' "$LOG" | tail -40; fi
+            echo "── $name, what it printed ──"; tail -20 "$home/out.txt"
+            if [ -z "$LOG" ] || ! grep -q 'Window ready-to-show' "$LOG"; then
+              echo "$name did not get as far as showing its window" >&2; exit 1
+            fi
+          }
+          started 'the client' crundi-client
+          started 'the all-in-one app' crundi
+          # Its own settings folder, never the one a server installed with
+          # install.sh uses, and with nothing set up yet it asks, not starts.
+          grep -q 'userDataDir=.*/crundi-desktop' "$LOG" || { echo "the all-in-one app is not using its own settings folder" >&2; exit 1; }
+          grep -q 'opening setup wizard' "$LOG" || { echo "the all-in-one app did not open its setup wizard" >&2; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-desktop
+          path: |
+            dist/Crundi-*-linux-x64.deb
+            dist/latest-linux.yml
+            dist/client/Crundi-Client-*-linux-x64.deb
+            dist/client/client-linux.yml
+          if-no-files-found: error
+
   server-image:
     name: Linux server image
     runs-on: ubuntu-latest
@@ -289,7 +388,7 @@ jobs:
 
   attach:
     name: Attach to the release
-    needs: [client, server-windows, server-linux]
+    needs: [client, server-windows, server-linux, desktop-linux]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     runs-on: ubuntu-latest
     # A job that hangs should die in minutes, not burn six hours of the
@@ -311,6 +410,10 @@ jobs:
         with:
           name: linux-server
           path: artifacts/linux-server
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-desktop
+          path: artifacts/linux-desktop
 
       # Added to the release the main workflow created, rather than creating
       # one — so the installer it publishes stays the primary asset.
@@ -341,5 +444,5 @@ jobs:
             fi
             sleep 10
           done
-          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.yml' \) -print0 \
+          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.yml' \) -print0 \
             | xargs -0 -I{} gh release upload "$TAG" "{}" --clobber --repo "$GITHUB_REPOSITORY"

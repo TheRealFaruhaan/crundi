@@ -65,7 +65,8 @@ check('no principal is not a free pass', !mayAccess(null, 'GET', '/api/state'));
 // meant to sit beside it.
 const EVERY_AREA = [
   ['GET', '/api/secrets'], ['POST', '/api/secrets'], ['GET', '/api/schedules'],
-  ['POST', '/api/terminals/spawn'], ['GET', '/api/server-logs'], ['POST', '/api/settings'],
+  ['POST', '/api/terminals/create'], ['GET', '/api/server-logs'], ['POST', '/api/settings'],
+  ['GET', '/api/docker/containers'], ['POST', '/api/docker/prune'],
   ['GET', '/api/state'], ['POST', '/api/git/push'], ['GET', '/api/files/read'],
   ['POST', '/api/some/route/added/next/year'],
 ];
@@ -83,12 +84,13 @@ const FORBIDDEN = [
   ['GET', '/api/secrets'], ['POST', '/api/secrets'],
   ['GET', '/api/schedules'], ['POST', '/api/schedules'], ['POST', '/api/chat-schedule'],
   ['GET', '/api/settings'], ['POST', '/api/settings'], ['POST', '/api/auth/config'],
-  ['POST', '/api/terminals/create'], ['POST', '/api/terminals/spawn'], ['GET', '/api/terminals'],
+  ['POST', '/api/terminals/create'], ['GET', '/api/terminals'],
   ['GET', '/api/server-logs'], ['POST', '/api/maintenance'], ['POST', '/api/update'],
   ['POST', '/api/claude-update'], ['POST', '/api/import'], ['POST', '/api/tunnel'],
   // /api/forwards is open to collaborators but scoped in the routes to their
   // own projects and services (see test-forward-access.mjs).
-  ['GET', '/api/containers'], ['POST', '/api/mcp/call'],
+  ['GET', '/api/docker/status'], ['GET', '/api/docker/containers'], ['POST', '/api/docker/containers/action'],
+  ['GET', '/api/docker/images'], ['POST', '/api/docker/prune'], ['POST', '/api/mcp/call'],
   // /api/stats is open to collaborators but scoped to their projects' services
   // with no machine stats (see test-service-stop.mjs).
   ['GET', '/api/usage'], ['GET', '/api/clipboard'],
@@ -121,7 +123,7 @@ for (const [m, p] of ALLOWED) {
 
 // ── Tool surfaces ─────────────────────────────────────────────────────────
 for (const t of ['secret_get', 'secret_run', 'secret_search', 'schedule_add', 'schedule_delete',
-  'spawn_terminal', 'terminal_input', 'enable_tunnel', 'get_usage',
+  'enable_tunnel', 'get_usage',
   'capture_display', 'send_file_to_user']) {
   check(`MCP tool withheld: ${t}`, !COLLABORATOR_MCP_TOOLS.has(t));
 }
@@ -160,7 +162,7 @@ check('getProject is shadowed so new routes inherit the scope',
 check('the absolute-path escape is REMOVED for a collaborator, not checked after',
   /if \(isConfined\(principal\)\) return resolve\(root, '\.' \+ sep/.test(webapp));
 check('state is filtered per principal before it is sent',
-  /function filterStateFor\(principal, state\)[\s\S]{0,2000}?userTerminals: \[\]/.test(webapp));
+  /function filterStateFor\(principal, state\)[\s\S]{0,2000}?scheduled: \[\]/.test(webapp));
 check('the websocket refuses terminal traffic',
   /confined && \(msg\.type === 'subscribe'[\s\S]{0,160}?return;/.test(webapp));
 check('the websocket checks chat ownership before replaying a transcript',

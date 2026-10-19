@@ -78,6 +78,10 @@ object LiveCards {
         val o = JSONObject()
         for ((k, e) in map) o.put(k, e.json())
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, o.toString()).apply()
+        // While a card shows a chat at work, the app stays running and online
+        // (Link), so tapping the card shows the chat without reconnecting.
+        val now = System.currentTimeMillis()
+        Link.hold(ctx, "live", map.values.any { it.active && now - it.at <= STALE_MS })
     }
 
     private fun cardId(serverId: String, project: String) = "live:$serverId:$project".hashCode()
@@ -98,6 +102,53 @@ object LiveCards {
         if (entry.active) map[ref.key] = entry else map.remove(ref.key)
         save(ctx, map)
         render(ctx, server.id, ref.project, map, justFinished = if (!entry.active && wasActive) entry else null)
+    }
+
+    /**
+     * Catch up with a server: what it says is on the cards right now.
+     *
+     * A change of state is sent once, as it happens. A phone that was not
+     * there to hear it (paired a moment later, switched off, the message
+     * lost) knew nothing of that chat until its state changed again. So the
+     * app asks, when it is opened and when it is paired, and what comes back
+     * is taken as the whole truth for that server: each chat listed is drawn,
+     * and a chat this phone still showed that is not listed has stopped
+     * without our hearing of it, and is taken down quietly.
+     */
+    fun sync(ctx: Context, server: Server, states: org.json.JSONArray) {
+        val listed = HashSet<String>()
+        for (i in 0 until states.length()) {
+            val one = states.optJSONObject(i) ?: continue
+            val id = one.optJSONObject("chat")?.optString("id").orEmpty()
+            if (id.isEmpty()) continue
+            listed.add(id)
+            // Already shown as it is: drawing it again would only make the
+            // card blink each time the app is opened.
+            val known = synchronized(this) { load(ctx).values.firstOrNull { it.serverId == server.id && it.chatId == id } }
+            if (known != null && known.state == one.optString("state")) continue
+            one.optJSONObject("chat")?.optJSONObject("mark")?.optString("icon")?.takeIf { it.isNotEmpty() }?.let { runCatching { Icons.ensure(ctx, server.id, it) } }
+            onState(ctx, server, one)
+        }
+        synchronized(this) {
+            val map = load(ctx)
+            val gone = map.entries.filter { it.value.serverId == server.id && it.value.chatId !in listed }
+            if (gone.isEmpty()) return
+            val projects = gone.map { it.value.project }.toSet()
+            for (g in gone) map.remove(g.key)
+            save(ctx, map)
+            for (p in projects) render(ctx, server.id, p, map, justFinished = null)
+        }
+    }
+
+    /** Ask the server what is on the cards and catch up with it. Blocking: call it from Bg. */
+    fun catchUp(ctx: Context, serverId: String) {
+        val server = Servers.byId(ctx, serverId) ?: return
+        val reply = Api.authed(ctx, serverId, "GET", "/api/push/mobile/states")
+        // A server from before this existed answers 404, and one that cannot
+        // be reached answers nothing: either way, leave the cards as they are.
+        val states = reply.json?.takeIf { reply.ok }?.optJSONArray("states") ?: return
+        sync(ctx, server, states)
+        PushLog.add(ctx, "Caught up with ${server.host}: ${states.length()} chat(s) at work")
     }
 
     /** The chats of a server that are working, waiting, or waiting on the person, as last heard. */

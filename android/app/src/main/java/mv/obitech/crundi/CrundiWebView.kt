@@ -34,6 +34,11 @@ class CrundiWebView(context: Context) : WebView(context) {
     private val accepts = arrayOf("image/*", "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp", "image/heic", "image/heif")
 
     init {
+        // The page runs in a renderer process of its own, which Android lowers
+        // and may end once the view is out of sight: a bubble folded away
+        // then reloaded from nothing on its next tap. Kept important even
+        // when hidden, so it is still there, still connected (see Link).
+        setRendererPriorityPolicy(RENDERER_PRIORITY_IMPORTANT, false)
         ViewCompat.setOnReceiveContentListener(this, accepts) { _, payload ->
             // Take the pictures, leave anything else (text) to be handled as usual.
             val split = payload.partition { item -> item.uri != null }

@@ -36,7 +36,6 @@ import { decodeImage } from './image-input.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
-import * as terminalsMod from './terminals.js';
 import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt, getProjectIconFile, setProjectIconFile } from './project-store.js';
 import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
@@ -456,11 +455,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
 
   /** Drop every token belonging to one login. Used on logout and on reuse detection. */
-  function revokeFamily(familyId) {
-    // Logged because "why was I signed out?" is otherwise unanswerable.
+  function revokeFamily(familyId, why = '') {
+    // Logged, with the reason, because "why was I signed out?" is otherwise
+    // unanswerable: a sign-out, a revocation from another device and a
+    // refresh token taken for stolen all used to read the same here.
     const m = families.get(familyId);
     console.log(`[webapp] Revoked session ${String(familyId).slice(0, 8)}`
-      + (m?.ip ? ` (${m.ip})` : '') + (m?.userAgent ? ` ${m.userAgent.slice(0, 40)}` : ''));
+      + (m?.device?.name ? ` on paired device "${m.device.name}"` : '')
+      + (m?.ip ? ` (${m.ip})` : '') + (m?.userAgent ? ` ${m.userAgent.slice(0, 40)}` : '')
+      + (why ? `: ${why}` : ''));
     // A paired device holds more than one login (the page and the background
     // code each have their own, see pairDevice). Cutting off the device means
     // all of them: leaving one behind would leave the phone signed in.
@@ -515,15 +518,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ token: string, refreshToken: string, expiresIn: number }}
    */
-  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '', device = null) {
+  function createSession(username, familyId = randomBytes(16).toString('hex'), req = null, collabKey = '', device = null, parent = '') {
     const now = Date.now();
     const token = randomBytes(32).toString('hex');
     const refreshToken = randomBytes(32).toString('hex');
     // collabKey rides on BOTH tokens so a refresh cannot quietly promote a
     // collaborator to an owner session: the new access token is minted from
     // the refresh record, and the record remembers which it was.
-    tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS, collabKey });
-    refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false, collabKey });
+    // `parent` is the refresh token this pair was renewed from, when it was.
+    // The first time either of the pair is used, the parent learns that its
+    // answer arrived (see answerArrived and the replay rule in rotateRefresh).
+    tokens.set(token, { username, familyId, expiresAt: now + ACCESS_TTL_MS, collabKey, ...(parent ? { parent } : {}) });
+    refreshTokens.set(refreshToken, { username, familyId, expiresAt: now + REFRESH_TTL_MS, used: false, collabKey, ...(parent ? { parent } : {}) });
     // Remember enough about the sign-in to recognise it in a list later. "A
     // session" tells you nothing; "Chrome on Android, from this address, last
     // seen an hour ago" is something you can decide about.
@@ -565,6 +571,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return (fwd || req.socket?.remoteAddress || '').replace(/^::ffff:/, '').slice(0, 45);
   }
 
+  /**
+   * Who is renewing, in a few words, for the log: address, what kind of
+   * client, and which page of ours it was on. A web page's renewal carries a
+   * Referer, which tells the phone's main window ("/") from a bubble
+   * ("/chat/…"); the phone app's own renewals say so in X-Crundi-Page.
+   */
+  function renewer(req) {
+    if (!req) return 'unknown';
+    const c = clientVersion.identifyClient(req);
+    let page = String(req.headers['x-crundi-page'] || '').slice(0, 20);
+    if (!page) {
+      try { page = new URL(String(req.headers.referer || '')).pathname.startsWith('/chat/') ? 'bubble page' : 'main page'; } catch { page = ''; }
+    }
+    return [clientIp(req), c.kind ? c.kind + (c.version ? ' ' + c.version : '') : 'browser', page].filter(Boolean).join(', ');
+  }
+
   /** Back-compat shim: callers that only need an access token. */
   function createToken(username) { return createSession(username).token; }
 
@@ -573,6 +595,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    *
    * @returns {{ ok: true, token, refreshToken, expiresIn } | { ok: false, error: string }}
    */
+  /** A token from a renewal has been used: whoever renewed did get the answer. */
+  function answerArrived(entry) {
+    if (!entry.parent) return;
+    const spent = refreshTokens.get(entry.parent);
+    if (spent) spent.answered = true;
+    delete entry.parent;   // said once; nothing more to say
+  }
+
   function rotateRefresh(rt, req = null) {
     const entry = rt && refreshTokens.get(rt);
     if (!entry) return { ok: false, error: 'Invalid refresh token' };
@@ -587,10 +617,32 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // almost certainly is: issue a fresh pair for the same login. A replay
       // later — the shape an actually-stolen token has — still cuts the login.
       const age = Date.now() - (entry.usedAt || 0);
+      const sid = String(entry.familyId).slice(0, 8);
+      // Every replay is logged with who spent the token and who brought it
+      // back, so a phone signed out "for nothing" can be traced to its cause
+      // (two pages of the app, a lost answer, a network handover) instead of
+      // guessed at.
+      const story = `spent ${(age / 1000).toFixed(1)}s earlier by ${entry.spentBy || 'unknown'}, presented again by ${renewer(req)}`;
       if (entry.usedAt && age <= REPLAY_GRACE_MS) {
-        return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '') };
+        console.log(`[webapp] Renewal race in session ${sid}: ${story}; answered with a fresh pair`);
+        return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '', null, rt) };
       }
-      revokeFamily(entry.familyId);
+      // A third case, and the one that signed a phone out for nothing: the
+      // renewal was asked for and the ANSWER never arrived (the network went
+      // as it was sent; a phone moving between Wi-Fi and mobile data does
+      // this). The client still holds the spent token, because it was never
+      // given another, and offers it again whenever it is next online, which
+      // can be long after the grace above. What tells this from a theft is
+      // that nothing the renewal issued has ever been used. If the pair had
+      // reached its owner it would have been used at once; an unused pair
+      // means there is no second holder to protect. So the login carries on.
+      // The moment a pair IS used, the spent token is marked answered, and
+      // any later replay of it is cut off as before.
+      if (entry.answered === false) {
+        console.log(`[webapp] A renewal for session ${sid} was asked for again (${story}); its first answer was never used, so it is answered again`);
+        return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '', null, rt) };
+      }
+      revokeFamily(entry.familyId, `a spent refresh token was presented again (${story}; ${entry.answered ? 'the pair it was swapped for had been used' : 'from before answers were tracked'})`);
       return { ok: false, error: 'Refresh token reused' };
     }
     if (Date.now() >= entry.expiresAt) {
@@ -602,15 +654,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // passes expiresAt.
     entry.used = true;
     entry.usedAt = Date.now();   // how the grace above tells a race from a theft
+    entry.spentBy = renewer(req);   // for the log, if it is ever presented again
+    // Not yet known to have arrived. Written out as false, not left unset:
+    // tokens spent before this rule existed carry no such field, and those
+    // keep the strict treatment rather than being taken for unanswered.
+    entry.answered = false;
+    answerArrived(entry);
     // createSession saves, which also records this one as spent - so a replay
     // after a restart is still caught and still revokes the family.
     // A collaborator whose time ran out must not be able to refresh their way
     // into another 15 minutes; active() is the same check the request gate makes.
     if (entry.collabKey && !collaborators.liveByIdentity(entry.collabKey).length) {
-      revokeFamily(entry.familyId);
+      revokeFamily(entry.familyId, 'the collaborator access ended');
       return { ok: false, error: 'That collaborator access has ended' };
     }
-    return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '') };
+    return { ok: true, ...createSession(entry.username, entry.familyId, req, entry.collabKey || '', null, rt) };
   }
 
   /** Spent refresh tokens are retained for replay detection; drop them at expiry. */
@@ -652,6 +710,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // worth a disk write per request; the periodic refresh persists it.
     const fam = families.get(entry.familyId);
     if (fam) fam.lastSeenAt = Date.now();
+    answerArrived(entry);
     if (!invitations.length) {
       return { username: entry.username, role: ROLE_OWNER, collabKey: '', projects: [], roots: {} };
     }
@@ -872,6 +931,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     kanbanTask: 'never', kanbanSubtask: 'never',
     scheduleRun: 'away',
     serviceDown: 'always', serviceUp: 'away',
+    // A watched forward whose port stopped answering, and came back.
+    forwardDown: 'always', forwardUp: 'away',
     mindmapAdd: 'never', mindmapDelete: 'never',
     browserLaunch: 'never', browserStop: 'never',
     secretRequest: 'always',
@@ -1111,6 +1172,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: (text, meta = {}) => browserMod.notifyHost({
       title: meta.title || 'Crundi',
       body: String(text).slice(0, 400),
+      // Where a click should take the app: the chat it is about. Only a chat
+      // link is passed on; the app checks it again before using it.
+      ...(typeof meta.url === 'string' && /^\/chat\/[A-Za-z0-9_-]{1,80}$/.test(meta.url) ? { url: meta.url } : {}),
     }),
   });
 
@@ -1184,6 +1248,53 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
     }
     for (const k of [...prevServiceStatus.keys()]) if (!seen.has(k)) prevServiceStatus.delete(k);
+  }
+
+  // Watched forwards: the same warning a service gives when it stops. When a
+  // container publishes the forward's port, Docker decides: down when that
+  // container stops, or when its own health check says unhealthy. With no
+  // container behind it (a dev server, a forward added by hand), down when
+  // nothing answers on the port. Down only after two bad checks in a row, so
+  // a restart does not set it off; up again on the first good one.
+  const forwardHealth = new Map();   // host -> { up, fails }
+  let forwardCheckBusy = false;
+  async function checkForwardHealth(baseline = false) {
+    if (forwardCheckBusy) return;
+    forwardCheckBusy = true;
+    try {
+      const watched = forwards.list().filter((f) => f.watch);
+      const keep = new Set(watched.map((f) => f.host));
+      for (const h of [...forwardHealth.keys()]) if (!keep.has(h)) forwardHealth.delete(h);
+      if (!watched.length) return;
+      const owners = await dockerMod.portOwners().catch(() => null);
+      await Promise.all(watched.map(async (f) => {
+        const owner = owners && owners.get(Number(f.port));
+        let answers, why;
+        if (owner) {
+          answers = owner.running && owner.health !== 'unhealthy';
+          why = !owner.running ? `container ${owner.name} has stopped` : `container ${owner.name} is unhealthy (Docker health check)`;
+        } else {
+          answers = await dockerMod.isListening(f.port);
+          why = `nothing is listening on port ${f.port}`;
+        }
+        const prev = forwardHealth.get(f.host);
+        if (!prev || baseline) { forwardHealth.set(f.host, { up: answers, fails: answers ? 0 : 2 }); return; }
+        if (answers) {
+          if (!prev.up) console.log(`[forwards] ${f.host} is back${owner ? ` (container ${owner.name} running${owner.health ? ', ' + owner.health : ''})` : ` on port ${f.port}`}`);
+          if (!prev.up) notifyEvent('forwardUp', `▶️ Forward "${f.host}" is back${owner ? `: container ${owner.name} is running${owner.health === 'healthy' ? ' and healthy' : ''}` : ` on port ${f.port}`}.`, { url: f.url });
+          forwardHealth.set(f.host, { up: true, fails: 0 });
+          return;
+        }
+        const fails = prev.fails + 1;
+        if (prev.up && fails >= 2) {
+          console.log(`[forwards] ${f.host} is down: ${why}`);
+          notifyEvent('forwardDown', `⏹️ Forward "${f.host}" is down: ${why}.`, { url: f.url });
+          forwardHealth.set(f.host, { up: false, fails });
+          return;
+        }
+        forwardHealth.set(f.host, { up: prev.up, fails });
+      }));
+    } catch { /* checked again next round */ } finally { forwardCheckBusy = false; }
   }
 
   // Apply a hook-reported state for a terminal; notify on transitions to
@@ -1273,6 +1384,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const chat = { id: term.id, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) };
     if (active) onLiveCard.set(term.id, chat); else { workingSince.delete(term.id); onLiveCard.delete(term.id); }
     sendState(chat, state, since);
+  }
+  // A chat renamed while it is on a card: the card was drawn with the old
+  // name and is redrawn only when the state changes, which for a chat that
+  // works for hours is not soon. Tell the phones again, same state, new name.
+  function retitleLiveCards() {
+    if (!onLiveCard.size || !claudeUi) return;
+    let sessions = [];
+    try { sessions = claudeUi.list(); } catch { return; }
+    for (const [id, chat] of onLiveCard) {
+      const t = sessions.find((x) => x.id === id);
+      if (!t) continue;
+      const title = t.longTitle || t.title || 'Chat';
+      if (title === chat.title) continue;
+      const next = { ...chat, title, mark: markOf(t.project || chat.project || '', t.title) };
+      onLiveCard.set(id, next);
+      const state = agentStates.get(id);
+      if (state === 'working' || state === 'needs-input' || state === 'waiting') sendState(next, state, workingSince.get(id) || Date.now());
+    }
   }
   // A chat closed while it was on a card never reports "idle": it is simply
   // gone. Say so for it, or its line would sit on the phone until it expired.
@@ -1609,7 +1738,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       terminals: (state.terminals || []).filter(t =>
         t.kind === 'ui' && mine.has(String(t.project || '').toLowerCase())
         && !!t.collaborator && t.collaborator.key === principal.collabKey),
-      userTerminals: [],
       scheduled: [],
     };
   }
@@ -1643,7 +1771,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * a second one. Built in one place so the two can never disagree.
    */
   function buildState() {
-    const projects = listProjects();
+    // With each project's icon address, as /api/projects gives it. Without it
+    // every state push replaced the page's list with one that had no icons,
+    // and the sidebar went back to letters on a desktop, where it redraws
+    // from these pushes. The icon's file path stays here.
+    const projects = lookOnceForIcons(listProjects()).map(({ iconFile, ...p }) => ({ ...p, icon: projectIconUrl(p.alias, p.path, iconFile) }));
     const services = getAllServiceStatus().map(s => ({
       key: s.key, name: s.name, alias: s.alias, command: s.command,
       projectPath: s.projectPath, status: s.status, pid: s.pid,
@@ -1677,7 +1809,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Parked panes keep their id, so the layout keeps their slot.
       ...panes.listParked(),
     ];
-    const userTerminals = terminalsMod.listTerminals();
     // Project aliases that have at least one enabled schedule (for the sidebar
     // "upcoming schedule" clock indicator).
     const scheduled = [...new Set(schedule.listSchedules().filter(s => s.enabled).map(s => String(s.project || '').toLowerCase()))];
@@ -1686,7 +1817,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       projects,
       services,
       terminals,
-      userTerminals: userTerminals.terminals || [],
       scheduled,
     };
   }
@@ -1699,7 +1829,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     claudeBin: () => { try { return resolveClaudeBin(); } catch { return null; } },
     currentTitle: (id) => { const m = claudeUi && claudeUi.meta(id); return m && !m.collaborator ? m.title : null; },
     apply: (id, title, long) => claudeUi.rename(id, title, { auto: true, long: long || '' }),
-    onApplied: () => broadcastState(),
+    onApplied: () => { broadcastState(); retitleLiveCards(); },
   });
 
   // ─── Widgets (Claude-authored UI; see widget-api.js) ───
@@ -2195,6 +2325,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const refusal = clientVersion.refusalFor(clientVersion.identifyClient(req));
       if (refusal) return json(res, clientVersion.refusalBody(refusal, APP_VERSION), 426);
     }
+    // The phone app signs in by pairing and by nothing else: see
+    // isUnpairedSignIn for what a password typed into it used to leave behind.
+    if (clientVersion.isUnpairedSignIn(req, path)) {
+      console.warn(`[crundi] Refused a sign-in from the phone app at ${path}: it has to be paired`);
+      return json(res, clientVersion.PAIR_REQUIRED, 403);
+    }
 
     // Serve web app
     if (path === '/' && req.method === 'GET') {
@@ -2544,7 +2680,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const entry = tok && tokens.get(tok);
       // Revoke the whole family, not just this access token: the refresh token
       // beside it would mint a new one seconds later otherwise.
-      if (entry?.familyId) revokeFamily(entry.familyId);
+      if (entry?.familyId) revokeFamily(entry.familyId, 'signed out there');
       // And take the forward cookie with it. Leaving it behind would mean
       // signing out of Crundi while every private forward stayed reachable
       // from that browser for another week.
@@ -2581,14 +2717,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // Deliberately spares this device: "sign out everywhere else" that also
         // signs YOU out is a good way to lock yourself out of a remote server.
         for (const sess of listSessions(mine)) {
-          if (sess.id !== mine) { revokeFamily(sess.id); revoked++; }
+          if (sess.id !== mine) { revokeFamily(sess.id, 'signed out everywhere else, from another session'); revoked++; }
         }
       } else {
         const id = String(body.id || '');
         if (!id) return json(res, { ok: false, error: 'No session given' }, 400);
         if (id === mine) return json(res, { ok: false, error: 'That is this device — use Sign out instead.' }, 400);
         if (!listSessions(mine).some((x) => x.id === id)) return json(res, { ok: false, error: 'No such session' }, 404);
-        revokeFamily(id);
+        revokeFamily(id, 'revoked from another session');
         revoked = 1;
       }
       return json(res, { ok: true, revoked });
@@ -2615,9 +2751,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // is known to work from where they are, which a configured public URL is
       // not (a LAN address, a tunnel that has since moved).
       let base = '';
-      try { const u = new URL(String(body.origin || '')); if (/^https?:$/.test(u.protocol)) base = u.origin; } catch { /* fall through */ }
-      if (!base) base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port }) || '';
-      if (!base) return json(res, { ok: false, error: 'This server does not know its own address yet.' }, 409);
+      let loopback = false;
+      try {
+        const u = new URL(String(body.origin || ''));
+        if (/^https?:$/.test(u.protocol)) base = u.origin;
+        // Except an address that means "this computer": on a phone it means
+        // the phone. The desktop app shows Crundi at http://localhost:<port>,
+        // and a link made from there sent the phone to itself.
+        loopback = /^(localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/i.test(u.hostname);
+      } catch { /* fall through */ }
+      if (!base || loopback) base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port }) || '';
+      // With no tunnel and no certificate the server's own idea of its address
+      // is localhost too, which is no better.
+      if (loopback && /^https?:\/\/(localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(base)) base = '';
+      if (!base) {
+        return json(res, {
+          ok: false,
+          error: loopback
+            ? 'A phone cannot reach this computer at "localhost". Open Crundi at an address the phone can reach (its tunnel or network address) and connect the phone from there.'
+            : 'This server does not know its own address yet.',
+        }, 409);
+      }
       const started = pairing.start({ username: principal.username, collabKey: principal.collabKey || '' });
       if (!started.ok) return json(res, started, 429);
       const link = pairingLink(base, started.code);
@@ -2666,6 +2820,40 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!who.collabKey) setForwardCookie(res);
       const paired = pairDevice(who, body.device, req);
       return json(res, { ok: true, username: who.username, ...paired, server: clientVersion.handshake(req, APP_VERSION).server });
+    }
+
+    // A page login for a paired phone, asked for by the phone itself.
+    //
+    // The app used to hand its page the page's login once, after which every
+    // page it showed (the main window, each bubble) kept its own copy of the
+    // refresh token and renewed it. Two holders of one refresh token is the
+    // shape of a theft, and the server cut the phone off for it. Now the app
+    // keeps the page login and renews it for all of its pages, one renewal at
+    // a time. A phone paired before that has no page login of its own to
+    // keep, so it asks here, with the app's own (background) login, which
+    // only that phone holds. Any page login that phone had is retired: it
+    // lives in a web view that will not use it again.
+    if (path === '/api/pair/page-login' && req.method === 'POST') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      const entry = tokens.get(extractToken(req));
+      const fam = entry && families.get(entry.familyId);
+      const dev = fam && fam.device;
+      if (!dev || dev.role !== 'background') {
+        return json(res, { ok: false, error: 'Only a paired phone\'s own login can ask for its page login' }, 403);
+      }
+      for (const [fid, f] of [...families]) {
+        if (f.device?.id !== dev.id || f.device?.role !== 'page') continue;
+        // This family only: revokeFamily would take the whole device, the
+        // login asking included.
+        for (const [t, e] of tokens) if (e.familyId === fid) tokens.delete(t);
+        for (const [t, e] of refreshTokens) if (e.familyId === fid) refreshTokens.delete(t);
+        families.delete(fid);
+        console.log(`[webapp] Retired the page login ${String(fid).slice(0, 8)} of paired device "${dev.name}": the app now keeps that login itself`);
+      }
+      const login = createSession(entry.username, undefined, req, entry.collabKey || '', { id: dev.id, name: dev.name, platform: dev.platform, role: 'page' });
+      console.log(`[webapp] Paired device "${dev.name}" was given a page login it keeps itself`);
+      return json(res, { ok: true, ...login });
     }
 
     // ─── SSE endpoint ───
@@ -2905,6 +3093,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Status ───
+    // Is this token still good? Nothing else. A page whose live connection
+    // dropped (a phone moving between Wi-Fi and mobile data) asks this
+    // instead of renewing its login on the off chance: a renewal there,
+    // every few seconds while the network changed hands, was needless churn.
+    // Refused here, the page renews as for any other refusal.
+    if (path === '/api/session-check' && req.method === 'GET') {
+      if (!validateToken(req)) return json(res, { ok: false, error: 'Unauthorized' }, 401);
+      return json(res, { ok: true });
+    }
+
     if (path === '/api/status' && req.method === 'GET') {
       const services = getAllServiceStatus();
       const projects = listProjects();
@@ -3806,6 +4004,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (action === 'rename') {
         const result = claudeUi.rename(sid, body.title);
         broadcastState();
+        retitleLiveCards();
         return json(res, result);
       }
       if (action === 'permission-mode') {
@@ -3895,28 +4094,52 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result, result.ok || result.needsConfirm ? 200 : 400);
     }
 
-    // Docker containers. Every id is resolved against the live listing inside
-    // docker.js before any command runs, so what arrives here is only ever a
-    // lookup key.
-    if (path === '/api/containers' && req.method === 'GET') {
-      return json(res, await dockerMod.listContainers());
-    }
-    if (path === '/api/containers/logs' && req.method === 'GET') {
-      const result = await dockerMod.containerLogs(
-        url.searchParams.get('id') || '',
-        url.searchParams.get('tail') || 200,
-      );
-      return json(res, result, result.ok ? 200 : 404);
-    }
-    if (path === '/api/containers/stop' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await dockerMod.stopContainer(String(body.id || ''));
-      return json(res, result, result.ok ? 200 : 400);
-    }
-    if (path === '/api/containers/start' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await dockerMod.startContainer(String(body.id || ''));
-      return json(res, result, result.ok ? 200 : 400);
+    // ─── Docker tab ───
+    // Owner-only (access-policy refuses /api/docker for collaborators). Every
+    // target the client names is resolved against the engine's live listing
+    // inside docker.js before anything acts on it, so what arrives here is
+    // only ever a lookup key.
+    if (path.startsWith('/api/docker/')) {
+      const sendResult = (r) => json(res, r, r.ok ? 200 : (r.status === 404 ? 404 : 400));
+      const body = req.method === 'POST' ? JSON.parse((await readBody(req)) || '{}') : {};
+      const q = (k) => url.searchParams.get(k) || '';
+      switch (req.method + ' ' + path) {
+        case 'GET /api/docker/status': return json(res, await dockerMod.status({ force: q('force') === '1' }));
+        case 'GET /api/docker/containers': return sendResult(await dockerMod.listContainers({ stats: q('stats') === '1' }));
+        case 'GET /api/docker/containers/detail': return sendResult(await dockerMod.containerDetail(q('id')));
+        case 'GET /api/docker/containers/logs': return sendResult(await dockerMod.containerLogs(q('id'), q('tail') || 500));
+        case 'GET /api/docker/containers/stats': return sendResult(await dockerMod.containerStats(q('id')));
+        case 'POST /api/docker/containers/action': return sendResult(await dockerMod.containerAction(String(body.id || ''), String(body.action || '')));
+        case 'POST /api/docker/containers/rename': return sendResult(await dockerMod.renameContainer(String(body.id || ''), body.name));
+        case 'POST /api/docker/containers/remove': return sendResult(await dockerMod.removeContainer(String(body.id || ''), { force: body.force === true, volumes: body.volumes === true }));
+        case 'GET /api/docker/stacks': return sendResult(await dockerMod.listStacks());
+        case 'POST /api/docker/stacks/action': return sendResult(await dockerMod.stackAction(String(body.name || ''), String(body.action || '')));
+        case 'GET /api/docker/images': return sendResult(await dockerMod.listImages());
+        case 'POST /api/docker/images/remove': return sendResult(await dockerMod.removeImage(String(body.id || ''), { force: body.force === true }));
+        case 'POST /api/docker/images/pull': return sendResult(dockerMod.pullImage(body.reference));
+        case 'GET /api/docker/volumes': return sendResult(await dockerMod.listVolumes());
+        case 'POST /api/docker/volumes/remove': return sendResult(await dockerMod.removeVolume(String(body.name || '')));
+        case 'GET /api/docker/networks': return sendResult(await dockerMod.listNetworks());
+        case 'POST /api/docker/networks/remove': return sendResult(await dockerMod.removeNetwork(String(body.id || '')));
+        case 'GET /api/docker/system': return sendResult(await dockerMod.systemInfo());
+        case 'GET /api/docker/system/df': return sendResult(await dockerMod.diskUsage());
+        case 'POST /api/docker/prune': return sendResult(await dockerMod.prune(String(body.kind || '')));
+        case 'GET /api/docker/job': return sendResult(dockerMod.jobOutput(q('id'), q('from')));
+        // Crundi's forwards, each with what is behind its port: a container
+        // (running or stopped), some other program, or nothing at all, which
+        // makes it an orphan. Owner-only like the rest of /api/docker.
+        case 'GET /api/docker/forwards': {
+          const owners = await dockerMod.portOwners().catch(() => new Map());
+          const out = await Promise.all(forwards.list().map(async (f) => {
+            const owner = owners.get(Number(f.port)) || null;
+            const listening = await dockerMod.isListening(f.port);
+            const state = owner && owner.running ? 'container' : listening ? 'other' : owner ? 'stopped' : 'orphaned';
+            return { ...f, container: owner, listening, state };
+          }));
+          return json(res, { ok: true, forwards: out, domain: forwards.baseDomain() });
+        }
+      }
+      return json(res, { ok: false, error: 'Not found' }, 404);
     }
 
     // Disk maintenance. The catalogue is fixed in maintenance.js; the client
@@ -4076,7 +4299,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // ─── Browsers ───
     if (path === '/api/browsers' && req.method === 'GET') {
       const alias = url.searchParams.get('alias') || '';
-      return json(res, { browsers: browserMod.listBrowsers(alias) });
+      return json(res, { browsers: browserMod.listBrowsers(alias), places: browserMod.browserPlaces() });
     }
 
     if (path === '/api/browsers/open' && req.method === 'POST') {
@@ -4088,6 +4311,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         url: body.url,
         width: body.width || 1280,
         height: body.height || 720,
+        on: body.on === 'server' || body.on === 'desktop' ? body.on : undefined,
       });
       return json(res, result);
     }
@@ -4114,13 +4338,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result);
     }
 
-    // ─── User Terminals ───
-    if (path === '/api/user-terminals' && req.method === 'GET') {
-      const alias = url.searchParams.get('alias') || '';
-      const result = terminalsMod.listTerminals(alias);
-      return json(res, result);
-    }
-
     // ─── Server Logs ───
     if (path === '/api/server-logs' && req.method === 'GET') {
       return json(res, { logs: serverLogs || [] });
@@ -4128,7 +4345,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Tunnel Status ───
     if (path === '/api/tunnel' && req.method === 'GET') {
-      return json(res, { tunnels: getAllTunnelInfo(), tunnelUrl });
+      // `target`: where a named tunnel's Public Hostname has to send traffic,
+      // shown on the Info page so a "Bad gateway" can be checked against it.
+      return json(res, { tunnels: getAllTunnelInfo(), tunnelUrl, named: !!config.tunnelToken, target: `127.0.0.1:${localPort || port}` });
     }
 
     // ─── Settings ───
@@ -4237,6 +4456,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { body = null; }
       if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+      // Watching is set on its own, and leaves the project alone.
+      if (Object.prototype.hasOwnProperty.call(body, 'watch')) {
+        const rw = forwards.setWatch(fwdDel[1], body.watch === true);
+        if (rw.ok) forwardHealth.delete(fwdDel[1]);   // a fresh baseline, no stale alert
+        return json(res, rw, rw.ok ? 200 : 404);
+      }
       const want = String(body.project || '').toLowerCase().trim();
       if (want && !getProjectUnscoped(want)) return json(res, { ok: false, error: 'Unknown project' }, 400);
       const r = forwards.setProject(fwdDel[1], want);
@@ -4482,6 +4707,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as unusable */ }
       const r = mobilePush.registerDevice({ deviceId: device.id, name: device.name }, body);
       return json(res, r, r.ok ? 200 : 400);
+    }
+
+    // What is on the live cards right now, for a phone that was not told as
+    // it happened: it was not paired yet, it was off, the message was lost.
+    // A change of state is sent once, when it changes, so a phone that missed
+    // "working" showed nothing for that chat until its state changed again.
+    // The app asks this when it is opened and when it is paired. Each entry
+    // has the shape of the message it stands in for.
+    if (path === '/api/push/mobile/states' && req.method === 'GET') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      // The cards are the owner's chats; a collaborator's phone has none.
+      if (principal.role !== ROLE_OWNER) return json(res, { ok: true, at: Date.now(), states: [] });
+      const states = [];
+      for (const [id, chat] of onLiveCard) {
+        const state = agentStates.get(id);
+        if (state !== 'working' && state !== 'needs-input' && state !== 'waiting') continue;
+        states.push({ state, since: workingSince.get(id) || 0, chat });
+      }
+      return json(res, { ok: true, at: Date.now(), states });
     }
 
     if (path === '/api/push/test' && req.method === 'POST') {
@@ -5124,38 +5369,6 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return;
     }
 
-    // ─── User Terminals (API for Terminals tab) ───
-
-    if (path === '/api/terminals/spawn' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await terminalsMod.spawnTerminal(body.alias || 'default', body.alias || 'default', body.name, { command: body.command, cwd: body.cwd });
-      broadcastState();
-      return json(res, result);
-    }
-
-    if (path === '/api/terminals/input' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await terminalsMod.writeTerminal(body.alias || 'default', body.name, body.input);
-      return json(res, result);
-    }
-
-    if (path === '/api/terminals/output' && req.method === 'GET') {
-      const alias = url.searchParams.get('alias') || 'default';
-      const name = url.searchParams.get('name');
-      const result = await terminalsMod.getTerminalOutput(alias, name, {
-        start: parseInt(url.searchParams.get('start') || '0', 10),
-        end: url.searchParams.get('end') ? parseInt(url.searchParams.get('end'), 10) : undefined,
-      });
-      return json(res, result);
-    }
-
-    if (path === '/api/terminals/close' && req.method === 'POST') {
-      const body = JSON.parse(await readBody(req));
-      const result = await terminalsMod.closeTerminal(body.alias || 'default', body.name);
-      broadcastState();
-      return json(res, result);
-    }
-
     // ─── Git ───
 
     function gitExec(cwd, args) {
@@ -5491,7 +5704,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (a.sessionId && claudeUi && claudeUi.has(String(a.sessionId))) r = claudeUi.rename(String(a.sessionId), t.title, { auto: true, long });
         else if (a.terminalId && claudeTerminals) r = claudeTerminals.rename(String(a.terminalId), t.title, { auto: true, long });
         else return json(res, { ok: false, error: 'This session is not a Crundi chat or terminal, so there is nothing to rename. Carry on without it.' });
-        if (r.ok) broadcastState();
+        if (r.ok) { broadcastState(); retitleLiveCards(); }
         return json(res, r);
       }
 
@@ -6010,6 +6223,64 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const subs = new Map();
       // …and several chat sessions: id → event handler.
       const uiSubs = new Map();
+      // Docker streams this socket opened, keyed by the client's own ref so
+      // one page can follow several logs and hold several shells at once.
+      const dockerLogs = new Map();     // ref -> stop()
+      const dockerShells = new Map();   // ref -> pty
+      // Refs stopped or closed while still opening: the open finishes after
+      // the stop arrived, and must not leave a stream nobody will end.
+      const dockerCancelled = new Set();
+      const sendWs = (m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); };
+      const handleDockerMessage = async (msg) => {
+        const ref = String(msg.ref || '').slice(0, 64);
+        if (!ref) return;
+        switch (msg.type) {
+          case 'docker-logs-follow': {
+            if (dockerLogs.has(ref)) { dockerLogs.get(ref)(); dockerLogs.delete(ref); }
+            const r = await dockerMod.followLogs(msg.id, { tail: msg.tail },
+              (frames) => sendWs({ type: 'docker-logs', ref, frames }),
+              () => { dockerLogs.delete(ref); sendWs({ type: 'docker-logs-end', ref }); });
+            if (!r.ok) { sendWs({ type: 'docker-logs-error', ref, error: r.error }); return; }
+            if (ws.readyState !== 1 || dockerCancelled.delete(ref)) { r.stop(); return; }
+            dockerLogs.set(ref, r.stop);
+            return;
+          }
+          case 'docker-logs-stop': {
+            const stop = dockerLogs.get(ref);
+            if (stop) { dockerLogs.delete(ref); stop(); } else dockerCancelled.add(ref);
+            return;
+          }
+          case 'docker-shell-open': {
+            if (dockerShells.has(ref)) { try { dockerShells.get(ref).kill(); } catch { /* gone */ } dockerShells.delete(ref); }
+            if (dockerShells.size >= 8) { sendWs({ type: 'docker-shell-error', ref, error: 'Too many shells open on this page' }); return; }
+            const r = await dockerMod.spawnShell(msg.id, { cols: msg.cols, rows: msg.rows });
+            if (!r.ok) { sendWs({ type: 'docker-shell-error', ref, error: r.error }); return; }
+            if (ws.readyState !== 1 || dockerCancelled.delete(ref)) { try { r.proc.kill(); } catch { /* gone */ } return; }
+            dockerShells.set(ref, r.proc);
+            r.proc.onData((data) => sendWs({ type: 'docker-shell-data', ref, data }));
+            r.proc.onExit(({ exitCode }) => {
+              if (dockerShells.get(ref) === r.proc) dockerShells.delete(ref);
+              sendWs({ type: 'docker-shell-exit', ref, code: exitCode });
+            });
+            return;
+          }
+          case 'docker-shell-input': {
+            const p = dockerShells.get(ref);
+            if (p && typeof msg.data === 'string') p.write(msg.data);
+            return;
+          }
+          case 'docker-shell-resize': {
+            const p = dockerShells.get(ref);
+            if (p && msg.cols > 0 && msg.rows > 0) { try { p.resize(Math.min(400, msg.cols | 0), Math.min(200, msg.rows | 0)); } catch { /* exited */ } }
+            return;
+          }
+          case 'docker-shell-close': {
+            const p = dockerShells.get(ref);
+            if (p) { dockerShells.delete(ref); try { p.kill(); } catch { /* gone */ } } else dockerCancelled.add(ref);
+            return;
+          }
+        }
+      };
       // Set when this socket is acting as the server's native host (a desktop
       // app lending us its GUI for the browser panel).
       let detachHost = null;
@@ -6092,6 +6363,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           return;
         }
 
+        // ─── Docker: live logs and a shell inside a container ───
+        // Owner-only, like the routes: the daemon is shared and a shell in a
+        // container is root on whatever it mounts.
+        if (typeof msg.type === 'string' && msg.type.startsWith('docker-')) {
+          if (confined) return;
+          handleDockerMessage(msg);
+          return;
+        }
+
         if (!claudeTerminals) return;
         const id = msg.id;
 
@@ -6142,6 +6422,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         uiSubs.clear();
         logSubscribers.delete(ws);
         presentClients.delete(ws);
+        for (const stop of dockerLogs.values()) { try { stop(); } catch { /* gone */ } }
+        dockerLogs.clear();
+        for (const p of dockerShells.values()) { try { p.kill(); } catch { /* gone */ } }
+        dockerShells.clear();
+        dockerCancelled.clear();
         if (detachHost) {
           detachHost();
           detachHost = null;
@@ -6308,6 +6593,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Service start / crash-stop notifications (independent of SSE clients).
       checkServiceTransitions(); // baseline current statuses (no alerts on first pass)
       setInterval(checkServiceTransitions, 7000);
+      checkForwardHealth(true);  // the same for watched forwards
+      setInterval(checkForwardHealth, 7000);
       limitResets.start();        // likewise: the first tick only takes a baseline
 
       // Ask GitHub whether there is a newer release, now and every six hours.

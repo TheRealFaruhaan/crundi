@@ -113,7 +113,7 @@ check('policy opens delete/tunnel routes and the delete tool (ownership enforced
   const html = readFileSync(join(here, '..', 'src', 'webapp-html.js'), 'utf8');
   check('forwards record their project', /project: String\(project \|\| ''\)\.toLowerCase\(\)\.trim\(\),/.test(fw) && /export function setProject\(host, project\)/.test(fw));
   check('owner can assign a forward\'s project (real projects only)',
-    /fwdDel && req\.method === 'PATCH'\)[\s\S]{0,400}if \(want && !getProjectUnscoped\(want\)\)[\s\S]{0,200}forwards\.setProject\(fwdDel\[1\], want\)/.test(web));
+    /fwdDel && req\.method === 'PATCH'\)[\s\S]{0,1400}if \(want && !getProjectUnscoped\(want\)\)[\s\S]{0,200}forwards\.setProject\(fwdDel\[1\], want\)/.test(web));
   check('forwards made from a service or a project chat carry that project',
     /project: body\.project && getProjectUnscoped\(String\(body\.project\)\)/.test(web)
     && /project: a\.alias && getProjectUnscoped\(String\(a\.alias\)\)/.test(web)

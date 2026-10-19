@@ -117,7 +117,7 @@ const claudeTerminals = createClaudeTerminals();
 // multiple-choice questions.
 const claudeUi = createClaudeUiSessions();
 
-// ─── MCP dispatch handler (for browser, screenshots, terminals, RDP) ───
+// ─── MCP dispatch handler (for browser, screenshots, RDP) ───
 async function mcpDispatch(tool, args) {
   // Browser tools
   if (tool.startsWith('browser_') || tool === 'list_browsers') {
@@ -196,21 +196,6 @@ async function mcpDispatch(tool, args) {
       } finally {
         try { unlinkSync(tmpFile); } catch { /* ignore */ }
       }
-    }
-  }
-
-  // User terminal tools (non-Claude PTY instances)
-  if (tool === 'spawn_terminal' || tool === 'terminal_input' || tool === 'terminal_output' ||
-      tool === 'terminal_wait' || tool === 'close_terminal' || tool === 'list_terminals') {
-    const t = await import('./terminals.js');
-    const alias = args.alias || 'default';
-    switch (tool) {
-      case 'spawn_terminal': return t.spawnTerminal(alias, alias, args.name, { command: args.command, cwd: args.cwd });
-      case 'terminal_input': return t.writeTerminal(alias, args.name, args.input);
-      case 'terminal_output': return t.getTerminalOutput(alias, args.name, { start: args.start, end: args.end, countOnly: args.countOnly });
-      case 'terminal_wait': return t.waitTerminal(alias, args.name, { pattern: args.pattern, timeout: args.timeout });
-      case 'close_terminal': return t.closeTerminal(alias, args.name);
-      case 'list_terminals': return t.listTerminals(alias);
     }
   }
 

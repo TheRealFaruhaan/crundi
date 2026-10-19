@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { spawn, execFileSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
@@ -27,6 +27,19 @@ const srcDir = join(appRoot, 'src');
 const assetsDir = app.isPackaged
   ? join(dirname(app.getPath('exe')), 'resources', 'assets')
   : join(__dirname, '..', 'assets');
+
+// On Linux the all-in-one app keeps its settings in a folder of its own.
+// Left alone it would use ~/.config/crundi, which is exactly where a server
+// installed with install.sh keeps its .env and data: the two would be one
+// installation run twice, each starting a server on the same port over the
+// same files. Set before anything asks where userData is.
+if (app.isPackaged && process.platform === 'linux' && existsSync(join(srcDir, 'index.js'))) {
+  app.setPath('userData', join(app.getPath('appData'), 'crundi-desktop'));
+  // Electron makes its usual folder by itself but not one it was pointed at,
+  // and until it existed the first lines of the log (written below, before
+  // the app is ready) had nowhere to go and were lost.
+  try { mkdirSync(app.getPath('userData'), { recursive: true }); } catch { /* the log says so later */ }
+}
 
 // Crundi data directory — separate from old "Claude Telegram Bot" app
 const userDataDir = app.isPackaged ? app.getPath('userData') : join(__dirname, '..');
@@ -113,6 +126,40 @@ function showWindow() {
   }
 }
 
+/**
+ * Show the window and put it in front, for a click on a notification.
+ *
+ * show() and focus() are enough on Windows. GNOME's focus-stealing prevention
+ * refuses a window that raises itself, and shows "Crundi is ready" instead:
+ * the click is the person asking for it, so the app asks for focus outright
+ * and holds the window on top for a moment while the desktop catches up.
+ */
+/**
+ * Show one chat in the main window. The page does the switching
+ * (window.crundiOpenChat, which waits for the chat list if the page is still
+ * loading); the id is checked to be an id before it goes anywhere near code.
+ */
+function openChatInWindow(id) {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) return;
+  const w = mainWindow;
+  if (!w || w.isDestroyed()) return;
+  const run = () => w.webContents.executeJavaScript('window.crundiOpenChat && window.crundiOpenChat(' + JSON.stringify(id) + ')').catch(() => {});
+  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', run); else run();
+}
+
+function bringToFront() {
+  showWindow();
+  const w = mainWindow;
+  if (!w || w.isDestroyed()) return;
+  try { app.focus({ steal: true }); } catch { /* not on this platform */ }
+  if (process.platform === 'linux') {
+    w.setAlwaysOnTop(true);
+    w.show();
+    w.focus();
+    setTimeout(() => { if (!w.isDestroyed()) w.setAlwaysOnTop(false); }, 300);
+  }
+}
+
 function createWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     showWindow();
@@ -126,7 +173,8 @@ function createWindow() {
     minWidth: 800,
     minHeight: 500,
     title: 'Crundi',
-    icon: join(assetsDir, 'icon.ico'),
+    // An .ico is a Windows file; everywhere else the window takes a PNG.
+    icon: join(assetsDir, process.platform === 'win32' ? 'icon.ico' : 'icon_256x256.png'),
     frame: false,
     titleBarStyle: 'hidden',
     backgroundColor: '#0a0a0f',
@@ -150,20 +198,7 @@ function createWindow() {
   appendLog(`[lifecycle] Loading ${htmlPath}`);
   mainWindow.loadFile(htmlPath);
 
-  // Handle file downloads (triggered from webapp iframe)
-  mainWindow.webContents.session.on('will-download', (event, item) => {
-    // Show save dialog instead of silently blocking
-    const fname = item.getFilename();
-    dialog.showSaveDialog(mainWindow, {
-      defaultPath: fname,
-    }).then(({ canceled, filePath }) => {
-      if (canceled || !filePath) {
-        item.cancel();
-      } else {
-        item.setSavePath(filePath);
-      }
-    });
-  });
+  wireDownloads(mainWindow.webContents.session);
 
   mainWindow.once('ready-to-show', () => {
     appendLog('[lifecycle] Window ready-to-show');
@@ -176,6 +211,31 @@ function createWindow() {
       e.preventDefault();
       mainWindow.hide();
     }
+  });
+}
+
+// ─── Downloads ───
+//
+// One Save dialog per download. This used to open a dialog of its own, from a
+// promise, after will-download had returned. A download with no save path set
+// by then gets Electron's own dialog as well, so on Linux every click asked
+// twice and could save the file twice. And the handler was added to the
+// shared session each time the window was made, which a second window (the
+// setup wizard, a reopen) did again, adding another dialog each time. Now the
+// dialog's options are given at once and Electron shows its one dialog, and
+// a session is wired only once.
+const wiredSessions = new WeakSet();
+
+function wireDownloads(ses) {
+  if (!ses || wiredSessions.has(ses)) return;
+  wiredSessions.add(ses);
+  ses.on('will-download', (_event, item) => {
+    let dir = '';
+    try { dir = app.getPath('downloads'); } catch { /* no Downloads folder: the dialog picks */ }
+    item.setSaveDialogOptions({
+      title: 'Save ' + item.getFilename(),
+      defaultPath: dir ? join(dir, item.getFilename()) : item.getFilename(),
+    });
   });
 }
 
@@ -195,6 +255,9 @@ function createTray() {
   tray.setToolTip('Crundi');
   updateTrayMenu();
   tray.on('double-click', () => showWindow());
+  // Linux trays report a single click, where they report a click at all
+  // (an AppIndicator shows only the menu, which has Open in it).
+  if (process.platform === 'linux') tray.on('click', () => showWindow());
 }
 
 function updateTrayMenu() {
@@ -330,6 +393,58 @@ function writeClientConfig(cfg) {
   }
 }
 
+// ─── Running the server on Linux and macOS ───
+//
+// Started from a desktop launcher, an app does not get the PATH a terminal
+// has: nothing from ~/.bashrc or ~/.profile, so no ~/.local/bin, no nvm, no
+// npm-global. The server finds `claude`, `git` and everything else it runs
+// through PATH, and with the launcher's bare one it finds none of what the
+// person installed for themselves. So the PATH is asked of their own login
+// shell, once, and what it says goes in front of what we were given.
+let shellPathCache;
+function loginShellPath() {
+  if (process.platform === 'win32') return '';
+  if (shellPathCache !== undefined) return shellPathCache;
+  shellPathCache = '';
+  try {
+    const sh = process.env.SHELL || '/bin/bash';
+    // Marked on both sides: an interactive shell may print a greeting, and
+    // only what is between the marks is the PATH.
+    const out = execFileSync(sh, ['-ilc', 'printf "__CRUNDI__%s__CRUNDI__" "$PATH"'], {
+      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const m = /__CRUNDI__([\s\S]*?)__CRUNDI__/.exec(out);
+    if (m) shellPathCache = m[1].trim();
+  } catch (err) {
+    appendLog(`[electron] Could not ask the login shell for its PATH: ${err.message}`);
+  }
+  return shellPathCache;
+}
+
+/** The Node that ships inside the Linux package, or '' where none does. */
+function bundledNode() {
+  if (!app.isPackaged) return '';
+  const p = join(process.resourcesPath, 'node', 'bin', 'node');
+  return existsSync(p) ? p : '';
+}
+
+/** PATH for the server: the login shell's, then ours, then the usual per-user places, then the bundled Node. */
+function serverPath() {
+  const sep = process.platform === 'win32' ? ';' : ':';
+  const parts = [];
+  const add = (list) => { for (const d of String(list || '').split(sep)) if (d && !parts.includes(d)) parts.push(d); };
+  add(loginShellPath());
+  add(process.env.PATH);
+  if (process.platform !== 'win32') {
+    add([join(homedir(), '.local', 'bin'), '/usr/local/bin'].join(sep));
+    // Last, so a Node the person installed is the one their tools get; this
+    // one is there so that `node` exists at all on a machine without it.
+    const node = bundledNode();
+    if (node) add(dirname(node));
+  }
+  return parts.join(sep);
+}
+
 function startBot() {
   if (botProcess) return;
 
@@ -380,7 +495,10 @@ function startBot() {
   setBotStatus('starting');
   appendLog('Starting Crundi...');
 
-  const nodeExe = app.isPackaged ? 'node' : process.execPath;
+  // Windows runs the server with the Node on the machine. The Linux package
+  // carries its own, the one its native modules were built against, so the
+  // server starts on a machine with no Node and never meets one too old.
+  const nodeExe = app.isPackaged ? (bundledNode() || 'node') : process.execPath;
   const entryScript = join(srcDir, 'index.js');
   appendLog(`[electron] node: ${nodeExe}`);
   appendLog(`[electron] script: ${entryScript}`);
@@ -394,6 +512,7 @@ function startBot() {
     DOTENV_PATH: envPath,
     DATA_DIR: dataDir,
   };
+  if (process.platform !== 'win32') spawnEnv.PATH = serverPath();
   // Dev mode (npm run dev → electron . --dev): use a separate port and skip
   // Cloudflare so it never collides with a production instance on 8888.
   const isDev = !app.isPackaged && process.argv.includes('--dev');
@@ -494,13 +613,11 @@ function killTree(pid) {
   } catch { /* already gone */ }
 }
 
-// Gracefully stop the server process (it stops services/tunnels/terminals via
+// Gracefully stop the server process (it stops services/tunnels/Claude terminals via
 // the IPC 'shutdown' message — reliable on Windows where SIGTERM isn't catchable),
 // then hard-kill the tree as a guaranteed fallback.
 async function stopServerProcess() {
   // Local (main-process) children first.
-  for (const [, entry] of userTerminals) { try { entry.proc.kill(); } catch { /* ignore */ } }
-  userTerminals.clear();
   for (const [, entry] of browserWindows) { try { entry.win.destroy(); } catch { /* ignore */ } }
   browserWindows.clear();
   if (!botProcess) return;
@@ -616,6 +733,8 @@ function versionGt(a, b) {
   return false;
 }
 
+const UPDATE_FILE_SUFFIX = process.platform === 'linux' ? '-linux' : process.platform === 'darwin' ? '-mac' : '';
+
 /** The newest release of either kind carrying this build's update file. */
 async function pickDevRelease() {
   const { owner, repo, channel } = feedInfo();
@@ -626,7 +745,10 @@ async function pickDevRelease() {
   if (!res.ok) throw new Error('GitHub returned ' + res.status);
   let best = null;
   for (const r of await res.json()) {
-    if (r.draft || !(r.assets || []).some(a => a.name === channel + '.yml')) continue;
+    // The update file is latest.yml / client.yml on Windows and carries the
+    // platform in its name elsewhere (latest-linux.yml), which is how one
+    // release holds a build for each without them reading each other's.
+    if (r.draft || !(r.assets || []).some(a => a.name === channel + UPDATE_FILE_SUFFIX + '.yml')) continue;
     const v = String(r.tag_name || '').replace(/^v/, '');
     if (!best || versionGt(v, best.version)) best = { tag: r.tag_name, version: v, prerelease: !!r.prerelease };
   }
@@ -771,11 +893,35 @@ function setAutoUpdate(enabled) {
 }
 
 // ─── Launch at Windows startup (OS login-item; OS is the source of truth) ───
+//
+// Linux has no login items in Electron. What every desktop there reads is a
+// .desktop file in ~/.config/autostart, so that file is the setting: there
+// means on, absent means off.
+function autostartFile() {
+  return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'autostart', `${app.getName()}.desktop`);
+}
 function getLaunchAtStartup() {
+  if (process.platform === 'linux') return existsSync(autostartFile());
   try { return !!app.getLoginItemSettings().openAtLogin; } catch { return false; }
 }
 function setLaunchAtStartup(enabled) {
   try {
+    if (process.platform === 'linux') {
+      const file = autostartFile();
+      if (!enabled) { try { unlinkSync(file); } catch { /* was not there */ } }
+      else {
+        mkdirSync(dirname(file), { recursive: true });
+        // An AppImage runs from a mount that is gone after it exits; the
+        // file that was started is the one to start again.
+        const exe = process.env.APPIMAGE || app.getPath('exe');
+        writeFileSync(file, [
+          '[Desktop Entry]', 'Type=Application', `Name=${app.getName()}`,
+          `Exec="${exe.replace(/(["\\`$])/g, '\\$1')}"`, 'Terminal=false', 'X-GNOME-Autostart-enabled=true', '',
+        ].join('\n'), 'utf8');
+      }
+      appendLog('[startup] Launch at login ' + (enabled ? 'enabled' : 'disabled'));
+      return;
+    }
     app.setLoginItemSettings({ openAtLogin: !!enabled });
     appendLog('[startup] Launch at login ' + (enabled ? 'enabled' : 'disabled'));
   } catch (e) { appendLog('[startup] error: ' + (e.message || e)); }
@@ -861,7 +1007,11 @@ ipcMain.handle('setup:save', (_e, config) => {
     `TELEGRAM_BOT_TOKEN=${config.botToken || ''}`,
     `ALLOWED_USERNAME=${config.username || ''}`,
     `PROJECTS_DIR=${config.projectsDir || ''}`,
-    `WEB_PORT=${config.webPort || (config.tunnelToken ? '3000' : '0')}`,
+    // 8888 with a tunnel: the port the tunnel's Public Hostname points at, the
+    // one the setup steps and the README name. It was 3000 here, which no
+    // instructions mentioned, and a tunnel set up from them showed "Bad
+    // gateway". Without a tunnel any free port will do.
+    `WEB_PORT=${config.webPort || (config.tunnelToken ? '8888' : '0')}`,
     `CLOUDFLARE_TUNNEL_TOKEN=${config.tunnelToken || ''}`,
     `CLOUDFLARE_TUNNEL_URL=${config.tunnelUrl || ''}`,
     `DATA_DIR=`,
@@ -1084,143 +1234,18 @@ ipcMain.handle('clipboard:getFilePaths', () => {
       return str.split('\0').filter(Boolean);
     }
   }
+  if (process.platform === 'linux') {
+    // Files copied in a Linux file manager are a list of file:// addresses.
+    try {
+      const raw = clipboard.readBuffer('text/uri-list').toString('utf8');
+      return raw.split(/\r?\n/).filter((l) => l.startsWith('file://')).map((l) => { try { return fileURLToPath(l.trim()); } catch { return ''; } }).filter(Boolean);
+    } catch { /* nothing copied */ }
+  }
   return [];
 });
 
-// ─── User Terminals (node-pty instances for MCP terminal tools) ───
-
+// `require` for the CommonJS-only packages loaded further down (ws).
 const require = createRequire(import.meta.url);
-let pty;
-try { pty = require('node-pty'); } catch { /* node-pty not available */ }
-
-const userTerminals = new Map(); // key → { proc, output[], maxOutput }
-const MAX_TERM_OUTPUT = 500;
-const isWin = process.platform === 'win32';
-
-// Strip ANSI escape codes and control sequences from PTY output
-function stripAnsi(str) {
-  return str
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')   // CSI sequences (colors, cursor, clear)
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC sequences (title etc)
-    .replace(/\x1b[()][0-9A-Z]/g, '')           // Character set selection
-    .replace(/\x1b[>=<]/g, '')                  // Keypad/cursor mode
-    .replace(/\r/g, '')                          // Carriage returns
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ''); // Other control chars (keep \n \t)
-}
-
-const terminalIpcHandlers = {
-  async terminalSpawn(msg) {
-    if (!pty) return { ok: false, error: 'node-pty not available' };
-    const { key, name, command, cwd } = msg;
-    if (userTerminals.has(key)) return { ok: false, error: `Terminal '${name}' already exists` };
-
-    const shell = isWin ? 'cmd.exe' : (process.env.SHELL || '/bin/bash');
-    const shellArgs = command
-      ? (isWin ? ['/c', command] : ['-c', command])
-      : [];
-    const proc = pty.spawn(shell, shellArgs, {
-      name: 'xterm-256color',
-      cols: 120, rows: 30,
-      cwd: cwd || process.cwd(),
-      env: { ...process.env, FORCE_COLOR: '1' },
-    });
-
-    const entry = { proc, output: [], name };
-    userTerminals.set(key, entry);
-
-    proc.onData((data) => {
-      const clean = stripAnsi(data);
-      const lines = clean.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trimEnd();
-        if (trimmed) entry.output.push(trimmed);
-      }
-      while (entry.output.length > MAX_TERM_OUTPUT) entry.output.shift();
-    });
-
-    proc.onExit(({ exitCode }) => {
-      const inst = userTerminals.get(key);
-      if (inst) inst.exited = true;
-      botProcess?.send({ type: 'terminalExited', key, exitCode });
-    });
-
-    return { ok: true, name };
-  },
-
-  async terminalWrite(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    if (entry.exited) return { ok: false, error: 'Terminal has exited' };
-    entry.proc.write(msg.input + '\r');
-    return { ok: true };
-  },
-
-  async terminalOutput(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    const { start, end, countOnly } = msg;
-    const total = entry.output.length;
-    if (countOnly) return { ok: true, total };
-    const s = Math.max(0, start || 0);
-    const e = Math.min(total, end || total);
-    return { ok: true, lines: entry.output.slice(s, e), total };
-  },
-
-  async terminalClose(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    try { entry.proc.kill(); } catch { /* ignore */ }
-    userTerminals.delete(msg.key);
-    return { ok: true };
-  },
-
-  async terminalResize(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    if (entry.exited) return { ok: false, error: 'Terminal has exited' };
-    try { entry.proc.resize(msg.cols || 120, msg.rows || 30); } catch { /* ignore */ }
-    return { ok: true };
-  },
-
-  async terminalWait(msg) {
-    const entry = userTerminals.get(msg.key);
-    if (!entry) return { ok: false, error: 'Terminal not found' };
-    const pattern = msg.pattern;
-    const timeout = Math.min(msg.timeout || 30000, 60000);
-    const re = new RegExp(pattern);
-
-    // Check existing output first
-    for (const line of entry.output) {
-      if (re.test(line)) return { ok: true, matched: true, line };
-    }
-
-    // Watch for new output
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        resolve({ ok: true, matched: false, line: null });
-      }, timeout);
-
-      const onData = (data) => {
-        const lines = data.split('\n');
-        for (const line of lines) {
-          if (re.test(line)) {
-            cleanup();
-            resolve({ ok: true, matched: true, line });
-            return;
-          }
-        }
-      };
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        entry.proc.removeListener?.('data', onData);
-      };
-
-      entry.proc.onData(onData);
-    });
-  },
-};
 
 // ─── Browser IPC (hidden BrowserWindows for MCP browser tools) ───
 
@@ -1285,6 +1310,12 @@ function browserActionTimeout(msg) {
  * Chromium has no push service - so the server sends it down the socket the
  * app already holds and it is shown natively here.
  */
+// Shown notifications, held until clicked or closed. A Notification only
+// referenced from inside showServerNotification is collected once it is on
+// screen, and its click handler with it: clicking it then did nothing, which
+// is what it did on Ubuntu.
+const liveNotifications = new Set();
+
 function showServerNotification(msg) {
   try {
     if (!Notification.isSupported()) { appendLog('[notify] not supported on this OS'); return; }
@@ -1292,7 +1323,18 @@ function showServerNotification(msg) {
       title: String(msg.title || 'Crundi').slice(0, 120),
       body: String(msg.body || '').slice(0, 400),
     });
-    n.on('click', () => { try { showWindow(); } catch { /* tray-only is fine */ } });
+    liveNotifications.add(n);
+    const done = () => liveNotifications.delete(n);
+    // The chat it is about, when the server says (older servers do not).
+    const chat = /^\/chat\/([A-Za-z0-9_-]{1,80})$/.exec(String(msg.url || ''));
+    n.on('click', () => {
+      done();
+      try { bringToFront(); } catch { /* tray-only is fine */ }
+      if (chat) openChatInWindow(chat[1]);
+    });
+    n.on('close', done);
+    // Belt and braces: a notification server that never reports either.
+    setTimeout(done, 6 * 60 * 60 * 1000).unref?.();
     n.show();
   } catch (err) {
     appendLog(`[notify] could not show: ${err?.message || err}`);
@@ -1314,17 +1356,6 @@ function handleBotMessage(msg, reply) {
     return;
   }
 
-  // Terminal IPC
-  const termHandler = terminalIpcHandlers[msg.type];
-  if (termHandler) {
-    termHandler(msg).then(result => {
-      send({ type: 'terminalResult', requestId: msg.requestId, ...result });
-    }).catch(err => {
-      send({ type: 'terminalResult', requestId: msg.requestId, ok: false, error: err.message });
-    });
-    return;
-  }
-
   // Browser IPC
   if (!msg.requestId) return;
   const handler = browserIpcHandlers[msg.type];
@@ -1341,9 +1372,9 @@ function handleBotMessage(msg, reply) {
  * Serve a REMOTE server that has registered this app as its native host.
  *
  * Deliberately narrower than the parent-process channel: only the browser
- * handlers are exposed. A named terminal spawned by a remote server should run
- * where that server's code lives, not on the laptop looking at it — bridging it
- * here would silently run commands on the wrong machine.
+ * handlers are exposed. Anything that runs commands belongs where that
+ * server's code lives, not on the laptop looking at it — bridging it here would
+ * silently run commands on the wrong machine.
  */
 function handleNativeHostMessage(msg, reply) {
   if (!msg || !msg.type) return;

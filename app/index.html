@@ -479,7 +479,7 @@
             <li>Skip this to use a <b>free random quick tunnel</b> — Crundi generates a URL each start.</li>
             <li>For a fixed custom domain: open <b>Cloudflare Zero Trust &rarr; Networks &rarr; Tunnels &rarr; Create a tunnel &rarr; Cloudflared</b>.</li>
             <li>Name it. On the <b>"Install and run a connector"</b> screen, <b>only copy the token</b> from the install command (the long <code>eyJ...</code> string) and paste it below.</li>
-            <li>Add a <b>Public Hostname</b> for the tunnel and enter that full URL below.</li>
+            <li>Add a <b>Public Hostname</b> (for example <code>crundi.yourdomain.com</code>) with Service type <b>HTTP</b> and URL <b><code>127.0.0.1:8888</code></b>, and enter that full address below. Write <code>127.0.0.1</code>, not <code>localhost</code>: on Windows <code>localhost</code> can mean the IPv6 address, which Crundi does not listen on, and the page shows "Bad gateway" (502).</li>
           </ol>
           <div class="setup-warn">
             <b>Don't install Cloudflare's connector.</b> Cloudflare's page tells you to download/run <code>cloudflared</code> (or a <code>.msi</code>/service) to "install the connector" — <b>skip that entirely</b>. Crundi already bundles and runs <code>cloudflared</code> itself; installing it again creates a second connector that fights ours and breaks the tunnel. You only need the <b>token</b> and the <b>public hostname URL</b> from that screen.
@@ -524,7 +524,7 @@
           </label>
           <label style="display:flex;align-items:flex-start;gap:11px;cursor:pointer;padding:13px 15px;border:1px solid var(--border);border-radius:10px;background:var(--bg-tertiary);margin:10px 0;">
             <input type="checkbox" id="setup-auto-launch" checked style="width:18px;height:18px;accent-color:var(--accent);margin-top:1px;cursor:pointer;flex-shrink:0;">
-            <span style="font-size:0.92rem;color:var(--text-primary);line-height:1.45;">Launch Crundi when Windows starts<br><span style="font-size:0.78rem;color:var(--text-muted);">Starts in the tray so your terminals and services are always reachable.</span></span>
+            <span style="font-size:0.92rem;color:var(--text-primary);line-height:1.45;">Launch Crundi when this computer starts<br><span style="font-size:0.78rem;color:var(--text-muted);">Starts in the tray so your terminals and services are always reachable.</span></span>
           </label>
         </div>
 

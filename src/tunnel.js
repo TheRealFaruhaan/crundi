@@ -189,6 +189,19 @@ function spawnNamedTunnel(key, token, url, restartCount) {
   tunnels.set(key, entry);
   emitServiceUpdate();
 
+  // What cloudflared said last. An exit code alone ("4294967295" on Windows)
+  // says nothing; the reason, a bad token or a refused connection, is in its
+  // own output, which is kept here and printed when it exits.
+  const said = [];
+  t.on('stderr', (out) => {
+    for (const line of String(out).split(/\r?\n/)) {
+      const l = line.trim();
+      if (!l) continue;
+      said.push(l.slice(0, 300));
+      if (said.length > 40) said.shift();
+    }
+  });
+
   t.on('connected', () => {
     entry.connections++;
     if (entry.status !== 'stopped') entry.status = 'active';
@@ -214,6 +227,10 @@ function spawnNamedTunnel(key, token, url, restartCount) {
     if (entry.status === 'stopped') return;
 
     console.log(`[tunnel] ${key} named exited code=${code} signal=${signal}`);
+    // Its errors first, else its last words.
+    const errs = said.filter((l) => /\bERR\b|error|fail|invalid|unauthori[sz]ed|refused|denied/i.test(l));
+    for (const l of (errs.length ? errs.slice(-6) : said.slice(-4))) console.log(`[tunnel] cloudflared: ${l}`);
+    said.length = 0;
     entry.status = 'error';
     entry.pid = null;
     emitServiceUpdate();

@@ -147,7 +147,7 @@ const TOOLS = [
 
   // Browser tools
   {
-    name: 'browser_open', description: 'Open a hidden browser at a URL. Up to 5 per project. Requires Electron.',
+    name: 'browser_open', description: 'Open a hidden browser at a URL. Up to 5 per project. on picks the machine it runs on, which decides what it can reach: "server" is the machine Crundi (and you) run on, so its localhost is your dev servers; "desktop" is the Crundi desktop app the person has open, on their network. Omitted: the desktop app when one is connected, else the server. Every later browser_* call on this instance runs in the same place.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -155,6 +155,7 @@ const TOOLS = [
         name: { type: 'string', description: 'Instance name (default: "default")' },
         width: { type: 'number', description: 'Viewport width (default: 1280, max: 1920)' },
         height: { type: 'number', description: 'Viewport height (default: 720, max: 1080)' },
+        on: { type: 'string', enum: ['server', 'desktop'], description: 'Where to run it: "server" (this machine, reaches its localhost) or "desktop" (the person\'s connected desktop app). Default: desktop when connected, else server.' },
       },
       required: ['url'],
     },
@@ -181,7 +182,7 @@ const TOOLS = [
   { name: 'browser_snapshot', description: 'Get an accessibility tree snapshot of the page.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, maxDepth: { type: 'number' }, maxLength: { type: 'number' } }, required: ['key'] } },
   { name: 'browser_elements', description: 'List interactive elements on the page.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, selector: { type: 'string' }, start: { type: 'number' }, end: { type: 'number' }, countOnly: { type: 'boolean' } }, required: ['key'] } },
   { name: 'browser_pdf', description: 'Export the current page as a PDF.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, landscape: { type: 'boolean' } }, required: ['key'] } },
-  { name: 'browser_list', description: 'List all open browser instances.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'browser_list', description: 'List all open browser instances, with where each runs (on: server or desktop).', inputSchema: { type: 'object', properties: {} } },
 
   // Screenshot / display tools
   { name: 'list_windows', description: 'List all open windows across virtual desktops.', inputSchema: { type: 'object', properties: {} } },
@@ -191,13 +192,6 @@ const TOOLS = [
   { name: 'send_window_screenshot_to_user', description: 'Capture a window screenshot and send it to the user via Telegram.', inputSchema: { type: 'object', properties: { windowId: { type: 'number', description: 'Window ID (hwnd)' } }, required: ['windowId'] } },
   { name: 'send_display_screenshot_to_user', description: 'Capture a display screenshot and send it to the user via Telegram.', inputSchema: { type: 'object', properties: { display: { type: 'number', description: '1-based display index (default: 1)' } } } },
 
-  // User terminal tools (non-Claude PTY instances)
-  { name: 'spawn_terminal', description: 'Create a named terminal. Requires Electron.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Terminal name' }, command: { type: 'string', description: 'Initial command' }, cwd: { type: 'string', description: 'Working directory' } }, required: ['name'] } },
-  { name: 'terminal_input', description: 'Send commands/keystrokes to a named terminal.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Terminal name' }, input: { type: 'string', description: 'Text to send' } }, required: ['name', 'input'] } },
-  { name: 'terminal_output', description: 'Read buffered output from a named terminal.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Terminal name' }, start: { type: 'number' }, end: { type: 'number' }, countOnly: { type: 'boolean' } }, required: ['name'] } },
-  { name: 'terminal_wait', description: 'Block until a pattern appears in terminal output or timeout.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Terminal name' }, pattern: { type: 'string', description: 'Pattern to wait for' }, timeout: { type: 'number', description: 'Max wait ms (default: 30000)' } }, required: ['name', 'pattern'] } },
-  { name: 'close_terminal', description: 'Kill a named terminal and remove it.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'Terminal name' } }, required: ['name'] } },
-  { name: 'list_terminals', description: 'List all open named terminals with their status.', inputSchema: { type: 'object', properties: {} } },
 
   // RDP tools
   { name: 'disconnect_rdp', description: 'Disconnect RDP session (keeps GUI alive for screenshots).', inputSchema: { type: 'object', properties: {} } },
@@ -423,7 +417,7 @@ const TOOLS = [
 
 // ─── Tool handler ───
 
-const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command', 'spawn_terminal', 'list_terminals', 'terminal_input', 'terminal_output', 'terminal_wait', 'close_terminal',
+const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command',
   'kanban_list', 'kanban_get_task', 'kanban_list_column', 'kanban_add_task', 'kanban_update_task', 'kanban_move_task', 'kanban_delete_task', 'kanban_restore_task',
   'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo', 'kanban_restore_todo', 'kanban_history',
   'mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors', 'mindmap_add_node', 'mindmap_link_node',
@@ -525,7 +519,7 @@ const server = new Server(
 // A collaborator's session is told only about the tools it may call. The
 // server refuses the rest regardless (COLLABORATOR_MCP_TOOLS is checked on
 // every call); this is so their Claude does not see secret_get and
-// spawn_terminal listed, try them, and report a wall of 403s as "blockers".
+// owner-only tools listed, try them, and report a wall of 403s as "blockers".
 const TOOL_SCOPE = process.env.CRUNDI_TOOL_SCOPE || '';
 // Tools that only mean anything in an outside collaborator's chat.
 const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);

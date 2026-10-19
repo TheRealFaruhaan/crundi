@@ -1,0 +1,53 @@
+<div class="wna a-dkt">
+  <div class="seg"><b class="on">Containers</b><b>Stacks</b><b>Images</b><b>Volumes</b><b>Networks</b><b>System</b></div>
+  <div class="bay"><i></i><i></i><i class="w"></i><i></i><i></i><i></i><i></i><i class="x"></i><i></i><i class="s"></i><i class="s"></i><i class="s"></i></div>
+  <div class="list">
+    <div class="row r1"><s></s><p><em>web</em><u>nginx:alpine</u></p><span class="cpu"><i></i></span><code>2.1%</code></div>
+    <div class="row r2"><s></s><p><em>db</em><u>postgres:16</u></p><span class="cpu"><i></i></span><code>4.8%</code></div>
+    <div class="row r3"><s class="t"></s><p><em>worker</em><u>app-worker</u></p><span class="cpu"><i></i></span><code class="c3">31%</code><b class="stop"><i></i></b></div>
+    <div class="row r4"><s></s><p><em>cache</em><u>redis:7</u></p><span class="cpu"><i></i></span><code>0.4%</code></div>
+  </div>
+  <style>
+    .a-dkt .seg{position:absolute;left:40px;top:34px;display:flex;gap:4px;padding:4px;border-radius:10px;border:1px solid var(--border);background:var(--bg-secondary)}
+    .a-dkt .seg b{font:500 12px/1 system-ui,sans-serif;color:var(--text-muted);padding:8px 12px;border-radius:7px}
+    .a-dkt .seg b.on{color:var(--text-primary);background:var(--bg-card);box-shadow:inset 0 0 0 1px var(--border)}
+    .a-dkt .bay{position:absolute;left:40px;top:94px;width:560px;height:38px;display:flex;gap:6px;align-items:center;padding:0 12px;box-sizing:border-box;border-radius:10px;border:1px solid var(--border);background:var(--bg-secondary)}
+    .a-dkt .bay i{width:18px;height:18px;border-radius:4px;background:var(--green);opacity:0;animation:adk-pop 10s ease infinite}
+    .a-dkt .bay i:nth-child(2){animation-delay:.08s}.a-dkt .bay i:nth-child(3){animation-delay:.16s}.a-dkt .bay i:nth-child(4){animation-delay:.24s}
+    .a-dkt .bay i:nth-child(5){animation-delay:.32s}.a-dkt .bay i:nth-child(6){animation-delay:.4s}.a-dkt .bay i:nth-child(7){animation-delay:.48s}
+    .a-dkt .bay i:nth-child(8){animation-delay:.56s}.a-dkt .bay i:nth-child(9){animation-delay:.64s}.a-dkt .bay i:nth-child(10){animation-delay:.72s}
+    .a-dkt .bay i:nth-child(11){animation-delay:.8s}.a-dkt .bay i:nth-child(12){animation-delay:.88s}
+    .a-dkt .bay i.w{background:var(--yellow)}
+    .a-dkt .bay i.s{background:var(--text-muted)}
+    .a-dkt .bay i.x{animation:adk-pop 10s ease infinite,adk-off 10s ease infinite;animation-delay:.56s,0s}
+    .a-dkt .list{position:absolute;left:40px;top:148px;width:560px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);overflow:hidden}
+    .a-dkt .row{display:flex;align-items:center;gap:14px;height:52px;padding:0 16px;border-bottom:1px solid var(--border)}
+    .a-dkt .row:last-child{border-bottom:none}
+    .a-dkt .row s{width:9px;height:9px;border-radius:50%;background:var(--green);flex:none;text-decoration:none}
+    .a-dkt .row s.t{animation:adk-dot 10s ease infinite}
+    .a-dkt .row p{margin:0;flex:1;display:flex;flex-direction:column;gap:3px}
+    .a-dkt .row em{font:600 13px system-ui,sans-serif;font-style:normal;color:var(--text-primary)}
+    .a-dkt .row u{text-decoration:none;font:11px var(--mono,monospace);color:var(--text-muted)}
+    .a-dkt .cpu{width:110px;height:6px;border-radius:3px;background:var(--bg-secondary);overflow:hidden}
+    .a-dkt .cpu i{display:block;height:100%;border-radius:3px;background:var(--accent);transform-origin:left;animation:adk-cpu 10s ease-in-out infinite}
+    .a-dkt .r2 .cpu i{animation-name:adk-cpu2}
+    .a-dkt .r3 .cpu i{animation-name:adk-cpu3}
+    .a-dkt .r4 .cpu i{animation-name:adk-cpu4}
+    .a-dkt code{width:44px;text-align:right;font:12px var(--mono,monospace);color:var(--text-secondary)}
+    .a-dkt .c3{animation:adk-txt 10s ease infinite}
+    .a-dkt .stop{position:absolute;right:16px;width:26px;height:26px;border-radius:7px;border:1px solid var(--border);display:none}
+    .a-dkt .r3{position:relative}
+    .a-dkt .r3 .stop{display:block;right:-40px;top:13px;animation:adk-btn 10s ease infinite}
+    .a-dkt .stop i{position:absolute;left:8px;top:8px;width:9px;height:9px;border-radius:2px;background:var(--text-secondary)}
+    @keyframes adk-pop{0%,4%{opacity:0;transform:scale(.4)}10%,100%{opacity:1;transform:scale(1)}}
+    @keyframes adk-off{0%,56%{background:var(--green)}62%,92%{background:var(--text-muted)}100%{background:var(--green)}}
+    @keyframes adk-dot{0%,56%{background:var(--green)}62%,92%{background:var(--text-muted)}100%{background:var(--green)}}
+    @keyframes adk-cpu{0%{scale:.12 1}25%{scale:.2 1}50%{scale:.1 1}75%{scale:.18 1}100%{scale:.12 1}}
+    @keyframes adk-cpu2{0%{scale:.3 1}25%{scale:.22 1}50%{scale:.38 1}75%{scale:.26 1}100%{scale:.3 1}}
+    @keyframes adk-cpu3{0%{scale:.55 1}20%{scale:.8 1}40%{scale:.62 1}56%{scale:.7 1}62%,92%{scale:0 1}100%{scale:.55 1}}
+    @keyframes adk-cpu4{0%{scale:.05 1}50%{scale:.08 1}100%{scale:.05 1}}
+    @keyframes adk-txt{0%,40%{opacity:1}44%,94%{opacity:0}100%{opacity:1}}
+    @keyframes adk-btn{0%,40%{right:-40px;border-color:var(--border)}46%,54%{right:16px;border-color:var(--border);background:transparent}57%{border-color:var(--yellow);background:var(--yellow-dim)}62%{right:16px}68%,100%{right:-40px}}
+    @media (prefers-reduced-motion:reduce){.a-dkt *{animation:none!important}.a-dkt .bay i{opacity:1}}
+  </style>
+</div>

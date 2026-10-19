@@ -1,0 +1,39 @@
+<div class="wna a-fwt">
+  <div class="card">
+    <div class="h"><em>shop</em><span class="bell"><i></i></span></div>
+    <div class="ctr"><s></s><b>web</b><span class="st"><span class="hl">healthy</span><span class="uh">unhealthy</span></span></div>
+  </div>
+  <div class="note"><span class="dot"></span><p><b>Forward "shop" is down</b><span>container web is unhealthy (Docker health check)</span></p></div>
+  <div class="note back"><span class="dot"></span><p><b>Forward "shop" is back</b><span>container web is running and healthy</span></p></div>
+  <style>
+    .a-fwt .card{position:absolute;left:60px;top:120px;width:240px;border-radius:14px;border:1px solid var(--border);background:var(--bg-card);padding:16px 18px;box-sizing:border-box}
+    .a-fwt .h{display:flex;align-items:center;justify-content:space-between}
+    .a-fwt .h em{font:600 16px system-ui,sans-serif;font-style:normal;color:var(--text-primary)}
+    .a-fwt .bell{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;animation:afw-bell 11s ease infinite}
+    .a-fwt .bell i{width:14px;height:13px;border:2px solid currentColor;border-bottom:none;border-radius:8px 8px 2px 2px;color:var(--text-secondary);position:relative;animation:afw-belli 11s ease infinite}
+    .a-fwt .bell i::after{content:"";position:absolute;left:50%;bottom:-6px;width:5px;height:3px;margin-left:-2.5px;border-radius:0 0 3px 3px;background:currentColor}
+    .a-fwt .ctr{display:flex;align-items:center;gap:8px;margin-top:18px;font:12px var(--mono,monospace)}
+    .a-fwt .ctr s{width:9px;height:9px;border-radius:50%;background:var(--green);text-decoration:none;animation:afw-dot 11s ease infinite}
+    .a-fwt .ctr b{font-weight:500;color:var(--text-primary)}
+    .a-fwt .hl,.a-fwt .uh{border-radius:999px;padding:2px 8px;font-size:11px}
+    .a-fwt .hl{color:var(--green);background:var(--green-dim);animation:afw-hl 11s ease infinite}
+    .a-fwt .st{display:inline-grid}
+    .a-fwt .st>span{grid-area:1/1;justify-self:start}
+    .a-fwt .uh{color:#f87171;background:rgba(239,68,68,.15);opacity:0;animation:afw-uh 11s ease infinite}
+    .a-fwt .note{position:absolute;left:330px;top:104px;width:260px;display:flex;gap:10px;padding:12px 14px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border);box-shadow:0 14px 34px rgba(0,0,0,.45);opacity:0;transform:translateY(-10px);animation:afw-n1 11s ease infinite}
+    .a-fwt .note.back{top:196px;animation-name:afw-n2}
+    .a-fwt .note .dot{width:10px;height:10px;border-radius:50%;background:#ef4444;flex:none;margin-top:4px}
+    .a-fwt .note.back .dot{background:var(--green)}
+    .a-fwt .note p{margin:0;display:flex;flex-direction:column;gap:3px}
+    .a-fwt .note b{font:600 12.5px system-ui,sans-serif;color:var(--text-primary)}
+    .a-fwt .note span{font:11px system-ui,sans-serif;color:var(--text-secondary)}
+    @keyframes afw-bell{0%,10%{border-color:var(--border);background:transparent}16%,100%{border-color:var(--accent);background:var(--accent)}}
+    @keyframes afw-belli{0%,10%{color:var(--text-secondary)}16%,100%{color:#fff}}
+    @keyframes afw-dot{0%,30%{background:var(--green)}34%,62%{background:#f59e0b}66%,100%{background:var(--green)}}
+    @keyframes afw-hl{0%,30%{opacity:1}34%,62%{opacity:0}66%,100%{opacity:1}}
+    @keyframes afw-uh{0%,30%{opacity:0}34%,62%{opacity:1}66%,100%{opacity:0}}
+    @keyframes afw-n1{0%,36%{opacity:0;transform:translateY(-10px)}41%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afw-n2{0%,68%{opacity:0;transform:translateY(-10px)}73%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @media (prefers-reduced-motion:reduce){.a-fwt *{animation:none!important}.a-fwt .note{opacity:1;transform:none}}
+  </style>
+</div>

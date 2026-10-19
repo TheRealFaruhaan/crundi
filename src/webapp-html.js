@@ -139,27 +139,31 @@ export function getWebappHtml(botUsername, appVersion = '') {
     @media (prefers-reduced-motion: reduce) { #boot { transition: none; } }
 
     /* ─── Reconnecting ───
-       Shown when the live connection has been down for more than a moment.
-       It does not take clicks: what is on screen stays readable and
-       scrollable while the robot works on getting the connection back. */
-    #reconn {
-      display: none; position: fixed; left: 50%; top: 50%; z-index: 99990;
-      transform: translate(-50%, -50%);
-      flex-direction: column; align-items: center; gap: 8px;
-      padding: 22px 30px 20px; min-width: 220px; max-width: calc(100vw - 32px); box-sizing: border-box;
-      background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
-      border: 1px solid var(--border); border-radius: 18px;
-      box-shadow: var(--shadow-lg), var(--surface-hi);
-      -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
-      pointer-events: none; text-align: center;
+       A thin line along the bottom edge of the top bar, with the status pill
+       saying what it is. Nothing is drawn over the page: what is on screen
+       stays readable and usable while the connection comes back. Amber and
+       moving while it tries, red and still when this device is offline, a
+       moment of green when it is back. */
+    #reconn-line {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 2px; overflow: hidden;
+      pointer-events: none; opacity: 0; transition: opacity 0.3s ease; z-index: 2;
     }
-    #reconn.on { display: flex; animation: reconnIn 0.28s cubic-bezier(0.22,1,0.36,1) both; }
-    @keyframes reconnIn { from { opacity: 0; transform: translate(-50%, -46%) scale(0.96); } to { opacity: 1; transform: translate(-50%, -50%); } }
-    #reconn .cb-mini { width: 84px; height: 84px; }
-    #reconn .rc-t { font-weight: 650; font-size: 0.98rem; color: var(--text-primary); }
-    #reconn .rc-s { font-size: 0.8rem; line-height: 1.45; color: var(--text-secondary); max-width: 240px; }
-    #reconn .rc-s:empty { display: none; }
-    @media (prefers-reduced-motion: reduce) { #reconn.on { animation: none; } }
+    #reconn-line i {
+      position: absolute; top: 0; bottom: 0; left: -40%; width: 40%;
+      background: linear-gradient(90deg, transparent, var(--yellow), transparent);
+      animation: reconnSweep 1.4s ease-in-out infinite;
+    }
+    @keyframes reconnSweep { from { left: -40%; } to { left: 100%; } }
+    #reconn-line.on { opacity: 1; }
+    #reconn-line.offline i { left: 0; width: 100%; background: var(--red); opacity: 0.75; animation: none; }
+    #reconn-line.back { opacity: 1; animation: reconnBack 1.6s ease forwards; }
+    #reconn-line.back i { left: 0; width: 100%; background: var(--green); animation: none; }
+    @keyframes reconnBack { 0%, 50% { opacity: 1; } 100% { opacity: 0; } }
+    #reconn-say { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    @media (prefers-reduced-motion: reduce) {
+      #reconn-line i { left: 0; width: 100%; animation: none; opacity: 0.8; }
+      #reconn-line.back { animation: none; opacity: 0; }
+    }
 
     /* ─── Login Screen ─── */
     #login-screen {
@@ -392,6 +396,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     .topbar .status-badge.connected { background: var(--green-dim); color: var(--green); }
     .topbar .status-badge.disconnected { background: var(--red-dim); color: var(--red); }
+    .topbar .status-badge.reconnecting { background: var(--yellow-dim); color: var(--yellow); }
+    .topbar .status-badge.offline { background: var(--red-dim); color: var(--red); }
     .topbar .tunnel-url {
       color: var(--text-muted);
       font-size: 0.75rem;
@@ -1475,6 +1481,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
     /* Notes: the tab and the panes host crundi-notes.js, which scrolls itself. */
     .notes-tab { overflow: hidden; }
     .widgets-tab { overflow: hidden; }
+    /* Docker: crundi-docker.js scrolls its own body, so its header stays put. */
+    .docker-tab { overflow: hidden; }
+    .tab-btn.dk-absent { display: none !important; }
     .nt-tabbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex: none; }
     .nt-tabbar-t { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); }
     .nt-tabhost { flex: 1; min-height: 0; }
@@ -1612,42 +1621,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       padding: 1px 6px; border-radius: 999px; background: var(--red-dim); color: var(--red);
     }
 
-    /* Containers. The whole row is the control for opening logs, so it gets a
-       pointer and a hover the way a link would. */
-    .ctr-row {
-      display: flex; align-items: center; gap: 10px;
-      padding: 9px 8px; border-radius: var(--radius-sm); cursor: pointer;
-      border-bottom: 1px solid var(--border-subtle);
-    }
-    .ctr-row:last-of-type { border-bottom: none; }
-    .ctr-row:hover { background: var(--bg-hover); }
-    .ctr-row.open { background: var(--bg-tertiary); }
-    .ctr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--text-muted); }
-    .ctr-dot.running { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
-    .ctr-dot.unhealthy { background: var(--yellow); box-shadow: 0 0 0 3px var(--yellow-dim); }
-    .ctr-main { flex: 1; min-width: 0; }
-    .ctr-name { font-size: 0.82rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ctr-sub {
-      font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px;
-    }
-    /* Which stack it belongs to. On a shared machine this is the difference
-       between stopping your own container and stopping someone else's. */
-    .ctr-proj {
-      flex: none; font-size: 0.62rem; font-family: var(--mono);
-      padding: 1px 7px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-secondary);
-    }
-    .ctr-logs {
-      max-height: 300px; overflow: auto; margin: 0 0 10px;
-      background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm);
-      padding: 8px; font-family: var(--mono); font-size: 0.72rem; line-height: 1.5;
-      color: var(--text-secondary); white-space: pre-wrap; word-break: break-word;
-      user-select: text; -webkit-user-select: text;
-    }
     .ctr-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-    @media (max-width: 640px) {
-      .ctr-sub { white-space: normal; }
-    }
     .svc-btn.confirming { border-color: var(--red); color: var(--red); background: var(--red-dim); }
     @media (max-width: 640px) {
       .maint-row { flex-wrap: wrap; }
@@ -1661,7 +1635,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     /* Action buttons — one consistent button style across the card. The bare
        .svc-actions button selector also covers panels that reuse this row
-       (Terminals, Browsers) without needing the explicit class. */
+       (Browsers) without needing the explicit class. */
     .svc-card .svc-actions, .svc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
     .svc-btn, .svc-actions button {
       display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
@@ -2094,7 +2068,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       /* Reclaim width so badges never overflow: drop the wordmark text (icon
          stays) and collapse the connection badge to just its status dot. */
       .topbar .logo .logo-text { display: none; }
-      .topbar .status-badge.connected, .topbar .status-badge.disconnected {
+      .topbar .status-badge.connected, .topbar .status-badge.disconnected,
+      .topbar .status-badge.reconnecting, .topbar .status-badge.offline {
         font-size: 0; padding: 6px; gap: 0 !important; border-radius: 50%;
       }
       /* A collaborator's Push and Ask to merge carried text labels that ran
@@ -3232,7 +3207,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
     input:focus, textarea:focus, select:focus { outline: none; box-shadow: var(--ring); border-color: var(--accent) !important; }
 
     /* connection badge → live status dot */
-    .topbar .status-badge.connected, .topbar .status-badge.disconnected { display: inline-flex; align-items: center; gap: 6px; }
+    .topbar .status-badge.connected, .topbar .status-badge.disconnected,
+    .topbar .status-badge.reconnecting, .topbar .status-badge.offline { display: inline-flex; align-items: center; gap: 6px; }
+    .topbar .status-badge.reconnecting::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); animation: reconnBlink 1.2s ease-in-out infinite; }
+    .topbar .status-badge.offline::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
+    @keyframes reconnBlink { 50% { opacity: 0.25; } }
     .topbar .status-badge.connected::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: connPulse 2.2s ease-out infinite; }
     .topbar .status-badge.disconnected::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--red); opacity: 0.8; }
     @keyframes connPulse {
@@ -3363,7 +3342,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .toast.success { border-left-color: var(--green); }
 
     @media (prefers-reduced-motion: reduce) {
-      .topbar .status-badge.connected::before { animation: none; }
+      .topbar .status-badge.connected::before, .topbar .status-badge.reconnecting::before { animation: none; }
       .svc-card, .info-section, .secret-item { transition: none; }
       .svc-card:hover, .info-section:hover, .secret-item:hover { transform: none; }
     }
@@ -3375,12 +3354,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
     ${miniSvg('bt', 'cb-load', 'Crundi is loading')}
     ${wordSvg()}
     <div class="boot-note" id="boot-note"></div>
-  </div>
-  <!-- ─── Reconnecting ─── -->
-  <div id="reconn" role="status" aria-live="polite">
-    ${miniSvg('rc', 'cb-load', '')}
-    <div class="rc-t">Reconnecting</div>
-    <div class="rc-s" id="reconn-sub"></div>
   </div>
   <!-- ─── Login Screen ─── -->
   <div id="login-screen">
@@ -3526,6 +3499,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       <button class="topbar-act" id="collab-merge" data-action="collab-merge" title="Ask the owner to merge your branch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span>Ask to merge</span></button>
       <button class="topbar-act" id="approvals-btn" data-action="approvals-toggle" title="Things waiting on you"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12.5"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span class="appr-count" id="approvals-count">0</span></button>
       <span class="status-badge disconnected" id="conn-badge">disconnected</span>
+      <div id="reconn-line" aria-hidden="true"><i></i></div>
+      <span id="reconn-say" role="status" aria-live="polite"></span>
       <div class="win-controls" id="win-controls">
         <button onclick="window.api?.minimize()" title="Minimize">&#x2013;</button>
         <button onclick="window.api?.maximize()" title="Maximize">&#x25A1;</button>
@@ -3558,7 +3533,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           <button class="tab-btn" data-tab="widgets" title="Panels built by Claude"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="tab-label">Panels</span></button>
           <button class="tab-btn" data-tab="schedule" title="Schedule"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg><span class="tab-label">Schedule</span></button>
           <button class="tab-btn" data-tab="services" title="Services"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg><span class="tab-label">Services</span></button>
-          <button class="tab-btn" data-tab="terminals" title="Terminals"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><span class="tab-label">Terminals</span></button>
+          <button class="tab-btn" data-tab="docker" title="Docker"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg><span class="tab-label">Docker</span></button>
           <button class="tab-btn" data-tab="browsers" title="Browsers"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browsers</span></button>
           <button class="tab-btn" data-tab="info" title="Info"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span class="tab-label">Info</span></button>
           <button class="tab-btn" data-tab="secrets" title="Secrets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tab-label">Secrets</span> <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
@@ -3641,7 +3616,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="browser-panel tab-panel" id="browser-panel" data-panel="browser"></div>
         <div class="schedule-panel tab-panel" id="schedule-panel" data-panel="schedule"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
-        <div class="services-panel tab-panel" id="terminals-panel" data-panel="terminals"></div>
+        <div class="tab-panel docker-tab" id="docker-panel" data-panel="docker"></div>
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
         <div class="info-panel tab-panel" id="info-panel" data-panel="info"></div>
         <div class="info-panel tab-panel" id="settings-panel" data-panel="settings"></div>
@@ -3830,6 +3805,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/crundi-mini.js?v=${vendorTag('crundi-mini.js')}"><\/script>
   <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
+  <script src="/vendor/crundi-docker.js?v=${vendorTag('crundi-docker.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
   <script src="/vendor/crundi-whatsnew.js?v=${vendorTag('crundi-whatsnew.js')}"><\/script>
   <script src="/vendor/crundi-phone.js?v=${vendorTag('crundi-phone.js')}"><\/script>
@@ -3840,6 +3816,48 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // ─── State ───
     let token = localStorage.getItem('crundi_token');
     let refreshToken = localStorage.getItem('crundi_refresh');
+    // Inside the phone app, with a server that offers it, the app keeps this
+    // page's login and renews it for every page it shows (PageLogin in the
+    // app). The page then holds only the access token, in memory, and asks
+    // the app for a new one over window.CrundiLogin, a channel only this
+    // server's own frames can see. It never holds a refresh token, so no two
+    // pages of the app can spend the same one: that is what used to get a
+    // phone cut off as if its login had been stolen.
+    const APP_LOGIN = !!window.CrundiLogin;
+    if (APP_LOGIN) {
+      token = null; refreshToken = null;
+      // A login this page kept before (a password typed into an older
+      // version) must not linger beside the app's.
+      try { localStorage.removeItem('crundi_token'); localStorage.removeItem('crundi_refresh'); } catch (e) { /* no storage */ }
+    }
+    let appLoginSeq = 0;
+    const appLoginWait = new Map();
+    if (APP_LOGIN) {
+      window.CrundiLogin.onmessage = (e) => {
+        let m = null;
+        try { m = JSON.parse(e.data); } catch (err) { return; }
+        const done = m && appLoginWait.get(m.id);
+        if (!done) return;
+        appLoginWait.delete(m.id);
+        done(m);
+      };
+    }
+    /** Ask the app for the login: op "get" (what it has) or "renew". Resolves null if it does not answer. */
+    function askAppLogin(op) {
+      return new Promise((resolve) => {
+        const id = 'l' + (++appLoginSeq);
+        const timer = setTimeout(() => { appLoginWait.delete(id); resolve(null); }, 30000);
+        appLoginWait.set(id, (m) => { clearTimeout(timer); resolve(m); });
+        try { window.CrundiLogin.postMessage(JSON.stringify({ id, op, stale: token || '' })); }
+        catch (err) { clearTimeout(timer); appLoginWait.delete(id); resolve(null); }
+      });
+    }
+    function takeAppLogin(m) {
+      if (!m || !m.token) return false;
+      token = m.token;
+      scheduleRefresh(m.expiresIn);
+      return true;
+    }
     // One shared in-flight refresh. Without this, a burst of concurrent 401s
     // would each rotate the refresh token; the second rotation would look like
     // a replay to the server and revoke the whole login.
@@ -3848,6 +3866,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // Another tab rotating the session writes the new tokens here. Picking them
     // up as they land keeps this tab from ever holding a spent copy.
     window.addEventListener('storage', (e) => {
+      if (APP_LOGIN) return;
       if (e.key === 'crundi_refresh' && e.newValue) refreshToken = e.newValue;
       if (e.key === 'crundi_token' && e.newValue) token = e.newValue;
     });
@@ -3855,6 +3874,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     function storeSession(d) {
       if (!d || !d.token) return false;
+      // The app keeps the login: nothing of it goes into this page's storage.
+      if (APP_LOGIN) { token = d.token; scheduleRefresh(d.expiresIn); return true; }
       token = d.token;
       localStorage.setItem('crundi_token', token);
       if (d.refreshToken) {
@@ -3889,6 +3910,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     function refreshSession() {
       if (refreshInFlight) return refreshInFlight;
+      if (APP_LOGIN) {
+        refreshInFlight = askAppLogin('renew')
+          .then(m => takeAppLogin(m))
+          .then(ok => { refreshInFlight = null; return ok; });
+        return refreshInFlight;
+      }
       // Take the freshest token, not the one captured at page load. Another tab
       // may have rotated it since, and refreshInFlight only serialises refreshes
       // WITHIN this tab. Sending a copy a sibling already spent looked like a
@@ -3961,6 +3988,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       kanbanTask: 'never', kanbanSubtask: 'never',
       scheduleRun: 'away',
       serviceDown: 'always', serviceUp: 'away',
+      forwardDown: 'always', forwardUp: 'away',
       updateAvailable: 'away',
       scheduledChat: 'always',
       mindmapAdd: 'never', mindmapDelete: 'never',
@@ -4452,7 +4480,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
     let currentTab = 'workbench';
     let projects = [];
     let terminals = []; // { id, project, title, order, status }
-    let userTerminals = []; // { name, status, alias, command }
     let services = [];
     let scheduledProjects = []; // aliases with at least one enabled schedule
     let reconnectTimer = null;
@@ -4530,6 +4557,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       'git-branch': '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
       refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
       plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+      bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
       kanban: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>',
       'chevrons-left': '<polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/>',
       'chevron-left': '<polyline points="15 18 9 12 15 6"/>',
@@ -4548,6 +4576,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
       maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/>',
       play: '<polygon points="6 4 20 12 6 20 6 4"/>',
       stop: '<rect x="5" y="5" width="14" height="14" rx="2"/>',
+      pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+      zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+      layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+      'hard-drive': '<line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/>',
+      network: '<rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3"/><line x1="12" y1="8" x2="12" y2="13"/>',
     };
     function ic(name) {
       const p = ICON_PATHS[name]; if (!p) return '';
@@ -8631,31 +8664,54 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (btn) { btn.classList.add('active'); btn.textContent = 'Done'; }
     }
 
-    // ─── Reconnecting card ───
+    // ─── Reconnecting line ───
     // A dropped connection that comes straight back (a phone waking, a tab
-    // returning) should not flash anything, so the card waits a moment before
-    // it appears. After a while it says more, since by then it is the network
-    // or the server and not a blip.
-    let reconnShowTimer = null, reconnSlowTimer = null;
-    function reconnSub() {
-      const el = $('#reconn-sub');
-      if (!el) return;
-      el.textContent = navigator.onLine === false ? 'This device is offline.' : 'Still trying. Crundi may be restarting, or the network may be down.';
+    // returning) should not show anything, so the line and the pill wait a
+    // moment before they change. After a while the pill's tooltip and the
+    // screen-reader text say more, since by then it is the network or the
+    // server and not a blip.
+    let reconnShowTimer = null, reconnSlowTimer = null, reconnBackTimer = null, reconnShown = false;
+    function reconnPaint(slow) {
+      const offline = navigator.onLine === false;
+      const badge = $('#conn-badge'), line = $('#reconn-line'), say = $('#reconn-say');
+      const text = offline ? 'This device is offline.'
+        : slow ? 'Still trying. Crundi may be restarting, or the network may be down.' : 'Reconnecting';
+      if (badge) {
+        badge.className = 'status-badge ' + (offline ? 'offline' : 'reconnecting');
+        badge.textContent = offline ? 'offline' : 'reconnecting';
+        badge.title = text;
+      }
+      if (line) line.className = offline ? 'on offline' : 'on';
+      if (say && say.textContent !== text) say.textContent = text;
     }
     function reconnShow() {
-      if (!appReady || reconnShowTimer || $('#reconn').classList.contains('on')) return;
+      if (!appReady || reconnShowTimer || reconnShown) return;
       reconnShowTimer = setTimeout(function () {
         reconnShowTimer = null;
-        $('#reconn-sub').textContent = navigator.onLine === false ? 'This device is offline.' : '';
-        $('#reconn').classList.add('on');
-        reconnSlowTimer = setTimeout(reconnSub, 9000);
+        reconnShown = true;
+        clearTimeout(reconnBackTimer);
+        reconnPaint(false);
+        reconnSlowTimer = setTimeout(function () { reconnPaint(true); }, 9000);
       }, 1200);
     }
     function reconnHide() {
       clearTimeout(reconnShowTimer); clearTimeout(reconnSlowTimer);
       reconnShowTimer = reconnSlowTimer = null;
-      $('#reconn').classList.remove('on');
+      const badge = $('#conn-badge'), line = $('#reconn-line'), say = $('#reconn-say');
+      if (badge) { badge.className = 'status-badge connected'; badge.textContent = 'connected'; badge.title = ''; }
+      if (!reconnShown) return;
+      reconnShown = false;
+      // A moment of green, so the person who saw it go sees it come back.
+      if (line) {
+        line.className = 'back';
+        clearTimeout(reconnBackTimer);
+        reconnBackTimer = setTimeout(function () { line.className = ''; }, 1700);
+      }
+      if (say) say.textContent = 'Connected again.';
     }
+    // Going offline or back online while the line is up changes what it says.
+    window.addEventListener('offline', function () { if (reconnShown) reconnPaint(false); });
+    window.addEventListener('online', function () { if (reconnShown) reconnPaint(false); });
 
     // ─── WebSocket ───
     function connectWS() {
@@ -8673,8 +8729,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       ws = new WebSocket(url);
 
       ws.onopen = () => {
-        $('#conn-badge').className = 'status-badge connected';
-        $('#conn-badge').textContent = 'connected';
         reconnHide();
         // Re-subscribe every mounted terminal. Reset each first so the scrollback
         // the server re-sends on subscribe replaces (not duplicates) the buffer.
@@ -8686,6 +8740,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // applyHistory() rebuilds the log and re-arms any parked prompt.
         for (const [, c] of chatViews) { try { c.resubscribe(); } catch { /* ignore */ } }
         fitAllTerms();
+        if (window.CrundiDocker) window.CrundiDocker.onReconnect();
         reportPresence(true); // re-assert presence on a fresh socket
       };
 
@@ -8707,11 +8762,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if (msg.type === 'server-log') {
           appendServerLog(msg);
         }
+        if (typeof msg.type === 'string' && msg.type.indexOf('docker-') === 0 && window.CrundiDocker) {
+          window.CrundiDocker.handleMessage(msg);
+        }
       };
 
       ws.onclose = () => {
-        $('#conn-badge').className = 'status-badge disconnected';
-        $('#conn-badge').textContent = 'disconnected';
         reconnShow();
         reconnectTimer = setTimeout(connectWS, 3000);
       };
@@ -8774,7 +8830,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
      * that is the control — this exists so they are not shown doors that open
      * onto a 403.
      */
-    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'terminals', 'info', 'settings', 'widgets'];
+    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'info', 'settings', 'widgets'];
     const COLLAB_HIDDEN_WB = ['git'];
 
     function applyRoleToUi() {
@@ -8940,8 +8996,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (state.role && state.role !== userRole) { userRole = state.role; applyRoleToUi(); }
       collabInfo = state.collab || null;
       renderCollabBar();
+      checkDockerPresence();
       terminals = state.terminals || [];
-      userTerminals = state.userTerminals || [];
       if (state.services) services = state.services;   // keep sidebar heartbeat fresh
       if (state.scheduled) scheduledProjects = state.scheduled;
       if (state.projects) projects = state.projects;
@@ -8954,7 +9010,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       autoPickProject();
       renderProjects();
-      renderTerminals();
       // Status dots/badges update in place every push (cheap, no focus loss).
       updateLiveCellHeads();
       // Only rebuild the grid when the terminal SET/layout actually changes -
@@ -9048,7 +9103,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // asleep (timers don't fire there, so the proactive refresh was skipped)
       // would make the socket 401 and flap on the 3s reconnect loop. Renew
       // first when either side is actually down.
-      if ((!wsHealthy() || !sseHealthy()) && refreshToken) await refreshSession();
+      // Inside the app: check the token instead of renewing it. A dropped
+      // connection is usually the network changing hands, not the login
+      // ageing; apiFetch renews by itself if the check is refused.
+      if ((!wsHealthy() || !sseHealthy()) && APP_LOGIN) await apiFetch('/api/session-check').catch(() => {});
+      else if ((!wsHealthy() || !sseHealthy()) && refreshToken) await refreshSession();
       let reconnected = false;
       if (!wsHealthy()) { connectWS(); reconnected = true; }   // re-subscribes on open
       if (!sseHealthy()) { connectSSE(); reconnected = true; } // server re-pushes state + usage
@@ -9243,10 +9302,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     // ─── Tabs ───
     // Tabs that mean something with no project open. Media and Mindmap have a
-    // global scope of their own; Info, Secrets and Settings are app-level. The
+    // global scope of their own; Docker, Info, Secrets and Settings are
+    // machine- or app-level. The
     // rest are meaningless without a project, so they stay hidden rather than
     // being shown and then erroring.
-    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'info', 'secrets', 'settings'];
+    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'docker', 'info', 'secrets', 'settings'];
 
     function syncTabScope() {
       // Global panels (and their top bar chips) exist with or without a
@@ -9277,12 +9337,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
       parkWbPanels();
       if (currentTab === 'notes' && tab !== 'notes') closeNotesTab();
       if (currentTab === 'widgets' && tab !== 'widgets' && window.CrundiWidgets) window.CrundiWidgets.unmountTab();
+      if (currentTab === 'docker' && tab !== 'docker' && dockerView) dockerView.hide();
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.tab-panel').forEach(p => p.classList.toggle('visible', p.dataset.panel === tab));
       if (tab === 'workbench') { renderTermGrid(); setTimeout(() => { fitAllTerms(); const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
       if (tab === 'services') loadServices();
-      if (tab === 'terminals') renderTerminals();
+      if (tab === 'docker') loadDockerTab();
       if (tab === 'browsers') loadBrowsers();
       if (tab === 'git') loadGitInfo();
       if (tab === 'files') loadFiles();
@@ -11025,134 +11086,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       el.innerHTML = html;
     }
 
-    // ─── Containers ───
-    //
-    // Hidden behind a button: this is a long list on a busy machine and it is
-    // not what Info is mainly for. Logs are fetched per container on demand
-    // rather than up front, because pulling ten log tails to show none of them
-    // is work nobody asked for.
-
     var sreqArmed = null;    // request id whose PIN field is open
     var sreqError = '';      // inline PIN error for that card
-    var ctrOpen = null;      // id whose logs are showing
-    var ctrShown = false;
-
-    async function toggleContainers() {
-      ctrShown = !ctrShown;
-      const btn = $('#ctr-toggle');
-      if (btn) btn.textContent = ctrShown ? 'Hide' : 'Show';
-      const body = $('#ctr-body');
-      if (!body) return;
-      body.style.display = ctrShown ? '' : 'none';
-      if (ctrShown) await loadContainers();
-    }
-
-    async function loadContainers() {
-      const body = $('#ctr-body');
-      if (!body) return;
-      try {
-        const res = await apiFetch('/api/containers');
-        const d = await res.json();
-        renderContainers(d.containers || [], d.error);
-      } catch (err) {
-        body.innerHTML = '<div class="sys-quiet">Could not reach Docker.</div>';
-      }
-    }
-
-    function renderContainers(list, error) {
-      const body = $('#ctr-body');
-      if (!body) return;
-      if (error) { body.innerHTML = '<div class="sys-quiet">' + escHtml(error) + '</div>'; return; }
-      if (!list.length) { body.innerHTML = '<div class="sys-quiet">No containers on this machine.</div>'; return; }
-      var html = '';
-      for (var i = 0; i < list.length; i++) {
-        var c = list[i];
-        var dot = c.running ? (c.health === 'unhealthy' ? 'unhealthy' : 'running') : '';
-        var id = escHtml(c.id);
-        html += '<div class="ctr-row' + (ctrOpen === c.id ? ' open' : '') + '" data-action="ctr-logs" data-id="' + id + '">'
-          + '<span class="ctr-dot ' + dot + '"></span>'
-          + '<div class="ctr-main">'
-          + '<div class="ctr-name">' + escHtml(c.name) + '</div>'
-          + '<div class="ctr-sub">' + escHtml(c.image) + ' \u00b7 ' + escHtml(c.status)
-          + ((c.ips || []).length ? ' \u00b7 ' + escHtml(c.ips.map(function (x) { return x.ip; }).join(', ')) : '')
-          + '</div>'
-          + '</div>'
-          + (c.project ? '<span class="ctr-proj">' + escHtml(c.project) + '</span>' : '')
-          + (c.running
-            ? '<button class="svc-btn danger" data-action="ctr-stop" data-id="' + id + '" data-name="' + escHtml(c.name) + '">Stop</button>'
-            : '<button class="svc-btn" data-action="ctr-start" data-id="' + id + '">Start</button>')
-          + '</div>';
-        if (ctrOpen === c.id) {
-          html += '<div class="ctr-logs" id="ctr-logs-' + id + '">Loading logs\u2026</div>';
-        }
-      }
-      body.innerHTML = html;
-      if (ctrOpen) fetchContainerLogs(ctrOpen);
-    }
-
-    async function showContainerLogs(id) {
-      ctrOpen = (ctrOpen === id) ? null : id;
-      await loadContainers();
-    }
-
-    async function fetchContainerLogs(id) {
-      const pane = document.getElementById('ctr-logs-' + id);
-      if (!pane) return;
-      try {
-        const res = await apiFetch('/api/containers/logs?id=' + encodeURIComponent(id) + '&tail=300');
-        const d = await res.json();
-        if (!d.ok) { pane.textContent = d.error || 'Could not read logs.'; return; }
-        // An empty log is a fact about the container, not a failure to report.
-        pane.textContent = d.text.trim() || 'This container has not logged anything.';
-        pane.scrollTop = pane.scrollHeight;
-      } catch (err) {
-        pane.textContent = 'Could not read logs.';
-      }
-    }
-
-    /** Stopping is two-step: these are often somebody else's containers. */
-    async function containerStop(id, name, btn) {
-      if (!btn) return;
-      if (btn.dataset.armed !== '1') {
-        btn.dataset.armed = '1';
-        btn.classList.add('confirming');
-        btn.textContent = 'Stop ' + (name || 'it') + '?';
-        clearTimeout(btn._armTimer);
-        btn._armTimer = setTimeout(() => {
-          btn.dataset.armed = '';
-          btn.classList.remove('confirming');
-          btn.textContent = 'Stop';
-        }, 6000);
-        return;
-      }
-      clearTimeout(btn._armTimer);
-      btn.disabled = true;
-      btn.textContent = 'Stopping\u2026';
-      try {
-        const res = await apiFetch('/api/containers/stop', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: id }),
-        });
-        const d = await res.json();
-        if (!d.ok) throw new Error(d.error || 'Could not stop it');
-        toast('Stopped ' + d.name, 'success');
-      } catch (err) { toast(err.message, 'error'); }
-      loadContainers();
-    }
-
-    async function containerStart(id, btn) {
-      if (btn) { btn.disabled = true; btn.textContent = 'Starting\u2026'; }
-      try {
-        const res = await apiFetch('/api/containers/start', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: id }),
-        });
-        const d = await res.json();
-        if (!d.ok) throw new Error(d.error || 'Could not start it');
-        toast('Started ' + d.name, 'success');
-      } catch (err) { toast(err.message, 'error'); }
-      loadContainers();
-    }
 
     // ─── Reclaim disk space ───
     //
@@ -12146,121 +12081,28 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const alias = currentProject || '';
         const res = await apiFetch('/api/browsers?alias=' + encodeURIComponent(alias));
         const data = await res.json();
+        browserPlaces = data.places || null;
         renderBrowsers(data.browsers || []);
       } catch (err) {
         toast('Failed to load browsers: ' + err.message, 'error');
       }
     }
 
-    function renderTerminals() {
-      const panel = $('#terminals-panel');
-      if (!panel) return;
-
-      // Merge Claude terminals and user terminals for current project
-      const notParked = terminals.filter(t => t.kind !== 'parked');
-      const claudeTerms = currentProject
-        ? notParked.filter(t => t.project === currentProject)
-        : notParked;
-      const userTerms = currentProject
-        ? userTerminals.filter(t => t.alias === currentProject)
-        : userTerminals;
-
-      const spawnForm = '<div style="padding:0 0 8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
-        + '<input type="text" id="term-spawn-name" placeholder="Terminal name" style="flex:1;min-width:100px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<input type="text" id="term-spawn-cmd" placeholder="Command (optional)" style="flex:2;min-width:140px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
-        + '<button data-action="term-spawn" style="padding:6px 14px;border-radius:var(--radius-sm);border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;font-size:12px;white-space:nowrap;">+ Spawn</button>'
-        + '</div>';
-
-      let cards = '';
-
-      // Claude terminal cards
-      for (const ct of claudeTerms) {
-        const statusClass = ct.status === 'running' ? 'running' : 'stopped';
-        cards += '<div class="svc-card">'
-          + '<div class="svc-header">'
-          + '  <span class="svc-name">Claude: ' + escHtml(ct.project) + '</span>'
-          + '  <span class="svc-status ' + statusClass + '">' + escHtml(ct.status || 'unknown') + (ct.busy ? ' (busy)' : '') + '</span>'
-          + '</div>'
-          + '<div class="svc-meta">Claude Code CLI session</div>'
-          + '</div>';
-      }
-
-      // User terminal cards
-      for (const ut of userTerms) {
-        const statusClass = ut.status === 'running' ? 'running' : 'stopped';
-        const ename = escHtml(ut.name);
-        cards += '<div class="svc-card">'
-          + '<div class="svc-header">'
-          + '  <span class="svc-name">' + ename + '</span>'
-          + '  <span class="svc-status ' + statusClass + '">' + escHtml(ut.status) + '</span>'
-          + '</div>'
-          + (ut.command ? '<div class="svc-meta">' + escHtml(ut.command) + '</div>' : '')
-          + '<div class="svc-actions">'
-          + '<button data-action="term-view-output" data-name="' + ename + '">Output</button>'
-          + (ut.status === 'running' ? '<button class="danger" data-action="term-close-user" data-name="' + ename + '">Close</button>' : '')
-          + '</div>'
-          + '<div class="svc-logs" id="term-logs-' + ename + '"></div>'
-          + '</div>';
-      }
-
-      if (!cards) {
-        panel.innerHTML = spawnForm + '<div class="services-empty">'
-          + '<div class="icon">&gt;_</div>'
-          + '<p>No terminals' + (currentProject ? ' for this project' : '') + '</p>'
-          + '</div>';
-        return;
-      }
-
-      panel.innerHTML = spawnForm + cards;
-    }
-
-    async function termSpawnUser() {
-      const nameEl = document.getElementById('term-spawn-name');
-      const cmdEl = document.getElementById('term-spawn-cmd');
-      if (!nameEl || !nameEl.value.trim()) { toast('Enter a terminal name', 'error'); return; }
-      try {
-        const project = projects.find(p => p.alias === currentProject);
-        const r = await apiFetch('/api/terminals/spawn', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alias: currentProject, name: nameEl.value.trim(), command: cmdEl?.value || undefined, cwd: project?.path }),
-        });
-        const data = await r.json();
-        if (!data.ok) toast(data.error || 'Failed', 'error');
-        else { toast('Terminal spawned'); nameEl.value = ''; if (cmdEl) cmdEl.value = ''; }
-      } catch (e) { toast(e.message, 'error'); }
-    }
-
-    async function termViewOutput(name) {
-      const logsEl = document.getElementById('term-logs-' + name);
-      if (!logsEl) return;
-      if (logsEl.style.display === 'block') { logsEl.style.display = 'none'; return; }
-      try {
-        const r = await apiFetch('/api/terminals/output?alias=' + encodeURIComponent(currentProject) + '&name=' + encodeURIComponent(name));
-        const data = await r.json();
-        if (!data.ok) { toast(data.error, 'error'); return; }
-        const lines = data.lines || [];
-        logsEl.textContent = lines.join('\\n') || '(no output)';
-        logsEl.style.display = 'block';
-        logsEl.scrollTop = logsEl.scrollHeight;
-      } catch (e) { toast(e.message, 'error'); }
-    }
-
-    async function termCloseUser(name) {
-      try {
-        const r = await apiFetch('/api/terminals/close', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alias: currentProject, name }),
-        });
-        const data = await r.json();
-        if (!data.ok) toast(data.error, 'error');
-        else toast('Terminal closed');
-      } catch (e) { toast(e.message, 'error'); }
-    }
+    // Where a new browser may run (server, desktop), from the last listing.
+    let browserPlaces = null;
+    let browserOn = '';
 
     function renderBrowsers(browsers) {
       const panel = $('#browsers-panel');
+      // A choice only when there is one: both this server and a desktop app.
+      const pl = browserPlaces || {};
+      const onSelect = (pl.server && pl.desktop)
+        ? '<select id="browser-on-select" title="Which machine runs it: this server reaches its own localhost, the desktop app reaches your network" style="min-width:130px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;">'
+          + '<option value="">Run on: default</option>'
+          + '<option value="server"' + (browserOn === 'server' ? ' selected' : '') + '>Run on this server</option>'
+          + '<option value="desktop"' + (browserOn === 'desktop' ? ' selected' : '') + '>Run on the desktop app</option>'
+          + '</select>'
+        : '';
 
       // Device selector + open button toolbar
       let deviceOpts = '';
@@ -12282,6 +12124,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'
         + '<select id="browser-device-select" style="flex:1;min-width:140px;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;">'
         + deviceOpts + '</select>'
+        + onSelect
         + '</div>'
         + '<div style="display:flex;gap:6px;align-items:center;">'
         + '<input type="text" id="browser-new-url" value="http://localhost:3000" placeholder="URL to open" style="flex:1;padding:6px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12px;font-family:var(--mono);" />'
@@ -12303,7 +12146,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         return '<div class="svc-card" data-browser-key="' + ek + '">'
           + '<div class="svc-header">'
           + '  <span class="svc-name">' + escHtml(b.name || b.key || 'browser') + '</span>'
-          + '  <span class="svc-status running">open</span>'
+          + '  <span class="svc-status running">' + (b.on === 'server' ? 'on the server' : b.on === 'desktop' ? 'on the desktop app' : 'open') + '</span>'
           + '</div>'
           + '<div class="svc-meta">'
           + '  <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;">'
@@ -12330,12 +12173,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (!url) { toast('Enter a URL first', 'error'); return; }
       const name = 'browser-' + Date.now();
       const selIdx = parseInt(($('#browser-device-select') || {}).value || '0');
+      const onSel = $('#browser-on-select');
+      browserOn = onSel ? onSel.value : '';
       const profile = DEVICE_PROFILES[selIdx] || DEVICE_PROFILES[0];
       try {
         const res = await apiFetch('/api/browsers/open', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alias: currentProject, name, url, width: profile.w, height: profile.h }),
+          body: JSON.stringify({ alias: currentProject, name, url, width: profile.w, height: profile.h, on: browserOn || undefined }),
         });
         const data = await res.json();
         if (!data.ok) toast(data.error || 'Failed to open browser', 'error');
@@ -12395,38 +12240,41 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
     }
 
-    // ─── User Terminals Panel ───
-    async function loadUserTerminals() {
+    // ─── Docker (app/vendor/crundi-docker.js) ───
+    //
+    // The whole machine's Docker, owner-only. The tab only exists where Docker
+    // is installed: one status call per page load decides, and hides the
+    // button otherwise rather than offering a tab that can only say no.
+    let dockerView = null;
+    let dockerChecked = false;
+
+    async function checkDockerPresence() {
+      if (dockerChecked || userRole === 'collaborator') return;
+      dockerChecked = true;
+      const btn = document.querySelector('.tab-btn[data-tab="docker"]');
       try {
-        const alias = currentProject || '';
-        const res = await apiFetch('/api/user-terminals?alias=' + encodeURIComponent(alias));
-        const data = await res.json();
-        renderUserTerminals(data.terminals || []);
-      } catch (err) {
-        toast('Failed to load terminals: ' + err.message, 'error');
-      }
+        const r = await apiFetch('/api/docker/status');
+        const d = await r.json();
+        if (btn) btn.classList.toggle('dk-absent', !d.installed);
+        if (!d.installed && currentTab === 'docker') switchTab('info');
+      } catch (err) { dockerChecked = false; /* asked again on the next state push */ }
     }
 
-    function renderUserTerminals(terms) {
-      const panel = $('#user-terminals-panel');
-      if (terms.length === 0) {
-        panel.innerHTML = '<div class="services-empty">'
-          + '<div class="icon">' + ic('terminal') + '</div>'
-          + '<p>No user terminals open</p>'
-          + '<p style="font-size:0.8rem;color:var(--text-muted)">Terminals are spawned via Claude Code MCP tools</p>'
-          + '</div>';
-        return;
+    function loadDockerTab() {
+      if (!window.CrundiDocker) { toast('The Docker view did not load. Reload the page.', 'error'); return; }
+      if (!dockerView) {
+        dockerView = window.CrundiDocker.mount(document.getElementById('docker-panel'), {
+          apiFetch: apiFetch,
+          toast: toast,
+          icon: ic,
+          send: (m) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(m)); return true; } return false; },
+          Terminal: window.Terminal,
+          FitAddon: window.FitAddon,
+          termTheme: TERM_THEME,
+          termFont: TERM_FONT_FAMILY,
+        });
       }
-      panel.innerHTML = terms.map(t => {
-        const statusClass = t.status === 'running' ? 'running' : 'stopped';
-        return '<div class="svc-card">'
-          + '<div class="svc-header">'
-          + '  <span class="svc-name">' + escHtml(t.name || t.key || 'terminal') + '</span>'
-          + '  <span class="svc-status ' + statusClass + '">' + escHtml(t.status || 'unknown') + '</span>'
-          + '</div>'
-          + (t.cwd ? '<div class="svc-meta">' + escHtml(t.cwd) + '</div>' : '')
-          + '</div>';
-      }).join('');
+      dockerView.show();
     }
 
     // ─── Info Panel ───
@@ -12446,6 +12294,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
         tunnelHtml = '<div class="info-section"><h4>Tunnel</h4>'
           + infoRow('URL', tUrl !== '—' ? '<a href="' + escHtml(tUrl) + '" target="_blank">' + escHtml(tUrl) + '</a>' : '—', true)
           + infoRow('Status', activeTunnels > 0 ? 'Connected' : (tunnelKeys.length > 0 ? 'Connecting...' : 'Not configured'))
+          // A named tunnel's hostname is set in Cloudflare, not here, and has
+          // to point at this port. Shown so a "Bad gateway" (502) can be
+          // checked against it at a glance.
+          + (tdata.named && tdata.target
+            ? infoRow('Cloudflare service', '<code title="In Cloudflare: Zero Trust, Networks, Tunnels, this tunnel, Public Hostname. Use 127.0.0.1, not localhost.">HTTP \u2192 ' + escHtml(tdata.target) + '</code>', true)
+            : '')
           + '</div>';
       } catch { /* ignore */ }
 
@@ -12476,10 +12330,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
       const sysHtml = '<div class="info-section"><h4>This machine</h4>'
         + '<div id="sys-stats-body"><div class="sys-quiet">Reading the machine\\u2026</div></div></div>'
-        + '<div class="info-section" id="ctr-section" style="display:none">'
-        + '<div class="ctr-head"><h4 style="margin:0;flex:1">Containers</h4>'
-        + '<button class="svc-btn" id="ctr-toggle" data-action="ctr-toggle">Show</button></div>'
-        + '<div id="ctr-body" style="display:none"></div></div>'
         + '<div class="info-section"><h4>Reclaim disk space</h4>'
         + '<div id="maint-body"><div class="sys-quiet">Measuring\\u2026</div></div></div>'
         + '<div class="info-section"><h4>Outside collaborators</h4>'
@@ -12491,21 +12341,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       ensureStatsPolling();
       loadMaintenance();
       loadCollaborators();
-      // The Containers section only appears on a machine that has Docker; the
-      // listing doubles as the availability check, so it costs one call.
-      ctrShown = false;
-      ctrOpen = null;
-      try {
-        const cres = await apiFetch('/api/containers');
-        const cd = await cres.json();
-        if (cd.ok) {
-          const sec = $('#ctr-section');
-          if (sec) sec.style.display = '';
-          const tog = $('#ctr-toggle');
-          if (tog) tog.textContent = 'Show ' + (cd.containers || []).length;
-        }
-      } catch (err) { /* no Docker, no section */ }
-
       // Load server logs
       try {
         const lres = await apiFetch('/api/server-logs');
@@ -13341,6 +13176,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           ['Kanban', [['kanbanTask', 'Main task status change'], ['kanbanSubtask', 'Sub task status change']]],
           ['Schedule', [['scheduleRun', 'When a schedule executes'], ['scheduledChat', 'Result of a scheduled chat']]],
           ['Services', [['serviceDown', 'When a service crashes / stops'], ['serviceUp', 'When a service starts']]],
+          ['Forwards', [['forwardDown', 'When a watched forward goes down'], ['forwardUp', 'When a watched forward is back']]],
           ['Mindmap', [['mindmapAdd', 'When a node is added'], ['mindmapDelete', 'When a node is deleted']]],
           ['MCP Browser', [['browserLaunch', 'When a browser launches'], ['browserStop', 'When a browser stops']]],
           ['Security', [['secretRequest', 'Secret access requested']]],
@@ -13723,10 +13559,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'svc-tunnel-port': svcTunnelSetPort(d.key, d.port); break;
         case 'svc-tunnel-toggle': svcTunnelToggle(d.key, d.enabled === '1', d.port); break;
         case 'svc-delete': svcDelete(d.key); break;
-        case 'ctr-toggle': toggleContainers(); break;
-        case 'ctr-logs': showContainerLogs(d.id); break;
-        case 'ctr-stop': containerStop(d.id, d.name, e.target.closest('button')); break;
-        case 'ctr-start': containerStart(d.id, e.target.closest('button')); break;
         case 'maint-run': runMaintenance(d.id, e.target.closest('button')); break;
         case 'svc-register': showRegisterServiceForm(); break;
         case 'svc-reg-submit': submitRegisterService(); break;
@@ -13956,9 +13788,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
           break;
         }
         case 'copy-logs': copyServerLogs(); break;
-        case 'term-spawn': termSpawnUser(); break;
-        case 'term-view-output': termViewOutput(d.name); break;
-        case 'term-close-user': termCloseUser(d.name); break;
         case 'browser-open': showOpenBrowserForm(); break;
         case 'browser-close': closeBrowserInstance(d.key); break;
         case 'browser-navigate': browserNavigate(d.key); break;
@@ -17341,7 +17170,36 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (pick) selectProject(pick);
     }
 
+    /** The sign-in screen as the phone app sees it: no form, one way forward. */
+    function showPairAgain() {
+      const box = document.querySelector('#login-screen .login-box');
+      if (!box) return;
+      const can = (typeof NATIVE_CAN !== 'undefined') ? NATIVE_CAN : [];
+      const canPair = can.indexOf('pair') >= 0;
+      box.textContent = '';
+      const add = (tag, text, css) => { const el = document.createElement(tag); el.textContent = text; if (css) el.style.cssText = css; box.appendChild(el); return el; };
+      add('p', 'This phone is not paired with this server', 'font-weight:600;color:var(--text-primary);');
+      add('p', 'Its sign-in ended, or was removed from another device. The app signs in by pairing, not with a password.', 'max-width:300px;');
+      add('p', 'On a computer, or in the browser on this phone, open Crundi, then Settings, then Connect a phone.'
+        + (canPair ? '' : ' In this app, remove this server in the app settings first, then pair again.'), 'max-width:300px;');
+      const btn = add('button', canPair ? 'Pair this phone' : 'Open app settings',
+        'padding:11px 18px;border-radius:var(--radius-sm);border:0;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer;');
+      btn.type = 'button';
+      btn.addEventListener('click', () => {
+        try {
+          if (canPair) window.CrundiNative.pair(); else window.CrundiNative.openSettings();
+        } catch (err) { toast('Open the app settings to pair this phone again', 'error'); }
+      });
+      // The app is told as well, so it can stop offering what cannot work
+      // (bubbles, replies) until the phone is paired again.
+      try { if (canPair && window.CrundiNative.unpaired) window.CrundiNative.unpaired(); } catch (err) { /* an older app */ }
+    }
+
     async function init() {
+      // The app's login, before anything asks whether we are signed in.
+      if (APP_LOGIN && !token) {
+        if (!takeAppLogin(await askAppLogin('get'))) takeAppLogin(await askAppLogin('renew'));
+      }
       if (consumeRedirectToken() && await checkAuth()) {
         showApp(); connectSSE(); checkImport();
         return;
@@ -17356,6 +17214,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         clearSession();
         $('#login-screen').style.display = '';
         hideBoot();
+        // Inside the phone app there is no signing in here. The app is two
+        // logins, this page's and its own, and only pairing makes both; a
+        // password typed here would leave an app that looks signed in and
+        // gets no notifications. The server refuses it as well.
+        if (window.CrundiNative || navigator.userAgent.indexOf('CrundiAndroid/') >= 0) { showPairAgain(); return; }
         initLogin();
         $('#password-login').addEventListener('submit', submitPasswordLogin);
         const cf = $('#collab-login');

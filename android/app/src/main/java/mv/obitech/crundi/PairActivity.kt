@@ -34,8 +34,16 @@ class PairActivity : Activity() {
         super.onCreate(savedInstanceState)
         val col = Ui.column(this).apply { gravity = Gravity.CENTER }
         col.addView(ImageView(this).apply { setImageResource(R.drawable.ic_logo) }, LinearLayout.LayoutParams(Ui.dp(this, 84), Ui.dp(this, 84)))
-        col.addView(Ui.title(this, "Connect to your Crundi server"), Ui.wide(this, 18))
-        col.addView(Ui.body(this, "On the server, open Settings, then Connect a phone, and point this phone at the picture it shows."), Ui.wide(this, 10))
+        // Pairing AGAIN: the server ended this phone's sign-in, and the app
+        // has no other way back in (the server refuses a password from it).
+        val again = intent.getStringExtra(EXTRA_AGAIN)?.let { Servers.byId(this, it) }
+        if (again == null) {
+            col.addView(Ui.title(this, "Connect to your Crundi server"), Ui.wide(this, 18))
+            col.addView(Ui.body(this, "On the server, open Settings, then Connect a phone, and point this phone at the picture it shows."), Ui.wide(this, 10))
+        } else {
+            col.addView(Ui.title(this, "Pair this phone again"), Ui.wide(this, 18))
+            col.addView(Ui.body(this, "${again.host} ended this phone's sign-in. Open Crundi on a computer, or in this phone's browser, go to Settings, then Connect a phone, and point this phone at the picture it shows."), Ui.wide(this, 10))
+        }
         col.addView(Ui.button(this, "Scan the picture", true) { startActivityForResult(Intent(this, ScanActivity::class.java), REQ_SCAN) }, Ui.wide(this, 26))
 
         col.addView(Ui.body(this, "Or paste a pairing link"), Ui.wide(this, 28))
@@ -122,11 +130,26 @@ class PairActivity : Activity() {
             bgToken = bg.optString("token"), bgRefresh = bg.optString("refreshToken"),
             pageToken = page.optString("token"), pageRefresh = page.optString("refreshToken"),
         )
+        // A phone paired again is a new device to the server, with a new id.
+        // What it replaces is the old pairing with the same server and the
+        // same person, whose logins are dead: left in the list it would be a
+        // second entry for one server that answers nothing.
+        for (old in Servers.all(this)) {
+            if (old.id == server.id || old.baseUrl != server.baseUrl || old.username != server.username) continue
+            LiveCards.forget(applicationContext, old.id)
+            Icons.forget(old.id)
+            PageLogin.forget(applicationContext, old.id)
+            Servers.remove(this, old.id)
+        }
         Servers.save(this, server)
         Servers.setCurrent(this, server.id)
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK))
         finish()
     }
 
-    companion object { private const val REQ_SCAN = 1 }
+    companion object {
+        private const val REQ_SCAN = 1
+        /** The id of a server whose pairing has ended and is being made again. */
+        const val EXTRA_AGAIN = "again"
+    }
 }

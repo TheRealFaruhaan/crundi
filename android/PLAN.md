@@ -39,8 +39,11 @@ code, not from building any of it.
   installed.
 - **iOS later.** Same pairing, same relay, same bridge contract, a Swift shell.
   Until then iPhone users have the home screen web app with web push.
-- **Linux desktop client** after Android is built and tested, in both forms:
-  with a server, and client only.
+- **Linux desktop client** in both forms, with a server and client only:
+  built in 1.20.1-dev.3 as `.deb` packages for Ubuntu (the `desktop-linux`
+  job in `.github/workflows/release-extra.yml`). The all-in-one package
+  carries its own Node and keeps its settings in `~/.config/crundi-desktop`.
+  Not built: an AppImage, arm64, and a macOS app.
 
 ## Pairing
 
@@ -587,9 +590,38 @@ and the Linux desktop client.
   password and authenticator secret, on a network with no way out. Claude is
   not signed in there. Connect a phone gained "Copy the pairing link
   instead" so that a reviewer with one phone can pair.
-- **Not part of 1.0.0:** the GitHub build as a release (no release signing
-  key, not attached to releases), the Play in-app update prompt, a path from
-  the demonstration server to the push relay.
+- **The GitHub build is a release asset.** A version tag makes the `github`
+  flavour as a signed release APK and attaches it to that tag's release as
+  `Crundi-Android-<app version>.apk` (the `release` job in
+  `.github/workflows/android.yml`; it can also be run by hand for a release
+  that already exists). It is signed with a key of its own,
+  `crundi-github.jks`, kept beside the upload key on the build machine and,
+  with its password and `google-services.json`, in the repository's secrets.
+  The workflow refuses an APK whose certificate is not the one it names. It
+  is not the Play key, so a phone moves between the two installs only by
+  uninstalling. Each flavour is signed by its own key in `build.gradle.kts`.
+- **1.0.1: the app signs in by pairing and nothing else.** A phone lost its
+  pairing (the server took a renewal offered twice for a stolen token and
+  cut the device off), a password typed into the page brought the page back,
+  and what was left looked signed in and did half its job: no notifications,
+  and every bubble answered "chat could not be found". Now the server
+  refuses every sign-in from the app that is not pairing (`isUnpairedSignIn`
+  in `src/client-version.js`), the page shows the app "Pair this phone" in
+  place of a sign-in form, and the app has a pair-again path that replaces
+  the dead pairing (`PairActivity.EXTRA_AGAIN`, the bridge's `pair()`). The
+  bubble lookup says which of three things went wrong. And the cause: a
+  renewal whose answer never arrived is answered again when the spent token
+  comes back, as long as nothing that first answer issued was ever used
+  (`rotateRefresh`); the server logs why a login was revoked.
+- **1.0.1 also catches up.** A change of a chat's state is sent once, as
+  it happens, so a phone that missed "working" (paired a moment too late,
+  the message lost) showed nothing for that chat. The app now asks the
+  server what is on the cards each time it comes to the front
+  (`GET /api/push/mobile/states`, `LiveCards.catchUp`), draws what it did
+  not know of and takes down what has stopped. It does not open a bubble:
+  those come from notifications.
+- **Not part of 1.0.0:** the Play in-app update prompt, a path from the
+  demonstration server to the push relay.
 - **Next:** the Play Console steps in `android/store/PLAY_RELEASE.md`.
 
 ## API notes for the app

@@ -1,0 +1,31 @@
+<div class="wna a-bro">
+  <div class="box srv"><i class="ic-s"></i><b>Server</b><u>localhost:4300</u></div>
+  <div class="box dsk"><i class="ic-d"></i><b>Desktop app</b><u>your network</u></div>
+  <div class="pick"><span class="o1">Run on this server</span><span class="o2">Run on the desktop app</span><i class="hl"></i></div>
+  <div class="page"><div class="bar"><s></s><s></s><s></s></div><p class="p1"></p><p class="p2"></p><p class="p3"></p></div>
+  <style>
+    .a-bro .box{position:absolute;top:226px;width:200px;height:122px;border-radius:14px;border:1px solid var(--border);background:var(--bg-card);box-sizing:border-box;padding:66px 18px 0;text-align:center}
+    .a-bro .srv{left:70px;animation:abr-srv 10s ease infinite}
+    .a-bro .dsk{left:370px;animation:abr-dsk 10s ease infinite}
+    .a-bro .box b{display:block;font:600 14px system-ui,sans-serif;color:var(--text-primary)}
+    .a-bro .box u{display:block;margin-top:5px;text-decoration:none;font:11px var(--mono,monospace);color:var(--text-muted)}
+    .a-bro .ic-s{position:absolute;left:82px;top:18px;width:36px;height:36px;border-radius:5px;border:2px solid var(--text-secondary);box-sizing:border-box;background:linear-gradient(var(--text-secondary),var(--text-secondary)) 6px 9px/20px 2px no-repeat,linear-gradient(var(--text-secondary),var(--text-secondary)) 6px 19px/20px 2px no-repeat}
+    .a-bro .ic-d{position:absolute;left:78px;top:20px;width:44px;height:28px;border-radius:4px;border:2px solid var(--text-secondary);box-sizing:border-box}
+    .a-bro .ic-d::after{content:"";position:absolute;left:-8px;right:-8px;bottom:-8px;height:4px;border-radius:2px;background:var(--text-secondary)}
+    .a-bro .pick{position:absolute;left:170px;top:34px;width:300px;height:36px;border-radius:9px;border:1px solid var(--border);background:var(--bg-secondary);overflow:hidden}
+    .a-bro .pick span{position:absolute;left:14px;top:10px;font:500 13px system-ui,sans-serif;color:var(--text-primary)}
+    .a-bro .o1{animation:abr-o1 10s ease infinite}.a-bro .o2{opacity:0;animation:abr-o2 10s ease infinite}
+    .a-bro .hl{position:absolute;right:12px;top:14px;width:8px;height:8px;border-right:2px solid var(--text-muted);border-bottom:2px solid var(--text-muted);rotate:45deg;top:10px}
+    .a-bro .page{position:absolute;top:92px;width:160px;height:104px;border-radius:10px;border:1px solid var(--accent);background:var(--bg-secondary);overflow:hidden;box-shadow:0 12px 30px rgba(0,0,0,.4);animation:abr-move 10s cubic-bezier(.6,0,.3,1) infinite}
+    .a-bro .bar{height:20px;display:flex;gap:5px;align-items:center;padding:0 9px;border-bottom:1px solid var(--border);background:var(--bg-card)}
+    .a-bro .bar s{width:7px;height:7px;border-radius:50%;background:var(--border);text-decoration:none}
+    .a-bro .page p{height:8px;border-radius:4px;background:var(--border);margin:12px 12px 0}
+    .a-bro .p1{width:70%;background:var(--accent)!important;opacity:.6}.a-bro .p2{width:52%}.a-bro .p3{width:62%}
+    @keyframes abr-move{0%,10%{left:90px;opacity:0;transform:translateY(-8px)}16%,44%{left:90px;opacity:1;transform:none}54%,60%{left:390px;opacity:1}62%,90%{left:390px;opacity:1;transform:none}96%,100%{left:390px;opacity:0;transform:translateY(-8px)}}
+    @keyframes abr-srv{0%,10%{border-color:var(--border)}16%,44%{border-color:var(--accent)}50%,100%{border-color:var(--border)}}
+    @keyframes abr-dsk{0%,54%{border-color:var(--border)}60%,92%{border-color:var(--accent)}98%,100%{border-color:var(--border)}}
+    @keyframes abr-o1{0%,44%{opacity:1}48%,96%{opacity:0}100%{opacity:1}}
+    @keyframes abr-o2{0%,44%{opacity:0}48%,96%{opacity:1}100%{opacity:0}}
+    @media (prefers-reduced-motion:reduce){.a-bro *{animation:none!important}.a-bro .page{left:90px}}
+  </style>
+</div>

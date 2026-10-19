@@ -56,6 +56,10 @@ export const CAPABILITIES = Object.freeze([
   'handshake',
   'pairing',
   'mobile-push',
+  // The phone app may hold its page's login itself and renew it for every
+  // page it shows (POST /api/pair/page-login gives it one), instead of
+  // handing the page a refresh token of its own. See src/webapp.js.
+  'app-page-login',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));
@@ -164,6 +168,33 @@ export function isGated(path) {
   if (!path.startsWith('/api/')) return false;
   return !OPEN_PREFIXES.some((p) => path.startsWith(p));
 }
+
+/**
+ * The ways of signing in that are not pairing: Telegram, a password, a
+ * collaborator's phrase, first-run setup. Renewing, signing out and asking
+ * which methods exist are not sign-ins and are not listed.
+ */
+const SIGN_IN_PATHS = new Set(['/api/auth', '/auth/telegram/callback', '/api/auth/webapp', '/api/auth/password', '/api/auth/collab', '/api/auth/setup']);
+
+/**
+ * Is this the phone app trying to sign in some way other than pairing?
+ *
+ * The app is two logins tied to one device: the page it shows, and its own,
+ * which is what notifications, bubbles and replies run on. Pairing makes
+ * both. A password typed into the page makes only the first, and what you
+ * get is an app that looks signed in and does half its job: no notification
+ * arrives, every bubble says the chat cannot be found. So the app has one
+ * way in, and anything else is refused here rather than left to half-work.
+ */
+export function isUnpairedSignIn(req, path) {
+  return SIGN_IN_PATHS.has(path) && identifyClient(req).kind === 'android';
+}
+
+export const PAIR_REQUIRED = {
+  ok: false,
+  code: 'pair_required',
+  error: 'The Crundi app signs in by pairing. On another device, open Settings, then Connect a phone, and scan the picture with this app.',
+};
 
 /** The body of a refusal, the same on HTTP and in the handshake. */
 export function refusalBody(refusal, serverVersion) {

@@ -6,9 +6,22 @@
 # `play` flavour is NOT built here on purpose: that build is made by hand for
 # the Play Store, and contains no code that knows about GitHub.
 #
-# What comes out is a debug build, kept as a workflow artifact for trying on a
-# phone. Signed release builds attached to a GitHub release come later, once
-# there is a signing key in the repository's secrets.
+# Every run makes a debug build, kept as a workflow artifact for trying on a
+# phone. A version tag also makes the real thing (the `release` job below): the
+# `github` flavour, shrunk, signed, and attached to that tag's GitHub release
+# as Crundi-Android-<app version>.apk.
+#
+# The signing key is the GitHub one, NOT the Play upload key: it has to sit in
+# this repository's secrets, and a leak here must not be a leak of the key the
+# Play Store trusts. A phone therefore cannot move between the Play install
+# and this APK without uninstalling first. What the job needs in secrets:
+#   CRUNDI_GITHUB_KEYSTORE           the keystore file, base64
+#   CRUNDI_GITHUB_KEYSTORE_PASSWORD  its password (also the key's)
+#   GOOGLE_SERVICES_JSON             android/app/google-services.json, base64
+#                                    (without it the app has no notifications)
+#
+# To attach an APK to a release that already exists, run this workflow by hand
+# (Actions, Android, Run workflow) and give it the tag.
 name: Android
 
 on:
@@ -22,6 +35,11 @@ on:
       - 'android/**'
       - 'src/crundi-code.js'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to attach a signed APK to (e.g. v1.20.0). Empty: build only.'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -52,3 +70,91 @@ jobs:
           name: crundi-android-github-debug
           path: android/app/build/outputs/apk/github/debug/app-github-debug.apk
           if-no-files-found: error
+
+  release:
+    name: Signed APK on the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      # The certificate every APK from here must carry. An app signed with
+      # anything else cannot update the one people have installed, so a
+      # replaced or regenerated key has to fail here, loudly, not on a phone.
+      SIGNER_SHA256: 5dc5d001e6b7fc0198985d75e5526ddfff02a59a12b67810562bae5070df4235
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: The key and the Firebase description, from secrets
+        env:
+          KEYSTORE: ${{ secrets.CRUNDI_GITHUB_KEYSTORE }}
+          GOOGLE_SERVICES: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          [ -n "$KEYSTORE" ] || { echo "CRUNDI_GITHUB_KEYSTORE is not set" >&2; exit 1; }
+          [ -n "$GOOGLE_SERVICES" ] || { echo "GOOGLE_SERVICES_JSON is not set: the app would ship without notifications" >&2; exit 1; }
+          printf '%s' "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/crundi-github.jks"
+          printf '%s' "$GOOGLE_SERVICES" | base64 -d > android/app/google-services.json
+      - name: Build
+        working-directory: android
+        env:
+          CRUNDI_GITHUB_STORE_PASSWORD: ${{ secrets.CRUNDI_GITHUB_KEYSTORE_PASSWORD }}
+        run: |
+          export CRUNDI_GITHUB_STORE_FILE="$RUNNER_TEMP/crundi-github.jks"
+          ./gradlew --no-daemon assembleGithubRelease
+      - name: Check what was built
+        id: apk
+        run: |
+          out=android/app/build/outputs/apk/github/release
+          apk="$out/app-github-release.apk"
+          # Without a usable key Gradle still succeeds and writes
+          # app-github-release-unsigned.apk, which installs on nothing.
+          [ -f "$apk" ] || { echo "No signed APK came out:" >&2; ls "$out" >&2; exit 1; }
+          signer=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
+          # Shown whole, because how apksigner words a signer differs between
+          # versions of the build tools ("Signer #1", "Signer (minSdkVersion=…").
+          "$signer" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
+          got=$(grep -oE 'certificate SHA-256 digest: [0-9a-f]{64}' "$RUNNER_TEMP/certs.txt" | awk '{print $NF}' | sort -u)
+          if [ "$got" != "$SIGNER_SHA256" ]; then
+            echo "Signed with the wrong key: $got" >&2
+            exit 1
+          fi
+          # Notifications are compiled in from google-services.json. A file
+          # that was there but not read leaves them switched off, silently.
+          project=$(jq -r .project_info.project_id android/app/google-services.json)
+          if ! unzip -p "$apk" 'classes*.dex' | grep -aq "$project"; then
+            echo "The APK does not carry the Firebase project: notifications would be off" >&2
+            exit 1
+          fi
+          version=$(jq -r '.elements[0].versionName' "$out/output-metadata.json")
+          named="$RUNNER_TEMP/Crundi-Android-$version.apk"
+          cp "$apk" "$named"
+          echo "path=$named" >> "$GITHUB_OUTPUT"
+          echo "Crundi-Android-$version.apk, $(wc -c < "$named") bytes, signer $got"
+      - name: Attach
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # On a tag push GITHUB_REF_NAME is the tag; on a manual run it is the
+          # branch, and the tag is the one asked for.
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          # The Release workflow creates the release, from the same tag push
+          # and in parallel with this. Wait for it rather than race it.
+          for attempt in $(seq 1 60); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "release $TAG exists (after ${attempt} check(s))"
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "The release $TAG never appeared: the Release workflow must have failed."
+              exit 1
+            fi
+            sleep 10
+          done
+          gh release upload "$TAG" "${{ steps.apk.outputs.path }}" --clobber --repo "$GITHUB_REPOSITORY"

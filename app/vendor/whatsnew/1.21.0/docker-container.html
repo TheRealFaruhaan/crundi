@@ -1,0 +1,57 @@
+<div class="wna a-dkc">
+  <div class="tabs"><b class="t1">Overview</b><b class="t2">Logs</b><b class="t3">Stats</b><b class="t4">Shell</b><b class="t5">Inspect</b><i class="ink"></i></div>
+  <div class="pane logs">
+    <p class="l1"><span></span><em style="width:62%"></em></p>
+    <p class="l2"><span></span><em style="width:48%"></em></p>
+    <p class="l3 err"><span></span><em style="width:70%"></em></p>
+    <p class="l4"><span></span><em style="width:40%"></em></p>
+    <p class="l5"><span></span><em style="width:56%"></em></p>
+  </div>
+  <div class="pane stats">
+    <div class="ch"><u>CPU</u><svg viewBox="0 0 240 70" preserveAspectRatio="none"><path class="ln a" d="M0 52 L30 48 L60 50 L90 30 L120 36 L150 22 L180 30 L210 18 L240 24"/></svg></div>
+    <div class="ch"><u>Memory</u><svg viewBox="0 0 240 70" preserveAspectRatio="none"><path class="ln b" d="M0 40 L30 39 L60 38 L90 38 L120 36 L150 35 L180 35 L210 34 L240 34"/></svg></div>
+  </div>
+  <div class="pane shell">
+    <p><span>/#</span> <em class="ty"></em><i class="cur"></i></p>
+    <p class="out o1"></p><p class="out o2"></p>
+  </div>
+  <style>
+    .a-dkc .tabs{position:absolute;left:60px;top:40px;width:520px;display:flex;gap:4px;border-bottom:1px solid var(--border);padding-bottom:0}
+    .a-dkc .tabs b{font:500 13px/1 system-ui,sans-serif;color:var(--text-muted);padding:12px 14px}
+    .a-dkc .ink{position:absolute;bottom:-1px;height:2px;width:56px;background:var(--accent);left:84px;animation:adc-ink 11s ease infinite}
+    .a-dkc .t2{animation:adc-on1 11s ease infinite}.a-dkc .t3{animation:adc-on2 11s ease infinite}.a-dkc .t4{animation:adc-on3 11s ease infinite}
+    .a-dkc .pane{position:absolute;left:60px;top:100px;width:520px;height:250px;border-radius:12px;border:1px solid var(--border);background:var(--bg-primary);box-sizing:border-box;padding:18px 20px;opacity:0}
+    .a-dkc .logs{animation:adc-p1 11s ease infinite}
+    .a-dkc .stats{animation:adc-p2 11s ease infinite;display:flex;gap:16px;background:var(--bg-secondary)}
+    .a-dkc .shell{animation:adc-p3 11s ease infinite}
+    .a-dkc .logs p{display:flex;gap:10px;align-items:center;margin:0 0 18px;opacity:0;animation:adc-line 11s ease infinite}
+    .a-dkc .logs span{width:70px;height:8px;border-radius:4px;background:var(--border)}
+    .a-dkc .logs em{height:8px;border-radius:4px;background:var(--text-secondary);opacity:.6}
+    .a-dkc .logs .err em{background:#f87171;opacity:.8}
+    .a-dkc .l2{animation-delay:.35s!important}.a-dkc .l3{animation-delay:.7s!important}.a-dkc .l4{animation-delay:1.05s!important}.a-dkc .l5{animation-delay:1.4s!important}
+    .a-dkc .ch{flex:1;border-radius:10px;border:1px solid var(--border);background:var(--bg-card);padding:12px}
+    .a-dkc .ch u{text-decoration:none;font:600 10px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+    .a-dkc .ch svg{width:100%;height:150px;margin-top:10px}
+    .a-dkc .ln{fill:none;stroke-width:2.5;vector-effect:non-scaling-stroke;stroke-dasharray:400;stroke-dashoffset:400;animation:adc-draw 11s ease infinite}
+    .a-dkc .ln.a{stroke:var(--accent)}.a-dkc .ln.b{stroke:var(--green)}
+    .a-dkc .shell p{margin:0 0 14px;font:14px var(--mono,monospace);color:var(--text-primary);display:flex;align-items:center;gap:6px}
+    .a-dkc .shell span{color:var(--green)}
+    .a-dkc .ty{display:block;height:12px;border-radius:3px;background:var(--text-secondary);opacity:.7;width:0;animation:adc-type 11s steps(12) infinite}
+    .a-dkc .cur{display:block;width:8px;height:16px;background:var(--accent);animation:adc-blink 1s steps(1) infinite}
+    .a-dkc .out{height:9px;border-radius:4px;background:var(--border);opacity:0;animation:adc-out 11s ease infinite}
+    .a-dkc .o1{width:58%}.a-dkc .o2{width:40%}
+    @keyframes adc-ink{0%,30%{left:84px;width:44px}36%,63%{left:142px;width:50px}69%,100%{left:206px;width:50px}}
+    @keyframes adc-on1{0%,30%{color:var(--text-primary)}36%,100%{color:var(--text-muted)}}
+    @keyframes adc-on2{0%,30%{color:var(--text-muted)}36%,63%{color:var(--text-primary)}69%,100%{color:var(--text-muted)}}
+    @keyframes adc-on3{0%,63%{color:var(--text-muted)}69%,100%{color:var(--text-primary)}}
+    @keyframes adc-p1{0%,30%{opacity:1}34%,100%{opacity:0}}
+    @keyframes adc-p2{0%,32%{opacity:0}37%,63%{opacity:1}67%,100%{opacity:0}}
+    @keyframes adc-p3{0%,65%{opacity:0}70%,97%{opacity:1}100%{opacity:0}}
+    @keyframes adc-line{0%,3%{opacity:0;transform:translateY(6px)}7%,30%{opacity:1;transform:none}34%,100%{opacity:0}}
+    @keyframes adc-draw{0%,36%{stroke-dashoffset:400}56%,63%{stroke-dashoffset:0}67%,100%{stroke-dashoffset:0}}
+    @keyframes adc-type{0%,71%{width:0}82%,100%{width:190px}}
+    @keyframes adc-out{0%,84%{opacity:0}88%,97%{opacity:1}100%{opacity:0}}
+    @keyframes adc-blink{50%{opacity:0}}
+    @media (prefers-reduced-motion:reduce){.a-dkc *{animation:none!important}.a-dkc .logs,.a-dkc .logs p{opacity:1}}
+  </style>
+</div>

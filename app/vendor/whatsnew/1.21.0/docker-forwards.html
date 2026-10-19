@@ -1,0 +1,41 @@
+<div class="wna a-dfw">
+  <div class="list">
+    <div class="row r1"><s></s><p><em>web</em><u>nginx:alpine</u></p><b class="chip c1"><i></i>shop</b></div>
+    <div class="row r2"><s></s><p><em>api</em><u>node:22</u></p><b class="add"><i></i>Add forward</b><b class="chip c2"><i></i>api</b></div>
+    <div class="row r3"><s class="off"></s><p><em>worker</em><u>app-worker</u></p></div>
+  </div>
+  <div class="grp">
+    <div class="g g1"><h6>Nothing behind it</h6><div class="f f1"><em>old-demo</em><span class="bin"></span></div></div>
+    <div class="g g2"><h6>Running container</h6><div class="f"><em>shop</em><span class="ok">web</span></div><div class="f f2"><em>api</em><span class="ok">api</span></div></div>
+  </div>
+  <style>
+    .a-dfw .list{position:absolute;left:36px;top:46px;width:330px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);overflow:hidden}
+    .a-dfw .row{position:relative;display:flex;align-items:center;gap:12px;height:62px;padding:0 14px;border-bottom:1px solid var(--border)}
+    .a-dfw .row:last-child{border-bottom:none}
+    .a-dfw .row s{width:9px;height:9px;border-radius:50%;background:var(--green);flex:none;text-decoration:none}
+    .a-dfw .row s.off{background:var(--text-muted)}
+    .a-dfw .row p{margin:0;flex:1;display:flex;flex-direction:column;gap:3px}
+    .a-dfw .row em{font:600 13px system-ui,sans-serif;font-style:normal;color:var(--text-primary)}
+    .a-dfw .row u{text-decoration:none;font:11px var(--mono,monospace);color:var(--text-muted)}
+    .a-dfw .chip{display:inline-flex;align-items:center;gap:5px;font:500 11px var(--mono,monospace);color:var(--accent-hover);background:var(--accent-dim);border-radius:999px;padding:3px 9px}
+    .a-dfw .chip i{width:8px;height:8px;border:1.5px solid currentColor;border-radius:2px}
+    .a-dfw .c1{animation:adf-pop1 10s ease infinite}
+    .a-dfw .c2{position:absolute;right:14px;opacity:0;animation:adf-pop2 10s ease infinite}
+    .a-dfw .add{position:absolute;right:14px;display:inline-flex;align-items:center;gap:6px;font:500 11.5px system-ui,sans-serif;color:var(--text-secondary);border:1px solid var(--border);border-radius:7px;padding:5px 9px;animation:adf-add 10s ease infinite}
+    .a-dfw .add i{width:9px;height:9px;background:linear-gradient(currentColor,currentColor) center/9px 1.5px no-repeat,linear-gradient(currentColor,currentColor) center/1.5px 9px no-repeat}
+    .a-dfw .grp{position:absolute;left:392px;top:46px;width:212px;display:flex;flex-direction:column;gap:14px}
+    .a-dfw h6{margin:0 0 6px;font:600 9.5px system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+    .a-dfw .f{display:flex;align-items:center;justify-content:space-between;height:36px;padding:0 10px;margin-bottom:6px;border-radius:9px;border:1px solid var(--border);background:var(--bg-card)}
+    .a-dfw .f em{font:600 12px system-ui,sans-serif;font-style:normal;color:var(--text-primary)}
+    .a-dfw .f .ok{font:11px var(--mono,monospace);color:var(--green);background:var(--green-dim);border-radius:999px;padding:2px 8px}
+    .a-dfw .bin{width:22px;height:22px;border-radius:6px;border:1px solid var(--border)}
+    .a-dfw .f1{animation:adf-gone 10s ease infinite}
+    .a-dfw .g1 h6{animation:adf-gone 10s ease infinite}
+    .a-dfw .f2{opacity:0;animation:adf-pop2 10s ease infinite}
+    @keyframes adf-pop1{0%,6%{opacity:0;transform:scale(.7)}12%,100%{opacity:1;transform:none}}
+    @keyframes adf-add{0%,22%{opacity:1;border-color:var(--border)}28%,34%{opacity:1;border-color:var(--accent);color:var(--text-primary)}40%,100%{opacity:0}}
+    @keyframes adf-pop2{0%,40%{opacity:0;transform:scale(.7)}46%,96%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes adf-gone{0%,62%{opacity:1;transform:none}68%,74%{opacity:1;transform:none;border-color:#ef4444}82%,96%{opacity:0;transform:translateX(20px)}100%{opacity:1;transform:none}}
+    @media (prefers-reduced-motion:reduce){.a-dfw *{animation:none!important}.a-dfw .c2,.a-dfw .f2{opacity:1}.a-dfw .add{opacity:0}}
+  </style>
+</div>

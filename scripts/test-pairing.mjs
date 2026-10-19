@@ -134,5 +134,12 @@ ok(/if \(code && !paired\) post\(apiFetch, '\/api\/pair\/cancel'/.test(phone), '
 ok(phone.includes("'/api/push/mobile/key'") && phone.includes("input.type = 'password'") && !/keyHint[^;]*input\.value/.test(phone), 'the push key is entered in a masked field and never filled back in');
 ok(pageSrc.includes("x.device && x.device.name ? x.device.name + ' (Crundi app)'"), 'a paired phone is listed by its name among the signed-in devices');
 
+// A phone opening "localhost" opens itself. A pairing link made where Crundi
+// is open at a loopback address (the desktop app) uses the public address,
+// and with none there is no link at all, rather than one that cannot work.
+const ps = src.slice(src.indexOf("path === '/api/pair/start'"), src.indexOf("path === '/api/pair/cancel'"));
+ok(/loopback = \/\^\(localhost\|127/.test(ps) && /if \(!base \|\| loopback\) base = publicBaseUrl/.test(ps), 'a pairing link opened at localhost uses the public address instead');
+ok(/if \(loopback && \/\^https\?:/.test(ps) && /A phone cannot reach this computer at "localhost"/.test(ps), 'and with no public address it says so, rather than handing out a localhost link');
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

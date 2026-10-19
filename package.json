@@ -1,8 +1,8 @@
 {
   "name": "crundi",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "chromeVersion": "152.0.7977.64",
-  "claudeTestedVersion": "2.1.287",
+  "claudeTestedVersion": "2.1.302",
   "description": "Self-hosted remote workbench for your projects — agent terminals, files, git, kanban, mindmap and scheduling, reachable from anywhere.",
   "type": "module",
   "main": "app/main.js",
@@ -79,7 +79,32 @@
         "from": "skills",
         "to": "skills"
       }
-    ]
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon_512x512.png",
+      "category": "Development",
+      "executableName": "crundi",
+      "synopsis": "Self-hosted workbench for your projects",
+      "artifactName": "Crundi-${version}-linux-x64.${ext}",
+      "extraResources": [
+        {
+          "from": "build/linux-node",
+          "to": "node"
+        }
+      ]
+    },
+    "deb": {
+      "packageName": "crundi",
+      "priority": "optional"
+    }
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -98,5 +123,10 @@
     "@xterm/xterm": "^6.0.0",
     "electron": "^41.2.0",
     "electron-builder": "^26.8.1"
+  },
+  "homepage": "https://crundi.faruhaan.com",
+  "author": {
+    "name": "Obitech",
+    "email": "TheRealFaruhaan@users.noreply.github.com"
   }
 }

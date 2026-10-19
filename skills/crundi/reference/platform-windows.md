@@ -6,9 +6,9 @@ none of the commands below transfer.
 Two shapes:
 
 - **The desktop app** (the usual one) — Crundi runs as a Windows application with
-  a real desktop session, so the terminal and screen-capture tools work.
+  a real desktop session, so the screen-capture tools work.
 - **A headless Windows server** — the server run under pm2, no Electron. Same
-  limits as a Linux headless box for terminals and capture.
+  limits as a Linux headless box for capture.
 
 ## Checking a port before you bind it
 
@@ -55,12 +55,9 @@ explicit `stopCommand` — `taskkill`, or whatever the tool provides.
 
 ## Which MCP tools work here
 
-Under the **desktop app**, everything works — including the two groups a headless
-host cannot offer:
+Under the **desktop app**, everything works — including what a headless host cannot
+offer:
 
-- **Terminal tools** — `spawn_terminal`, `terminal_input`, `terminal_wait`,
-  `terminal_output`, `close_terminal`, `list_terminals`. Real terminals that
-  outlive a single tool call; good for an interactive process you need to watch.
 - **Screen capture** — `list_windows`, `list_displays`, `capture_window`,
   `capture_display`, and `send_window_screenshot_to_user` /
   `send_display_screenshot_to_user`. Use these to show the user a desktop app's
@@ -68,8 +65,8 @@ host cannot offer:
 - **`disconnect_rdp`** — Windows only. Drops an RDP session while keeping the GUI
   session alive, so capture keeps working on a locked screen.
 
-Under a **headless Windows server**, terminal and capture tools return graceful
-errors; use ordinary shell commands and registered services instead. Browser
+Under a **headless Windows server**, capture tools return graceful errors; use
+ordinary shell commands and registered services instead. Browser
 tools work in both cases.
 
 ## The Crundi server itself

@@ -55,6 +55,35 @@ class MainActivity : Activity() {
         open()
     }
 
+    private var caughtUpAt = 0L
+
+    /**
+     * Each time the app comes to the front: ask the server which chats are at
+     * work. The live card is otherwise drawn only from messages sent as a
+     * state changes, and a phone that missed one (it was paired a moment too
+     * late, or the message never arrived) showed nothing for that chat.
+     */
+    /** Any touch or key: the hour before the app lets go of its connection starts again (Link). */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        Link.touch(this)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        OnScreen.mainFocused = hasFocus
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val s = server ?: return
+        val now = System.currentTimeMillis()
+        if (now - caughtUpAt < 10_000) return
+        caughtUpAt = now
+        val app = applicationContext
+        Bg.run({ LiveCards.catchUp(app, s.id) }) { }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -131,7 +160,15 @@ class MainActivity : Activity() {
                     "This server needs updating\n\n${s.host} is version ${verdict.serverVersion.ifEmpty { "unknown" }}. This app needs ${BuildConfig.MIN_SERVER} or newer.\n\nUpdate the server from its own Settings, on a computer. If it is not your server, ask its owner.",
                     "Try again",
                 ) { open() }
-                else -> showPage(s)
+                else -> {
+                    // The page's login is kept by the app when the server
+                    // offers that and this phone's web view can carry it
+                    // safely (see PageLogin). Decided here, at every opening,
+                    // and remembered for the bubbles, which do not ask.
+                    val appLogin = LoginChannel.supported && "app-page-login" in verdict.capabilities
+                    LoginChannel.setOn(applicationContext, s.id, appLogin)
+                    showPage(s, appLogin)
+                }
             }
         }
     }
@@ -149,7 +186,7 @@ class MainActivity : Activity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun showPage(s: Server) {
+    private fun showPage(s: Server, appLogin: Boolean = false) {
         root.findViewWithTag<View>("notice")?.let { root.removeView(it) }
         web?.let { root.removeView(it); it.destroy() }
         val view = CrundiWebView(this)
@@ -226,17 +263,30 @@ class MainActivity : Activity() {
         view.addJavascriptInterface(Bridge(), "CrundiNative")
 
         root.addView(view, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        // First load after pairing: hand the page its login, then forget our
-        // copy. A refresh token is spent by using it, so two holders of one
-        // would cut each other off; from here on it is the page's alone.
         // Always the front page. If an intent pointed at a chat, the page is
         // asked for it once it has loaded (see go).
-        val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else "/"
-        if (s.pageToken.isNotEmpty()) {
-            s.pageToken = ""; s.pageRefresh = ""
-            Servers.save(this, s)
+        if (appLogin) {
+            // The app keeps the page's login and renews it for every page
+            // (PageLogin). A login a pairing has just handed over is taken
+            // into its keeping; the page asks for it over the channel.
+            LoginChannel.attach(view, s)
+            if (s.pageToken.isNotEmpty()) {
+                PageLogin.adopt(applicationContext, s)
+                s.pageToken = ""; s.pageRefresh = ""
+                Servers.save(this, s)
+            }
+            view.loadUrl(s.baseUrl + "/")
+        } else {
+            // An older server: hand the page its login on the first load after
+            // pairing, then forget our copy. A refresh token is spent by using
+            // it, so two holders of one would cut each other off.
+            val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else "/"
+            if (s.pageToken.isNotEmpty()) {
+                s.pageToken = ""; s.pageRefresh = ""
+                Servers.save(this, s)
+            }
+            view.loadUrl(s.baseUrl + handoff)
         }
-        view.loadUrl(s.baseUrl + handoff)
         askToNotify()
         Push.registerAll(this)
     }
@@ -273,11 +323,33 @@ class MainActivity : Activity() {
                 val x = sessions.getJSONObject(i)
                 if (x.optString("id") == chatId) found = ChatRef.from(s.id, org.json.JSONObject().put("id", chatId).put("title", x.optString("longTitle").ifEmpty { x.optString("title") }).put("project", x.optString("project")).put("mark", x.optJSONObject("mark")))
             }
-            if (found == null) Toast.makeText(this, "That chat could not be found on the server.", Toast.LENGTH_LONG).show() else then(found)
+            if (found != null) { then(found); return@run }
+            // Three different failures, and they used to read the same. The
+            // one that matters most is the app's own sign-in having ended:
+            // then nothing here works until the phone is paired again.
+            val reply = result.getOrNull()
+            when {
+                reply != null && (reply.status == 401 || reply.status == 403) -> pairAgain("This phone is no longer paired with ${s.host}. Pair it again to use bubbles and notifications.")
+                sessions == null -> Toast.makeText(this, "Could not reach ${s.host}. Check the connection and try again.", Toast.LENGTH_LONG).show()
+                else -> Toast.makeText(this, "That chat is no longer open on the server.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
+    /** Send the person to pair this phone with this server again. */
+    private fun pairAgain(why: String = "") {
+        val s = server ?: return
+        if (why.isNotEmpty()) Toast.makeText(this, why, Toast.LENGTH_LONG).show()
+        startActivity(Intent(this, PairActivity::class.java).putExtra(PairActivity.EXTRA_AGAIN, s.id))
+    }
+
     private inner class Bridge {
+        /** "Pair this phone", on the screen the page shows in place of a sign-in form. */
+        @JavascriptInterface fun pair() { runOnUiThread { pairAgain() } }
+
+        /** The page saying it is signed out. Nothing to do yet: the person is looking at that screen, and its button is pair(). */
+        @JavascriptInterface fun unpaired() { }
+
         /** The back arrow in the compact chat. Here there is no bubble to put away, so it is plain back. */
         @JavascriptInterface fun close() { runOnUiThread { goBack() } }
 
@@ -294,7 +366,7 @@ class MainActivity : Activity() {
 
         /** What this build of the app can do, so the page offers only that: a comma-separated list. */
         @JavascriptInterface fun can(): String = listOfNotNull(
-            "settings", "download",
+            "settings", "download", "pair",
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) "bubble" else null,
         ).joinToString(",")
 
@@ -312,6 +384,8 @@ class MainActivity : Activity() {
                 // reading it: the bubble has the focus. Taking the bubble
                 // down from underneath is exactly the wrong way round.
                 if (!hasWindowFocus()) return@runOnUiThread
+                // In front of the person: a notification for it is left out (OnScreen).
+                OnScreen.seenInMain("chat:${s.id}:$chatId")
                 Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true, why = "the same chat is open in the main window")
             }
         }

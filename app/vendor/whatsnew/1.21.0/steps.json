@@ -1,0 +1,52 @@
+{
+  "steps": [
+    {
+      "id": "docker-tab",
+      "tag": "Docker",
+      "title": "All of Docker, in one tab",
+      "body": "On a machine with Docker, the new Docker tab manages the whole engine. Every container with its live CPU and memory, ready to start, stop, restart, pause or remove. Compose stacks with up, pull, restart and down. Images, volumes and networks, and disk use with a clean-up for each kind. The tab does not appear where Docker is not installed.",
+      "art": "docker-tab.html",
+      "artTitle": "Docker"
+    },
+    {
+      "id": "docker-container",
+      "tag": "Docker",
+      "title": "Inside a container",
+      "body": "Open a container to see everything about it. Its log follows live, with colours and a filter. Charts show CPU, memory, network and disk as they change. A shell opens inside it, in bash when the image has it. Inspect shows the raw details. Values in the environment that look like secrets are hidden in the overview.",
+      "art": "docker-container.html",
+      "artTitle": "scraper-db"
+    },
+    {
+      "id": "docker-forwards",
+      "tag": "Docker",
+      "title": "Forwards, beside their containers",
+      "body": "A container whose port has a forward now shows it, one tap from opening. A container's Ports add a forward in place, and the new Forwards view lists every forward by what is behind it: a running container, a stopped one, another program, or nothing at all. The ones with nothing behind them can be removed together.",
+      "art": "docker-forwards.html",
+      "artTitle": "Forwards"
+    },
+    {
+      "id": "forward-watch",
+      "tag": "Docker",
+      "title": "Know when a forward goes down",
+      "body": "Ring the bell on a forward to be warned when it goes down, the way a service warns when it stops. When a container is behind it, Docker decides: the container stopping, or failing its own health check. Otherwise, nothing answering on the port. Settings, Notifications has a Forwards row for how you are told.",
+      "art": "forward-watch.html",
+      "artTitle": "Forwards"
+    },
+    {
+      "id": "browser-run-on",
+      "tag": "Browsers",
+      "title": "Choose where a browser runs",
+      "body": "A browser can run on the server or in your desktop app, and now you choose which. On the server it reaches the dev servers on that machine's localhost. In the desktop app it reaches your own network. Claude makes the same choice when it opens one, so it can check its own dev server even while your desktop app is connected.",
+      "art": "browser-run-on.html",
+      "artTitle": "Browsers"
+    },
+    {
+      "id": "linux-desktop",
+      "tag": "Desktop app",
+      "title": "Crundi for Ubuntu",
+      "body": "The desktop app now comes as a package for Ubuntu and other Debian-family desktops, in the same two forms as on Windows. One has the server inside it, for everything on one machine. The other is the client alone, for a server that runs somewhere else. Both are on the releases page as .deb files, sit in the tray, and update themselves.",
+      "art": "linux-desktop.html",
+      "artTitle": "Releases"
+    }
+  ]
+}
