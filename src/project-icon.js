@@ -13,7 +13,7 @@
 // address, and everything that had the old one fetches again by itself. A
 // project with no icon, or whose icon has since gone, keeps its letters.
 
-import { readFileSync, statSync, realpathSync } from 'node:fs';
+import { readFileSync, statSync, realpathSync, readdirSync } from 'node:fs';
 import { join, sep, extname } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
@@ -93,12 +93,92 @@ function usable(root, rel) {
   } catch { return null; }
 }
 
+// ─── A mark made for a dark background ───
+// Crundi is dark. A logo drawn in a dark colour, which is what most projects
+// put first, all but disappears on it; many projects also keep a version for
+// dark backgrounds ("logo-white.svg", "mark-dark.png", "icon-inverse.svg"),
+// often in a brand folder. Where there is one, it is used before anything else.
+const DARK_DIRS = [...DIRS,
+  'brand', 'branding', 'logo', 'logos', 'public/brand', 'public/branding', 'public/logo', 'public/logos',
+  'static/brand', 'static/logos', 'assets/brand', 'assets/branding', 'assets/logo', 'assets/logos',
+  'src/assets/brand', 'src/assets/logos', 'src/assets/images', 'src/assets/icons', 'website/static/img', 'docs/static/img',
+];
+// The file is a mark of some kind...
+const MARK_WORD = /(icon|logo|mark|favicon|symbol|emblem|glyph)/i;
+// ...for a dark background. "light" is left out on purpose: "logo-light" is as
+// often the one for a light page as the light-coloured one.
+const DARK_WORD = /(?:^|[-_.\s])(white|dark|darkmode|dark-mode|on-dark|ondark|inverse|inverted|reversed|negative|night)(?=[-_.\s]|$)/i;
+const TYPE_RANK = { '.png': 0, '.ico': 1, '.svg': 2 };
+
+// "dark" in a name can also mean a mark drawn IN a dark colour. An SVG says
+// its colours in the open, so one whose colours are all dark is passed over.
+function svgAllDark(buf) {
+  const text = buf.toString('utf8', 0, Math.min(buf.length, 256 * 1024));
+  const named = { white: 'ffffff', black: '000000' };
+  const found = [];
+  const re = /(?:fill|stroke|stop-color|color)\s*[=:]\s*["']?\s*(#[0-9a-f]{3,8}\b|white\b|black\b|rgba?\([^)]*\))/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    let v = m[1].toLowerCase(), r, g, b;
+    if (named[v]) v = '#' + named[v];
+    if (v[0] === '#') {
+      let h = v.slice(1);
+      if (h.length === 3 || h.length === 4) h = h.split('').map((c) => c + c).join('');
+      r = parseInt(h.slice(0, 2), 16); g = parseInt(h.slice(2, 4), 16); b = parseInt(h.slice(4, 6), 16);
+    } else {
+      const n = v.match(/[\d.]+/g) || [];
+      [r, g, b] = n.map(Number);
+    }
+    if ([r, g, b].some((x) => !Number.isFinite(x))) continue;
+    found.push((0.2126 * r + 0.7152 * g + 0.0722 * b) / 255);
+  }
+  return found.length > 0 && found.every((l) => l < 0.3);
+}
+
+function sameAsPlain(root, dir, name, stem, ext, file) {
+  const plain = stem.replace(DARK_WORD, '') + ext;
+  if (!plain || plain === name) return false;
+  try { return readFileSync(join(root, dir, plain)).equals(readFileSync(file)); } catch { return false; }
+}
+
+/** The project's mark for dark backgrounds, or null. */
+export function findDarkIcon(root) {
+  const hits = [];
+  DARK_DIRS.forEach((dir, dirRank) => {
+    let names;
+    try { names = readdirSync(dir ? join(root, dir) : root); } catch { return; }
+    for (const name of names) {
+      const ext = extname(name).toLowerCase();
+      if (!(ext in TYPE_RANK)) continue;
+      const stem = name.slice(0, -ext.length);
+      if (!MARK_WORD.test(stem) || !DARK_WORD.test(stem)) continue;
+      const hit = usable(root, dir ? `${dir}/${name}` : name);
+      if (!hit) continue;
+      if (ext === '.svg') { try { if (svgAllDark(readFileSync(hit.file))) continue; } catch { continue; } }
+      // A "dark" copy that is the same file as the plain one is no better, and
+      // would only push a better picture of the same thing (a PNG) aside.
+      if (sameAsPlain(root, dir, name, stem, ext, hit.file)) continue;
+      // A mark or icon before a whole logo, a big picture before a small one.
+      const kind = /(icon|mark|symbol|favicon|emblem|glyph)/i.test(stem) ? 0 : 1;
+      let side = 0;
+      if (ext === '.png') { try { side = readFileSync(hit.file).readUInt32BE(16); } catch { /* unknown */ } }
+      hits.push({ hit, key: [TYPE_RANK[ext], kind, -side, dirRank, name] });
+    }
+  });
+  if (!hits.length) return null;
+  hits.sort((a, b) => { for (let i = 0; i < a.key.length; i++) { if (a.key[i] < b.key[i]) return -1; if (a.key[i] > b.key[i]) return 1; } return 0; });
+  return hits[0].hit;
+}
+
 /**
- * The project's icon file, or null.
+ * The project's icon file, or null. A mark made for a dark background comes
+ * first, where the project has one.
  * @returns {{ file: string, rel: string, type: string, size: number, mtimeMs: number } | null}
  */
 export function findProjectIcon(root) {
   if (!root) return null;
+  const dark = findDarkIcon(root);
+  if (dark) return dark;
   for (const names of [RASTER, ICO, VECTOR]) {
     for (const name of names) {
       for (const dir of DIRS) {
