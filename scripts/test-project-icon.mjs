@@ -108,5 +108,27 @@ try {
   rmSync(root, { recursive: true, force: true });
 }
 
+// A mark made for a dark background comes first: Crundi is dark.
+const dark = mkdtempSync(join(tmpdir(), 'crundi-icon-dark-'));
+try {
+  const svg = (fill) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path fill="${fill}" d="M0 0h100v100z"/></svg>`;
+  mkdirSync(join(dark, 'public', 'brand'), { recursive: true });
+  writeFileSync(join(dark, 'public', 'icon-512.png'), png(512, 512));
+  ok(findProjectIcon(dark).rel === 'public/icon-512.png', 'dark: with no dark version, the usual pick stands');
+  writeFileSync(join(dark, 'public', 'brand', 'logo-dark.svg'), svg('#20272f'));
+  ok(findProjectIcon(dark).rel === 'public/icon-512.png', 'dark: a "dark" SVG drawn in dark colours is not a dark-mode mark');
+  writeFileSync(join(dark, 'public', 'brand', 'mark.svg'), svg('#e1604b'));
+  writeFileSync(join(dark, 'public', 'brand', 'mark_dark.svg'), svg('#e1604b'));
+  ok(findProjectIcon(dark).rel === 'public/icon-512.png', 'dark: a dark copy identical to the plain file is passed over');
+  writeFileSync(join(dark, 'public', 'brand', 'acme-mark-white.svg'), svg('#ffffff'));
+  ok(findProjectIcon(dark).rel === 'public/brand/acme-mark-white.svg', 'dark: a white mark in a brand folder is used before the usual icon');
+  writeFileSync(join(dark, 'public', 'logo-inverse.png'), png(900, 240));
+  ok(findProjectIcon(dark).rel === 'public/brand/acme-mark-white.svg', 'dark: an oblong dark logo is still not an icon');
+  writeFileSync(join(dark, 'public', 'icon-white.png'), png(256, 256));
+  ok(findProjectIcon(dark).rel === 'public/icon-white.png', 'dark: a dark-mode PNG beats a dark-mode SVG');
+} finally {
+  rmSync(dark, { recursive: true, force: true });
+}
+
 console.log(failures ? `\n${failures} failed` : '\nAll passed');
 process.exit(failures ? 1 : 0);

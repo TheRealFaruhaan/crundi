@@ -23,14 +23,16 @@ ok(MAX_AUTO_TITLE === 20, 'the limit is 20 characters');
 ok(cleanAutoTitle('Fix login redirect').title === 'Fix login redirect', 'a plain title passes');
 ok(cleanAutoTitle('  "Orders   dashboard".  ').title === 'Orders dashboard', 'quotes, extra spaces and a trailing full stop are dropped');
 ok(cleanAutoTitle('12345678901234567890').ok, 'exactly 20 characters passes');
-const long = cleanAutoTitle('123456789012345678901');
-ok(!long.ok && /21 characters/.test(long.error), '21 characters is refused, with the count, not cut', long.error);
+// Claude is told 20; up to 25 is accepted so a near miss costs no retry.
+ok(cleanAutoTitle('1234567890123456789012345').ok, 'up to 25 characters is accepted quietly');
+const long = cleanAutoTitle('12345678901234567890123456');
+ok(!long.ok && /26 characters/.test(long.error) && /limit is 20\b/.test(long.error), '26 characters is refused, with the count, not cut; the stated limit stays 20', long.error);
 ok(cleanAutoTitle('ދިވެހި ޓައިޓަލް').ok, 'length is counted in characters, not bytes');
 ok(!cleanAutoTitle('').ok && !cleanAutoTitle('   ').ok && !cleanAutoTitle('""').ok && !cleanAutoTitle(null).ok, 'an empty title is refused');
 ok(cleanAutoTitle('Line one\nline two').title === 'Line one line two', 'a line break becomes a space');
 ok(MAX_LONG_TITLE === 50, 'the long form allows 50 characters');
 ok(cleanLongTitle('Fix the redirect loop after password login').ok, 'long: a 42-character title passes');
-ok(cleanLongTitle('x'.repeat(50)).ok && !cleanLongTitle('x'.repeat(51)).ok, 'long: 50 passes, 51 is refused');
+ok(cleanLongTitle('x'.repeat(55)).ok && !cleanLongTitle('x'.repeat(56)).ok, 'long: 55 passes quietly, 56 is refused');
 ok(cleanLongTitle('').ok && cleanLongTitle('').title === '' && cleanLongTitle(undefined).title === '', 'long: leaving it out is fine');
 
 // The person's own title wins, in both kinds of session.
