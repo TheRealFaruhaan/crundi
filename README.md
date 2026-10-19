@@ -71,7 +71,7 @@ On first launch Crundi shows a step-by-step wizard:
 1. **Create a bot** with @BotFather and paste the token (current login channel).
 2. **Your Telegram username** — only this user can access Crundi.
 3. **Projects** — point at a parent folder (each subfolder = a project), or add projects individually.
-4. **Cloudflare tunnel** *(optional)* — paste a named-tunnel token + URL for a fixed domain, or skip for a random quick tunnel. **Do not** install Cloudflare's connector; Crundi bundles and runs `cloudflared` itself.
+4. **Cloudflare tunnel** *(optional)* — a fixed address on your own domain (see [A fixed address with a Cloudflare tunnel](#a-fixed-address-with-a-cloudflare-tunnel)), or skip for a random quick-tunnel address that changes every start.
 5. **Enable login** — set your bot's login domain in @BotFather (`/setdomain`) to your public URL so the login button works.
 
 Config is stored in your OS app-data dir; you can also use a `.env` (see `.env.example`):
@@ -81,10 +81,39 @@ Config is stored in your OS app-data dir; you can also use a `.env` (see `.env.e
 | `TELEGRAM_BOT_TOKEN` | yes | Bot token from @BotFather (login validation + notifications) |
 | `ALLOWED_USERNAME` | yes | Your Telegram username, no `@` — the only allowed user |
 | `PROJECTS_DIR` | * | Parent folder of projects (single-folder mode); leave empty for multi-folder mode |
-| `WEB_PORT` | no | Web UI port (`0` = auto-assign) |
+| `WEB_PORT` | no | Web UI port (`8888` by default; `0` = any free port). A tunnel's Public Hostname must point at it |
 | `CLOUDFLARE_TUNNEL_TOKEN` | no | Named-tunnel token for a persistent domain |
 | `CLOUDFLARE_TUNNEL_URL` | no | The tunnel's public URL |
 | `DATA_DIR` | no | Override the data directory |
+
+## A fixed address with a Cloudflare tunnel
+
+For `https://crundi.example.com` instead of a random quick-tunnel address. You need a domain whose DNS is on Cloudflare (the free plan is enough). **Do not install `cloudflared` yourself**: Crundi bundles and runs it, and a second copy fights it for the tunnel.
+
+1. **Create the tunnel.** In the Cloudflare dashboard open **Zero Trust → Networks → Tunnels → Create a tunnel**, choose **Cloudflared** and name it.
+2. **Copy the token, run nothing.** The "Install and run a connector" screen shows install commands. Do not run them. Copy only the token from one of them: the long string starting `eyJ`, after `--token`. Then **Next**.
+3. **Point a hostname at Crundi.** On **Public Hostnames** (later: the tunnel → **Configure** → **Public Hostname**):
+
+   | Field | Value |
+   |---|---|
+   | Subdomain / Domain | e.g. `crundi` / `example.com` |
+   | Service type | **HTTP** |
+   | URL | **`127.0.0.1:8888`**, Crundi's port (`WEB_PORT`) |
+
+   Write `127.0.0.1`, not `localhost`: on Windows `localhost` can mean the IPv6 address, which Crundi does not listen on. Cloudflare adds the DNS record itself.
+4. **Give Crundi the token and address**, in the setup wizard, in **Settings**, or in `.env` (`CLOUDFLARE_TUNNEL_TOKEN`, and `CLOUDFLARE_TUNNEL_URL=https://crundi.example.com`), then restart Crundi.
+
+Crundi's **Info** page shows the tunnel's status and, under *Cloudflare service*, the exact `HTTP → 127.0.0.1:<port>` the hostname has to use.
+
+| What you see | What it means |
+|---|---|
+| **Error 502, Bad gateway** | The tunnel works but the hostname points at the wrong place: check Service type HTTP and `127.0.0.1:<port>` against the Info page |
+| **Error 1033** | No connector is running: Crundi is not running, or has no token |
+| Info says *Connecting…*, the log says `named exited` | `cloudflared` is refusing to start. The lines after it, `[tunnel] cloudflared: …`, say why (most often an incomplete token) |
+
+**Phones** pair through the tunnel: **Settings → Connect a phone** gives them the tunnel address, even when Crundi itself is open at `localhost`.
+
+**Forwards on their own subdomain** (`myapp.crundi.example.com`) need a second Public Hostname, `*.crundi` on the same domain, pointing at the same `127.0.0.1:<port>`, and `FORWARD_DOMAIN=crundi.example.com`. Cloudflare's free certificate covers one level of subdomain only, so `*.example.com` works and `*.crundi.example.com` needs its paid add-on. Path forwards (`/tunnel/myapp/`) need none of this.
 
 ## Build
 

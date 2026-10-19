@@ -1007,7 +1007,11 @@ ipcMain.handle('setup:save', (_e, config) => {
     `TELEGRAM_BOT_TOKEN=${config.botToken || ''}`,
     `ALLOWED_USERNAME=${config.username || ''}`,
     `PROJECTS_DIR=${config.projectsDir || ''}`,
-    `WEB_PORT=${config.webPort || (config.tunnelToken ? '3000' : '0')}`,
+    // 8888 with a tunnel: the port the tunnel's Public Hostname points at, the
+    // one the setup steps and the README name. It was 3000 here, which no
+    // instructions mentioned, and a tunnel set up from them showed "Bad
+    // gateway". Without a tunnel any free port will do.
+    `WEB_PORT=${config.webPort || (config.tunnelToken ? '8888' : '0')}`,
     `CLOUDFLARE_TUNNEL_TOKEN=${config.tunnelToken || ''}`,
     `CLOUDFLARE_TUNNEL_URL=${config.tunnelUrl || ''}`,
     `DATA_DIR=`,

@@ -2751,9 +2751,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // is known to work from where they are, which a configured public URL is
       // not (a LAN address, a tunnel that has since moved).
       let base = '';
-      try { const u = new URL(String(body.origin || '')); if (/^https?:$/.test(u.protocol)) base = u.origin; } catch { /* fall through */ }
-      if (!base) base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port }) || '';
-      if (!base) return json(res, { ok: false, error: 'This server does not know its own address yet.' }, 409);
+      let loopback = false;
+      try {
+        const u = new URL(String(body.origin || ''));
+        if (/^https?:$/.test(u.protocol)) base = u.origin;
+        // Except an address that means "this computer": on a phone it means
+        // the phone. The desktop app shows Crundi at http://localhost:<port>,
+        // and a link made from there sent the phone to itself.
+        loopback = /^(localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/i.test(u.hostname);
+      } catch { /* fall through */ }
+      if (!base || loopback) base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port }) || '';
+      // With no tunnel and no certificate the server's own idea of its address
+      // is localhost too, which is no better.
+      if (loopback && /^https?:\/\/(localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(base)) base = '';
+      if (!base) {
+        return json(res, {
+          ok: false,
+          error: loopback
+            ? 'A phone cannot reach this computer at "localhost". Open Crundi at an address the phone can reach (its tunnel or network address) and connect the phone from there.'
+            : 'This server does not know its own address yet.',
+        }, 409);
+      }
       const started = pairing.start({ username: principal.username, collabKey: principal.collabKey || '' });
       if (!started.ok) return json(res, started, 429);
       const link = pairingLink(base, started.code);
@@ -4327,7 +4345,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Tunnel Status ───
     if (path === '/api/tunnel' && req.method === 'GET') {
-      return json(res, { tunnels: getAllTunnelInfo(), tunnelUrl });
+      // `target`: where a named tunnel's Public Hostname has to send traffic,
+      // shown on the Info page so a "Bad gateway" can be checked against it.
+      return json(res, { tunnels: getAllTunnelInfo(), tunnelUrl, named: !!config.tunnelToken, target: `127.0.0.1:${localPort || port}` });
     }
 
     // ─── Settings ───

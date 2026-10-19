@@ -12294,6 +12294,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
         tunnelHtml = '<div class="info-section"><h4>Tunnel</h4>'
           + infoRow('URL', tUrl !== '—' ? '<a href="' + escHtml(tUrl) + '" target="_blank">' + escHtml(tUrl) + '</a>' : '—', true)
           + infoRow('Status', activeTunnels > 0 ? 'Connected' : (tunnelKeys.length > 0 ? 'Connecting...' : 'Not configured'))
+          // A named tunnel's hostname is set in Cloudflare, not here, and has
+          // to point at this port. Shown so a "Bad gateway" (502) can be
+          // checked against it at a glance.
+          + (tdata.named && tdata.target
+            ? infoRow('Cloudflare service', '<code title="In Cloudflare: Zero Trust, Networks, Tunnels, this tunnel, Public Hostname. Use 127.0.0.1, not localhost.">HTTP \u2192 ' + escHtml(tdata.target) + '</code>', true)
+            : '')
           + '</div>';
       } catch { /* ignore */ }
 
