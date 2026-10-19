@@ -118,7 +118,11 @@ All are JSON, `{ "ok": false, "error": "<code>" }`.
   notification does not replace another's.
 - `kind` is the event: `finished`, `needsInput`, `serviceDown`, `test` and so
   on. It doubles as the collapse tag.
-- `body` is cut to 1800 bytes so the whole message stays inside the 4096 bytes
+- `body` is cut to 1800 bytes, and further where the rest of the message
+  (a suggestion, a permission request, a long chat title) would take the
+  sealed payload past the relay's 3000 characters. The relay refuses an
+  oversized payload with 400 and the whole batch with it, so the server makes
+  every payload fit; the 3000 keeps the whole message inside the 4096 bytes
   Google and Apple allow.
 
 ## How a phone registers
