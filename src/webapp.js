@@ -44,6 +44,7 @@ import * as factoryStore from './factory-store.js';
 import { validateFactory } from './factory-model.js';
 import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-runner.js';
 import * as factoryCleanup from './factory-cleanup.js';
+import { createTriggerStore, createTriggerDispatcher } from './factory-triggers.js';
 import { inspectRepo as inspectFactoryRepo } from './factory-git.js';
 import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
@@ -1010,6 +1011,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const meta = id ? { url: `/chat/${id}`, title: `Factory: ${run.factoryName}`, chat: { id, title: `Factory: ${run.factoryName}`, project: run.project || '', mark: markOf(run.project || '', run.factoryName) } } : {};
         notifyEvent('factory', text, meta);
       } catch { /* best effort */ }
+      // A run started from a kanban card: the card follows the work.
+      try {
+        const card = run && run.trigger && run.trigger.cardId;
+        if (card && kind === 'started') kanban.moveTask(run.project, card, 'in_progress');
+        if (card && kind === 'merged') kanban.moveTask(run.project, card, 'done');
+      } catch { /* the card may be gone */ }
     },
     onChange: (run) => {
       try { broadcastSSE('factoryRun', { id: run.id, project: run.project, status: run.status }); } catch { /* not up yet */ }
@@ -1032,6 +1039,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     catch (err) { console.error('[factory] housekeeping:', err.message); }
   };
   setTimeout(factoryHousekeeping, 30_000).unref?.();
+  // Triggers: schedules, kanban cards, webhooks start runs by themselves.
+  const factoryTriggers = createTriggerStore(config.dataDir);
+  const triggerDispatch = factoryRunner ? createTriggerDispatcher({
+    store: factoryTriggers,
+    startRun: (a) => factoryRunner.startRun(a),
+    activeRunFor: (p) => factoryRunner.activeRunFor(p),
+    notify: (text) => { try { notifyEvent('factory', text, {}); } catch { /* best effort */ } },
+  }) : null;
+  if (triggerDispatch) {
+    setInterval(() => { triggerDispatch.tick().catch(err => console.error('[factory] triggers:', err.message)); }, 20_000).unref?.();
+    kanban.onStatusChange((project, card, status) => {
+      // Not from inside the kanban call: the move finishes first.
+      setTimeout(() => triggerDispatch.onKanban(project, card, status).catch(err => console.error('[factory] kanban trigger:', err.message)), 0);
+    });
+  }
   setInterval(factoryHousekeeping, 6 * 3600_000).unref?.();
 
   // WebSocket connections that have reported the user is actively at the window
@@ -2708,6 +2730,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
     }
 
+    // A factory trigger's webhook. Outside the auth gate: the key is the credential.
+    {
+      const m = /^\/api\/factory-hook\/trigger\/(trg_[0-9a-f]{12})$/.exec(path);
+      if (m && req.method === 'POST') {
+        if (!triggerDispatch) return json(res, { ok: false, error: 'Factories are not available.' }, 503);
+        const raw = await readBody(req);
+        let body;
+        try { body = raw ? JSON.parse(raw) : {}; } catch { body = { text: raw.slice(0, 20000) }; }
+        const r = await triggerDispatch.onWebhook(m[1], url.searchParams.get('key') || req.headers['x-crundi-key'] || '', body);
+        return json(res, r.ok ? { ok: true, queued: r.queued, runId: r.runId } : { ok: false, error: r.error }, r.ok ? 200 : r.status || 400);
+      }
+    }
+
     // Which sign-in methods this server offers. Read before login, so it is
     // deliberately outside the auth gate and says nothing a stranger could use.
     if (path === '/api/auth/methods' && req.method === 'GET') {
@@ -3420,6 +3455,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, { ...info, active: active ? { id: active.id, status: active.status, factoryName: active.factoryName } : null });
     }
     // Leftovers of finished and stopped runs, and auto-delete.
+    // ─── Factory triggers ───
+    if (path === '/api/factory-triggers' && req.method === 'GET') {
+      const project = url.searchParams.get('project') || '';
+      return json(res, { ok: true, triggers: factoryTriggers.list(project ? { project } : {}) });
+    }
+    if (path === '/api/factory-triggers' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      let result;
+      switch (body.action) {
+        case 'save': result = factoryTriggers.upsert(body.trigger); break;
+        case 'delete': result = factoryTriggers.remove(body.id); break;
+        case 'rotate': result = factoryTriggers.rotateKey(body.id); break;
+        case 'run': result = triggerDispatch ? await triggerDispatch.runNow(body.id) : { ok: false, error: 'Factories are not available.' }; break;
+        case 'preview': result = triggerDispatch ? { ok: true, cr: triggerDispatch.preview(body.trigger || {}, body.sample || {}) } : { ok: false }; break;
+        default: result = { ok: false, error: 'Unknown action.' };
+      }
+      return json(res, result);
+    }
+
     if (path === '/api/factory-cleanup' && req.method === 'GET') {
       if (!factoryRunner) return json(res, { ok: true, items: [], settings: { autoDeleteDays: 0 } });
       const items = await factoryCleanup.scan({ runs: factoryRunner.listRuns() });

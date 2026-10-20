@@ -65,6 +65,13 @@
     '.fx-modal h3{margin:0;font-size:15px}',
     '.fx-modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}',
     '.fx-modal.fx-modal-wide{width:min(680px,100%)}',
+    '.fx-days{display:flex;gap:4px;flex-wrap:wrap}',
+    '.fx-day{background:var(--bg-card);border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:5px 9px;font:inherit;font-size:12px;cursor:pointer}',
+    '.fx-day.on{background:var(--accent);border-color:var(--accent);color:#fff}',
+    '.fx-check{display:flex;align-items:center;gap:8px;font-size:13px}',
+    '.fx-chip-s{font-size:11px;color:var(--text-secondary);border:1px solid var(--border);border-radius:999px;padding:1px 7px;margin-left:6px}',
+    '.fx-run.off{opacity:.6}',
+    '.fx-triggers{margin-top:12px}',
     '.fx-cr-view{font-size:12.5px;margin:4px 0}',
     '.fx-cr-view summary{cursor:pointer;color:var(--text-secondary)}',
     '.fx-cr-view-k{font-weight:600;margin-top:6px;font-size:12px}',
@@ -491,6 +498,7 @@
           a.replies.forEach(function (rp) { var x = btn(rp.label, ''); x.onclick = async function () { var r = await post(ctx, '/api/factory-runs', { action: 'ask', id: run.id, tokenId: a.tokenId, replyId: rp.id, note: n2.value }); if (!r.ok) ctx.toast(r.error, 'error'); load(project); }; rb.appendChild(x); });
           q.appendChild(rb); box.appendChild(q);
         });
+        (run.tokens || []).filter(function (t) { return t.wait; }).forEach(function (t) { box.appendChild(waitCard(ctx, run, t, function () { load(project); })); });
         if (run.status === 'finishing') box.appendChild(el('div', 'fx-note', 'The team is done. The result is waiting for you in the Manager\'s chat: merge it, ask for changes, keep the branch, or discard it.'));
         if (run.waitingOn === 'manager') box.appendChild(el('div', 'fx-note', 'The Manager is talking to you in its chat.'));
         if (run.capHit) box.appendChild(el('div', 'fx-warn', 'It reached its limit (' + esc(run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs') + ') and is waiting for you.'));
@@ -513,9 +521,171 @@
         det.appendChild(list);
         box.appendChild(det);
       }
+      box.appendChild(await triggersSection(ctx, project, function () { load(project); }));
       root.appendChild(box);
     }
     return { load: load, destroy: off };
+  }
+
+  // ─── Waits ───
+  function waitCard(ctx, run, t, refresh) {
+    var w = t.wait;
+    var left = function (iso) { var ms = Date.parse(iso) - Date.now(); if (!(ms > 0)) return 'any moment'; var m = Math.floor(ms / 60000); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m >= 1 ? m + ' min' : Math.ceil(ms / 1000) + ' s'; };
+    var two = w.kind === 'command' || w.kind === 'signal';
+    var c = el('div', 'fx-card');
+    var head = w.kind === 'time' || w.kind === 'until' ? left(w.deadline) + ' left' : w.kind === 'signal' ? (w.what || 'waiting for a signal') : 'checking (' + w.tries + ' tr' + (w.tries === 1 ? 'y' : 'ies') + ' so far)';
+    c.appendChild(el('div', '', ctx.icon('clock') + ' <b>' + esc(t.label) + '</b>: ' + esc(head)));
+    if (two) c.appendChild(el('div', 'fx-meta', 'Gives up in ' + esc(left(w.timeoutAt)) + '.'));
+    if (w.signalPath) {
+      var u = el('input', 'fx-input mono'); u.readOnly = true; u.value = location.origin + w.signalPath; u.onfocus = function () { u.select(); };
+      c.appendChild(el('div', 'fx-meta', 'POST to this URL to end it (body optional: {"note": "…"}, or {"outcome": "failed"}):'));
+      c.appendChild(u);
+    }
+    var rb = el('div', 'fx-row-btns');
+    var end = function (outcome) { return async function () { var r = await post(ctx, '/api/factory-runs', { action: 'endWait', id: run.id, tokenId: t.id, outcome: outcome }); if (!r.ok) ctx.toast(r.error, 'error'); refresh(); }; };
+    var e1 = btn('End the wait now', ''); e1.onclick = end('done'); rb.appendChild(e1);
+    if (two) { var e2 = btn('Treat as timed out', 'ghost'); e2.onclick = end('timeout'); rb.appendChild(e2); }
+    c.appendChild(rb);
+    return c;
+  }
+
+  // ─── Triggers: what starts a run by itself ───
+  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var COLUMNS = [['backlog', 'Backlog'], ['todo', 'To do'], ['in_progress', 'In progress'], ['done', 'Done']];
+  function triggerWhen(t) {
+    if (t.kind === 'schedule') return 'At ' + t.schedule.at + (t.schedule.days.length && t.schedule.days.length < 7 ? ' on ' + t.schedule.days.map(function (d) { return DAYS[d]; }).join(', ') : ' every day');
+    if (t.kind === 'kanban') return 'When a card enters ' + (COLUMNS.find(function (c) { return c[0] === t.kanban.status; }) || ['', t.kanban.status])[1];
+    return 'When its webhook is called';
+  }
+  async function triggersSection(ctx, project, refresh) {
+    var j = await getJson(ctx, '/api/factory-triggers?project=' + encodeURIComponent(project)).catch(function () { return { triggers: [] }; });
+    var list = j.triggers || [];
+    var det = el('details', 'fx-triggers');
+    if (list.length) det.open = true;
+    det.appendChild(el('summary', 'fx-meta', 'Triggers' + (list.length ? ' (' + list.length + ')' : '') + ': start a run by itself'));
+    var body = el('div', 'fx-list'); body.style.marginTop = '8px';
+    if (!list.length) body.appendChild(el('div', 'fx-note', 'Start a factory at a time of day, when a kanban card enters a column, or when a webhook is called (CI, an issue tracker). The change request is filled in from the card or the call.'));
+    list.forEach(function (t) {
+      var last = (t.history || [])[0];
+      var row = el('div', 'fx-run' + (t.enabled ? '' : ' off'), '<div class="fx-run-top"><span class="fx-run-name">' + esc(t.name) + '</span>' + (t.enabled ? '' : '<span class="fx-chip-s">off</span>') + (t.queue && t.queue.length ? '<span class="fx-chip-s">' + t.queue.length + ' waiting</span>' : '') + '</div><div class="fx-run-task">' + esc(triggerWhen(t)) + '</div>' + (last ? '<div class="fx-meta">' + esc(ago(last.at)) + ': ' + esc(last.outcome) + (last.note ? ' (' + esc(last.note) + ')' : '') + '</div>' : ''));
+      row.onclick = function () { triggerDialog(ctx, project, t, refresh); };
+      body.appendChild(row);
+    });
+    var add = btn('Add a trigger', '', 'plus', ctx); add.onclick = function () { triggerDialog(ctx, project, null, refresh); };
+    body.appendChild(add);
+    det.appendChild(body);
+    return det;
+  }
+
+  async function triggerDialog(ctx, project, t, refresh) {
+    var md = modal(t ? 'Trigger' : 'New trigger');
+    md.box.classList.add('fx-modal-wide');
+    var b = md.box;
+    var lib = await getJson(ctx, '/api/factories').catch(function () { return { factories: [] }; });
+    var factories = (lib.factories || []).filter(function (f) { return f.runnable || (t && f.id === t.factoryId); });
+    if (!factories.length) { b.appendChild(el('div', 'fx-empty', 'There are no runnable factories yet. Create one in the Factories tab first.')); var c0 = btn('Close', 'ghost'); c0.onclick = md.close; b.appendChild(c0); return; }
+    var cur = t || { name: '', enabled: true, kind: 'kanban', factoryId: factories[0].id, schedule: { at: '09:00', days: [] }, kanban: { status: 'todo' }, cr: { title: '', sections: {} }, mergeMode: '', ifBusy: 'queue' };
+    var field = function (label, input) { var f = el('label', 'fx-field'); f.appendChild(el('span', '', label)); f.appendChild(input); return f; };
+    var sel = function (opts, v) { var s2 = el('select', 'fx-input'); opts.forEach(function (o) { var x = el('option', '', esc(o[1])); x.value = o[0]; if (o[0] === v) x.selected = true; s2.appendChild(x); }); return s2; };
+    var name = el('input', 'fx-input'); name.value = cur.name; name.placeholder = 'Cards to the team';
+    var fSel = sel(factories.map(function (f) { return [f.id, f.name]; }), cur.factoryId);
+    var kind = sel([['kanban', 'A kanban card enters a column'], ['schedule', 'A time of day'], ['webhook', 'A webhook is called']], cur.kind);
+    var row = el('div', 'fx-cr-row'); row.appendChild(field('Name', name)); row.appendChild(field('Factory', fSel)); b.appendChild(row);
+    b.appendChild(field('Start when', kind));
+    var kindBox = el('div', 'fx-list'); b.appendChild(kindBox);
+    var at = el('input', 'fx-input'); at.type = 'time'; at.value = cur.schedule.at;
+    var days = cur.schedule.days.slice();
+    var col = sel(COLUMNS, cur.kanban.status);
+    var crBox = el('div', 'fx-cr'); b.appendChild(crBox);
+    var title = el('input', 'fx-input'); title.value = cur.cr.title;
+    var inputs = {};
+    var mm = sel([['', 'As the factory says'], ['ask', 'Show me first, I decide'], ['auto', 'Merge automatically (with Undo)']], cur.mergeMode);
+    var busy = sel([['queue', 'Wait its turn, then start'], ['skip', 'Skip it']], cur.ifBusy);
+    var row2 = el('div', 'fx-cr-row'); row2.appendChild(field('When the work is done', mm)); row2.appendChild(field('If a run is already going', busy)); b.appendChild(row2);
+    var en = el('label', 'fx-check'); var enI = el('input'); enI.type = 'checkbox'; enI.checked = cur.enabled !== false; en.appendChild(enI); en.appendChild(el('span', '', 'On')); b.appendChild(en);
+    var hookBox = el('div', 'fx-list'); b.appendChild(hookBox);
+    var hist = el('div', 'fx-list'); b.appendChild(hist);
+
+    function placeholders() {
+      var k = kind.value;
+      return k === 'kanban' ? '{{card.title}}, {{card.description}}, {{card.todos}} (one per line), {{date}}'
+        : k === 'webhook' ? '{{body.some.field}}, {{body}} (all of it), {{date}}' : '{{date}}, {{time}}';
+    }
+    function renderKind() {
+      kindBox.innerHTML = '';
+      if (kind.value === 'schedule') {
+        kindBox.appendChild(field('At (this server\'s time)', at));
+        var dw = el('div', 'fx-days');
+        DAYS.forEach(function (d, i) { var x = el('button', 'fx-day' + (days.indexOf(i) >= 0 ? ' on' : ''), d); x.type = 'button'; x.onclick = function () { var k = days.indexOf(i); if (k >= 0) days.splice(k, 1); else days.push(i); x.classList.toggle('on'); }; dw.appendChild(x); });
+        kindBox.appendChild(field('On (none = every day)', dw));
+      }
+      if (kind.value === 'kanban') kindBox.appendChild(field('Column', col));
+      renderCr();
+    }
+    function renderCr() {
+      var f = factories.find(function (x) { return x.id === fSel.value; });
+      var tpl = (f && f.crTemplate) || [];
+      var keep = {}; Object.keys(inputs).forEach(function (k) { keep[k] = inputs[k].value; });
+      // Switched away from kanban: card placeholders would come out empty.
+      if (kind.value !== 'kanban') { Object.keys(keep).forEach(function (k) { if (/\{\{\s*card\./.test(keep[k])) keep[k] = ''; }); if (/\{\{\s*card\./.test(title.value)) title.value = ''; }
+      crBox.innerHTML = '';
+      crBox.appendChild(el('div', 'fx-cr-head', '<b>Change request</b><span>Filled in when it fires. Placeholders: ' + esc(placeholders()) + '. Only the title has to come out filled; the Manager asks you about anything missing.</span>'));
+      if (!title.value && kind.value === 'kanban') title.value = '{{card.title}}';
+      crBox.appendChild(field('Title <i>required</i>', title));
+      inputs = {};
+      tpl.forEach(function (sec) {
+        var ta = el('textarea', 'fx-input'); ta.rows = 2; ta.placeholder = sec.hint;
+        ta.value = keep[sec.id] != null ? keep[sec.id] : (cur.cr.sections[sec.id] || (kind.value === 'kanban' && !t ? ({ goal: '{{card.description}}', done: '{{card.todos}}' })[sec.id] || '' : ''));
+        ta.addEventListener('input', function () { grow(ta); });
+        inputs[sec.id] = ta;
+        crBox.appendChild(field(esc(sec.label), ta));
+        setTimeout(function () { grow(ta); }, 0);
+      });
+    }
+    function renderHook(tr) {
+      hookBox.innerHTML = '';
+      if (!tr || tr.kind !== 'webhook') return;
+      var u = location.origin + '/api/factory-hook/trigger/' + tr.id + '?key=' + tr.webhook.key;
+      var inp = el('input', 'fx-input mono'); inp.readOnly = true; inp.value = u; inp.onfocus = function () { inp.select(); };
+      hookBox.appendChild(field('Webhook URL (POST, JSON body)', inp));
+      hookBox.appendChild(el('div', 'fx-meta', esc("curl -X POST -H 'Content-Type: application/json' -d '{\"title\": \"…\"}' '" + u + "'")));
+      var rot = btn('New key', 'ghost'); rot.onclick = async function () { if (!window.confirm('The old URL stops working. Make a new key?')) return; var r = await post(ctx, '/api/factory-triggers', { action: 'rotate', id: tr.id }); if (r.ok) renderHook(r.trigger); };
+      var rr = el('div', 'fx-row-btns'); rr.appendChild(rot); hookBox.appendChild(rr);
+    }
+    function renderHistory(tr) {
+      hist.innerHTML = '';
+      if (!tr || !(tr.history || []).length) return;
+      var d = el('details', ''); d.appendChild(el('summary', 'fx-meta', 'What it did (' + tr.history.length + ')'));
+      tr.history.forEach(function (h) { d.appendChild(el('div', 'fx-meta', esc(ago(h.at)) + ' · ' + esc(h.outcome) + ' · ' + esc(h.source || '') + (h.title ? ': ' + esc(h.title) : '') + (h.note ? ' (' + esc(h.note) + ')' : ''))); });
+      hist.appendChild(d);
+    }
+    kind.onchange = renderKind; fSel.onchange = renderCr;
+    renderKind(); renderHook(t); renderHistory(t);
+
+    var actions = el('div', 'fx-modal-actions');
+    var saved = t;
+    if (t) {
+      var del = btn('Delete', 'ghost', 'trash', ctx);
+      del.onclick = async function () { if (!window.confirm('Delete this trigger?')) return; var r = await post(ctx, '/api/factory-triggers', { action: 'delete', id: t.id }); if (r.ok) { md.close(); refresh(); } else ctx.toast(r.error, 'error'); };
+      actions.appendChild(del);
+      var now = btn('Run now', '', 'play', ctx);
+      now.onclick = async function () { var r = await post(ctx, '/api/factory-triggers', { action: 'run', id: t.id }); ctx.toast(r.ok ? (r.queued ? 'Queued: a run is going in this project.' : 'Started.') : (r.error || 'It could not start.'), r.ok ? 'success' : 'error'); refresh(); };
+      actions.appendChild(now);
+    }
+    actions.appendChild(el('span', 'fx-sp'));
+    var cancel = btn('Close', 'ghost'); cancel.onclick = md.close; actions.appendChild(cancel);
+    var save = btn('Save', 'primary', 'check', ctx); actions.appendChild(save);
+    b.appendChild(actions);
+    save.onclick = async function () {
+      var sections = {}; Object.keys(inputs).forEach(function (k) { if (inputs[k].value.trim()) sections[k] = inputs[k].value; });
+      var tr = { id: saved ? saved.id : undefined, name: name.value, enabled: enI.checked, project: project, factoryId: fSel.value, kind: kind.value, schedule: { at: at.value || '09:00', days: days }, kanban: { status: col.value }, cr: { title: title.value, sections: sections }, mergeMode: mm.value, ifBusy: busy.value };
+      var r = await post(ctx, '/api/factory-triggers', { action: 'save', trigger: tr }).catch(function (e) { return { ok: false, error: e.message }; });
+      if (!r.ok) { ctx.toast(r.error || 'Could not save.', 'error'); return; }
+      saved = r.trigger;
+      ctx.toast('Saved.', 'success');
+      refresh();
+      if (r.trigger.kind === 'webhook') { renderHook(r.trigger); md.box.querySelector('h3').textContent = 'Trigger'; } else md.close();
+    };
   }
 
   // ─── The Factories tab ───

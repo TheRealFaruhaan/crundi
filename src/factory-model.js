@@ -553,7 +553,7 @@ export function validateFactory(input, { skills = null } = {}) {
   for (const n of f.nodes) {
     for (const h of requiredOutputsOf(n)) {
       if (!handleUse.has(n.id + '|' + h)) {
-        const what = n.type === 'decision' ? `the answer "${handleLabel(n, h)}"` : n.type === 'ask' ? `the reply "${handleLabel(n, h)}"` : h === 'finish' ? 'its Finish' : 'its output';
+        const what = n.type === 'decision' ? `the answer "${handleLabel(n, h)}"` : n.type === 'ask' ? `the reply "${handleLabel(n, h)}"` : n.type === 'wait' && h !== 'out' ? `its "${handleLabel(n, h)}" route` : h === 'finish' ? 'its Finish' : 'its output';
         err('output-unwired', `"${label(n)}" has nowhere to go for ${what}.`, 'Connect it to the next step.', { nodeId: n.id, handle: h });
       }
     }

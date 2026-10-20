@@ -41,6 +41,7 @@ The Manager is a roster entry that always exists and cannot be deleted.
 | Decision | a question: `yes/no`, `pick one`, `pick many`. Pick many fans out in parallel and must include a "none of these" option |
 | Join | waits for the branches of its matching fan-out that actually started |
 | Ask me | a human gate; notifies the user (push/Telegram) and waits. Each possible reply is an output |
+| Wait | holds the flow: a length of time, a time of day, until a command succeeds (polled in the worktree, every N s), or until a signal (a secret POST URL, or the person). Command and signal waits have **Done** and **Timed out** outputs and a time limit, so every wait is bounded. What came in goes on to the next step with what happened. The plan is journaled and re-armed after a recovery; the person can end any wait early |
 | End | always goes through the Manager's present-and-merge step |
 
 **Who answers a decision:** the employee whose node feeds into it; overridable
@@ -388,6 +389,24 @@ The result card is an entry Crundi puts in the Manager's chat
 `/chat/<id>` page too; it is updated in place. Closing any chat of an
 unfinished run is refused (409) with "Stop the factory first"; the Manager's
 chat header carries a Factory badge.
+
+### 4.9 Triggers
+- A trigger (src/factory-triggers.js, `<dataDir>/factory-triggers.json`)
+  starts a factory in a project by itself: **schedule** (HH:MM server time,
+  chosen weekdays), **kanban** (a card enters a column), **webhook** (a POST to
+  `/api/factory-hook/trigger/<id>?key=…`, JSON body, outside the auth gate; the
+  key is the credential and can be replaced).
+- Each carries a CR with placeholders filled when it fires: `{{date}}`,
+  `{{time}}`, `{{card.title|description|todos|id}}`, `{{body.path}}`,
+  `{{body}}`. Only the title must come out filled (lenient check); the
+  Manager asks the person about what is missing.
+- One run per project still holds: a busy project makes the firing **wait its
+  turn** (queued, started on the next tick once the project is free) or
+  **skip**. Every outcome (started, queued, skipped, failed) goes in the
+  trigger's history; Run now fires it by hand.
+- A run started from a kanban card moves the card to In progress, and to Done
+  when the result is merged.
+- UI: the project Factory panel, under "Triggers".
 
 ## 5. UI
 

@@ -55,9 +55,11 @@ const listItems = (v) => str(v).split('\n').map(x => x.replace(/^\s*(?:[-*•]|\
  * Check a CR against its template.
  * @param {object} cr        { title, sections: { id: text }, attachments: [{ path, name }] }
  * @param {Array}  template  normalizeTemplate(...)
+ * @param {object} [o]      lenient: only the title is required (a trigger fills the CR
+ *                          in; the Manager asks the person about what is missing)
  * @returns {{ ok: true, cr } | { ok: false, error, field }}
  */
-export function checkCr(cr, template) {
+export function checkCr(cr, template, { lenient = false } = {}) {
   const t = normalizeTemplate(template);
   const c = cr && typeof cr === 'object' ? cr : {};
   const title = str(c.title).replace(/\s+/g, ' ').trim().slice(0, CR_LIMITS.title);
@@ -65,7 +67,7 @@ export function checkCr(cr, template) {
   const sections = {};
   for (const s of t) {
     const v = str((c.sections || {})[s.id]).replace(/\r/g, '').trim().slice(0, CR_LIMITS.section);
-    if (s.required && !(s.list ? listItems(v).length : v)) return { ok: false, field: s.id, error: `Fill in "${s.label}".` };
+    if (s.required && !lenient && !(s.list ? listItems(v).length : v)) return { ok: false, field: s.id, error: `Fill in "${s.label}".` };
     if (v) sections[s.id] = v;
   }
   const attachments = (Array.isArray(c.attachments) ? c.attachments : []).slice(0, CR_LIMITS.attachments)

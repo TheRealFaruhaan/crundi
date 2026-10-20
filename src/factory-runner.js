@@ -187,6 +187,7 @@ export function createFactoryRunner({
       factoryName: s.snapshot.name,
       factoryVersion: r.factoryVersion,
       task: s.task,
+      trigger: r.trigger || null,
       cr: r.cr ? {
         title: r.cr.title,
         sections: s.snapshot.settings.crTemplate.filter(x => r.cr.sections[x.id]).map(x => ({ id: x.id, label: x.label, text: r.cr.sections[x.id] })),
@@ -275,7 +276,7 @@ export function createFactoryRunner({
 
   // ─── Start ───
 
-  async function startRun({ project, factoryId, task, cr, mergeMode, ignoreMissingSkills = false } = {}) {
+  async function startRun({ project, factoryId, task, cr, mergeMode, ignoreMissingSkills = false, trigger = null } = {}) {
     const key = String(project || '').toLowerCase();
     const proj = getProject(key);
     if (!proj) return { ok: false, error: `Project "${project}" not found.` };
@@ -288,7 +289,7 @@ export function createFactoryRunner({
     // A change request (the start form), or a plain task (older callers).
     let crIn = null;
     if (cr) {
-      const c = checkCr(cr, normalizeFactory(got.factory).settings.crTemplate);
+      const c = checkCr(cr, normalizeFactory(got.factory).settings.crTemplate, { lenient: !!trigger });
       if (!c.ok) return { ok: false, field: c.field, error: c.error };
       crIn = c.cr;
       // Attachments come from the project's upload folder (the chat's paperclip), nowhere else.
@@ -338,7 +339,7 @@ export function createFactoryRunner({
 
       const entry = newEntry(null);
       commit(entry, {
-        type: 'start', id, project: key, factory, task: taskText, cr: crRec, factoryId, factoryVersion: got.factory.version,
+        type: 'start', id, project: key, factory, task: taskText, cr: crRec, trigger: trigger || null, factoryId, factoryVersion: got.factory.version,
         mergeMode: mergeMode === 'auto' || mergeMode === 'ask' ? mergeMode : '',
         wt: { repo: wt.repo, root: wt.root, path: wt.path, branch: wt.branch, parentBranch: wt.parentBranch, baseCommit: wt.baseCommit, dirty: wt.dirty },
         skillExcludes, missingSkills: missing,
