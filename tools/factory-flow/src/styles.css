@@ -210,3 +210,11 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
   .ff-viewer .ff-replay .ff-replay-label { min-width: 0; }
 }
 .ff-checks { display: flex; flex-direction: column; gap: 6px; }
+.ff-cr-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.ff-cr-sec { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--ff-border); border-radius: 8px; padding: 8px; background: var(--ff-card); }
+.ff-cr-sec-top { display: flex; gap: 4px; align-items: center; }
+.ff-cr-sec-top > input { flex: 1; min-width: 0; font-weight: 600; }
+.ff-cr-sec-flags { display: flex; gap: 14px; flex-wrap: wrap; }
+.ff-icon-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; background: none; border: 1px solid transparent; border-radius: 6px; color: var(--ff-sub); cursor: pointer; padding: 0; }
+.ff-icon-btn:hover:not(:disabled) { background: var(--ff-hover); color: var(--ff-text); }
+.ff-icon-btn:disabled { opacity: .35; cursor: default; }

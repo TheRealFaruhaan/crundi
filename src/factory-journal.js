@@ -97,6 +97,7 @@ export function reduce(prev, ev) {
         repo: ev.wt.repo, root: ev.wt.root, worktree: ev.wt.path, branch: ev.wt.branch,
         parentBranch: ev.wt.parentBranch, baseCommit: ev.wt.baseCommit, dirty: !!ev.wt.dirty,
         skillExcludes: ev.skillExcludes || [], missingSkills: ev.missingSkills || [],
+        cr: ev.cr || null,
         startedAt: at,
       });
       r.ws.main = { path: ev.wt.path, branch: ev.wt.branch };

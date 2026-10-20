@@ -40,8 +40,8 @@
  * Spec: specs/factory.md §4.
  */
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync, rmdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync, rmdirSync, statSync, copyFileSync, realpathSync } from 'fs';
+import { join, basename, resolve, sep } from 'path';
 import { spawn } from 'child_process';
 import { randomBytes } from 'crypto';
 import { fileURLToPath } from 'url';
@@ -52,6 +52,7 @@ import { reduce, replay, asksOf, timeLeft, isHeld, UNFINISHED as UNFINISHED_SET,
 import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage, recoveryOverview } from './factory-prompts.js';
 import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES, GATEKEEPER_ID, gatekeeperPrompt, startRules, scopedRules, rulesFor } from './factory-permissions.js';
 import { missingSkills } from './factory-skills.js';
+import { checkCr, crMarkdown, crBrief, crText } from './factory-cr.js';
 
 /** Runs in these states hold their project: no second run can start. */
 export const UNFINISHED = UNFINISHED_SET;
@@ -186,6 +187,11 @@ export function createFactoryRunner({
       factoryName: s.snapshot.name,
       factoryVersion: r.factoryVersion,
       task: s.task,
+      cr: r.cr ? {
+        title: r.cr.title,
+        sections: s.snapshot.settings.crTemplate.filter(x => r.cr.sections[x.id]).map(x => ({ id: x.id, label: x.label, text: r.cr.sections[x.id] })),
+        attachments: r.cr.attachments.map(a => ({ name: a.name })), file: r.cr.file,
+      } : null,
       status: s.status,
       waitingOn: r.paused ? (r.paused.by === 'usage' ? 'usage' : 'paused') : r.capHit ? 'cap' : asks.length ? 'ask' : L.managerIdle ? 'manager' : '',
       paused: r.paused || null,
@@ -263,7 +269,7 @@ export function createFactoryRunner({
 
   // ─── Start ───
 
-  async function startRun({ project, factoryId, task, mergeMode, ignoreMissingSkills = false } = {}) {
+  async function startRun({ project, factoryId, task, cr, mergeMode, ignoreMissingSkills = false } = {}) {
     const key = String(project || '').toLowerCase();
     const proj = getProject(key);
     if (!proj) return { ok: false, error: `Project "${project}" not found.` };
@@ -271,16 +277,32 @@ export function createFactoryRunner({
     if (existing || claiming.has(key)) {
       return { ok: false, busy: true, runId: existing?.id || '', error: existing ? `A factory is already ${existing.status === 'crashed' ? 'waiting to be recovered' : 'running'} in this project ("${existing.factoryName}"). Finish or stop it first.` : 'A factory is being started in this project.' };
     }
-    const taskText = String(task || '').trim();
-    if (!taskText) return { ok: false, error: 'Give the factory a task.' };
     const got = getFactory(factoryId);
     if (!got) return { ok: false, error: 'Factory not found.' };
+    // A change request (the start form), or a plain task (older callers).
+    let crIn = null;
+    if (cr) {
+      const c = checkCr(cr, normalizeFactory(got.factory).settings.crTemplate);
+      if (!c.ok) return { ok: false, field: c.field, error: c.error };
+      crIn = c.cr;
+      // Attachments come from the project's upload folder (the chat's paperclip), nowhere else.
+      const upDir = join(proj.path, 'crundi_attachments');
+      for (const a of crIn.attachments) {
+        let real = '';
+        try { real = realpathSync(a.path); } catch { return { ok: false, field: 'attachments', error: `The attachment "${a.name}" is gone; attach it again.` }; }
+        let base = upDir; try { base = realpathSync(upDir); } catch { /* none yet */ }
+        if (!real.startsWith(base + sep)) return { ok: false, field: 'attachments', error: `"${a.name}" is not an uploaded attachment.` };
+        a.path = real;
+      }
+    }
+    const taskText = crIn ? crIn.title : String(task || '').trim();
+    if (!taskText) return { ok: false, error: 'Give the factory a task.' };
     const v = validateFactory(got.factory);
     if (!v.ok) return { ok: false, invalid: true, errors: v.errors, error: `This factory cannot run yet: ${v.errors.length} problem${v.errors.length === 1 ? '' : 's'} to fix in the editor.` };
     let known = [];
     try { known = listSkills(key) || []; } catch { known = []; }
     const factory = normalizeFactory(got.factory);
-    const missing = missingSkills(factory, taskText, new Set(known.map(x => x.name)));
+    const missing = missingSkills(factory, crIn ? crText(crIn) : taskText, new Set(known.map(x => x.name)));
     if (missing.length && !ignoreMissingSkills) {
       return { ok: false, missingSkills: missing, error: `This factory names skill${missing.length === 1 ? '' : 's'} this project does not have: ${missing.map(n => '/' + n).join(', ')}. Install ${missing.length === 1 ? 'it' : 'them'}, or start anyway.` };
     }
@@ -293,10 +315,24 @@ export function createFactoryRunner({
       const skillExcludes = git.linkProjectSkills ? git.linkProjectSkills(wt.repo, wt.path) : [];
       mkdirSync(join(runDir(id), 'shared'), { recursive: true });
       mkdirSync(join(runDir(id), 'notes'), { recursive: true });
+      // The change request goes in the shared folder, with copies of its
+      // attachments, where every member of the team can read it.
+      let crRec = null;
+      if (crIn) {
+        const dir = join(runDir(id), 'shared', 'change-request');
+        mkdirSync(dir, { recursive: true });
+        const attachments = crIn.attachments.map((a, i) => {
+          const name = (i + 1) + '-' + basename(a.name).replace(/[^\w.\-]+/g, '_').slice(-80);
+          copyFileSync(a.path, join(dir, name));
+          return { name: a.name, path: join(dir, name) };
+        });
+        crRec = { ...crIn, attachments, file: join(runDir(id), 'shared', 'CHANGE-REQUEST.md') };
+        writeFileSync(crRec.file, crMarkdown(crRec, factory.settings.crTemplate));
+      }
 
       const entry = newEntry(null);
       commit(entry, {
-        type: 'start', id, project: key, factory, task: taskText, factoryId, factoryVersion: got.factory.version,
+        type: 'start', id, project: key, factory, task: taskText, cr: crRec, factoryId, factoryVersion: got.factory.version,
         mergeMode: mergeMode === 'auto' || mergeMode === 'ask' ? mergeMode : '',
         wt: { repo: wt.repo, root: wt.root, path: wt.path, branch: wt.branch, parentBranch: wt.parentBranch, baseCommit: wt.baseCommit, dirty: wt.dirty },
         skillExcludes, missingSkills: missing,
@@ -398,7 +434,7 @@ export function createFactoryRunner({
       cwd: rr(entry).worktree,
       addDirs: [rr(entry).root, runDir(st(entry).id)].filter(Boolean),
       systemPromptExtra: isGate
-        ? gatekeeperPrompt({ factory: f, task: st(entry).task, project: st(entry).project, policy: rr(entry).policy, team: f.roster })
+        ? gatekeeperPrompt({ factory: f, task: rr(entry).cr ? crBrief(rr(entry).cr, f.settings.crTemplate) : st(entry).task, project: st(entry).project, policy: rr(entry).policy, team: f.roster })
         : systemPromptFor({ factory: f, employee: r, project: st(entry).project, paths: paths(entry, employeeId), managerMode, teamMode: rr(entry).teamMode, skills: skillsOf(entry), rules: rulesFor(rr(entry).rules, employeeId) }),
       model: r.model, effort: r.effort,
       // The factory's own tools, and what the team may do from the start
@@ -580,10 +616,23 @@ export function createFactoryRunner({
       run: st(entry), effect: ef, req: Engine.requirements(st(entry), ef.tokenId),
       wsPath: wsPath(entry, ef.ws), notice, recovery, skills: skillsOf(entry),
       context: await runContextFor(entry, ef),
+      cr: crFor(entry, ef, !!recovery),
     });
     const sent = agents.send(s.chatId, msg);
     if (sent && sent.ok === false) entry.live.error = `Could not message ${r?.name || ef.employeeId}: ${sent.error}`;
     else if (notice) commit(entry, { type: 'notice-clear', tokenId: ef.tokenId });
+  }
+
+  /**
+   * The change request as a step carries it: in full for the Manager's first
+   * step (and after a recovery), as a brief with the file's path otherwise.
+   */
+  function crFor(entry, ef, recovering) {
+    const cr = rr(entry).cr;
+    if (!cr) return null;
+    const t = st(entry).snapshot.settings.crTemplate;
+    const first = ef.employeeId === MANAGER_ID && ef.mode === 'work' && !st(entry).history.some(h => h.type === 'handoff');
+    return first || (recovering && ef.employeeId === MANAGER_ID) ? { full: true, text: crMarkdown(cr, t) } : { full: false, text: crBrief(cr, t, cr.file) };
   }
 
   /** A small port range per workspace, so parallel dev servers do not collide. */

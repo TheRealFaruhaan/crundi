@@ -53,7 +53,8 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
       '- Messages starting with "[Factory]" come from Crundi, not from the person: they tell you what your team did and what you must decide. Answer them with a handoff.',
       '- Messages without that prefix are the person talking to you. Answer them normally. If you need them to decide something, ask in this chat and end your turn; the run waits for them.',
       `- Your team works in ${paths.worktree} on the branch ${paths.branch}, cut from ${paths.parentBranch}. Read it to judge their work. Do not do their work yourself unless the person asks you to.`,
-      `- When the whole task is done and you are satisfied with it, call ${TOOL} with finish: true and a summary of what was done.`,
+      '- The run starts from a change request (CR): its goal, the situation today, the expected result and the checks for "done". If it is unclear, contradicts itself or is missing something that changes the work, ask the person here before handing anything out; the run waits. Pass on what each person needs (notes, a plan), but everyone can read the full CR in the shared folder.',
+      `- When the whole task is done, every "Done when" check of the CR is met and you are satisfied, call ${TOOL} with finish: true and a summary that goes through those checks.`,
       '- Never commit, merge, push or reset with git yourself. Crundi commits each step and merges the result when the person agrees.',
       '',
       'Permissions:',
@@ -89,6 +90,7 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
       '- Nobody is watching your turn. Do not ask the person questions; escalate instead.',
       '- Work only in the folder the step names. The project\'s own checkout is off limits.',
       '- Do not commit, branch, merge, push or reset with git. Crundi commits your work when you hand off.',
+      '- The work is described by a change request (CR). Your step gives a brief of it and the path of the full CR; read the full one when your step needs more (attachments such as screenshots are listed in it). When you review, hold the work to its "Done when" checks.',
       '- Review findings live in the run, not in anyone\'s memory. When you review: list problems as findings ([{ text, where, blocking }]); blocking means it must change before approval, nits are kept as follow-ups. Check the findings already open before raising new ones. When you fix something: mark it with done: ["F1"]. When you check a fix: verified: ["F1"], or reopen: ["F1"] if it is not really fixed.',
       teamMode === 'bypass' ? '- You run with bypass permissions: nothing you do asks first. Stay inside the run\'s folders all the same.'
         : rules.length ? `- You may do these without asking: ${rules.slice(0, 30).join(', ')}. Anything else that needs permission goes to the Manager${factory.settings.gatekeeper?.enabled ? ' (through the Gatekeeper)' : ''}.` : '',
@@ -112,7 +114,7 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
  *                                interrupted and is being picked up again
  * @param {Map<string,string>} [o.skills]  skills the project can see: name -> description
  */
-export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = null, skills = new Map(), context = null }) {
+export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = null, skills = new Map(), context = null, cr = null }) {
   const f = run.snapshot;
   const node = f.nodes.find(n => n.id === effect.nodeId);
   const c = effect.context || {};
@@ -130,7 +132,9 @@ export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = 
   if (effect.mode === 'delegate') lines.push('[Factory] A job from the Manager, outside the usual flow');
   else if (effect.mode === 'answer') lines.push(`[Factory] A decision for you: ${node?.label || node?.decision?.question || ''}`.trim());
   else lines.push(`[Factory] Your step: ${stepName}`);
-  lines.push('', `Task: ${run.task || '(none given)'}`);
+  if (cr && cr.full) lines.push('', 'The change request this run is for:', '', cr.text.trim(), '', '— End of the change request —');
+  else if (cr) lines.push('', 'The change request:', indent(cr.text));
+  else lines.push('', `Task: ${run.task || '(none given)'}`);
   if (wsPath) lines.push(`Work in: ${wsPath}`);
   if (context) {
     if (context.branchStep) lines.push(`You are working in a parallel branch. Run every shell command there (cd ${context.cd}) and change files only there: the run's main worktree must stay untouched, and a handoff with changes there is refused.`);
@@ -158,7 +162,7 @@ export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = 
     for (const i of live) lines.push(`- ${i.id} [${i.blocking ? 'blocking' : 'nit'}${i.status === 'claimed' ? ', said to be fixed' : ''}${i.reopened ? `, reopened ${i.reopened}x` : ''}] ${i.text}${i.where ? ` (${i.where})` : ''}`);
   }
   // Skills named in anything this step carries: the task, the question, notes.
-  const texts = [run.task, c.summary, c.message, c.escalation, recovery?.note, node?.decision?.question, ...(c.notes || []).map(n => n.text + ' ' + (n.label || ''))];
+  const texts = [run.task, cr && cr.full ? cr.text : '', c.summary, c.message, c.escalation, recovery?.note, node?.decision?.question, ...(c.notes || []).map(n => n.text + ' ' + (n.label || ''))];
   const named = [...new Set(texts.flatMap(t => findMentions(t)))];
   if (named.length) lines.push('', ...skillLines(named, skills));
 

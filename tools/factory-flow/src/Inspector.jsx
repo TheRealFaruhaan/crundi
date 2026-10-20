@@ -2,6 +2,7 @@ import { genId, MANAGER_ID, PERMISSION_PRESETS } from '../../../src/factory-mode
 import { Field, Text, Num, Select, Toggle, SkillText, ChoiceList } from './fields.jsx';
 import { Icon } from './icons.jsx';
 import { handleLabel } from './convert.js';
+import { CrTemplateEditor } from './CrTemplate.jsx';
 
 const KIND_LABEL = { start: 'Start', manager: 'Manager', employee: 'Employee', decision: 'Decision', join: 'Join', ask: 'Ask me', end: 'End' };
 
@@ -145,6 +146,7 @@ export function FactorySettings({ f, mutate, skills }) {
       <Field label="Description" hint="What this factory is for. /skill-name works here too.">
         <SkillText skills={skills} rows={3} value={f.description} onChange={v => set(d => { d.description = v; }, 'desc')} />
       </Field>
+      <CrTemplateEditor f={f} mutate={mutate} />
       <Field label="Manager's permissions" hint={s.managerMode === 'bypass' ? 'The Manager runs unchecked and approves its team\'s requests itself. Choose this only if you trust it. Some things stay refused: sudo, restarting Crundi, pushing, the server\'s ports.' : 'The Manager\'s own actions ask you. It still decides its team\'s permission requests.'}>
         <Select value={s.managerMode} onChange={v => set(d => { d.settings.managerMode = v; })} options={[{ value: 'normal', label: 'Normal: ask me for the Manager\'s own actions' }, { value: 'bypass', label: 'Bypass: I trust the Manager' }]} />
       </Field>

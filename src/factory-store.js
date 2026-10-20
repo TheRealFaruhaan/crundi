@@ -20,6 +20,7 @@
  * Spec: specs/factory.md §5.1, §6.
  */
 
+import { normalizeTemplate } from './factory-cr.js';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { config } from './config.js';
@@ -63,6 +64,7 @@ function summary(f) {
     runnable: v.ok,
     errorCount: v.errors.length,
     warningCount: v.warnings.length,
+    crTemplate: normalizeTemplate(f.settings && f.settings.crTemplate),
   };
 }
 

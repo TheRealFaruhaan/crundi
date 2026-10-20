@@ -47,6 +47,7 @@
  */
 
 import { mentionsInFactory } from './factory-skills.js';
+import { normalizeTemplate } from './factory-cr.js';
 
 // ─── Constants ───
 
@@ -155,6 +156,8 @@ export function normalizeFactory(input) {
       // May the Manager set standing rules ("allow npm test for the rest of
       // the run") instead of answering every request one by one?
       managerRules: s.managerRules === undefined ? true : !!s.managerRules,
+      // The change request form the run starts from (factory-cr.js).
+      crTemplate: normalizeTemplate(s.crTemplate),
       gatekeeper: {
         enabled: !!(s.gatekeeper && s.gatekeeper.enabled),
         model: str(s.gatekeeper && s.gatekeeper.model, 60) || 'haiku',

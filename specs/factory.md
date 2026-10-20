@@ -144,8 +144,21 @@ exhaustion only allows exits; run caps bound everything.
 ## 4. Running
 
 ### 4.1 Starting
-- From the project's Factory panel (or a kanban card): choose factory + task,
-  optionally override merge mode.
+- From the project's Factory panel (or a kanban card): choose factory, fill
+  in a **change request**, optionally override merge mode.
+- **Change request (CR)** (src/factory-cr.js): a title plus the factory's CR
+  template sections. Default: Goal*, Current situation, Expected result*,
+  Done when* (list), Out of scope (list), Constraints and references (*
+  required). The template is edited per factory (Factory settings → Change
+  request form: label, hint, required, list; reorder; back to default).
+  Attachments use the chat's upload (project `crundi_attachments`), only from
+  there; at start they are copied into the run's `shared/change-request/` and
+  the CR is written to `shared/CHANGE-REQUEST.md` (lists as checklists).
+  The Manager's first step (and a recovery) carries the whole CR; every other
+  step carries a brief (title, goal, done checks, the file's path). The
+  Manager is told to ask the person when the CR is unclear and to finish only
+  when every done check is met; reviewers hold work to the done checks. The
+  draft is kept per factory in the browser. The panel shows the CR folded.
 - **One run per project.** A second start is refused with the reason.
 - The run **snapshots** the factory; later edits never affect it. Library
   cards show "N runs on an older version".

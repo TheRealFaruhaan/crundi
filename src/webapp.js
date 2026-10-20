@@ -3442,7 +3442,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       switch (body.action) {
         case 'start':
           if (!body.project || aliasDenied(body.project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
-          result = await factoryRunner.startRun({ project: body.project, factoryId: body.factoryId, task: body.task, mergeMode: body.mergeMode, ignoreMissingSkills: !!body.ignoreMissingSkills });
+          result = await factoryRunner.startRun({ project: body.project, factoryId: body.factoryId, task: body.task, cr: body.cr, mergeMode: body.mergeMode, ignoreMissingSkills: !!body.ignoreMissingSkills });
           break;
         case 'stop': result = await factoryRunner.stopRun(body.id); break;
         case 'resume': result = await factoryRunner.resume(body.id); break;
