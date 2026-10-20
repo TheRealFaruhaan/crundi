@@ -408,6 +408,21 @@ chat header carries a Factory badge.
   when the result is merged.
 - UI: the project Factory panel, under "Triggers".
 
+### 4.10 Building a factory from a chat or terminal
+- Every Crundi chat and terminal (not a factory run's own chats, which get
+  the run tools instead) has `factory_guide` (the JSON format, the
+  validator's rules, shapes that work; src/factory-guide.js),
+  `factory_list`, `factory_get`, `factory_validate`, `factory_save` (create,
+  or update with baseVersion), `factory_start` (with a CR) and
+  `factory_triggers` (list, save, delete). The shipped skill
+  `crundi-factories` tells Claude when and how to use them.
+- A definition saved without positions (or with nodes piled on one spot) is
+  laid out top to bottom (`layoutFactory`; loops are the edges that go back
+  up the path from Start). The editor's Tidy uses the same edges.
+- Checked end to end: Haiku, asked for "planner, parallel frontend and
+  backend, reviewer who approves or sends back, Manager finishes", built and
+  saved a valid factory in 6 turns.
+
 ## 5. UI
 
 ### 5.1 Global Factories tab

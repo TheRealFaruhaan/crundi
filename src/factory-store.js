@@ -24,7 +24,7 @@ import { normalizeTemplate } from './factory-cr.js';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { config } from './config.js';
-import { normalizeFactory, validateFactory, skeletonFactory, genId } from './factory-model.js';
+import { normalizeFactory, validateFactory, skeletonFactory, genId, needsLayout, layoutFactory } from './factory-model.js';
 
 export const EXPORT_FORMAT = 'crundi-factory';
 export const EXPORT_FORMAT_VERSION = 1;
@@ -100,7 +100,8 @@ function stamp(f, { fresh = false } = {}) {
 
 /** A new factory: the minimal valid skeleton, or a given definition. */
 export function createFactory({ name, definition } = {}) {
-  const base = definition ? normalizeFactory(definition) : skeletonFactory(name || 'New factory');
+  // Written as text (a chat, an import without positions): laid out here.
+  const base = definition ? normalizeFactory(needsLayout(definition) ? layoutFactory(definition) : definition) : skeletonFactory(name || 'New factory');
   if (name) base.name = String(name).slice(0, 80).trim() || base.name;
   base.id = genId('f_');
   stamp(base, { fresh: true });
@@ -120,7 +121,8 @@ export function saveFactory(id, definition, { baseVersion } = {}) {
   if (baseVersion != null && Number(baseVersion) !== cur.version) {
     return { ok: false, conflict: true, error: 'This factory was changed somewhere else. Reload it to see the latest version.', version: cur.version };
   }
-  const next = normalizeFactory({ ...definition, id: cur.id, createdAt: cur.createdAt, version: cur.version });
+  const laid = needsLayout(definition) ? layoutFactory(definition) : definition;
+  const next = normalizeFactory({ ...laid, id: cur.id, createdAt: cur.createdAt, version: cur.version });
   stamp(next);
   writeOne(next);
   return { ok: true, factory: next, validation: validateFactory(next) };

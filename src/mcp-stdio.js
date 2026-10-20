@@ -335,6 +335,62 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'Short title, at most 20 characters' }, long: { type: 'string', description: 'Longer title saying a little more, at most 50 characters' } }, required: ['title'] },
   },
 
+  // ─── Building factories (any chat or terminal) ───
+  {
+    name: 'factory_guide',
+    description: 'How to write a Crundi factory (a reusable AI team for large pieces of work: a Manager, employees with personas, a flow of steps, decisions, joins, waits): the JSON format, the rules the validator enforces, and shapes that work. Read it before writing or changing a factory.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'factory_list',
+    description: 'List the Crundi factories (id, name, description, team size, whether it can run, problems to fix) and their CR templates.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'factory_get',
+    description: 'One Crundi factory\'s full definition (roster, nodes, edges, settings) with its validation, to read or change it.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'factory_validate',
+    description: 'Check a factory definition without saving it: errors (must fix before it can run) and warnings, each with a fix. Use it until there are no errors.',
+    inputSchema: { type: 'object', properties: { definition: { type: 'object', description: 'The factory, as in factory_guide', additionalProperties: true } }, required: ['definition'] },
+  },
+  {
+    name: 'factory_save',
+    description: 'Save a factory: a new one (no id), or over an existing one (id, and baseVersion from factory_get to avoid overwriting someone else\'s edits). Saved even with errors, as a draft. Node positions are laid out automatically when left out. Returns the id and validation.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, definition: { type: 'object', additionalProperties: true }, baseVersion: { type: 'number' } }, required: ['definition'] },
+  },
+  {
+    name: 'factory_start',
+    description: 'Start a factory run in a project (only when the person asks). Give a change request: title, and sections keyed by the factory\'s CR template ids (default: goal, current, expected, done (one check per line), scope, notes). One run per project at a time.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        factoryId: { type: 'string' },
+        project: { type: 'string', description: 'Project alias; defaults to this chat\'s project' },
+        title: { type: 'string' },
+        sections: { type: 'object', additionalProperties: { type: 'string' } },
+        mergeMode: { type: 'string', enum: ['ask', 'auto'] },
+      },
+      required: ['factoryId', 'title'],
+    },
+  },
+  {
+    name: 'factory_triggers',
+    description: 'List, save or delete triggers that start a factory by themselves: schedule (at HH:MM on weekdays 0-6), kanban (a card enters a column: backlog, todo, in_progress, done), webhook (a secret URL). The CR may use placeholders: {{date}}, {{time}}, {{card.title}}, {{card.description}}, {{card.todos}}, {{body.path}}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'save', 'delete'] },
+        id: { type: 'string', description: 'For delete' },
+        project: { type: 'string', description: 'For list; defaults to this chat\'s project' },
+        trigger: { type: 'object', description: 'For save: { id?, name, enabled, project, factoryId, kind, schedule: { at, days }, kanban: { status }, cr: { title, sections }, mergeMode, ifBusy: "queue"|"skip" }', additionalProperties: true },
+      },
+      required: ['action'],
+    },
+  },
+
   {
     name: 'factory_handoff',
     description: 'End your step in a Crundi factory run and hand the work on. Call it exactly once when your step is done, then stop. Give a summary, your answers to the decisions your step message lists (answers keyed by decision id), any notes it lists (notes keyed by the id it gives), finish: true if you are the Manager and the whole task is done, or escalate with a reason instead of everything else if you cannot do the step. If something is missing or wrong the call fails and says what; fix it and call again.',
@@ -474,7 +530,7 @@ const TOOLS = [
 
 // ─── Tool handler ───
 
-const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command',
+const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command', 'factory_start', 'factory_triggers',
   'kanban_list', 'kanban_get_task', 'kanban_list_column', 'kanban_add_task', 'kanban_update_task', 'kanban_move_task', 'kanban_delete_task', 'kanban_restore_task',
   'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo', 'kanban_restore_todo', 'kanban_history',
   'mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors', 'mindmap_add_node', 'mindmap_link_node',
@@ -591,11 +647,15 @@ const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show
 const IN_CHAT = !!process.env.CRUNDI_CHAT_ID;
 // Only a factory run's chats are offered factory_handoff.
 const IN_FACTORY = !!process.env.CRUNDI_FACTORY_RUN;
+const FACTORY_RUN_TOOLS = new Set(['factory_handoff', 'factory_permission', 'factory_delegate', 'factory_result']);
+const FACTORY_LIBRARY_TOOLS = new Set(['factory_guide', 'factory_list', 'factory_get', 'factory_validate', 'factory_save', 'factory_start', 'factory_triggers']);
 const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
   : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name))
 ).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name))
-  .filter(t => IN_FACTORY || !t.name.startsWith('factory_'));
+  // A factory run's chats get the run tools; every other chat gets the tools
+  // that build factories.
+  .filter(t => IN_FACTORY ? !FACTORY_LIBRARY_TOOLS.has(t.name) : !FACTORY_RUN_TOOLS.has(t.name));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: LISTED_TOOLS };

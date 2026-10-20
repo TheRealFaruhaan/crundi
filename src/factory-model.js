@@ -715,3 +715,80 @@ function handleLabel(n, h) {
   if (n.type === 'wait') return h === 'done' ? 'Done' : h === 'timeout' ? 'Timed out' : '';
   return h;
 }
+
+// ─── Layout for factories written as text (a chat, an import) ───
+
+/** True when the nodes have no real positions (missing, or piled on one spot). */
+export function needsLayout(input) {
+  const nodes = Array.isArray(input?.nodes) ? input.nodes : [];
+  if (nodes.length < 2) return false;
+  const seen = new Set();
+  let missing = 0;
+  for (const n of nodes) {
+    const p = n && n.position;
+    if (!p || !Number.isFinite(+p.x) || !Number.isFinite(+p.y)) { missing++; continue; }
+    const k = Math.round(p.x / 40) + ',' + Math.round(p.y / 40);
+    if (seen.has(k)) return true;
+    seen.add(k);
+  }
+  return missing > 0;
+}
+
+/**
+ * The flow edges that read top to bottom: every flow edge except the ones
+ * that go back up a loop (found walking from Start, so the Manager sits under
+ * Start and a review's way back counts as the loop). [[source, target]].
+ */
+export function layoutEdges(input) {
+  const f = input;
+  const out = new Map(f.nodes.map(n => [n.id, []]));
+  for (const e of f.edges) if (e.kind !== 'note' && out.has(e.source) && out.has(e.target)) out.get(e.source).push(e);
+  // Forward edges first, so a loop's limited edge is the one left out.
+  for (const list of out.values()) list.sort((a, b) => (a.maxRounds > 0) - (b.maxRounds > 0));
+  const state = new Map();
+  const keep = [];
+  const visit = (id) => {
+    state.set(id, 1);
+    for (const e of out.get(id)) {
+      if (state.get(e.target) === 1) continue;   // back up the path: a loop
+      keep.push([id, e.target]);
+      if (!state.has(e.target)) visit(e.target);
+    }
+    state.set(id, 2);
+  };
+  const start = f.nodes.find(n => n.type === 'start');
+  if (start) visit(start.id);
+  for (const n of f.nodes) if (!state.has(n.id)) visit(n.id);
+  return keep;
+}
+
+/**
+ * Lay a factory out top to bottom: layers by longest path from Start over
+ * layoutEdges; each layer centred. Returns a copy.
+ */
+export function layoutFactory(input) {
+  const f = normalizeFactory(input);
+  const W = 240, H = 130, GAP = 40;
+  const dag = new Map(f.nodes.map(n => [n.id, []]));
+  for (const [a, b] of layoutEdges(f)) dag.get(a).push(b);
+  // Longest path layering.
+  const layer = new Map();
+  const order = [];
+  const seen = new Set();
+  const topo = (id) => { if (seen.has(id)) return; seen.add(id); for (const t of dag.get(id)) topo(t); order.push(id); };
+  for (const n of f.nodes) topo(n.id);
+  order.reverse();
+  for (const id of order) if (!layer.has(id)) layer.set(id, 0);
+  for (const id of order) for (const t of dag.get(id)) layer.set(t, Math.max(layer.get(t) || 0, layer.get(id) + 1));
+  // End goes last, under everything.
+  const end = f.nodes.find(n => n.type === 'end');
+  if (end) layer.set(end.id, Math.max(...[...layer.values()]) + (layer.get(end.id) === Math.max(...[...layer.values()]) ? 0 : 1));
+  const rows = new Map();
+  for (const n of f.nodes) { const l = layer.get(n.id) || 0; if (!rows.has(l)) rows.set(l, []); rows.get(l).push(n.id); }
+  const pos = new Map();
+  for (const [l, ids] of rows) {
+    const width = ids.length * W + (ids.length - 1) * GAP;
+    ids.forEach((id, i) => pos.set(id, { x: Math.round(-width / 2 + i * (W + GAP)), y: l * (H + GAP) }));
+  }
+  return { ...f, nodes: f.nodes.map(n => ({ ...n, position: pos.get(n.id) || { x: 0, y: 0 } })) };
+}

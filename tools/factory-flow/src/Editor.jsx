@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, MarkerType, useReactFlow } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
-import { validateFactory, normalizeFactory, genId, MANAGER_ID, flowGraph, reachable } from '../../../src/factory-model.js';
+import { validateFactory, normalizeFactory, genId, MANAGER_ID, flowGraph, reachable, layoutEdges } from '../../../src/factory-model.js';
 import { toFlow, AGENTS } from './convert.js';
 import { nodeTypes, edgeTypes } from './nodes.jsx';
 import { Icon } from './icons.jsx';
@@ -236,7 +236,7 @@ function Inner({ apiFetch, factoryId, onClose, initial }) {
     g.setDefaultEdgeLabel(() => ({}));
     for (const n of rf.getNodes()) g.setNode(n.id, { width: n.measured?.width || 220, height: n.measured?.height || 100 });
     // Back edges (loops) are left out so the flow reads top to bottom.
-    for (const e of f.edges) if (e.kind === 'flow' && !e.maxRounds) g.setEdge(e.source, e.target);
+    for (const [a, b] of layoutEdges(f)) g.setEdge(a, b);
     dagre.layout(g);
     mutate(d => { for (const n of d.nodes) { const p = g.node(n.id); if (p) n.position = { x: Math.round(p.x - p.width / 2), y: Math.round(p.y - p.height / 2) }; } });
     setTimeout(() => rf.fitView({ duration: 300, padding: 0.15 }), 50);

@@ -45,6 +45,7 @@ import { validateFactory } from './factory-model.js';
 import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-runner.js';
 import * as factoryCleanup from './factory-cleanup.js';
 import { createTriggerStore, createTriggerDispatcher } from './factory-triggers.js';
+import { FACTORY_GUIDE } from './factory-guide.js';
 import { inspectRepo as inspectFactoryRepo } from './factory-git.js';
 import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
@@ -5998,6 +5999,49 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           return json(res, body.tool === 'factory_delegate'
             ? await factoryRunner.delegateJob(String(a.sessionId || ''), a.employee, a.task)
             : await factoryRunner.resultFromManager(String(a.sessionId || ''), a.action, a.note || ''));
+        } catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
+      // ─── Building factories from a chat or terminal (owner only) ───
+      if (['factory_guide', 'factory_list', 'factory_get', 'factory_validate', 'factory_save', 'factory_start', 'factory_triggers'].includes(body.tool)) {
+        try {
+          switch (body.tool) {
+            case 'factory_guide': return json(res, { ok: true, content: [{ type: 'text', text: FACTORY_GUIDE }] });
+            case 'factory_list': return json(res, { ok: true, factories: factoryStore.listFactories() });
+            case 'factory_get': {
+              const r = factoryStore.getFactory(String(a.id || ''));
+              return json(res, r ? { ok: true, factory: r.factory, validation: r.validation } : { ok: false, error: 'Factory not found. factory_list shows the ids.' });
+            }
+            case 'factory_validate': {
+              if (!a.definition || typeof a.definition !== 'object') return json(res, { ok: false, error: 'Give the definition (see factory_guide).' });
+              const v = validateFactory(a.definition);
+              return json(res, { ok: true, runnable: v.ok, errors: v.errors, warnings: v.warnings });
+            }
+            case 'factory_save': {
+              if (!a.definition || typeof a.definition !== 'object') return json(res, { ok: false, error: 'Give the definition (see factory_guide).' });
+              const r = a.id ? factoryStore.saveFactory(String(a.id), a.definition, { baseVersion: a.baseVersion }) : factoryStore.createFactory({ definition: a.definition });
+              if (r.ok) { try { broadcastSSE('factories', { id: r.factory.id }); } catch { /* not up */ } }
+              return json(res, r.ok ? { ok: true, id: r.factory.id, version: r.factory.version, runnable: r.validation.ok, errors: r.validation.errors, warnings: r.validation.warnings, note: 'Open it in the Factories tab to see and adjust the flow.' } : r);
+            }
+            case 'factory_start': {
+              if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+              const project = String(a.project || a.alias || '');
+              if (!project) return json(res, { ok: false, error: 'Which project? Give project (its alias).' });
+              const r = await factoryRunner.startRun({ project, factoryId: a.factoryId, cr: { title: a.title, sections: a.sections || {} }, mergeMode: a.mergeMode });
+              return json(res, r.ok ? { ok: true, runId: r.run.id, managerChatId: r.run.managerChatId, note: 'Started. The person follows it in the project\'s Factory panel and the Manager\'s chat.' } : { ok: false, error: r.error, ...(r.field ? { field: r.field } : {}), ...(r.missingSkills ? { missingSkills: r.missingSkills } : {}) });
+            }
+            case 'factory_triggers': {
+              if (a.action === 'list') return json(res, { ok: true, triggers: factoryTriggers.list(a.project || a.alias ? { project: a.project || a.alias } : {}) });
+              if (a.action === 'delete') return json(res, factoryTriggers.remove(String(a.id || '')));
+              if (a.action === 'save') {
+                const t = { ...(a.trigger || {}) };
+                if (!t.project) t.project = a.project || a.alias || '';
+                const r = factoryTriggers.upsert(t);
+                return json(res, r.ok && r.trigger.kind === 'webhook' ? { ...r, webhookPath: `/api/factory-hook/trigger/${r.trigger.id}?key=${r.trigger.webhook.key}` } : r);
+              }
+              return json(res, { ok: false, error: 'action is list, save or delete.' });
+            }
+          }
         } catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 
