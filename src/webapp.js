@@ -46,6 +46,7 @@ import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-
 import * as factoryCleanup from './factory-cleanup.js';
 import { createTriggerStore, createTriggerDispatcher } from './factory-triggers.js';
 import { FACTORY_GUIDE } from './factory-guide.js';
+import { factoryTemplates } from './factory-templates.js';
 import { inspectRepo as inspectFactoryRepo } from './factory-git.js';
 import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
@@ -1040,6 +1041,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     catch (err) { console.error('[factory] housekeeping:', err.message); }
   };
   setTimeout(factoryHousekeeping, 30_000).unref?.();
+  // The provided factory templates, keeping only the skills this machine has.
+  const providedTemplates = () => {
+    let available = null;
+    try { available = new Set((skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced').map(x => x.name)); } catch { available = null; }
+    return factoryTemplates({ available });
+  };
   // Triggers: schedules, kanban cards, webhooks start runs by themselves.
   const factoryTriggers = createTriggerStore(config.dataDir);
   const triggerDispatch = factoryRunner ? createTriggerDispatcher({
@@ -3415,6 +3422,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/factories' && req.method === 'GET') {
       return json(res, { ok: true, factories: factoryStore.listFactories() });
     }
+    // The provided templates, with the skills this machine has.
+    if (path === '/api/factory-templates' && req.method === 'GET') {
+      return json(res, { ok: true, templates: providedTemplates().map(t => ({ id: t.id, name: t.name, description: t.description, goodFor: t.goodFor, team: t.roster.filter(r => r.id !== 'manager').map(r => r.name), steps: t.nodes.length })) });
+    }
     if (path === '/api/factories/get' && req.method === 'GET') {
       const r = factoryStore.getFactory(url.searchParams.get('id'));
       if (!r) return json(res, { ok: false, error: 'Factory not found' }, 404);
@@ -3435,6 +3446,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'duplicate': result = factoryStore.duplicateFactory(body.id, { name: body.name }); break;
         case 'delete': result = factoryStore.deleteFactory(body.id); break;
         case 'import': result = factoryStore.importFactory(body.data); break;
+        case 'fromTemplate': {
+          const t = providedTemplates().find(x => x.id === body.templateId);
+          if (!t) { result = { ok: false, error: 'No such template.' }; break; }
+          const { id: _i, template: _t, goodFor: _g, ...def } = t;
+          result = factoryStore.createFactory({ definition: def, name: body.name || t.name });
+          break;
+        }
         default: return json(res, { ok: false, error: `Unknown factory action: ${body.action}` }, 400);
       }
       if (result.ok) broadcastSSE('factories', { id: body.id || (result.factory && result.factory.id), action: body.action });
@@ -6012,8 +6030,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         try {
           switch (body.tool) {
             case 'factory_guide': return json(res, { ok: true, content: [{ type: 'text', text: FACTORY_GUIDE }] });
-            case 'factory_list': return json(res, { ok: true, factories: factoryStore.listFactories() });
+            case 'factory_list': return json(res, { ok: true, factories: factoryStore.listFactories(), templates: providedTemplates().map(t => ({ id: t.id, name: t.name, goodFor: t.goodFor, team: t.roster.map(r => r.name) })), note: 'Templates (tpl_…) are read-only starting points: factory_get one, change it, and factory_save it as a new factory.' });
             case 'factory_get': {
+              const tpl = String(a.id || '').startsWith('tpl_') ? providedTemplates().find(x => x.id === a.id) : null;
+              if (tpl) { const { id: _i, template: _t, ...def } = tpl; return json(res, { ok: true, template: true, factory: def, note: 'A provided template: save a changed copy with factory_save (no id).' }); }
               const r = factoryStore.getFactory(String(a.id || ''));
               return json(res, r ? { ok: true, factory: r.factory, validation: r.validation } : { ok: false, error: 'Factory not found. factory_list shows the ids.' });
             }

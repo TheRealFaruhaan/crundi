@@ -54,6 +54,11 @@ export const DENY_RULES = [
   'Bash(pm2 restart:*)',
   'Bash(pm2 stop:*)',
   'Bash(pm2 delete:*)',
+  // By name they hit whatever else matches (another project's server, Crundi
+  // itself: a test chat's `pkill -f "node src/index.js"` took down a Crundi
+  // dev instance). Stop your own processes by PID, or as Crundi services.
+  'Bash(pkill:*)',
+  'Bash(killall:*)',
 ];
 
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);

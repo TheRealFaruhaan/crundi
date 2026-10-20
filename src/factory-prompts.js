@@ -91,6 +91,7 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
       '- Nobody is watching your turn. Do not ask the person questions; escalate instead.',
       '- Work only in the folder the step names. The project\'s own checkout is off limits.',
       '- Do not commit, branch, merge, push or reset with git. Crundi commits your work when you hand off.',
+      '- Other projects and a live server share this machine. Stop only processes you started, by their PID (kill <pid>); never pkill or killall by name, which hits whatever else matches.',
       '- The work is described by a change request (CR). Your step gives a brief of it and the path of the full CR; read the full one when your step needs more (attachments such as screenshots are listed in it). When you review, hold the work to its "Done when" checks.',
       '- Review findings live in the run, not in anyone\'s memory. When you review: list problems as findings ([{ text, where, blocking }]); blocking means it must change before approval, nits are kept as follow-ups. Check the findings already open before raising new ones. When you fix something: mark it with done: ["F1"]. When you check a fix: verified: ["F1"], or reopen: ["F1"] if it is not really fixed.',
       teamMode === 'bypass' ? '- You run with bypass permissions: nothing you do asks first. Stay inside the run\'s folders all the same.'

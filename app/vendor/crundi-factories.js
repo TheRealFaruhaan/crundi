@@ -65,6 +65,9 @@
     '.fx-modal h3{margin:0;font-size:15px}',
     '.fx-modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}',
     '.fx-modal.fx-modal-wide{width:min(680px,100%)}',
+    '.fx-section{display:flex;flex-direction:column;gap:2px;margin:18px 2px 10px;font-size:14px}',
+    '.fx-section span{font-size:12.5px;color:var(--text-secondary)}',
+    '.fx-tpl .fx-card-desc{-webkit-line-clamp:3}',
     '.fx-days{display:flex;gap:4px;flex-wrap:wrap}',
     '.fx-day{background:var(--bg-card);border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:5px 9px;font:inherit;font-size:12px;cursor:pointer}',
     '.fx-day.on{background:var(--accent);border-color:var(--accent);color:#fff}',
@@ -789,14 +792,15 @@
         input.click();
       };
       body.innerHTML = '<div class="fx-empty">Loading…</div>';
-      var j = await getJson(ctx, '/api/factories').catch(function () { return { factories: [] }; });
+      var both = await Promise.all([
+        getJson(ctx, '/api/factories').catch(function () { return { factories: [] }; }),
+        getJson(ctx, '/api/factory-templates').catch(function () { return { templates: [] }; }),
+      ]);
+      var j = both[0], tpls = both[1].templates || [];
       if (current !== 'library' || sub) return;
       body.innerHTML = '';
       var list = j.factories || [];
-      if (!list.length) {
-        body.appendChild(el('div', 'fx-empty', 'No factories yet. A factory is a team: a Manager who owns the task and employees with personas, wired together as a flow of steps and decisions. Create one, then start it in any project.'));
-        return;
-      }
+      if (!list.length) body.appendChild(el('div', 'fx-empty', 'No factories of your own yet. A factory is a team: a Manager who owns the change request and employees with personas, wired together as a flow of steps and decisions. Start from one of the templates below, build your own with New factory, or ask any Claude chat to build one for you.'));
       var grid = el('div', 'fx-grid');
       list.forEach(function (f) {
         var card = el('div', 'fx-card');
@@ -827,7 +831,33 @@
         card.appendChild(row);
         grid.appendChild(card);
       });
-      body.appendChild(grid);
+      if (list.length) body.appendChild(grid);
+      // The provided templates: read-only starting points, copied on use.
+      if (tpls.length) {
+        body.appendChild(el('div', 'fx-section', '<b>Templates</b><span>Modelled on how real teams work. Use one as it is, copy it and change it to fit how your team works, or build your own from scratch.</span>'));
+        var tg = el('div', 'fx-grid');
+        tpls.forEach(function (t) {
+          var card = el('div', 'fx-card fx-tpl');
+          card.appendChild(el('div', 'fx-card-head', '<span class="fx-card-name">' + esc(t.name) + '</span><span class="fx-chip">Template</span>'));
+          card.appendChild(el('div', 'fx-card-desc', esc(t.goodFor)));
+          card.appendChild(el('div', 'fx-meta', esc(t.description)));
+          card.appendChild(el('div', 'fx-meta', '<b>Team:</b> Manager, ' + esc(t.team.join(', '))));
+          var row = el('div', 'fx-row-btns');
+          var use = btn('Use this', 'primary', 'copy', ctx);
+          use.onclick = async function () {
+            use.disabled = true;
+            var r = await post(ctx, '/api/factories', { action: 'fromTemplate', templateId: t.id });
+            use.disabled = false;
+            if (!r.ok) return ctx.toast(r.error || 'Could not copy it.', 'error');
+            ctx.toast('"' + t.name + '" is in your factories now. Change it however you like.', 'success');
+            openSub('editor', r.factory.id);
+          };
+          row.appendChild(use);
+          card.appendChild(row);
+          tg.appendChild(card);
+        });
+        body.appendChild(tg);
+      }
     }
 
     async function runsView() {

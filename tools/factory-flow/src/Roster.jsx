@@ -5,12 +5,12 @@ import { PERSONAS } from './personas.js';
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
-export function newEmployee(template, f) {
+export function newEmployee(template, f, skills = null) {
   const t = template ? PERSONAS.find(p => p.key === template) : null;
   let name = t ? t.name : 'New employee';
   let n = 2;
   while (f.roster.some(r => r.name.toLowerCase() === name.toLowerCase())) name = (t ? t.name : 'New employee') + ' ' + n++;
-  return { id: genId('emp_'), name, persona: t ? t.persona : '', model: '', effort: '', memory: t ? t.memory : 'keep', tools: { allow: [], deny: t ? [...t.deny] : [] }, skills: [], presets: t && t.presets ? [...t.presets] : [] };
+  return { id: genId('emp_'), name, persona: t ? t.persona : '', model: '', effort: '', memory: t ? t.memory : 'keep', tools: { allow: [], deny: t ? [...t.deny] : [] }, skills: t ? t.skills.filter(k => !skills || skills.some(x => x.name === k)) : [], presets: t && t.presets ? [...t.presets] : [] };
 }
 
 export function RosterPane({ f, mutate, selected, setSelected, skills, issuesByEmployee, onRemove, onAddTo }) {
@@ -18,7 +18,7 @@ export function RosterPane({ f, mutate, selected, setSelected, skills, issuesByE
   const set = (fn, key) => mutate(d => { const e = d.roster.find(x => x.id === selected); if (e) fn(e); }, key);
   const used = (id) => f.nodes.filter(n => n.type === 'employee' && n.employeeId === id).length;
   const add = (tpl) => {
-    const e = newEmployee(tpl, f);
+    const e = newEmployee(tpl, f, skills && skills.length ? skills : null);
     mutate(d => {
       d.roster.push(e);
       if (onAddTo) { const n = d.nodes.find(x => x.id === onAddTo); if (n) n.employeeId = e.id; }

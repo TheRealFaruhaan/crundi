@@ -1427,6 +1427,9 @@ export function createFactoryRunner({
     needed.add(GATEKEEPER_ID);
     for (const [eid, emp] of Object.entries(entry.live.employees)) {
       if (needed.has(eid) || !emp.chatId || emp.busy || (emp.queue || []).length) continue;
+      // Still finishing the turn it handed off in: closing it now would cut
+      // the turn short (and lose what it cost). A later pass retires it.
+      if (agents.state && agents.state(emp.chatId) && agents.state(emp.chatId) !== 'idle') continue;
       if (entry.live.permissions.some(p => p.employeeId === eid)) continue;
       const chatId = emp.chatId;
       const uuid = agents.sessionUuid(chatId) || '';
