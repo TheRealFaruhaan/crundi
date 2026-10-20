@@ -345,11 +345,30 @@ chat header carries a Factory badge.
 - Start button, disabled with reason while a run exists.
 - Badge on the project and the Factories tab when a run is active or needs you.
 
+### 5.2b Phone
+- The Manager's chat is an ordinary chat: it has its bubble, and its result
+  card renders on the compact `/chat/<id>` page, which also shows a "Part of a
+  factory · Open the live graph" bar (opens `/#factory-run=<id>` in the main
+  app, straight into that run's live graph). Employees are background chats
+  and stay off the phone.
+- The live card follows the whole run, carried by the Manager's chat
+  (`factoryLiveCard`): working while anyone on the team works, titled with who
+  ("Std: Frontend dev working"); "needs you" for a question, a limit, a crash,
+  the result or the Manager talking to you; waiting while paused; gone when
+  the run ends. The Manager going idle while its team works does not drop it.
+- Factory notifications (needs you, done, crashed, cap, merged) are filed
+  under the Manager's chat (its bubble) and open it.
+
 ### 5.3 Cleanup
 - On finish: Merge/Discard remove worktree, branch, sub-worktrees, services,
   sessions' processes; Keep branch keeps only the branch.
-- On Crundi boot: reconcile orphaned worktrees, runs whose worktree vanished,
-  services from dead runs, `git worktree prune`.
+- On Crundi boot (30 s after) and every six hours: `git worktree prune` in
+  every repo a run used, then auto-delete if turned on
+  (`<dataDir>/factory-settings.json`). The Cleanup view scans the worktrees
+  root: worktrees of stopped runs, folders no run knows about, kept branches;
+  each with size, age and uncommitted changes. Removal unregisters worktrees
+  from their repository and deletes factory/* branches, and never leaves the
+  worktrees root. After a merge the run's empty folder goes too.
 - Cleanup view lists leftovers with size and age; clear one or all. Uncommitted
   work flagged before deletion. Nothing silent except after Merge/Discard.
 - Optional: auto-delete kept/crashed leftovers after N days.

@@ -32,6 +32,7 @@ ${rootCss}
 html,body{margin:0;height:100%;background:var(--bg-primary);color:var(--text-primary);font-family:-apple-system,"Segoe UI",system-ui,sans-serif;-webkit-text-size-adjust:100%;overscroll-behavior:none}
 button{font:inherit;color:inherit}
 #cp{display:flex;flex-direction:column;height:100dvh;min-height:0}
+#cp-factory{display:block;width:100%;text-align:left;padding:7px 12px;background:rgba(99,102,241,.12);color:var(--text-secondary);border:0;border-bottom:1px solid var(--border-subtle);font:inherit;font-size:.82rem;cursor:pointer;flex:none}#cp-factory b{color:var(--accent-hover,#818cf8);font-weight:600}#cp-factory[hidden]{display:none}
 #cp-head{display:flex;align-items:center;gap:10px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px;background:var(--bg-secondary);border-bottom:1px solid var(--border-subtle);flex:none}
 .cp-btn{width:38px;height:38px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:50%;background:transparent;cursor:pointer;color:var(--text-secondary)}
 .cp-btn:active{background:var(--bg-hover)}
@@ -114,6 +115,7 @@ button{font:inherit;color:inherit}
   </div>
   <div id="cp-conn"><i></i><span role="status" aria-live="polite"></span></div>
   <div id="cp-ask" role="alert"></div>
+  <button id="cp-factory" type="button" hidden>Part of a factory · <b>Open the live graph</b></button>
   <div id="cp-body">
     <div id="cp-chat" class="chat-mount"></div>
     <div id="cp-note" role="status"></div>

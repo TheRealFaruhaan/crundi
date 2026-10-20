@@ -314,7 +314,7 @@ function Inner({ apiFetch, factoryId, onClose, initial }) {
             onNodeClick={(_, n) => select({ kind: 'node', id: n.id })} onEdgeClick={(_, e) => select({ kind: 'edge', id: e.id })}
             onPaneClick={() => { setSelection(null); if (phone) setTab(null); }}
             nodesConnectable={!run} elementsSelectable
-            snapToGrid snapGrid={[16, 16]} fitView fitViewOptions={{ padding: 0.15 }} minZoom={0.15} maxZoom={2}
+            snapToGrid snapGrid={[16, 16]} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.15} maxZoom={2}
             deleteKeyCode={run ? null : ['Delete', 'Backspace']} connectionRadius={30} colorMode="dark"
             defaultEdgeOptions={{ markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 } }}
           >

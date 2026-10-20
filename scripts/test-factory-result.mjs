@@ -146,6 +146,7 @@ const cardOf = (team) => team.of('manager')[0]?.cards?.[0];
   ok(sh(['log', '-1', '--format=%s', 'dev'], dir) === 'Add the greeting' && /Made by the Crundi factory "Solo"/.test(sh(['log', '-1', '--format=%b', 'dev'], dir)), 'merge: one commit on dev, its subject from the Manager\'s summary');
   ok(existsSync(join(dir, 'hello.txt')), 'merge: the person\'s checkout has the result');
   ok(!existsSync(st.run.worktree) && !sh(['branch', '--list', st.run.branch], dir), 'merge: the worktree and the branch are cleaned up');
+  ok(!existsSync(join(st.run.worktree, '..')), 'merge: the run\'s own folder goes too');
   ok(removed.includes('svc:preview'), 'merge: preview services started from the run are removed');
   ok(cardOf(team).state === 'merged' && cardOf(team).commit, 'merge: the same card now says it was merged, with the commit');
   ok(!r.guardsChat(mgrChat), 'guard: once finished, the Manager\'s chat can be closed');

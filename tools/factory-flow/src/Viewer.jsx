@@ -254,7 +254,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
           <ReactFlow nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={onNodesChange}
             nodesDraggable={false} nodesConnectable={false} elementsSelectable
             onNodeClick={(_, x) => { setSel(x.id); setTab('run'); }} onPaneClick={() => setSel(null)}
-            fitView fitViewOptions={{ padding: 0.15 }} minZoom={0.15} maxZoom={2} colorMode="dark" deleteKeyCode={null}
+            fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.15} maxZoom={2} colorMode="dark" deleteKeyCode={null}
             defaultEdgeOptions={{ markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 } }}>
             <Background gap={16} size={1} />
             <Controls showInteractive={false} />

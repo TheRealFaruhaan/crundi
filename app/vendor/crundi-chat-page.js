@@ -384,8 +384,12 @@
     }
     note('Update required', (kind === 'web' ? 'This page' : 'This app') + ' is older than this server accepts. Version ' + body.minimum + ' or newer is needed.');
   }
+  // Shown inside the main page (a factory employee's chat opens in a frame):
+  // "back" and "open in Crundi" act on the main page, not inside the frame.
+  var framed = (function () { try { return window.top !== window.self && window.top.location.origin === location.origin; } catch (e) { return false; } })();
   function openMain(path) {
     if (bridge('openMain', path) !== undefined) return;
+    if (framed) { window.top.location.href = path; return; }
     location.href = path;
   }
 
@@ -505,6 +509,13 @@
       if (!view || msg.id !== sid) return;
       if (msg.type === 'ui-history') {
         view.applyHistory(msg.session);
+        // The Manager of a factory run: a way to its live graph.
+        var fb = $('cp-factory');
+        if (fb && msg.session && msg.session.factory && msg.session.factory.runId) {
+          var runId = msg.session.factory.runId;
+          fb.hidden = false;
+          fb.onclick = function () { openMain('/#factory-run=' + encodeURIComponent(runId)); };
+        }
         if (msg.session) { meta.state = msg.session.status === 'exited' ? '' : (msg.session.state || ''); if (msg.session.title && !meta.title) meta.title = msg.session.title; paintHead(); }
       }
       if (msg.type === 'ui-event') {
@@ -539,6 +550,9 @@
     // A file being shown is what is in front: back puts that away first.
     if (fileShown) { closeFile(); return; }
     if (bridge('close') !== undefined) return;
+    // In a frame, the main page has its own Close; history.back() here would
+    // move the main page through its history instead.
+    if (framed) { try { window.top.postMessage({ type: 'crundi-chat-close' }, location.origin); } catch (e) { /* fine */ } return; }
     if (history.length > 1) history.back(); else location.href = '/';
   };
   // Renaming is done in the header itself: the title becomes a box to type

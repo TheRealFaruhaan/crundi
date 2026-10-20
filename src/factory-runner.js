@@ -40,7 +40,7 @@
  * Spec: specs/factory.md §4.
  */
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync, rmdirSync } from 'fs';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { randomBytes } from 'crypto';
@@ -195,6 +195,8 @@ export function createFactoryRunner({
       updatedAt: s.updatedAt,
       handoffs: s.handoffs,
       worktree: r.worktree,
+      root: r.root,
+      repo: r.repo,
       branch: r.branch,
       parentBranch: r.parentBranch,
       dirtyAtStart: !!r.dirty,
@@ -676,6 +678,8 @@ export function createFactoryRunner({
       try { await git.removeWorktree({ repo: r.repo, path: w.path, branch: w.branch, deleteBranch: true }); } catch { /* gone */ }
     }
     try { await git.removeWorktree({ repo: r.repo, path: r.worktree, branch: r.branch, deleteBranch: !keepBranch }); } catch { /* gone */ }
+    // The run's own folder, now empty (rmdir refuses one that is not).
+    if (r.root) { try { rmdirSync(r.root); } catch { /* not empty, or gone */ } }
   }
 
   /**
@@ -1370,6 +1374,29 @@ export function createFactoryRunner({
   }
 
   return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+}
+
+/**
+ * What the phone's live card says about a run, carried by the Manager's chat:
+ * working while anyone on the team works, "needs you" for a question, a
+ * limit, a crash, the result or the Manager talking to the person, waiting
+ * while paused, idle (the card goes) once the run is over.
+ * @param {object} run           a run summary (status, waitingOn, tokens, factoryName)
+ * @param {string} managerState  the Manager chat's own state
+ */
+export function factoryLiveCard(run, managerState = 'idle') {
+  const active = ['starting', 'running', 'waiting', 'paused', 'finishing', 'crashed'].includes(run.status);
+  const busy = (run.tokens || []).find(t => t.status === 'work' || t.status === 'answer');
+  let state;
+  if (!active) state = 'idle';
+  else if (run.status === 'crashed' || run.status === 'finishing' || run.waitingOn === 'ask' || run.waitingOn === 'cap' || run.waitingOn === 'manager' || managerState === 'needs-input') state = 'needs-input';
+  else if (run.status === 'paused') state = 'waiting';
+  else state = busy || managerState === 'working' ? 'working' : 'waiting';
+  const doing = state === 'needs-input' ? (run.status === 'finishing' ? 'done, your decision' : run.status === 'crashed' ? 'crashed' : 'needs you')
+    : run.status === 'paused' ? 'paused'
+    : !active ? run.status
+    : busy ? `${busy.employee || 'someone'} ${busy.status === 'answer' ? 'deciding' : 'working'}` : 'between steps';
+  return { state, title: `${run.factoryName}: ${doing}` };
 }
 
 /** A commit subject from a summary: its first sentence, kept short. */

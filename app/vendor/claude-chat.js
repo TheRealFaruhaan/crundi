@@ -1690,7 +1690,7 @@
         discarded: 'Discarded. The worktree and branch are gone.',
         conflict: 'Merging into ' + parent + ' conflicts. The Manager is bringing ' + parent + ' in and resolving it, then it will finish again.',
         changes: 'Changes requested. The team is working on them; this card updates when the Manager finishes again.',
-        ask: 'Look it over, then choose what happens to it.',
+        ask: (d.count || 0) === 0 ? 'The team made no changes, so there is nothing to merge. Ask for changes, or close the run.' : 'Look it over, then choose what happens to it.',
       }[e.state] || '';
       if (msg) box.appendChild(el('div', 'cc-ask-sub', msg));
       if (e.error) box.appendChild(el('div', 'cc-ask-reason', esc(e.error)));
@@ -1715,17 +1715,24 @@
 
       var btns = el('div', 'cc-btns');
       if (e.state === 'ask') {
-        var merge = el('button', 'cc-btn primary', 'Merge into ' + parent);
-        merge.addEventListener('click', function () { act('merge', null, merge); });
-        btns.appendChild(merge);
-        var changes = el('button', 'cc-btn', 'Request changes');
+        // Nothing changed: nothing to merge or keep.
+        var empty = (d.count || 0) === 0;
+        if (!empty) {
+          var merge = el('button', 'cc-btn primary', 'Merge into ' + parent);
+          merge.addEventListener('click', function () { act('merge', null, merge); });
+          btns.appendChild(merge);
+        }
+        var changes = el('button', 'cc-btn' + (empty ? ' primary' : ''), 'Request changes');
         btns.appendChild(changes);
-        var keep = el('button', 'cc-btn', 'Keep branch');
-        keep.addEventListener('click', function () { act('keep', null, keep); });
-        btns.appendChild(keep);
-        var discard = el('button', 'cc-btn danger', 'Discard');
+        if (!empty) {
+          var keep = el('button', 'cc-btn', 'Keep branch');
+          keep.addEventListener('click', function () { act('keep', null, keep); });
+          btns.appendChild(keep);
+        }
+        var discard = el('button', 'cc-btn danger', empty ? 'Close the run' : 'Discard');
         var armed = null;
         discard.addEventListener('click', function () {
+          if (empty) { act('discard', null, discard); return; }
           if (!armed) {
             discard.textContent = 'Sure? Discard';
             armed = setTimeout(function () { armed = null; discard.textContent = 'Discard'; }, 3000);

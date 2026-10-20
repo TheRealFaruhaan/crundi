@@ -42,7 +42,9 @@ import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
 import * as factoryStore from './factory-store.js';
 import { validateFactory } from './factory-model.js';
-import { createFactoryRunner, claudeUiAgents } from './factory-runner.js';
+import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-runner.js';
+import * as factoryCleanup from './factory-cleanup.js';
+import { inspectRepo as inspectFactoryRepo } from './factory-git.js';
 import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
@@ -979,6 +981,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
 
   // ─── Factories: runs of a workflow template (factory-runner.js) ───
+  const lastFactoryStatus = new Map();
   // Created here because it needs the chat manager, notifications and the
   // event stream. Runs still going when Crundi stopped come back 'crashed'.
   const factoryRunner = claudeUi ? createFactoryRunner({
@@ -1000,12 +1003,36 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       },
       remove: async (key) => { try { await deleteService(key); } catch { /* gone */ } setTimeout(broadcastState, 200); },
     },
-    notify: (kind, run, text) => { try { notifyEvent('factory', text); } catch { /* best effort */ } },
-    onChange: (run) => { try { broadcastSSE('factoryRun', { id: run.id, project: run.project, status: run.status }); } catch { /* not up yet */ } },
+    // Filed under the Manager's chat on the phone (its bubble), and opening it.
+    notify: (kind, run, text) => {
+      try {
+        const id = run && run.managerChatId;
+        const meta = id ? { url: `/chat/${id}`, title: `Factory: ${run.factoryName}`, chat: { id, title: `Factory: ${run.factoryName}`, project: run.project || '', mark: markOf(run.project || '', run.factoryName) } } : {};
+        notifyEvent('factory', text, meta);
+      } catch { /* best effort */ }
+    },
+    onChange: (run) => {
+      try { broadcastSSE('factoryRun', { id: run.id, project: run.project, status: run.status }); } catch { /* not up yet */ }
+      try { tellPhonesFactory(run); } catch { /* the phone is a nicety */ }
+      // Status changes reach the project badges through the state push.
+      if (run && lastFactoryStatus.get(run.id) !== run.status + '|' + run.waitingOn) {
+        lastFactoryStatus.set(run.id, run.status + '|' + run.waitingOn);
+        try { setTimeout(broadcastState, 50); } catch { /* not up yet */ }
+      }
+    },
   }) : null;
   try { factoryRunner && factoryRunner.load(); } catch (err) { console.error('[factory] could not load runs:', err.message); }
   // A full usage window pauses running factories; they carry on after it resets.
   try { factoryRunner && factoryRunner.watchUsage(() => usage.getUsage()); } catch { /* usage is optional */ }
+  // Leftovers: forget worktrees whose folders are gone; delete old leftovers
+  // if the person turned that on. At boot and every six hours.
+  const factoryHousekeeping = async () => {
+    if (!factoryRunner) return;
+    try { const runs = factoryRunner.listRuns(); await factoryCleanup.prune(runs); await factoryCleanup.autoDelete({ runs, dataDir: config.dataDir }); }
+    catch (err) { console.error('[factory] housekeeping:', err.message); }
+  };
+  setTimeout(factoryHousekeeping, 30_000).unref?.();
+  setInterval(factoryHousekeeping, 6 * 3600_000).unref?.();
 
   // WebSocket connections that have reported the user is actively at the window
   // (window focused AND page visible). Used to skip the agent-status Telegram
@@ -1411,6 +1438,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
   function tellPhonesState(term, state, prev) {
     if (term.kind !== 'ui' || term.collaborator || term.background) return;
+    // A factory's Manager: its live card speaks for the whole run, so the
+    // Manager going idle while its team works does not take the card down.
+    if (term.factory && term.factory.role === 'manager' && factoryRunner) {
+      const run = factoryRunner.guardsChat(term.id);
+      if (run) { tellPhonesFactory(run); return; }
+    }
     if (state === prev) return;
     const active = state === 'working' || state === 'needs-input' || state === 'waiting';
     if (active && !workingSince.has(term.id)) workingSince.set(term.id, Date.now());
@@ -1587,6 +1620,28 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       console.log(`[crundi] Stopping ${s.key}: the collaborator who created it no longer has access`);
       try { stopService(s.key); } catch { /* next minute */ }
     }
+  }
+
+  // ─── A factory run on the phone's live card ───
+  // The Manager's chat carries the card: working while anyone on the team is,
+  // "needs you" for a question, a limit, a crash, the result or the Manager
+  // talking to you, waiting while paused, gone when the run ends. Titled with
+  // who is on it, so a glance says what the factory is doing.
+  const factoryLiveSent = new Map();   // run id -> last state|title told to phones
+  function tellPhonesFactory(run) {
+    if (!run || !run.managerChatId || !channels.isEnabled('mobile')) return;
+    const mgrState = (claudeUi && claudeUi.meta(run.managerChatId)?.state) || 'idle';
+    const { state, title } = factoryLiveCard(run, mgrState);
+    const key = state + '|' + title;
+    if (factoryLiveSent.get(run.id) === key) return;
+    factoryLiveSent.set(run.id, key);
+    if (state === 'idle') factoryLiveSent.delete(run.id);
+    const id = run.managerChatId;
+    if (state !== 'idle' && !workingSince.has(id)) workingSince.set(id, Date.parse(run.createdAt) || Date.now());
+    const since = workingSince.get(id) || Date.now();
+    const chat = { id, title, project: run.project || '', mark: markOf(run.project || '', run.factoryName) };
+    if (state !== 'idle') onLiveCard.set(id, chat); else { workingSince.delete(id); onLiveCard.delete(id); }
+    sendState(chat, state, since);
   }
 
   const collabChatSweep = setInterval(() => {
@@ -1773,6 +1828,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         t.kind === 'ui' && mine.has(String(t.project || '').toLowerCase())
         && !!t.collaborator && t.collaborator.key === principal.collabKey),
       scheduled: [],
+      // Factories are the owner's.
+      factoryRuns: [],
     };
   }
 
@@ -1848,12 +1905,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Project aliases that have at least one enabled schedule (for the sidebar
     // "upcoming schedule" clock indicator).
     const scheduled = [...new Set(schedule.listSchedules().filter(s => s.enabled).map(s => String(s.project || '').toLowerCase()))];
+    // Unfinished factory runs, for the badges on projects and the Factories tab.
+    let factoryRuns = [];
+    try {
+      factoryRuns = factoryRunner ? factoryRunner.listRuns().filter(r => ['starting', 'running', 'waiting', 'paused', 'finishing', 'crashed'].includes(r.status))
+        .map(r => ({ id: r.id, project: r.project, status: r.status, waitingOn: r.waitingOn, factoryName: r.factoryName, managerChatId: r.managerChatId })) : [];
+    } catch { factoryRuns = []; }
     return {
       uptime: formatUptime(Date.now() - startedAt),
       projects,
       services,
       terminals,
       scheduled,
+      factoryRuns,
     };
   }
 
@@ -3331,6 +3395,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/factory-runs' && req.method === 'GET') {
       if (!factoryRunner) return json(res, { ok: true, runs: [] });
       return json(res, { ok: true, runs: factoryRunner.listRuns({ project: url.searchParams.get('project') || '' }) });
+    }
+    // Before starting: which branch it will start from, and whether there is
+    // uncommitted work that the run will not see.
+    if (path === '/api/factory-runs/precheck' && req.method === 'GET') {
+      const project = url.searchParams.get('project') || '';
+      if (!project || aliasDenied(project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
+      const p = getProjectUnscoped(project);
+      if (!p) return json(res, { ok: false, error: 'Unknown project' }, 404);
+      const info = await inspectFactoryRepo(p.path);
+      const active = factoryRunner ? factoryRunner.activeRunFor(project) : null;
+      return json(res, { ...info, active: active ? { id: active.id, status: active.status, factoryName: active.factoryName } : null });
+    }
+    // Leftovers of finished and stopped runs, and auto-delete.
+    if (path === '/api/factory-cleanup' && req.method === 'GET') {
+      if (!factoryRunner) return json(res, { ok: true, items: [], settings: { autoDeleteDays: 0 } });
+      const items = await factoryCleanup.scan({ runs: factoryRunner.listRuns() });
+      return json(res, { ok: true, items, settings: factoryCleanup.readSettings(config.dataDir) });
+    }
+    if (path === '/api/factory-cleanup' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      if (body.action === 'settings') return json(res, { ok: true, settings: factoryCleanup.writeSettings(config.dataDir, body) });
+      if (body.action !== 'remove') return json(res, { ok: false, error: 'Unknown action' }, 400);
+      const items = await factoryCleanup.scan({ runs: factoryRunner ? factoryRunner.listRuns() : [] });
+      const want = new Set(Array.isArray(body.ids) ? body.ids : []);
+      const results = [];
+      for (const it of items.filter(x => want.has(x.id))) results.push({ id: it.id, ...(await factoryCleanup.remove(it)) });
+      return json(res, { ok: results.every(r => r.ok), results, error: results.filter(r => !r.ok).map(r => r.error).join('; ') });
     }
     if (path === '/api/factory-runs/events' && req.method === 'GET') {
       if (!factoryRunner) return json(res, { ok: false, error: 'Run not found' }, 404);

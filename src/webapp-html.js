@@ -1487,6 +1487,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .widgets-tab { overflow: hidden; }
     /* Docker: crundi-docker.js scrolls its own body, so its header stays put. */
     .docker-tab { overflow: hidden; }
+    /* Factories: crundi-factories.js scrolls its own body; the editor and live graph fill it. */
+    .factories-tab { overflow: hidden; }
+    .factories-tab.visible { display: flex; flex-direction: column; }
+    .factory-panel { overflow-y: auto; }
+    .fx-mark { display: inline-flex; color: var(--green); margin-left: 2px; }
+    .fx-mark.needs { color: var(--yellow); }
+    .fx-mark svg { width: 14px; height: 14px; }
     .tab-btn.dk-absent { display: none !important; }
     .nt-tabbar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex: none; }
     .nt-tabbar-t { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); }
@@ -3535,6 +3542,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           <button class="tab-btn" data-tab="mindmap" title="Mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg><span class="tab-label">Mindmap</span></button>
           <button class="tab-btn" data-tab="media" title="Media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg><span class="tab-label">Media</span></button>
           <button class="tab-btn" data-tab="widgets" title="Panels built by Claude"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="tab-label">Panels</span></button>
+          <button class="tab-btn" data-tab="factories" title="Factories: teams of Claude employees"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/></svg><span class="tab-label">Factories</span> <span class="secret-badge" id="factory-badge" style="display:none"></span></button>
           <button class="tab-btn" data-tab="schedule" title="Schedule"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg><span class="tab-label">Schedule</span></button>
           <button class="tab-btn" data-tab="services" title="Services"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg><span class="tab-label">Services</span></button>
           <button class="tab-btn" data-tab="docker" title="Docker"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg><span class="tab-label">Docker</span></button>
@@ -3552,6 +3560,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           <button data-action="wb-add" data-kind="mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Mindmap</button>
           <button data-action="wb-add" data-kind="media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg> Media</button>
           <button data-action="wb-add" data-kind="browser"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Browser</button>
+          <button data-action="wb-add" data-kind="factory" title="This project's factory run"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/></svg> Factory</button>
           <button data-action="wb-add" data-kind="widget" title="Open a panel Claude built"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg> Panel</button>
           <button data-action="wb-fit" title="Share the width out again so every pane fits the window (pinned panes keep their size)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="7 8 3 12 7 16"/><polyline points="17 8 21 12 17 16"/><line x1="3" y1="12" x2="21" y2="12"/></svg> Fit to screen</button>
           <div class="wb-sub" id="wb-layout-sub">
@@ -3621,6 +3630,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="schedule-panel tab-panel" id="schedule-panel" data-panel="schedule"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="tab-panel docker-tab" id="docker-panel" data-panel="docker"></div>
+        <div class="tab-panel factories-tab" id="factories-panel" data-panel="factories"></div>
+        <div class="factory-panel tab-panel" id="factory-panel" data-panel="factory"></div>
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
         <div class="info-panel tab-panel" id="info-panel" data-panel="info"></div>
         <div class="info-panel tab-panel" id="settings-panel" data-panel="settings"></div>
@@ -3810,6 +3821,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-docker.js?v=${vendorTag('crundi-docker.js')}"><\/script>
+  <script src="/vendor/crundi-factories.js?v=${vendorTag('crundi-factories.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
   <script src="/vendor/crundi-whatsnew.js?v=${vendorTag('crundi-whatsnew.js')}"><\/script>
   <script src="/vendor/crundi-phone.js?v=${vendorTag('crundi-phone.js')}"><\/script>
@@ -4487,6 +4499,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     let terminals = []; // { id, project, title, order, status }
     let services = [];
     let scheduledProjects = []; // aliases with at least one enabled schedule
+    let factoryRuns = [];       // unfinished factory runs: { id, project, status, waitingOn, factoryName }
     let reconnectTimer = null;
     let sse = null;             // EventSource (kept so we can health-check it)
     let sseReconnectTimer = null;
@@ -4530,6 +4543,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     // ─── Flat icon set (stroke icons, inherit currentColor) ───
     const ICON_PATHS = {
+      factory: '<path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/>',
+      'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
       scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>',
       clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
       panel: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -5599,6 +5614,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function showApp() {
       hideBoot();
       appReady = true;
+      // Arrived from a factory link (the phone's chat page): open that run.
+      const fxRun = (location.hash.match(/^#factory-run=([A-Za-z0-9_-]+)$/) || [])[1];
+      if (fxRun) {
+        history.replaceState(null, '', location.pathname + location.search);
+        setTimeout(() => { if (userRole !== 'collaborator') { switchTab('factories'); loadFactoriesTab(); if (factoriesView) factoriesView.openRun(fxRun); } }, 1200);
+      }
       $('#login-screen').style.display = 'none';
       $('#app').classList.add('visible');
       connectWS();
@@ -5751,6 +5772,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
             + '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg>'
             + '</span>'
           : '';
+        // A factory running in this project; amber when it needs you.
+        const fr = factoryRuns.find(r => String(r.project || '').toLowerCase() === p.alias.toLowerCase());
+        const frNeeds = fr && factoryNeedsYou(fr);
+        const fmark = fr
+          ? '<span class="fx-mark' + (frNeeds ? ' needs' : '') + '" title="Factory ' + escHtml(fr.factoryName) + ': ' + escHtml(frNeeds ? 'needs you' : fr.status) + '">' + ic('factory') + '</span>'
+          : '';
         // Per-terminal close lives on each terminal's header now; the project
         // row only shows a "has terminals" dot + the remove-project control.
         const icoSrc = projIconSrc(p.icon);
@@ -5761,6 +5788,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + (icoSrc ? '<img class="proj-ico" src="' + escHtml(icoSrc) + '" alt="">' : '')
           + '<span class="name">' + escHtml(p.name || p.alias) + '</span>'
           + sched
+          + fmark
           + heart
           + (canRemove ? '<button class="remove-btn" data-action="remove-project" data-project="' + escHtml(p.alias) + '" data-name="' + escHtml(p.name || p.alias) + '" title="Remove project (keeps files)">' + ic('trash') + '</button>' : '');
         item.addEventListener('click', (e) => {
@@ -6831,6 +6859,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       mindmap: { icon: 'mindmap', label: 'Mindmap' },
       media: { icon: 'images', label: 'Media' },
       browser: { icon: 'globe', label: 'Browser' },
+      factory: { icon: 'factory', label: 'Factory' },
     };
     // Pin toggle shared by every pane header. Which pane it acts on comes from
     // the mosaic leaf it sits in, so the header needs no key of its own.
@@ -7526,6 +7555,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       else if (kind === 'mindmap') loadMindmap();
       else if (kind === 'media') loadMedia();
       else if (kind === 'browser') initBrowserPanel();
+      else if (kind === 'factory') loadFactoryPanel();
     }
     // Move each workbench cell's panel node into its body (if not already there)
     // and refresh it. Only loads when it actually (re)mounts to avoid churn.
@@ -8851,8 +8881,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
      * that is the control — this exists so they are not shown doors that open
      * onto a 403.
      */
-    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'info', 'settings', 'widgets'];
-    const COLLAB_HIDDEN_WB = ['git'];
+    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'info', 'settings', 'widgets', 'factories'];
+    const COLLAB_HIDDEN_WB = ['git', 'factory'];
 
     function applyRoleToUi() {
       const collab = userRole === 'collaborator';
@@ -9021,6 +9051,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       terminals = state.terminals || [];
       if (state.services) services = state.services;   // keep sidebar heartbeat fresh
       if (state.scheduled) scheduledProjects = state.scheduled;
+      if (state.factoryRuns) { factoryRuns = state.factoryRuns; renderFactoryBadge(); }
       if (state.projects) projects = state.projects;
       // A collaborator signing in landed on "No project" with only Mindmap and
       // Media showing, and had to discover the sidebar before anything worked.
@@ -9089,6 +9120,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
         } catch { /* ignore */ }
       });
       es.addEventListener('schedule', () => { if (currentTab === 'schedule') loadSchedules(); });
+      // Factory runs and the factory library: the views refresh what they show.
+      es.addEventListener('factoryRun', (e) => { try { if (window.CrundiFactories) window.CrundiFactories.runEvent(JSON.parse(e.data)); } catch (err) { /* malformed */ } });
+      es.addEventListener('factories', () => { if (window.CrundiFactories) window.CrundiFactories.runEvent({ kind: 'factories' }); });
       es.addEventListener('widget', (e) => {
         let d; try { d = JSON.parse(e.data); } catch { return; }
         if (window.CrundiWidgets) window.CrundiWidgets.handleEvent(d);
@@ -9359,12 +9393,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (currentTab === 'notes' && tab !== 'notes') closeNotesTab();
       if (currentTab === 'widgets' && tab !== 'widgets' && window.CrundiWidgets) window.CrundiWidgets.unmountTab();
       if (currentTab === 'docker' && tab !== 'docker' && dockerView) dockerView.hide();
+      if (currentTab === 'factories' && tab !== 'factories' && factoriesView) factoriesView.hide();
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.tab-panel').forEach(p => p.classList.toggle('visible', p.dataset.panel === tab));
       if (tab === 'workbench') { renderTermGrid(); setTimeout(() => { fitAllTerms(); const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
       if (tab === 'services') loadServices();
       if (tab === 'docker') loadDockerTab();
+      if (tab === 'factories') loadFactoriesTab();
       if (tab === 'browsers') loadBrowsers();
       if (tab === 'git') loadGitInfo();
       if (tab === 'files') loadFiles();
@@ -12296,6 +12332,59 @@ export function getWebappHtml(botUsername, appVersion = '') {
         });
       }
       dockerView.show();
+    }
+
+    // ─── Factories (app/vendor/crundi-factories.js) ───
+    //
+    // The Factories tab (library, runs, cleanup, and the editor and live graph
+    // from factory-flow.js, loaded on first use) and the project's Factory
+    // panel in the workbench. Owner only.
+    let factoriesView = null;
+    let factoryPanelView = null;
+    const FACTORY_FLOW_JS = '/vendor/factory-flow.js?v=${vendorTag('factory-flow.js')}';
+    const FACTORY_FLOW_CSS = '/vendor/factory-flow.css?v=${vendorTag('factory-flow.css')}';
+
+    function factoryNeedsYou(r) {
+      return r.status === 'crashed' || r.status === 'finishing' || r.status === 'waiting' || !!r.waitingOn;
+    }
+    function renderFactoryBadge() {
+      const b = document.getElementById('factory-badge');
+      if (!b) return;
+      const n = factoryRuns.filter(factoryNeedsYou).length;
+      b.textContent = n ? String(n) : '';
+      b.style.display = n ? '' : 'none';
+      b.title = n ? n + ' factory run' + (n === 1 ? '' : 's') + ' waiting for you' : '';
+    }
+    function factoryCtx() {
+      return {
+        apiFetch: apiFetch,
+        toast: toast,
+        icon: ic,
+        currentProject: () => currentProject || '',
+        projects: () => (projects || []).map(p => ({ alias: p.alias, name: p.name || p.alias })),
+        flowJs: FACTORY_FLOW_JS,
+        flowCss: FACTORY_FLOW_CSS,
+        // The Manager's chat is a workbench chat: go to it rather than open a copy.
+        openManagerChat: (chatId) => {
+          const t = terminals.find(x => x.id === chatId && x.kind === 'ui');
+          if (!t) return false;
+          const go = () => { switchTab('workbench'); focusTerm(chatId); setTimeout(() => { const c = document.querySelector('.term-cell[data-tid="' + chatId + '"]'); if (c) c.scrollIntoView({ block: 'nearest' }); }, 60); };
+          if (String(t.project || '').toLowerCase() !== String(currentProject || '').toLowerCase()) selectProject(t.project).then(go);
+          else go();
+          return true;
+        },
+        openTab: (runId) => { switchTab('factories'); if (factoriesView) factoriesView.openRun(runId); },
+      };
+    }
+    function loadFactoriesTab() {
+      if (!window.CrundiFactories) { toast('The Factories view did not load. Reload the page.', 'error'); return; }
+      if (!factoriesView) factoriesView = window.CrundiFactories.mountTab(document.getElementById('factories-panel'), factoryCtx());
+      factoriesView.show();
+    }
+    function loadFactoryPanel() {
+      if (!window.CrundiFactories) return;
+      if (!factoryPanelView) factoryPanelView = window.CrundiFactories.mountPanel(document.getElementById('factory-panel'), factoryCtx());
+      factoryPanelView.load(currentProject);
     }
 
     // ─── Info Panel ───

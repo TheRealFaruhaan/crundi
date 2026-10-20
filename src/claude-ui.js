@@ -2683,6 +2683,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function snapshot(s) {
     return {
       id: s.id, project: s.alias, title: s.title, kind: 'ui',
+      factory: s.factory || null,
       status: s.proc ? 'running' : 'exited',
       state: s.state, sessionId: s.sessionId, model: s.model,
       permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
