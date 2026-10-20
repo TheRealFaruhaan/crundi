@@ -37,6 +37,7 @@ function newNode(kind, position) {
   }
   if (type === 'join') return { ...base, join: { forkId: '' } };
   if (type === 'ask') return { ...base, ask: { prompt: '', replies: [{ id: genId('o_'), label: 'Go ahead' }, { id: genId('o_'), label: 'Stop' }] } };
+  if (type === 'wait') return { ...base, wait: { kind: 'command', minutes: 10, at: '09:00', command: '', every: 60, timeout: 60, what: '' } };
   return base;
 }
 

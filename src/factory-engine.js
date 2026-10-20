@@ -336,6 +336,35 @@ export function askReply(run, tokenId, replyId, note = '') {
 }
 
 /**
+ * A Wait node is over: 'done' (the time passed, the command succeeded, the
+ * signal came) or 'timeout'. A time wait has a single route; the others go
+ * down Done or Timed out. detail says what happened, for the next step.
+ */
+export function waitDone(run, tokenId, outcome, detail = '') {
+  const r = clone(run);
+  const ix = index(r.snapshot);
+  const t = r.tokens.find(x => x.id === tokenId);
+  if (!t || t.status !== 'wait') return { ok: false, error: 'That wait is no longer waiting.' };
+  const node = ix.nodes.get(t.nodeId);
+  const single = !(node.wait.kind === 'command' || node.wait.kind === 'signal');
+  const handle = single ? 'out' : outcome === 'timeout' ? 'timeout' : 'done';
+  const e = ix.outEdge.get(node.id + '|' + handle);
+  if (!e) return { ok: false, error: 'That wait leads nowhere.' };
+  const held = t.held || {};
+  delete t.held;
+  const label = nodeLabel(ix, node);
+  const what = text(detail).trim();
+  const line = `${label}: ${handle === 'timeout' ? 'gave up waiting' : 'the wait is over'}${what ? ` (${what})` : ''}.`;
+  const msg = held.message ? `${line}\n\n${held.message}` : line;
+  const ctx = newCtx(r, ix, { from: held.from ? { nodeId: '', rosterId: '', name: held.from.name, label: held.from.label } : { nodeId: node.id, rosterId: '', name: label, label }, summary: held.summary || '', payload: {}, defaultNote: msg });
+  log(r, { type: 'wait-done', nodeId: node.id, outcome: handle === 'timeout' ? 'timeout' : 'done', detail: what });
+  t.status = 'moving';
+  traverse(ctx, t, e, null, msg);
+  if (ctx.errors.length) return { ok: false, error: ctx.errors.join('\n') };
+  return finishCtx(r, ctx);
+}
+
+/**
  * Hand a token to the Manager with a reason: a stall, a merge conflict, a
  * crash the runner could not recover from. Aborts any fan-out it was in.
  */
@@ -510,7 +539,7 @@ function newCtx(r, ix, { from, summary, payload, isManager = false, defaultNote 
 function finishCtx(r, ctx) {
   if (ctx.errors.length) return { ok: false, error: ctx.errors.join('\n') };
   if (!ctx.keepStatus) {
-    r.status = r.tokens.some(t => t.status === 'work' || t.status === 'answer') ? 'running'
+    r.status = r.tokens.some(t => t.status === 'work' || t.status === 'answer' || t.status === 'wait' || t.status === 'delegated') ? 'running'
       : r.tokens.some(t => t.status === 'ask') ? 'waiting' : r.status;
   }
   return { ok: true, run: r, effects: ctx.effects };
@@ -534,7 +563,7 @@ function deliverNotes(ctx, t, node) {
   }
 }
 
-function traverse(ctx, t, e, who) {
+function traverse(ctx, t, e, who, carryMsg = '') {
   if (ctx.errors.length) return;
   const { r, ix } = ctx;
   if (e.maxRounds > 0) {
@@ -562,7 +591,7 @@ function traverse(ctx, t, e, who) {
   } else {
     r.edgeCounts[e.id] = (r.edgeCounts[e.id] || 0) + 1;
   }
-  let message = '';
+  let message = carryMsg;
   if (e.requireNote) {
     message = text((ctx.payload.notes || {})[e.id] || ctx.defaultNote).trim();
     if (!message) {
@@ -603,6 +632,14 @@ function arrive(ctx, t, node, who, message) {
     case 'ask': {
       t.status = 'ask';
       ctx.effects.push({ type: 'ask', tokenId: t.id, nodeId: node.id, prompt: node.ask.prompt, replies: node.ask.replies, context: baseContext(ctx, message) });
+      return;
+    }
+    case 'wait': {
+      // Held until the runner says the wait is over; what came in is kept
+      // for whoever comes next.
+      t.status = 'wait';
+      t.held = baseContext(ctx, message);
+      ctx.effects.push({ type: 'wait', tokenId: t.id, nodeId: node.id, wait: node.wait, ws: t.ws });
       return;
     }
     default:

@@ -2696,6 +2696,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       });
     }
 
+    // A factory run's Wait node, ended by its signal URL (CI, a deploy hook).
+    // Outside the auth gate: the per-wait key in the URL is the credential.
+    {
+      const m = /^\/api\/factory-hook\/wait\/(run_[\w]+)\/(t\d+)$/.exec(path);
+      if (m && req.method === 'POST') {
+        let body = {};
+        try { body = JSON.parse((await readBody(req)) || '{}') || {}; } catch { body = {}; }
+        const r = factoryRunner ? await factoryRunner.endWait(m[1], m[2], { key: url.searchParams.get('key') || '', outcome: body.outcome === 'timeout' || body.outcome === 'failed' ? 'timeout' : 'done', note: typeof body.note === 'string' ? body.note : '' }) : { ok: false, error: 'Factories are not available.' };
+        return json(res, r.ok ? { ok: true } : { ok: false, error: r.error }, r.ok ? 200 : r.forbidden ? 403 : 409);
+      }
+    }
+
     // Which sign-in methods this server offers. Read before login, so it is
     // deliberately outside the auth gate and says nothing a stranger could use.
     if (path === '/api/auth/methods' && req.method === 'GET') {
@@ -3449,6 +3461,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'pause': result = await factoryRunner.pause(body.id); break;
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
+        case 'endWait': result = await factoryRunner.endWait(body.id, body.tokenId, { outcome: body.outcome, note: body.note || '' }); break;
         case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
         case 'teamMode': result = await factoryRunner.setTeamMode(body.id, body.mode); break;
         // The person's choice on the result card: merge | changes | keep | discard | undo.

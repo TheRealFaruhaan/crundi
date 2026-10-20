@@ -9,6 +9,7 @@ const META = {
   decision: { icon: 'branch', kind: 'Decision' },
   join: { icon: 'merge', kind: 'Join' },
   ask: { icon: 'ask', kind: 'Ask me' },
+  wait: { icon: 'clock', kind: 'Wait' },
   end: { icon: 'flag', kind: 'End' },
 };
 
@@ -27,7 +28,7 @@ function Badge({ issues }) {
 function Tokens({ tokens }) {
   if (!tokens.length) return null;
   const t = tokens[0];
-  const label = { work: 'working', answer: 'deciding', ask: 'waiting on you', join: 'waiting', finished: 'finished' }[t.status] || t.status;
+  const label = { work: 'working', answer: 'deciding', ask: 'waiting on you', join: 'waiting', wait: 'waiting', finished: 'finished' }[t.status] || t.status;
   return <div className={'ff-token ' + t.status}>{label}{tokens.length > 1 ? ' ×' + tokens.length : ''}</div>;
 }
 
@@ -42,9 +43,20 @@ function body(n, d) {
     }
     case 'join': return d.join ? 'Waits for the branches of ' + (d.join.label || 'its decision') : 'Choose which decision it joins';
     case 'ask': return n.ask.prompt || 'No question yet';
+    case 'wait': return waitText(n.wait);
     case 'end': return 'The result, presented by the Manager';
     default: return '';
   }
+}
+
+/** A wait in a few words: "10 min", "until 07:30", "until `npm test` passes (60 min max)". */
+export function waitText(w) {
+  if (!w) return '';
+  const lim = (m) => (m >= 120 && m % 60 === 0 ? m / 60 + ' h' : m + ' min');
+  if (w.kind === 'time') return 'For ' + lim(w.minutes);
+  if (w.kind === 'until') return 'Until ' + w.at;
+  if (w.kind === 'command') return (w.command ? 'Until `' + w.command + '` succeeds' : 'No command yet') + ' · ' + lim(w.timeout) + ' max';
+  return 'For a signal' + (w.what ? ': ' + w.what : '') + ' · ' + lim(w.timeout) + ' max';
 }
 
 function title(n, d) {

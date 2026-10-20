@@ -31,6 +31,7 @@ function describe(ev, names, nodes) {
     }
     case 'escalate': return { k: 'escalate', main: 'Sent to the Manager', sub: first(ev.reason) };
     case 'ask-reply': return { k: 'info', main: 'You replied', sub: ev.note || '' };
+    case 'wait-done': return { k: ev.outcome === 'timeout' ? 'escalate' : 'info', main: `${nodes.get(ev.nodeId)?.label || 'Wait'}: ${ev.outcome === 'timeout' ? 'gave up waiting' : 'over'}`, sub: first(ev.detail) };
     case 'perm-decided': return ev.by === 'manager' || ev.by === 'deny-list' ? { k: ev.decision === 'allowed' ? 'info' : 'escalate', main: `${ev.employee}: ${ev.toolName} ${ev.decision}${ev.by === 'deny-list' ? ' (never allowed)' : ' by the Manager'}`, sub: first(ev.input?.command || ev.input?.url || '') } : null;
     case 'rule': return { k: 'info', main: 'Rule granted', sub: ev.rule };
     case 'retire': return { k: 'info', main: `${who(ev.employeeId)} stopped for now`, sub: 'Not needed by the current work; resumed with their memory if needed again.' };
@@ -52,6 +53,33 @@ function describe(ev, names, nodes) {
     }
     default: return null;
   }
+}
+
+/** A Wait in progress: what it waits for, how long is left, end it early. */
+function WaitCard({ t, busy, act }) {
+  const [, tick] = useState(0);
+  useEffect(() => { const i = setInterval(() => tick(x => x + 1), 1000); return () => clearInterval(i); }, []);
+  const w = t.wait;
+  const left = (iso) => { const ms = Date.parse(iso) - Date.now(); if (!(ms > 0)) return 'any moment'; const m = Math.floor(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : m >= 1 ? `${m} min` : `${Math.ceil(ms / 1000)} s`; };
+  const url = w.signalPath ? location.origin + w.signalPath : '';
+  const two = w.kind === 'command' || w.kind === 'signal';
+  return (
+    <div className="ff-actor">
+      <div className="ff-actor-head"><Icon name="clock" size={14} />{t.label}: {w.kind === 'time' || w.kind === 'until' ? `${left(w.deadline)} left` : w.kind === 'signal' ? (w.what || 'waiting for a signal') : `trying (${w.tries} so far)`}</div>
+      {two && <p className="ff-hint">Gives up in {left(w.timeoutAt)}.</p>}
+      {w.kind === 'command' && w.last && <pre className="ff-pre">{w.last}</pre>}
+      {url && (
+        <div className="ff-field"><span className="ff-field-label">Signal URL (POST)</span>
+          <div className="ff-btnrow"><input className="ff-input mono" readOnly value={url} onFocus={e => e.target.select()} /><button className="ff-btn" onClick={() => navigator.clipboard?.writeText(`curl -X POST '${url}'`)}><Icon name="copy" size={13} />curl</button></div>
+          <p className="ff-hint">Body optional: {'{"note": "…"}'}, or {'{"outcome": "failed"}'} for Timed out.</p>
+        </div>
+      )}
+      <div className="ff-btnrow">
+        <button className="ff-btn" disabled={!!busy} onClick={() => act({ action: 'endWait', tokenId: t.id, outcome: 'done' }, 'wait')}>End the wait now</button>
+        {two && <button className="ff-btn ghost" disabled={!!busy} onClick={() => act({ action: 'endWait', tokenId: t.id, outcome: 'timeout' }, 'wait')}>Treat as timed out</button>}
+      </div>
+    </div>
+  );
 }
 
 function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
@@ -169,7 +197,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
         </div>
         <div className="ff-kv">
           {person && <><span>Who</span><span>{person.name}{person.model ? ' · ' + person.model : ''}</span></>}
-          <span>Now</span><span>{tokens.length ? { work: 'working on it', answer: 'deciding', ask: 'waiting for your reply', join: 'waiting for the other branches', finished: 'finished' }[tokens[0].status] : steps.length ? 'done' : 'not reached yet'}{who && rec.run.retired[who] ? ' · session stopped for now' : ''}</span>
+          <span>Now</span><span>{tokens.length ? { work: 'working on it', answer: 'deciding', ask: 'waiting for your reply', join: 'waiting for the other branches', wait: 'waiting', finished: 'finished' }[tokens[0].status] : steps.length ? 'done' : 'not reached yet'}{who && rec.run.retired[who] ? ' · session stopped for now' : ''}</span>
           {steps.length > 0 && <><span>Visits</span><span>{steps.length}</span></>}
         </div>
         {chatId && openChat && <button className="ff-btn primary" onClick={() => openChat(chatId, person?.name || 'Chat')}><Icon name="ask" size={14} />Open {who === MANAGER_ID ? 'the Manager\'s' : 'their'} chat</button>}
@@ -205,6 +233,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
           </>}
         </div>
       ))}
+      {live && (run?.tokens || []).filter(t => t.wait).map(t => <WaitCard key={t.id} t={t} busy={busy} act={act} />)}
       {live && run?.status === 'crashed' && (
         <div className="ff-actor">
           <div className="ff-actor-head"><Icon name="alert" size={14} />It stopped: {run.crash?.reason}</div>

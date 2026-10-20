@@ -55,6 +55,7 @@ function emptyRecord() {
       retired: {},          // employeeId -> true while stopped by the collector
       notices: {},          // tokenId -> text for that token's next step
       rules: [],
+      waits: {},            // tokenId -> { kind, nodeId, ws, startedAt, deadline, timeoutAt, key }
       perms: { seq: 0, outstanding: [], log: [] },
       capExtra: 0, capMinutesExtra: 0, capHit: null, paused: null,
       crash: null,          // { reason, at, from }
@@ -158,6 +159,14 @@ export function reduce(prev, ev) {
       queue(rec, res.effects, at);
       break;
     }
+    case 'wait-done': {
+      const res = Engine.waitDone(rec.state, ev.tokenId, ev.outcome, ev.detail || '');
+      if (r.waits) delete r.waits[ev.tokenId];
+      if (!res.ok) break;
+      rec.state = res.run;
+      queue(rec, res.effects, at);
+      break;
+    }
     case 'escalate': {
       const res = Engine.escalate(rec.state, ev.tokenId, ev.reason || '');
       if (!res.ok) break;
@@ -170,6 +179,10 @@ export function reduce(prev, ev) {
       r.pending = r.pending.filter(e => e.id !== ev.effectId);
       if (!ef) break;
       const res = ev.result || {};
+      if (ef.type === 'wait' && res.timeoutAt) {
+        if (!r.waits) r.waits = {};
+        r.waits[ef.tokenId] = res;
+      }
       if (ef.type === 'workspace') {
         r.ws[ef.wsId] = res.path
           ? { path: res.path, branch: res.branch || '', parent: ef.parentWs, ...(res.shared ? { shared: true } : {}) }

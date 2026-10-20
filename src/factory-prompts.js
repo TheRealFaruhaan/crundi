@@ -278,6 +278,7 @@ function describeNext(item, out, lead, pad) {
   else if (to.type === 'decision') where = `${to.answeredBy} is asked "${to.label}"`;
   else if (to.type === 'join') where = 'waits for the other branches';
   else if (to.type === 'ask') where = 'the person is asked';
+  else if (to.type === 'wait') where = `waits at "${to.label}" (a check, a time or a signal), then carries on by itself`;
   else where = `goes to ${to.label || to.type}`;
   out.push(`${lead}${where}${tail}`);
 }

@@ -4,7 +4,7 @@ import { Icon } from './icons.jsx';
 import { handleLabel } from './convert.js';
 import { CrTemplateEditor } from './CrTemplate.jsx';
 
-const KIND_LABEL = { start: 'Start', manager: 'Manager', employee: 'Employee', decision: 'Decision', join: 'Join', ask: 'Ask me', end: 'End' };
+const KIND_LABEL = { start: 'Start', manager: 'Manager', employee: 'Employee', decision: 'Decision', join: 'Join', ask: 'Ask me', wait: 'Wait', end: 'End' };
 
 function IssueList({ issues, onPick }) {
   if (!issues.length) return null;
@@ -90,6 +90,45 @@ export function NodeInspector({ f, node, issues, skills, mutate, remove, openRos
               onRemove={id => set((n, d) => { n.ask.replies = n.ask.replies.filter(o => o.id !== id); d.edges = d.edges.filter(e => !(e.source === node.id && e.sourceHandle === id)); })}
               onAdd={() => set(n => { n.ask.replies.push({ id: genId('o_'), label: 'Reply ' + (n.ask.replies.length + 1) }); })} />
           </Field>
+        </>
+      )}
+
+      {node.type === 'wait' && (
+        <>
+          <Field label="Wait for">
+            <Select value={node.wait.kind} onChange={v => set((n, d) => {
+              const two = (k) => k === 'command' || k === 'signal';
+              // Switching between one route and Done / Timed out: the old routes no longer fit.
+              if (two(v) !== two(n.wait.kind)) d.edges = d.edges.filter(e => e.source !== node.id || e.kind === 'note');
+              n.wait.kind = v;
+            })} options={[
+              { value: 'command', label: 'A command to succeed (CI, a deploy, a health check)' },
+              { value: 'signal', label: 'A signal (a URL called by CI or a hook, or you)' },
+              { value: 'time', label: 'A length of time' },
+              { value: 'until', label: 'A time of day' },
+            ]} />
+          </Field>
+          {node.wait.kind === 'time' && <Field label="Minutes"><Num value={node.wait.minutes} min={1} max={10080} onChange={v => set(n => { n.wait.minutes = v || 1; }, 'wm:' + node.id)} /></Field>}
+          {node.wait.kind === 'until' && <Field label="Until (this server's time)" hint="The next time the clock says this; tomorrow if it has passed today."><Text value={node.wait.at} placeholder="07:30" onChange={v => set(n => { n.wait.at = v; }, 'wa:' + node.id)} /></Field>}
+          {node.wait.kind === 'command' && (
+            <>
+              <Field label="Command" hint="Run in the run's worktree; the wait is over when it exits 0. E.g. gh run watch --exit-status, curl -fs localhost:4310/health, npm test.">
+                <Text mono value={node.wait.command} placeholder="gh run watch --exit-status" onChange={v => set(n => { n.wait.command = v; }, 'wc:' + node.id)} />
+              </Field>
+              <Field label="Try every (seconds)"><Num value={node.wait.every} min={15} max={3600} onChange={v => set(n => { n.wait.every = v || 60; }, 'we:' + node.id)} /></Field>
+            </>
+          )}
+          {node.wait.kind === 'signal' && (
+            <>
+              <Field label="Waiting for" hint="Shown on the live graph. Each run gets a secret URL to POST to; you can also end the wait from the run."><Text value={node.wait.what} placeholder="The staging deploy to finish" onChange={v => set(n => { n.wait.what = v; }, 'ww:' + node.id)} /></Field>
+            </>
+          )}
+          {(node.wait.kind === 'command' || node.wait.kind === 'signal') && (
+            <>
+              <Field label="Give up after (minutes)" hint="Then it goes down Timed out, so the run never waits forever."><Num value={node.wait.timeout} min={1} max={10080} onChange={v => set(n => { n.wait.timeout = v || 60; }, 'wt:' + node.id)} /></Field>
+            </>
+          )}
+          <p className="ff-hint">What came in (the last summary, any note) goes on to whoever is next, with what happened during the wait. Waits survive a restart.</p>
         </>
       )}
 

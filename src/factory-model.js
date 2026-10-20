@@ -51,7 +51,14 @@ import { normalizeTemplate } from './factory-cr.js';
 
 // ─── Constants ───
 
-export const NODE_TYPES = ['start', 'manager', 'employee', 'decision', 'join', 'ask', 'end'];
+export const NODE_TYPES = ['start', 'manager', 'employee', 'decision', 'join', 'ask', 'wait', 'end'];
+/**
+ * Wait kinds: a fixed time, until a clock time, until a command succeeds
+ * (polled in the worktree), or until a signal (a secret URL, or the person).
+ * Every wait is bounded, so it never breaks the guarantee that a run ends;
+ * the last two have a "Timed out" route.
+ */
+export const WAIT_KINDS = ['time', 'until', 'command', 'signal'];
 export const AGENT_TYPES = ['manager', 'employee'];
 export const DECISION_KINDS = ['yesno', 'one', 'many'];
 export const EDGE_KINDS = ['flow', 'note'];
@@ -97,7 +104,7 @@ export const DEFAULT_MANAGER_PERSONA = [
 ].join('\n');
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const RESERVED_HANDLES = new Set(['out', 'finish', 'note', 'none', 'yes', 'no']);
+const RESERVED_HANDLES = new Set(['out', 'finish', 'note', 'none', 'yes', 'no', 'done', 'timeout']);
 
 // ─── Small helpers ───
 
@@ -224,6 +231,18 @@ export function normalizeFactory(input) {
       const a = n.ask && typeof n.ask === 'object' ? n.ask : {};
       node.ask = { prompt: str(a.prompt, LIMITS.text), replies: normalizeChoices(a.replies) };
     }
+    if (node.type === 'wait') {
+      const w = n.wait && typeof n.wait === 'object' ? n.wait : {};
+      node.wait = {
+        kind: oneOf(w.kind, WAIT_KINDS, 'time'),
+        minutes: intIn(w.minutes, 1, 10080, 10),
+        at: /^([01]\d|2[0-3]):[0-5]\d$/.test(String(w.at || '')) ? String(w.at) : '09:00',
+        command: str(w.command, 1000),
+        every: intIn(w.every, 15, 3600, 60),
+        timeout: intIn(w.timeout, 1, 10080, 60),
+        what: str(w.what, LIMITS.text),
+      };
+    }
     if (node.type === 'join') {
       const j = n.join && typeof n.join === 'object' ? n.join : {};
       node.join = { forkId: typeof j.forkId === 'string' ? j.forkId : '' };
@@ -301,6 +320,7 @@ export function outputsOf(node) {
       return d.kind === 'many' ? [...ids, 'none'] : ids;
     }
     case 'ask': return (node.ask?.replies || []).map(r => r.id);
+    case 'wait': return node.wait && (node.wait.kind === 'command' || node.wait.kind === 'signal') ? ['done', 'timeout'] : ['out'];
     default: return [];
   }
 }
@@ -479,6 +499,10 @@ export function validateFactory(input, { skills = null } = {}) {
       }
       if (d.review && d.kind !== 'yesno') warn('review-not-yesno', `"${label(n)}" is marked as a review but is not a yes/no question, so the mark does nothing.`, 'Make it a yes/no question, or unmark it.', { nodeId: n.id });
       if (d.answeredBy && !roster.has(d.answeredBy)) err('decision-answerer-missing', `"${label(n)}" is answered by someone no longer on the roster.`, 'Pick who answers this decision, or leave it to whoever arrives.', { nodeId: n.id });
+    }
+    if (n.type === 'wait') {
+      if (n.wait.kind === 'command' && !n.wait.command.trim()) err('wait-no-command', `"${label(n)}" waits for a command, but has none.`, 'Write the command to run, e.g. gh run watch --exit-status, or curl -fs localhost:4310/health.', { nodeId: n.id });
+      if (n.wait.kind === 'command' && n.wait.every * 2 > n.wait.timeout * 60) warn('wait-few-tries', `"${label(n)}" gives up before it can try twice.`, 'Lengthen the time limit or check more often.', { nodeId: n.id });
     }
     if (n.type === 'ask') {
       if (!n.ask.prompt.trim()) err('ask-no-prompt', 'An "Ask me" node has no question.', 'Write what you want to be asked.', { nodeId: n.id });
@@ -688,5 +712,6 @@ function handleLabel(n, h) {
     return n.decision.options.find(o => o.id === h)?.label || h;
   }
   if (n.type === 'ask') return n.ask.replies.find(r => r.id === h)?.label || h;
+  if (n.type === 'wait') return h === 'done' ? 'Done' : h === 'timeout' ? 'Timed out' : '';
   return h;
 }

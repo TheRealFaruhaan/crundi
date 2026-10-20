@@ -9,6 +9,7 @@ const ITEMS = [
   { kind: 'decision:many', icon: 'branch', label: 'Pick any (parallel)', hint: 'Comes with its Join' },
   { kind: 'join', icon: 'merge', label: 'Join' },
   { kind: 'ask', icon: 'ask', label: 'Ask me' },
+  { kind: 'wait', icon: 'clock', label: 'Wait', hint: 'A time, a command, a signal' },
 ];
 
 /** Drag onto the canvas, or tap to add in the middle of the view. */

@@ -14,6 +14,7 @@ export function handleLabel(node, h) {
     return node.decision.options.find(o => o.id === h)?.label || '?';
   }
   if (node.type === 'ask') return node.ask.replies.find(r => r.id === h)?.label || '?';
+  if (node.type === 'wait') return h === 'done' ? 'Done' : h === 'timeout' ? 'Timed out' : '';
   return h;
 }
 
@@ -43,7 +44,7 @@ export function toFlow(f, { validation, selection, run, readOnly }) {
   }
   const nodes = f.nodes.map(n => ({
     id: n.id,
-    type: ['start', 'manager', 'employee', 'decision', 'join', 'ask', 'end'].includes(n.type) ? n.type : 'employee',
+    type: ['start', 'manager', 'employee', 'decision', 'join', 'ask', 'wait', 'end'].includes(n.type) ? n.type : 'employee',
     position: n.position,
     selected: selection?.kind === 'node' && selection.id === n.id,
     deletable: !readOnly && !['start', 'manager', 'end'].includes(n.type),

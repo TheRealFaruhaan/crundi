@@ -43,7 +43,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync, rmdirSync, statSync, copyFileSync, realpathSync } from 'fs';
 import { join, basename, resolve, sep } from 'path';
 import { spawn } from 'child_process';
-import { randomBytes } from 'crypto';
+import { randomBytes, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import * as Engine from './factory-engine.js';
 import * as Git from './factory-git.js';
@@ -102,7 +102,7 @@ export function createFactoryRunner({
     return {
       rec,
       live: { employees: {}, permissions: [], managerIdle: false, error: '' },
-      lock: Promise.resolve(), timers: {}, watchers: {}, draining: false, skills: null, autoTries: 0,
+      lock: Promise.resolve(), timers: {}, watchers: {}, waits: {}, draining: false, skills: null, autoTries: 0,
     };
   }
 
@@ -212,7 +212,13 @@ export function createFactoryRunner({
       tokens: s.tokens.map(t => {
         const n = nodes.get(t.nodeId);
         const who = Engine.personOf(s, t);
-        return { id: t.id, nodeId: t.nodeId, label: t.delegate ? 'Job from the Manager' : n?.label || n?.type || '', status: t.status, employeeId: who || '', employee: roster.get(who)?.name || '', ws: t.ws, ...(t.delegate ? { job: t.delegate.task } : {}) };
+        const wp = t.status === 'wait' ? (r.waits || {})[t.id] : null;
+        const wl = wp ? entry.waits[t.id] : null;
+        return {
+          id: t.id, nodeId: t.nodeId, label: t.delegate ? 'Job from the Manager' : n?.label || n?.type || '', status: t.status, employeeId: who || '', employee: roster.get(who)?.name || '', ws: t.ws,
+          ...(t.delegate ? { job: t.delegate.task } : {}),
+          ...(wp ? { wait: { kind: wp.kind, what: n?.wait?.what || '', startedAt: wp.startedAt, deadline: wp.deadline, timeoutAt: wp.timeoutAt, tries: wl?.tries || 0, last: (wl?.last || '').slice(-300), ...(wp.key ? { signalPath: `/api/factory-hook/wait/${s.id}/${t.id}?key=${wp.key}` } : {}) } } : {}),
+        };
       }),
       employees: Object.fromEntries(s.snapshot.roster.map(x => {
         const e = L.employees[x.id] || {};
@@ -580,6 +586,7 @@ export function createFactoryRunner({
         }
         case 'cancel': await cancelTokens(entry, ef); break;
         case 'ask': notify('ask', summary(entry), `Factory "${st(entry).snapshot.name}" asks: ${ef.prompt}`); break;
+        case 'wait': result = waitPlan(ef); after = () => armWait(entry, ef.tokenId); break;
         case 'finish': await onFinish(entry, ef); break;
         default: break;
       }
@@ -1306,6 +1313,7 @@ export function createFactoryRunner({
       if (t.status === 'answer') return { employee: roster.get(t.answerer), what: `was asked "${n?.label || n?.decision?.question || ''}"` };
       if (t.status === 'ask') return { employee: '', what: `the person was asked: ${n?.ask?.prompt || ''}` };
       if (t.status === 'join') return { employee: '', what: `a branch was waiting at "${n?.label || 'Join'}"` };
+      if (t.status === 'wait') return { employee: '', what: `the flow is waiting at "${n?.label || 'Wait'}" (it carries on by itself)` };
       return { employee: roster.get(Engine.rosterOf(n)), what: `was working on "${n?.label || n?.type}"` };
     };
     let w = { status: '', diffStat: '' };
@@ -1329,6 +1337,7 @@ export function createFactoryRunner({
         await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, ef.employeeId, ef, reason, text) });
       }
       for (const a of asksOf(entry.rec)) notify('ask', summary(entry), `Factory "${st(entry).snapshot.name}" asks: ${a.prompt}`);
+      armAllWaits(entry);
       startClock(entry);
     }
     collect(entry);
@@ -1409,6 +1418,131 @@ export function createFactoryRunner({
     }
   }
 
+  // ─── Waits ───
+  //
+  // A Wait node holds its token until a time passes, a command succeeds or a
+  // signal comes, bounded by a time limit. The plan (deadlines, the signal
+  // key) is journaled when the wait starts, so a restart re-arms it from the
+  // same deadlines. Polls and timers are live state only.
+
+  /** Deadlines for a wait starting now. */
+  function waitPlan(ef) {
+    const w = ef.wait, t0 = Date.now();
+    let deadline = 0;
+    if (w.kind === 'time') deadline = t0 + w.minutes * 60_000;
+    if (w.kind === 'until') {
+      const [h, m] = w.at.split(':').map(Number);
+      const d = new Date(t0); d.setHours(h, m, 0, 0);
+      if (d.getTime() <= t0) d.setDate(d.getDate() + 1);
+      deadline = d.getTime();
+    }
+    const timeoutAt = w.kind === 'command' || w.kind === 'signal' ? t0 + w.timeout * 60_000 : deadline;
+    return {
+      kind: w.kind, nodeId: ef.nodeId, ws: ef.ws, startedAt: new Date(t0).toISOString(),
+      deadline: deadline ? new Date(deadline).toISOString() : '', timeoutAt: new Date(timeoutAt).toISOString(),
+      key: w.kind === 'signal' ? randomBytes(18).toString('base64url') : '',
+    };
+  }
+
+  function clearWait(entry, tokenId) {
+    const w = entry.waits[tokenId];
+    if (!w) return;
+    clearTimeout(w.timer);
+    if (w.child) { try { w.child.kill('SIGKILL'); } catch { /* gone */ } }
+    delete entry.waits[tokenId];
+  }
+
+  /** Start (or restart) the timers and polls of one wait. */
+  function armWait(entry, tokenId) {
+    clearWait(entry, tokenId);
+    const plan = rr(entry).waits?.[tokenId];
+    const t = st(entry).tokens.find(x => x.id === tokenId);
+    if (!plan || !t || t.status !== 'wait') return;
+    const node = st(entry).snapshot.nodes.find(n => n.id === plan.nodeId);
+    const live = entry.waits[tokenId] = { timer: null, child: null, tries: 0, last: '' };
+    const at = (iso) => Math.max(0, Date.parse(iso) - Date.now());
+    const later = (fn, ms) => { live.timer = setTimeout(fn, Math.min(ms, 2 ** 31 - 1)); live.timer.unref?.(); };
+    if (plan.kind === 'time' || plan.kind === 'until') {
+      later(() => finishWait(entry, tokenId, 'done', plan.kind === 'time' ? `${node.wait.minutes} min passed` : `it is ${node.wait.at}`), at(plan.deadline));
+      return;
+    }
+    if (plan.kind === 'signal') {
+      later(() => finishWait(entry, tokenId, 'timeout', `no signal within ${node.wait.timeout} min`), at(plan.timeoutAt));
+      return;
+    }
+    // A command: run it now and every `every` seconds until it succeeds or time runs out.
+    const poll = async () => {
+      if (entry.waits[tokenId] !== live) return;
+      if (st(entry).tokens.find(x => x.id === tokenId)?.status !== 'wait') { clearWait(entry, tokenId); return; }
+      if (isHeld(entry.rec)) { later(poll, 30_000); return; }   // paused: try again later
+      const cwd = wsPath(entry, plan.ws);
+      const why = hardDeny({ toolName: 'Bash', input: { command: node.wait.command } }, { writableRoots: [rr(entry).root, runDir(st(entry).id)] });
+      if (why) { finishWait(entry, tokenId, 'timeout', `the command is not allowed: ${why}`); return; }
+      live.tries++;
+      const res = await runCheck(node.wait.command, cwd, Math.min(node.wait.every, 300) * 1000, live);
+      if (entry.waits[tokenId] !== live) return;
+      live.last = res.output;
+      if (res.ok) { finishWait(entry, tokenId, 'done', `the command succeeded after ${live.tries} tr${live.tries === 1 ? 'y' : 'ies'}${res.output ? `; it said: ${res.output.slice(-400)}` : ''}`); return; }
+      const left = at(plan.timeoutAt);
+      if (left <= 0) { finishWait(entry, tokenId, 'timeout', `the command still failed after ${node.wait.timeout} min and ${live.tries} tries${res.output ? `; last output: ${res.output.slice(-400)}` : ''}`); return; }
+      later(poll, Math.min(node.wait.every * 1000, left));
+    };
+    poll();
+  }
+
+  /** Run a wait's check command; ok when it exits 0. */
+  function runCheck(command, cwd, timeoutMs, live) {
+    return new Promise((done) => {
+      let out = '';
+      let child;
+      try { child = spawn('bash', ['-lc', command], { cwd, env: { ...process.env, CI: '1' }, stdio: ['ignore', 'pipe', 'pipe'] }); } catch (err) { done({ ok: false, output: err.message }); return; }
+      live.child = child;
+      const add = (b) => { out = (out + b.toString()).slice(-4000); };
+      child.stdout.on('data', add); child.stderr.on('data', add);
+      const kill = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, timeoutMs);
+      child.on('close', (code) => { clearTimeout(kill); live.child = null; done({ ok: code === 0, output: out.trim() }); });
+      child.on('error', (err) => { clearTimeout(kill); live.child = null; done({ ok: false, output: err.message }); });
+    });
+  }
+
+  /** A wait is over: route the token on. */
+  function finishWait(entry, tokenId, outcome, detail) {
+    return locked(entry, async () => {
+      clearWait(entry, tokenId);
+      const t = st(entry).tokens.find(x => x.id === tokenId);
+      if (!t || t.status !== 'wait' || !UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return { ok: false, error: 'That wait is no longer waiting.' };
+      if (isHeld(entry.rec)) { const l = entry.waits[tokenId] = { timer: setTimeout(() => finishWait(entry, tokenId, outcome, detail), 30_000), child: null }; l.timer.unref?.(); return { ok: false, error: 'The run is paused; the wait ends when it resumes.' }; }
+      const dry = Engine.waitDone(st(entry), tokenId, outcome, detail);
+      if (!dry.ok) return dry;
+      commit(entry, { type: 'wait-done', tokenId, outcome, detail: String(detail || '').slice(0, 1000) });
+      await drain(entry);
+      collect(entry);
+      return { ok: true, run: summary(entry) };
+    });
+  }
+
+  /** Re-arm every wait of a run (after a recovery). */
+  function armAllWaits(entry) {
+    for (const t of st(entry).tokens) if (t.status === 'wait') armWait(entry, t.id);
+  }
+
+  /**
+   * End a wait from outside: the person (from the panel, any kind) or a
+   * signal URL (signal waits, with their key).
+   */
+  async function endWait(runId, tokenId, { key = null, outcome = 'done', note = '' } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    const plan = rr(entry).waits?.[tokenId];
+    if (!plan) return { ok: false, error: 'That wait is no longer waiting.' };
+    if (key !== null) {
+      const a = Buffer.from(String(key)), b = Buffer.from(plan.key || '');
+      if (!plan.key || a.length !== b.length || !timingSafeEqual(a, b)) return { ok: false, forbidden: true, error: 'Wrong key.' };
+    }
+    const by = key !== null ? 'a signal came' : 'the person ended it';
+    return finishWait(entry, tokenId, outcome === 'timeout' ? 'timeout' : 'done', `${by}${note ? `: ${String(note).slice(0, 500)}` : ''}`);
+  }
+
   // ─── Calls from outside ───
 
   /**
@@ -1486,6 +1620,7 @@ export function createFactoryRunner({
     for (const e of effects) {
       if (e.type === 'activate') parts.push(e.mode === 'answer' ? `${roster.get(e.employeeId)} is asked to decide` : `${roster.get(e.employeeId)} takes over`);
       if (e.type === 'ask') parts.push('the person is asked');
+      if (e.type === 'wait') parts.push(`the flow waits at "${st(entry).snapshot.nodes.find(n => n.id === e.nodeId)?.label || 'Wait'}" and then carries on`);
       if (e.type === 'cap') parts.push('the run has reached its handoff limit and waits for the person');
     }
     if (!parts.length && st(entry).tokens.some(t => t.status === 'join')) parts.push('waiting for the other branches');
@@ -1524,6 +1659,7 @@ export function createFactoryRunner({
       }
       clearClock(entry);
       clearTimeout(entry.timers.auto);
+      for (const id of Object.keys(entry.waits)) clearWait(entry, id);
       commit(entry, { type: 'stop' });
       return { ok: true, run: summary(entry) };
     });
@@ -1536,6 +1672,7 @@ export function createFactoryRunner({
       clearClock(e);
       clearTimeout(e.timers.perm);
       clearTimeout(e.timers.auto);
+      for (const id of Object.keys(e.waits)) clearWait(e, id);
       for (const id of Object.keys(e.watchers)) unwatch(e, id);
     }
   }
@@ -1612,7 +1749,7 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /**
@@ -1634,7 +1771,8 @@ export function factoryLiveCard(run, managerState = 'idle') {
   const doing = state === 'needs-input' ? (run.status === 'finishing' ? 'done, your decision' : run.status === 'crashed' ? 'crashed' : 'needs you')
     : run.status === 'paused' ? 'paused'
     : !active ? run.status
-    : busy ? `${busy.employee || 'someone'} ${busy.status === 'answer' ? 'deciding' : 'working'}` : 'between steps';
+    : busy ? `${busy.employee || 'someone'} ${busy.status === 'answer' ? 'deciding' : 'working'}`
+    : (run.tokens || []).find(t => t.status === 'wait') ? `waiting: ${(run.tokens || []).find(t => t.status === 'wait').label}` : 'between steps';
   return { state, title: `${run.factoryName}: ${doing}` };
 }
 

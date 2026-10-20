@@ -110,6 +110,7 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 .ff-decision .ff-node-head { color: var(--ff-sky); }
 .ff-join .ff-node-head { color: var(--ff-sky); }
 .ff-ask .ff-node-head { color: #c084fc; }
+.ff-wait .ff-node-head { color: #f0abfc; }
 .ff-start .ff-node-head, .ff-end .ff-node-head { color: var(--ff-green); }
 .ff-outs { display: flex; justify-content: space-around; gap: 2px; border-top: 1px solid var(--ff-border); margin: 0 -11px; padding: 4px 4px 10px; }
 .ff-out { position: relative; flex: 1; text-align: center; min-width: 0; }
@@ -125,6 +126,7 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 .ff-badge.warning { background: var(--ff-amber); color: #111; }
 .ff-token { position: absolute; top: -10px; left: 10px; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 99px; background: var(--ff-green); color: #04110c; z-index: 2; }
 .ff-token.ask { background: #c084fc; }
+.ff-token.wait { background: #d946ef; }
 .ff-token.join { background: var(--ff-sub); }
 
 /* Edges */
@@ -218,3 +220,4 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 .ff-icon-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; background: none; border: 1px solid transparent; border-radius: 6px; color: var(--ff-sub); cursor: pointer; padding: 0; }
 .ff-icon-btn:hover:not(:disabled) { background: var(--ff-hover); color: var(--ff-text); }
 .ff-icon-btn:disabled { opacity: .35; cursor: default; }
+.ff-pre { white-space: pre-wrap; word-break: break-all; font: 11px/1.4 ui-monospace, monospace; background: var(--ff-card); border: 1px solid var(--ff-border); border-radius: 6px; padding: 6px 8px; max-height: 120px; overflow: auto; margin: 0; }

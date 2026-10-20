@@ -1,3 +1,4 @@
+import { waitText } from './nodes.jsx';
 import { useState } from 'react';
 import * as E from '../../../src/factory-engine.js';
 import { Icon } from './icons.jsx';
@@ -25,6 +26,7 @@ export function DryRun({ f, run, setRun, valid }) {
     if (e.type === 'merge') return e.abort ? 'the branches are stopped and their work merged back' : 'the branches are merged back together';
     if (e.type === 'cancel') return 'the other branches are stopped';
     if (e.type === 'ask') return 'you are asked: ' + e.prompt;
+    if (e.type === 'wait') return 'the flow waits';
     if (e.type === 'finish') return 'the Manager finishes and presents the result';
     if (e.type === 'cap') return `the run reaches its limit of ${e.limit} handoffs and waits for you`;
     return e.type;
@@ -53,7 +55,7 @@ export function DryRun({ f, run, setRun, valid }) {
     );
   }
 
-  const active = run.tokens.filter(t => ['work', 'answer', 'ask'].includes(t.status));
+  const active = run.tokens.filter(t => ['work', 'answer', 'ask', 'wait'].includes(t.status));
   const finished = run.status === 'finishing';
 
   return (
@@ -71,6 +73,18 @@ export function DryRun({ f, run, setRun, valid }) {
 
   function Actor({ t }) {
     const node = nodes.get(t.nodeId);
+    if (t.status === 'wait') {
+      const two = node.wait.kind === 'command' || node.wait.kind === 'signal';
+      return (
+        <div key={t.id} className="ff-actor">
+          <div className="ff-actor-head"><Icon name="clock" size={14} />{node.label || 'Wait'}: {waitText(node.wait)}</div>
+          <div className="ff-btnrow">
+            <button className="ff-btn" onClick={() => apply(E.waitDone(run, t.id, 'done', 'in the dry run'), two ? 'The wait was done' : 'The time passed')}>{two ? 'Done' : 'Time passes'}</button>
+            {two && <button className="ff-btn" onClick={() => apply(E.waitDone(run, t.id, 'timeout', 'in the dry run'), 'The wait timed out')}>Timed out</button>}
+          </div>
+        </div>
+      );
+    }
     if (t.status === 'ask') {
       return (
         <div className="ff-actor">
