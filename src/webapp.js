@@ -5992,6 +5992,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         try { return json(res, await factoryRunner.answerPermissions(String(a.sessionId || ''), a.decisions, { rules: a.rules, policy: a.policy })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
+      if (body.tool === 'factory_status') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.statusFor(String(a.sessionId || ''))); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
       // The Manager handing someone a one-off job, or acting on the person's word about the result.
       if (body.tool === 'factory_delegate' || body.tool === 'factory_result') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });

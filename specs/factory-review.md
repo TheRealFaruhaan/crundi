@@ -216,3 +216,53 @@ ask the person. This works as designed.
 | 8 | Blocked-on-permission shown on the live graph and panel | W3 | small |
 | 9 | `factory_status` and leaner step messages for long runs | M7 | medium |
 | 10 | "Done when…" field at start | M1 | small |
+
+---
+
+## Pass 2 (after the improvements, CR, waits, triggers, building from chat)
+
+Ten of the ten improvements above are now in: run context (1), factory_result
+(2), the review ledger (3, 4), factory_delegate (5), confinement, cd line and
+ports (6), presets and project rules (7), blocked-on-permission (8, below),
+factory_status (9, below), and "Done when" through the change request (10).
+
+### M8. A run started at 02:00 by a webhook
+**Situation.** An issue tracker posts a bug; the trigger starts my run with a
+CR whose title is filled and whose "Expected result" came out empty.
+**What happens.** I am told to ask the person when the CR is unclear; I ask
+and the run waits; the person gets a notification and the live card says
+"needs you". Fine: an empty section is a question, not a failure (triggered
+CRs only need a title).
+
+### M9. The Gatekeeper passed something on, and nobody could tell
+**Situation.** The Gatekeeper escalates "curl … | sh" to me.
+**Found.** The journal dropped the request from the waiting list the moment
+the Gatekeeper passed it on, so after a restart it would be gone, and the
+timeline never showed the Gatekeeper's decisions at all.
+**Fixed.** An escalation keeps the request waiting; the timeline shows the
+Gatekeeper's allows, denials and hand-ons, delegations, team-mode changes and
+policy.
+
+### M10. Hours in, after a compaction
+**Situation.** My context was compacted; I no longer remember which loop
+has rounds left or what is still open.
+**Fixed.** `factory_status`: the CR brief, who is doing what, loops used of
+their limit, open findings, waiting permissions, the diff since the start,
+recent handoffs, and what has been spent, in one block.
+
+### W8. Waiting on a permission nobody can see
+**Fixed.** A step waiting for a permission answer shows "needs permission"
+on the live graph and "(waiting for a permission answer)" in the panel.
+
+### P1. The person: "what did the reviewers actually ask for?"
+**Fixed.** Review findings are listed in the panel and the live view, with
+where each stands (open, said fixed, verified, dismissed) and how often it
+was reopened.
+
+### P2. The person: "what did this cost?"
+**Found.** Nothing measured a run.
+**Fixed.** Each chat's cost and turns go into the journal at the end of every
+turn (the CLI's figure, cumulative per process, so relaunches are summed as
+segments). The panel and live view show the spend so far; the result card
+shows cost, turns, handoffs, chats and active time. This is also what the
+chat-versus-factory comparison is measured with.

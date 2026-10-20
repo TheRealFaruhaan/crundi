@@ -32,7 +32,10 @@ function describe(ev, names, nodes) {
     case 'escalate': return { k: 'escalate', main: 'Sent to the Manager', sub: first(ev.reason) };
     case 'ask-reply': return { k: 'info', main: 'You replied', sub: ev.note || '' };
     case 'wait-done': return { k: ev.outcome === 'timeout' ? 'escalate' : 'info', main: `${nodes.get(ev.nodeId)?.label || 'Wait'}: ${ev.outcome === 'timeout' ? 'gave up waiting' : 'over'}`, sub: first(ev.detail) };
-    case 'perm-decided': return ev.by === 'manager' || ev.by === 'deny-list' ? { k: ev.decision === 'allowed' ? 'info' : 'escalate', main: `${ev.employee}: ${ev.toolName} ${ev.decision}${ev.by === 'deny-list' ? ' (never allowed)' : ' by the Manager'}`, sub: first(ev.input?.command || ev.input?.url || '') } : null;
+    case 'perm-decided': return ev.by === 'manager' || ev.by === 'deny-list' || ev.by === 'gatekeeper' ? { k: ev.decision === 'allowed' ? 'info' : 'escalate', main: `${ev.employee}: ${ev.toolName} ${ev.decision === 'escalated' ? 'passed to the Manager' : ev.decision}${ev.by === 'deny-list' ? ' (never allowed)' : ev.decision === 'escalated' ? ' by the Gatekeeper' : ev.by === 'gatekeeper' ? ' by the Gatekeeper' : ' by the Manager'}`, sub: first(ev.reason || ev.input?.command || ev.input?.url || '') } : null;
+    case 'delegate': return { k: 'handoff', main: `The Manager handed ${who(ev.employeeId)} a job`, sub: first(ev.task) };
+    case 'team-mode': return { k: 'info', main: ev.mode === 'bypass' ? 'The team now runs with bypass' : 'The team asks again' };
+    case 'policy': return { k: 'info', main: 'The Manager set its permission policy', sub: first(ev.text) };
     case 'rule': return { k: 'info', main: 'Rule granted', sub: ev.rule };
     case 'retire': return { k: 'info', main: `${who(ev.employeeId)} stopped for now`, sub: 'Not needed by the current work; resumed with their memory if needed again.' };
     case 'pause': return { k: 'escalate', main: ev.by === 'usage' ? 'Paused: usage limit' : 'Paused' };
@@ -142,6 +145,8 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
       node.data.skills = skillsAt.get(node.id) || [];
       const who = rosterOf(raw);
       node.data.retired = !!(who && rec.run.retired[who]);
+      // Someone here is waiting for a permission answer.
+      node.data.blocked = !!(who && node.data.tokens.length && (rec.run.perms?.outstanding || []).some(p => p.employeeId === who));
       const last = [...rec.state.history].reverse().find(h => h.type === 'handoff' && h.nodeId === node.id);
       if (last && last.summary) node.data.live = first(last.summary, 110);
     }
@@ -221,6 +226,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
         <span>Handoffs</span><span>{rec.state.handoffs}</span>
         {run?.branch && <><span>Branch</span><span>{run.branch}</span></>}
         {run && live && run.liveSessions != null && <><span>Sessions</span><span>{run.liveSessions} live</span></>}
+        {run?.usage?.turns > 0 && <><span>Spent</span><span>{run.usage.costUsd ? '$' + run.usage.costUsd.toFixed(2) + ' · ' : ''}{run.usage.turns} turns in {run.usage.chats} chats</span></>}
       </div>
       {live && run?.waitingOn === 'manager' && <p className="ff-hint">The Manager is talking to you in its chat.</p>}
       {live && run?.managerChatId && openChat && <button className="ff-btn" onClick={() => openChat(run.managerChatId, 'Manager')}><Icon name="crown" size={14} />Open the Manager's chat</button>}
@@ -234,6 +240,14 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
         </div>
       ))}
       {live && (run?.tokens || []).filter(t => t.wait).map(t => <WaitCard key={t.id} t={t} busy={busy} act={act} />)}
+      {(run?.findings || []).length > 0 && (
+        <details className="ff-more">
+          <summary>Review findings: {run.findings.filter(i => i.status === 'open' || i.status === 'claimed').length} open of {run.findings.length}</summary>
+          {run.findings.map(i => (
+            <div key={i.id} className="ff-hint"><b>{i.id}</b> {({ open: 'open', claimed: 'said fixed', closed: 'verified', dismissed: 'dismissed' })[i.status]}{i.blocking ? ' · blocking' : ' · nit'}{i.reopened ? ` · reopened ${i.reopened}x` : ''} · {i.by}: {i.text}{i.where ? ` (${i.where})` : ''}</div>
+          ))}
+        </details>
+      )}
       {live && run?.status === 'crashed' && (
         <div className="ff-actor">
           <div className="ff-actor-head"><Icon name="alert" size={14} />It stopped: {run.crash?.reason}</div>

@@ -55,7 +55,8 @@ function emptyRecord() {
       retired: {},          // employeeId -> true while stopped by the collector
       notices: {},          // tokenId -> text for that token's next step
       rules: [],
-      waits: {},            // tokenId -> { kind, nodeId, ws, startedAt, deadline, timeoutAt, key }
+      waits: {},
+      usage: {},            // chatId -> { employeeId, costUsd, turns, durationMs } (latest)            // tokenId -> { kind, nodeId, ws, startedAt, deadline, timeoutAt, key }
       perms: { seq: 0, outstanding: [], log: [] },
       capExtra: 0, capMinutesExtra: 0, capHit: null, paused: null,
       crash: null,          // { reason, at, from }
@@ -160,6 +161,10 @@ export function reduce(prev, ev) {
       queue(rec, res.effects, at);
       break;
     }
+    case 'usage':
+      if (!r.usage) r.usage = {};
+      r.usage[ev.chatId] = { employeeId: ev.employeeId, costUsd: ev.costUsd || 0, turns: ev.turns || 0, durationMs: ev.durationMs || 0 };
+      break;
     case 'wait-done': {
       const res = Engine.waitDone(rec.state, ev.tokenId, ev.outcome, ev.detail || '');
       if (r.waits) delete r.waits[ev.tokenId];
@@ -231,7 +236,8 @@ export function reduce(prev, ev) {
       r.perms.outstanding.push({ id: ev.id, employeeId: ev.employeeId, employee: ev.employee, toolName: ev.toolName, input: ev.input, at });
       break;
     case 'perm-decided':
-      r.perms.outstanding = r.perms.outstanding.filter(p => p.id !== ev.id);
+      // Passed on by the Gatekeeper: still waiting, now on the Manager.
+      if (ev.decision !== 'escalated') r.perms.outstanding = r.perms.outstanding.filter(p => p.id !== ev.id);
       r.perms.log.push({ at, id: ev.id, employee: ev.employee, toolName: ev.toolName, input: ev.input, decision: ev.decision, by: ev.by, reason: ev.reason || '', rule: ev.rule || undefined });
       if (r.perms.log.length > LOG_MAX) r.perms.log.splice(0, r.perms.log.length - LOG_MAX);
       break;

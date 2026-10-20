@@ -446,11 +446,26 @@
   function runSteps(run) {
     var box = el('div', 'fx-steps');
     (run.tokens || []).forEach(function (t) {
-      var what = { work: 'working on', answer: 'deciding', ask: 'You are asked', join: 'waiting at', finished: 'finished' }[t.status] || t.status;
-      var line = t.status === 'ask' ? 'You are asked a question' : t.status === 'join' ? 'A branch is waiting at ' + t.label : (t.employee || 'Someone') + ' · ' + what + ' ' + t.label;
+      var what = { work: 'working on', answer: 'deciding', ask: 'You are asked', join: 'waiting at', finished: 'finished', delegated: 'waiting for a job it handed out at' }[t.status] || t.status;
+      var line = t.status === 'ask' ? 'You are asked a question' : t.status === 'join' ? 'A branch is waiting at ' + t.label : t.status === 'wait' ? 'Waiting at ' + t.label
+        : t.job ? (t.employee || 'Someone') + ' · a job from the Manager: ' + t.job.slice(0, 120)
+        : (t.employee || 'Someone') + ' · ' + what + ' ' + t.label;
+      if (t.blocked) line += ' (waiting for a permission answer)';
       box.appendChild(el('div', 'fx-step', '<span class="fx-dot ' + esc(t.status) + '"></span><span>' + esc(line) + '</span>'));
     });
     return box;
+  }
+
+  /** The review findings so far: what reviewers asked for and where each stands. */
+  function findingsView(items) {
+    var open = items.filter(function (i) { return i.status === 'open' || i.status === 'claimed'; });
+    var d = el('details', 'fx-cr-view');
+    d.appendChild(el('summary', '', 'Review findings: ' + open.length + ' open of ' + items.length));
+    items.forEach(function (i) {
+      var st = { open: 'open', claimed: 'said fixed', closed: 'verified', dismissed: 'dismissed' }[i.status] || i.status;
+      d.appendChild(el('div', 'fx-meta', '<b>' + esc(i.id) + '</b> ' + esc(st) + (i.blocking ? ' · blocking' : ' · nit') + (i.reopened ? ' · reopened ' + i.reopened + 'x' : '') + ': ' + esc(i.text) + (i.where ? ' (' + esc(i.where) + ')' : '')));
+    });
+    return d;
   }
 
   // ─── The project's Factory panel ───
@@ -481,9 +496,11 @@
         kv.innerHTML = '<span>Running for</span><span>' + esc(dur(Date.now() - Date.parse(run.createdAt))) + '</span>'
           + '<span>Handoffs</span><span>' + esc(run.handoffs) + '</span>'
           + '<span>Sessions</span><span>' + esc(run.liveSessions || 0) + ' live</span>'
-          + '<span>Branch</span><span>' + esc(run.branch || '') + '</span>';
+          + '<span>Branch</span><span>' + esc(run.branch || '') + '</span>'
+          + (run.usage && run.usage.turns ? '<span>So far</span><span>' + esc((run.usage.costUsd ? '$' + run.usage.costUsd.toFixed(2) + ' · ' : '') + run.usage.turns + ' turns') + '</span>' : '');
         box.appendChild(kv);
         if (run.tokens && run.tokens.length) box.appendChild(runSteps(run));
+        if (run.findings && run.findings.length) box.appendChild(findingsView(run.findings));
         if (run.status === 'crashed') {
           box.appendChild(el('div', 'fx-warn', 'It stopped: ' + esc(run.crash && run.crash.reason || 'it was interrupted') + '. Recover picks it up where it was.'));
           var note = el('textarea', 'fx-input'); note.rows = 2; note.placeholder = 'Anything the team should know (optional)'; box.appendChild(note);

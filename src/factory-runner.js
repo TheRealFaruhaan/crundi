@@ -218,6 +218,7 @@ export function createFactoryRunner({
         return {
           id: t.id, nodeId: t.nodeId, label: t.delegate ? 'Job from the Manager' : n?.label || n?.type || '', status: t.status, employeeId: who || '', employee: roster.get(who)?.name || '', ws: t.ws,
           ...(t.delegate ? { job: t.delegate.task } : {}),
+          ...(who && (t.status === 'work' || t.status === 'answer') && L.permissions.some(p => p.employeeId === who) ? { blocked: true } : {}),
           ...(wp ? { wait: { kind: wp.kind, what: n?.wait?.what || '', startedAt: wp.startedAt, deadline: wp.deadline, timeoutAt: wp.timeoutAt, tries: wl?.tries || 0, last: (wl?.last || '').slice(-300), ...(wp.key ? { signalPath: `/api/factory-hook/wait/${s.id}/${t.id}?key=${wp.key}` } : {}) } } : {}),
         };
       }),
@@ -226,6 +227,8 @@ export function createFactoryRunner({
         return [x.id, { chatId: e.chatId || '', busy: e.busy || null, queued: (e.queue || []).length, retired: !!r.retired[x.id], name: x.name }];
       })),
       liveSessions: Object.values(L.employees).filter(e => e.chatId).length,
+      usage: usageOf(r),
+      findings: Engine.ledgerOf(s).items.map(i => ({ id: i.id, text: i.text, where: i.where, blocking: i.blocking, status: i.status, by: roster.get(i.by)?.name || i.by, reopened: i.reopened || 0 })),
       asks,
       managerMode: r.managerMode,
       teamMode: r.teamMode || 'ask',
@@ -481,8 +484,9 @@ export function createFactoryRunner({
     let timer = null;
     const fn = (ev) => {
       if (!ev) return;
-      if (ev.type === 'exit') { clearTimeout(timer); return onExit(entry, chatId, employeeId); }
+      if (ev.type === 'exit') { clearTimeout(timer); recordUsage(entry, chatId, employeeId); return onExit(entry, chatId, employeeId); }
       if (ev.type !== 'state') return;
+      if (ev.state === 'idle') recordUsage(entry, chatId, employeeId);
       if (ev.state !== 'idle') {
         clearTimeout(timer); timer = null;
         if (employeeId === MANAGER_ID && entry.live.managerIdle) { entry.live.managerIdle = false; writeCache(entry); }
@@ -495,9 +499,22 @@ export function createFactoryRunner({
     agents.on(chatId, fn);
   }
 
+  /** What a chat has cost so far, into the journal when it changed (each turn's end). */
+  function recordUsage(entry, chatId, employeeId) {
+    if (!agents.usage) return;
+    let u;
+    try { u = agents.usage(chatId); } catch { return; }
+    if (!u) return;
+    const prev = (rr(entry).usage || {})[chatId];
+    if (prev && prev.costUsd === u.costUsd && prev.turns === u.turns) return;
+    commit(entry, { type: 'usage', chatId, employeeId, costUsd: u.costUsd, turns: u.turns, durationMs: u.durationMs || 0 });
+  }
+
   function unwatch(entry, chatId) {
     const w = entry.watchers[chatId];
     if (!w) return;
+    const eid = chats.get(chatId)?.employeeId;
+    if (eid) recordUsage(entry, chatId, eid);
     w.clear();
     try { agents.off(chatId, w.fn); } catch { /* gone */ }
     delete entry.watchers[chatId];
@@ -772,6 +789,8 @@ export function createFactoryRunner({
       diff: { added: d.added, removed: d.removed, count: d.files.length, files: d.files.slice(0, 40) },
       // Review findings not dealt with: nits, and anything the Manager let through.
       followUps: Engine.ledgerOf(st(entry)).items.filter(i => i.status === 'open' || i.status === 'claimed').map(i => ({ id: i.id, text: i.text, where: i.where, blocking: i.blocking })),
+      // What it took: measured from the run's own chats.
+      usage: (() => { const u = usageOf(rr(entry)); return { costUsd: u.costUsd, turns: u.turns, chats: u.chats, activeMs: u.activeMs, handoffs: st(entry).handoffs }; })(),
     };
     const chatId = entry.live.employees[MANAGER_ID]?.chatId;
     if (!chatId || !agents.addCard) return;
@@ -1720,6 +1739,60 @@ export function createFactoryRunner({
     return { ok: true, message: done + ' Tell the person in a sentence.' };
   }
 
+  /**
+   * factory_status: where the run stands, in one block, for whoever in the
+   * run asks (the Manager after a long conversation or a compaction).
+   */
+  async function statusFor(chatId) {
+    const info = chatInfo(chatId);
+    if (!info) return { ok: false, error: 'This chat is not part of a factory run.' };
+    const entry = runs.get(info.runId);
+    if (!entry) return { ok: false, error: 'That factory run no longer exists.' };
+    const s = st(entry), r = rr(entry), f = s.snapshot;
+    const names = new Map(f.roster.map(x => [x.id, x.name]));
+    const nodes = new Map(f.nodes.map(n => [n.id, n]));
+    const lines = [`[Factory] Status of "${f.name}" (${s.status}), ${s.handoffs} handoffs so far.`];
+    if (r.cr) lines.push('', 'Change request:', crBrief(r.cr, f.settings.crTemplate, r.cr.file));
+    else lines.push('', `Task: ${s.task}`);
+    lines.push('', 'Now:');
+    for (const t of s.tokens) {
+      const n = nodes.get(t.nodeId);
+      const who = names.get(Engine.personOf(s, t)) || '';
+      const what = t.delegate ? `${who}: a job you handed out (${t.delegate.task.slice(0, 120)})`
+        : t.status === 'work' ? `${who} is working on "${n?.label || who}"`
+        : t.status === 'answer' ? `${who} is asked "${n?.label || n?.decision?.question || ''}"`
+        : t.status === 'ask' ? `the person is asked: ${n?.ask?.prompt || ''}`
+        : t.status === 'join' ? `a branch waits at "${n?.label || 'Join'}"`
+        : t.status === 'wait' ? `the flow waits at "${n?.label || 'Wait'}"`
+        : t.status === 'delegated' ? 'you are waiting for a job you handed out'
+        : t.status;
+      lines.push(`- ${what}${t.ws && t.ws !== 'main' ? ` (branch ${t.ws})` : ''}`);
+    }
+    if (!s.tokens.length) lines.push('- nothing is moving');
+    const loops = f.edges.filter(e => e.maxRounds > 0 && (s.edgeCounts[e.id] || 0) > 0);
+    if (loops.length) {
+      lines.push('', 'Loops used:');
+      for (const e of loops) lines.push(`- "${nodes.get(e.source)?.label || e.source}" -> "${nodes.get(e.target)?.label || e.target}": ${s.edgeCounts[e.id]} of ${e.maxRounds}${s.exhausted[e.id] ? ` (reopened ${s.exhausted[e.id]}x)` : ''}`);
+    }
+    const L = Engine.ledgerOf(s).items;
+    if (L.length) {
+      const open = L.filter(i => i.status === 'open' || i.status === 'claimed');
+      lines.push('', `Review findings: ${open.length} open of ${L.length}.`);
+      for (const i of open) lines.push(`- ${i.id} [${i.blocking ? 'blocking' : 'nit'}${i.status === 'claimed' ? ', said to be fixed' : ''}] ${i.text}`);
+    }
+    if (entry.live.permissions.length) lines.push('', `Permission requests waiting: ${entry.live.permissions.map(p => `${p.id} (${p.employee}: ${p.toolName})`).join(', ')}`);
+    try {
+      const d = await git.git(['diff', '--stat=100', `${r.baseCommit}..HEAD`, '--', '.', ':(exclude).claude/skills'], r.worktree);
+      const stat = d.stdout.split('\n').filter(Boolean).slice(-15).join('\n');
+      lines.push('', `Changes since the run started (${String(r.baseCommit).slice(0, 12)}):`, stat ? stat.split('\n').map(x => '  ' + x).join('\n') : '  (none yet)');
+    } catch { /* best effort */ }
+    const recent = s.history.filter(h => h.type === 'handoff').slice(-6).map(h => `- ${names.get(h.by) || h.by}: ${String(h.summary || '').split('\n')[0].slice(0, 160)}`);
+    if (recent.length) lines.push('', 'Recent handoffs:', ...recent);
+    const u = usageOf(r);
+    lines.push('', `Spent so far: ${u.turns} turns in ${u.chats} chats${u.costUsd ? `, about $${u.costUsd.toFixed(2)}` : ''}; ${Math.round(timeLeft(entry.rec, Date.now()) / 60000)} min of the time limit left.`);
+    return { ok: true, content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
   /** Switch the team between asking (the Manager or Gatekeeper) and bypass. */
   async function setTeamMode(runId, mode) {
     const entry = runs.get(runId);
@@ -1750,7 +1823,7 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /**
@@ -1775,6 +1848,19 @@ export function factoryLiveCard(run, managerState = 'idle') {
     : busy ? `${busy.employee || 'someone'} ${busy.status === 'answer' ? 'deciding' : 'working'}`
     : (run.tokens || []).find(t => t.status === 'wait') ? `waiting: ${(run.tokens || []).find(t => t.status === 'wait').label}` : 'between steps';
   return { state, title: `${run.factoryName}: ${doing}` };
+}
+
+/** A run's spend, from its journaled usage: totals and per person. */
+export function usageOf(r) {
+  const out = { costUsd: 0, turns: 0, chats: 0, byEmployee: {} };
+  for (const u of Object.values(r.usage || {})) {
+    out.costUsd += u.costUsd || 0; out.turns += u.turns || 0; out.chats++;
+    const b = out.byEmployee[u.employeeId] || (out.byEmployee[u.employeeId] = { costUsd: 0, turns: 0 });
+    b.costUsd += u.costUsd || 0; b.turns += u.turns || 0;
+  }
+  out.costUsd = Math.round(out.costUsd * 10000) / 10000;
+  out.activeMs = r.time ? r.time.activeMs + (r.time.since ? Math.max(0, Date.now() - Date.parse(r.time.since)) : 0) : 0;
+  return out;
 }
 
 /** A commit subject from a summary: its first sentence, kept short. */
@@ -1853,6 +1939,20 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
       .map(m => String(m.input?.skill || m.input?.command || m.input?.name || '').replace(/^\//, ''))
       .filter(Boolean),
     patchCard: (id, entryId, patch) => claudeUi.patchCard(id, entryId, patch),
+    // Cost and turns so far. The CLI's cost is cumulative per process, so a
+    // relaunch on the same chat id (bypass, recovery) starts a new segment.
+    usage: (id) => {
+      let cost = 0, seg = 0, turns = 0, ms = 0;
+      for (const m of ((claudeUi.history(id) || {}).messages || [])) {
+        if (m.kind !== 'result') continue;
+        const c = Number(m.costUsd) || 0;
+        if (c < seg) { cost += seg; }
+        seg = c;
+        turns += Number(m.numTurns) || 0;
+        ms += Number(m.durationMs) || 0;
+      }
+      return { costUsd: Math.round((cost + seg) * 1e6) / 1e6, turns, durationMs: ms };
+    },
     on: (id, fn) => claudeUi.on(id, fn),
     off: (id, fn) => claudeUi.off(id, fn),
   };

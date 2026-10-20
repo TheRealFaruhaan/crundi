@@ -25,11 +25,11 @@ function Badge({ issues }) {
   );
 }
 
-function Tokens({ tokens }) {
+function Tokens({ tokens, blocked }) {
   if (!tokens.length) return null;
   const t = tokens[0];
-  const label = { work: 'working', answer: 'deciding', ask: 'waiting on you', join: 'waiting', wait: 'waiting', finished: 'finished' }[t.status] || t.status;
-  return <div className={'ff-token ' + t.status}>{label}{tokens.length > 1 ? ' ×' + tokens.length : ''}</div>;
+  const label = blocked ? 'needs permission' : { work: 'working', answer: 'deciding', ask: 'waiting on you', join: 'waiting', wait: 'waiting', finished: 'finished' }[t.status] || t.status;
+  return <div className={'ff-token ' + (blocked ? 'blocked' : t.status)} title={blocked ? 'Waiting for the Manager (or the Gatekeeper) to answer a permission request' : ''}>{label}{tokens.length > 1 ? ' ×' + tokens.length : ''}</div>;
 }
 
 function body(n, d) {
@@ -77,7 +77,7 @@ export function FactoryNode({ data, selected }) {
       {n.type !== 'start' && <Handle type="target" position={Position.Top} id="in" className="ff-h-in" />}
       {AGENTS.has(n.type) && <Handle type="target" position={Position.Left} id="notein" className="ff-h-note" title="Notes arrive here" />}
       <Badge issues={data.issues} />
-      <Tokens tokens={data.tokens} />
+      <Tokens tokens={data.tokens} blocked={data.blocked} />
       <div className="ff-node-head"><Icon name={m.icon} size={14} /><span className="ff-node-kind">{m.kind}</span></div>
       <div className="ff-node-title">{title(n, data)}</div>
       <div className="ff-node-body">{data.live ? data.live : body(n, data)}</div>

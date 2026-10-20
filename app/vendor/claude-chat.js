@@ -40,6 +40,7 @@
     // A factory's result card.
     '.cc-fr-sum{margin:6px 0 8px}',
     '.cc-fr-fu{font-size:.92em;line-height:1.45}',
+    '.cc-fr-use{font-size:.85em;color:var(--text-secondary);margin:2px 0 6px}',
     '.cc-fr-files{margin:4px 0 8px;font-size:.92em}',
     '.cc-fr-files>summary{cursor:pointer;color:var(--text-secondary)}',
     '.cc-fr-br{color:var(--text-muted)}',
@@ -1694,6 +1695,11 @@
         ask: (d.count || 0) === 0 ? 'The team made no changes, so there is nothing to merge. Ask for changes, or close the run.' : 'Look it over, then choose what happens to it.',
       }[e.state] || '';
       if (msg) box.appendChild(el('div', 'cc-ask-sub', msg));
+      // What the run took, measured.
+      if (e.usage && (e.usage.turns || e.usage.costUsd)) {
+        var mins = Math.round((e.usage.activeMs || 0) / 60000);
+        box.appendChild(el('div', 'cc-fr-use', esc((e.usage.costUsd ? '$' + e.usage.costUsd.toFixed(2) + ' · ' : '') + e.usage.turns + ' turns · ' + e.usage.handoffs + ' handoffs · ' + e.usage.chats + ' chats' + (mins ? ' · ' + (mins >= 60 ? Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min' : mins + ' min') : ''))));
+      }
       // Review findings nobody dealt with: kept so they are not lost.
       if ((e.followUps || []).length) {
         var fu = el('details', 'cc-fr-files');
