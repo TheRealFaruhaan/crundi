@@ -198,10 +198,40 @@ exhaustion only allows exits; run caps bound everything.
   every factory chat as `--disallowedTools` prefix rules (all that binds a
   Manager in bypass).
 - The factory's own MCP tools (`factory_handoff`, `factory_permission`,
-  `rename_chat`) are `--allowedTools` on every factory chat: an MCP call needs
+  `factory_delegate`, `factory_result`, `rename_chat`, `Skill`) are `--allowedTools` on every factory chat: an MCP call needs
   permission otherwise, and a normal-mode Manager stalled on its first call.
-- Employees always run in `acceptEdits` (never bypass). AskUserQuestion from
-  an employee is declined with "decide yourself, or escalate".
+- **Team mode** (factory setting, changeable mid-run): *Ask* (default) or
+  *Bypass*. With Bypass the employees launch with
+  `--dangerously-skip-permissions` too; the deny list still rides along. When
+  the Manager is bypassed and the team is not, the editor recommends giving the
+  team bypass as well (the person already trusts the Manager to approve them),
+  with a one-click button, and the Manager's prompt says the same. A mode
+  change takes effect at each employee's next step: the CLI is relaunched on
+  its conversation.
+- Otherwise employees run in `acceptEdits`. AskUserQuestion from an employee
+  is declined with "decide yourself, or escalate".
+- **Rules from the start**, each scoped to a person or to everyone (`{rule,
+  who}`, who `*` = everyone):
+  - factory *presets* for everyone: `git-read`, `tests` (tests, builds,
+    linters, plus the project's own `package.json` test/build/lint/check
+    scripts and Makefile targets, never deploy/start/release), `packages`,
+    `web`. Default: git-read and tests.
+  - hand-written rules for everyone (factory settings), and per person
+    (Team panel: their presets and their always-allowed rules).
+  - Too-broad, edit and deny-listed rules are dropped. Each person's CLI gets
+    `--allowedTools` with everyone's rules plus their own, and its prompt lists
+    them.
+- **Approval rules are per employee.** A rule the Manager grants with an
+  answer applies to the person who asked, unless it adds `ruleFor:
+  "everyone"` (or a name). It may also grant rules up front (`rules: [{rule,
+  employee?}]`) and set a written `policy`. The factory setting *The Manager
+  may set standing rules* (default on) turns all of that off: it then answers
+  every request on its own.
+- **Gatekeeper** (factory setting, off by default; model chosen there, Haiku
+  by default): a small background chat with no edit or shell tools that
+  answers requests first, following the Manager's policy. Unsure requests are
+  passed on (`escalate: true` with a reason) and reach the Manager marked as
+  such. The Gatekeeper cannot grant rules. The Manager's decision is final.
 - The Manager answers with `factory_permission` `{ decisions: [{ id, allow,
   reason, rule? }] }`. A rule is refused if too broad (`Bash`, `Bash(*)`), on
   the deny list, or an edit rule. A Bash prefix rule never covers a compound
@@ -209,6 +239,30 @@ exhaustion only allows exits; run caps bound everything.
   requests already waiting. Requests are batched for 1.5 s.
 - Every decision (deny list, rule, Manager, dropped) is kept in the run's
   permission log.
+
+### 4.4b Working inside a run (from the role-play review, specs/factory-review.md)
+- **Run context in every step message:** the base commit and parent branch,
+  `git diff --stat <base>..HEAD`, what changed since this person's last step,
+  the shared folder's files, the open review findings, where to run commands
+  (a branch step's `cd` line) and the workspace's own ten ports (4300-4899,
+  hashed from run and workspace).
+- **Branch confinement:** a branch step's handoff is refused while the run's
+  main worktree has stray changes, naming the files and how to move them.
+- **Review ledger:** reviewers file `findings` ({text, where, blocking,
+  reason}); they get ids F1, F2… kept in the run, so a fresh-eyes reviewer
+  checks last round's requests first. Workers mark `done`, reviewers
+  `verified` or `reopen`, the Manager may `dismiss`. After a person's first
+  review, a new blocking finding needs a reason (stops moving goalposts); nits
+  never block and come out as follow-ups on the result card.
+- **Review gate** (a yes/no decision flag): "no" needs an open blocking
+  finding, "yes" needs none open and closes what was claimed fixed. Loop-limit
+  and no-progress escalations list the findings and how often each was
+  reopened.
+- **Delegation:** `factory_delegate {employee, task}` hands a one-off job to
+  anyone (resolve a conflict, a quick check); it always returns to the Manager,
+  counts as a handoff and cannot break termination.
+- **`factory_result {action}`:** the Manager carries out the person's decision
+  given in the chat (merge, keep, discard, changes, undo).
 
 ### 4.5 Sessions: no sleep, reachability GC
 - The pane parker (`src/panes.js`) **never parks** a session of an unfinished

@@ -346,13 +346,28 @@ const TOOLS = [
         notes: { type: 'object', description: 'Note id (as listed in your step) -> text', additionalProperties: { type: 'string' } },
         finish: { type: 'boolean', description: 'Manager only: the whole task is done' },
         escalate: { type: 'string', description: 'Instead of everything else: why you cannot do this step. The Manager picks it up.' },
+        findings: { type: 'array', description: 'Review findings: problems to fix. blocking: must change before approval; otherwise a nit, kept as a follow-up. After your first review a new blocking finding needs a reason.', items: { type: 'object', properties: { text: { type: 'string' }, where: { type: 'string' }, blocking: { type: 'boolean' }, reason: { type: 'string' } }, required: ['text'] } },
+        done: { type: 'array', items: { type: 'string' }, description: 'Ids of findings you fixed, e.g. ["F1"]' },
+        verified: { type: 'array', items: { type: 'string' }, description: 'Ids of findings whose fix you checked' },
+        reopen: { type: 'array', items: { type: 'string' }, description: 'Ids of findings that are not really fixed' },
+        dismiss: { type: 'array', items: { type: 'string' }, description: 'Manager only: findings to drop' },
       },
     },
+  },
+  {
+    name: 'factory_delegate',
+    description: 'Manager of a Crundi factory run only: hand someone on your team a one-off job outside the drawn flow (resolve a merge conflict, check something, make a small fix). Your own step waits; their result comes back to you as a message and then it is your turn again. Stop after calling it.',
+    inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, task: { type: 'string', description: 'The job: what to do and what done looks like' } }, required: ['employee', 'task'] },
+  },
+  {
+    name: 'factory_result',
+    description: 'Manager of a Crundi factory run only: when the run is finished and the person tells you in the chat what to do with the result, do it: merge (one squash commit onto the parent branch), keep (keep the branch, merge nothing), discard, changes (reopen the run with their note), or undo (take back a merge). Only on the person\'s word.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['merge', 'keep', 'discard', 'changes', 'undo'] }, note: { type: 'string', description: 'For changes: what they asked to change' } }, required: ['action'] },
   },
 
   {
     name: 'factory_permission',
-    description: 'Manager of a Crundi factory run only: answer your team\'s permission requests (they arrive as "[Factory] Permission request" messages with ids like p3). Your decision is final. Give one decision per request; add rule (for example "Bash(npm test:*)" or "WebFetch(domain:docs.example.com)") to an allow to approve the same kind of request for the rest of the run. This is not a handoff: carry on afterwards.',
+    description: 'For the Manager (or the Gatekeeper) of a Crundi factory run: answer the team\'s permission requests (they arrive as "[Factory] Permission request" messages with ids like p3). One decision per request. With an allow, rule (e.g. "Bash(npm test:*)") lets that person do the same again without asking; ruleFor: "everyone" grants it to the whole team. The Manager may also grant rules up front (rules) and set the policy the Gatekeeper follows (policy). The Gatekeeper may pass a request to the Manager with escalate: true. This is not a handoff: carry on afterwards.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -364,13 +379,16 @@ const TOOLS = [
               id: { type: 'string', description: 'The request id, e.g. p3' },
               allow: { type: 'boolean' },
               reason: { type: 'string', description: 'Why; the employee is told when you deny' },
-              rule: { type: 'string', description: 'Optional, with allow: a run-wide rule such as Bash(npm test:*)' },
+              rule: { type: 'string', description: 'Optional, with allow: a standing rule such as Bash(npm test:*), for this person' },
+              ruleFor: { type: 'string', description: 'Optional: "everyone", or a name, for whom the rule is (default: the person who asked)' },
+              escalate: { type: 'boolean', description: 'Gatekeeper only: pass this request to the Manager' },
             },
-            required: ['id', 'allow'],
+            required: ['id'],
           },
         },
+        rules: { type: 'array', description: 'Manager only: rules granted up front, before anyone asks', items: { type: 'object', properties: { rule: { type: 'string' }, employee: { type: 'string', description: 'A name, or leave out for everyone' } }, required: ['rule'] } },
+        policy: { type: 'string', description: 'Manager only: what the Gatekeeper should allow, refuse and pass to you' },
       },
-      required: ['decisions'],
     },
   },
 
@@ -496,7 +514,7 @@ async function handleToolCall(name, args) {
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
   // Which chat is handing off is this process's own, never an argument.
-  if (name === 'factory_handoff' || name === 'factory_permission') {
+  if (name === 'factory_handoff' || name === 'factory_permission' || name === 'factory_delegate' || name === 'factory_result') {
     delete args.sessionId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
@@ -577,7 +595,7 @@ const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
   : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name))
 ).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name))
-  .filter(t => IN_FACTORY || (t.name !== 'factory_handoff' && t.name !== 'factory_permission'));
+  .filter(t => IN_FACTORY || !t.name.startsWith('factory_'));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: LISTED_TOOLS };

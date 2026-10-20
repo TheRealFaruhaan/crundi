@@ -1,4 +1,4 @@
-import { genId, MANAGER_ID } from '../../../src/factory-model.js';
+import { genId, MANAGER_ID, PERMISSION_PRESETS } from '../../../src/factory-model.js';
 import { Field, Text, Select, Toggle, SkillText } from './fields.jsx';
 import { Icon } from './icons.jsx';
 import { PERSONAS } from './personas.js';
@@ -10,7 +10,7 @@ export function newEmployee(template, f) {
   let name = t ? t.name : 'New employee';
   let n = 2;
   while (f.roster.some(r => r.name.toLowerCase() === name.toLowerCase())) name = (t ? t.name : 'New employee') + ' ' + n++;
-  return { id: genId('emp_'), name, persona: t ? t.persona : '', model: '', effort: '', memory: t ? t.memory : 'keep', tools: { allow: [], deny: t ? [...t.deny] : [] }, skills: [] };
+  return { id: genId('emp_'), name, persona: t ? t.persona : '', model: '', effort: '', memory: t ? t.memory : 'keep', tools: { allow: [], deny: t ? [...t.deny] : [] }, skills: [], presets: t && t.presets ? [...t.presets] : [] };
 }
 
 export function RosterPane({ f, mutate, selected, setSelected, skills, issuesByEmployee, onRemove, onAddTo }) {
@@ -85,9 +85,19 @@ export function RosterPane({ f, mutate, selected, setSelected, skills, issuesByE
         <Text value={(r.skills || []).join(', ')} placeholder="frontend-design, run"
           onChange={v => set(e => { e.skills = v.split(',').map(x => x.trim().replace(/^\//, '')).filter(Boolean); }, 'rs:' + r.id)} />
       </Field>
+      {!isManager && f.settings.teamMode !== 'bypass' && (
+        <Field label="This person may also, without asking" hint="On top of what everyone may (factory settings).">
+          <div className="ff-checks">
+            {Object.entries(PERMISSION_PRESETS).map(([k, p]) => (
+              <Toggle key={k} checked={(r.presets || []).includes(k) || f.settings.presets.includes(k)} label={p.label + (f.settings.presets.includes(k) ? ' (everyone has this)' : '')}
+                onChange={v => { if (f.settings.presets.includes(k)) return; set(e => { e.presets = v ? [...new Set([...(e.presets || []), k])] : (e.presets || []).filter(x => x !== k); }); }} />
+            ))}
+          </div>
+        </Field>
+      )}
       <details className="ff-more">
         <summary>More tool rules</summary>
-        <Field label="Always allowed" hint="Claude Code rules, comma separated, e.g. Bash(npm test:*).">
+        <Field label="Always allowed (this person only)" hint="Claude Code rules, comma separated, e.g. Bash(npm test:*).">
           <Text mono value={r.tools.allow.join(', ')} onChange={v => set(e => { e.tools.allow = v.split(',').map(x => x.trim()).filter(Boolean); }, 'ta:' + r.id)} />
         </Field>
         <Field label="Never allowed">

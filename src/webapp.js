@@ -3450,6 +3450,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
         case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
+        case 'teamMode': result = await factoryRunner.setTeamMode(body.id, body.mode); break;
         // The person's choice on the result card: merge | changes | keep | discard | undo.
         case 'finish': result = await factoryRunner.finishAction(body.id, String(body.choice || ''), { note: body.note || '' }); break;
         default: return json(res, { ok: false, error: `Unknown factory run action: ${body.action}` }, 400);
@@ -5920,8 +5921,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // The Manager answering its team's permission requests.
       if (body.tool === 'factory_permission') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
-        try { return json(res, await factoryRunner.answerPermissions(String(a.sessionId || ''), a.decisions)); }
+        try { return json(res, await factoryRunner.answerPermissions(String(a.sessionId || ''), a.decisions, { rules: a.rules, policy: a.policy })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      // The Manager handing someone a one-off job, or acting on the person's word about the result.
+      if (body.tool === 'factory_delegate' || body.tool === 'factory_result') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try {
+          return json(res, body.tool === 'factory_delegate'
+            ? await factoryRunner.delegateJob(String(a.sessionId || ''), a.employee, a.task)
+            : await factoryRunner.resultFromManager(String(a.sessionId || ''), a.action, a.note || ''));
+        } catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 
       // ─── Widget tools (owner only: not in COLLABORATOR_MCP_TOOLS) ───

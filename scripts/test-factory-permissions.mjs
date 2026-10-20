@@ -83,7 +83,7 @@ function repo(name) {
   return dir;
 }
 
-function setup(name, factory = standard(), brains = null) {
+function setup(name, factory = (() => { const f = standard(); f.settings = { presets: [], managerRules: true }; return f; })(), brains = null) {
   const batches = [];
   const team = fakeTeam(brains || {
     manager: async (msg) => {
@@ -140,7 +140,7 @@ function setup(name, factory = standard(), brains = null) {
   const beAns = be.responses.find(x => x.requestId === beReq);
   ok(feAns && feAns.behavior === 'allow', 'answer: the frontend dev\'s request is allowed, matched by its own request id');
   ok(beAns && beAns.behavior === 'deny' && /Use the docs in the repo/.test(beAns.message), 'answer: the backend dev is told no, with the Manager\'s reason');
-  ok(r.getRun(st.run.id).rules.includes('Bash(npm test:*)'), 'rule: granted for the rest of the run');
+  ok(r.getRun(st.run.id).rules.some(x => x.rule === 'Bash(npm test:*)'), 'rule: granted for the rest of the run');
 
   // The rule answers later requests without asking.
   const before = batches.length;
@@ -158,8 +158,16 @@ function setup(name, factory = standard(), brains = null) {
   await until(() => r.getRun(st.run.id).permissions.length >= 3);
   const run = r.getRun(st.run.id);
   const first = run.permissions.find(p => p.input.command === 'npm run build').id;
+  // Granted for the backend dev only: the frontend dev's matching request still waits.
   const res = await r.answerPermissions(mgr.id, [{ id: first, allow: true, rule: 'Bash(npm run build:*)' }]);
-  ok(be.responses.find(x => x.requestId === w1)?.behavior === 'allow' && fe.responses.find(x => x.requestId === w2)?.behavior === 'allow' && /allowed by your new rule/.test(res.message), 'rule: a new rule also answers other waiting requests it covers');
+  ok(be.responses.find(x => x.requestId === w1)?.behavior === 'allow' && !fe.responses.find(x => x.requestId === w2), 'rule: per employee by default, so another person\'s matching request still waits');
+  ok(r.getRun(st.run.id).rules.some(x => x.rule === 'Bash(npm run build:*)' && x.who === 'be'), 'rule: recorded for that person');
+  const second = r.getRun(st.run.id).permissions.find(p => p.input.command === 'npm run build -- --prod').id;
+  const res2 = await r.answerPermissions(mgr.id, [{ id: second, allow: true, rule: 'Bash(npm run build:*)', ruleFor: 'everyone' }]);
+  ok(fe.responses.find(x => x.requestId === w2)?.behavior === 'allow' && r.getRun(st.run.id).rules.some(x => x.rule === 'Bash(npm run build:*)' && x.who === '*'), 'rule: granted for everyone when the Manager says so');
+  const w3 = team.ask(fe.id, { toolName: 'Bash', input: { command: 'npm run build' } });
+  await until(() => fe.responses.find(x => x.requestId === w3));
+  ok(fe.responses.find(x => x.requestId === w3)?.behavior === 'allow', 'rule: an everyone-rule answers anyone later');
   ok(r.getRun(st.run.id).permissions.length === 1, 'queue: only the compound command is still waiting');
 
   // Stop refuses what is left.
@@ -191,7 +199,7 @@ function setup(name, factory = standard(), brains = null) {
 
 // ─── A bypass factory starts its Manager bypassed, never its team ───
 {
-  const f = standard(); f.settings = { managerMode: 'bypass' };
+  const f = standard(); f.settings = { managerMode: 'bypass', presets: [] };
   const { team, r } = setup('p3', f);
   await r.startRun({ project: 'p3', factoryId: 'x', task: 'Do it' });
   await until(() => team.of('fe')[0]);

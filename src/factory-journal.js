@@ -101,6 +101,10 @@ export function reduce(prev, ev) {
       });
       r.ws.main = { path: ev.wt.path, branch: ev.wt.branch };
       r.time.maxMinutes = rec.state.snapshot.settings.caps.maxMinutes;
+      // The team's permissions: presets and the project's own scripts, granted from the start.
+      r.rules = Array.isArray(ev.rules) ? ev.rules.slice() : [];
+      r.teamMode = rec.state.snapshot.settings.teamMode || 'ask';
+      r.policy = '';
       break;
     }
     case 'setup':
@@ -122,13 +126,30 @@ export function reduce(prev, ev) {
       rec.state = res.run;
       queue(rec, res.effects, at);
       if (ev.by && r.sessions[ev.by] && ev.sessionUuid) r.sessions[ev.by].sessionUuid = ev.sessionUuid;
-      // The skills loaded during that step ride on its history entry.
-      if (Array.isArray(ev.skills) && ev.skills.length) {
-        const h = [...rec.state.history].reverse().find(x => x.type === 'handoff');
-        if (h) h.skills = ev.skills.slice(0, 20);
+      // The skills loaded during that step, and the commit it ended on, ride
+      // on its history entry (the next step is told what changed since).
+      const h = [...rec.state.history].reverse().find(x => x.type === 'handoff' || x.type === 'delegate-done' || x.type === 'delegate-escalated');
+      if (h) {
+        if (Array.isArray(ev.skills) && ev.skills.length) h.skills = ev.skills.slice(0, 20);
+        if (ev.commit) h.commit = ev.commit;
+        if (!h.by && ev.by) h.by = ev.by;
       }
       break;
     }
+    case 'delegate': {
+      const caps = { maxHandoffs: rec.state.snapshot.settings.caps.maxHandoffs + r.capExtra };
+      const res = Engine.delegate(rec.state, ev.tokenId, ev.employeeId, ev.task, { caps });
+      if (!res.ok) break;
+      rec.state = res.run;
+      queue(rec, res.effects, at);
+      break;
+    }
+    case 'team-mode':
+      r.teamMode = ev.mode === 'bypass' ? 'bypass' : 'ask';
+      break;
+    case 'policy':
+      r.policy = String(ev.text || '').slice(0, 4000);
+      break;
     case 'ask-reply': {
       const res = Engine.askReply(rec.state, ev.tokenId, ev.replyId, ev.note || '');
       if (!res.ok) break;
@@ -180,9 +201,13 @@ export function reduce(prev, ev) {
       if (ev.sessionUuid) r.sessions[ev.employeeId] = { ...(r.sessions[ev.employeeId] || {}), sessionUuid: ev.sessionUuid };
       history(rec, { type: 'retire', employeeId: ev.employeeId });
       break;
-    case 'rule':
-      if (!r.rules.includes(ev.rule)) r.rules.push(ev.rule);
+    case 'rule': {
+      // Rules are per employee: who is the employee it was granted for, '*' for everyone.
+      const who = ev.who || '*';
+      r.rules = (r.rules || []).map(x => typeof x === 'string' ? { rule: x, who: '*' } : x);
+      if (!r.rules.some(x => x.rule === ev.rule && x.who === who)) r.rules.push({ rule: ev.rule, who });
       break;
+    }
     case 'manager-mode':
       r.managerMode = ev.mode === 'bypass' ? 'bypass' : 'normal';
       break;

@@ -72,6 +72,20 @@ export const LIMITS = {
 };
 
 export const DEFAULT_CAPS = { maxHandoffs: 200, maxMinutes: 8 * 60, tokenBudget: 0 }; // 0 = no budget
+export const TEAM_MODES = ['ask', 'bypass'];
+
+/**
+ * Permission presets: kinds of request the whole team may make from the
+ * start, so they never reach the Manager. 'tests' also grants the project's
+ * own test/build/lint scripts, read at run start (factory-permissions.js).
+ */
+export const PERMISSION_PRESETS = {
+  'git-read': { label: 'Read git (status, diff, log)', rules: ['Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(git branch --show-current:*)'] },
+  tests: { label: 'Tests, builds and linters', rules: ['Bash(npm test:*)', 'Bash(npm run test:*)', 'Bash(npm run build:*)', 'Bash(npm run lint:*)', 'Bash(npx tsc:*)', 'Bash(pytest:*)', 'Bash(python -m pytest:*)', 'Bash(cargo test:*)', 'Bash(cargo build:*)', 'Bash(go test:*)', 'Bash(go build:*)', 'Bash(make test:*)', 'Bash(make build:*)', 'Bash(make lint:*)'] },
+  packages: { label: 'Install packages', rules: ['Bash(npm install:*)', 'Bash(npm ci:*)', 'Bash(yarn add:*)', 'Bash(yarn install:*)', 'Bash(pnpm add:*)', 'Bash(pnpm install:*)', 'Bash(pip install:*)', 'Bash(cargo add:*)', 'Bash(go get:*)'] },
+  web: { label: 'Search the web and read docs', rules: ['WebSearch', 'WebFetch'] },
+};
+export const DEFAULT_PRESETS = ['git-read', 'tests'];
 
 export const DEFAULT_MANAGER_PERSONA = [
   'You are the Manager of this factory. You own the task from start to finish.',
@@ -129,6 +143,22 @@ export function normalizeFactory(input) {
       // Pick a crashed run up again by itself (with retries) instead of
       // waiting for the person to press Recover.
       autoRecover: !!s.autoRecover,
+      // The team's own permissions: 'ask' sends requests to the Manager (or
+      // the Gatekeeper); 'bypass' runs the team unchecked, like a bypassed
+      // Manager. The fixed deny list applies either way.
+      teamMode: oneOf(s.teamMode, TEAM_MODES, 'ask'),
+      presets: Array.isArray(s.presets) ? s.presets.filter(k => Object.prototype.hasOwnProperty.call(PERMISSION_PRESETS, k)) : DEFAULT_PRESETS.slice(),
+      // Rules written by hand in the factory, e.g. Bash(docker compose up:*).
+      rules: strList(s.rules, 50, 200).map(x => x.trim()).filter(Boolean),
+      // A cheap session that answers the team's permission requests by the
+      // Manager's policy and passes only the unclear ones to the Manager.
+      // May the Manager set standing rules ("allow npm test for the rest of
+      // the run") instead of answering every request one by one?
+      managerRules: s.managerRules === undefined ? true : !!s.managerRules,
+      gatekeeper: {
+        enabled: !!(s.gatekeeper && s.gatekeeper.enabled),
+        model: str(s.gatekeeper && s.gatekeeper.model, 60) || 'haiku',
+      },
       caps: {
         maxHandoffs: intIn(caps.maxHandoffs, 1, 10_000, DEFAULT_CAPS.maxHandoffs),
         maxMinutes: intIn(caps.maxMinutes, 1, 7 * 24 * 60, DEFAULT_CAPS.maxMinutes),
@@ -156,6 +186,8 @@ export function normalizeFactory(input) {
       memory: oneOf(r.memory, MEMORY_MODES, 'keep'),
       tools: { allow: strList(tools.allow, 100, 200), deny: strList(tools.deny, 100, 200) },
       skills: strList(r.skills, 50, 100),
+      // Permission presets for this person only (the factory's apply to everyone).
+      presets: Array.isArray(r.presets) ? r.presets.filter(k => Object.prototype.hasOwnProperty.call(PERMISSION_PRESETS, k)) : [],
     });
   }
 
@@ -180,6 +212,8 @@ export function normalizeFactory(input) {
         question: str(d.question, LIMITS.text),
         options: normalizeChoices(d.options),
         answeredBy: typeof d.answeredBy === 'string' && d.answeredBy ? d.answeredBy : null,
+        // A review gate: "no" needs an open blocking finding, "yes" needs none.
+        review: !!d.review,
       };
       if (node.decision.kind === 'yesno') node.decision.options = [];
     }
@@ -397,6 +431,14 @@ export function validateFactory(input, { skills = null } = {}) {
     if (!r.persona.trim()) warn('roster-no-persona', `"${r.name || 'An employee'}" has no persona.`, 'Describe who this employee is and how they work.', { employeeId: r.id });
   }
 
+  // ── Hand-written approval rules ──
+  for (const rule of f.settings.rules) {
+    const shape = /^[A-Za-z_][\w.-]*(\(.+\))?$/.test(rule);
+    const tooBroad = rule === 'Bash' || /^Bash\(\s*\*?\s*:?\s*\*?\s*\)$/.test(rule);
+    const forbidden = /(^|[\s(])(sudo|su|doas)\b|git\s+push|git\s+remote/.test(rule);
+    if (!shape || tooBroad || forbidden) warn('rule-invalid', `The approval rule "${rule}" ${!shape ? 'is not a rule (write Tool or Tool(spec), e.g. Bash(npm test:*))' : tooBroad ? 'allows every shell command, which is too broad' : 'allows something that is never allowed'}; it will be ignored.`, 'Fix or remove it in the factory settings.', {});
+  }
+
   // ── Nodes ──
   const byType = t => f.nodes.filter(n => n.type === t);
   const starts = byType('start'), managers = byType('manager'), ends = byType('end');
@@ -432,6 +474,7 @@ export function validateFactory(input, { skills = null } = {}) {
           if (RESERVED_HANDLES.has(o.id)) err('decision-option-reserved', `An option of "${label(n)}" uses a reserved id.`, 'Delete the option and add it again.', { nodeId: n.id });
         }
       }
+      if (d.review && d.kind !== 'yesno') warn('review-not-yesno', `"${label(n)}" is marked as a review but is not a yes/no question, so the mark does nothing.`, 'Make it a yes/no question, or unmark it.', { nodeId: n.id });
       if (d.answeredBy && !roster.has(d.answeredBy)) err('decision-answerer-missing', `"${label(n)}" is answered by someone no longer on the roster.`, 'Pick who answers this decision, or leave it to whoever arrives.', { nodeId: n.id });
     }
     if (n.type === 'ask') {

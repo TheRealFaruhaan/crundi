@@ -39,6 +39,7 @@
     '.cc-entry{margin-bottom:10px;animation:cc-in .18s ease}',
     // A factory's result card.
     '.cc-fr-sum{margin:6px 0 8px}',
+    '.cc-fr-fu{font-size:.92em;line-height:1.45}',
     '.cc-fr-files{margin:4px 0 8px;font-size:.92em}',
     '.cc-fr-files>summary{cursor:pointer;color:var(--text-secondary)}',
     '.cc-fr-br{color:var(--text-muted)}',
@@ -1693,6 +1694,15 @@
         ask: (d.count || 0) === 0 ? 'The team made no changes, so there is nothing to merge. Ask for changes, or close the run.' : 'Look it over, then choose what happens to it.',
       }[e.state] || '';
       if (msg) box.appendChild(el('div', 'cc-ask-sub', msg));
+      // Review findings nobody dealt with: kept so they are not lost.
+      if ((e.followUps || []).length) {
+        var fu = el('details', 'cc-fr-files');
+        fu.appendChild(el('summary', '', esc(e.followUps.length + ' follow-up' + (e.followUps.length === 1 ? '' : 's') + ' from review')));
+        var fl = el('div', 'cc-fr-list');
+        e.followUps.forEach(function (x) { fl.appendChild(el('div', 'cc-fr-fu', '<b>' + esc(x.id) + '</b> ' + (x.blocking ? '<span class="cc-fr-del">blocking</span> ' : '') + esc(x.text) + (x.where ? ' <span class="cc-fr-br">(' + esc(x.where) + ')</span>' : ''))); });
+        fu.appendChild(fl);
+        box.appendChild(fu);
+      }
       if (e.error) box.appendChild(el('div', 'cc-ask-reason', esc(e.error)));
       var errLine = el('div', 'cc-ask-reason');
       errLine.style.display = 'none';

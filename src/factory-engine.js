@@ -128,6 +128,7 @@ export function createRun({ id, project, factory, task, now = '' }) {
     fingerprints: {},
     history: [],
     outcome: null,
+    ledger: { seq: 0, items: [] },
   };
 }
 
@@ -158,6 +159,7 @@ export function requirements(run, tokenId) {
   const ix = index(run.snapshot);
   const t = run.tokens.find(x => x.id === tokenId);
   if (!t) return null;
+  if (t.delegate) return { mode: 'delegate', who: t.delegate.employeeId, canFinish: false, route: null, noteTargets: [], task: t.delegate.task };
   const node = ix.nodes.get(t.nodeId);
   if (t.status === 'work') {
     const who = rosterOf(node);
@@ -206,6 +208,7 @@ function describeDecision(run, ix, node, who, seen) {
       label: node.label,
       options: d.kind === 'yesno' ? [] : d.options.map(o => ({ id: o.id, label: o.label })),
       lastPicks: d.kind === 'many' ? (run.lastPicks[node.id] || null) : null,
+      review: !!d.review,
       branches: handles.map(h => {
         const e = ix.outEdge.get(node.id + '|' + h);
         return { answer: h, label: handleLabel(node, h), next: e ? describeEdge(run, ix, e, who, s) : null };
@@ -236,6 +239,7 @@ export function handoff(run, tokenId, payload, meta = {}) {
   const t = r.tokens.find(x => x.id === tokenId);
   if (!t || (t.status !== 'work' && t.status !== 'answer')) return { ok: false, error: 'There is nothing waiting on you right now.' };
   const p = payload && typeof payload === 'object' ? payload : {};
+  if (t.delegate) return finishDelegate(r, ix, t, p, meta);
   const node = ix.nodes.get(t.nodeId);
   const who = t.status === 'work' ? rosterOf(node) : t.answerer;
   // The Manager deciding, in either mode: it may reopen a used-up loop and
@@ -265,6 +269,10 @@ export function handoff(run, tokenId, payload, meta = {}) {
     if (!allowedNotes.has(k)) return { ok: false, error: `notes.${k} is not a note you can leave here. Use the keys listed in your instructions.` };
   }
 
+  // The review ledger: findings filed, fixed, verified, reopened.
+  const lerr = applyLedger(r, who, p);
+  if (lerr) return { ok: false, error: lerr };
+
   r.handoffs++;
   const capHandoffs = meta.caps?.maxHandoffs || r.snapshot.settings.caps.maxHandoffs;
 
@@ -275,7 +283,7 @@ export function handoff(run, tokenId, payload, meta = {}) {
     if (r.fingerprints[fp] >= NO_PROGRESS_REPEATS) {
       log(r, { type: 'no-progress', nodeId: node.id, by: who });
       deliverNotes(ctx, t, node);
-      escalateToken(ctx, t, `No progress: "${from.label}" has handed off ${r.fingerprints[fp]} times with the same answers and no change to the code.`);
+      escalateToken(ctx, t, `No progress: "${from.label}" has handed off ${r.fingerprints[fp]} times with the same answers and no change to the code.${ledgerSummary(r)}`);
       return finishCtx(r, ctx);
     }
   }
@@ -336,6 +344,7 @@ export function escalate(run, tokenId, reason) {
   const ix = index(r.snapshot);
   const t = r.tokens.find(x => x.id === tokenId);
   if (!t) return { ok: false, error: 'No such token.' };
+  if (t.delegate) return finishDelegate(r, ix, t, { escalate: text(reason) }, {});
   const ctx = newCtx(r, ix, { from: null, summary: '', payload: {} });
   log(r, { type: 'escalate', nodeId: t.nodeId, reason: text(reason) });
   escalateToken(ctx, t, text(reason));
@@ -364,7 +373,132 @@ export function reopen(run, reason, { asMessage = true } = {}) {
 /** The tokens currently waiting on a given person (work or answer). */
 export function tokensFor(run, rosterId) {
   const ix = index(run.snapshot);
-  return run.tokens.filter(t => (t.status === 'work' && rosterOf(ix.nodes.get(t.nodeId)) === rosterId) || (t.status === 'answer' && t.answerer === rosterId));
+  return run.tokens.filter(t => (t.delegate ? t.delegate.employeeId === rosterId && t.status === 'work'
+    : (t.status === 'work' && rosterOf(ix.nodes.get(t.nodeId)) === rosterId) || (t.status === 'answer' && t.answerer === rosterId)));
+}
+
+/** Who a token is waiting on (a delegated job, a decision, a step). */
+export function personOf(run, t) {
+  if (!t) return '';
+  if (t.delegate) return t.delegate.employeeId;
+  if (t.status === 'answer') return t.answerer || '';
+  const node = run.snapshot.nodes.find(n => n.id === t.nodeId);
+  return rosterOf(node);
+}
+
+// ─── Delegation ───
+
+/**
+ * The Manager hands a one-off job to someone on the team, outside the drawn
+ * flow (resolve a conflict, check something, a small fix). The Manager's own
+ * token waits; the job always comes back to the Manager, so it cannot break
+ * the guarantee that the run ends, and it counts against the handoff cap.
+ */
+export function delegate(run, tokenId, employeeId, task, meta = {}) {
+  const r = clone(run);
+  const ix = index(r.snapshot);
+  const t = r.tokens.find(x => x.id === tokenId);
+  if (!t || (t.status !== 'work' && t.status !== 'answer') || t.delegate) return { ok: false, error: 'You can only hand out a job while it is your turn.' };
+  if (personOf(r, t) !== MANAGER_ID) return { ok: false, error: 'Only the Manager hands out jobs.' };
+  const emp = ix.roster.get(employeeId) || [...ix.roster.values()].find(x => x.name.toLowerCase() === String(employeeId || '').trim().toLowerCase());
+  if (!emp || emp.id === MANAGER_ID) return { ok: false, error: `Nobody called "${employeeId}" is on your team. The team: ${[...ix.roster.values()].filter(x => x.id !== MANAGER_ID).map(x => x.name).join(', ')}.` };
+  const job = text(task).trim();
+  if (!job) return { ok: false, error: 'Say what the job is.' };
+  if (r.tokens.some(x => x.delegatedBy === t.id)) return { ok: false, error: 'You are already waiting on a job you handed out.' };
+  r.handoffs++;
+  const ctx = newCtx(r, ix, { from: { nodeId: t.nodeId, rosterId: MANAGER_ID, name: nameOf(ix, MANAGER_ID), label: 'Manager' }, summary: '', payload: {} });
+  t.prevStatus = t.status;
+  t.status = 'delegated';
+  const d = { id: newId(r, 't'), nodeId: '', ws: t.ws, path: [], status: 'work', delegate: { employeeId: emp.id, task: job }, delegatedBy: t.id };
+  r.tokens.push(d);
+  log(r, { type: 'delegate', employeeId: emp.id, task: job });
+  ctx.effects.push({ type: 'activate', tokenId: d.id, nodeId: '', employeeId: emp.id, mode: 'delegate', ws: d.ws, context: { from: { name: nameOf(ix, MANAGER_ID), label: 'Manager' }, summary: '', message: job, notes: [], escalation: '' } });
+  const capHandoffs = meta.caps?.maxHandoffs || r.snapshot.settings.caps.maxHandoffs;
+  if (r.handoffs >= capHandoffs) { r.status = 'waiting'; ctx.keepStatus = true; ctx.effects.push({ type: 'cap', which: 'maxHandoffs', limit: capHandoffs }); }
+  return finishCtx(r, ctx);
+}
+
+function finishDelegate(r, ix, d, p, meta) {
+  const who = d.delegate.employeeId;
+  const name = nameOf(ix, who);
+  const summary = text(p.summary).trim();
+  if (!summary && !p.escalate) return { ok: false, error: 'Write a short summary of what you did (summary).' };
+  const lerr = applyLedger(r, who, p);
+  if (lerr) return { ok: false, error: lerr };
+  r.handoffs++;
+  const m = r.tokens.find(x => x.id === d.delegatedBy);
+  r.tokens = r.tokens.filter(x => x.id !== d.id);
+  const ctx = newCtx(r, ix, { from: { nodeId: '', rosterId: who, name, label: 'Job from the Manager' }, summary, payload: {} });
+  log(r, { type: p.escalate ? 'delegate-escalated' : 'delegate-done', employeeId: who, summary: summary || text(p.escalate) });
+  if (m) {
+    m.status = m.prevStatus || 'work';
+    delete m.prevStatus;
+    const node = ix.nodes.get(m.nodeId);
+    const msg = p.escalate ? `${name} could not do the job you handed out: ${text(p.escalate)}` : `${name} finished the job you handed out: ${summary}`;
+    activate(ctx, m, node, m.status === 'answer' ? 'answer' : 'work', { message: msg });
+  }
+  const capHandoffs = meta.caps?.maxHandoffs || r.snapshot.settings.caps.maxHandoffs;
+  if (r.handoffs >= capHandoffs) { r.status = 'waiting'; ctx.keepStatus = true; ctx.effects.push({ type: 'cap', which: 'maxHandoffs', limit: capHandoffs }); }
+  return finishCtx(r, ctx);
+}
+
+// ─── The review ledger ───
+//
+// Findings live in the run, not in anyone's memory, so a fresh-eyes reviewer
+// checks last round's requests before raising new ones. Each has a status:
+// open → claimed (whoever fixed it says so) → closed (verified), or back to
+// open (reopened); the Manager may dismiss one. Blocking findings gate a
+// review decision; nits never block and end up as follow-ups.
+
+export function ledgerOf(r) {
+  if (!r.ledger) r.ledger = { seq: 0, items: [] };
+  return r.ledger;
+}
+
+function applyLedger(r, who, p) {
+  const L = ledgerOf(r);
+  const list = (x) => Array.isArray(x) ? x : x == null || x === '' ? [] : [x];
+  const ids = (x) => list(x).map(v => String(v).trim().toUpperCase()).filter(Boolean);
+  const byId = new Map(L.items.map(i => [i.id, i]));
+  const openList = () => L.items.filter(i => i.status === 'open' || i.status === 'claimed').map(i => i.id).join(', ') || 'none';
+  for (const id of [...ids(p.done), ...ids(p.verified), ...ids(p.reopen), ...ids(p.dismiss)]) {
+    if (!byId.has(id)) return `There is no finding ${id}. Findings still open: ${openList()}.`;
+  }
+  if (ids(p.dismiss).length && who !== MANAGER_ID) return 'Only the Manager can dismiss a finding.';
+  const earlier = L.items.some(i => i.by === who);
+  const fresh = [];
+  for (const raw of list(p.findings)) {
+    const f = typeof raw === 'string' ? { text: raw } : raw && typeof raw === 'object' ? raw : null;
+    const body = f ? text(f.text || f.finding || f.issue).trim().slice(0, 1000) : '';
+    if (!body) return 'Each finding needs a text: what is wrong and what to change.';
+    const blocking = f.blocking === true || f.blocking === 'true';
+    const reason = text(f.reason).trim().slice(0, 500);
+    if (blocking && earlier && !reason) {
+      return `After your first review, a new blocking finding needs a reason (why it must block): add "reason" to "${body.slice(0, 80)}". Otherwise make it a nit (blocking: false), which is kept as a follow-up.`;
+    }
+    fresh.push({ text: body, where: text(f.where).trim().slice(0, 200), blocking, reason });
+  }
+  for (const f of fresh) L.items.push({ id: 'F' + (++L.seq), ...f, by: who, at: r.handoffs, status: 'open' });
+  for (const id of ids(p.done)) { const i = byId.get(id); if (i.status === 'open') { i.status = 'claimed'; i.claimedBy = who; } }
+  for (const id of ids(p.verified)) { const i = byId.get(id); if (i.status !== 'dismissed') { i.status = 'closed'; i.closedBy = who; } }
+  for (const id of ids(p.reopen)) { const i = byId.get(id); i.status = 'open'; i.reopened = (i.reopened || 0) + 1; }
+  for (const id of ids(p.dismiss)) { const i = byId.get(id); i.status = 'dismissed'; i.closedBy = who; }
+  return '';
+}
+
+/** One paragraph on the ledger, for escalations. */
+function ledgerSummary(r) {
+  const L = ledgerOf(r);
+  if (!L.items.length) return '';
+  const fmt = (i) => `${i.id} (${i.blocking ? 'blocking' : 'nit'}): ${i.text.slice(0, 140)}${i.reopened ? ` [reopened ${i.reopened}x]` : ''}`;
+  const open = L.items.filter(i => i.status === 'open');
+  const claimed = L.items.filter(i => i.status === 'claimed');
+  const closed = L.items.filter(i => i.status === 'closed' || i.status === 'dismissed');
+  const out = ['', 'Review findings so far:'];
+  if (open.length) out.push('Still open: ' + open.map(fmt).join('; '));
+  if (claimed.length) out.push('Said to be fixed, not yet verified: ' + claimed.map(fmt).join('; '));
+  out.push(`Closed: ${closed.length}.`);
+  return out.join('\n');
 }
 
 // ─── Routing internals ───
@@ -419,7 +553,7 @@ function traverse(ctx, t, e, who) {
         r.edgeCounts[e.id] = used + 1;
       } else {
         log(r, { type: 'limit', edgeId: e.id });
-        escalateToken(ctx, t, `The loop ${what} reached its limit of ${e.maxRounds} round${e.maxRounds === 1 ? '' : 's'}.`);
+        escalateToken(ctx, t, `The loop ${what} reached its limit of ${e.maxRounds} round${e.maxRounds === 1 ? '' : 's'}.${ledgerSummary(r)}`);
         return;
       }
     } else {
@@ -495,6 +629,21 @@ function evalDecision(ctx, t, node, who) {
   if (d.kind === 'yesno') {
     const v = raw === true ? 'yes' : raw === false ? 'no' : typeof raw === 'string' ? raw.trim().toLowerCase() : '';
     if (v !== 'yes' && v !== 'no') { ctx.errors.push(`Answer ${ask} with "yes" or "no" in answers.${node.id}.`); return; }
+    // A review gate: "no" must say what blocks, "yes" must leave nothing blocking open.
+    if (d.review) {
+      const L = ledgerOf(r);
+      const openBlocking = L.items.filter(i => i.blocking && i.status === 'open');
+      if (v === 'no' && !openBlocking.length) {
+        ctx.errors.push(`You did not approve, but there is no open blocking finding. Add one to findings (with blocking: true) saying what must change, reopen one that was not really fixed (reopen: ["F1"]), or approve.`);
+        return;
+      }
+      if (v === 'yes' && openBlocking.length) {
+        ctx.errors.push(`You approved, but blocking findings are still open: ${openBlocking.map(i => i.id).join(', ')}. Verify them as fixed (verified: [...]), or answer no.`);
+        return;
+      }
+      // Approving verifies whatever was claimed fixed.
+      if (v === 'yes') for (const i of L.items) if (i.blocking && i.status === 'claimed') { i.status = 'closed'; i.closedBy = who; }
+    }
     return follow(v);
   }
   if (d.kind === 'one') {

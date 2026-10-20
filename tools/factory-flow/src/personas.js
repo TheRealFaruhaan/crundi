@@ -19,10 +19,10 @@ export const PERSONAS = [
     persona: 'You review interface changes. Check layout on desktop and phone widths, consistency with the existing design, empty and error states, and accessibility basics (labels, contrast, keyboard). Say precisely what to change. You do not edit code.' },
   { key: 'security', name: 'Security reviewer', memory: 'fresh', deny: READ_ONLY,
     persona: 'You look for security problems in the change: injection, missing authorisation, secrets in code or logs, unsafe file or shell access, and data exposed to people who should not see it. Report each finding with where it is and how to fix it. You do not edit code.' },
-  { key: 'qa', name: 'Tester', memory: 'keep', deny: [],
+  { key: 'qa', name: 'Tester', memory: 'keep', deny: [], presets: ['tests', 'packages'],
     persona: 'You test the change. Run the project\'s tests and, where it helps, write new ones for the behaviour the task adds. Try the obvious ways it could break. Report what you ran and what failed, with the exact output.' },
   { key: 'writer', name: 'Tech writer', memory: 'keep', deny: [],
     persona: 'You keep documentation true to the code: the README, docs and comments the change affects. Write plainly and briefly, for someone who has not seen the change before.' },
-  { key: 'researcher', name: 'Researcher', memory: 'keep', deny: READ_ONLY,
+  { key: 'researcher', name: 'Researcher', memory: 'keep', deny: READ_ONLY, presets: ['web'],
     persona: 'You find things out before anyone builds: how the existing code works, what a library offers, what the options and trade-offs are. Write what you found to the shared folder as research.md, with sources. You do not change code.' },
 ];

@@ -27,7 +27,7 @@ const TOOL = 'factory_handoff (mcp__crundi__factory_handoff)';
  * @param {string} [o.managerMode]  'normal' | 'bypass' (the run's current setting)
  * @param {Map<string,string>} [o.skills]  skills the project can see: name -> description
  */
-export function systemPromptFor({ factory, employee, project, paths, managerMode = 'normal', skills = new Map() }) {
+export function systemPromptFor({ factory, employee, project, paths, managerMode = 'normal', teamMode = 'ask', skills = new Map(), rules = [] }) {
   const isManager = employee.id === MANAGER_ID;
   const persona = (employee.persona || '').trim();
   const lines = [];
@@ -60,6 +60,18 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
       '- Your team edits files in the run\'s worktrees freely. Anything else they want to do that needs permission (shell commands, web access, reading elsewhere) comes to you as a "[Factory] Permission request" message. Answer with factory_permission (mcp__crundi__factory_permission). Your decision is final: the person is not asked.',
       '- Allow what the task genuinely needs; deny what is risky, destructive or off-task, and say why so they can find another way. For a safe command they will need again (tests, builds, linters), add a rule such as "Bash(npm test:*)" so it is allowed for the rest of the run without asking.',
       '- Some things are refused before they reach you and cannot be allowed: sudo, restarting Crundi, pushing or changing remotes, the server\'s ports (80, 443, 8888, 22, 53), and writing outside the run\'s folders.',
+      teamMode === 'bypass'
+        ? '- Your team runs with bypass permissions too: they will not ask you for anything.'
+        : factory.settings.gatekeeper?.enabled
+          ? '- A Gatekeeper answers your team\'s requests by your policy and passes you only the unclear ones. Set your policy early: factory_permission with policy: "…" (what to allow, what to refuse, what to ask you).'
+          : '',
+      factory.settings.managerRules === false
+        ? '- Standing rules are turned off for this factory: answer each request on its own.'
+        : '- You may grant rules up front so nobody has to ask: factory_permission with rules: [{ rule: "Bash(npm run e2e:*)", employee: "Frontend dev" }] (leave employee out for everyone). Rules are per person unless you say everyone.',
+      '',
+      'Your other tools:',
+      '- factory_delegate (mcp__crundi__factory_delegate): hand someone on your team a one-off job outside the drawn flow (resolve a merge conflict, check something, a small fix). It comes back to you as a message; then it is your turn again.',
+      '- factory_result (mcp__crundi__factory_result): when the run is finished and the person tells you in this chat what to do with the result ("merge it", "keep the branch", "discard it", "change X"), do it with this instead of sending them to the button. Only on their word.',
       managerMode === 'bypass'
         ? '- The person launched you with bypass permissions: they trust you. Your own actions are not checked, and you should answer your team\'s requests promptly and generously within the task, without asking the person.'
         : '- Your own actions ask the person in this chat as usual.',
@@ -77,8 +89,12 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
       '- Nobody is watching your turn. Do not ask the person questions; escalate instead.',
       '- Work only in the folder the step names. The project\'s own checkout is off limits.',
       '- Do not commit, branch, merge, push or reset with git. Crundi commits your work when you hand off.',
+      '- Review findings live in the run, not in anyone\'s memory. When you review: list problems as findings ([{ text, where, blocking }]); blocking means it must change before approval, nits are kept as follow-ups. Check the findings already open before raising new ones. When you fix something: mark it with done: ["F1"]. When you check a fix: verified: ["F1"], or reopen: ["F1"] if it is not really fixed.',
+      teamMode === 'bypass' ? '- You run with bypass permissions: nothing you do asks first. Stay inside the run\'s folders all the same.'
+        : rules.length ? `- You may do these without asking: ${rules.slice(0, 30).join(', ')}. Anything else that needs permission goes to the Manager${factory.settings.gatekeeper?.enabled ? ' (through the Gatekeeper)' : ''}.` : '',
     );
   }
+  for (let i = lines.length - 1; i >= 0; i--) if (lines[i] === '' && lines[i - 1] === '') lines.splice(i, 1);
   if (paths.notesFile) lines.push(`- Your private notes file: ${paths.notesFile}. Keep anything you want to remember between steps there.`);
   if (paths.sharedDir) lines.push(`- The team's shared folder: ${paths.sharedDir} (for example plan.md). Everyone can read and write it.`);
   return lines.join('\n');
@@ -96,7 +112,7 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
  *                                interrupted and is being picked up again
  * @param {Map<string,string>} [o.skills]  skills the project can see: name -> description
  */
-export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = null, skills = new Map() }) {
+export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = null, skills = new Map(), context = null }) {
   const f = run.snapshot;
   const node = f.nodes.find(n => n.id === effect.nodeId);
   const c = effect.context || {};
@@ -111,10 +127,19 @@ export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = 
     if (recovery.note) lines.push('', 'A note from the person:', indent(recovery.note));
     lines.push('', '— The step, as it was given —', '');
   }
-  if (effect.mode === 'answer') lines.push(`[Factory] A decision for you: ${node?.label || node?.decision?.question || ''}`.trim());
+  if (effect.mode === 'delegate') lines.push('[Factory] A job from the Manager, outside the usual flow');
+  else if (effect.mode === 'answer') lines.push(`[Factory] A decision for you: ${node?.label || node?.decision?.question || ''}`.trim());
   else lines.push(`[Factory] Your step: ${stepName}`);
   lines.push('', `Task: ${run.task || '(none given)'}`);
   if (wsPath) lines.push(`Work in: ${wsPath}`);
+  if (context) {
+    if (context.branchStep) lines.push(`You are working in a parallel branch. Run every shell command there (cd ${context.cd}) and change files only there: the run's main worktree must stay untouched, and a handoff with changes there is refused.`);
+    lines.push(`If you start a server, use a port from ${context.ports[0]} to ${context.ports[1]} (check it is free first; never 80, 443, 8888, 22 or 53).`);
+    lines.push('', `The run started from ${String(context.base || '').slice(0, 12)} on ${context.parentBranch}. Everything committed since (each step is committed at handoff): git diff ${String(context.base || '').slice(0, 12)}..HEAD`);
+    lines.push(context.diffStat ? indent(context.diffStat) : '  (no changes yet)');
+    if (context.since) lines.push(`Since your last step (git diff ${String(context.since).slice(0, 12)}..HEAD):`, indent(context.sinceStat));
+    if (context.shared && context.shared.length) lines.push('', 'In the team\'s shared folder: ' + context.shared.map(f => f.name).join(', '));
+  }
   if (c.escalation) lines.push('', `Escalated to you: ${c.escalation}`);
   if (notice) lines.push('', notice);
   if (c.from && c.summary) lines.push('', `From ${c.from.name}${c.from.label && c.from.label !== c.from.name ? ` (${c.from.label})` : ''}:`, indent(c.summary));
@@ -124,6 +149,14 @@ export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = 
     for (const n of c.notes) lines.push(`- From ${n.from}${n.label ? ` (${n.label})` : ''}: ${n.text}`);
   }
   if (effect.mode === 'answer') lines.push('', 'Nothing else is asked of you here: look at whatever you need to decide, then hand off with your answer(s).');
+  if (effect.mode === 'delegate') lines.push('', 'Do the job above, then hand off with a summary of what you did; it goes back to the Manager.');
+  // The review ledger.
+  const items = (context && context.ledger) || [];
+  const live = items.filter(i => i.status === 'open' || i.status === 'claimed');
+  if (live.length) {
+    lines.push('', 'Review findings still open:');
+    for (const i of live) lines.push(`- ${i.id} [${i.blocking ? 'blocking' : 'nit'}${i.status === 'claimed' ? ', said to be fixed' : ''}${i.reopened ? `, reopened ${i.reopened}x` : ''}] ${i.text}${i.where ? ` (${i.where})` : ''}`);
+  }
   // Skills named in anything this step carries: the task, the question, notes.
   const texts = [run.task, c.summary, c.message, c.escalation, recovery?.note, node?.decision?.question, ...(c.notes || []).map(n => n.text + ' ' + (n.label || ''))];
   const named = [...new Set(texts.flatMap(t => findMentions(t)))];
@@ -147,6 +180,13 @@ export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = 
     for (const n of req.noteTargets) lines.push(`    notes.${n.key}: for ${n.to}${n.label ? ` ("${n.label}")` : ''}`);
   }
   if (req && req.canFinish) lines.push('- finish: true, instead of answers, when the whole task is done');
+  // Findings, for anyone: reviewers raise and verify them, fixers mark them done.
+  const reviewGate = req && req.route && hasReview(req.route);
+  if (reviewGate) lines.push('- this includes a review: answer "no" only with at least one open blocking finding (new, or reopened); answer "yes" only when no blocking finding is left open (approving also verifies what was marked fixed).');
+  if (reviewGate || live.length) {
+    lines.push('- findings: new problems, [{ text, where, blocking: true|false, reason }] (after your first review, a new blocking one needs a reason)');
+    lines.push('- done: ["F1"] for findings you fixed; verified: ["F1"] for fixes you checked; reopen: ["F1"] for ones not really fixed' + (req && req.who === MANAGER_ID ? '; dismiss: ["F1"] to drop one' : ''));
+  }
   if (req && req.mode === 'work' && req.who !== MANAGER_ID) lines.push('- escalate: "<reason>", instead of everything else, if you cannot do this step');
   const ex = example(req);
   if (ex) lines.push('', `Example: ${JSON.stringify(ex)}`);
@@ -190,6 +230,12 @@ export function cancelMessage(reason) {
 }
 
 // ─── Rendering the question tree ───
+
+function hasReview(item) {
+  if (!item) return false;
+  if (item.decision) return !!item.decision.review || item.decision.branches.some(b => hasReview(b.next));
+  return false;
+}
 
 function renderRoute(item, out, pad, top) {
   if (!item) return;

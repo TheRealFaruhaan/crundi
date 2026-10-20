@@ -209,3 +209,4 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
   .ff-viewer .ff-top .ff-btn { padding: 5px 8px; }
   .ff-viewer .ff-replay .ff-replay-label { min-width: 0; }
 }
+.ff-checks { display: flex; flex-direction: column; gap: 6px; }

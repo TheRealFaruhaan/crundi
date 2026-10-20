@@ -1,4 +1,4 @@
-import { genId, MANAGER_ID } from '../../../src/factory-model.js';
+import { genId, MANAGER_ID, PERMISSION_PRESETS } from '../../../src/factory-model.js';
 import { Field, Text, Num, Select, Toggle, SkillText, ChoiceList } from './fields.jsx';
 import { Icon } from './icons.jsx';
 import { handleLabel } from './convert.js';
@@ -67,6 +67,10 @@ export function NodeInspector({ f, node, issues, skills, mutate, remove, openRos
                 onAdd={() => set(n => { n.decision.options.push({ id: genId('o_'), label: 'Option ' + (n.decision.options.length + 1) }); })} />
             </Field>
           )}
+          {node.decision.kind === 'yesno' && (
+            <Toggle checked={node.decision.review} label="This is a review gate (approval)" onChange={v => set(n => { n.decision.review = v; })} />
+          )}
+          {node.decision.kind === 'yesno' && node.decision.review && <p className="ff-hint">"No" needs at least one open blocking finding saying what must change; "yes" needs none left open. Findings carry over between rounds, so reviewers check last round's requests first, and nits become follow-ups instead of blocking.</p>}
           <Field label="Who answers" hint="Usually whoever arrives here. After a Join or an Ask me, someone has to be named.">
             <Select value={node.decision.answeredBy || ''} onChange={v => set(n => { n.decision.answeredBy = v || null; })}
               options={[{ value: '', label: 'Whoever arrives' }, ...f.roster.map(r => ({ value: r.id, label: r.name || r.id }))]} />
@@ -144,6 +148,37 @@ export function FactorySettings({ f, mutate, skills }) {
       <Field label="Manager's permissions" hint={s.managerMode === 'bypass' ? 'The Manager runs unchecked and approves its team\'s requests itself. Choose this only if you trust it. Some things stay refused: sudo, restarting Crundi, pushing, the server\'s ports.' : 'The Manager\'s own actions ask you. It still decides its team\'s permission requests.'}>
         <Select value={s.managerMode} onChange={v => set(d => { d.settings.managerMode = v; })} options={[{ value: 'normal', label: 'Normal: ask me for the Manager\'s own actions' }, { value: 'bypass', label: 'Bypass: I trust the Manager' }]} />
       </Field>
+      <Field label="The team's permissions" hint={s.teamMode === 'bypass' ? 'The team runs unchecked too: nobody asks for anything, which is fastest. The fixed refusals still apply, but nothing stops them writing outside their worktree, so only for projects you trust them with.' : (s.gatekeeper.enabled ? 'Requests go to the Gatekeeper, which passes the unclear ones to the Manager.' : 'Requests go to the Manager, whose decision is final.')}>
+        <Select value={s.teamMode} onChange={v => set(d => { d.settings.teamMode = v; })} options={[{ value: 'ask', label: 'Ask the Manager' + (s.gatekeeper.enabled ? ' (through the Gatekeeper)' : '') }, { value: 'bypass', label: 'Bypass too' }]} />
+      </Field>
+      {s.managerMode === 'bypass' && s.teamMode !== 'bypass' && (
+        <div className="ff-issue warning"><Icon name="alert" size={13} /><div>
+          <div>You trust the Manager with bypass, and it would approve most of its team's requests anyway. Giving the team bypass too saves every one of those round trips.</div>
+          <button className="ff-btn" style={{ marginTop: 6 }} onClick={() => set(d => { d.settings.teamMode = 'bypass'; })}>Give the team bypass too</button>
+        </div></div>
+      )}
+      {s.teamMode !== 'bypass' && (
+        <>
+          <Field label="Everyone may, without asking" hint="Each person can have more in the Team panel.">
+            <div className="ff-checks">
+              {Object.entries(PERMISSION_PRESETS).map(([k, p]) => (
+                <Toggle key={k} checked={s.presets.includes(k)} label={p.label} onChange={v => set(d => { d.settings.presets = v ? [...new Set([...d.settings.presets, k])] : d.settings.presets.filter(x => x !== k); })} />
+              ))}
+            </div>
+          </Field>
+          <Field label="More rules for everyone" hint="One per line, Claude Code style: Bash(docker compose up:*), WebFetch(domain:docs.example.com). Too broad or forbidden rules are ignored.">
+            <textarea className="ff-input mono" rows={3} value={s.rules.join('\n')} onChange={e => set(d => { d.settings.rules = e.target.value.split('\n').map(x => x.trim()).filter(Boolean); }, 'rules')} />
+          </Field>
+          <Toggle checked={s.managerRules} label="The Manager may set standing rules" onChange={v => set(d => { d.settings.managerRules = v; })} />
+          <p className="ff-hint">{s.managerRules ? 'So it is not asked the same thing again and again: a rule it grants applies to that person (or everyone, if it says so) for the rest of the run.' : 'It answers every request on its own.'}</p>
+          <Toggle checked={s.gatekeeper.enabled} label="A Gatekeeper answers requests first" onChange={v => set(d => { d.settings.gatekeeper.enabled = v; })} />
+          {s.gatekeeper.enabled && (
+            <Field label="Gatekeeper model" hint="A small, cheap model is enough: it follows the Manager's policy and passes the unclear requests on, so the Manager's own conversation stays on the work.">
+              <Select value={s.gatekeeper.model} onChange={v => set(d => { d.settings.gatekeeper.model = v; })} options={[{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }]} />
+            </Field>
+          )}
+        </>
+      )}
       <Field label="When the work is done" hint="Either way it is a single squash commit, and nothing is ever pushed.">
         <Select value={s.mergeMode} onChange={v => set(d => { d.settings.mergeMode = v; })} options={[{ value: 'ask', label: 'Show me first, I decide' }, { value: 'auto', label: 'Merge automatically (with Undo)' }]} />
       </Field>

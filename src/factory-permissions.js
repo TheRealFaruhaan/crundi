@@ -21,7 +21,9 @@
  * and 53 (DNS).
  */
 
-import { resolve, sep } from 'path';
+import { resolve, sep, join } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import { PERMISSION_PRESETS } from './factory-model.js';
 
 export const RESERVED_PORTS = [80, 443, 8888, 22, 53];
 
@@ -33,6 +35,8 @@ export const RESERVED_PORTS = [80, 443, 8888, 22, 53];
 export const ALLOW_RULES = [
   'mcp__crundi__factory_handoff',
   'mcp__crundi__factory_permission',
+  'mcp__crundi__factory_delegate',
+  'mcp__crundi__factory_result',
   'mcp__crundi__rename_chat',
   // Skills are part of how a factory is meant to work (spec §2.5).
   'Skill',
@@ -159,14 +163,23 @@ export function describeRequest(req) {
 }
 
 /** The message carrying a batch of requests to the Manager. */
-export function batchMessage(items, { bypass = false } = {}) {
-  const lines = [`[Factory] Permission request${items.length === 1 ? '' : 's'} from your team. Answer with factory_permission (mcp__crundi__factory_permission); your decision is final.`, ''];
+export function batchMessage(items, { bypass = false, gatekeeper = false, escalated = false, rulesAllowed = true } = {}) {
+  const lines = [gatekeeper
+    ? `[Factory] Permission request${items.length === 1 ? '' : 's'} for you to answer by the Manager's policy (factory_permission, mcp__crundi__factory_permission).`
+    : `[Factory] Permission request${items.length === 1 ? '' : 's'} from your team${escalated ? ', passed on by the Gatekeeper' : ''}. Answer with factory_permission (mcp__crundi__factory_permission); your decision is final.`, ''];
   for (const it of items) {
     lines.push(`- ${it.id} · ${it.employee} wants to ${describeRequest(it)}`);
     if (it.description && it.toolName !== 'Bash') lines.push(`    ${clip(it.description, 300)}`);
+    if (it.gateNote) lines.push(`    The Gatekeeper: ${clip(it.gateNote, 300)}`);
   }
-  lines.push('', 'For each: { id, allow: true|false, reason }. Add rule (for example "Bash(npm test:*)") to an allow to approve the same kind of request for the rest of the run without asking.');
-  if (bypass) lines.push('The person launched you with bypass permissions: they trust you. Approve reasonable requests promptly and grant rules for safe repeated commands; deny what is risky or off-task.');
+  if (gatekeeper) {
+    lines.push('', 'For each: { id, allow: true|false, reason }, or { id, escalate: true, reason } to pass it to the Manager when unsure.');
+  } else {
+    lines.push('', 'For each: { id, allow: true|false, reason }.');
+    if (rulesAllowed) lines.push('Add rule (for example "Bash(npm test:*)") to an allow so this person may do the same again without asking; add ruleFor: "everyone" to grant it to the whole team.');
+    else lines.push('Standing rules are turned off for this factory: answer each request on its own.');
+  }
+  if (bypass && !gatekeeper) lines.push('The person launched you with bypass permissions: they trust you. Approve reasonable requests promptly' + (rulesAllowed ? ' and grant rules for safe repeated commands' : '') + '; deny what is risky or off-task.');
   lines.push('This is not a handoff: answer these, then carry on with whatever you were doing.');
   return lines.join('\n');
 }
@@ -174,4 +187,84 @@ export function batchMessage(items, { bypass = false } = {}) {
 /** What the employee is told when the Manager (or the deny list) refuses. */
 export function denyMessage(reason, by = 'The Manager') {
   return `${by} denied this${reason ? `: ${reason}` : '.'} Find another way, or hand off with escalate if you cannot continue without it.`;
+}
+
+// ─── Rules from presets and from the project itself ───
+
+const SCRIPT_NAME = /^(test|tests|build|lint|typecheck|type-check|check|format|fmt|e2e)([:_-][\w:-]*)?$/i;
+
+/**
+ * Rules for the project's own test/build/lint commands: package.json scripts
+ * (npm run <name>) and Makefile targets (make <name>) whose names say what
+ * they are. Granted with the "tests" preset.
+ */
+export function projectRules(repo) {
+  const out = [];
+  try {
+    const pkg = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf-8'));
+    for (const name of Object.keys(pkg.scripts || {})) {
+      if (SCRIPT_NAME.test(name) && /^[\w:.-]+$/.test(name)) out.push(`Bash(npm run ${name}:*)`);
+    }
+  } catch { /* no package.json */ }
+  try {
+    const mk = existsSync(join(repo, 'Makefile')) ? readFileSync(join(repo, 'Makefile'), 'utf-8') : '';
+    for (const m of mk.matchAll(/^([A-Za-z][\w-]*):(?!=)/gm)) if (SCRIPT_NAME.test(m[1])) out.push(`Bash(make ${m[1]}:*)`);
+  } catch { /* no Makefile */ }
+  return [...new Set(out)];
+}
+
+/**
+ * The rules a factory grants from the start, each with who it is for: the
+ * factory's presets and hand-written rules for everyone ('*'), and each
+ * employee's own presets and always-allowed rules for that employee.
+ * @returns {Array<{rule:string, who:string}>}
+ */
+export function startRules(settings, repo, roster = []) {
+  const out = [];
+  const add = (rule, who) => { if ((checkRule(rule).ok || rule === 'WebSearch' || rule === 'WebFetch') && !out.some(x => x.rule === rule && x.who === who)) out.push({ rule, who }); };
+  const fromPresets = (presets) => {
+    const list = [];
+    for (const k of presets || []) list.push(...(PERMISSION_PRESETS[k]?.rules || []));
+    if ((presets || []).includes('tests') && repo) list.push(...projectRules(repo));
+    return list;
+  };
+  for (const r of fromPresets(settings.presets)) add(r, '*');
+  for (const r of settings.rules || []) add(r, '*');
+  for (const e of roster) {
+    for (const r of fromPresets(e.presets)) add(r, e.id);
+    for (const r of e.tools?.allow || []) add(r, e.id);
+  }
+  return out;
+}
+
+/** Normalise a run's rules (older runs kept plain strings, for everyone). */
+export function scopedRules(rules) {
+  return (rules || []).map(r => typeof r === 'string' ? { rule: r, who: '*' } : r).filter(r => r && r.rule);
+}
+
+/** The rules that apply to one person. */
+export function rulesFor(rules, who) {
+  return scopedRules(rules).filter(r => r.who === '*' || r.who === who).map(r => r.rule);
+}
+
+export const GATEKEEPER_ID = '__gatekeeper';
+
+/** The Gatekeeper's standing instructions. */
+export function gatekeeperPrompt({ factory, task, project, policy, team }) {
+  return [
+    `[Crundi Factory "${factory.name}": you are the Gatekeeper]`,
+    `You answer the permission requests of an AI team working on one task in the project "${project}", on behalf of its Manager. The task: ${task}`,
+    '',
+    'How this works:',
+    '- Requests arrive as "[Factory] Permission request" messages with ids like p3. Answer every one with factory_permission (mcp__crundi__factory_permission): { id, allow, reason }.',
+    '- Follow the Manager\'s policy below. Allow what the task plainly needs and the policy covers; deny what is risky, destructive or off-task, with a reason the employee can act on.',
+    '- If you are unsure, or the policy does not cover it, pass it to the Manager: { id, escalate: true, reason }. Do not guess on anything that could do harm.',
+    '- You never do the work yourself and never change files.',
+    '- Some things are refused before they reach you: sudo, restarting Crundi, pushing or changing remotes, the server\'s ports, writing outside the run\'s folders.',
+    '',
+    'The team: ' + (team || []).map(r => r.name).join(', '),
+    '',
+    'The Manager\'s policy:',
+    policy ? policy : '(none yet: allow ordinary development commands the task needs, such as running tests, building, reading files and installing the packages it asks for; pass anything else to the Manager)',
+  ].join('\n');
 }

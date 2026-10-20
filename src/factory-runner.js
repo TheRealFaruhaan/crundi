@@ -40,7 +40,7 @@
  * Spec: specs/factory.md §4.
  */
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync, rmdirSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync, rmdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { spawn } from 'child_process';
 import { randomBytes } from 'crypto';
@@ -50,7 +50,7 @@ import * as Git from './factory-git.js';
 import { validateFactory, normalizeFactory, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
 import { reduce, replay, asksOf, timeLeft, isHeld, UNFINISHED as UNFINISHED_SET, JOURNAL_VERSION } from './factory-journal.js';
 import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage, recoveryOverview } from './factory-prompts.js';
-import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES } from './factory-permissions.js';
+import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES, GATEKEEPER_ID, gatekeeperPrompt, startRules, scopedRules, rulesFor } from './factory-permissions.js';
 import { missingSkills } from './factory-skills.js';
 
 /** Runs in these states hold their project: no second run can start. */
@@ -199,12 +199,14 @@ export function createFactoryRunner({
       repo: r.repo,
       branch: r.branch,
       parentBranch: r.parentBranch,
+      baseCommit: r.baseCommit || '',
+      policy: r.policy || '',
       dirtyAtStart: !!r.dirty,
       managerChatId: L.employees[MANAGER_ID]?.chatId || '',
       tokens: s.tokens.map(t => {
         const n = nodes.get(t.nodeId);
-        const who = t.status === 'answer' ? t.answerer : Engine.rosterOf(n);
-        return { id: t.id, nodeId: t.nodeId, label: n?.label || n?.type || '', status: t.status, employeeId: who || '', employee: roster.get(who)?.name || '', ws: t.ws };
+        const who = Engine.personOf(s, t);
+        return { id: t.id, nodeId: t.nodeId, label: t.delegate ? 'Job from the Manager' : n?.label || n?.type || '', status: t.status, employeeId: who || '', employee: roster.get(who)?.name || '', ws: t.ws, ...(t.delegate ? { job: t.delegate.task } : {}) };
       }),
       employees: Object.fromEntries(s.snapshot.roster.map(x => {
         const e = L.employees[x.id] || {};
@@ -213,8 +215,10 @@ export function createFactoryRunner({
       liveSessions: Object.values(L.employees).filter(e => e.chatId).length,
       asks,
       managerMode: r.managerMode,
+      teamMode: r.teamMode || 'ask',
+      gatekeeper: !!s.snapshot.settings.gatekeeper?.enabled,
       permissions: L.permissions.map(p => ({ id: p.id, employee: p.employee, toolName: p.toolName, input: p.input, at: p.at, sent: p.sent })),
-      rules: r.rules,
+      rules: scopedRules(r.rules),
       outcome: s.outcome,
       setup: r.setup,
       missingSkills: r.missingSkills,
@@ -296,6 +300,7 @@ export function createFactoryRunner({
         mergeMode: mergeMode === 'auto' || mergeMode === 'ask' ? mergeMode : '',
         wt: { repo: wt.repo, root: wt.root, path: wt.path, branch: wt.branch, parentBranch: wt.parentBranch, baseCommit: wt.baseCommit, dirty: wt.dirty },
         skillExcludes, missingSkills: missing,
+        rules: startRules(factory.settings, wt.repo, factory.roster),
       });
       runs.set(id, entry);
       claiming.delete(key);
@@ -359,14 +364,28 @@ export function createFactoryRunner({
     return L[employeeId];
   }
 
+  /** The Gatekeeper is not on the roster: it is a setting of the factory. */
+  function gatekeeperEntry(f) {
+    return { id: GATEKEEPER_ID, name: 'Gatekeeper', persona: '', model: f.settings.gatekeeper?.model || 'haiku', effort: '', memory: 'keep',
+      tools: { allow: [], deny: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'] }, skills: [] };
+  }
+
   async function ensureSession(entry, employeeId, { fresh = false, reuseId = '' } = {}) {
     const emp = empOf(entry, employeeId);
-    if (emp.chatId && !fresh && !reuseId && agents.isAlive(emp.chatId)) return { ok: true, chatId: emp.chatId };
-    if (emp.chatId) { unwatch(entry, emp.chatId); try { await agents.close(emp.chatId); } catch { /* gone */ } chats.delete(emp.chatId); emp.chatId = ''; }
     const f = st(entry).snapshot;
-    const r = f.roster.find(x => x.id === employeeId);
-    if (!r) return { ok: false, error: `Nobody called "${employeeId}" is on the roster.` };
     const isManager = employeeId === MANAGER_ID;
+    const isGate = employeeId === GATEKEEPER_ID;
+    // Bypass is a launch flag: a session started under the other team mode is
+    // relaunched on its conversation the next time it is needed.
+    const wantSkip = isManager ? rr(entry).managerMode === 'bypass' : !isGate && rr(entry).teamMode === 'bypass';
+    if (emp.chatId && !fresh && !reuseId && agents.isAlive(emp.chatId) && (isManager || emp.skip === wantSkip)) return { ok: true, chatId: emp.chatId };
+    if (emp.chatId) {
+      const uuid = agents.sessionUuid(emp.chatId);
+      if (uuid && !fresh) commit(entry, { type: 'session', employeeId, chatId: emp.chatId, sessionUuid: uuid });
+      unwatch(entry, emp.chatId); try { await agents.close(emp.chatId); } catch { /* gone */ } chats.delete(emp.chatId); emp.chatId = '';
+    }
+    const r = isGate ? gatekeeperEntry(f) : f.roster.find(x => x.id === employeeId);
+    if (!r) return { ok: false, error: `Nobody called "${employeeId}" is on the roster.` };
     const known = rr(entry).sessions[employeeId] || {};
     const resume = !fresh && r.memory === 'keep' && known.sessionUuid ? known.sessionUuid : '';
     const managerMode = rr(entry).managerMode;
@@ -378,9 +397,13 @@ export function createFactoryRunner({
       title: isManager ? `Factory: ${f.name}` : `${r.name} · ${f.name}`,
       cwd: rr(entry).worktree,
       addDirs: [rr(entry).root, runDir(st(entry).id)].filter(Boolean),
-      systemPromptExtra: systemPromptFor({ factory: f, employee: r, project: st(entry).project, paths: paths(entry, employeeId), managerMode, skills: skillsOf(entry) }),
+      systemPromptExtra: isGate
+        ? gatekeeperPrompt({ factory: f, task: st(entry).task, project: st(entry).project, policy: rr(entry).policy, team: f.roster })
+        : systemPromptFor({ factory: f, employee: r, project: st(entry).project, paths: paths(entry, employeeId), managerMode, teamMode: rr(entry).teamMode, skills: skillsOf(entry), rules: rulesFor(rr(entry).rules, employeeId) }),
       model: r.model, effort: r.effort,
-      allowedTools: [...r.tools.allow, ...ALLOW_RULES],
+      // The factory's own tools, and what the team may do from the start
+      // (presets, the project's scripts, hand-written rules), never ask.
+      allowedTools: [...r.tools.allow, ...ALLOW_RULES, ...(isGate ? [] : rulesFor(rr(entry).rules, employeeId))],
       // The fixed deny list rides on every chat: it is all that binds a
       // Manager in bypass mode, which never asks.
       disallowedTools: [...r.tools.deny, ...DENY_RULES],
@@ -388,7 +411,7 @@ export function createFactoryRunner({
       // --add-dir), anything else asks, and asking goes to the Manager.
       // The Manager: bypass if the person chose it, else its own actions ask
       // the person in its chat as usual.
-      skipPermissions: isManager && managerMode === 'bypass',
+      skipPermissions: wantSkip,
       permissionMode: isManager ? '' : 'acceptEdits',
       background: !isManager,
       resumeId: resume,
@@ -398,6 +421,7 @@ export function createFactoryRunner({
     if (!res.ok) return { ok: false, error: res.error || 'could not start' };
     emp.chatId = res.id;
     emp.skillsSeen = 0;
+    emp.skip = wantSkip;
     chats.set(res.id, { runId: st(entry).id, employeeId });
     watch(entry, res.id, employeeId);
     commit(entry, { type: 'session', employeeId, chatId: res.id, sessionUuid: resume || known.sessionUuid || '' });
@@ -555,10 +579,51 @@ export function createFactoryRunner({
     const msg = stepMessage({
       run: st(entry), effect: ef, req: Engine.requirements(st(entry), ef.tokenId),
       wsPath: wsPath(entry, ef.ws), notice, recovery, skills: skillsOf(entry),
+      context: await runContextFor(entry, ef),
     });
     const sent = agents.send(s.chatId, msg);
     if (sent && sent.ok === false) entry.live.error = `Could not message ${r?.name || ef.employeeId}: ${sent.error}`;
     else if (notice) commit(entry, { type: 'notice-clear', tokenId: ef.tokenId });
+  }
+
+  /** A small port range per workspace, so parallel dev servers do not collide. */
+  function portRange(entry, wsId) {
+    let h = 0;
+    for (const ch of st(entry).id + '|' + wsId) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const base = 4300 + (h % 60) * 10;   // 4300-4899, clear of 8888 and the low ports
+    return [base, base + 9];
+  }
+
+  /**
+   * What a person needs to orient: where the run started and what it changed,
+   * what changed since their own last step, the shared folder, the review
+   * findings, where to run commands and which ports to use.
+   */
+  async function runContextFor(entry, ef) {
+    const r = rr(entry), s = st(entry);
+    const ws = wsPath(entry, ef.ws);
+    const clip = (t, n) => t.split('\n').filter(Boolean).slice(-n).join('\n');
+    let diffStat = '', since = '', sinceStat = '';
+    try {
+      const d = await git.git(['diff', '--stat=100', `${r.baseCommit}..HEAD`, '--', '.', ':(exclude).claude/skills'], ws);
+      diffStat = clip(d.stdout, 25);
+      const last = [...s.history].reverse().find(h => (h.type === 'handoff' || h.type === 'delegate-done') && h.by === ef.employeeId && h.commit);
+      if (last) {
+        since = last.commit;
+        const d2 = await git.git(['diff', '--stat=100', `${last.commit}..HEAD`, '--', '.', ':(exclude).claude/skills'], ws);
+        sinceStat = clip(d2.stdout, 25) || '(nothing changed since)';
+      }
+    } catch { /* best effort */ }
+    let shared = [];
+    try {
+      const dir = join(runDir(s.id), 'shared');
+      shared = readdirSync(dir).filter(n => !n.startsWith('.')).slice(0, 20).map(n => ({ name: n, at: statSync(join(dir, n)).mtimeMs }));
+    } catch { shared = []; }
+    return {
+      base: r.baseCommit, parentBranch: r.parentBranch, diffStat, since, sinceStat, shared,
+      cd: ws, branchStep: ef.ws !== 'main' && ws !== r.worktree, ports: portRange(entry, ef.ws),
+      ledger: Engine.ledgerOf(s).items,
+    };
   }
 
   function wsPath(entry, wsId) {
@@ -648,6 +713,8 @@ export function createFactoryRunner({
       commit: rr(entry).result.commit || '',
       auto: rr(entry).mergeMode === 'auto',
       diff: { added: d.added, removed: d.removed, count: d.files.length, files: d.files.slice(0, 40) },
+      // Review findings not dealt with: nits, and anything the Manager let through.
+      followUps: Engine.ledgerOf(st(entry)).items.filter(i => i.status === 'open' || i.status === 'claimed').map(i => ({ id: i.id, text: i.text, where: i.where, blocking: i.blocking })),
     };
     const chatId = entry.live.employees[MANAGER_ID]?.chatId;
     if (!chatId || !agents.addCard) return;
@@ -849,7 +916,7 @@ export function createFactoryRunner({
         decided(entry, item, 'denied', 'deny-list', { reason: why });
         return;
       }
-      const rule = rr(entry).rules.find(r => ruleMatches(r, { toolName: req.toolName, input: req.input }));
+      const rule = rulesFor(rr(entry).rules, info.employeeId).find(r => ruleMatches(r, { toolName: req.toolName, input: req.input }));
       if (rule) {
         answer(item, true);
         decided(entry, item, 'allowed', 'rule', { rule });
@@ -861,7 +928,14 @@ export function createFactoryRunner({
     });
   }
 
-  /** Requests are batched briefly, then sent to the Manager in one message. */
+  /** Is this factory's Gatekeeper on? It answers first; the Manager gets what it passes on. */
+  const gatekeeperOn = (entry) => !!st(entry).snapshot.settings.gatekeeper?.enabled;
+
+  /**
+   * Requests are batched briefly, then sent in one message: to the Gatekeeper
+   * when the factory has one (unless it already passed them on), else to the
+   * Manager.
+   */
   function scheduleDelivery(entry) {
     if (entry.timers.perm) return;
     entry.timers.perm = setTimeout(() => {
@@ -869,11 +943,24 @@ export function createFactoryRunner({
       locked(entry, async () => {
         const items = entry.live.permissions.filter(p => !p.sent);
         if (!items.length) return;
-        const m = await ensureSession(entry, MANAGER_ID);
-        if (!m.ok) { dropPermissions(entry, (p) => !p.sent, `the Manager is unavailable (${m.error})`); return; }
-        const sent = agents.send(m.chatId, batchMessage(items, { bypass: rr(entry).managerMode === 'bypass' }));
-        if (sent && sent.ok === false) return scheduleDelivery(entry);
-        for (const p of items) p.sent = true;
+        const toGate = gatekeeperOn(entry) ? items.filter(p => !p.escalated) : [];
+        const toManager = items.filter(p => !toGate.includes(p));
+        if (toGate.length) {
+          const g = await ensureSession(entry, GATEKEEPER_ID);
+          if (g.ok) {
+            const sent = agents.send(g.chatId, batchMessage(toGate, { gatekeeper: true }));
+            if (!sent || sent.ok !== false) for (const p of toGate) p.sent = true;
+          } else {
+            for (const p of toGate) { p.escalated = true; toManager.push(p); }
+          }
+        }
+        if (toManager.length) {
+          const m = await ensureSession(entry, MANAGER_ID);
+          if (!m.ok) { dropPermissions(entry, (p) => toManager.includes(p), `the Manager is unavailable (${m.error})`); return; }
+          const sent = agents.send(m.chatId, batchMessage(toManager, { bypass: rr(entry).managerMode === 'bypass', escalated: gatekeeperOn(entry), rulesAllowed: st(entry).snapshot.settings.managerRules }));
+          if (sent && sent.ok === false) return scheduleDelivery(entry);
+          for (const p of toManager) p.sent = true;
+        }
         writeCache(entry);
       });
     }, permissionBatchMs);
@@ -881,49 +968,85 @@ export function createFactoryRunner({
   }
 
   /**
-   * factory_permission, from the Manager's chat.
-   * @param {Array<{id:string, allow:boolean, reason?:string, rule?:string}>} decisions
+   * factory_permission, from the Manager's chat (or the Gatekeeper's).
+   * decisions: [{ id, allow, reason, rule?, escalate? }]; the Manager may also
+   * grant standing rules up front (rules) and set the policy the Gatekeeper
+   * follows (policy), when the factory lets it set rules.
    */
-  async function answerPermissions(chatId, decisions) {
+  async function answerPermissions(chatId, decisions, { rules = [], policy } = {}) {
     const info = chatInfo(chatId);
     if (!info) return { ok: false, error: 'This chat is not part of a factory run.' };
-    if (info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager answers permission requests.' };
+    const isGate = info.employeeId === GATEKEEPER_ID;
+    if (info.employeeId !== MANAGER_ID && !isGate) return { ok: false, error: 'Only the Manager answers permission requests.' };
     const entry = runs.get(info.runId);
     if (!entry) return { ok: false, error: 'That factory run no longer exists.' };
-    if (!Array.isArray(decisions) || !decisions.length) return { ok: false, error: 'Give decisions: a list of { id, allow, reason }.' };
+    const list = Array.isArray(decisions) ? decisions : [];
+    const pre = Array.isArray(rules) ? rules : rules ? [rules] : [];
+    if (!list.length && !pre.length && policy == null) return { ok: false, error: 'Give decisions: a list of { id, allow, reason }' + (isGate ? '.' : ', or rules to grant up front, or a policy.') };
     return locked(entry, async () => {
+      const mayRule = !isGate && st(entry).snapshot.settings.managerRules !== false;
       const results = [];
       const errors = [];
       const newRules = [];
-      for (const d of decisions) {
+      const roster = st(entry).snapshot.roster;
+      const whoOf = (v) => {
+        if (v == null || v === '' || v === '*' || String(v).toLowerCase() === 'everyone') return '*';
+        const e = roster.find(x => x.id === v || x.name.toLowerCase() === String(v).toLowerCase());
+        return e ? e.id : null;
+      };
+      // Rules are per employee unless granted for everyone.
+      const grant = (text, label, who) => {
+        if (!mayRule) { errors.push(`${label}: standing rules are turned off for this factory; answer requests one by one`); return false; }
+        const c = checkRule(text);
+        if (!c.ok) { errors.push(`${label}: ${c.error}`); return false; }
+        if (who == null) { errors.push(`${label}: nobody by that name is on the team`); return false; }
+        if (!scopedRules(rr(entry).rules).some(x => x.rule === c.rule && x.who === who)) { commit(entry, { type: 'rule', rule: c.rule, who }); newRules.push({ rule: c.rule, who }); }
+        return true;
+      };
+      if (policy != null && !isGate) {
+        commit(entry, { type: 'policy', text: String(policy) });
+        results.push('Policy saved' + (gatekeeperOn(entry) ? ' and sent to the Gatekeeper.' : '.'));
+        const g = entry.live.employees[GATEKEEPER_ID];
+        if (g && g.chatId) agents.send(g.chatId, '[Factory] The Manager updated the policy:\n' + String(policy).slice(0, 4000));
+      }
+      for (const r of pre) {
+        const text = typeof r === 'object' && r ? String(r.rule || '') : String(r);
+        const who = whoOf(typeof r === 'object' && r ? r.employee : '*');
+        if (grant(text, 'rule ' + text, who)) results.push(`Rule granted: ${text} for ${who === '*' ? 'everyone' : roster.find(x => x.id === who)?.name}`);
+      }
+      for (const d of list) {
         const id = String(d?.id || '');
         const item = entry.live.permissions.find(p => p.id === id);
         if (!item) { errors.push(`${id || '(no id)'}: no such request is waiting`); continue; }
-        const allow = d.allow === true || d.allow === 'true';
         const reason = String(d.reason || '').slice(0, 1000);
-        if (allow && d.rule) {
-          const c = checkRule(d.rule);
-          if (!c.ok) { errors.push(`${id}: ${c.error} (the request itself was not answered)`); continue; }
-          if (!rr(entry).rules.includes(c.rule)) { commit(entry, { type: 'rule', rule: c.rule }); newRules.push(c.rule); }
+        if (isGate && (d.escalate === true || d.escalate === 'true')) {
+          item.escalated = true; item.sent = false; item.gateNote = reason;
+          decided(entry, item, 'escalated', 'gatekeeper', { reason });
+          results.push(`${id}: passed to the Manager`);
+          continue;
         }
-        const delivered = answer(item, allow, allow ? undefined : denyMessage(reason));
+        const allow = d.allow === true || d.allow === 'true';
+        if (allow && d.rule && !grant(String(d.rule), id, d.ruleFor ? whoOf(d.ruleFor) : item.employeeId)) continue;
+        const delivered = answer(item, allow, allow ? undefined : denyMessage(reason, isGate ? 'The Gatekeeper' : 'The Manager'));
         entry.live.permissions = entry.live.permissions.filter(p => p !== item);
-        decided(entry, item, allow ? 'allowed' : 'denied', 'manager', { reason, ...(allow && d.rule ? { rule: d.rule } : {}) });
+        decided(entry, item, allow ? 'allowed' : 'denied', isGate ? 'gatekeeper' : 'manager', { reason, ...(allow && d.rule ? { rule: d.rule } : {}) });
         results.push(`${id}: ${allow ? 'allowed' : 'denied'}${delivered ? '' : ' (that request was no longer waiting)'}`);
       }
       // A rule just granted answers anything else waiting that it covers.
       if (newRules.length) {
         for (const item of [...entry.live.permissions]) {
-          const rule = newRules.find(r => ruleMatches(r, item));
-          if (!rule) continue;
+          const hit = newRules.find(r => (r.who === '*' || r.who === item.employeeId) && ruleMatches(r.rule, item));
+          if (!hit) continue;
+          const rule = hit.rule;
           answer(item, true);
           entry.live.permissions = entry.live.permissions.filter(p => p !== item);
           decided(entry, item, 'allowed', 'rule', { rule });
           results.push(`${item.id}: allowed by your new rule ${rule}`);
         }
       }
+      if (entry.live.permissions.some(p => p.escalated && !p.sent)) scheduleDelivery(entry);
       writeCache(entry);
-      const left = entry.live.permissions.map(p => p.id);
+      const left = entry.live.permissions.filter(p => !(isGate && p.escalated)).map(p => p.id);
       return {
         ok: errors.length === 0 || results.length > 0,
         message: [...results, ...errors.map(e => 'not done: ' + e)].join('\n') + (left.length ? `\nStill waiting: ${left.join(', ')}` : '\nNothing else is waiting.'),
@@ -1073,11 +1196,11 @@ export function createFactoryRunner({
   function activationFor(entry, tokenId) {
     const t = st(entry).tokens.find(x => x.id === tokenId);
     if (!t || (t.status !== 'work' && t.status !== 'answer')) return null;
-    const node = st(entry).snapshot.nodes.find(n => n.id === t.nodeId);
     return {
       type: 'activate', tokenId: t.id, nodeId: t.nodeId,
-      employeeId: t.status === 'answer' ? t.answerer : Engine.rosterOf(node),
-      mode: t.status, ws: t.ws, context: { from: null, summary: '', message: '', notes: [], escalation: '' },
+      employeeId: Engine.personOf(st(entry), t),
+      mode: t.delegate ? 'delegate' : t.status, ws: t.ws,
+      context: { from: null, summary: '', message: t.delegate ? t.delegate.task : '', notes: [], escalation: '' },
     };
   }
 
@@ -1222,6 +1345,8 @@ export function createFactoryRunner({
       if (n.type === 'decision' && n.decision.answeredBy) needed.add(n.decision.answeredBy);
     }
     for (const t of s.tokens) if (t.status === 'answer' && t.answerer) needed.add(t.answerer);
+    for (const t of s.tokens) if (t.delegate) needed.add(t.delegate.employeeId);
+    needed.add(GATEKEEPER_ID);
     for (const [eid, emp] of Object.entries(entry.live.employees)) {
       if (needed.has(eid) || !emp.chatId || emp.busy || (emp.queue || []).length) continue;
       if (entry.live.permissions.some(p => p.employeeId === eid)) continue;
@@ -1257,6 +1382,17 @@ export function createFactoryRunner({
       if (!tokenId) return { ok: false, error: 'Nothing is waiting on you right now. Stop here and wait.' };
       const tok = st(entry).tokens.find(t => t.id === tokenId);
       const node = st(entry).snapshot.nodes.find(n => n.id === tok?.nodeId);
+      // Working in a branch: the run's main worktree must not have changed
+      // (it was committed when the branches were made). Edits that landed
+      // there by mistake would be merged as if they were someone else's.
+      const here = wsPath(entry, tok?.ws);
+      if (tok && here !== rr(entry).worktree && !payload?.escalate) {
+        const stray = await git.git(['status', '--porcelain'], rr(entry).worktree);
+        const files = stray.stdout.split('\n').map(l => l.slice(3).trim()).filter(f => f && !f.startsWith('.claude/skills') && !f.startsWith('.mcp.json'));
+        if (files.length) {
+          return { ok: false, error: `You changed files in the run's main worktree (${rr(entry).worktree}): ${files.slice(0, 8).join(', ')}${files.length > 8 ? '…' : ''}. Your workspace for this step is ${here}. Move those changes into your workspace, undo them in the main worktree (git -C ${rr(entry).worktree} checkout -- <file>, or delete new files), then hand off again.` };
+        }
+      }
       const subject = shortSubject(payload?.summary || payload?.escalate || '');
       const c = await git.commitAll(wsPath(entry, tok?.ws), `factory: ${node?.label || node?.type || 'step'}${subject ? ' — ' + subject : ''}`, excl(entry));
       const caps = { maxHandoffs: st(entry).snapshot.settings.caps.maxHandoffs + rr(entry).capExtra };
@@ -1355,6 +1491,60 @@ export function createFactoryRunner({
     }
   }
 
+  /**
+   * factory_delegate, from the Manager's chat: a one-off job for someone on
+   * the team, outside the drawn flow. It comes back to the Manager.
+   */
+  async function delegateJob(chatId, employee, task) {
+    const info = chatInfo(chatId);
+    if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run hands out jobs.' };
+    const entry = runs.get(info.runId);
+    if (!entry) return { ok: false, error: 'That factory run no longer exists.' };
+    return locked(entry, async () => {
+      if (!['running', 'waiting'].includes(st(entry).status)) return { ok: false, error: `The run is ${st(entry).status}; jobs can be handed out while it runs.` };
+      const emp = entry.live.employees[MANAGER_ID];
+      const tokenId = (emp && emp.busy) || Engine.tokensFor(st(entry), MANAGER_ID)[0]?.id;
+      if (!tokenId) return { ok: false, error: 'It is not your turn: hand out jobs while a step or decision is yours.' };
+      const caps = { maxHandoffs: st(entry).snapshot.settings.caps.maxHandoffs + rr(entry).capExtra };
+      const dry = Engine.delegate(st(entry), tokenId, employee, task, { caps });
+      if (!dry.ok) return dry;
+      const job = dry.run.tokens.find(t => t.delegatedBy === tokenId);
+      commit(entry, { type: 'delegate', tokenId, employeeId: job.delegate.employeeId, task: job.delegate.task });
+      if (emp && emp.busy === tokenId) emp.busy = null;
+      await drain(entry);
+      const name = st(entry).snapshot.roster.find(r => r.id === job.delegate.employeeId)?.name;
+      return { ok: true, message: `Handed to ${name}. Stop here and wait: their result comes back to you as a message, and then it is your turn again.` };
+    });
+  }
+
+  /**
+   * factory_result, from the Manager's chat: carry out the person's decision
+   * on the result when they gave it in the chat ("merge it").
+   */
+  async function resultFromManager(chatId, action, note = '') {
+    const info = chatInfo(chatId);
+    if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run can do this.' };
+    const map = { merge: 'merge', keep: 'keep', discard: 'discard', changes: 'changes', reopen: 'changes', undo: 'undo' };
+    const a = map[String(action || '').toLowerCase()];
+    if (!a) return { ok: false, error: 'action is merge, keep, discard, changes or undo.' };
+    const r = await finishAction(info.runId, a, { note });
+    if (!r.ok) return r;
+    const done = { merge: 'Merged.', keep: 'Kept on its branch.', discard: 'Discarded.', changes: 'Reopened: the run is back to work, and it is your turn.', undo: 'The merge is undone.' }[a];
+    return { ok: true, message: done + ' Tell the person in a sentence.' };
+  }
+
+  /** Switch the team between asking (the Manager or Gatekeeper) and bypass. */
+  async function setTeamMode(runId, mode) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    if (mode !== 'bypass' && mode !== 'ask') return { ok: false, error: 'mode is "ask" or "bypass".' };
+    return locked(entry, async () => {
+      if (rr(entry).teamMode === mode) return { ok: true, run: summary(entry) };
+      commit(entry, { type: 'team-mode', mode });
+      return { ok: true, run: summary(entry), message: 'Each employee switches the next time they start a step.' };
+    });
+  }
+
   /** The run's journal from `from` on, for the live graph and its replay. */
   function runEvents(runId, from = 0) {
     const entry = runs.get(runId);
@@ -1373,7 +1563,7 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /**
