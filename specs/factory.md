@@ -363,9 +363,23 @@ chat header carries a Factory badge.
 - Updates pushed over the existing event stream; nodes update in place.
 
 ### 5.5 Implementation notes
-- Frontend is vanilla JS. React + `@xyflow/react` ship as a self-contained
-  island bundled with esbuild (like `app/vendor/codemirror-entry.mjs`), loaded
-  only when the Factories tab or a live graph opens.
+- Frontend is vanilla JS. React + `@xyflow/react` (+ dagre for auto-layout)
+  ship as a self-contained island, `window.CrundiFactoryFlow`, built from
+  `tools/factory-flow` (esbuild, like `tools/codemirror`) into
+  `app/vendor/factory-flow.js` + `.css`, loaded only when an editor or live
+  graph opens. `mountEditor(el, { apiFetch, factoryId, onClose })`.
+- The editor bundles the real `factory-model.js`, `factory-engine.js` and
+  `factory-skills.js`: validation while editing and the dry run use exactly
+  the server's rules. The build stamps a hash of those sources;
+  `scripts/test-factory-flow-build.mjs` fails `npm run check` if they changed
+  without a rebuild. Building needs `npm install --include=dev` on this
+  machine (NODE_ENV=production skips dev dependencies).
+- Editor details: the factory is the source of truth, nodes/edges derived;
+  autosave 1.2 s after a change with baseVersion (conflict → Reload); undo/redo
+  (Ctrl+Z / Ctrl+Shift+Z), Ctrl+S; snap 16 px; a connection that closes a loop
+  gets a round limit of 3 at once; dropping "Pick any" brings its Join; loops
+  are drawn in lanes past the right edge of the flow; phone: canvas full
+  screen, panels as a bottom sheet, tab bar.
 - Employees are the user's own `claude` over stream-json (no Agent SDK).
 - `webapp-html` is one template literal: no bare `\n`/`\r` in browser JS.
 - Icons from the `ic()`/`ICON_PATHS` set; no emoji.

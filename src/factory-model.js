@@ -46,7 +46,6 @@
  * valid factory cannot loop forever.
  */
 
-import { randomBytes } from 'crypto';
 import { mentionsInFactory } from './factory-skills.js';
 
 // ─── Constants ───
@@ -87,8 +86,12 @@ const RESERVED_HANDLES = new Set(['out', 'finish', 'note', 'none', 'yes', 'no'])
 
 // ─── Small helpers ───
 
+// Web Crypto, not node:crypto: the editor bundles this module and runs the
+// same validation in the browser. Node 18+ has globalThis.crypto too.
 export function genId(prefix = '') {
-  return prefix + randomBytes(6).toString('hex');
+  const b = new Uint8Array(6);
+  globalThis.crypto.getRandomValues(b);
+  return prefix + Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
 }
 
 const str = (v, max) => (typeof v === 'string' ? v : v == null ? '' : String(v)).slice(0, max);
