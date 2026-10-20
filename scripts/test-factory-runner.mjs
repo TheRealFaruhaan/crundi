@@ -140,8 +140,8 @@ let fullRunId = '';
     ok(team.of('ber').length === 0, 'single pick: the backend reviewer was never started');
     ok(['fe', 'be', 'uir'].every(e => team.of(e).every(s => !s.alive)), 'finish: the employees\' sessions are closed');
     ok(team.of('manager')[0].alive, 'finish: the Manager stays, to present the result');
-    const lines = readFileSync(join(process.env.DATA_DIR, 'factory-runs', fullRunId, 'handoffs.jsonl'), 'utf-8').trim().split('\n');
-    ok(lines.length >= 7, 'persist: every handoff is logged');
+    const events = readFileSync(join(process.env.DATA_DIR, 'factory-runs', fullRunId, 'events.jsonl'), 'utf-8').trim().split('\n').map(l => JSON.parse(l));
+    ok(events.filter(e => e.type === 'handoff').length >= 6 && events[0].type === 'start', 'persist: every handoff is in the journal');
     const res = team.of('fe')[0].results[0];
     ok(res.ok && /waiting for the other branches|takes over|asked/.test(res.message), 'handoff: the employee is told where the work went');
   }

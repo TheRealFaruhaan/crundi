@@ -128,14 +128,30 @@ export async function createRunWorktree({ repo, project, runId, name }) {
   return { ok: true, path, root, branch, parentBranch: info.branch, baseCommit: info.commit, dirty: info.dirty, repo: info.top };
 }
 
-/** A worktree for one parallel branch, cut from the current commit of `parentPath`. */
-export async function createBranchWorktree({ repo, parentPath, root, name, branchPrefix, exclude = [] }) {
+/**
+ * A worktree for one parallel branch, cut from the current commit of
+ * `parentPath`. Safe to repeat: the folder and branch are fixed by `key` (the
+ * engine's workspace id), so if a crash came after the worktree was made but
+ * before that was recorded, doing it again finds and reuses it instead of
+ * making a second one.
+ */
+export async function createBranchWorktree({ repo, parentPath, root, name, branchPrefix, key, exclude = [] }) {
+  const id = String(key || '').replace(/[^A-Za-z0-9_-]/g, '') || slug(name, 12);
+  const path = join(root, `${slug(name, 32)}-${id}`);
+  const branch = `${branchPrefix}--${id}`;
+  if (existsSync(path)) {
+    const head = await git(['rev-parse', '--abbrev-ref', 'HEAD'], path);
+    if (head.ok && head.stdout.trim() === branch) return { ok: true, path, branch, reused: true };
+    return { ok: false, error: `${path} exists but is not the worktree for ${branch}.` };
+  }
+  const known = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repo);
+  if (known.ok) {
+    const add = await git(['worktree', 'add', path, branch], repo);
+    if (!add.ok) return { ok: false, error: `Could not restore the branch worktree: ${add.error}` };
+    return { ok: true, path, branch, reused: true };
+  }
   const base = await commitAll(parentPath, 'factory: before fan-out', { exclude });
   if (!base.ok) return base;
-  const dirName = slug(name, 40);
-  let path = join(root, dirName), n = 1;
-  while (existsSync(path)) path = join(root, `${dirName}-${++n}`);
-  const branch = `${branchPrefix}--${dirName}${n > 1 ? '-' + n : ''}`;
   const add = await git(['worktree', 'add', '-b', branch, path, base.head], repo);
   if (!add.ok) return { ok: false, error: `Could not create the branch worktree: ${add.error}` };
   return { ok: true, path, branch, baseCommit: base.head };

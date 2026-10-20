@@ -123,6 +123,9 @@ export function normalizeFactory(input) {
       managerMode: oneOf(s.managerMode, MANAGER_MODES, 'normal'),
       mergeMode: oneOf(s.mergeMode, MERGE_MODES, 'ask'),
       setupCommand: str(s.setupCommand, LIMITS.short),
+      // Pick a crashed run up again by itself (with retries) instead of
+      // waiting for the person to press Recover.
+      autoRecover: !!s.autoRecover,
       caps: {
         maxHandoffs: intIn(caps.maxHandoffs, 1, 10_000, DEFAULT_CAPS.maxHandoffs),
         maxMinutes: intIn(caps.maxMinutes, 1, 7 * 24 * 60, DEFAULT_CAPS.maxMinutes),

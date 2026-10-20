@@ -80,7 +80,7 @@ let crashedId = '';
   await until(() => calls === 2);
   await sleep(50);
   const disk = runFile(crashedId);
-  const pendingTypes = disk.meta.pending.map(e => e.type);
+  const pendingTypes = disk.rec.run.pending.map(e => e.type);
   ok(pendingTypes[0] === 'workspace' && pendingTypes.filter(t => t === 'activate').length === 2, 'write-ahead: the unfinished workspace and both activations are on disk');
   ok(team.of('fe').length === 0 && team.of('be').length === 0, 'write-ahead: nobody was started past the point of the crash');
   r.dispose();

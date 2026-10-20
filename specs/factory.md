@@ -243,11 +243,31 @@ exhaustion only allows exits; run caps bound everything.
 
 **Stop** interrupts immediately, then asks keep or delete the worktree.
 
-### 4.7 Recovery
-- Every change is written to disk at once, and effects are written ahead:
-  saved as `meta.pending` before anything happens and ticked off one by one,
-  so a crash part-way leaves exactly what is still to do.
-- Crashed runs show in the Factory panel with **Recover**; never automatic.
+### 4.7 Durability and recovery
+- **The journal is the source of truth.** Every input that changes a run is an
+  event appended to `events.jsonl` and flushed (fsync) before it takes effect:
+  start, setup, begin, handoff, ask-reply, escalate, effect-done (with the
+  effect's result), notice, session, retire, rule, manager-mode, perm-asked /
+  perm-decided, cap, pause, resume, stop, crash, recover. The run is the fold
+  of its events (`factory-journal.js`, pure; the engine is deterministic and
+  time comes only from each event's `at`). `run.json` is a cache: if missing,
+  damaged or behind the journal it is rebuilt by replay; a torn last line is
+  ignored.
+- **Effects are written ahead and safe to repeat.** They are pending from the
+  event that causes them until an `effect-done` carrying their result. A
+  branch worktree's folder and branch are fixed by its workspace id and reused
+  if they exist (or the branch is checked out again if only the folder went);
+  a merge already made is a no-op; activations are rebuilt from the tokens.
+- What dies with the process is kept in memory only and rebuilt on recovery:
+  chat ids, who is busy, queued steps, permission requests in flight.
+- **Durable time limit.** maxMinutes counts active time from event timestamps:
+  paused time and the time the process was dead (from its last event to the
+  restart) do not count; it carries across restarts.
+- **Auto-recover (per factory, off by default):** a crashed run recovers
+  itself after 30 s, retrying at 2 and 10 minutes; if those fail it stays
+  crashed and the person is told to press Recover.
+- Crashed runs show in the Factory panel with **Recover**, unless the factory
+  is set to auto-recover.
 - Recover has a **reply box**; the user's note joins the continue prompt.
 - Each agent that was mid-step gets a **continue prompt**: why it stopped,
   which node and last completed action, current worktree `git status` + diff
@@ -329,9 +349,8 @@ are cleaned up after a successful merge.
 
 ```
 <dataDir>/factories/<factoryId>.json        factory definition (roster, graph, settings, version)
-<dataDir>/factory-runs/<runId>/run.json     snapshot, state machine, loop counters, caps used
-<dataDir>/factory-runs/<runId>/handoffs.jsonl   write-ahead log of handoffs
-<dataDir>/factory-runs/<runId>/permissions.jsonl  permission queue
+<dataDir>/factory-runs/<runId>/events.jsonl  the journal: source of truth
+<dataDir>/factory-runs/<runId>/run.json      cache of the fold of the journal
 <dataDir>/factory-runs/<runId>/notes/<employee>.md  private notes
 <dataDir>/factory-runs/<runId>/shared/plan.md      shared board
 ```
