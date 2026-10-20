@@ -423,6 +423,38 @@ chat header carries a Factory badge.
   backend, reviewer who approves or sends back, Manager finishes", built and
   saved a valid factory in 6 turns.
 
+### 4.11 Provided templates and personas
+- `src/factory-templates.js`: Pair and review, Product squad, New project
+  kickoff, Design studio, Platform team. Read-only; "Use this" in the Library
+  (or factory_get on a `tpl_` id from a chat) copies one into the library.
+  Every one validates with no warnings and walks to Finish
+  (scripts/test-factory-templates.mjs).
+- `src/factory-personas.js` (shared with the editor): planner, architect,
+  frontend, backend, database engineer, developer, designer, DevOps, reviewer,
+  UI reviewer, security reviewer, tester, tech writer, researcher. Each has
+  the skills that fit (crundi, frontend-design, logo-design, deep-research);
+  a template or a new person keeps only the installed ones.
+
+### 4.12 Measured: one chat against a factory (2026-10-21)
+Same change request (notes app: node:http JSON API with search, validation,
+atomic JSON storage, a phone page, tests, README), fresh identical repos,
+everyone on Haiku, one run each.
+
+| | One chat | Product squad factory |
+|---|---|---|
+| Wall time | 204 s | 462 s |
+| Turns | 24 | 166 (11 chats, 20 handoffs) |
+| Cost (CLI estimate) | $0.036 | $0.179 |
+| Tests (all passing, rerun by hand) | 26 | 40 |
+| Edge-case probes (bad %-encoding, 1 MB body, long title, bad JSON) | all handled | all handled |
+
+The factory's reviewer filed two blocking findings in its own first draft
+(fixed, verified) and three nits (dismissed). Conclusion shown in What's new:
+at this size use a chat; factories are for work too big for one
+conversation, not yet measured. An earlier factory attempt was discarded:
+the chat test's `pkill -f "node src/index.js"` killed the dev Crundi it ran
+on, which led to pkill/killall joining the factory deny rules.
+
 ## 5. UI
 
 ### 5.1 Global Factories tab

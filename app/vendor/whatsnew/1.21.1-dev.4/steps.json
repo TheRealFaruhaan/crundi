@@ -1,0 +1,44 @@
+{
+  "steps": [
+    {
+      "id": "factory-team",
+      "tag": "Factories",
+      "title": "A whole team for the big work",
+      "body": "A factory is a team of Claude chats you design once and run in any project: a Manager you talk to, and employees with personas wired into steps, decisions and parallel branches. It takes big work from a change request to a reviewed result in its own worktree, and asks before merging. Made for new projects and features across interface, server and data; for a fix or a small change, a chat is still better.",
+      "art": "factory-team.html",
+      "artTitle": "Product squad"
+    },
+    {
+      "id": "factory-measured",
+      "tag": "Factories",
+      "title": "When a factory pays off, measured",
+      "body": "Same change request (a small notes app, about 700 lines), both on Haiku, one run each. One chat: 3.4 min, 24 turns, about $0.04. The Product squad factory: 7.7 min, 166 turns, about $0.18. Both met every done check; the factory added tests and a review that caught two bugs. At this size, use a chat. Factories are for work too big for one conversation, which we have not measured yet.",
+      "art": "factory-measure.html",
+      "artTitle": "Chat or factory"
+    },
+    {
+      "id": "factory-templates",
+      "tag": "Factories",
+      "title": "Start from a template, or your own",
+      "body": "Five templates come with Crundi, modelled on real teams: Pair and review, Product squad, New project kickoff, Design studio and Platform team, with personas like a database engineer and a designer that use the skills fitting their job. Use one, copy and change it to how your team works, or build your own, or ask any chat to build one.",
+      "art": "factory-templates.html",
+      "artTitle": "Factories"
+    },
+    {
+      "id": "factory-cr",
+      "tag": "Factories",
+      "title": "Every run starts from a change request",
+      "body": "A run starts from a change request: the goal, how things are, the expected result and the checks for done, with attachments. The Manager asks you first if anything is unclear, reviewers hold the work to the done checks, and their findings stay listed until verified. Each factory can have its own form.",
+      "art": "factory-cr.html",
+      "artTitle": "Start a factory"
+    },
+    {
+      "id": "factory-waits",
+      "tag": "Factories",
+      "title": "Waits, and runs that start themselves",
+      "body": "A Wait step holds the flow for a time, until a command passes (CI, a health check) or until a signal arrives, and always gives up in the end. Triggers start a factory by themselves: at a time of day, when a kanban card enters a column, or when a webhook is called.",
+      "art": "factory-waits.html",
+      "artTitle": "Triggers"
+    }
+  ]
+}

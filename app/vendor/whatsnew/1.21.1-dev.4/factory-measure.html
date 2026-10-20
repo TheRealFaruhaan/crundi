@@ -1,0 +1,26 @@
+<div class="wna a-fxm">
+  <div class="hd"><span></span><b class="k1">One chat</b><b class="k2">Factory</b></div>
+  <div class="row r1"><span>Cost</span><div class="bars"><i class="c" style="--w:20"><em>$0.04</em></i><i class="f" style="--w:100"><em>$0.18</em></i></div></div>
+  <div class="row r2"><span>Time</span><div class="bars"><i class="c" style="--w:44"><em>3.4 min</em></i><i class="f" style="--w:100"><em>7.7 min</em></i></div></div>
+  <div class="row r3"><span>Turns</span><div class="bars"><i class="c" style="--w:14"><em>24</em></i><i class="f" style="--w:100"><em>166</em></i></div></div>
+  <div class="row r4"><span>Tests</span><div class="bars"><i class="c" style="--w:65"><em>26 pass</em></i><i class="f" style="--w:100"><em>40 pass</em></i></div></div>
+  <div class="foot">Same change request, both on Haiku, one run each</div>
+  <style>
+    .a-fxm{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-fxm .hd{position:absolute;left:150px;top:36px;display:flex;gap:18px;font-size:12px}
+    .a-fxm .hd b{display:flex;align-items:center;gap:6px;font-weight:600}
+    .a-fxm .hd b::before{content:"";width:10px;height:10px;border-radius:3px}
+    .a-fxm .k1::before{background:var(--green)} .a-fxm .k2::before{background:var(--accent)}
+    .a-fxm .row{position:absolute;left:40px;width:560px;display:flex;align-items:center;gap:16px}
+    .a-fxm .r1{top:82px} .a-fxm .r2{top:152px} .a-fxm .r3{top:222px} .a-fxm .r4{top:292px}
+    .a-fxm .row>span{width:94px;font-size:13px;color:var(--text-secondary);text-align:right}
+    .a-fxm .bars{flex:1;display:flex;flex-direction:column;gap:6px}
+    .a-fxm .bars i{position:relative;display:block;height:20px;border-radius:5px;width:0;animation:afxm-grow 10s ease infinite}
+    .a-fxm .bars i.c{background:var(--green)} .a-fxm .bars i.f{background:var(--accent)}
+    .a-fxm .bars em{position:absolute;left:calc(100% + 8px);top:2px;font:11.5px var(--mono,monospace);font-style:normal;white-space:nowrap;color:var(--text-primary);opacity:0;animation:afxm-lab 10s ease infinite}
+    .a-fxm .r2 i,.a-fxm .r2 em{animation-delay:.25s} .a-fxm .r3 i,.a-fxm .r3 em{animation-delay:.5s} .a-fxm .r4 i,.a-fxm .r4 em{animation-delay:.75s}
+    .a-fxm .foot{position:absolute;left:150px;top:356px;font-size:11px;color:var(--text-muted)}
+    @keyframes afxm-grow{0%,6%{width:0}24%,92%{width:calc(var(--w) * 3.6px)}100%{width:0}}
+    @keyframes afxm-lab{0%,20%{opacity:0}28%,90%{opacity:1}100%{opacity:0}}
+  </style>
+</div>
