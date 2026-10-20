@@ -82,7 +82,8 @@ export function fakeTeam(brains) {
   const emit = (id, ev) => { for (const fn of sessions.get(id)?.listeners || []) fn(ev); };
   const agents = {
     async spawn(o) {
-      const id = o.id && !sessions.get(o.id)?.alive ? o.id : 'c' + (++n);
+      let id = o.id && !sessions.get(o.id)?.alive ? o.id : '';
+      while (!id || (sessions.has(id) && id !== o.id)) id = 'c' + (++n);
       const prev = sessions.get(id);
       sessions.set(id, { ...o, id, listeners: prev ? prev.listeners : new Set(), alive: true, msgs: prev ? prev.msgs : [], results: [], responses: prev ? prev.responses : [], state: 'idle', mode: o.permissionMode, spawns: (prev?.spawns || 0) + 1 });
       return { ok: true, id };

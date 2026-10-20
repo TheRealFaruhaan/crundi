@@ -88,13 +88,24 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
  * @param {object} o.req          requirements(run, tokenId)
  * @param {string} o.wsPath       folder to work in
  * @param {string} [o.notice]     anything extra the runner must say (a merge conflict)
+ * @param {object} [o.recovery]   { reason, lastAction, status, diffStat, note } — this step was
+ *                                interrupted and is being picked up again
  */
-export function stepMessage({ run, effect, req, wsPath, notice = '' }) {
+export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = null }) {
   const f = run.snapshot;
   const node = f.nodes.find(n => n.id === effect.nodeId);
   const c = effect.context || {};
   const lines = [];
   const stepName = node ? (node.label || (node.type === 'manager' ? 'Manager' : node.type)) : 'step';
+  if (recovery) {
+    lines.push(`[Factory] You were interrupted: ${recovery.reason}`);
+    lines.push(`You were on the step "${stepName}". Continue from where you stopped; the work you already did is still in the folder.`);
+    if (recovery.lastAction) lines.push(`Your last completed handoff in this run: ${recovery.lastAction}`);
+    if (recovery.status) lines.push('', 'The folder right now (git status, uncommitted changes are yours from before the interruption):', indent(recovery.status));
+    if (recovery.diffStat) lines.push('', 'Changes in this run so far:', indent(recovery.diffStat));
+    if (recovery.note) lines.push('', 'A note from the person:', indent(recovery.note));
+    lines.push('', '— The step, as it was given —', '');
+  }
   if (effect.mode === 'answer') lines.push(`[Factory] A decision for you: ${node?.label || node?.decision?.question || ''}`.trim());
   else lines.push(`[Factory] Your step: ${stepName}`);
   lines.push('', `Task: ${run.task || '(none given)'}`);
@@ -130,6 +141,32 @@ export function stepMessage({ run, effect, req, wsPath, notice = '' }) {
   if (req && req.mode === 'work' && req.who !== MANAGER_ID) lines.push('- escalate: "<reason>", instead of everything else, if you cannot do this step');
   const ex = example(req);
   if (ex) lines.push('', `Example: ${JSON.stringify(ex)}`);
+  return lines.join('\n');
+}
+
+/**
+ * What the Manager is told first when a run is recovered: why it stopped,
+ * where everyone was, and what is in the worktree.
+ */
+export function recoveryOverview({ run, reason, tokens, recent, dropped, status, diffStat, note, wasFinishing }) {
+  const lines = [`[Factory] This run is being recovered. It stopped because: ${reason}`, ''];
+  if (wasFinishing) lines.push('You had already finished (finish: true). When everyone is settled, present the result to the person again.');
+  if (tokens.length) {
+    lines.push('Where the work stood:');
+    for (const t of tokens) lines.push(`- ${t.employee || 'the person'}: ${t.what}`);
+  }
+  if (recent.length) {
+    lines.push('', 'The last handoffs:');
+    for (const h of recent) lines.push(`- ${h}`);
+  }
+  if (dropped.length) {
+    lines.push('', 'Permission requests that were waiting were lost with the old sessions; the employees will ask again if they still need them:');
+    for (const d of dropped) lines.push(`- ${d}`);
+  }
+  if (status) lines.push('', `The run worktree now (${run.id}):`, indent(status));
+  if (diffStat) lines.push('', 'Changes in this run so far:', indent(diffStat));
+  if (note) lines.push('', 'A note from the person:', indent(note));
+  lines.push('', 'Everyone who was mid-step has been told to carry on. Nothing is needed from you unless a step of yours is listed below.');
   return lines.join('\n');
 }
 

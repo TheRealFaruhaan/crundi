@@ -35,8 +35,8 @@ import { randomBytes } from 'crypto';
 import { fileURLToPath } from 'url';
 import * as Engine from './factory-engine.js';
 import * as Git from './factory-git.js';
-import { validateFactory, MANAGER_ID } from './factory-model.js';
-import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage } from './factory-prompts.js';
+import { validateFactory, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
+import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage, recoveryOverview } from './factory-prompts.js';
 import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES } from './factory-permissions.js';
 
 /** Runs in these states hold their project: no second run can start. */
@@ -104,6 +104,7 @@ export function createFactoryRunner({
       if (UNFINISHED.has(entry.state.status) && entry.state.status !== 'crashed') {
         entry.meta.crashedFrom = entry.state.status;
         entry.meta.crashedAt = now();
+        entry.meta.crashReason = 'Crundi restarted, and every chat of the run ended with it';
         entry.state.status = 'crashed';
         for (const emp of Object.values(entry.meta.employees || {})) { emp.chatId = ''; }
         // Those requests belonged to processes that are gone; nothing can answer
@@ -141,7 +142,9 @@ export function createFactoryRunner({
       factoryVersion: m.factoryVersion,
       task: s.task,
       status: s.status,
-      waitingOn: m.capHit ? 'cap' : (m.asks || []).length ? 'ask' : m.managerIdle ? 'manager' : '',
+      waitingOn: m.paused ? (m.paused.by === 'usage' ? 'usage' : 'paused') : m.capHit ? 'cap' : (m.asks || []).length ? 'ask' : m.managerIdle ? 'manager' : '',
+      paused: m.paused || null,
+      crash: s.status === 'crashed' ? { reason: m.crashReason || '', at: m.crashedAt || '', from: m.crashedFrom || '' } : null,
       capHit: m.capHit || null,
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
@@ -156,7 +159,8 @@ export function createFactoryRunner({
         const who = t.status === 'answer' ? t.answerer : Engine.rosterOf(n);
         return { id: t.id, nodeId: t.nodeId, label: n?.label || n?.type || '', status: t.status, employeeId: who || '', employee: roster.get(who)?.name || '', ws: t.ws };
       }),
-      employees: Object.fromEntries(Object.entries(m.employees || {}).map(([k, e]) => [k, { chatId: e.chatId, busy: e.busy || null, queued: (e.queue || []).length, name: roster.get(k)?.name || k }])),
+      employees: Object.fromEntries(Object.entries(m.employees || {}).map(([k, e]) => [k, { chatId: e.chatId, busy: e.busy || null, queued: (e.queue || []).length, retired: !!e.retired, name: roster.get(k)?.name || k }])),
+      liveSessions: Object.values(m.employees || {}).filter(e => e.chatId).length,
       asks: m.asks || [],
       managerMode: m.managerMode || s.snapshot.settings.managerMode,
       permissions: (m.permissions || []).map(p => ({ id: p.id, employee: p.employee, toolName: p.toolName, input: p.input, at: p.at, sent: p.sent })),
@@ -321,6 +325,7 @@ export function createFactoryRunner({
     });
     if (!res.ok) return { ok: false, error: res.error || 'could not start' };
     emp.chatId = res.id;
+    if (isManager) entry.meta.lastManagerChat = res.id;
     chats.set(res.id, { runId: entry.state.id, employeeId });
     watch(entry, res.id, employeeId);
     persist(entry);
@@ -363,6 +368,9 @@ export function createFactoryRunner({
     return locked(entry, async () => {
       const emp = entry.meta.employees[employeeId];
       if (!emp || emp.chatId !== chatId || !emp.busy || !UNFINISHED.has(entry.state.status)) return;
+      // Paused (by the person, or the usage limit cutting a turn short): a
+      // stopped turn is expected. resume() picks them up.
+      if (entry.meta.paused || entry.state.status === 'crashed') return;
       if (employeeId === MANAGER_ID) {
         entry.meta.managerIdle = true;
         persist(entry);
@@ -391,6 +399,9 @@ export function createFactoryRunner({
       persist(entry);
       if (!UNFINISHED.has(entry.state.status) || entry.state.status === 'crashed') return;
       if (employeeId === MANAGER_ID) {
+        entry.meta.crashedFrom = entry.state.status;
+        entry.meta.crashedAt = now();
+        entry.meta.crashReason = 'the Manager\'s chat ended';
         entry.state.status = 'crashed';
         entry.meta.error = 'The Manager\'s chat ended.';
         persist(entry);
@@ -406,43 +417,72 @@ export function createFactoryRunner({
 
   // ─── Effects ───
 
+  /**
+   * Carry out effects, write-ahead: they are saved as pending BEFORE anything
+   * happens and ticked off one by one, so a crash part-way leaves on disk
+   * exactly what is still to do (recover() finishes it). Effects raised while
+   * draining (an escalation after a merge conflict) go to the front of the
+   * queue and the one drain loop runs them next.
+   */
   async function runEffects(entry, effects) {
-    // A cap holds new steps back until the person resumes.
-    if (effects.some(e => e.type === 'cap')) {
-      const cap = effects.find(e => e.type === 'cap');
+    const cap = effects.find(e => e.type === 'cap');
+    if (cap) {
       entry.meta.capHit = { which: cap.which, limit: cap.limit, at: now() };
       notify('cap', summary(entry), `Factory "${entry.state.snapshot.name}" reached its limit of ${cap.limit} handoffs and is waiting for you.`);
     }
-    const skip = new Set();
-    for (const ef of effects) {
-      if (ef.tokenId && skip.has(ef.tokenId)) continue;
-      if (entry.meta.capHit && ef.type === 'activate') { entry.meta.held.push(ef); continue; }
-      try {
-        switch (ef.type) {
-          case 'activate': await activate(entry, ef); break;
-          case 'workspace': await makeWorkspace(entry, ef); break;
-          case 'merge': {
-            const r = await mergeWorkspaces(entry, ef);
-            if (!r.ok && !ef.abort) {
-              skip.add(ef.contTokenId);
-              await escalateToken(entry, ef.contTokenId, r.reason);
-            }
-            break;
-          }
-          case 'cancel': await cancelTokens(entry, ef); break;
-          case 'ask':
-            entry.meta.asks.push({ tokenId: ef.tokenId, nodeId: ef.nodeId, prompt: ef.prompt, replies: ef.replies, context: ef.context, at: now() });
-            notify('ask', summary(entry), `Factory "${entry.state.snapshot.name}" asks: ${ef.prompt}`);
-            break;
-          case 'finish': await onFinish(entry, ef); break;
-          case 'cap': break;
-          default: break;
-        }
-      } catch (err) {
-        entry.meta.error = `${ef.type}: ${err.message}`;
-      }
-    }
+    entry.meta.pending = [...effects.filter(e => e.type !== 'cap'), ...(entry.meta.pending || [])];
     persist(entry);
+    if (entry.draining) return;
+    entry.draining = true;
+    try {
+      while (entry.meta.pending.length) {
+        const ef = entry.meta.pending.shift();
+        await runOne(entry, ef);
+        persist(entry);
+      }
+    } finally {
+      entry.draining = false;
+    }
+    collect(entry);
+    persist(entry);
+  }
+
+  /** Activations wait while the run is held (a cap, or paused). */
+  function held(entry) { return !!(entry.meta.capHit || entry.meta.paused); }
+
+  async function runOne(entry, ef) {
+    if (held(entry) && ef.type === 'activate') { entry.meta.held.push(ef); return; }
+    try {
+      switch (ef.type) {
+        case 'activate': await activate(entry, ef); break;
+        case 'workspace': await makeWorkspace(entry, ef); break;
+        case 'merge': {
+          const r = await mergeWorkspaces(entry, ef);
+          if (!r.ok && !ef.abort) {
+            // The continuation must not go on as if merged: drop what was
+            // queued for it, and send it to the Manager instead.
+            entry.meta.pending = entry.meta.pending.filter(p => p.tokenId !== ef.contTokenId);
+            await escalateToken(entry, ef.contTokenId, r.reason);
+          }
+          break;
+        }
+        case 'cancel': await cancelTokens(entry, ef); break;
+        case 'ask':
+          if (!entry.meta.asks.some(a => a.tokenId === ef.tokenId)) entry.meta.asks.push({ tokenId: ef.tokenId, nodeId: ef.nodeId, prompt: ef.prompt, replies: ef.replies, context: ef.context, at: now() });
+          notify('ask', summary(entry), `Factory "${entry.state.snapshot.name}" asks: ${ef.prompt}`);
+          break;
+        case 'finish': await onFinish(entry, ef); break;
+        default: break;
+      }
+    } catch (err) {
+      entry.meta.error = `${ef.type}: ${err.message}`;
+    }
+  }
+
+  /** The engine recomputes status from tokens; the runner's holds win over it. */
+  function applyHolds(entry) {
+    if (entry.meta.paused && UNFINISHED.has(entry.state.status) && entry.state.status !== 'finishing') entry.state.status = 'paused';
+    else if (entry.meta.capHit && entry.state.status === 'running') entry.state.status = 'waiting';
   }
 
   async function activate(entry, ef) {
@@ -451,7 +491,7 @@ export function createFactoryRunner({
     await startStep(entry, emp, ef);
   }
 
-  async function startStep(entry, emp, ef) {
+  async function startStep(entry, emp, ef, { recovery = null } = {}) {
     const r = entry.state.snapshot.roster.find(x => x.id === ef.employeeId);
     const fresh = !!(r && r.memory === 'fresh' && ef.employeeId !== MANAGER_ID && emp.chatId);
     const s = await ensureSession(entry, ef.employeeId, { fresh });
@@ -465,9 +505,10 @@ export function createFactoryRunner({
     if (ef.employeeId === MANAGER_ID) entry.meta.managerIdle = false;
     const notice = entry.meta.notices[ef.tokenId] || '';
     delete entry.meta.notices[ef.tokenId];
+    emp.retired = false;
     const msg = stepMessage({
       run: entry.state, effect: ef, req: Engine.requirements(entry.state, ef.tokenId),
-      wsPath: wsPath(entry, ef.ws), notice,
+      wsPath: wsPath(entry, ef.ws), notice, recovery,
     });
     const sent = agents.send(s.chatId, msg);
     if (sent && sent.ok === false) entry.meta.error = `Could not message ${r?.name || ef.employeeId}: ${sent.error}`;
@@ -554,6 +595,7 @@ export function createFactoryRunner({
       if (emp && emp.busy === tokenId) emp.busy = null;
     }
     entry.state = res.run;
+    applyHolds(entry);
     appendHandoff(entry, { type: 'escalate', tokenId, reason });
     persist(entry);
     await runEffects(entry, res.effects);
@@ -791,6 +833,7 @@ export function createFactoryRunner({
       const res = Engine.handoff(entry.state, tokenId, payload, { treeHash: c.ok ? c.tree : '', caps });
       if (!res.ok) return { ok: false, error: res.error };
       entry.state = res.run;
+      applyHolds(entry);
       if (emp && emp.busy === tokenId) emp.busy = null;
       if (emp && emp.chatId) emp.sessionUuid = agents.sessionUuid(emp.chatId) || emp.sessionUuid;
       appendHandoff(entry, { type: 'handoff', tokenId, by: info.employeeId, nodeId: node?.id, payload, commit: c.ok ? c.head : '' });
@@ -824,6 +867,7 @@ export function createFactoryRunner({
       const res = Engine.askReply(entry.state, tokenId, replyId, note);
       if (!res.ok) return res;
       entry.state = res.run;
+      applyHolds(entry);
       entry.meta.asks = entry.meta.asks.filter(a => a.tokenId !== tokenId);
       appendHandoff(entry, { type: 'ask-reply', tokenId, replyId, note });
       persist(entry);
@@ -832,21 +876,243 @@ export function createFactoryRunner({
     });
   }
 
-  /** Carry on after a cap: grants another maxHandoffs and restarts the clock. */
-  async function resume(runId) {
+  /**
+   * Carry on after a pause or a cap. A cap grants another maxHandoffs and
+   * restarts the clock. Held steps start; anyone whose turn stopped while the
+   * run was held (the usage limit cuts turns short) is told to continue.
+   */
+  async function resume(runId, { reason = '' } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    return locked(entry, () => resumeLocked(entry, reason));
+  }
+
+  async function resumeLocked(entry, reason = '') {
+    if (!entry.meta.capHit && !entry.meta.paused) return { ok: false, error: 'This run is not paused or held.' };
+    if (entry.meta.capHit && entry.meta.capHit.which === 'maxHandoffs') entry.meta.capExtra = (entry.meta.capExtra || 0) + entry.state.snapshot.settings.caps.maxHandoffs;
+    const why = reason || (entry.meta.paused?.by === 'usage' ? 'the usage limit was reached; it has reset now' : entry.meta.paused ? 'the person paused the run; it is resumed now' : 'the run reached a limit; the person let it carry on');
+    entry.meta.capHit = null;
+    entry.meta.paused = null;
+    const heldSteps = entry.meta.held; entry.meta.held = [];
+    entry.state.status = 'running';
+    startClock(entry);
+    persist(entry);
+    // Turns that stopped while held: same continue prompt as a recovery.
+    for (const [eid, emp] of Object.entries(entry.meta.employees)) {
+      if (!emp.busy || !emp.chatId || !agents.isAlive(emp.chatId)) continue;
+      if (agents.state(emp.chatId) !== 'idle') continue;
+      const ef = activationFor(entry, emp.busy);
+      if (ef) await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, eid, ef, why, '') });
+    }
+    await runEffects(entry, heldSteps);
+    return { ok: true, run: summary(entry) };
+  }
+
+  /**
+   * Pause: nobody new is started; employees finish the turn they are in and
+   * their handoffs are routed, but what follows is held until resume().
+   */
+  async function pause(runId, { by = 'person', resetsAt = '' } = {}) {
     const entry = runs.get(runId);
     if (!entry) return { ok: false, error: 'Run not found.' };
     return locked(entry, async () => {
-      if (!entry.meta.capHit) return { ok: false, error: 'This run is not held.' };
-      if (entry.meta.capHit.which === 'maxHandoffs') entry.meta.capExtra = (entry.meta.capExtra || 0) + entry.state.snapshot.settings.caps.maxHandoffs;
-      entry.meta.capHit = null;
-      const held = entry.meta.held; entry.meta.held = [];
-      entry.state.status = 'running';
-      startClock(entry);
+      if (!['running', 'waiting'].includes(entry.state.status)) return { ok: false, error: `The run is ${entry.state.status}; it cannot be paused.` };
+      entry.meta.paused = { by, at: now(), ...(resetsAt ? { resetsAt } : {}) };
+      entry.state.status = 'paused';
+      clearClock(entry);
       persist(entry);
-      await runEffects(entry, held);
+      if (by === 'usage') notify('paused', summary(entry), `Factory "${entry.state.snapshot.name}" paused: the usage limit is reached.${resetsAt ? ` It carries on by itself after ${resetsAt}.` : ''}`);
       return { ok: true, run: summary(entry) };
     });
+  }
+
+  // ─── Recovery ───
+
+  /** Rebuild the activation a waiting token stands for. */
+  function activationFor(entry, tokenId) {
+    const t = entry.state.tokens.find(x => x.id === tokenId);
+    if (!t || (t.status !== 'work' && t.status !== 'answer')) return null;
+    const node = entry.state.snapshot.nodes.find(n => n.id === t.nodeId);
+    return {
+      type: 'activate', tokenId: t.id, nodeId: t.nodeId,
+      employeeId: t.status === 'answer' ? t.answerer : Engine.rosterOf(node),
+      mode: t.status, ws: t.ws, context: { from: null, summary: '', message: '', notes: [], escalation: '' },
+    };
+  }
+
+  async function recoveryFor(entry, employeeId, ef, reason, note) {
+    const last = [...entry.state.history].reverse().find(h => h.type === 'handoff' && h.by === employeeId);
+    const ws = wsPath(entry, ef.ws);
+    let w = { status: '', diffStat: '' };
+    try { if (ws && existsSync(ws)) w = await git.workSummary(ws, entry.meta.baseCommit); } catch { /* best effort */ }
+    return { reason, lastAction: last ? last.summary : '', status: w.status, diffStat: w.diffStat, note };
+  }
+
+  /**
+   * Pick a crashed run up again. Unfinished effects are completed, the
+   * Manager is relaunched on its conversation and given an overview, and
+   * everyone who was mid-step gets a continue prompt with why it stopped,
+   * where they were, their last handoff, the worktree now, and the person's note.
+   */
+  async function recover(runId, { note = '' } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    return locked(entry, async () => {
+      if (entry.state.status !== 'crashed') return { ok: false, error: `The run is ${entry.state.status}, not crashed.` };
+      if (!entry.meta.worktree || !existsSync(entry.meta.worktree)) return { ok: false, error: 'The run\'s worktree is gone, so it cannot be recovered. Stop the run instead.' };
+      const reason = entry.meta.crashReason || 'it was interrupted';
+      const from = entry.meta.crashedFrom || 'running';
+      const text = String(note || '').slice(0, 5000).trim();
+
+      // Old chats are gone; their queues are rebuilt from the tokens.
+      const oldManagerChat = entry.meta.employees[MANAGER_ID]?.chatId || entry.meta.lastManagerChat || '';
+      for (const emp of Object.values(entry.meta.employees)) { if (emp.chatId) chats.delete(emp.chatId); emp.chatId = ''; emp.busy = null; emp.queue = []; emp.nudged = false; }
+      // Branch worktrees that vanished: their branches carry on in main.
+      for (const [id, ws] of Object.entries(entry.meta.ws)) {
+        if (id !== 'main' && ws.path && !existsSync(ws.path)) entry.meta.ws[id] = { ...entry.meta.ws.main, parent: ws.parent, shared: true };
+      }
+      entry.state.status = ['running', 'waiting', 'paused', 'finishing'].includes(from) ? from : 'running';
+      if (entry.state.status !== 'paused') entry.meta.paused = null;
+      delete entry.meta.crashReason; delete entry.meta.crashedAt; delete entry.meta.crashedFrom;
+      entry.meta.error = '';
+      appendHandoff(entry, { type: 'recover', reason, note: text });
+      entry.state.history.push({ seq: ++entry.state.seq, type: 'recover', reason, note: text });
+
+      const m = await ensureSession(entry, MANAGER_ID, { reuseId: oldManagerChat });
+      if (!m.ok) {
+        entry.state.status = 'crashed'; entry.meta.crashReason = reason; entry.meta.crashedFrom = from;
+        persist(entry);
+        return { ok: false, error: `Could not start the Manager again: ${m.error}` };
+      }
+
+      // Finish what was half done (not the activations: those are rebuilt below).
+      const pending = (entry.meta.pending || []).filter(e => e.type !== 'activate');
+      entry.meta.pending = [];
+      if (pending.length) await runEffects(entry, pending);
+
+      const roster = new Map(entry.state.snapshot.roster.map(r => [r.id, r.name]));
+      const nodes = new Map(entry.state.snapshot.nodes.map(n => [n.id, n]));
+      const waiting = entry.state.tokens.filter(t => t.status === 'work' || t.status === 'answer');
+      const describe = (t) => {
+        const n = nodes.get(t.nodeId);
+        if (t.status === 'answer') return { employee: roster.get(t.answerer), what: `was asked "${n?.label || n?.decision?.question || ''}"` };
+        if (t.status === 'ask') return { employee: '', what: `the person was asked: ${n?.ask?.prompt || ''}` };
+        if (t.status === 'join') return { employee: '', what: `a branch was waiting at "${n?.label || 'Join'}"` };
+        return { employee: roster.get(Engine.rosterOf(n)), what: `was working on "${n?.label || n?.type}"` };
+      };
+      let w = { status: '', diffStat: '' };
+      try { w = await git.workSummary(entry.meta.worktree, entry.meta.baseCommit); } catch { /* best effort */ }
+      const recent = entry.state.history.filter(h => h.type === 'handoff').slice(-5).map(h => `${roster.get(h.by) || h.by}: ${String(h.summary || '').split('\n')[0].slice(0, 200)}`);
+      const dropped = (entry.meta.droppedPermissions || []).map(p => `${p.employee} wanted ${p.toolName} ${JSON.stringify(p.input).slice(0, 160)}`);
+      entry.meta.droppedPermissions = [];
+      agents.send(m.chatId, recoveryOverview({
+        run: entry.state, reason, tokens: entry.state.tokens.map(describe), recent, dropped,
+        status: w.status, diffStat: w.diffStat, note: text, wasFinishing: from === 'finishing',
+      }));
+
+      if (from !== 'finishing') {
+        for (const t of waiting) {
+          const ef = activationFor(entry, t.id);
+          if (!ef) continue;
+          if (held(entry)) { entry.meta.held.push(ef); continue; }
+          const emp = empOf(entry, ef.employeeId);
+          if (emp.busy) { emp.queue.push(ef); continue; }
+          await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, ef.employeeId, ef, reason, text) });
+        }
+        for (const a of entry.meta.asks) notify('ask', summary(entry), `Factory "${entry.state.snapshot.name}" asks: ${a.prompt}`);
+        startClock(entry);
+      }
+      collect(entry);
+      persist(entry);
+      notify('recovered', summary(entry), `Factory "${entry.state.snapshot.name}" was recovered.`);
+      return { ok: true, run: summary(entry) };
+    });
+  }
+
+  // ─── Usage limit ───
+
+  let usageTimer = null;
+  /**
+   * Pause running factories when a usage window is full, and carry them on by
+   * themselves once it has reset. Polls getUsage (usage.js shape:
+   * { fiveHour:{utilization,resetsAt}, week:{…} }); it only asks while a run
+   * is going or waiting on the limit.
+   */
+  function watchUsage(getUsage, { tickMs = 60_000 } = {}) {
+    const tick = async () => {
+      const relevant = [...runs.values()].filter(e => ['running', 'waiting'].includes(e.state.status) || e.meta.paused?.by === 'usage');
+      if (!relevant.length) return;
+      let u;
+      try { u = await getUsage(); } catch { return; }
+      if (!u || u.ok === false) return;
+      const full = [u.fiveHour, u.week].filter(w => w && w.utilization >= 100);
+      const resetsAt = full.map(w => w.resetsAt).filter(Boolean).sort().pop() || '';
+      for (const e of relevant) {
+        if (full.length && !e.meta.paused && ['running', 'waiting'].includes(e.state.status)) {
+          await pause(e.state.id, { by: 'usage', resetsAt });
+        } else if (!full.length && e.meta.paused?.by === 'usage') {
+          const at = Date.parse(e.meta.paused.resetsAt || '');
+          if (Number.isFinite(at) && Date.now() < at) continue;
+          await resume(e.state.id);
+          notify('resumed', summary(e), `Factory "${e.state.snapshot.name}" carries on: the usage limit has reset.`);
+        }
+      }
+    };
+    clearInterval(usageTimer);
+    usageTimer = setInterval(tick, tickMs);
+    usageTimer.unref?.();
+    return { tick, stop: () => clearInterval(usageTimer) };
+  }
+
+  // ─── Reachability collector ───
+
+  /**
+   * Stop the sessions of employees the current work can no longer reach.
+   *
+   * Roots are wherever the flow is (every token). Reachable is what flow
+   * edges lead to from there, minus loops closed for good, and NOT onward
+   * through the Manager unless the Manager is the one acting. That boundary
+   * is what makes this worth having: Start only leads to the Manager, so
+   * everything in a valid factory is reachable from the Manager, and with the
+   * Manager always counted nobody would ever be collected. Employees inside
+   * the loop being worked (a review loop back to the devs) stay alive;
+   * someone only the Manager could send work to again is stopped until it does.
+   *
+   * An employee is needed if any of its nodes is reachable, or it answers a
+   * reachable decision. Collected sessions keep their conversation id, and
+   * when the flow reaches them again they are resumed with their memory.
+   * Still conservative within the loop: it follows what the graph allows, not
+   * what was chosen, so a branch not picked this round stays alive.
+   */
+  function collect(entry) {
+    if (!UNFINISHED.has(entry.state.status) || entry.state.status === 'crashed') return;
+    const f = entry.state.snapshot;
+    const s = entry.state;
+    const closed = (e) => e.maxRounds > 0 && (s.edgeCounts[e.id] || 0) >= e.maxRounds && (s.exhausted[e.id] || 0) >= 2;
+    const g = flowGraph(f, { exclude: closed });
+    const managerNode = f.nodes.find(n => n.type === 'manager');
+    const managerActing = s.tokens.some(t => t.nodeId === managerNode?.id || (t.status === 'answer' && t.answerer === MANAGER_ID));
+    const roots = s.tokens.map(t => t.nodeId).filter(Boolean);
+    const seen = reachable(g, roots, managerActing ? {} : { stopAt: new Set([managerNode?.id]) });
+    const needed = new Set([MANAGER_ID]);
+    for (const n of f.nodes) {
+      if (!seen.has(n.id)) continue;
+      if (n.type === 'employee') needed.add(n.employeeId);
+      if (n.type === 'decision' && n.decision.answeredBy) needed.add(n.decision.answeredBy);
+    }
+    for (const t of s.tokens) if (t.status === 'answer' && t.answerer) needed.add(t.answerer);
+    for (const [eid, emp] of Object.entries(entry.meta.employees)) {
+      if (needed.has(eid) || !emp.chatId || emp.busy || (emp.queue || []).length) continue;
+      if ((entry.meta.permissions || []).some(p => p.employeeId === eid)) continue;
+      const chatId = emp.chatId;
+      emp.sessionUuid = agents.sessionUuid(chatId) || emp.sessionUuid;
+      unwatch(entry, chatId);
+      chats.delete(chatId);
+      try { agents.close(chatId); } catch { /* gone */ }
+      emp.chatId = '';
+      emp.retired = true;
+      s.history.push({ seq: ++s.seq, type: 'retire', employeeId: eid });
+    }
   }
 
   /**
@@ -878,6 +1144,7 @@ export function createFactoryRunner({
 
   /** Stop timers (tests, shutdown). Runs stay on disk. */
   function dispose() {
+    clearInterval(usageTimer);
     for (const e of runs.values()) {
       clearClock(e);
       clearTimeout(e.timers.perm);
@@ -885,7 +1152,7 @@ export function createFactoryRunner({
     }
   }
 
-  return { load, startRun, handoff, askReply, resume, stopRun, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, dispose };
+  return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /** A commit subject from a summary: its first sentence, kept short. */

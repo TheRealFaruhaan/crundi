@@ -212,11 +212,16 @@ exhaustion only allows exits; run caps bound everything.
 - The pane parker (`src/panes.js`) **never parks** a session of an unfinished
   run (running, waiting, paused). Employee sessions are owned by the runner, not
   the workbench.
-- **Reachability collector**, run after every handoff, loop-counter change and
-  Join:
-  - Roots: active nodes, waiting Joins, the Manager.
-  - Reachable: flow-edge closure from roots, with exhausted loop back-edges
-    removed. Conservative — follows what the graph allows, not past choices.
+- **Reachability collector**, run after every batch of effects (handoff,
+  escalation, Join, recovery):
+  - Roots: every token (active nodes, waiting Joins, Ask me).
+  - Reachable: flow-edge closure from the roots, without loops closed for good
+    (used up and reopened twice), and **not onward through the Manager unless
+    the Manager is acting**. Start only leads to the Manager, so everything in
+    a valid factory is reachable from it; counting the Manager as a root would
+    collect nobody, ever. Employees in the loop being worked stay alive;
+    someone only the Manager could send work to again is stopped until it does.
+  - Conservative within the loop: follows what the graph allows, not past choices.
   - An employee with no reachable node is **Retired**: process stopped,
     session id + transcript kept, still viewable. If flow reaches it again it is
     resumed with `--resume` (lossless).
@@ -237,14 +242,20 @@ exhaustion only allows exits; run caps bound everything.
 **Stop** interrupts immediately, then asks keep or delete the worktree.
 
 ### 4.7 Recovery
-- Every handoff is written to disk **before** it is performed.
+- Every change is written to disk at once, and effects are written ahead:
+  saved as `meta.pending` before anything happens and ticked off one by one,
+  so a crash part-way leaves exactly what is still to do.
 - Crashed runs show in the Factory panel with **Recover**; never automatic.
 - Recover has a **reply box**; the user's note joins the continue prompt.
 - Each agent that was mid-step gets a **continue prompt**: why it stopped,
   which node and last completed action, current worktree `git status` + diff
   summary, the user's note, "continue from where you stopped".
-- The Manager gets a whole-run overview first; queued permission requests are
-  re-raised.
+- The Manager is relaunched on its old chat id and conversation and gets a
+  whole-run overview first (reason, where everyone was, last handoffs, the
+  worktree, the note). Unfinished effects other than activations are
+  completed; activations are rebuilt from the tokens. Permission requests
+  that were waiting died with their sessions: listed to the Manager, and the
+  employees ask again if they still need them.
 - Usage-limit resume uses the same continue prompt.
 
 ### 4.8 Ending

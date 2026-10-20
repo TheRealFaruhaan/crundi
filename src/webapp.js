@@ -989,6 +989,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     onChange: (run) => { try { broadcastSSE('factoryRun', { id: run.id, project: run.project, status: run.status }); } catch { /* not up yet */ } },
   }) : null;
   try { factoryRunner && factoryRunner.load(); } catch (err) { console.error('[factory] could not load runs:', err.message); }
+  // A full usage window pauses running factories; they carry on after it resets.
+  try { factoryRunner && factoryRunner.watchUsage(() => usage.getUsage()); } catch { /* usage is optional */ }
 
   // WebSocket connections that have reported the user is actively at the window
   // (window focused AND page visible). Used to skip the agent-status Telegram
@@ -3326,6 +3328,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           break;
         case 'stop': result = await factoryRunner.stopRun(body.id); break;
         case 'resume': result = await factoryRunner.resume(body.id); break;
+        case 'pause': result = await factoryRunner.pause(body.id); break;
+        case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
         case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
         default: return json(res, { ok: false, error: `Unknown factory run action: ${body.action}` }, 400);
