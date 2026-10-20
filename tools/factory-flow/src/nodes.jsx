@@ -61,14 +61,15 @@ export function FactoryNode({ data, selected }) {
   const errs = data.issues.some(i => i.level === 'error');
   const active = data.tokens.length > 0;
   return (
-    <div className={['ff-node', 'ff-' + n.type, selected ? 'sel' : '', errs ? 'bad' : '', active ? 'active' : ''].join(' ')}>
+    <div className={['ff-node', 'ff-' + n.type, selected ? 'sel' : '', errs ? 'bad' : '', active ? 'active' : '', data.visited && !active ? 'visited' : '', data.retired ? 'retired' : ''].join(' ')}>
       {n.type !== 'start' && <Handle type="target" position={Position.Top} id="in" className="ff-h-in" />}
       {AGENTS.has(n.type) && <Handle type="target" position={Position.Left} id="notein" className="ff-h-note" title="Notes arrive here" />}
       <Badge issues={data.issues} />
       <Tokens tokens={data.tokens} />
       <div className="ff-node-head"><Icon name={m.icon} size={14} /><span className="ff-node-kind">{m.kind}</span></div>
       <div className="ff-node-title">{title(n, data)}</div>
-      <div className="ff-node-body">{body(n, data)}</div>
+      <div className="ff-node-body">{data.live ? data.live : body(n, data)}</div>
+      {data.skills && data.skills.length > 0 && <div className="ff-node-skills">{data.skills.map(k => <span key={k}>/{k}</span>)}</div>}
       {outs.length > 0 && (
         <div className="ff-outs">
           {outs.map((h) => (
@@ -102,7 +103,7 @@ export function FactoryEdge(props) {
     else if (e.noteLabel) bits.push(e.noteLabel);
     if (e.maxRounds) bits.push(data.used != null ? `round ${Math.min(data.used, e.maxRounds)}/${e.maxRounds}` : `max ${e.maxRounds}`);
   }
-  const cls = ['ff-edge', note ? 'note' : 'flow', selected ? 'sel' : '', errs ? 'bad' : '', e.maxRounds ? 'loop' : '', data.used ? 'used' : ''].join(' ');
+  const cls = ['ff-edge', note ? 'note' : 'flow', selected ? 'sel' : '', errs ? 'bad' : '', e.maxRounds ? 'loop' : '', data.used ? 'used' : '', data.pulse ? 'pulse' : ''].join(' ');
   return (
     <>
       <BaseEdge id={id} path={path} className={cls} markerEnd={markerEnd} />

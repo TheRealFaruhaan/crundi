@@ -27,6 +27,7 @@ export function sourceFiles() {
     join(repo, 'src', 'factory-model.js'),
     join(repo, 'src', 'factory-engine.js'),
     join(repo, 'src', 'factory-skills.js'),
+    join(repo, 'src', 'factory-journal.js'),
   ];
 }
 

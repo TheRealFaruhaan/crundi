@@ -355,7 +355,23 @@ chat header carries a Factory badge.
 - Optional: auto-delete kept/crashed leftovers after N days.
 
 ### 5.4 Live view
-- Same graph as the editor, read-only, from the run's snapshot.
+- `CrundiFactoryFlow.mountViewer(el, { apiFetch, runId, subscribe, openChat, onClose })`.
+  It fetches the run's journal (`/api/factory-runs/events?id&from=`) and
+  folds it with the bundled reducer, so the graph at any point of the run is
+  exact; live updates fetch only the new events (pushed via `subscribe`, the
+  host forwarding its `factoryRun` SSE event; polls every 4 s without it).
+- Replay: a slider and the timeline jump to any event; "Back to live".
+- Steps: working / deciding / waiting on you glow; visited steps show their
+  last summary; a person stopped by the collector is faded; the connection
+  just taken flows (CSS, still under reduced motion); loops show their round.
+- Skills: each handoff records the skills that person loaded during the step
+  (Skill tool calls in their chat since the last handoff), journaled, shown
+  on the step and in its details.
+- Step details: who, what they are doing, every visit with its summary,
+  answers and skills, and Open chat (the host decides how).
+- Run panel: task, branch, live sessions, Ask me replies, Recover with a
+  note, "let it carry on" after a cap; Pause / Resume / Stop in the header.
+- Phone: graph on top, panel underneath.
 - Node states: idle, working, waiting on you, done, retired, failed; loop-count
   badge. Active edge animates (CSS only).
 - Tap a node → that employee's chat (existing renderer); user can type into it.

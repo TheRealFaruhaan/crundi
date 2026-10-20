@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
 import { Editor } from './Editor.jsx';
+import { Viewer } from './Viewer.jsx';
 
 function mountEditor(el, { apiFetch, factoryId, onClose }) {
   const root = createRoot(el);
@@ -19,5 +20,18 @@ function mountEditor(el, { apiFetch, factoryId, onClose }) {
   return { destroy() { destroyed = true; root.unmount(); el.classList.remove('ff-host'); } };
 }
 
+/**
+ * The live graph of a run, with its replay.
+ * subscribe(cb) -> unsubscribe: the host calls cb({ id }) when a run changes
+ * (its factoryRun event); without it the view polls. openChat(chatId, name)
+ * opens a person's chat.
+ */
+function mountViewer(el, { apiFetch, runId, subscribe, openChat, onClose }) {
+  const root = createRoot(el);
+  el.classList.add('ff-host');
+  root.render(<Viewer apiFetch={apiFetch} runId={runId} subscribe={subscribe} openChat={openChat} onClose={onClose} />);
+  return { destroy() { root.unmount(); el.classList.remove('ff-host'); } };
+}
+
 /* global __FF_SRC_HASH__ */
-window.CrundiFactoryFlow = { mountEditor, version: 1, srcHash: __FF_SRC_HASH__ };
+window.CrundiFactoryFlow = { mountEditor, mountViewer, version: 1, srcHash: __FF_SRC_HASH__ };

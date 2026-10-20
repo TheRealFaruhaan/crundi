@@ -122,6 +122,11 @@ export function reduce(prev, ev) {
       rec.state = res.run;
       queue(rec, res.effects, at);
       if (ev.by && r.sessions[ev.by] && ev.sessionUuid) r.sessions[ev.by].sessionUuid = ev.sessionUuid;
+      // The skills loaded during that step ride on its history entry.
+      if (Array.isArray(ev.skills) && ev.skills.length) {
+        const h = [...rec.state.history].reverse().find(x => x.type === 'handoff');
+        if (h) h.skills = ev.skills.slice(0, 20);
+      }
       break;
     }
     case 'ask-reply': {

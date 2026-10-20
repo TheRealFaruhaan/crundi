@@ -395,6 +395,7 @@ export function createFactoryRunner({
     });
     if (!res.ok) return { ok: false, error: res.error || 'could not start' };
     emp.chatId = res.id;
+    emp.skillsSeen = 0;
     chats.set(res.id, { runId: st(entry).id, employeeId });
     watch(entry, res.id, employeeId);
     commit(entry, { type: 'session', employeeId, chatId: res.id, sessionUuid: resume || known.sessionUuid || '' });
@@ -1257,9 +1258,19 @@ export function createFactoryRunner({
       const caps = { maxHandoffs: st(entry).snapshot.settings.caps.maxHandoffs + rr(entry).capExtra };
       const dry = Engine.handoff(st(entry), tokenId, payload, { treeHash: c.ok ? c.tree : '', caps });
       if (!dry.ok) return { ok: false, error: dry.error };
+      // Which skills this person loaded during the step (shown on the live graph).
+      let skills = [];
+      if (emp?.chatId && agents.skillsUsed) {
+        try {
+          const all = agents.skillsUsed(emp.chatId) || [];
+          skills = [...new Set(all.slice(emp.skillsSeen || 0))];
+          emp.skillsSeen = all.length;
+        } catch { skills = []; }
+      }
       commit(entry, {
         type: 'handoff', tokenId, payload, treeHash: c.ok ? c.tree : '', by: info.employeeId,
         commit: c.ok ? c.head : '', sessionUuid: emp?.chatId ? agents.sessionUuid(emp.chatId) || '' : '',
+        ...(skills.length ? { skills } : {}),
       });
       if (emp && emp.busy === tokenId) emp.busy = null;
       const where = describeWhere(entry, dry.effects);
@@ -1340,6 +1351,15 @@ export function createFactoryRunner({
     }
   }
 
+  /** The run's journal from `from` on, for the live graph and its replay. */
+  function runEvents(runId, from = 0) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    const all = readJournal(runId);
+    const start = Math.max(0, Math.min(all.length, Number(from) || 0));
+    return { ok: true, from: start, total: all.length, events: all.slice(start) };
+  }
+
   /** Does this chat belong to a run that has not finished? (The close guard.) */
   function guardsChat(chatId) {
     const info = chatInfo(chatId);
@@ -1349,7 +1369,7 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, finishAction, runDiff, guardsChat, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /** A commit subject from a summary: its first sentence, kept short. */
@@ -1422,6 +1442,11 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
     setPermissionMode: (id, mode) => claudeUi.setPermissionMode(id, mode),
     onPermission: (cb) => claudeUi.onFactoryPermission(cb),
     addCard: (id, card) => claudeUi.addCard(id, card),
+    // Every skill this chat has loaded so far, in order (Skill tool calls).
+    skillsUsed: (id) => ((claudeUi.history(id) || {}).messages || [])
+      .filter(m => m.kind === 'tool' && m.name === 'Skill')
+      .map(m => String(m.input?.skill || m.input?.command || m.input?.name || '').replace(/^\//, ''))
+      .filter(Boolean),
     patchCard: (id, entryId, patch) => claudeUi.patchCard(id, entryId, patch),
     on: (id, fn) => claudeUi.on(id, fn),
     off: (id, fn) => claudeUi.off(id, fn),

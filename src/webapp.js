@@ -3332,6 +3332,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!factoryRunner) return json(res, { ok: true, runs: [] });
       return json(res, { ok: true, runs: factoryRunner.listRuns({ project: url.searchParams.get('project') || '' }) });
     }
+    if (path === '/api/factory-runs/events' && req.method === 'GET') {
+      if (!factoryRunner) return json(res, { ok: false, error: 'Run not found' }, 404);
+      return json(res, factoryRunner.runEvents(url.searchParams.get('id'), url.searchParams.get('from') || 0));
+    }
     if (path === '/api/factory-runs/diff' && req.method === 'GET') {
       if (!factoryRunner) return json(res, { ok: false, error: 'Run not found' }, 404);
       return json(res, await factoryRunner.runDiff(url.searchParams.get('id')));
