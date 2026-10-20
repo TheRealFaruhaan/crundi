@@ -41,6 +41,7 @@ import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
 import * as factoryStore from './factory-store.js';
+import { validateFactory } from './factory-model.js';
 import { createFactoryRunner, claudeUiAgents } from './factory-runner.js';
 import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
@@ -985,6 +986,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     agents: claudeUiAgents(claudeUi, { dataDir: config.dataDir }),
     getProject: (alias) => getProjectUnscoped(alias),
     getFactory: (id) => factoryStore.getFactory(id),
+    // What a project can see: global, synced, and that project's own skills.
+    listSkills: (project) => {
+      const key = 'project:' + String(project || '').toLowerCase();
+      try { return (skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced' || x.scope === key).map(x => ({ name: x.name, description: x.description || '' })); }
+      catch { return []; }
+    },
     notify: (kind, run, text) => { try { notifyEvent('factory', text); } catch { /* best effort */ } },
     onChange: (run) => { try { broadcastSSE('factoryRun', { id: run.id, project: run.project, status: run.status }); } catch { /* not up yet */ } },
   }) : null;
@@ -3290,7 +3297,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
     if (path === '/api/factories/get' && req.method === 'GET') {
       const r = factoryStore.getFactory(url.searchParams.get('id'));
-      return r ? json(res, { ok: true, ...r }) : json(res, { ok: false, error: 'Factory not found' }, 404);
+      if (!r) return json(res, { ok: false, error: 'Factory not found' }, 404);
+      // With the skills every project can see, so the editor can flag the rest.
+      let known = null;
+      try { known = new Set((skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced').map(x => x.name)); } catch { known = null; }
+      return json(res, { ok: true, factory: r.factory, validation: validateFactory(r.factory, { skills: known }) });
     }
     if (path === '/api/factories/export' && req.method === 'GET') {
       return json(res, factoryStore.exportFactory(url.searchParams.get('id')));
@@ -3324,7 +3335,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       switch (body.action) {
         case 'start':
           if (!body.project || aliasDenied(body.project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
-          result = await factoryRunner.startRun({ project: body.project, factoryId: body.factoryId, task: body.task, mergeMode: body.mergeMode });
+          result = await factoryRunner.startRun({ project: body.project, factoryId: body.factoryId, task: body.task, mergeMode: body.mergeMode, ignoreMissingSkills: !!body.ignoreMissingSkills });
           break;
         case 'stop': result = await factoryRunner.stopRun(body.id); break;
         case 'resume': result = await factoryRunner.resume(body.id); break;

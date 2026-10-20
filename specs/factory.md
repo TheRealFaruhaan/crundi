@@ -77,8 +77,10 @@ Employees are full Claude sessions and can use skills like any chat.
   `<project>/.claude/skills`, and the worktree is outside the project, so
   Claude would not find them (it looks upward from cwd), and uncommitted or
   ignored skills would not be in the checkout anyway. The runner links the
-  project's skills folder into the worktree and excludes it from git
-  (`info/exclude`), so it is never committed or merged.
+  project's skills folder into the run and branch worktrees (the whole folder
+  if the worktree has none; otherwise each missing skill), and those links are
+  excluded from every commit by pathspec. Verified: Claude loads a skill
+  through the link.
 - **The Skill tool is always in an employee's allowlist** unless the user
   removes it on purpose.
 - **Skill mentions in any prompt text** — persona, Manager instructions,

@@ -23,14 +23,43 @@
  */
 
 import { execFile } from 'child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, symlinkSync, lstatSync } from 'fs';
 import { join, resolve, sep } from 'path';
 import { homedir } from 'os';
 
 export const worktreesRoot = () => process.env.FACTORY_WORKTREES_DIR || join(homedir(), 'crundi-factory-worktrees');
 
 /** Paths Crundi may place in a worktree that must never be committed. */
-export const NEVER_COMMIT = ['.mcp.json', '.claude/skills', '.factory'];
+export const NEVER_COMMIT = ['.mcp.json', '.factory'];
+
+/**
+ * Make the project's skills visible in a worktree. Claude finds project skills
+ * in <cwd>/.claude/skills, and a worktree only has the ones committed. If the
+ * worktree has no skills folder, the project's whole folder is linked; if it
+ * has one (committed skills), each project skill it lacks is linked in. The
+ * links are returned so every commit can leave them out.
+ * @returns {string[]} paths, relative to the worktree, never to commit
+ */
+export function linkProjectSkills(repo, worktree) {
+  const src = join(repo, '.claude', 'skills');
+  if (!existsSync(src)) return [];
+  const dst = join(worktree, '.claude', 'skills');
+  try {
+    if (!existsSync(dst)) {
+      mkdirSync(join(worktree, '.claude'), { recursive: true });
+      symlinkSync(src, dst, 'dir');
+      return ['.claude/skills'];
+    }
+    if (lstatSync(dst).isSymbolicLink()) return ['.claude/skills'];
+    const out = [];
+    for (const name of readdirSync(src)) {
+      if (name.startsWith('.') || existsSync(join(dst, name))) continue;
+      symlinkSync(join(src, name), join(dst, name), 'dir');
+      out.push(`.claude/skills/${name}`);
+    }
+    return out;
+  } catch { return []; }
+}
 
 const IDENTITY = ['-c', 'user.name=Crundi Factory', '-c', 'user.email=factory@crundi.invalid', '-c', 'commit.gpgsign=false'];
 
@@ -100,8 +129,8 @@ export async function createRunWorktree({ repo, project, runId, name }) {
 }
 
 /** A worktree for one parallel branch, cut from the current commit of `parentPath`. */
-export async function createBranchWorktree({ repo, parentPath, root, name, branchPrefix }) {
-  const base = await commitAll(parentPath, 'factory: before fan-out');
+export async function createBranchWorktree({ repo, parentPath, root, name, branchPrefix, exclude = [] }) {
+  const base = await commitAll(parentPath, 'factory: before fan-out', { exclude });
   if (!base.ok) return base;
   const dirName = slug(name, 40);
   let path = join(root, dirName), n = 1;
@@ -116,8 +145,8 @@ export async function createBranchWorktree({ repo, parentPath, root, name, branc
  * Stage everything except Crundi's own files and commit it, if anything
  * changed. Returns the resulting HEAD and its tree hash either way.
  */
-export async function commitAll(path, message) {
-  const add = await git(['add', '-A', '--', '.', ...NEVER_COMMIT.map(p => `:(exclude)${p}`)], path);
+export async function commitAll(path, message, { exclude = [] } = {}) {
+  const add = await git(['add', '-A', '--', '.', ...[...NEVER_COMMIT, ...exclude].map(p => `:(exclude)${p}`)], path);
   if (!add.ok) return { ok: false, error: `git add failed: ${add.error}` };
   const staged = await git(['diff', '--cached', '--quiet'], path);
   let committed = false;
@@ -138,12 +167,12 @@ export async function commitAll(path, message) {
  * On conflict the merge is aborted and the conflicted files are returned, so
  * the parent is left exactly as it was.
  */
-export async function mergeBranch({ parentPath, childPath, childBranch, message }) {
+export async function mergeBranch({ parentPath, childPath, childBranch, message, exclude = [] }) {
   if (childPath) {
-    const c = await commitAll(childPath, 'factory: branch done');
+    const c = await commitAll(childPath, 'factory: branch done', { exclude });
     if (!c.ok) return c;
   }
-  const p = await commitAll(parentPath, 'factory: before join');
+  const p = await commitAll(parentPath, 'factory: before join', { exclude });
   if (!p.ok) return p;
   const m = await git([...IDENTITY, 'merge', '--no-ff', '--no-edit', '-m', message || `factory: join ${childBranch}`, childBranch], parentPath);
   if (m.ok) {
@@ -172,6 +201,6 @@ export async function removeWorktree({ repo, path, branch, deleteBranch = true }
 export async function workSummary(path, baseCommit) {
   const st = await git(['status', '--short'], path);
   const stat = baseCommit ? await git(['diff', '--stat', baseCommit], path) : { stdout: '' };
-  const keep = s => s.split('\n').filter(l => l.trim() && !NEVER_COMMIT.some(p => l.includes(p))).slice(0, 60).join('\n');
+  const keep = s => s.split('\n').filter(l => l.trim() && ![...NEVER_COMMIT, '.claude/skills'].some(p => l.includes(p))).slice(0, 60).join('\n');
   return { status: keep(st.stdout), diffStat: keep(stat.stdout) };
 }

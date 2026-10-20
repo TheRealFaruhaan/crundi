@@ -47,6 +47,7 @@
  */
 
 import { randomBytes } from 'crypto';
+import { mentionsInFactory } from './factory-skills.js';
 
 // ─── Constants ───
 
@@ -362,8 +363,11 @@ export function forkRegion(f, graph, forkNode, joinId) {
  * Issue: { code, message, fix, nodeId?, edgeId?, nodeIds? }
  *
  * ok means runnable. A factory with errors can still be saved, as a draft.
+ * Pass { skills: Set<string> } (the names known on this machine) to be warned
+ * about mentioned skills that are not among them. Only a warning: factories
+ * are global and a project may bring the skill itself.
  */
-export function validateFactory(input) {
+export function validateFactory(input, { skills = null } = {}) {
   const f = normalizeFactory(input);
   const errors = [], warnings = [];
   const err = (code, message, fix, at = {}) => errors.push({ code, message, fix, ...at });
@@ -586,6 +590,13 @@ export function validateFactory(input) {
     }
   }
 
+  if (skills) {
+    for (const [name, where] of mentionsInFactory(f)) {
+      if (skills.has(name)) continue;
+      const at = where[0] || {};
+      warn('skill-unknown', `The skill /${name} is not installed for all projects.`, 'Install it, or make sure the projects you run this in have it.', { ...(at.nodeId ? { nodeId: at.nodeId } : {}), ...(at.employeeId ? { employeeId: at.employeeId } : {}), ...(at.edgeId ? { edgeId: at.edgeId } : {}), skill: name });
+    }
+  }
   return { ok: errors.length === 0, errors, warnings };
 }
 

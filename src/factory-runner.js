@@ -38,6 +38,7 @@ import * as Git from './factory-git.js';
 import { validateFactory, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
 import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage, recoveryOverview } from './factory-prompts.js';
 import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES } from './factory-permissions.js';
+import { missingSkills } from './factory-skills.js';
 
 /** Runs in these states hold their project: no second run can start. */
 export const UNFINISHED = new Set(['starting', 'running', 'waiting', 'paused', 'finishing', 'crashed']);
@@ -54,12 +55,13 @@ const PERMISSION_LOG_MAX = 500;
  * @param {object} o.agents         see claudeUiAgents() for the shape
  * @param {(alias:string) => {path:string}|null} o.getProject
  * @param {(id:string) => {factory, validation}|null} o.getFactory
+ * @param {(project:string) => Array<{name:string, description:string}>} [o.listSkills]  skills a project can see
  * @param {object} [o.git]          factory-git.js (tests may wrap it)
  * @param {(kind:string, run:object, text:string) => void} [o.notify]
  * @param {(run:object) => void} [o.onChange]
  */
 export function createFactoryRunner({
-  dataDir, agents, getProject, getFactory, git = Git,
+  dataDir, agents, getProject, getFactory, git = Git, listSkills = () => [],
   notify = () => {}, onChange = () => {},
   settleMs = SETTLE_MS, setupTimeoutMs = SETUP_TIMEOUT_MS, permissionBatchMs = PERMISSION_BATCH_MS,
   now = () => new Date().toISOString(),
@@ -193,7 +195,20 @@ export function createFactoryRunner({
 
   // ─── Start ───
 
-  async function startRun({ project, factoryId, task, mergeMode } = {}) {
+  /** name -> description of the skills a project can see (cached per run). */
+  function skillsOf(entry) {
+    if (!entry.skills) {
+      let list = [];
+      try { list = listSkills(entry.state.project) || []; } catch { list = []; }
+      entry.skills = new Map(list.map(x => [x.name, x.description || '']));
+    }
+    return entry.skills;
+  }
+
+  /** Commit options for a run: its linked skills are never committed. */
+  const excl = (entry) => ({ exclude: entry.meta.skillExcludes || [] });
+
+  async function startRun({ project, factoryId, task, mergeMode, ignoreMissingSkills = false } = {}) {
     const key = String(project || '').toLowerCase();
     const proj = getProject(key);
     if (!proj) return { ok: false, error: `Project "${project}" not found.` };
@@ -205,6 +220,14 @@ export function createFactoryRunner({
     if (!got) return { ok: false, error: 'Factory not found.' };
     const v = validateFactory(got.factory);
     if (!v.ok) return { ok: false, invalid: true, errors: v.errors, error: `This factory cannot run yet: ${v.errors.length} problem${v.errors.length === 1 ? '' : 's'} to fix in the editor.` };
+
+    // Skills the factory or the task names that this project cannot see.
+    let known = [];
+    try { known = listSkills(key) || []; } catch { known = []; }
+    const missing = missingSkills(got.factory, taskText, new Set(known.map(x => x.name)));
+    if (missing.length && !ignoreMissingSkills) {
+      return { ok: false, missingSkills: missing, error: `This factory names skill${missing.length === 1 ? '' : 's'} this project does not have: ${missing.map(n => '/' + n).join(', ')}. Install ${missing.length === 1 ? 'it' : 'them'}, or start anyway.` };
+    }
 
     const id = 'run_' + Date.now().toString(36) + randomBytes(3).toString('hex');
     const state = Engine.createRun({ id, project: key, factory: got.factory, task: taskText, now: now() });
@@ -229,6 +252,8 @@ export function createFactoryRunner({
     if (!wt.ok) { runs.delete(id); return { ok: false, error: wt.error }; }
     Object.assign(meta, { repo: wt.repo, root: wt.root, worktree: wt.path, branch: wt.branch, parentBranch: wt.parentBranch, baseCommit: wt.baseCommit, dirty: wt.dirty });
     meta.ws.main = { path: wt.path, branch: wt.branch };
+    meta.skillExcludes = git.linkProjectSkills ? git.linkProjectSkills(wt.repo, wt.path) : [];
+    if (missing.length) meta.missingSkills = missing;
     mkdirSync(join(runDir(id), 'shared'), { recursive: true });
     mkdirSync(join(runDir(id), 'notes'), { recursive: true });
     persist(entry);
@@ -307,7 +332,7 @@ export function createFactoryRunner({
       title: isManager ? `Factory: ${f.name}` : `${r.name} · ${f.name}`,
       cwd: entry.meta.worktree,
       addDirs: [entry.meta.root, runDir(entry.state.id)].filter(Boolean),
-      systemPromptExtra: systemPromptFor({ factory: f, employee: r, project: entry.state.project, paths: paths(entry, employeeId), managerMode: managerModeOf(entry) }),
+      systemPromptExtra: systemPromptFor({ factory: f, employee: r, project: entry.state.project, paths: paths(entry, employeeId), managerMode: managerModeOf(entry), skills: skillsOf(entry) }),
       model: r.model, effort: r.effort,
       allowedTools: [...r.tools.allow, ...ALLOW_RULES],
       // The fixed deny list rides on every chat: it is all that binds a
@@ -508,7 +533,7 @@ export function createFactoryRunner({
     emp.retired = false;
     const msg = stepMessage({
       run: entry.state, effect: ef, req: Engine.requirements(entry.state, ef.tokenId),
-      wsPath: wsPath(entry, ef.ws), notice, recovery,
+      wsPath: wsPath(entry, ef.ws), notice, recovery, skills: skillsOf(entry),
     });
     const sent = agents.send(s.chatId, msg);
     if (sent && sent.ok === false) entry.meta.error = `Could not message ${r?.name || ef.employeeId}: ${sent.error}`;
@@ -521,8 +546,11 @@ export function createFactoryRunner({
 
   async function makeWorkspace(entry, ef) {
     const parent = entry.meta.ws[ef.parentWs] || entry.meta.ws.main;
-    const r = await git.createBranchWorktree({ repo: entry.meta.repo, parentPath: parent.path, root: entry.meta.root, name: ef.name, branchPrefix: entry.meta.branch });
-    if (r.ok) entry.meta.ws[ef.wsId] = { path: r.path, branch: r.branch, parent: ef.parentWs };
+    const r = await git.createBranchWorktree({ repo: entry.meta.repo, parentPath: parent.path, root: entry.meta.root, name: ef.name, branchPrefix: entry.meta.branch, ...excl(entry) });
+    if (r.ok) {
+      entry.meta.ws[ef.wsId] = { path: r.path, branch: r.branch, parent: ef.parentWs };
+      if (git.linkProjectSkills) git.linkProjectSkills(entry.meta.repo, r.path);
+    }
     else entry.meta.ws[ef.wsId] = { path: parent.path, branch: '', parent: ef.parentWs, shared: true, error: r.error };
   }
 
@@ -533,7 +561,7 @@ export function createFactoryRunner({
       const ws = entry.meta.ws[w];
       if (!ws) continue;
       if (ws.shared || !ws.branch) { delete entry.meta.ws[w]; continue; }
-      const r = await git.mergeBranch({ parentPath: into.path, childPath: ws.path, childBranch: ws.branch });
+      const r = await git.mergeBranch({ parentPath: into.path, childPath: ws.path, childBranch: ws.branch, ...excl(entry) });
       if (r.ok) {
         await git.removeWorktree({ repo: entry.meta.repo, path: ws.path, branch: ws.branch });
         delete entry.meta.ws[w];
@@ -828,7 +856,7 @@ export function createFactoryRunner({
       const tok = entry.state.tokens.find(t => t.id === tokenId);
       const node = entry.state.snapshot.nodes.find(n => n.id === tok?.nodeId);
       const firstLine = shortSubject(payload?.summary || payload?.escalate || '');
-      const c = await git.commitAll(wsPath(entry, tok?.ws), `factory: ${node?.label || node?.type || 'step'}${firstLine ? ' — ' + firstLine : ''}`);
+      const c = await git.commitAll(wsPath(entry, tok?.ws), `factory: ${node?.label || node?.type || 'step'}${firstLine ? ' — ' + firstLine : ''}`, excl(entry));
       const caps = { maxHandoffs: entry.state.snapshot.settings.caps.maxHandoffs + (entry.meta.capExtra || 0) };
       const res = Engine.handoff(entry.state, tokenId, payload, { treeHash: c.ok ? c.tree : '', caps });
       if (!res.ok) return { ok: false, error: res.error };
@@ -961,6 +989,11 @@ export function createFactoryRunner({
       if (entry.state.status !== 'crashed') return { ok: false, error: `The run is ${entry.state.status}, not crashed.` };
       if (!entry.meta.worktree || !existsSync(entry.meta.worktree)) return { ok: false, error: 'The run\'s worktree is gone, so it cannot be recovered. Stop the run instead.' };
       const reason = entry.meta.crashReason || 'it was interrupted';
+      entry.skills = null;   // skills may have been installed since
+      if (git.linkProjectSkills && entry.meta.repo) {
+        const ex = git.linkProjectSkills(entry.meta.repo, entry.meta.worktree);
+        entry.meta.skillExcludes = [...new Set([...(entry.meta.skillExcludes || []), ...ex])];
+      }
       const from = entry.meta.crashedFrom || 'running';
       const text = String(note || '').slice(0, 5000).trim();
 

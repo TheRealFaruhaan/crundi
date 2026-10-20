@@ -14,6 +14,7 @@
  */
 
 import { MANAGER_ID } from './factory-model.js';
+import { findMentions, skillLines } from './factory-skills.js';
 
 const TOOL = 'factory_handoff (mcp__crundi__factory_handoff)';
 
@@ -24,8 +25,9 @@ const TOOL = 'factory_handoff (mcp__crundi__factory_handoff)';
  * @param {string} o.project
  * @param {object} o.paths          { worktree, branch, parentBranch, notesFile, sharedDir }
  * @param {string} [o.managerMode]  'normal' | 'bypass' (the run's current setting)
+ * @param {Map<string,string>} [o.skills]  skills the project can see: name -> description
  */
-export function systemPromptFor({ factory, employee, project, paths, managerMode = 'normal' }) {
+export function systemPromptFor({ factory, employee, project, paths, managerMode = 'normal', skills = new Map() }) {
   const isManager = employee.id === MANAGER_ID;
   const persona = (employee.persona || '').trim();
   const lines = [];
@@ -41,6 +43,8 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
     );
   }
   if (persona) lines.push('', 'Your persona, written by the person who set up this factory. Read it and act as it describes:', '---', persona, '---');
+  const mine = [...new Set([...(employee.skills || []).map(n => String(n).replace(/^\//, '')), ...findMentions(persona)])];
+  if (mine.length) lines.push('', ...skillLines(mine, skills));
 
   lines.push('', 'How this works:');
   if (isManager) {
@@ -90,8 +94,9 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
  * @param {string} [o.notice]     anything extra the runner must say (a merge conflict)
  * @param {object} [o.recovery]   { reason, lastAction, status, diffStat, note } — this step was
  *                                interrupted and is being picked up again
+ * @param {Map<string,string>} [o.skills]  skills the project can see: name -> description
  */
-export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = null }) {
+export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = null, skills = new Map() }) {
   const f = run.snapshot;
   const node = f.nodes.find(n => n.id === effect.nodeId);
   const c = effect.context || {};
@@ -119,6 +124,10 @@ export function stepMessage({ run, effect, req, wsPath, notice = '', recovery = 
     for (const n of c.notes) lines.push(`- From ${n.from}${n.label ? ` (${n.label})` : ''}: ${n.text}`);
   }
   if (effect.mode === 'answer') lines.push('', 'Nothing else is asked of you here: look at whatever you need to decide, then hand off with your answer(s).');
+  // Skills named in anything this step carries: the task, the question, notes.
+  const texts = [run.task, c.summary, c.message, c.escalation, recovery?.note, node?.decision?.question, ...(c.notes || []).map(n => n.text + ' ' + (n.label || ''))];
+  const named = [...new Set(texts.flatMap(t => findMentions(t)))];
+  if (named.length) lines.push('', ...skillLines(named, skills));
 
   lines.push('', `When you are done, call ${TOOL} with:`);
   lines.push('- summary: what you did or decided, in a few sentences (required)');

@@ -34,6 +34,8 @@ export const ALLOW_RULES = [
   'mcp__crundi__factory_handoff',
   'mcp__crundi__factory_permission',
   'mcp__crundi__rename_chat',
+  // Skills are part of how a factory is meant to work (spec §2.5).
+  'Skill',
 ];
 
 /** Passed as --disallowedTools to every factory chat. */
