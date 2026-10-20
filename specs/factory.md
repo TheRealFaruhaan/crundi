@@ -293,8 +293,34 @@ The Manager decides the work is done (Finish). Per-factory **merge mode**
   in the worktree; if it cannot, falls back to Ask me.
 
 Merge is always a **squash** into the parent branch with a Manager-written
-message. **Everything stays local; nothing is ever pushed.** Worktree and branch
-are cleaned up after a successful merge.
+message (subject from the first sentence of its summary, the summary as body).
+**Everything stays local; nothing is ever pushed.** Worktree and branch are
+cleaned up after a successful merge, with any preview service registered from
+inside the run's folder.
+
+How the squash is done, without touching anyone's working files:
+`git merge-tree --write-tree` computes the result in the object store
+(conflicts reported, nothing written), `git commit-tree` makes the one commit
+(the repository's own identity), and the parent moves by `merge --ff-only`
+where it is checked out (refuses rather than overwrite uncommitted changes) or
+`update-ref` with the old tip where it is not.
+
+- **Conflict** (the parent moved on): the Manager is sent back to merge the
+  parent into its branch in the worktree and resolve it, then finish again.
+  Auto mode does this once; if it still conflicts it falls back to Ask me.
+- **Blocked** (the person's uncommitted changes are in the way): the card says
+  so and Merge can be pressed again.
+- **Undo**: the parent goes back (`reset --keep` where checked out), and the
+  work is restored on the run's branch. Refused once something else has been
+  committed on top (it says how to `git revert`).
+- **Request changes**: the person's note goes to the Manager and the run goes
+  on; when the Manager finishes again, the same card asks again.
+
+The result card is an entry Crundi puts in the Manager's chat
+(`factory-result`), drawn by `claude-chat.js`, so it works on the compact
+`/chat/<id>` page too; it is updated in place. Closing any chat of an
+unfinished run is refused (409) with "Stop the factory first"; the Manager's
+chat header carries a Factory badge.
 
 ## 5. UI
 

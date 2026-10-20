@@ -33,7 +33,7 @@ import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
 import * as claudeUpdate from './claude-update.js';
 import { decodeImage } from './image-input.js';
-import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration } from './service-registry.js';
+import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration, listAllRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt, getProjectIconFile, setProjectIconFile } from './project-store.js';
@@ -991,6 +991,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const key = 'project:' + String(project || '').toLowerCase();
       try { return (skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced' || x.scope === key).map(x => ({ name: x.name, description: x.description || '' })); }
       catch { return []; }
+    },
+    // Preview services the Manager started from the run's worktree go with it.
+    services: {
+      under: (root) => {
+        const r = resolve(root) + sep;
+        return (listAllRegistered() || []).filter(x => x && x.cwd && (resolve(x.cwd) + sep).startsWith(r)).map(x => x.key);
+      },
+      remove: async (key) => { try { await deleteService(key); } catch { /* gone */ } setTimeout(broadcastState, 200); },
     },
     notify: (kind, run, text) => { try { notifyEvent('factory', text); } catch { /* best effort */ } },
     onChange: (run) => { try { broadcastSSE('factoryRun', { id: run.id, project: run.project, status: run.status }); } catch { /* not up yet */ } },
@@ -3324,6 +3332,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!factoryRunner) return json(res, { ok: true, runs: [] });
       return json(res, { ok: true, runs: factoryRunner.listRuns({ project: url.searchParams.get('project') || '' }) });
     }
+    if (path === '/api/factory-runs/diff' && req.method === 'GET') {
+      if (!factoryRunner) return json(res, { ok: false, error: 'Run not found' }, 404);
+      return json(res, await factoryRunner.runDiff(url.searchParams.get('id')));
+    }
     if (path === '/api/factory-runs/get' && req.method === 'GET') {
       const r = factoryRunner && factoryRunner.getRun(url.searchParams.get('id'));
       return r ? json(res, { ok: true, run: r }) : json(res, { ok: false, error: 'Run not found' }, 404);
@@ -3343,6 +3355,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
         case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
+        // The person's choice on the result card: merge | changes | keep | discard | undo.
+        case 'finish': result = await factoryRunner.finishAction(body.id, String(body.choice || ''), { note: body.note || '' }); break;
         default: return json(res, { ok: false, error: `Unknown factory run action: ${body.action}` }, 400);
       }
       if (result.ok) setTimeout(broadcastState, 200);
@@ -4059,6 +4073,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       if (action === 'interrupt') return json(res, claudeUi.interrupt(sid));
       if (action === 'close') {
+        // A factory's chats live as long as its run: closing the Manager (or an
+        // employee) would end the run's work behind its back. Stop it first.
+        const guard = factoryRunner && factoryRunner.guardsChat(sid);
+        if (guard) return json(res, { ok: false, factoryGuard: true, runId: guard.id, error: `This chat belongs to the factory "${guard.factoryName}", which is still ${guard.status}. Stop the factory first.` }, 409);
         const result = claudeUi.close(sid);
         panes.forget(sid);
         broadcastState();

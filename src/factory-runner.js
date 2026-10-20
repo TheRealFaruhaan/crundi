@@ -70,11 +70,12 @@ const AUTO_RECOVER_DELAYS = [30_000, 2 * 60_000, 10 * 60_000];
  * @param {(id:string) => {factory, validation}|null} o.getFactory
  * @param {(project:string) => Array<{name:string, description:string}>} [o.listSkills]  skills a project can see
  * @param {object} [o.git]          factory-git.js (tests may wrap it)
+ * @param {{ under:(root:string)=>string[], remove:(key:string)=>any }} [o.services]  preview services a run started, by folder
  * @param {(kind:string, run:object, text:string) => void} [o.notify]
  * @param {(run:object) => void} [o.onChange]
  */
 export function createFactoryRunner({
-  dataDir, agents, getProject, getFactory, git = Git, listSkills = () => [],
+  dataDir, agents, getProject, getFactory, git = Git, listSkills = () => [], services = null,
   notify = () => {}, onChange = () => {},
   settleMs = SETTLE_MS, setupTimeoutMs = SETUP_TIMEOUT_MS, permissionBatchMs = PERMISSION_BATCH_MS,
   autoRecoverDelays = AUTO_RECOVER_DELAYS,
@@ -620,6 +621,149 @@ export function createFactoryRunner({
     }
     clearClock(entry);
     notify('finished', summary(entry), `Factory "${st(entry).snapshot.name}" is done: ${ef.summary}`);
+    if (rr(entry).mergeMode === 'auto' && rr(entry).mergeAttempts < 2) await doMerge(entry, { auto: true });
+    else await present(entry, { state: 'ask' });
+  }
+
+  // ─── The result: present, merge, keep, discard, undo ───
+
+  async function diffOf(entry) {
+    try {
+      await git.commitAll(rr(entry).worktree, 'factory: final', excl(entry));
+      return await git.diffSummary(rr(entry).worktree, rr(entry).baseCommit);
+    } catch { return { stat: '', files: [], added: 0, removed: 0 }; }
+  }
+
+  /** The card in the Manager's chat: what was done, and the buttons. */
+  async function present(entry, { state, error = '', diff = null } = {}) {
+    const d = diff || await diffOf(entry);
+    const card = {
+      kind: 'factory-result', runId: st(entry).id, state, error,
+      factory: st(entry).snapshot.name, task: st(entry).task,
+      summary: st(entry).outcome?.summary || '',
+      branch: rr(entry).branch, parentBranch: rr(entry).parentBranch,
+      commit: rr(entry).result.commit || '',
+      auto: rr(entry).mergeMode === 'auto',
+      diff: { added: d.added, removed: d.removed, count: d.files.length, files: d.files.slice(0, 40) },
+    };
+    const chatId = entry.live.employees[MANAGER_ID]?.chatId;
+    if (!chatId || !agents.addCard) return;
+    const old = rr(entry).result.card;
+    if (old && agents.patchCard) {
+      const r = agents.patchCard(chatId, old, card);
+      if (r && r.ok !== false) return;
+    }
+    const r = agents.addCard(chatId, card);
+    if (r && r.ok && r.entryId) commit(entry, { type: 'card', entryId: r.entryId });
+  }
+
+  function commitMessage(entry) {
+    const s = st(entry);
+    const summary = String(s.outcome?.summary || '').trim();
+    const subject = shortSubject(summary) || shortSubject(s.task) || `Factory ${s.snapshot.name}`;
+    return `${subject}\n\n${summary || s.task}\n\nMade by the Crundi factory "${s.snapshot.name}" (run ${s.id}).`;
+  }
+
+  /** Remove the run's worktrees (and branches unless kept) and its preview services. */
+  async function cleanup(entry, { keepBranch = false } = {}) {
+    const r = rr(entry);
+    if (services && r.root) {
+      try { for (const key of services.under(r.root)) await services.remove(key); } catch { /* best effort */ }
+    }
+    for (const [id, w] of Object.entries(r.ws)) {
+      if (id === 'main' || w.shared || !w.path) continue;
+      try { await git.removeWorktree({ repo: r.repo, path: w.path, branch: w.branch, deleteBranch: true }); } catch { /* gone */ }
+    }
+    try { await git.removeWorktree({ repo: r.repo, path: r.worktree, branch: r.branch, deleteBranch: !keepBranch }); } catch { /* gone */ }
+  }
+
+  /**
+   * Squash the run onto its parent branch. On a conflict the Manager is sent
+   * back to bring the parent in and resolve it (automatic mode tries that
+   * twice before asking the person); if the person's checkout is in the way,
+   * the card says so and Merge can be pressed again.
+   */
+  async function doMerge(entry, { auto = false } = {}) {
+    const diff = await diffOf(entry);
+    const r = rr(entry);
+    const res = await git.squashMerge({ repo: r.repo, parentBranch: r.parentBranch, branch: r.branch, message: commitMessage(entry) });
+    if (res.ok) {
+      await cleanup(entry);
+      commit(entry, { type: 'merged', commit: res.commit, before: res.before, after: res.after, message: commitMessage(entry) });
+      await present(entry, { state: 'merged', diff });
+      notify('merged', summary(entry), `Factory "${st(entry).snapshot.name}" was merged into ${r.parentBranch}${auto ? ' automatically' : ''} (${res.commit.slice(0, 7)}).`);
+      return { ok: true, run: summary(entry) };
+    }
+    if (res.conflict) {
+      const reason = `Merging the result into ${r.parentBranch} conflicts in ${res.files.join(', ') || 'some files'}: ${r.parentBranch} has moved on. In ${r.worktree}, merge ${r.parentBranch} into your branch (git merge ${r.parentBranch}), resolve the conflicts or have your team do it, then finish again.`;
+      if (auto && r.mergeAttempts >= 1) {
+        await present(entry, { state: 'ask', error: res.error + ' Automatic merging gave up; choose what to do.', diff });
+        return { ok: false, error: res.error };
+      }
+      // Ask mode: the Manager needs git to do this, which it is otherwise told not to touch.
+      commit(entry, { type: 'reopen', reason, asMessage: false, auto });
+      await present(entry, { state: 'conflict', error: res.error, diff });
+      await drain(entry);
+      return { ok: false, conflict: true, error: res.error };
+    }
+    await present(entry, { state: 'ask', error: res.error, diff });
+    return { ok: false, blocked: !!res.blocked, empty: !!res.empty, error: res.error };
+  }
+
+  /**
+   * The person's choice on the result card.
+   * @param {'merge'|'changes'|'keep'|'discard'|'undo'} action
+   */
+  async function finishAction(runId, action, { note = '' } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    return locked(entry, async () => {
+      const s = st(entry), r = rr(entry);
+      if (action === 'undo') {
+        if (r.result.how !== 'merged') return { ok: false, error: 'Only a merged result can be undone.' };
+        const u = await git.undoMerge({ repo: r.repo, parentBranch: r.parentBranch, before: r.result.before, after: r.result.after, restoreBranch: r.branch });
+        if (!u.ok) return { ok: false, error: u.error };
+        commit(entry, { type: 'undone' });
+        await present(entry, { state: 'undone' });
+        return { ok: true, run: summary(entry) };
+      }
+      if (s.status !== 'finishing') return { ok: false, error: `The run is ${s.status}; there is no result waiting for a decision.` };
+      if (action === 'merge') return doMerge(entry, { auto: false });
+      if (action === 'changes') {
+        const text = String(note || '').trim();
+        if (!text) return { ok: false, error: 'Say what should change.' };
+        commit(entry, { type: 'reopen', reason: `The person looked at the result and asked for changes: ${text.slice(0, 5000)}` });
+        await present(entry, { state: 'changes', error: '' });
+        startClock(entry);
+        await drain(entry);
+        return { ok: true, run: summary(entry) };
+      }
+      if (action === 'keep') {
+        const diff = await diffOf(entry);
+        await cleanup(entry, { keepBranch: true });
+        commit(entry, { type: 'kept' });
+        await present(entry, { state: 'kept', diff });
+        return { ok: true, run: summary(entry) };
+      }
+      if (action === 'discard') {
+        const diff = await diffOf(entry);
+        await cleanup(entry, { keepBranch: false });
+        commit(entry, { type: 'discarded' });
+        await present(entry, { state: 'discarded', diff });
+        return { ok: true, run: summary(entry) };
+      }
+      return { ok: false, error: `Unknown action "${action}".` };
+    });
+  }
+
+  /** The full diff of a run, for the person to read before deciding. */
+  async function runDiff(runId) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    const r = rr(entry);
+    if (!r.worktree || !existsSync(r.worktree)) return { ok: false, error: 'The run\'s worktree is gone.' };
+    const d = await git.fullDiff(r.worktree, r.baseCommit);
+    return { ok: true, ...d };
   }
 
   async function dequeue(entry, employeeId) {
@@ -997,6 +1141,7 @@ export function createFactoryRunner({
 
     // Finish what was half done; activations were dropped and are rebuilt here.
     await drain(entry);
+    if (from === 'finishing') await present(entry, { state: 'ask' });
     if (from !== 'finishing') {
       for (const t of st(entry).tokens.filter(x => x.status === 'work' || x.status === 'answer')) {
         const ef = activationFor(entry, t.id);
@@ -1185,7 +1330,16 @@ export function createFactoryRunner({
     }
   }
 
-  return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  /** Does this chat belong to a run that has not finished? (The close guard.) */
+  function guardsChat(chatId) {
+    const info = chatInfo(chatId);
+    if (!info) return null;
+    const entry = runs.get(info.runId);
+    if (!entry || !UNFINISHED.has(st(entry).status)) return null;
+    return summary(entry);
+  }
+
+  return { load, startRun, handoff, askReply, resume, pause, recover, stopRun, finishAction, runDiff, guardsChat, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /** A commit subject from a summary: its first sentence, kept short. */
@@ -1257,6 +1411,8 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
     respond: (id, r) => claudeUi.respond(id, r),
     setPermissionMode: (id, mode) => claudeUi.setPermissionMode(id, mode),
     onPermission: (cb) => claudeUi.onFactoryPermission(cb),
+    addCard: (id, card) => claudeUi.addCard(id, card),
+    patchCard: (id, entryId, patch) => claudeUi.patchCard(id, entryId, patch),
     on: (id, fn) => claudeUi.on(id, fn),
     off: (id, fn) => claudeUi.off(id, fn),
   };

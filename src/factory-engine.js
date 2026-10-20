@@ -342,6 +342,25 @@ export function escalate(run, tokenId, reason) {
   return finishCtx(r, ctx);
 }
 
+/**
+ * Take a finished run back to work: the person asked for changes, or the
+ * result could not be merged as it is. The Manager gets the token again with
+ * the reason and carries on routing from there.
+ */
+export function reopen(run, reason, { asMessage = true } = {}) {
+  const r = clone(run);
+  const ix = index(r.snapshot);
+  const t = r.tokens.find(x => x.status === 'finished');
+  if (!t) return { ok: false, error: 'The run has not finished, so there is nothing to reopen.' };
+  const ctx = newCtx(r, ix, { from: { nodeId: '', rosterId: '', name: 'The person', label: '' }, summary: '', payload: {} });
+  log(r, { type: 'reopen', reason: text(reason) });
+  r.outcome = null;
+  t.nodeId = ix.manager.id;
+  t.status = 'work';
+  activate(ctx, t, ix.manager, 'work', asMessage ? { message: text(reason) } : { escalation: text(reason) });
+  return finishCtx(r, ctx);
+}
+
 /** The tokens currently waiting on a given person (work or answer). */
 export function tokensFor(run, rosterId) {
   const ix = index(run.snapshot);

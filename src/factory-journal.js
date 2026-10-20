@@ -62,6 +62,9 @@ function emptyRecord() {
       startedAt: '', stoppedAt: '',
       effectSeq: 0,
       pending: [],          // effects not yet done, each with an `id`
+      // The end: { card, how: 'merged'|'kept'|'discarded'|'undone', commit, before, after, at }
+      result: { card: '', how: '', commit: '', before: '', after: '', message: '', at: '' },
+      mergeAttempts: 0,     // automatic merges tried this run (auto mode)
     },
   };
 }
@@ -203,6 +206,33 @@ export function reduce(prev, ev) {
       rec.state.status = 'running';
       openClock(r, at);
       break;
+    case 'reopen': {
+      const res = Engine.reopen(rec.state, ev.reason || '', { asMessage: ev.asMessage !== false });
+      if (!res.ok) break;
+      rec.state = res.run;
+      queue(rec, res.effects, at);
+      if (ev.auto) r.mergeAttempts++;
+      openClock(r, at);
+      break;
+    }
+    case 'card':
+      r.result.card = ev.entryId || '';
+      break;
+    case 'merged':
+    case 'kept':
+    case 'discarded': {
+      const how = ev.type;
+      r.result = { ...r.result, how, commit: ev.commit || '', before: ev.before || '', after: ev.after || '', message: ev.message || '', at };
+      rec.state.status = 'finished';
+      rec.state.outcome = { ...(rec.state.outcome || {}), how, ...(ev.commit ? { commit: ev.commit } : {}) };
+      r.perms.outstanding = [];
+      closeClock(r, at);
+      break;
+    }
+    case 'undone':
+      r.result = { ...r.result, how: 'undone', at };
+      rec.state.outcome = { ...(rec.state.outcome || {}), how: 'undone' };
+      break;
     case 'stop':
       rec.state.status = 'stopped';
       r.stoppedAt = at;
@@ -264,7 +294,7 @@ function applyHolds(rec) {
   const s = rec.state;
   if (!s) return;
   const r = rec.run;
-  if (s.status === 'crashed' || s.status === 'stopped') return;
+  if (s.status === 'crashed' || s.status === 'stopped' || s.status === 'finished') return;
   if (r.paused && s.status !== 'finishing') s.status = 'paused';
   else if (r.capHit && s.status === 'running') s.status = 'waiting';
 }

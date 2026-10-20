@@ -108,6 +108,8 @@ export function fakeTeam(brains) {
     respond(id, r) { const s = sessions.get(id); if (!s) return { ok: false, error: 'gone' }; s.responses.push(r); return { ok: true }; },
     setPermissionMode(id, mode) { const s = sessions.get(id); if (s) s.mode = mode; return { ok: true }; },
     onPermission(cb) { permissionCb = cb; },
+    addCard(id, card) { const s = sessions.get(id); if (!s) return { ok: false }; s.cards = s.cards || []; const entryId = 'card' + (s.cards.length + 1); s.cards.push({ ...card, entryId }); return { ok: true, entryId }; },
+    patchCard(id, entryId, patch) { const s = sessions.get(id); const c = s?.cards?.find(x => x.entryId === entryId); if (!c) return { ok: false }; Object.assign(c, patch); return { ok: true }; },
     on: (id, fn) => sessions.get(id)?.listeners.add(fn),
     off: (id, fn) => sessions.get(id)?.listeners.delete(fn),
   };

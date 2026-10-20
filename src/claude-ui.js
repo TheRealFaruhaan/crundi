@@ -954,6 +954,29 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   /**
+   * A card Crundi itself puts in a chat (a factory's result, with its
+   * buttons). It is an entry like any other, so it is drawn by the same
+   * renderer on the full page and the phone's chat page, and survives a reload.
+   */
+  function addCard(id, card) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: `No session "${id}"` };
+    const entry = { ...card, id: genId(), kind: String(card.kind || 'card') };
+    emitEntry(s, entry);
+    schedulePersist(s);
+    return { ok: true, entryId: entry.id };
+  }
+
+  function patchCard(id, entryId, patch) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: `No session "${id}"` };
+    const entry = s.messages.find(m => m.id === entryId);
+    if (!entry) return { ok: false, error: 'That card is no longer in this chat' };
+    patchEntry(s, entry, patch);
+    return { ok: true };
+  }
+
+  /**
    * The plan, as clients see it.
    *
    * `status` is the plan's own lifecycle, not the session's permission mode:
@@ -2771,7 +2794,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, setFirstChatHandler, onSessionGone, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
+    history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, addCard, patchCard, setFirstChatHandler, onSessionGone, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },

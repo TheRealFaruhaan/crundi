@@ -220,3 +220,105 @@ export async function workSummary(path, baseCommit) {
   const keep = s => s.split('\n').filter(l => l.trim() && ![...NEVER_COMMIT, '.claude/skills'].some(p => l.includes(p))).slice(0, 60).join('\n');
   return { status: keep(st.stdout), diffStat: keep(stat.stdout) };
 }
+
+// ─── The result: diff, squash merge, undo ───
+
+/** What a run changed against where it started: diff stat and per-file counts. */
+export async function diffSummary(path, base) {
+  const stat = await git(['diff', '--stat=120', `${base}..HEAD`], path);
+  const num = await git(['diff', '--numstat', `${base}..HEAD`], path);
+  const files = num.stdout.split('\n').filter(Boolean).map(l => {
+    const [a, d, ...f] = l.split('\t');
+    return { file: f.join('\t'), added: a === '-' ? null : +a, removed: d === '-' ? null : +d };
+  }).filter(x => !NEVER_COMMIT.some(p => x.file.startsWith(p)));
+  return {
+    stat: stat.stdout.trim().split('\n').slice(-40).join('\n'),
+    files,
+    added: files.reduce((n, f) => n + (f.added || 0), 0),
+    removed: files.reduce((n, f) => n + (f.removed || 0), 0),
+  };
+}
+
+/** The full diff, capped. */
+export async function fullDiff(path, base, { maxBytes = 2_000_000 } = {}) {
+  const d = await git(['diff', `${base}..HEAD`], path);
+  const text = d.stdout;
+  return { diff: text.length > maxBytes ? text.slice(0, maxBytes) : text, truncated: text.length > maxBytes };
+}
+
+/** Where a branch is checked out, if anywhere. */
+async function checkedOutAt(repo, branch) {
+  const r = await git(['worktree', 'list', '--porcelain'], repo);
+  let path = '';
+  for (const line of r.stdout.split('\n')) {
+    if (line.startsWith('worktree ')) path = line.slice(9);
+    else if (line === `branch refs/heads/${branch}`) return path;
+  }
+  return '';
+}
+
+async function identityArgs(repo) {
+  const name = await git(['config', 'user.name'], repo);
+  const email = await git(['config', 'user.email'], repo);
+  return name.stdout.trim() && email.stdout.trim() ? [] : IDENTITY;
+}
+
+/**
+ * Squash the run's branch onto the parent branch as ONE commit, without
+ * touching anyone's working files:
+ *   1. git merge-tree computes the merged tree in the object store (conflicts
+ *      are reported, nothing is written to a checkout);
+ *   2. git commit-tree makes the single commit, with the parent's tip as its
+ *      only parent and the given message, as the repository's own identity;
+ *   3. the parent branch moves to it: `merge --ff-only` where it is checked
+ *      out (which refuses rather than overwrite local changes), `update-ref`
+ *      (compare-and-swap on the old tip) where it is not.
+ * @returns {{ok, commit?, before?, after?, conflict?, files?, blocked?, empty?, error?}}
+ */
+export async function squashMerge({ repo, parentBranch, branch, message }) {
+  const before = (await git(['rev-parse', `refs/heads/${parentBranch}`], repo)).stdout.trim();
+  const tip = (await git(['rev-parse', `refs/heads/${branch}`], repo)).stdout.trim();
+  if (!before || !tip) return { ok: false, error: `Could not find ${!before ? parentBranch : branch}.` };
+  const mt = await git(['merge-tree', '--write-tree', '--name-only', '--no-messages', before, tip], repo);
+  const lines = mt.stdout.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!mt.ok) {
+    if (mt.code === 1 && lines.length) return { ok: false, conflict: true, files: lines.slice(1), error: `Merging into ${parentBranch} conflicts in ${lines.slice(1).join(', ') || 'some files'}.` };
+    return { ok: false, error: `git merge-tree failed: ${mt.error}` };
+  }
+  const tree = lines[0];
+  const baseTree = (await git(['rev-parse', `${before}^{tree}`], repo)).stdout.trim();
+  if (tree === baseTree) return { ok: false, empty: true, error: `There is nothing to merge: ${parentBranch} already has all of it.` };
+  const c = await git([...(await identityArgs(repo)), 'commit-tree', tree, '-p', before, '-m', String(message || 'Factory result').slice(0, 20000)], repo);
+  if (!c.ok) return { ok: false, error: `git commit-tree failed: ${c.error}` };
+  const after = c.stdout.trim();
+  const at = await checkedOutAt(repo, parentBranch);
+  if (at) {
+    const ff = await git(['merge', '--ff-only', '-q', after], at);
+    if (!ff.ok) return { ok: false, blocked: true, error: `${parentBranch} is checked out in ${at} and its uncommitted changes would be overwritten. Commit or stash them, then merge again.` };
+  } else {
+    const u = await git(['update-ref', `refs/heads/${parentBranch}`, after, before], repo);
+    if (!u.ok) return { ok: false, error: `${parentBranch} moved while merging. Try again.` };
+  }
+  return { ok: true, commit: after, before, after };
+}
+
+/**
+ * Take a squash merge back, while nothing has been committed on top of it.
+ * The parent goes back to where it was (reset --keep where checked out, which
+ * keeps local changes and refuses if they are in the way), and the run's work
+ * is put on `restoreBranch` so nothing is lost.
+ */
+export async function undoMerge({ repo, parentBranch, before, after, restoreBranch }) {
+  const now = (await git(['rev-parse', `refs/heads/${parentBranch}`], repo)).stdout.trim();
+  if (now !== after) return { ok: false, moved: true, error: `${parentBranch} has moved on since the merge, so it cannot simply be taken back. Revert it instead: git revert ${after.slice(0, 12)}` };
+  if (restoreBranch) await git(['branch', '-f', restoreBranch, after], repo);
+  const at = await checkedOutAt(repo, parentBranch);
+  if (at) {
+    const r = await git(['reset', '--keep', '-q', before], at);
+    if (!r.ok) return { ok: false, blocked: true, error: `${parentBranch} is checked out in ${at} and its local changes are in the way of undoing. Commit or stash them, then undo again.` };
+  } else {
+    const u = await git(['update-ref', `refs/heads/${parentBranch}`, before, after], repo);
+    if (!u.ok) return { ok: false, error: `Could not move ${parentBranch} back: ${u.error}` };
+  }
+  return { ok: true };
+}

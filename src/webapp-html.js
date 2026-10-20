@@ -1113,6 +1113,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     .collab-site button { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.8rem; line-height: 1; padding: 0 3px; }
     .collab-site button:hover { color: var(--red); }
+    .term-factory-tag {
+      flex: none; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
+      color: var(--accent); border: 1px solid var(--accent); border-radius: 99px; padding: 1px 7px; margin-right: 4px;
+    }
     .term-collab-tag {
       flex: none; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.02em; white-space: nowrap;
       max-width: 110px; overflow: hidden; text-overflow: ellipsis;
@@ -6051,7 +6055,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
         return;
       }
       try {
-        await apiFetch(cellApiBase(id) + '/close', { method: 'POST' });
+        const res = await apiFetch(cellApiBase(id) + '/close', { method: 'POST' });
+        // Refused (a factory's chat while its run is going): say why, keep it.
+        if (res.status === 409) {
+          const j = await res.json().catch(() => ({}));
+          toast(j.error || 'This chat cannot be closed right now.', 'error');
+          return;
+        }
         terminals = terminals.filter(t => t.id !== id);
         if (focusedTermId === id) focusedTermId = null;
         delete termFont[id];
@@ -7301,6 +7311,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (!ctag) { ctag = document.createElement('span'); ctag.className = 'term-collab-tag'; kindTag.before(ctag); }
           ctag.textContent = whose;
           ctag.title = whose + '\\u2019s chat (outside collaborator). You can type here; it runs in their sandbox and counts toward their tokens.';
+        }
+        // A factory's Manager: this chat is the run's control point, and it
+        // cannot be closed while the run is going.
+        let ftag = el.querySelector('.term-factory-tag');
+        const isFactory = !!(t.factory && t.factory.role === 'manager');
+        if (!isFactory) { if (ftag) ftag.remove(); }
+        else if (kindTag) {
+          if (!ftag) { ftag = document.createElement('span'); ftag.className = 'term-factory-tag'; kindTag.before(ftag); }
+          ftag.textContent = 'Factory';
+          ftag.title = 'The Manager of a factory run. It stays open while the run is going: stop the factory to close it.';
         }
         let ptag = el.querySelector('.term-plan-tag');
         const p = planTagFor(t);
