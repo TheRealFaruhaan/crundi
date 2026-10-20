@@ -2054,6 +2054,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function onEscalation(cb) { escalateCb = cb; }
 
   /**
+   * Where a factory employee's permission requests go: its Manager decides,
+   * through the factory runner. Set by webapp.js. The card still shows in the
+   * employee's chat, marked as waiting on the Manager, and is answered with
+   * respond() like any other.
+   */
+  let factoryPermissionCb = null;
+  function onFactoryPermission(cb) { factoryPermissionCb = cb; }
+
+  /**
    * Asked once per collaborator: should the orientation be shown?
    *
    * Returns true exactly once per person — the record that answers it lives in
@@ -2138,6 +2147,34 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         s.pending.set(requestId, { entry, request: req });
         emitEntry(s, entry);
         respond(s.id, { requestId, behavior: 'allow' });
+        return;
+      }
+      // ─── Factory employee ───
+      // Nobody watches an employee's chat. A question for "the user" has no
+      // one to answer it, so it is declined with what to do instead; a
+      // permission request goes to the run's Manager.
+      if (s.factory && s.factory.role === 'employee' && factoryPermissionCb) {
+        s.pending.set(requestId, { entry, request: req });
+        if (isQuestion) {
+          emitEntry(s, entry);
+          respond(s.id, { requestId, behavior: 'deny', message: 'Nobody is watching this step, so there is no one to answer. Decide yourself, or hand off with escalate and the question.' });
+          return;
+        }
+        entry.escalated = true;
+        entry.routedTo = 'manager';
+        setState(s, 'needs-input');
+        emitEntry(s, entry);
+        pendingChanged(s);
+        try {
+          factoryPermissionCb({
+            sessionId: s.id, factory: s.factory, requestId,
+            toolName: req.tool_name, displayName: entry.displayName,
+            description: entry.description || entry.title || '',
+            input: req.input || {},
+          });
+        } catch (err) {
+          respond(s.id, { requestId, behavior: 'deny', message: `Could not reach the Manager: ${err.message}` });
+        }
         return;
       }
       if (s.collaborator && !isQuestion) {
@@ -2734,7 +2771,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, onEscalation, setFirstChatHandler, onSessionGone, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
+    history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, setFirstChatHandler, onSessionGone, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },

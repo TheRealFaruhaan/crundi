@@ -350,6 +350,30 @@ const TOOLS = [
     },
   },
 
+  {
+    name: 'factory_permission',
+    description: 'Manager of a Crundi factory run only: answer your team\'s permission requests (they arrive as "[Factory] Permission request" messages with ids like p3). Your decision is final. Give one decision per request; add rule (for example "Bash(npm test:*)" or "WebFetch(domain:docs.example.com)") to an allow to approve the same kind of request for the rest of the run. This is not a handoff: carry on afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        decisions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'The request id, e.g. p3' },
+              allow: { type: 'boolean' },
+              reason: { type: 'string', description: 'Why; the employee is told when you deny' },
+              rule: { type: 'string', description: 'Optional, with allow: a run-wide rule such as Bash(npm test:*)' },
+            },
+            required: ['id', 'allow'],
+          },
+        },
+      },
+      required: ['decisions'],
+    },
+  },
+
   // ─── Widgets: UI you author and place inside Crundi ───
   {
     name: 'widget_guide',
@@ -472,7 +496,7 @@ async function handleToolCall(name, args) {
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
   // Which chat is handing off is this process's own, never an argument.
-  if (name === 'factory_handoff') {
+  if (name === 'factory_handoff' || name === 'factory_permission') {
     delete args.sessionId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
@@ -553,7 +577,7 @@ const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
   : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name))
 ).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name))
-  .filter(t => IN_FACTORY || t.name !== 'factory_handoff');
+  .filter(t => IN_FACTORY || (t.name !== 'factory_handoff' && t.name !== 'factory_permission'));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: LISTED_TOOLS };

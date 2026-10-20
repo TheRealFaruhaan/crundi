@@ -189,8 +189,24 @@ exhaustion only allows exits; run caps bound everything.
     grant rules, do not escalate. Switching bypass **on** mid-run relaunches the
     Manager with `--resume` (CLI limitation); switching off is live.
   - *Normal*: the Manager's own actions ask the user.
-- **Hard deny list, all modes:** `sudo`, `systemctl restart crundi`, binding
-  80/443/8888/22/53, `git push`/remote writes.
+- **Hard deny list, all modes:** `sudo`/`su`/`doas`, restarting or stopping
+  Crundi or pm2, killing node/claude, binding 80/443/8888/22/53, `git push`
+  and remote changes, and writes outside the run's folders. Checked by the
+  runner on every employee request before the Manager sees it, and passed to
+  every factory chat as `--disallowedTools` prefix rules (all that binds a
+  Manager in bypass).
+- The factory's own MCP tools (`factory_handoff`, `factory_permission`,
+  `rename_chat`) are `--allowedTools` on every factory chat: an MCP call needs
+  permission otherwise, and a normal-mode Manager stalled on its first call.
+- Employees always run in `acceptEdits` (never bypass). AskUserQuestion from
+  an employee is declined with "decide yourself, or escalate".
+- The Manager answers with `factory_permission` `{ decisions: [{ id, allow,
+  reason, rule? }] }`. A rule is refused if too broad (`Bash`, `Bash(*)`), on
+  the deny list, or an edit rule. A Bash prefix rule never covers a compound
+  command (`;`, `&&`, pipes, substitution). A new rule also answers matching
+  requests already waiting. Requests are batched for 1.5 s.
+- Every decision (deny list, rule, Manager, dropped) is kept in the run's
+  permission log.
 
 ### 4.5 Sessions: no sleep, reachability GC
 - The pane parker (`src/panes.js`) **never parks** a session of an unfinished

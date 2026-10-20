@@ -3327,6 +3327,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'stop': result = await factoryRunner.stopRun(body.id); break;
         case 'resume': result = await factoryRunner.resume(body.id); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
+        case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
         default: return json(res, { ok: false, error: `Unknown factory run action: ${body.action}` }, 400);
       }
       if (result.ok) setTimeout(broadcastState, 200);
@@ -5786,6 +5787,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
         const { sessionId, ...payload } = a;
         try { return json(res, await factoryRunner.handoff(String(sessionId || ''), payload)); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      // The Manager answering its team's permission requests.
+      if (body.tool === 'factory_permission') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.answerPermissions(String(a.sessionId || ''), a.decisions)); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 

@@ -23,8 +23,9 @@ const TOOL = 'factory_handoff (mcp__crundi__factory_handoff)';
  * @param {object} o.employee       roster entry
  * @param {string} o.project
  * @param {object} o.paths          { worktree, branch, parentBranch, notesFile, sharedDir }
+ * @param {string} [o.managerMode]  'normal' | 'bypass' (the run's current setting)
  */
-export function systemPromptFor({ factory, employee, project, paths }) {
+export function systemPromptFor({ factory, employee, project, paths, managerMode = 'normal' }) {
   const isManager = employee.id === MANAGER_ID;
   const persona = (employee.persona || '').trim();
   const lines = [];
@@ -50,6 +51,14 @@ export function systemPromptFor({ factory, employee, project, paths }) {
       `- Your team works in ${paths.worktree} on the branch ${paths.branch}, cut from ${paths.parentBranch}. Read it to judge their work. Do not do their work yourself unless the person asks you to.`,
       `- When the whole task is done and you are satisfied with it, call ${TOOL} with finish: true and a summary of what was done.`,
       '- Never commit, merge, push or reset with git yourself. Crundi commits each step and merges the result when the person agrees.',
+      '',
+      'Permissions:',
+      '- Your team edits files in the run\'s worktrees freely. Anything else they want to do that needs permission (shell commands, web access, reading elsewhere) comes to you as a "[Factory] Permission request" message. Answer with factory_permission (mcp__crundi__factory_permission). Your decision is final: the person is not asked.',
+      '- Allow what the task genuinely needs; deny what is risky, destructive or off-task, and say why so they can find another way. For a safe command they will need again (tests, builds, linters), add a rule such as "Bash(npm test:*)" so it is allowed for the rest of the run without asking.',
+      '- Some things are refused before they reach you and cannot be allowed: sudo, restarting Crundi, pushing or changing remotes, the server\'s ports (80, 443, 8888, 22, 53), and writing outside the run\'s folders.',
+      managerMode === 'bypass'
+        ? '- The person launched you with bypass permissions: they trust you. Your own actions are not checked, and you should answer your team\'s requests promptly and generously within the task, without asking the person.'
+        : '- Your own actions ask the person in this chat as usual.',
     );
     const team = factory.roster.filter(r => r.id !== MANAGER_ID);
     if (team.length) {

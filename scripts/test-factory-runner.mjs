@@ -24,7 +24,7 @@ const base = mkdtempSync(join(tmpdir(), 'factory-runner-'));
 process.env.DATA_DIR = join(base, 'data');
 process.env.FACTORY_WORKTREES_DIR = join(base, 'worktrees');
 const { createFactoryRunner } = await import('../src/factory-runner.js');
-const { standard } = await import('./factory-fixtures.mjs');
+const { standard, fakeTeam } = await import('./factory-fixtures.mjs');
 
 let failed = 0;
 const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
@@ -44,41 +44,6 @@ function makeRepo(name) {
   sh(['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.'], dir);
   sh(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'init'], dir);
   return dir;
-}
-
-// ─── A fake team ───
-
-function fakeTeam(brains) {
-  const sessions = new Map();
-  let runner = null;
-  let n = 0;
-  const emit = (id, ev) => { for (const fn of sessions.get(id)?.listeners || []) fn(ev); };
-  const agents = {
-    async spawn(o) {
-      const id = 'c' + (++n);
-      sessions.set(id, { ...o, id, listeners: new Set(), alive: true, msgs: [], results: [] });
-      return { ok: true, id };
-    },
-    send(id, text) {
-      const s = sessions.get(id);
-      if (!s || !s.alive) return { ok: false, error: 'gone' };
-      s.msgs.push(text);
-      setTimeout(async () => {
-        const brain = brains[s.employeeId];
-        const out = brain ? await brain(text, s) : null;
-        if (out && out.payload) s.results.push(await runner.handoff(id, out.payload));
-        else if (out && out.idle) { emit(id, { type: 'state', state: 'working' }); emit(id, { type: 'state', state: 'idle' }); }
-      }, 5);
-      return { ok: true };
-    },
-    close(id) { const s = sessions.get(id); if (s) s.alive = false; },
-    interrupt() {},
-    isAlive: (id) => !!sessions.get(id)?.alive,
-    sessionUuid: (id) => 'uuid-' + id,
-    on: (id, fn) => sessions.get(id)?.listeners.add(fn),
-    off: (id, fn) => sessions.get(id)?.listeners.delete(fn),
-  };
-  return { agents, sessions, emit, setRunner: (r) => { runner = r; }, of: (emp) => [...sessions.values()].filter(s => s.employeeId === emp) };
 }
 
 const workIn = (msg) => (msg.match(/^Work in: (.+)$/m) || [])[1];

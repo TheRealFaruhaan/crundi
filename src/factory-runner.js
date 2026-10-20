@@ -37,6 +37,7 @@ import * as Engine from './factory-engine.js';
 import * as Git from './factory-git.js';
 import { validateFactory, MANAGER_ID } from './factory-model.js';
 import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage } from './factory-prompts.js';
+import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES } from './factory-permissions.js';
 
 /** Runs in these states hold their project: no second run can start. */
 export const UNFINISHED = new Set(['starting', 'running', 'waiting', 'paused', 'finishing', 'crashed']);
@@ -44,6 +45,8 @@ export const UNFINISHED = new Set(['starting', 'running', 'waiting', 'paused', '
 const SETTLE_MS = 20_000;
 const SETUP_TIMEOUT_MS = 15 * 60 * 1000;
 const SETUP_OUTPUT_MAX = 4000;
+const PERMISSION_BATCH_MS = 1500;   // parallel branches asking at once arrive as one message
+const PERMISSION_LOG_MAX = 500;
 
 /**
  * @param {object} o
@@ -58,7 +61,7 @@ const SETUP_OUTPUT_MAX = 4000;
 export function createFactoryRunner({
   dataDir, agents, getProject, getFactory, git = Git,
   notify = () => {}, onChange = () => {},
-  settleMs = SETTLE_MS, setupTimeoutMs = SETUP_TIMEOUT_MS,
+  settleMs = SETTLE_MS, setupTimeoutMs = SETUP_TIMEOUT_MS, permissionBatchMs = PERMISSION_BATCH_MS,
   now = () => new Date().toISOString(),
 }) {
   const RUNS = join(dataDir, 'factory-runs');
@@ -66,6 +69,9 @@ export function createFactoryRunner({
   const runs = new Map();
   /** chatId -> { runId, employeeId } */
   const chats = new Map();
+
+  // Employees' permission requests arrive here (see claude-ui onFactoryPermission).
+  if (typeof agents.onPermission === 'function') agents.onPermission((req) => onPermissionRequest(req));
 
   // ─── Persistence ───
 
@@ -100,6 +106,10 @@ export function createFactoryRunner({
         entry.meta.crashedAt = now();
         entry.state.status = 'crashed';
         for (const emp of Object.values(entry.meta.employees || {})) { emp.chatId = ''; }
+        // Those requests belonged to processes that are gone; nothing can answer
+        // them now. Kept aside so recovery can say what was waiting.
+        entry.meta.droppedPermissions = entry.meta.permissions || [];
+        entry.meta.permissions = [];
         persist(entry);
       }
       runs.set(entry.state.id, entry);
@@ -148,6 +158,9 @@ export function createFactoryRunner({
       }),
       employees: Object.fromEntries(Object.entries(m.employees || {}).map(([k, e]) => [k, { chatId: e.chatId, busy: e.busy || null, queued: (e.queue || []).length, name: roster.get(k)?.name || k }])),
       asks: m.asks || [],
+      managerMode: m.managerMode || s.snapshot.settings.managerMode,
+      permissions: (m.permissions || []).map(p => ({ id: p.id, employee: p.employee, toolName: p.toolName, input: p.input, at: p.at, sent: p.sent })),
+      rules: m.rules || [],
       outcome: s.outcome,
       setup: m.setup || null,
       error: m.error || '',
@@ -195,6 +208,8 @@ export function createFactoryRunner({
       factoryId, factoryVersion: got.factory.version,
       mergeMode: mergeMode === 'auto' || mergeMode === 'ask' ? mergeMode : state.snapshot.settings.mergeMode,
       employees: {}, ws: {}, asks: [], notices: {}, held: [], capExtra: 0, startedAt: now(),
+      managerMode: state.snapshot.settings.managerMode,
+      permissions: [], permSeq: 0, rules: [], permissionLog: [],
     };
     const entry = newEntry(state, meta);
     runs.set(id, entry);   // holds the project from this moment
@@ -271,9 +286,9 @@ export function createFactoryRunner({
     return m.employees[employeeId];
   }
 
-  async function ensureSession(entry, employeeId, { fresh = false } = {}) {
+  async function ensureSession(entry, employeeId, { fresh = false, reuseId = '' } = {}) {
     const emp = empOf(entry, employeeId);
-    if (emp.chatId && !fresh && agents.isAlive(emp.chatId)) return { ok: true, chatId: emp.chatId };
+    if (emp.chatId && !fresh && !reuseId && agents.isAlive(emp.chatId)) return { ok: true, chatId: emp.chatId };
     if (emp.chatId) { unwatch(entry, emp.chatId); try { await agents.close(emp.chatId); } catch { /* gone */ } chats.delete(emp.chatId); }
     const f = entry.state.snapshot;
     const r = f.roster.find(x => x.id === employeeId);
@@ -288,17 +303,21 @@ export function createFactoryRunner({
       title: isManager ? `Factory: ${f.name}` : `${r.name} · ${f.name}`,
       cwd: entry.meta.worktree,
       addDirs: [entry.meta.root, runDir(entry.state.id)].filter(Boolean),
-      systemPromptExtra: systemPromptFor({ factory: f, employee: r, project: entry.state.project, paths: paths(entry, employeeId) }),
+      systemPromptExtra: systemPromptFor({ factory: f, employee: r, project: entry.state.project, paths: paths(entry, employeeId), managerMode: managerModeOf(entry) }),
       model: r.model, effort: r.effort,
-      allowedTools: r.tools.allow,
-      disallowedTools: r.tools.deny,
-      // Until card 3 routes permission requests through the Manager: in
-      // bypass mode the whole team runs unprompted; otherwise edits are free
-      // and anything else asks in that person's chat.
-      skipPermissions: f.settings.managerMode === 'bypass',
-      permissionMode: f.settings.managerMode === 'bypass' ? '' : 'acceptEdits',
+      allowedTools: [...r.tools.allow, ...ALLOW_RULES],
+      // The fixed deny list rides on every chat: it is all that binds a
+      // Manager in bypass mode, which never asks.
+      disallowedTools: [...r.tools.deny, ...DENY_RULES],
+      // Employees: edits inside the run's folders are free (acceptEdits with
+      // --add-dir), anything else asks, and asking goes to the Manager.
+      // The Manager: bypass if the person chose it, else its own actions ask
+      // the person in its chat as usual.
+      skipPermissions: isManager && managerModeOf(entry) === 'bypass',
+      permissionMode: isManager ? '' : 'acceptEdits',
       background: !isManager,
       resumeId: resume,
+      id: reuseId || '',
     });
     if (!res.ok) return { ok: false, error: res.error || 'could not start' };
     emp.chatId = res.id;
@@ -365,6 +384,7 @@ export function createFactoryRunner({
       const emp = entry.meta.employees[employeeId];
       unwatch(entry, chatId);
       chats.delete(chatId);
+      dropPermissions(entry, (p) => p.chatId === chatId, '');
       if (!emp || emp.chatId !== chatId) return;
       emp.sessionUuid = emp.sessionUuid || '';
       emp.chatId = '';
@@ -495,6 +515,7 @@ export function createFactoryRunner({
       emp.queue = (emp.queue || []).filter(q => !ids.has(q.tokenId));
       if (emp.busy && ids.has(emp.busy)) {
         emp.busy = null;
+        dropPermissions(entry, (p) => p.chatId === emp.chatId, 'Your step was cancelled.');
         if (emp.chatId) {
           try { agents.interrupt(emp.chatId); } catch { /* not mid-turn */ }
           agents.send(emp.chatId, cancelMessage(ef.reason || 'the flow moved on'));
@@ -507,6 +528,7 @@ export function createFactoryRunner({
 
   async function onFinish(entry, ef) {
     entry.meta.finishedSummary = ef.summary;
+    dropPermissions(entry, () => true, 'The run has finished.');
     // The team is done; the Manager stays to present the result (card 5).
     for (const [eid, emp] of Object.entries(entry.meta.employees)) {
       if (eid === MANAGER_ID) { emp.busy = null; continue; }
@@ -536,6 +558,190 @@ export function createFactoryRunner({
     persist(entry);
     await runEffects(entry, res.effects);
     if (fromEmployee) await dequeue(entry, fromEmployee);
+  }
+
+  // ─── Permissions: employees ask, the Manager decides ───
+
+  function managerModeOf(entry) { return entry.meta.managerMode || entry.state.snapshot.settings.managerMode; }
+
+  function logPermission(entry, rec) {
+    const log = entry.meta.permissionLog || (entry.meta.permissionLog = []);
+    log.push({ at: now(), ...rec });
+    if (log.length > PERMISSION_LOG_MAX) log.splice(0, log.length - PERMISSION_LOG_MAX);
+  }
+
+  function answer(entry, item, allow, message) {
+    let r;
+    try { r = agents.respond(item.chatId, { requestId: item.requestId, behavior: allow ? 'allow' : 'deny', message }); }
+    catch (err) { r = { ok: false, error: err.message }; }
+    return r && r.ok !== false;
+  }
+
+  /** Remove queued requests; if a reason is given, the employees are told no. */
+  function dropPermissions(entry, pred, reason) {
+    const keep = [];
+    for (const p of entry.meta.permissions || []) {
+      if (!pred(p)) { keep.push(p); continue; }
+      if (reason) answer(entry, p, false, denyMessage(reason, 'Crundi'));
+      logPermission(entry, { id: p.id, employee: p.employee, toolName: p.toolName, decision: 'dropped', reason });
+    }
+    entry.meta.permissions = keep;
+  }
+
+  /** From claude-ui: an employee wants to do something its mode does not allow. */
+  function onPermissionRequest(req) {
+    const info = chatInfo(req.sessionId);
+    const entry = info && runs.get(info.runId);
+    if (!entry) {
+      try { agents.respond(req.sessionId, { requestId: req.requestId, behavior: 'deny', message: 'This chat is not part of a running factory.' }); } catch { /* gone */ }
+      return;
+    }
+    return locked(entry, async () => {
+      const roster = entry.state.snapshot.roster.find(r => r.id === info.employeeId);
+      const item = {
+        id: 'p' + (++entry.meta.permSeq),
+        chatId: req.sessionId, employeeId: info.employeeId, employee: roster?.name || info.employeeId,
+        tokenId: entry.meta.employees[info.employeeId]?.busy || '',
+        requestId: req.requestId, toolName: req.toolName, displayName: req.displayName,
+        description: String(req.description || '').slice(0, 1000),
+        input: clipInput(req.input), at: now(), sent: false,
+      };
+      if (!UNFINISHED.has(entry.state.status) || entry.state.status === 'crashed') {
+        answer(entry, item, false, denyMessage(`the run is ${entry.state.status}`, 'Crundi'));
+        return;
+      }
+      const why = hardDeny({ toolName: req.toolName, input: req.input }, { writableRoots: [entry.meta.root, runDir(entry.state.id)] });
+      if (why) {
+        answer(entry, item, false, denyMessage(why, 'Crundi'));
+        logPermission(entry, { id: item.id, employee: item.employee, toolName: item.toolName, input: item.input, decision: 'denied', by: 'deny-list', reason: why });
+        persist(entry);
+        return;
+      }
+      const rule = (entry.meta.rules || []).find(r => ruleMatches(r, { toolName: req.toolName, input: req.input }));
+      if (rule) {
+        answer(entry, item, true);
+        logPermission(entry, { id: item.id, employee: item.employee, toolName: item.toolName, input: item.input, decision: 'allowed', by: 'rule', rule });
+        persist(entry);
+        return;
+      }
+      entry.meta.permissions.push(item);
+      persist(entry);
+      scheduleDelivery(entry);
+    });
+  }
+
+  function clipInput(input) {
+    const out = {};
+    for (const [k, v] of Object.entries(input || {})) out[k] = typeof v === 'string' && v.length > 4000 ? v.slice(0, 4000) + '…' : v;
+    return out;
+  }
+
+  /** Requests are batched briefly, then sent to the Manager in one message. */
+  function scheduleDelivery(entry) {
+    if (entry.timers.perm) return;
+    entry.timers.perm = setTimeout(() => {
+      entry.timers.perm = null;
+      locked(entry, async () => {
+        const items = (entry.meta.permissions || []).filter(p => !p.sent);
+        if (!items.length) return;
+        const m = await ensureSession(entry, MANAGER_ID);
+        if (!m.ok) { dropPermissions(entry, (p) => !p.sent, `the Manager is unavailable (${m.error})`); persist(entry); return; }
+        const sent = agents.send(m.chatId, batchMessage(items, { bypass: managerModeOf(entry) === 'bypass' }));
+        if (sent && sent.ok === false) return scheduleDelivery(entry);
+        for (const p of items) p.sent = true;
+        persist(entry);
+      });
+    }, permissionBatchMs);
+    entry.timers.perm.unref?.();
+  }
+
+  /**
+   * factory_permission, from the Manager's chat.
+   * @param {string} chatId
+   * @param {Array<{id:string, allow:boolean, reason?:string, rule?:string}>} decisions
+   */
+  async function answerPermissions(chatId, decisions) {
+    const info = chatInfo(chatId);
+    if (!info) return { ok: false, error: 'This chat is not part of a factory run.' };
+    if (info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager answers permission requests.' };
+    const entry = runs.get(info.runId);
+    if (!entry) return { ok: false, error: 'That factory run no longer exists.' };
+    if (!Array.isArray(decisions) || !decisions.length) return { ok: false, error: 'Give decisions: a list of { id, allow, reason }.' };
+    return locked(entry, async () => {
+      const results = [];
+      const errors = [];
+      const newRules = [];
+      for (const d of decisions) {
+        const id = String(d?.id || '');
+        const item = entry.meta.permissions.find(p => p.id === id);
+        if (!item) { errors.push(`${id || '(no id)'}: no such request is waiting`); continue; }
+        const allow = d.allow === true || d.allow === 'true';
+        const reason = String(d.reason || '').slice(0, 1000);
+        if (allow && d.rule) {
+          const c = checkRule(d.rule);
+          if (!c.ok) { errors.push(`${id}: ${c.error} (the request itself was not answered)`); continue; }
+          if (!entry.meta.rules.includes(c.rule)) { entry.meta.rules.push(c.rule); newRules.push(c.rule); }
+        }
+        const delivered = answer(entry, item, allow, allow ? undefined : denyMessage(reason));
+        entry.meta.permissions = entry.meta.permissions.filter(p => p !== item);
+        logPermission(entry, { id, employee: item.employee, toolName: item.toolName, input: item.input, decision: allow ? 'allowed' : 'denied', by: 'manager', reason, rule: allow && d.rule ? d.rule : undefined });
+        results.push(`${id}: ${allow ? 'allowed' : 'denied'}${delivered ? '' : ' (that request was no longer waiting)'}`);
+      }
+      // A rule just granted answers anything else waiting that it covers.
+      if (newRules.length) {
+        for (const item of [...entry.meta.permissions]) {
+          const rule = newRules.find(r => ruleMatches(r, item));
+          if (!rule) continue;
+          answer(entry, item, true);
+          entry.meta.permissions = entry.meta.permissions.filter(p => p !== item);
+          logPermission(entry, { id: item.id, employee: item.employee, toolName: item.toolName, decision: 'allowed', by: 'rule', rule });
+          results.push(`${item.id}: allowed by your new rule ${rule}`);
+        }
+      }
+      persist(entry);
+      const left = entry.meta.permissions.map(p => p.id);
+      return {
+        ok: errors.length === 0 || results.length > 0,
+        message: [...results, ...errors.map(e => 'not done: ' + e)].join('\n') + (left.length ? `\nStill waiting: ${left.join(', ')}` : '\nNothing else is waiting.'),
+        ...(errors.length && !results.length ? { error: errors.join('\n') } : {}),
+      };
+    });
+  }
+
+  /**
+   * Switch the Manager between normal and bypass. Bypass can only be set when
+   * a CLI starts, so turning it on relaunches the Manager on the same
+   * conversation (--resume) under the same chat id; turning it off is live.
+   */
+  async function setManagerMode(runId, mode) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    if (mode !== 'bypass' && mode !== 'normal') return { ok: false, error: 'mode is "normal" or "bypass".' };
+    return locked(entry, async () => {
+      if (managerModeOf(entry) === mode) return { ok: true, run: summary(entry) };
+      const emp = empOf(entry, MANAGER_ID);
+      if (mode === 'normal') {
+        entry.meta.managerMode = 'normal';
+        if (emp.chatId && agents.isAlive(emp.chatId)) {
+          const r = agents.setPermissionMode(emp.chatId, 'default');
+          if (r && r.ok === false) return { ok: false, error: r.error };
+          agents.send(emp.chatId, '[Factory] The person turned bypass permissions off. Your own actions now ask them first. You still decide your team\'s permission requests.');
+        }
+        persist(entry);
+        return { ok: true, run: summary(entry) };
+      }
+      if (emp.chatId && agents.isAlive(emp.chatId) && agents.state(emp.chatId) !== 'idle') {
+        return { ok: false, error: 'The Manager is in the middle of a turn. Switch to bypass when it has stopped.' };
+      }
+      entry.meta.managerMode = 'bypass';
+      const sameId = emp.chatId;
+      if (sameId) emp.sessionUuid = agents.sessionUuid(sameId) || emp.sessionUuid;
+      const s = await ensureSession(entry, MANAGER_ID, { reuseId: sameId || '' });
+      if (!s.ok) { entry.meta.managerMode = 'normal'; persist(entry); return { ok: false, error: s.error }; }
+      if (emp.busy) agents.send(s.chatId, '[Factory] You were relaunched with bypass permissions: the person trusts you. You still owe a handoff for the step above; carry on.');
+      persist(entry);
+      return { ok: true, run: summary(entry) };
+    });
   }
 
   // ─── Clock ───
@@ -652,6 +858,7 @@ export function createFactoryRunner({
     if (!entry) return { ok: false, error: 'Run not found.' };
     return locked(entry, async () => {
       if (!UNFINISHED.has(entry.state.status)) return { ok: false, error: `The run is already ${entry.state.status}.` };
+      dropPermissions(entry, () => true, 'The run was stopped.');
       for (const [eid, emp] of Object.entries(entry.meta.employees)) {
         if (emp.chatId) {
           unwatch(entry, emp.chatId);
@@ -673,11 +880,12 @@ export function createFactoryRunner({
   function dispose() {
     for (const e of runs.values()) {
       clearClock(e);
+      clearTimeout(e.timers.perm);
       for (const id of Object.keys(e.watchers)) unwatch(e, id);
     }
   }
 
-  return { load, startRun, handoff, askReply, resume, stopRun, listRuns, getRun, activeRunFor, chatInfo, dispose };
+  return { load, startRun, handoff, askReply, resume, stopRun, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, dispose };
 }
 
 /** A commit subject from a summary: its first sentence, kept short. */
@@ -697,7 +905,9 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
   const dir = join(dataDir, 'factory-mcp');
   return {
     async spawn(o) {
-      const id = randomBytes(8).toString('hex');
+      // A relaunch (bypass switched on) keeps the chat's id, so the person's
+      // tab stays where it is.
+      const id = o.id && /^[0-9a-f]{16}$/.test(o.id) && !claudeUi.has(o.id) ? o.id : randomBytes(8).toString('hex');
       let mcpConfigFile = '';
       try {
         mkdirSync(dir, { recursive: true });
@@ -743,6 +953,10 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
     interrupt: (id) => claudeUi.interrupt(id),
     isAlive: (id) => !!(claudeUi.has(id) && claudeUi.meta(id)?.running),
     sessionUuid: (id) => claudeUi.meta(id)?.sessionId || '',
+    state: (id) => claudeUi.meta(id)?.state || '',
+    respond: (id, r) => claudeUi.respond(id, r),
+    setPermissionMode: (id, mode) => claudeUi.setPermissionMode(id, mode),
+    onPermission: (cb) => claudeUi.onFactoryPermission(cb),
     on: (id, fn) => claudeUi.on(id, fn),
     off: (id, fn) => claudeUi.off(id, fn),
   };
