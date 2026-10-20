@@ -107,10 +107,17 @@ fix), on save, on import, and at run start. Invalid factories save as
 3. End reachable from every node (reverse walk from End).
 4. Every decision answer wired (yes/no, every option, pick-many "none").
    Every Ask me reply wired.
-5. Every cycle (SCC) has an exit edge leaving it **and** a round limit.
+5. Every cycle has a way out (covered by 3) **and** a round limit. The limit
+   lives on an edge (`maxRounds`, usually the one going back round); the rule
+   is "remove every limited edge and the graph is acyclic".
 6. Every pick-many fan-out has exactly one matching Join; branches cannot leave
    the region except via escalation.
 7. A note edge cannot be a node's only way in.
+8. Every output takes exactly one flow edge; to branch, add a Decision.
+9. Only the Manager's Finish reaches End; Start leads to the Manager.
+10. A Join names its fan-out (`join.forkId`).
+11. A decision that follows Start, a Join or an Ask me must set `answeredBy`;
+    a chain of decisions is answered by the agent in front of the chain.
 
 **Dry run:** click through the graph without Claude, choosing answers by hand;
 shows path taken and loop counters.
