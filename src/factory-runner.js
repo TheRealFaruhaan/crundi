@@ -1265,7 +1265,17 @@ export function createFactoryRunner({
       const where = describeWhere(entry, dry.effects);
       await drain(entry);
       await dequeue(entry, info.employeeId);
-      if (payload?.finish) return { ok: true, message: 'The run is finished. Now present the result to the person in this chat: what was done and why, what changed, and how they can look at it.' };
+      if (payload?.finish) {
+        return {
+          ok: true,
+          message: [
+            'The run is finished. A card with the diff and the Merge / Request changes / Keep / Discard buttons is now in this chat for the person.',
+            'Present the result to them here: what was done and why, what changed, and anything they should check.',
+            `If it is something to look at (a page, an app), let them see it: start it from ${rr(entry).worktree} as a Crundi service (register_service with that folder as cwd, then start_service) on a free high port (4000-9999, never 8888), and show screenshots with show_image. Crundi removes that service when the run ends.`,
+            'Do not merge or commit yourself: the person decides on the card.',
+          ].join('\n'),
+        };
+      }
       return { ok: true, message: `Handed off${where ? ': ' + where : ''}. Your step is over. Stop here and wait; do not reply at length.` };
     });
   }
