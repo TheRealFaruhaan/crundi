@@ -463,6 +463,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         collaborator: s.collaborator
           ? { id: s.collaborator.id, name: s.collaborator.name || '', key: s.collaborator.key || '' }
           : null,
+        factory: s.factory || null,
       });
     }
     out.sort((a, b) => a.project === b.project ? (a.order - b.order) : a.project.localeCompare(b.project));
@@ -1010,6 +1011,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * @param {boolean} opts.userLayers     include the user's Settings/project system prompts
    * @param {string} opts.systemPromptExtra  appended last (the scheduled-job briefing)
    * @param {boolean} opts.persistSession false adds --no-session-persistence
+   * @param {object}  opts.factory        { runId, role:'manager'|'employee', employeeId } — a factory run owns this chat
+   * @param {string[]} opts.addDirs       extra folders the tools may reach (--add-dir)
+   * @param {object}  opts.extraEnv       added to the CLI's environment (and so its tool bridge's)
+   * @param {string[]} opts.allowedTools  --allowedTools rules (pre-approved)
+   * @param {string[]} opts.disallowedTools  --disallowedTools rules (removed)
+   * @param {string}  opts.mcpConfigFile  give the Crundi tools through --mcp-config instead of writing
+   *                                      .mcp.json into the working folder (a factory worktree: a new
+   *                                      folder's project servers need approval, and the file must not
+   *                                      land in the checkout)
    */
   async function create(alias, {
     title = '', model = '', effort = '', permissionMode = '',
@@ -1017,6 +1027,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     cwd = '', background = false,
     userLayers = true, systemPromptExtra = '', persistSession = true,
     collaborator = null,
+    factory = null, addDirs = [], extraEnv = {}, allowedTools = [], disallowedTools = [], mcpConfigFile = '',
     // A parked pane coming back: same id and order, so it keeps its place in
     // the workbench layout (which is keyed by id). Ignored if already taken.
     id: wantId = '', order: wantOrder = null,
@@ -1165,6 +1176,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
     if (model) args.push('--model', String(model));
     if (effort) args.push('--effort', String(effort));
+    // Factory employees: the run's other worktrees and its notes folder are
+    // reachable, and the roster's tool rules apply. Never for a collaborator,
+    // whose tool set is an exact allowlist decided above.
+    if (!collaborator) {
+      for (const d of (Array.isArray(addDirs) ? addDirs : [])) if (d && existsSync(d)) args.push('--add-dir', String(d));
+      const allow = (Array.isArray(allowedTools) ? allowedTools : []).filter(Boolean).map(String);
+      const deny = (Array.isArray(disallowedTools) ? disallowedTools : []).filter(Boolean).map(String);
+      if (allow.length) args.push('--allowedTools', allow.join(','));
+      if (deny.length) args.push('--disallowedTools', deny.join(','));
+    }
     // What this Claude is told about the machine it woke up on. Unattended runs
     // get Crundi's layer only — see system-prompt.js.
     // userLayers is forced off for a collaborator: the owner's global prompt is
@@ -1196,7 +1217,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // of them. The internal key reaches secret_get; theirs does not.
     // Collaborators get their config via --mcp-config above; nothing is written
     // into their worktree, so no key sits where their Claude or git can reach it.
-    if (!collaborator) {
+    if (!collaborator && mcpConfigFile && existsSync(mcpConfigFile)) {
+      args.push('--mcp-config', String(mcpConfigFile));
+    } else if (!collaborator) {
       try { writeMcpConfig(workdir, apiUrl, apiKey, key); } catch { /* non-fatal */ }
     }
 
@@ -1261,7 +1284,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // project's and the user's other servers for that chat: a fair trade for
     // a throwaway dev session, and never what production does.
     let devMcpFile = null;
-    if (!collaborator && process.env.CRUNDI_DEV === '1' && apiUrl) {
+    // A factory chat brings its own config, already pointed at this instance.
+    if (!collaborator && !mcpConfigFile && process.env.CRUNDI_DEV === '1' && apiUrl) {
       try {
         const devDir = join(config.dataDir, 'dev-mcp');
         mkdirSync(devDir, { recursive: true });
@@ -1296,6 +1320,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
           CRUNDI_UI_SESSION: '1',
           // Inherited by the tool bridge: which chat its calls belong to.
           CRUNDI_CHAT_ID: id,
+          ...(extraEnv && typeof extraEnv === 'object' ? extraEnv : {}),
           ...(apiUrl ? { CRUNDI_API_URL: apiUrl } : {}),
           ...(apiKey ? { CRUNDI_API_KEY: apiKey } : {}),
         },
@@ -1335,6 +1360,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // Set when this chat belongs to an outside collaborator. Drives where
       // permission requests go: they cannot approve their own escalations.
       collaborator: collaborator || null,
+      // Set when a factory run owns this chat (see factory-runner.js). The
+      // run's employees are kept out of the workbench and never parked.
+      factory: factory && typeof factory === 'object' ? { runId: String(factory.runId || ''), role: factory.role === 'manager' ? 'manager' : 'employee', employeeId: String(factory.employeeId || '') } : null,
       // An unattended job the scheduler is running. Its runner reports the
       // outcome, so the generic "Claude finished" ping skips it (see
       // handleAgentState in webapp.js). Cleared by setBackground on handover.
@@ -2585,6 +2613,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       sessionId: s.sessionId || '', model: s.model || '', effort: s.effort || '',
       permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
       background: !!s.background, collaborator: !!s.collaborator, cwd: s.cwd || '',
+      factory: s.factory || null,
       running: !!s.proc, state: s.state, busyTasks,
       pendingInjections: (s.pendingInjections || []).length,
     };

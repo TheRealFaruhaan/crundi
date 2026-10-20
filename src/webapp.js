@@ -40,6 +40,8 @@ import { listProjects, getProject as getProjectUnscoped, registerProject, remove
 import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
+import * as factoryStore from './factory-store.js';
+import { createFactoryRunner, claudeUiAgents } from './factory-runner.js';
 import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
@@ -943,6 +945,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // by default: if the owner is looking at Crundi the inbox badge already
     // says so; if not, the collaborator is sitting blocked.
     collabPermission: 'away',
+    // A factory run started, needs you (a question, a cap), finished or crashed.
+    factory: 'always',
   };
   const notifyPrefs = { ...NOTIFY_DEFAULTS };
   try {
@@ -972,6 +976,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       writeFileSync(sf, JSON.stringify(st));
     } catch { /* non-fatal */ }
   }
+
+  // ─── Factories: runs of a workflow template (factory-runner.js) ───
+  // Created here because it needs the chat manager, notifications and the
+  // event stream. Runs still going when Crundi stopped come back 'crashed'.
+  const factoryRunner = claudeUi ? createFactoryRunner({
+    dataDir: config.dataDir,
+    agents: claudeUiAgents(claudeUi, { dataDir: config.dataDir }),
+    getProject: (alias) => getProjectUnscoped(alias),
+    getFactory: (id) => factoryStore.getFactory(id),
+    notify: (kind, run, text) => { try { notifyEvent('factory', text); } catch { /* best effort */ } },
+    onChange: (run) => { try { broadcastSSE('factoryRun', { id: run.id, project: run.project, status: run.status }); } catch { /* not up yet */ } },
+  }) : null;
+  try { factoryRunner && factoryRunner.load(); } catch (err) { console.error('[factory] could not load runs:', err.message); }
 
   // WebSocket connections that have reported the user is actively at the window
   // (window focused AND page visible). Used to skip the agent-status Telegram
@@ -1793,7 +1810,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const liveTerms = claudeTerminals ? claudeTerminals.list() : [];
     // Chat sessions carry their own kind/agentState (derived from the message
     // stream), so they need no hook-state bookkeeping — only inclusion.
-    const uiSessions = claudeUi ? claudeUi.list() : [];
+    // A factory's employees are not workbench panes: they are reached from the
+    // run's live graph. Its Manager is an ordinary chat and stays.
+    const uiSessions = (claudeUi ? claudeUi.list() : []).filter(s => !s.factory || s.factory.role === 'manager');
     // Reconcile agent states against the live cells: drop states for cells that
     // are gone or no longer running (crash/force-close safety).
     const liveIds = new Set([...liveTerms.map(t => t.id), ...uiSessions.map(s => s.id)]);
@@ -3259,6 +3278,58 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         default: return json(res, { ok: false, error: `Unknown kanban action: ${action}` }, 400);
       }
       if (result.ok) broadcastKanban(project);
+      return json(res, result);
+    }
+
+    // ─── Factories (global library) and factory runs (per project) ───
+    // Owner only: none of these are in COLLABORATOR_ROUTES.
+    if (path === '/api/factories' && req.method === 'GET') {
+      return json(res, { ok: true, factories: factoryStore.listFactories() });
+    }
+    if (path === '/api/factories/get' && req.method === 'GET') {
+      const r = factoryStore.getFactory(url.searchParams.get('id'));
+      return r ? json(res, { ok: true, ...r }) : json(res, { ok: false, error: 'Factory not found' }, 404);
+    }
+    if (path === '/api/factories/export' && req.method === 'GET') {
+      return json(res, factoryStore.exportFactory(url.searchParams.get('id')));
+    }
+    if (path === '/api/factories' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      let result;
+      switch (body.action) {
+        case 'create': result = factoryStore.createFactory({ name: body.name, definition: body.definition }); break;
+        case 'save': result = factoryStore.saveFactory(body.id, body.definition, { baseVersion: body.baseVersion }); break;
+        case 'duplicate': result = factoryStore.duplicateFactory(body.id, { name: body.name }); break;
+        case 'delete': result = factoryStore.deleteFactory(body.id); break;
+        case 'import': result = factoryStore.importFactory(body.data); break;
+        default: return json(res, { ok: false, error: `Unknown factory action: ${body.action}` }, 400);
+      }
+      if (result.ok) broadcastSSE('factories', { id: body.id || (result.factory && result.factory.id), action: body.action });
+      return json(res, result);
+    }
+    if (path === '/api/factory-runs' && req.method === 'GET') {
+      if (!factoryRunner) return json(res, { ok: true, runs: [] });
+      return json(res, { ok: true, runs: factoryRunner.listRuns({ project: url.searchParams.get('project') || '' }) });
+    }
+    if (path === '/api/factory-runs/get' && req.method === 'GET') {
+      const r = factoryRunner && factoryRunner.getRun(url.searchParams.get('id'));
+      return r ? json(res, { ok: true, run: r }) : json(res, { ok: false, error: 'Run not found' }, 404);
+    }
+    if (path === '/api/factory-runs' && req.method === 'POST') {
+      if (!factoryRunner) return json(res, { ok: false, error: 'Chats are not available on this server.' }, 503);
+      const body = JSON.parse(await readBody(req));
+      let result;
+      switch (body.action) {
+        case 'start':
+          if (!body.project || aliasDenied(body.project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
+          result = await factoryRunner.startRun({ project: body.project, factoryId: body.factoryId, task: body.task, mergeMode: body.mergeMode });
+          break;
+        case 'stop': result = await factoryRunner.stopRun(body.id); break;
+        case 'resume': result = await factoryRunner.resume(body.id); break;
+        case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
+        default: return json(res, { ok: false, error: `Unknown factory run action: ${body.action}` }, 400);
+      }
+      if (result.ok) setTimeout(broadcastState, 200);
       return json(res, result);
     }
 
@@ -5706,6 +5777,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         else return json(res, { ok: false, error: 'This session is not a Crundi chat or terminal, so there is nothing to rename. Carry on without it.' });
         if (r.ok) { broadcastState(); retitleLiveCards(); }
         return json(res, r);
+      }
+
+      // ─── factory_handoff: a factory employee finishing its step ───
+      // Owner only (not in COLLABORATOR_MCP_TOOLS). Which chat is handing off
+      // comes from the bridge's own environment, never from Claude.
+      if (body.tool === 'factory_handoff') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        const { sessionId, ...payload } = a;
+        try { return json(res, await factoryRunner.handoff(String(sessionId || ''), payload)); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 
       // ─── Widget tools (owner only: not in COLLABORATOR_MCP_TOOLS) ───

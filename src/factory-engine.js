@@ -181,6 +181,11 @@ export function requirements(run, tokenId) {
 function describeEdge(run, ix, e, who, seen) {
   const target = ix.nodes.get(e.target);
   const item = { edgeId: e.id, requireNote: e.requireNote, noteLabel: e.noteLabel || '', maxRounds: e.maxRounds, used: run.edgeCounts[e.id] || 0 };
+  // "None of these" straight into its Join passes through: say where it goes on to.
+  if (target && target.type === 'join' && e.sourceHandle === 'none') {
+    const on = ix.outEdge.get(target.id + '|out');
+    if (on) return { ...describeEdge(run, ix, on, null, seen), requireNote: e.requireNote || on.requireNote };
+  }
   if (target && target.type === 'decision' && (target.decision.answeredBy || who) === who && !seen.has(target.id)) {
     item.decision = describeDecision(run, ix, target, who, seen).decision;
   } else {

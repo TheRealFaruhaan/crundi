@@ -56,10 +56,14 @@ per decision ("answered by: Manager" or another roster entry).
   answering employee.
 
 ### 2.4 Handoff
-Every employee session gets a `factory_handoff` MCP tool whose input schema is
-generated from its node's outgoing decisions and required notes. The employee
-cannot finish without answering all questions validly. Crundi validates and
-routes.
+Every factory chat (and only those) is offered a `factory_handoff` MCP tool:
+`{ summary, answers: {<decisionId>: answer}, notes: {<id>: text}, finish?,
+escalate? }`. The schema is generic (an MCP tool list is fixed when the session
+starts, but one employee visits different nodes); each step message spells out
+exactly which answers and notes apply, as a tree keyed by answer, with an
+example. Crundi validates the call against the route actually taken and, if
+anything is missing or wrong, the call fails saying what, and the employee
+calls again.
 
 **Back-edge into a pick many:** re-runs only the branches picked last time,
 unless the decision is answered again.
@@ -156,7 +160,14 @@ exhaustion only allows exits; run caps bound everything.
 - One worktree per run on branch `factory/<run-slug>`, cut from the project's
   current branch (the **parent branch**). Starts from the last commit; the start
   dialog warns if the checkout is dirty.
-- Location outside the repo: `~/.crundi/worktrees/<project>/<run>/`.
+- Location outside the repo and outside PROJECTS_DIR:
+  `~/crundi-factory-worktrees/<project>/<run>/main` (override with
+  `FACTORY_WORKTREES_DIR`), branch worktrees beside `main`.
+- Crundi commits every step as "Crundi Factory"; its own files (`.mcp.json`,
+  `.claude/skills`, `.factory`) are excluded by pathspec, because a linked
+  worktree's own `info/exclude` is ignored by git. Employees get the Crundi
+  tools via `--mcp-config` (a new folder's project MCP servers would need
+  approval), and `--add-dir` for the run's other worktrees and notes folder.
 - Parallel branches get **sub-worktrees** cut from the run branch, merged back
   automatically at the Join; on conflict the Manager sends a dev to resolve.
 - Per-factory **setup command** (e.g. `npm ci`) runs in each new worktree.

@@ -335,6 +335,21 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'Short title, at most 20 characters' }, long: { type: 'string', description: 'Longer title saying a little more, at most 50 characters' } }, required: ['title'] },
   },
 
+  {
+    name: 'factory_handoff',
+    description: 'End your step in a Crundi factory run and hand the work on. Call it exactly once when your step is done, then stop. Give a summary, your answers to the decisions your step message lists (answers keyed by decision id), any notes it lists (notes keyed by the id it gives), finish: true if you are the Manager and the whole task is done, or escalate with a reason instead of everything else if you cannot do the step. If something is missing or wrong the call fails and says what; fix it and call again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'What you did or decided, in a few sentences' },
+        answers: { type: 'object', description: 'Decision id -> answer: "yes"/"no", an option id, or a list of option ids for a pick-many ([] for none)', additionalProperties: true },
+        notes: { type: 'object', description: 'Note id (as listed in your step) -> text', additionalProperties: { type: 'string' } },
+        finish: { type: 'boolean', description: 'Manager only: the whole task is done' },
+        escalate: { type: 'string', description: 'Instead of everything else: why you cannot do this step. The Manager picks it up.' },
+      },
+    },
+  },
+
   // ─── Widgets: UI you author and place inside Crundi ───
   {
     name: 'widget_guide',
@@ -456,6 +471,11 @@ async function handleToolCall(name, args) {
     delete args.sessionId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
+  // Which chat is handing off is this process's own, never an argument.
+  if (name === 'factory_handoff') {
+    delete args.sessionId;
+    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+  }
   if (name === 'rename_chat') {
     delete args.sessionId; delete args.terminalId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
@@ -527,10 +547,13 @@ const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);
 // session has no transcript for Crundi to draw into, so it is not told about them.
 const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed']);
 const IN_CHAT = !!process.env.CRUNDI_CHAT_ID;
+// Only a factory run's chats are offered factory_handoff.
+const IN_FACTORY = !!process.env.CRUNDI_FACTORY_RUN;
 const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
   : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name))
-).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name));
+).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name))
+  .filter(t => IN_FACTORY || t.name !== 'factory_handoff');
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: LISTED_TOOLS };

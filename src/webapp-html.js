@@ -3996,6 +3996,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       secretRequest: 'always',
       limitReset: 'always',
       collabPermission: 'away',
+      factory: 'always',
     };
     let notifyPrefs = { ...NOTIFY_DEFAULTS_CLIENT };
 

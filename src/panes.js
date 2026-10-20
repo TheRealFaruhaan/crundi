@@ -75,7 +75,9 @@ export function createPanes(o) {
 
   /** Is this live pane something we restore at all? */
   function restorableTerminal(m) { return !!(m && m.restorable); }
-  function restorableChat(m) { return !!(m && !m.background && !m.collaborator); }
+  // A factory run's chats (its Manager and employees) belong to the runner: it
+  // keeps them awake while the run lasts and brings them back after a restart.
+  function restorableChat(m) { return !!(m && !m.background && !m.collaborator && !m.factory); }
 
   /** Write down every live pane as it is now (status 'live'). */
   function snapshot() {
