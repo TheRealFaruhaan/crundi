@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -35,12 +36,17 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = RobolectricDeviceQualifiers.Pixel7)
 abstract class ScreenshotTest {
-    /** Draw `content` full screen in the Crundi theme, with test services, and save it. */
+    /**
+     * Draw `content` full screen in the Crundi theme, with test services, and save it.
+     * Inspection mode is on for every image: a spinning indicator never lets
+     * Robolectric go idle (one cost about 19 minutes), so Spinner and
+     * LoadingState draw a still arc under it.
+     */
     fun shoot(name: String, services: AppServices = FakeServices.default(), host: Host = Host.None, content: @Composable () -> Unit) {
         require(Regex("^[a-z0-9]+(-[a-z0-9]+)*$").matches(name)) { "Screenshot names are lower-case-with-dashes: $name" }
         captureRoboImage(filePath = "build/outputs/screens/$name.png") {
             CrundiTheme {
-                CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host) {
+                CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalInspectionMode provides true) {
                     Box(Modifier.fillMaxSize().background(CrundiColors.BgPrimary)) { content() }
                 }
             }
