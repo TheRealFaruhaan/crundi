@@ -1,0 +1,20 @@
+{
+  "steps": [
+    {
+      "id": "factory-godseye",
+      "tag": "Factories",
+      "title": "The whole run, live, in the panel",
+      "body": "While a factory runs, the project's Factory panel is its live graph. You see who is working and what each is doing this second, the view follows the work, and anything that needs you shows at the top with the button that answers it. Tap someone to read their transcript right there, and come back to the graph.",
+      "art": "factory-godseye.html",
+      "artTitle": "Factory"
+    },
+    {
+      "id": "factory-limits",
+      "tag": "Factories",
+      "title": "Keep a run inside your usage",
+      "body": "Each factory can pause at a share of your 5-hour or weekly usage that you choose, carrying on by itself after the reset, so your own chats keep some room. You can also limit how many people work at once, or go one at a time above a share you set. All of it can be changed on a running run, and the Manager can pause and resume it when you ask.",
+      "art": "factory-limits.html",
+      "artTitle": "Usage"
+    }
+  ]
+}
