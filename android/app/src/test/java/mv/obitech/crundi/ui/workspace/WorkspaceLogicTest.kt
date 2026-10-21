@@ -9,6 +9,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import mv.obitech.crundi.ui.browser.brzTarget
+import mv.obitech.crundi.ui.workspace.terminal.radialPick
 import java.time.Instant
 
 /** The workspace's pure parts: the terminal emulator, the diff reader, the small formatters. */
@@ -182,5 +184,55 @@ class WorkspaceLogicTest {
         assertTrue(WorkspaceRoutes.diff("src/a.kt", true).startsWith("git/"))
         assertTrue(WorkspaceRoutes.terminal("abc").startsWith("terminals/"))
         assertTrue(WorkspaceRoutes.mediaItem("abc").startsWith("media/"))
+    }
+
+    // ─── Change 2: the terminal pane's keys and the browser ───
+
+    @Test fun keyPanelBytes() {
+        val k = mv.obitech.crundi.ui.workspace.terminal.TermKeyMap
+        assertEquals("\u001b", k.bytes("Escape", false))
+        assertEquals("\u001b[Z", k.bytes("shift+tab", false))
+        assertEquals("\u0003", k.bytes("ctrl+c", false))
+        assertEquals("\u001a", k.bytes("ctrl+z", false))
+        assertEquals("\u000c", k.bytes("ctrl+l", false))
+        assertEquals("\u001b[A", k.bytes("ArrowUp", false))
+        assertEquals("\u001bOA", k.bytes("ArrowUp", true))
+        assertEquals("\u001b[H", k.bytes("Home", false))
+        assertEquals("\u001b[F", k.bytes("End", false))
+        assertEquals(" ", k.bytes("Space", false))
+        assertEquals("\r", k.bytes("Enter", false))
+    }
+
+    @Test fun radialPicksByAngle() {
+        val pick = ::radialPick
+        val c = androidx.compose.ui.geometry.Offset(200f, 200f)
+        assertEquals(null, pick(c, androidx.compose.ui.geometry.Offset(210f, 205f), 80f, listOf(-90f, 90f, 180f, 0f, -135f, -45f, 135f, 45f)))
+        assertEquals(0, pick(c, androidx.compose.ui.geometry.Offset(200f, 120f), 80f, listOf(-90f, 90f, 180f, 0f, -135f, -45f, 135f, 45f)))   // up
+        assertEquals(3, pick(c, androidx.compose.ui.geometry.Offset(290f, 202f), 80f, listOf(-90f, 90f, 180f, 0f, -135f, -45f, 135f, 45f)))   // right
+        assertEquals(6, pick(c, androidx.compose.ui.geometry.Offset(140f, 260f), 80f, listOf(-90f, 90f, 180f, 0f, -135f, -45f, 135f, 45f)))   // down-left: ^C
+    }
+
+    @Test fun browserUrlBarAsTheWeb() {
+        val t = ::brzTarget
+        assertEquals(null, t("  "))
+        assertEquals("https://dhivo.mv", t("dhivo.mv"))
+        assertEquals("http://example.com/a", t("http://example.com/a"))
+        assertEquals("http://localhost:3000", t("localhost:3000"))
+        assertEquals("https://www.google.com/search?q=kotlin+compose", t("kotlin compose"))
+        assertEquals("http://localhost:4811", mv.obitech.crundi.ui.browser.serverTarget("localhost:4811"))
+        assertEquals("https://dhivo.mv", mv.obitech.crundi.ui.browser.serverTarget("dhivo.mv"))
+    }
+
+    @Test fun browserDeviceFitsAndCentres() {
+        val devs = mv.obitech.crundi.ui.browser.BRZ_DEVICES
+        assertTrue(devs.first().responsive)
+        assertEquals(19, devs.size)
+        val (s0, _, _) = mv.obitech.crundi.ui.browser.brzFit(devs.first(), 400f, 700f)
+        assertEquals(1f, s0)
+        val desk = devs.first { it.name == "Desktop 1280" }
+        val (s, l, top) = mv.obitech.crundi.ui.browser.brzFit(desk, 400f, 700f)
+        assertEquals(380f / 1280f, s, 0.0001f)
+        assertEquals(10f, l, 0.01f)
+        assertTrue(top > 10f)
     }
 }

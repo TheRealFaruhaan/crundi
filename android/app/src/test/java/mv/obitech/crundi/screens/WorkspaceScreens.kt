@@ -34,12 +34,48 @@ import mv.obitech.crundi.ui.workspace.media.MediaScreen
 import mv.obitech.crundi.ui.workspace.media.MediaState
 import mv.obitech.crundi.ui.workspace.media.MediaViewScreen
 import mv.obitech.crundi.ui.workspace.media.MediaViewState
-import mv.obitech.crundi.ui.workspace.terminal.NewTerminalDialog
 import mv.obitech.crundi.ui.workspace.terminal.TermEmulator
 import mv.obitech.crundi.ui.workspace.terminal.TerminalScreen
 import mv.obitech.crundi.ui.workspace.terminal.TerminalUi
-import mv.obitech.crundi.ui.workspace.terminal.TerminalsScreen
-import mv.obitech.crundi.ui.workspace.terminal.TerminalsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import mv.obitech.crundi.api.model.AgentState
+import mv.obitech.crundi.api.model.BrowserPlaces
+import mv.obitech.crundi.api.model.ServerBrowser
+import mv.obitech.crundi.api.model.ServerBrowsers
+import mv.obitech.crundi.ui.browser.BrowserScreen
+import mv.obitech.crundi.ui.browser.BrowserUi
+import mv.obitech.crundi.ui.browser.BrowsersSection
+import mv.obitech.crundi.ui.browser.BrowsersSections
+import mv.obitech.crundi.ui.browser.BrzDevice
+import mv.obitech.crundi.ui.browser.ServerBrowsersScreen
+import mv.obitech.crundi.ui.browser.ServerBrowsersState
+import mv.obitech.crundi.ui.browser.Shot
+import mv.obitech.crundi.ui.browser.brzFit
+import mv.obitech.crundi.ui.theme.CrundiColors
+import mv.obitech.crundi.ui.theme.CrundiType
+import mv.obitech.crundi.ui.workbench.PaneActions
+import mv.obitech.crundi.ui.workbench.PaneFrame
+import mv.obitech.crundi.ui.workbench.PaneKind
+import mv.obitech.crundi.ui.workbench.PaneView
+import mv.obitech.crundi.ui.workbench.WbCell
+import mv.obitech.crundi.ui.workspace.terminal.TermUpload
 import org.junit.Test
 import java.time.Instant
 
@@ -48,18 +84,6 @@ class WorkspaceScreens : ScreenshotTest() {
     private val now = Instant.parse("2026-10-21T15:00:00Z")
 
     // ─── Terminals ───
-
-    private val panes = listOf(
-        Pane("t1", "crundi", "Shell", kind = "terminal", status = "running", agentState = "idle", order = 0),
-        Pane("t2", "crundi", "Claude: release notes", kind = "terminal", status = "running", agentState = "working", order = 1),
-        Pane("t3", "crundi", "npm run dev", kind = "terminal", status = "running", agentState = "needs-input", order = 2),
-    )
-    private val parked = listOf(Pane("t4", "crundi", "Claude: tidy imports", kind = "parked", paneKind = "terminal", status = "parked", reason = "restart"))
-
-    @Test fun terminalsList() = shoot("terminals-list") { TerminalsScreen(TerminalsState("crundi", terminals = panes, parked = parked)) }
-    @Test fun terminalsEmpty() = shoot("terminals-empty") { TerminalsScreen(TerminalsState("crundi")) }
-    @Test fun terminalsNoProject() = shoot("terminals-no-project") { TerminalsScreen(TerminalsState(null)) }
-    @Test fun terminalsNew() = shoot("terminals-new") { NewTerminalDialog({}, {}) }
 
     private fun shellSession(): TermEmulator {
         val e = TermEmulator(50, 36)
@@ -101,8 +125,123 @@ class WorkspaceScreens : ScreenshotTest() {
         val e = shellSession()
         e.write("exit\r\n[Process exited with code 0]\r\n")
         shoot("terminals-terminal-exited") {
-            TerminalScreen(TerminalUi("Shell", "crundi · exited", DotState.Idle, exited = 0, ctrl = true, fontSize = 11), e, e.version)
+            TerminalScreen(TerminalUi("Shell", "crundi · exited", DotState.Idle, exited = 0, fontSize = 11), e, e.version)
         }
+    }
+
+    /** Inside a workbench pane: no top bar (the pane frame has it); the Select and scroll-to-bottom buttons; the input bar. */
+    @Composable
+    private fun InPane(content: @Composable () -> Unit) {
+        Column(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).padding(8.dp)) {
+            PaneFrame(PaneView("t:t1", PaneKind.Terminal, "Shell", AgentState.Idle), PaneActions.None, Modifier.fillMaxSize(), focused = true) { content() }
+        }
+    }
+
+    @Test fun terminalPane() {
+        val e = shellSession()
+        shoot("terminals-pane") { InPane { TerminalScreen(TerminalUi("Shell", input = "git log --oneline -5", columns = true), e, e.version, inPane = true, onSelect = {}, onAttach = {}) } }
+    }
+
+    @Test fun terminalPaneTools() {
+        val e = shellSession()
+        shoot("terminals-pane-keys") { InPane { TerminalScreen(TerminalUi("Shell", tools = true, columns = true), e, e.version, inPane = true, onAttach = {}, onLayout = {}) } }
+    }
+
+    @Test fun terminalPaneRadial() {
+        val e = shellSession()
+        shoot("terminals-pane-radial") { InPane { TerminalScreen(TerminalUi("Shell"), e, e.version, inPane = true, onAttach = {}, radialAt = Offset(560f, 900f)) } }
+    }
+
+    @Test fun terminalPaneSelect() {
+        val e = shellSession()
+        shoot("terminals-pane-select") { InPane { TerminalScreen(TerminalUi("Shell", selecting = true, upload = TermUpload("screenshot-login.png", 182_000, 410_000)), e, e.version, inPane = true, onAttach = {}) } }
+    }
+
+    @Test fun terminalPaneScrolledUp() {
+        val e = shellSession()
+        repeat(60) { e.write("\u001b[2m[build] :app:compilePlayDebugKotlin step $it\u001b[0m\r\n") }
+        shoot("terminals-pane-scrolled") {
+            InPane {
+                // Scrolled into the scrollback: the round arrow back to the bottom shows.
+                TerminalScreen(TerminalUi("Shell"), e, e.version, inPane = true, onAttach = {}, startAtTop = true)
+            }
+        }
+    }
+
+    // ─── Browsers ───
+
+    /** A stand-in for the WebView: a page at the device's size, scaled and centred as the real one is. */
+    @Composable
+    private fun FakePage(dev: BrzDevice) {
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+            val (scale, left, top) = brzFit(dev, maxWidth.value, maxHeight.value)
+            val w = if (dev.responsive) maxWidth else (dev.w * scale).dp
+            val h = if (dev.responsive) maxHeight else (dev.h * scale).dp
+            Column(Modifier.offset(left.dp, top.dp).size(w, h).background(Color.White)) {
+                Box(Modifier.fillMaxWidth().height(56.dp * (if (dev.responsive) 1f else scale * 1.6f)).background(Color(0xFF111827)))
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Dhivo", style = CrundiType.Heading.copy(color = Color(0xFF111827), fontSize = 22.sp))
+                    Text("Groceries and household goods, delivered across Male' the same day.", style = CrundiType.Body.copy(color = Color(0xFF374151)))
+                    repeat(4) { Box(Modifier.fillMaxWidth().height(70.dp).background(Color(0xFFF3F4F6), RoundedCornerShape(8.dp))) }
+                }
+            }
+        }
+    }
+
+    private val page = BrowserUi(url = "https://dhivo.mv/", hint = null, canBack = true)
+
+    @Test fun browserFill() = shoot("browsers-phone") {
+        Column(Modifier.fillMaxSize()) {
+            BrowsersSections(BrowsersSection.Phone) {}
+            BrowserScreen(page, {}, {}, {}, {}, {}, {}) { FakePage(it) }
+        }
+    }
+
+    @Test fun browserDevice() = shoot("browsers-phone-device") {
+        Column(Modifier.fillMaxSize()) {
+            BrowsersSections(BrowsersSection.Phone) {}
+            BrowserScreen(page.copy(device = 18, loading = true), {}, {}, {}, {}, {}, {}) { FakePage(it) }
+        }
+    }
+
+    @Test fun browserPicker() = shoot("browsers-device-picker") {
+        BrowserScreen(page.copy(device = 4), {}, {}, {}, {}, {}, {}, pickingDevice = true) { FakePage(it) }
+    }
+
+    @Test fun browserPane() = shoot("browsers-pane") {
+        Column(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).padding(8.dp)) {
+            PaneFrame(PaneView("w:b", PaneKind.Browser, "Browser", cell = WbCell("b", PaneKind.Browser)), PaneActions.None, Modifier.fillMaxSize(), focused = true) {
+                BrowserScreen(page.copy(device = 4, field = "dhivo.mv"), {}, {}, {}, {}, {}, {}) { FakePage(it) }
+            }
+        }
+    }
+
+    private val serverBrowsers: ServerBrowsers get() = FakeApi.model("browsers")
+
+    @Test fun browsersServer() = shoot("browsers-server") {
+        val list = serverBrowsers.browsers + ServerBrowser("crundi:login-check", "crundi", "login-check", "https://dev.faruhaan.com/login", 393, 852, "ready", on = "desktop")
+        Column(Modifier.fillMaxSize()) {
+            BrowsersSections(BrowsersSection.Server) {}
+            ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, browsers = list, places = BrowserPlaces(server = true, desktop = true), shots = mapOf("crundi:default" to Shot(loading = true))))
+        }
+    }
+
+    @Test fun browsersServerEmpty() = shoot("browsers-server-empty") {
+        Column(Modifier.fillMaxSize()) {
+            BrowsersSections(BrowsersSection.Server) {}
+            ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, places = BrowserPlaces(server = true)))
+        }
+    }
+
+    @Test fun browsersServerError() = shoot("browsers-server-error") {
+        Column(Modifier.fillMaxSize()) {
+            BrowsersSections(BrowsersSection.Server) {}
+            ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, error = "The server cannot be reached. Check the connection and try again."))
+        }
+    }
+
+    @Test fun browsersServerDevices() = shoot("browsers-server-devices") {
+        ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, browsers = serverBrowsers.browsers), pickingDevice = true)
     }
 
     // ─── Files ───

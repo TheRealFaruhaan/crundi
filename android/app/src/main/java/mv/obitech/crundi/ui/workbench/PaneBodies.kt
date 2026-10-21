@@ -22,7 +22,14 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
         when (v.kind) {
             PaneKind.Chat -> ChatRoute(v.paneId!!)                                          // ui.chats
             PaneKind.Terminal -> TerminalRoute(v.paneId!!)                                  // ui.workspace
-            PaneKind.Parked -> ParkedBody(v, { wb.resume(v) }, busy = wb.resuming[v.key] == true, preview = { val id = v.paneId; if (v.parkedAs == PaneKind.Chat && id != null) mv.obitech.crundi.ui.chats.ParkedChatPreview(id) else GhostLines() }) // Lead (preview: ui.chats / ui.workspace)
+            PaneKind.Parked -> ParkedBody(v, { wb.resume(v) }, busy = wb.resuming[v.key] == true, preview = {
+                val id = v.paneId
+                when {
+                    id == null -> GhostLines()
+                    v.parkedAs == PaneKind.Chat -> mv.obitech.crundi.ui.chats.ParkedChatPreview(id)                 // ui.chats
+                    else -> mv.obitech.crundi.ui.workspace.terminal.TerminalPreview(id)                          // ui.workspace
+                }
+            }) // Lead
             PaneKind.Pending -> TerminalLauncher({ wb.launch(v.key, it) }, busy = wb.launching[v.key] == true, error = wb.launchErrors[v.key]) // Lead
             PaneKind.Files -> FilesRoute()                                                  // ui.workspace
             PaneKind.Git -> GitRoute()                                                      // ui.workspace
