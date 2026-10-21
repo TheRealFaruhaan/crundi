@@ -961,13 +961,27 @@ async function confirmAndInstall() {
  * does this with spawnSync, which froze the app ("Not Responding"), and Force
  * Quit then killed the install half way. Resolves { ok, code, output }.
  */
-function installDebAsync(file, hold = {}) {
+/** Can sudo run without asking (NOPASSWD)? Then no prompt is needed at all. */
+function sudoWithoutPassword() {
+  return new Promise((resolve) => {
+    try {
+      const c = spawn('sudo', ['-n', 'true'], { stdio: 'ignore' });
+      const t = setTimeout(() => { try { c.kill('SIGKILL'); } catch { /* gone */ } resolve(false); }, 5000);
+      c.on('error', () => { clearTimeout(t); resolve(false); });
+      c.on('close', (code) => { clearTimeout(t); resolve(code === 0); });
+    } catch { resolve(false); }
+  });
+}
+
+function installDebAsync(file, hold = {}, { viaSudo = false } = {}) {
   return new Promise((resolve) => {
     let out = '';
     let child;
     try {
       // dpkg first; if dependencies are missing, let apt pull them in.
-      child = spawn('pkexec', ['/bin/sh', '-c', 'dpkg -i "$1" || apt-get install -f -y', 'crundi-update', file], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const install = ['/bin/sh', '-c', 'dpkg -i "$1" || apt-get install -f -y', 'crundi-update', file];
+      child = viaSudo ? spawn('sudo', ['-n', ...install], { stdio: ['ignore', 'pipe', 'pipe'] })
+        : spawn('pkexec', install, { stdio: ['ignore', 'pipe', 'pipe'] });
       hold.child = child;
     } catch (err) { resolve({ ok: false, code: -1, output: err.message }); return; }
     const add = (b) => { out = (out + b.toString()).slice(-4000); };
@@ -1022,7 +1036,25 @@ function installInTerminal(file) {
 async function installUpdateNow() {
   if (updateInstalling) return;
   updateInstalling = true;
-  if (process.platform === 'linux' && /\.deb$/i.test(updateFile) && existsSync(updateFile) && existsSync('/usr/bin/pkexec')) {
+  const linuxDeb = process.platform === 'linux' && /\.deb$/i.test(updateFile) && existsSync(updateFile);
+  // Passwordless sudo: install in the background, no prompt at all.
+  if (linuxDeb && await sudoWithoutPassword()) {
+    appendLog('[update] Installing ' + updateFile + ' with sudo (no password needed)…');
+    updateState.installing = true; sendUpdateStatus();
+    const r = await installDebAsync(updateFile, {}, { viaSudo: true });
+    updateState.installing = false; sendUpdateStatus();
+    if (r.ok) {
+      appendLog('[update] Installed; restarting…');
+      app.isQuitting = true;
+      quitting = true;
+      try { await stopServerProcess(); } catch { /* ignore */ }
+      app.relaunch();
+      app.exit(0);
+      return;
+    }
+    appendLog(`[update] sudo install did not finish (exit ${r.code}): ${r.output}; trying pkexec`);
+  }
+  if (linuxDeb && existsSync('/usr/bin/pkexec')) {
     // Install while everything still runs: cancelling the password prompt
     // leaves Crundi exactly as it was. Only a successful install restarts it.
     appendLog('[update] Installing ' + updateFile + ' with pkexec…');
@@ -1092,6 +1124,21 @@ async function installUpdateNow() {
     try { await stopServerProcess(); } catch { /* ignore */ }
     app.relaunch();
     app.exit(0);
+    return;
+  }
+  // No pkexec either: never fall back to the library's blocking install,
+  // which freezes the app. Offer the terminal.
+  if (linuxDeb) {
+    if (installInTerminal(updateFile)) {
+      app.isQuitting = true;
+      quitting = true;
+      try { await stopServerProcess(); } catch { /* ignore */ }
+      app.exit(0);
+      return;
+    }
+    updateInstalling = false;
+    if (mainWindow && !mainWindow.isDestroyed()) dialog.showMessageBox(mainWindow, { type: 'info', message: 'Install the update in a terminal.', detail: 'sudo apt install ' + updateFile }).catch(() => {});
+    clipboard.writeText('sudo apt install ' + shq(updateFile));
     return;
   }
   appendLog('[update] Installing — stopping server first…');
