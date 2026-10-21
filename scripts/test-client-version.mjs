@@ -141,7 +141,8 @@ const pl = server.slice(server.indexOf("path === '/api/pair/page-login'"), serve
 ok(pl.length > 0 && /dev\.role !== 'background'/.test(pl), 'only a paired phone\'s own background login may ask for its page login');
 ok(/f\.device\?\.role !== 'page'/.test(pl) && !pl.includes('revokeFamily('), 'it retires that phone\'s old page login alone, not the whole phone');
 ok(/role: 'page' \}\)/.test(pl), 'and the new one is the phone\'s page login, listed and revoked with the phone');
-ok(page.includes('const APP_LOGIN = !!window.CrundiLogin;') && chatPage.includes('var APP_LOGIN = !!window.CrundiLogin;'), 'both pages take the login from the app when it offers one');
+ok(page.includes('const APP_LOGIN = !!window.CrundiLogin;') && chatPage.includes('var APP_LOGIN = !FRAME_LOGIN && !!window.CrundiLogin;'), 'both pages take the login from the app when it offers one');
+ok(page.includes('window.crundiFrameSession = {') && /FRAME_LOGIN = \(function \(\) \{ try \{ return window\.top !== window\.self && window\.top\.location\.origin === location\.origin && window\.top\.crundiFrameSession/.test(chatPage), 'a chat page embedded in the main page (the live graph) borrows its login, which works inside the app too');
 const mainLogin = page.slice(page.indexOf('const APP_LOGIN'), page.indexOf('function clearSession()'));
 ok(/if \(APP_LOGIN\) \{ token = d\.token; scheduleRefresh\(d\.expiresIn\); return true; \}/.test(mainLogin), 'and keep nothing of it in their own storage');
 ok(page.includes("askAppLogin('renew')") && chatPage.includes("askAppLogin('renew')"), 'they renew by asking the app, never with a refresh token of their own');
