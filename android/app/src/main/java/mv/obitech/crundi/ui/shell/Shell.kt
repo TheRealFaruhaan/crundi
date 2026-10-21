@@ -114,6 +114,8 @@ fun ShellScaffold(
     onDrawer: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     addMenuOpen: Boolean = false,
+    /** Drawn over the content under the top bar, like the drawer: the approvals dropdown. */
+    overlay: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     BackHandler(enabled = drawerOpen) { onDrawer(false) }
@@ -137,6 +139,7 @@ fun ShellScaffold(
                     onPairAnother = { onDrawer(false); callbacks.onPairAnother() },
                 )
             }
+            overlay()
         }
     }
 }

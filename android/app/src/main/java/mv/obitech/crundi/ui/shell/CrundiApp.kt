@@ -62,6 +62,7 @@ fun CrundiApp(
     onOpened: () -> Unit = {},
     drawerOpenAtStart: Boolean = false,
     addMenuOpenAtStart: Boolean = false,
+    approvalsOpenAtStart: Boolean = false,
 ) {
     val navigator = remember(nav) { Navigator(nav) }
     val data by services.shell.state.collectAsStateWithLifecycle()
@@ -69,6 +70,7 @@ fun CrundiApp(
     val route = entry?.destination?.route
     var drawer by remember { mutableStateOf(drawerOpenAtStart) }
     var addingProject by remember { mutableStateOf(false) }
+    var approvalsOpen by remember { mutableStateOf(approvalsOpenAtStart) }
     val wb = rememberWorkbench(services.api, data.currentProject, LocalWorkbenchStore.current, host)
     LaunchedEffect(openRoute) {
         if (openRoute != null) { navigator.to(openRoute); onOpened() }
@@ -79,7 +81,7 @@ fun CrundiApp(
     val atRoot = route == null || Routes.isAreaRoot(route)
     val ctx = LocalContext.current
     var lastBack by remember { mutableLongStateOf(0L) }
-    BackHandler(enabled = atRoot && !drawer && wb.full == null) {
+    BackHandler(enabled = atRoot && !drawer && !approvalsOpen && wb.full == null) {
         val now = System.currentTimeMillis()
         if (now - lastBack < 2000) host.close()
         else { lastBack = now; Toast.makeText(ctx.applicationContext, "Press back again to exit", Toast.LENGTH_SHORT).show() }
@@ -93,7 +95,7 @@ fun CrundiApp(
             callbacks = ShellCallbacks(
                 onArea = navigator::area,
                 onProject = { services.shell.selectProject(it); navigator.area(Area.Workbench) },
-                onApprovals = { navigator.to(Routes.APPROVALS) },
+                onApprovals = { drawer = false; approvalsOpen = !approvalsOpen },
                 onUsage = { navigator.to(Area.Usage.key) },
                 onPanels = { navigator.area(Area.Panels) },
                 onAddProject = { addingProject = true },
@@ -107,6 +109,7 @@ fun CrundiApp(
             drawerOpen = drawer,
             onDrawer = { drawer = it },
             addMenuOpen = addMenuOpenAtStart,
+            overlay = { if (approvalsOpen && atRoot) mv.obitech.crundi.ui.chats.ApprovalsDropdownRoute { approvalsOpen = false } },
             modifier = modifier,
         ) {
             NavHost(navController = nav, startDestination = Area.Workbench.key) {
