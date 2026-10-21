@@ -448,12 +448,44 @@ everyone on Haiku, one run each.
 | Tests (all passing, rerun by hand) | 26 | 40 |
 | Edge-case probes (bad %-encoding, 1 MB body, long title, bad JSON) | all handled | all handled |
 
-The factory's reviewer filed two blocking findings in its own first draft
-(fixed, verified) and three nits (dismissed). Conclusion shown in What's new:
-at this size use a chat; factories are for work too big for one
-conversation, not yet measured. An earlier factory attempt was discarded:
-the chat test's `pkill -f "node src/index.js"` killed the dev Crundi it ran
-on, which led to pkill/killall joining the factory deny rules.
+**Completeness, driven through each page at 390 px** (add, edit, search
+hit, no-match message, delete with confirm, empty-title message, no
+horizontal scroll, notes kept across a server restart): both passed every
+check. Server stopped while saving: the chat's page showed the raw
+"Failed to fetch" at the top of the form, out of view when scrolled; the
+factory's showed "Could not reach the server. Check your connection and try
+again." under the form.
+
+**Features beyond the brief.** Both: confirm before delete, search delay,
+aria-live messages, sticky header, dates. Chat only: a 0/120 title counter;
+the form always on screen. Factory only: a full-screen editor on phones with
+Cancel and Save in a top bar, focus moved to the title, a floating New note
+button, two-line previews with an ellipsis, reduced-motion support. Against
+it: the factory's server listened on every interface (the chat's on
+127.0.0.1 only).
+
+**Design, two blind reviews** (Claude agents shown the same eight
+screenshots, labels A/B swapped between them, not told who made which):
+
+| out of 10 | Chat | Factory |
+|---|---|---|
+| Visual polish | 5, 5 | 7, 7 |
+| Typography and hierarchy | 5, 5 | 8, 8 |
+| Layout and spacing | 4, 4 | 7, 7 |
+| Phone usability | 3, 3 | 8, 9 |
+| Empty and error states | 3, 3 | 6, 6 |
+| Overall | 4, 4 | 7, 7.5 |
+
+Both reviewers would ship the factory's app ("puts the notes first on a
+phone", "error written for people"); the chat's was "a form with a list
+attached". Screenshots: /tmp/fx-dev/eval/ at the time.
+
+What's new shows: the chat was quicker and cheaper; the factory's app was
+better made; factories are intended for large work carried from start to
+finish (new projects, features across interface, server and data). An
+earlier factory attempt was discarded: the chat test's
+`pkill -f "node src/index.js"` killed the dev Crundi it ran on, which led to
+pkill/killall joining the factory deny rules.
 
 ## 5. UI
 

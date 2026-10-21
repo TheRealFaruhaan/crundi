@@ -11,8 +11,8 @@
     {
       "id": "factory-measured",
       "tag": "Factories",
-      "title": "When a factory pays off, measured",
-      "body": "Same change request (a small notes app, about 700 lines), both on Haiku, one run each. One chat: 3.4 min, 24 turns, about $0.04. The Product squad factory: 7.7 min, 166 turns, about $0.18. Both met every done check; the factory added tests and a review that caught two bugs. At this size, use a chat. Factories are for work too big for one conversation, which we have not measured yet.",
+      "title": "One chat or a factory, measured",
+      "body": "Same change request (a small notes app), both on Haiku, and both apps met every done check. The chat was quicker and cheaper: 3.4 min and $0.04, against 7.7 min and $0.18. The factory's app was better made: 40 tests to 26, a phone editor, plain error messages, and blind design reviews of 7 and 7.5 out of 10, against 4. Factories are intended for large work, start to finish: new projects, and features across interface, server and data.",
       "art": "factory-measure.html",
       "artTitle": "Chat or factory"
     },
