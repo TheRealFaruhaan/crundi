@@ -33,6 +33,9 @@ object CrundiColors {
     val Sky = Color(0xFF38BDF8)            // --sky: waiting
     val SkyDim = Color(0x2E38BDF8)
     val Scrim = Color(0xB3000000)          // dialog backdrop: rgba(0,0,0,0.7)
+    val Ask = Color(0xFFC084FC)            // factory graph: an Ask step, "waiting on you"
+    val Wait = Color(0xFFD946EF)           // factory graph: a Wait step's token
+    val WaitLight = Color(0xFFF0ABFC)      // factory graph: a Wait step's head
 
     /** --accent-grad: the active tab's underline, the active row's edge, primary emphasis. */
     val AccentGrad: Brush = Brush.linearGradient(listOf(Accent, AccentHover))
