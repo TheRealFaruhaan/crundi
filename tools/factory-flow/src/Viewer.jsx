@@ -39,7 +39,7 @@ function describe(ev, names, nodes) {
     case 'wait-done': return { k: ev.outcome === 'timeout' ? 'escalate' : 'info', main: `${nodes.get(ev.nodeId)?.label || 'Wait'}: ${ev.outcome === 'timeout' ? 'gave up waiting' : 'over'}`, sub: first(ev.detail) };
     case 'perm-decided': return ev.by === 'manager' || ev.by === 'deny-list' || ev.by === 'gatekeeper' ? { k: ev.decision === 'allowed' ? 'info' : 'escalate', main: `${ev.employee}: ${ev.toolName} ${ev.decision === 'escalated' ? 'passed to the Manager' : ev.decision}${ev.by === 'deny-list' ? ' (never allowed)' : ev.decision === 'escalated' ? ' by the Gatekeeper' : ev.by === 'gatekeeper' ? ' by the Gatekeeper' : ' by the Manager'}`, sub: first(ev.reason || ev.input?.command || ev.input?.url || '') } : null;
     case 'delegate': return { k: 'handoff', main: `The Manager handed ${who(ev.employeeId)} a job`, sub: first(ev.task) };
-    case 'manager-message': return { k: 'info', main: `The Manager told ${who(ev.employeeId)}`, sub: first(ev.text) };
+    case 'manager-message': return { k: 'info', main: `The Manager ${ev.hold ? 'held' : ev.interrupt ? 'stopped and told' : 'told'} ${who(ev.employeeId)}`, sub: first(ev.text) };
     case 'team-mode': return { k: 'info', main: ev.mode === 'bypass' ? 'The team now runs with bypass' : 'The team asks again' };
     case 'policy': return { k: 'info', main: 'The Manager set its permission policy', sub: first(ev.text) };
     case 'rule': return { k: 'info', main: 'Rule granted', sub: ev.rule };
@@ -258,7 +258,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
   // Everyone at work right now, with what they are doing.
   const working = live && run && !['crashed', 'paused', 'stopped', 'finished'].includes(run.status) ? (run.tokens || []).filter(t => t.status === 'work' || t.status === 'answer').map(t => {
     const e = run.employees?.[t.employeeId] || {};
-    return { id: t.id, nodeId: t.nodeId, name: t.employee || names.get(t.employeeId) || 'Someone', what: t.job ? 'Job: ' + first(t.job, 50) : (e.activity?.text || (t.status === 'answer' ? 'Deciding' : 'Starting')), state: e.activity?.state || '', chatId: e.chatId || '', blocked: !!t.blocked };
+    return { id: t.id, nodeId: t.nodeId, name: t.employee || names.get(t.employeeId) || 'Someone', what: e.held ? 'Held by the Manager' : t.job ? 'Job: ' + first(t.job, 50) : (e.activity?.text || (t.status === 'answer' ? 'Deciding' : 'Starting')), state: e.activity?.state || '', chatId: e.chatId || '', blocked: !!t.blocked };
   }) : [];
   const seats = live && run ? (run.waitingForSeat || []) : [];
   const strip = (working.length > 0 || seats.length > 0) && (

@@ -6013,7 +6013,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       if (body.tool === 'factory_message') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
-        try { return json(res, await factoryRunner.messageFromManager(String(a.sessionId || ''), a.employee, a.text)); }
+        try { return json(res, await factoryRunner.messageFromManager(String(a.sessionId || ''), a.employee, a.text, { interrupt: !!a.interrupt, hold: !!a.hold })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
       if (body.tool === 'factory_control') {

@@ -226,7 +226,7 @@ export function createFactoryRunner({
         const e = L.employees[x.id] || {};
         let activity = null;
         if (e.chatId && agents.activity) { try { activity = agents.activity(e.chatId); } catch { activity = null; } }
-        return [x.id, { chatId: e.chatId || '', busy: e.busy || null, queued: (e.queue || []).length, retired: !!r.retired[x.id], name: x.name, ...(activity ? { activity } : {}) }];
+        return [x.id, { chatId: e.chatId || '', busy: e.busy || null, queued: (e.queue || []).length, retired: !!r.retired[x.id], name: x.name, ...(e.held ? { held: true } : {}), ...(activity ? { activity } : {}) }];
       })),
       liveSessions: Object.values(L.employees).filter(e => e.chatId).length,
       usage: usageOf(r),
@@ -541,6 +541,7 @@ export function createFactoryRunner({
         writeCache(entry);
         return;
       }
+      if (emp.held) return;   // told by the Manager to wait: idle on purpose
       if (!emp.nudged) {
         emp.nudged = true;
         agents.send(chatId, nudgeMessage());
@@ -1921,7 +1922,7 @@ export function createFactoryRunner({
    * there is nobody to tell, and factory_delegate or the next step's notes
    * are the way.
    */
-  async function messageFromManager(chatId, employee, text) {
+  async function messageFromManager(chatId, employee, text, { interrupt = false, hold = false } = {}) {
     const info = chatInfo(chatId);
     if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run can do this.' };
     const entry = runs.get(info.runId);
@@ -1940,10 +1941,20 @@ export function createFactoryRunner({
       }
       const t = st(entry).tokens.find(x => x.id === emp.busy);
       const node = st(entry).snapshot.nodes.find(n => n.id === t?.nodeId);
-      const sent = agents.send(emp.chatId, `[Factory] A message from the Manager while you work on "${node?.label || (t?.delegate ? 'the job it gave you' : 'your step')}":\n\n${body}\n\nCarry on with your step; this message does not end it.`);
-      if (sent && sent.ok === false) return { ok: false, error: `Could not reach ${r.name}: ${sent.error}` };
-      commit(entry, { type: 'manager-message', employeeId: r.id, text: body });
-      return { ok: true, message: `Told ${r.name}. They read it in their running step; it does not end it.` };
+      // Stop their turn first, the way the person's Stop button does, so the
+      // message is read now rather than when they next pause.
+      if (interrupt && agents.interrupt) { try { await agents.interrupt(emp.chatId); } catch { /* it may have just ended */ } }
+      // Held: told to wait, so an idle step is expected, not a stall.
+      const wasHeld = !!emp.held;
+      emp.held = !!hold;
+      const tail = hold
+        ? 'Stop where you are and wait. Do not hand off and do nothing else until the Manager tells you to carry on; your work so far stays as it is.'
+        : wasHeld ? 'You may carry on with your step now.' : 'Carry on with your step; this message does not end it.';
+      const sent = agents.send(emp.chatId, `[Factory] A message from the Manager${interrupt ? ' (your turn was stopped for it)' : ''} while you work on "${node?.label || (t?.delegate ? 'the job it gave you' : 'your step')}":\n\n${body}\n\n${tail}`);
+      if (sent && sent.ok === false) { emp.held = wasHeld; return { ok: false, error: `Could not reach ${r.name}: ${sent.error}` }; }
+      commit(entry, { type: 'manager-message', employeeId: r.id, text: body, ...(interrupt ? { interrupt: true } : {}), ...(hold ? { hold: true } : {}) });
+      writeCache(entry);
+      return { ok: true, message: hold ? `Told ${r.name} to wait. Send them another message (without hold) to let them carry on.` : `Told ${r.name}${interrupt ? ' (their turn was stopped first)' : ''}. It does not end their step.` };
     });
   }
 

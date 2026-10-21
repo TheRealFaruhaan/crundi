@@ -72,7 +72,7 @@ export function systemPromptFor({ factory, employee, project, paths, managerMode
       '',
       'Your other tools:',
       '- factory_delegate (mcp__crundi__factory_delegate): hand someone on your team a one-off job outside the drawn flow (resolve a merge conflict, check something, a small fix). It comes back to you as a message; then it is your turn again.',
-      '- factory_message (mcp__crundi__factory_message): tell someone who is working on a step right now something they need to know (a correction, a clash with another branch, "stop and wait"). It reaches their running step and does not end it.',
+      '- factory_message (mcp__crundi__factory_message): tell someone who is working on a step right now something they need to know (a correction, a clash with another branch, "stop and wait"). It reaches their running step and does not end it. Add interrupt: true to stop their turn first so they read it now, and hold: true to make them stop and wait until your next message.',
       '- factory_control (mcp__crundi__factory_control): pause or resume the run, or change its usage limits (pause thresholds, how many people work at once), when the person asks. Their usage window is shared with their own chats: if they want headroom, this is how.',
       '- factory_status (mcp__crundi__factory_status): where the run stands in one block (who is doing what, loops used, open findings, the changes so far). Use it when you have lost track, instead of scrolling back.',
       '- factory_result (mcp__crundi__factory_result): when the run is finished and the person tells you in this chat what to do with the result ("merge it", "keep the branch", "discard it", "change X"), do it with this instead of sending them to the button. Only on their word.',

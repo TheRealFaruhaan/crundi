@@ -126,6 +126,12 @@ function setup(name, limits, usage = { value: null }) {
   const m = await r.messageFromManager(mgr.id, 'Frontend dev', 'Delete your Terminals.kt; the workspace owns terminals.');
   ok(m.ok && /A message from the Manager while you work on "Frontend dev"/.test(fe.msgs.at(-1)) && /Terminals\.kt/.test(fe.msgs.at(-1)) && /does not end it/.test(fe.msgs.at(-1)), 'message: reaches the running step, saying it does not end it');
   ok(!(await r.messageFromManager(fe.id, 'Backend dev', 'x')).ok, 'message: only the Manager sends them');
+  let interrupted = 0; team.agents.interrupt = () => { interrupted++; };
+  const h = await r.messageFromManager(mgr.id, 'Frontend dev', 'Stop: the build lock is jammed.', { interrupt: true, hold: true });
+  ok(h.ok && interrupted === 1 && /your turn was stopped for it/.test(fe.msgs.at(-1)) && /Stop where you are and wait/.test(fe.msgs.at(-1)), 'message: interrupt stops their turn first; hold tells them to wait');
+  ok(r.getRun(st.run.id).employees.fe.held === true, 'summary: shows them held');
+  const go = await r.messageFromManager(mgr.id, 'Frontend dev', 'Lock is free.');
+  ok(go.ok && /You may carry on with your step now/.test(fe.msgs.at(-1)) && !r.getRun(st.run.id).employees.fe.held, 'message: the next message releases them');
   const idle = await r.messageFromManager(mgr.id, 'Security dev', 'x');
   ok(!idle.ok && /not working on a step/.test(idle.error) && /Working now: .*Frontend dev/.test(idle.error), 'message: refused for someone not mid-step, naming who is');
   await r.stopRun(st.run.id); r.dispose();

@@ -422,8 +422,8 @@ const TOOLS = [
   },
   {
     name: 'factory_message',
-    description: 'Manager of a Crundi factory run only: send a message into the chat of someone on your team who is working on a step right now (a correction, a heads-up, "stop and wait"), delivered as if typed into their chat. It does not end their step. Only works while they hold a step; otherwise hand them a job with factory_delegate when it is your turn.',
-    inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, text: { type: 'string' } }, required: ['employee', 'text'] },
+    description: 'Manager of a Crundi factory run only: send a message into the chat of someone on your team who is working on a step right now (a correction, a heads-up, "stop and wait"), delivered as if typed into their chat. It does not end their step. interrupt: stop their current turn first so they read it now; hold: tell them to stop and wait until your next message. Only works while they hold a step; otherwise hand them a job with factory_delegate when it is your turn.',
+    inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, text: { type: 'string' }, interrupt: { type: 'boolean', description: 'Stop their current turn first (like the Stop button), so they read it now' }, hold: { type: 'boolean', description: 'Tell them to stop and wait until your next message; their idle step is not treated as stalled' } }, required: ['employee', 'text'] },
   },
   {
     name: 'factory_delegate',
