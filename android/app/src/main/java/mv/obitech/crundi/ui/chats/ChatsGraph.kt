@@ -8,12 +8,8 @@ import mv.obitech.crundi.ui.shell.Area
 
 /** Owned by the chats developer: Chats, one chat (also the bubble), the approvals list. Terminals: ui.workspace. */
 fun NavGraphBuilder.chatsGraph() {
-    composable(Area.Chats.key) { ChatsRoute() }
-    composable(Area.Terminals.key) { TerminalsScreen() }
+    // No Chats or Terminals tab since change 2: chats and terminals are Workbench panes.
     composable(Routes.CHAT) { e -> ChatRoute(e.arguments?.getString("chatId").orEmpty()) }
     composable(Routes.APPROVALS) { ApprovalsRoute() }
 }
-
-/** Terminals are built by ui.workspace (the workspace dev's persona); this only hands over. */
-@Composable fun TerminalsScreen() = mv.obitech.crundi.ui.workspace.terminal.TerminalsRoute()
 

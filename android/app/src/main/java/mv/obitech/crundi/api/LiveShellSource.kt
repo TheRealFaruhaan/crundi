@@ -45,9 +45,10 @@ class LiveShellSource(
 ) : ShellSource {
     private val chosen = MutableStateFlow(prefs?.getString(key, null))
 
-    override val state: StateFlow<ShellData> = combine(client.events.state, client.events.approvals, client.events.usage, client.status, chosen) { st, ap, us, status, pick ->
-        build(st, ap, us, status, pick)
-    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), ShellData(serverHost = serverHost, username = username, connection = Connection.Reconnecting))
+    override val state: StateFlow<ShellData> = combine(
+        combine(client.events.state, client.events.approvals, client.events.usage, client.status, chosen) { st, ap, us, status, pick -> build(st, ap, us, status, pick) },
+        client.events.secretRequests,
+    ) { d, secrets -> if (secrets.isEmpty()) d else d.copy(tabBadges = d.tabBadges + ("secrets" to secrets.size)) }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), ShellData(serverHost = serverHost, username = username, connection = Connection.Reconnecting))
 
     override fun selectProject(alias: String) {
         chosen.value = alias
@@ -58,16 +59,32 @@ class LiveShellSource(
 
     private fun build(st: ServerState?, ap: Approvals, us: Usage?, status: LiveStatus, pick: String?): ShellData {
         val projects = st?.projects.orEmpty().map { p ->
-            ProjectSummary(p.alias, p.label, p.path, dotOf(st?.projectState(p.alias)), p.icon.ifEmpty { null })
+            val svcs = st?.servicesOf(p.alias).orEmpty()
+            val runs = st?.factoryRuns.orEmpty().filter { it.project.equals(p.alias, true) }
+            ProjectSummary(
+                p.alias, p.label, p.path, dotOf(st?.projectState(p.alias)), p.icon.ifEmpty { null },
+                liveService = svcs.any { it.running }, hasService = svcs.isNotEmpty(),
+                scheduled = st?.scheduled.orEmpty().any { it.equals(p.alias, true) },
+                factory = when {
+                    runs.any { needsYou(it.status, it.waitingOn) } -> mv.obitech.crundi.ui.shell.FactoryMark.Needs
+                    runs.isNotEmpty() -> mv.obitech.crundi.ui.shell.FactoryMark.Running
+                    else -> null
+                },
+            )
         }
+        val waiting = st?.factoryRuns.orEmpty().count { needsYou(it.status, it.waitingOn) }
         val current = pick?.takeIf { a -> projects.isEmpty() || projects.any { it.alias == a } } ?: projects.firstOrNull()?.alias
         return ShellData(
             serverHost = serverHost, username = username, connection = connectionOf(status),
             projects = projects, currentProject = current, approvals = ap.count, usage = glance(us),
+            tabBadges = if (waiting > 0) mapOf("factories" to waiting) else emptyMap(),
         )
     }
 
     companion object {
+        /** A factory run waiting on the person (the Factories tab's badge, the sidebar's yellow mark). */
+        fun needsYou(status: String, waitingOn: String) = status == "waiting" || status == "finishing" || waitingOn == "ask" || waitingOn == "manager"
+
         fun dotOf(s: AgentState?): DotState = when (s) {
             AgentState.NeedsInput -> DotState.NeedsInput
             AgentState.Working -> DotState.Working
@@ -93,6 +110,8 @@ class LiveShellSource(
             return UsageGlance(
                 weekUsed = (u.week?.utilization ?: 0) / 100f, weekElapsed = elapsed(u.week?.resetsAtMs ?: 0, WEEK_MS),
                 fiveHourUsed = (u.fiveHour?.utilization ?: 0) / 100f, fiveHourElapsed = elapsed(u.fiveHour?.resetsAtMs ?: 0, FIVE_H_MS),
+                weekResetsAt = u.week?.resetsAtMs ?: 0, fiveHourResetsAt = u.fiveHour?.resetsAtMs ?: 0,
+                fetchedAt = runCatching { java.time.Instant.parse(u.fetchedAt).toEpochMilli() }.getOrDefault(0L),
             )
         }
     }

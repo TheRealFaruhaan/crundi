@@ -9,9 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -49,8 +47,8 @@ class ShellScreens : ScreenshotTest() {
     /** Every area through the real NavHost, as the person sees it after tapping its tab. */
     @Test
     fun everyArea() {
-        for (a in Area.entries) shoot("shell-${a.key}") {
-            CrundiApp(services = FakeServices.default(), host = Host.None, openRoute = if (a == Area.Chats) null else a.key)
+        for (a in Area.entries.filter { it.tab }) shoot("shell-${a.key}") {
+            CrundiApp(services = FakeServices.default(), host = Host.None, openRoute = if (a == Area.Workbench) null else a.key)
         }
     }
 
@@ -58,11 +56,12 @@ class ShellScreens : ScreenshotTest() {
     fun drawer() = shoot("shell-drawer") {
         ShellScaffold(
             data = FakeServices.shellData,
-            current = Area.Chats,
+            current = Area.Workbench,
             showChrome = true,
-            onArea = {}, onProject = {}, onApprovals = {},
-            drawerState = rememberDrawerState(DrawerValue.Open),
-        ) { EmptyState("message-square", "Chats") }
+            callbacks = mv.obitech.crundi.ui.shell.ShellCallbacks(),
+            drawerOpen = true,
+            onDrawer = {},
+        ) { EmptyState("terminal", "Workbench") }
     }
 
     @Test

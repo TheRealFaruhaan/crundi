@@ -17,6 +17,8 @@ fun NavGraphBuilder.operationsGraph() {
     composable(Area.Secrets.key) { SecretsRoute() }
     composable(Area.Usage.key) { UsageRoute() }
     composable(Area.Settings.key) { SettingsRoute() }
+    composable(Area.Info.key) { InfoRoute() }
+    composable(Area.Panels.key) { mv.obitech.crundi.ui.panels.PanelsRoute() }
     composable(SettingsPage.Server.route) { ServerPageRoute() }
     composable(SettingsPage.Notifications.route) { NotificationsRoute() }
     composable(SettingsPage.Prompt.route) { PromptRoute() }

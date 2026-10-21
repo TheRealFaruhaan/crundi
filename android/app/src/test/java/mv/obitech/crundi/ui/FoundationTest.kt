@@ -39,8 +39,8 @@ class FoundationTest {
         assertNull(DeepLinks.route("//evil.example/chat/x"))
         assertNull(DeepLinks.route("https://evil.example/chat/x"))
         assertNull(DeepLinks.route("/chat/../x"))
-        assertEquals(Area.Chats, Routes.areaOf(Routes.chat("x")))
-        assertTrue(Routes.isAreaRoot("files"))
+        assertNull(Routes.areaOf(Routes.chat("x")))  // one chat full screen: not a tab, no chrome
+        assertTrue(Routes.isAreaRoot("files")); assertTrue(Routes.isAreaRoot("workbench")); assertTrue(!Routes.isAreaRoot("usage"))
         assertTrue(!Routes.isAreaRoot("files/view"))
     }
 

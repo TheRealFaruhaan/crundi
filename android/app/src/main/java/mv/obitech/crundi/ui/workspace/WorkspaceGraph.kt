@@ -31,6 +31,7 @@ fun NavGraphBuilder.workspaceGraph() {
     composable(WorkspaceRoutes.FILE, arguments = listOf(str("path"))) { e -> FileViewRoute(e.arguments?.getString("path").orEmpty()) }
 
     composable(Area.Media.key) { MediaRoute() }
+    composable(Area.Browsers.key) { mv.obitech.crundi.ui.browser.BrowsersRoute() }
     composable(WorkspaceRoutes.MEDIA_ITEM) { e -> MediaViewRoute(e.arguments?.getString("id").orEmpty()) }
 
     composable(WorkspaceRoutes.TERMINAL) { e -> TerminalRoute(e.arguments?.getString("id").orEmpty()) }

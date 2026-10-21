@@ -1,9 +1,16 @@
 package mv.obitech.crundi.ui.shell
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -14,31 +21,26 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.DrawerState
-import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.layout.positionInParent
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,149 +49,257 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
+import androidx.compose.ui.unit.sp
 import mv.obitech.crundi.R
-import mv.obitech.crundi.ui.components.BadgeKind
 import mv.obitech.crundi.ui.components.CrundiDivider
 import mv.obitech.crundi.ui.components.CrundiIconButton
 import mv.obitech.crundi.ui.components.ListRow
 import mv.obitech.crundi.ui.components.SectionHeader
 import mv.obitech.crundi.ui.components.StateDot
-import mv.obitech.crundi.ui.components.StatusBadge
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.theme.Dimens
+import mv.obitech.crundi.ui.workbench.MenuItem
+import mv.obitech.crundi.ui.workbench.PaneKind
+import mv.obitech.crundi.ui.workbench.WbLayout
 
-/** The Crundi head, as in the desktop's top bar. */
+/** The Crundi mark as a still picture (the drawable), for large places. The top bar uses [RobotHead]. */
 @Composable
 fun CrundiMark(modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp = 24.dp) {
     Image(painterResource(R.drawable.ic_logo), contentDescription = "Crundi", modifier = modifier.size(size))
 }
 
+/** What the shell's controls do. Everything defaults to nothing (tests). */
+class ShellCallbacks(
+    val onArea: (Area) -> Unit = {},
+    val onProject: (String) -> Unit = {},
+    val onApprovals: () -> Unit = {},
+    val onUsage: () -> Unit = {},
+    val onPanels: () -> Unit = {},
+    val onAddProject: () -> Unit = {},
+    val onAppSettings: () -> Unit = {},
+    val onPairAnother: () -> Unit = {},
+    /** The "+" beside the Workbench tab. */
+    val onAdd: (PaneKind) -> Unit = {},
+    val onFit: () -> Unit = {},
+    val onToggleLayout: () -> Unit = {},
+    val layout: WbLayout = WbLayout.Columns,
+)
+
 /**
- * The whole frame round the app, stateless so a screenshot test can draw it:
- * the project drawer (the desktop's sidebar), and, on an area's front page,
- * the top bar and the tab row. `content` is the current screen (the NavHost).
+ * The frame round the app, as the mobile web: the top bar, the icon tab strip
+ * (on an area's front page), and the projects drawer sliding in from the left
+ * under the top bar. Stateless apart from the add menu, so a screenshot test
+ * can draw it; [drawerOpen] is hoisted for back handling.
  */
 @Composable
 fun ShellScaffold(
     data: ShellData,
     current: Area?,
     showChrome: Boolean,
-    onArea: (Area) -> Unit,
-    onProject: (String) -> Unit,
-    onApprovals: () -> Unit,
+    callbacks: ShellCallbacks,
+    drawerOpen: Boolean,
+    onDrawer: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    drawerState: DrawerState = rememberDrawerState(DrawerValue.Closed),
-    onAppSettings: () -> Unit = {},
-    onPairAnother: () -> Unit = {},
+    addMenuOpen: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        gesturesEnabled = showChrome || drawerState.isOpen,
-        scrimColor = CrundiColors.Scrim,
-        drawerContent = {
-            ProjectDrawer(
-                data = data,
-                onProject = { scope.launch { drawerState.close() }; onProject(it) },
-                onAppSettings = { scope.launch { drawerState.close() }; onAppSettings() },
-                onPairAnother = { scope.launch { drawerState.close() }; onPairAnother() },
-            )
-        },
-        modifier = modifier,
-    ) {
-        Column(Modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
-            if (showChrome) {
-                ShellTopBar(data, onMenu = { scope.launch { drawerState.open() } }, onApprovals = onApprovals)
-                AreaTabs(current, onArea)
+    BackHandler(enabled = drawerOpen) { onDrawer(false) }
+    Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
+        if (showChrome) ShellTopBar(data, onMenu = { onDrawer(!drawerOpen) }, callbacks = callbacks)
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            Column(Modifier.fillMaxSize()) {
+                if (showChrome) AreaTabs(current, data, callbacks, addMenuOpen)
+                Box(Modifier.fillMaxWidth().weight(1f)) { content() }
             }
-            Box(Modifier.fillMaxWidth().weight(1f)) { content() }
+            // The drawer and its dim overlay start under the top bar, as on the web.
+            androidx.compose.animation.AnimatedVisibility(drawerOpen, enter = fadeIn(), exit = fadeOut()) {
+                Box(Modifier.fillMaxSize().background(Color(0x66000000)).clickable(remember { MutableInteractionSource() }, null) { onDrawer(false) })
+            }
+            androidx.compose.animation.AnimatedVisibility(drawerOpen, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
+                ProjectDrawer(
+                    data,
+                    onProject = { onDrawer(false); callbacks.onProject(it) },
+                    onAddProject = { onDrawer(false); callbacks.onAddProject() },
+                    onAppSettings = { onDrawer(false); callbacks.onAppSettings() },
+                    onPairAnother = { onDrawer(false); callbacks.onPairAnother() },
+                )
+            }
         }
     }
 }
 
+// ─── Top bar ───
+
 /**
- * The desktop's top bar on a phone: menu (opens the projects), the mark, "/",
- * the current project, then the waiting counter and the connection badge.
- * Usage is drawn behind it in two thin rows, as on the desktop.
+ * The mobile web's top bar: menu, the animated head, "/", the project's icon
+ * and name, then the usage badge ("2m ago", opens the history chart), Panels
+ * with its count, the approvals shield with its yellow count, and the
+ * connection as a coloured dot. Usage is drawn behind it in two rows.
  */
 @Composable
-fun ShellTopBar(data: ShellData, onMenu: () -> Unit, onApprovals: () -> Unit, modifier: Modifier = Modifier) {
+fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Box(Modifier.fillMaxWidth().height(Dimens.TopBarHeight)) {
-            data.usage?.let { UsageBackdrop(it) }
-            Row(Modifier.fillMaxSize().padding(start = 2.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                CrundiIconButton("menu", onMenu, contentDescription = "Projects", tint = CrundiColors.TextPrimary, size = 20.dp)
-                CrundiMark(size = 24.dp)
-                Text("/", style = CrundiType.Body.copy(color = CrundiColors.TextMuted), modifier = Modifier.padding(horizontal = 9.dp))
+            data.usage?.let { UsageBackdrop(it, Modifier.clickable(onClick = callbacks.onUsage)) }
+            Row(Modifier.fillMaxSize().padding(start = 2.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CrundiIconButton("menu", onMenu, contentDescription = "Projects", tint = CrundiColors.TextPrimary, size = 22.dp)
+                RobotHead(size = 24.dp, motion = if (data.connection == Connection.Connected) MarkMotion.Idle else MarkMotion.Load)
+                Text("/", style = CrundiType.Body.copy(color = CrundiColors.TextMuted))
+                data.project?.icon?.let { ProjectIcon(it, 18.dp) }
                 Text(
                     data.project?.name ?: "No project",
                     style = CrundiType.Body.copy(color = CrundiColors.TextSecondary),
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).clickable(onClick = onMenu),
+                    modifier = Modifier.widthIn(min = 56.dp).weight(1f, fill = false).clickable(onClick = onMenu),
                 )
-                if (data.approvals > 0) {
+                Spacer(Modifier.weight(1f))
+                data.usage?.takeIf { it.fetchedAt > 0 }?.let { u ->
                     Row(
-                        Modifier.clip(Dimens.ShapeSm).background(CrundiColors.AccentDim).clickable(onClick = onApprovals).padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        Modifier.clip(RoundedCornerShape(12.dp)).background(Color(0x26949FB8)).clickable(onClick = callbacks.onUsage).padding(horizontal = 9.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        CrundiIcon("bell", size = 15.dp, tint = CrundiColors.AccentHover)
-                        Text(data.approvals.toString(), style = CrundiType.Badge.copy(color = CrundiColors.AccentHover))
+                        CrundiIcon("bar-chart", size = 13.dp, tint = CrundiColors.TextSecondary)
+                        Text(fmtAgo(u.fetchedAt), style = CrundiType.Badge.copy(fontSize = 11.sp), maxLines = 1)
                     }
-                    Spacer(Modifier.width(8.dp))
                 }
-                StatusBadge(
-                    data.connection.label,
-                    when (data.connection) {
-                        Connection.Connected -> BadgeKind.Good
-                        Connection.Reconnecting -> BadgeKind.Warn
-                        else -> BadgeKind.Bad
-                    },
-                )
+                if (data.panels > 0) TopBarAct("panel", "Panels", data.panels.toString(), false, callbacks.onPanels)
+                if (data.approvals > 0) TopBarAct("shield-alert", "Things waiting on you", data.approvals.toString(), true, callbacks.onApprovals)
+                ConnectionDot(data.connection)
             }
         }
         CrundiDivider(strong = true)
     }
 }
 
-/** The two usage rows behind the top bar (weekly on top, 5-hour below). */
+/** A project's own icon (from the server), small and rounded. */
 @Composable
-private fun UsageBackdrop(u: UsageGlance) {
-    Column(Modifier.fillMaxSize()) {
-        for ((used, elapsed) in listOf(u.weekUsed to u.weekElapsed, u.fiveHourUsed to u.fiveHourElapsed)) {
-            Box(
-                Modifier.fillMaxWidth().weight(1f).drawBehind {
-                    drawRect(Color(0x297DAAFF), size = Size(size.width * elapsed.coerceIn(0f, 1f), size.height))
-                    val c = when {
-                        used >= 0.9f -> CrundiColors.Red.copy(alpha = 0.28f)
-                        used > elapsed + 0.1f -> CrundiColors.Yellow.copy(alpha = 0.26f)
-                        else -> CrundiColors.Accent.copy(alpha = 0.22f)
-                    }
-                    drawRect(c, size = Size(size.width * used.coerceIn(0f, 1f), size.height))
-                },
-            )
-        }
+fun ProjectIcon(path: String, size: androidx.compose.ui.unit.Dp) {
+    val img = mv.obitech.crundi.api.rememberServerImage(path, 96)
+    if (img != null) Image(img, contentDescription = null, modifier = Modifier.size(size).clip(RoundedCornerShape(5.dp)))
+}
+
+/** .topbar-act: a small bordered button with an icon and a count (approvals: yellow). */
+@Composable
+private fun TopBarAct(icon: String, description: String, count: String, warn: Boolean, onClick: () -> Unit) {
+    val c = if (warn) CrundiColors.Yellow else CrundiColors.TextSecondary
+    Row(
+        Modifier.clip(Dimens.ShapeSm).border(Dimens.Hairline, if (warn) CrundiColors.Yellow else CrundiColors.Border, Dimens.ShapeSm)
+            .clickable(onClickLabel = description, onClick = onClick).padding(horizontal = 6.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        CrundiIcon(icon, size = 15.dp, tint = c, contentDescription = description)
+        Text(
+            count, style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (warn) Color(0xFF1A1A1A) else CrundiColors.TextPrimary),
+            modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(if (warn) CrundiColors.Yellow else CrundiColors.BgTertiary).padding(horizontal = 5.dp),
+        )
+    }
+}
+
+/** The connection badge collapsed to its dot, as on a phone. */
+@Composable
+fun ConnectionDot(c: Connection) {
+    val (fg, bg) = when (c) {
+        Connection.Connected -> CrundiColors.Green to CrundiColors.GreenDim
+        Connection.Reconnecting -> CrundiColors.Yellow to CrundiColors.YellowDim
+        else -> CrundiColors.Red to CrundiColors.RedDim
+    }
+    Box(Modifier.size(22.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(fg))
     }
 }
 
 /**
- * The desktop's tab bar: scrolls sideways, icons only on a phone as on the
- * desktop's narrow layout, with the current tab's label shown beside its icon
- * and the accent gradient line under it.
+ * The usage rows behind the top bar, as the desktop draws them: weekly on top,
+ * five-hour below; in each, time gone by (cool) under usage (accent, yellow
+ * when ahead of the clock, red near the limit), and their labels at the bars'
+ * edges ("wk 61%", the clock and "2h 1m").
  */
 @Composable
-fun AreaTabs(current: Area?, onArea: (Area) -> Unit, modifier: Modifier = Modifier) {
+private fun UsageBackdrop(u: UsageGlance, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxSize()) {
+        UsageRow("wk", u.weekUsed, u.weekElapsed, u.weekResetsAt, Modifier.weight(1f))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x0DFFFFFF)))
+        UsageRow("5h", u.fiveHourUsed, u.fiveHourElapsed, u.fiveHourResetsAt, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun UsageRow(name: String, used: Float, elapsed: Float, resetsAt: Long, modifier: Modifier) {
+    val usedC = used.coerceIn(0f, 1f); val timeC = elapsed.coerceIn(0f, 1f)
+    BoxWithConstraints(modifier.fillMaxWidth().drawBehind {
+        drawRect(Color(0x297DAAFF), size = Size(size.width * timeC, size.height))
+        val fill = when {
+            usedC >= 0.9f -> CrundiColors.Red.copy(alpha = 0.30f)
+            usedC > timeC + 0.1f -> CrundiColors.Yellow.copy(alpha = 0.26f)
+            else -> CrundiColors.Accent.copy(alpha = 0.22f)
+        }
+        drawRect(fill, size = Size(size.width * usedC, size.height))
+    }) {
+        val w = maxWidth
+        val label = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 8.5.sp, fontWeight = FontWeight.Bold, lineHeight = 10.sp)
+        EdgeLabel(usedC, w, Modifier.align(Alignment.TopStart).padding(top = 1.dp)) {
+            Text("$name ${(used * 100).toInt()}%", style = label.copy(color = CrundiColors.TextPrimary.copy(alpha = 0.9f)), maxLines = 1)
+        }
+        if (resetsAt > 0) EdgeLabel(timeC, w, Modifier.align(Alignment.BottomStart).padding(bottom = 1.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                CrundiIcon("clock", size = 8.dp, tint = CrundiColors.TextSecondary.copy(alpha = 0.7f))
+                Text(fmtRemaining(resetsAt), style = label.copy(color = CrundiColors.TextSecondary.copy(alpha = 0.7f)), maxLines = 1)
+            }
+        }
+    }
+}
+
+/** placeUsageLabel: past the middle the label sits just inside the bar's end, otherwise just after it. */
+@Composable
+private fun EdgeLabel(pct: Float, width: androidx.compose.ui.unit.Dp, modifier: Modifier, content: @Composable () -> Unit) {
+    Layout(content, modifier.fillMaxWidth()) { m, c ->
+        val p = m.first().measure(Constraints())
+        val edge = (width.toPx() * pct).toInt()
+        val gap = 6.dp.roundToPx()
+        val x = if (pct > 0.5f) edge - gap - p.width else edge + gap
+        layout(c.maxWidth, p.height) { p.place(x.coerceIn(0, (c.maxWidth - p.width).coerceAtLeast(0)), 0) }
+    }
+}
+
+fun fmtAgo(ms: Long, now: Long = System.currentTimeMillis()): String {
+    val s = ((now - ms) / 1000).coerceAtLeast(0)
+    if (s < 60) return "just now"
+    val m = s / 60; if (m < 60) return "${m}m ago"
+    val h = m / 60; if (h < 24) return "${h}h ago"
+    return "${h / 24}d ago"
+}
+
+fun fmtRemaining(resetsAt: Long, now: Long = System.currentTimeMillis()): String {
+    if (resetsAt <= 0) return "—"
+    val ms = (resetsAt - now).coerceAtLeast(0)
+    val d = ms / 86_400_000; val h = ms % 86_400_000 / 3_600_000; val m = ms % 3_600_000 / 60_000
+    return when { d > 0 -> "${d}d ${h}h"; h > 0 -> "${h}h ${m}m"; else -> "${m}m" }
+}
+
+// ─── Tab strip ───
+
+/**
+ * The tab strip: icons only, scrolling sideways, the current one in accent
+ * with the gradient line under it and brought into view; "+" beside the
+ * Workbench opens the add menu; red counts on Factories and Secrets, a green
+ * dot on Settings for an update. With no project, only the global tabs.
+ */
+@Composable
+fun AreaTabs(current: Area?, data: ShellData, callbacks: ShellCallbacks, addMenuOpen: Boolean = false, modifier: Modifier = Modifier) {
     val scroll = rememberScrollState()
-    // Where each tab is in the strip, and how wide the strip shows: enough
-    // to bring the current tab into the middle whenever it changes, so the
-    // person always sees where they are (16 tabs do not fit on a phone).
     val spans = remember { mutableStateMapOf<Area, IntArray>() }
     var viewport by remember { mutableIntStateOf(0) }
     var placed by remember { mutableStateOf(false) }
@@ -199,36 +309,52 @@ fun AreaTabs(current: Area?, onArea: (Area) -> Unit, modifier: Modifier = Modifi
         val target = (span[0] + span[1] / 2 - viewport / 2).coerceIn(0, scroll.maxValue)
         if (placed) scroll.animateScrollTo(target) else { scroll.scrollTo(target); placed = true }
     }
+    var menu by remember(addMenuOpen) { mutableStateOf(addMenuOpen) }
+    val hasProject = data.currentProject != null
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Row(
-            Modifier.fillMaxWidth().height(Dimens.TabBarHeight).onSizeChanged { viewport = it.width }.horizontalScroll(scroll).padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().height(Dimens.TabBarHeight).onSizeChanged { viewport = it.width }.horizontalScroll(scroll).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            for (a in Area.entries) {
+            for (a in Area.tabs(hasProject)) {
                 val on = a == current
                 val fg = if (on) CrundiColors.AccentHover else CrundiColors.TextMuted
-                Row(
-                    Modifier
-                        .fillMaxHeight()
+                Box(
+                    Modifier.fillMaxHeight()
                         .onGloballyPositioned { c -> spans[a] = intArrayOf(c.positionInParent().x.toInt(), c.size.width) }
-                        .clickable { onArea(a) }
+                        .clickable(onClickLabel = a.label) { callbacks.onArea(a) }
                         .drawBehind {
                             if (on) {
                                 val inset = 10.dp.toPx()
-                                drawRoundRect(
-                                    brush = CrundiColors.AccentGrad,
-                                    topLeft = Offset(inset, size.height - 2.dp.toPx()),
-                                    size = Size(size.width - 2 * inset, 2.dp.toPx()),
-                                    cornerRadius = CornerRadius(2.dp.toPx()),
-                                )
+                                drawRoundRect(CrundiColors.AccentGrad, Offset(inset, size.height - 2.dp.toPx()), Size(size.width - 2 * inset, 2.dp.toPx()), CornerRadius(2.dp.toPx()))
                             }
                         }
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(horizontal = 13.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    CrundiIcon(a.icon, size = 17.dp, tint = fg, contentDescription = a.label)
-                    if (on) Text(a.label, style = CrundiType.Tab.copy(color = fg), maxLines = 1, softWrap = false)
+                    CrundiIcon(a.icon, size = 18.dp, tint = fg, contentDescription = a.label)
+                    val badge = data.tabBadges[a.key]
+                    if (badge != null && badge != 0) {
+                        if (badge < 0) Box(Modifier.align(Alignment.Center).offset(x = 9.dp, y = (-9).dp).size(8.dp).clip(CircleShape).background(CrundiColors.Green))
+                        else Text(
+                            if (badge > 99) "99+" else badge.toString(),
+                            style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White, lineHeight = 12.sp),
+                            modifier = Modifier.align(Alignment.Center).offset(x = 11.dp, y = (-9).dp).clip(RoundedCornerShape(8.dp)).background(CrundiColors.Red).padding(horizontal = 4.dp),
+                        )
+                    }
+                }
+                if (a == Area.Workbench) Box {
+                    Box(
+                        Modifier.padding(horizontal = 4.dp).size(34.dp).clip(Dimens.ShapeSm).background(CrundiColors.BgTertiary)
+                            .border(Dimens.Hairline, if (menu) CrundiColors.Accent else CrundiColors.Border, Dimens.ShapeSm)
+                            .clickable(onClickLabel = "Add to the workbench") { menu = true },
+                        contentAlignment = Alignment.Center,
+                    ) { CrundiIcon("plus", size = 18.dp, tint = CrundiColors.TextSecondary, contentDescription = "Add to the workbench") }
+                    DropdownMenu(
+                        menu, { menu = false },
+                        containerColor = CrundiColors.BgSecondary, shape = Dimens.Shape,
+                        border = androidx.compose.foundation.BorderStroke(Dimens.Hairline, CrundiColors.Border),
+                    ) { AddMenuBody(callbacks) { menu = false } }
                 }
             }
         }
@@ -236,46 +362,92 @@ fun AreaTabs(current: Area?, onArea: (Area) -> Unit, modifier: Modifier = Modifi
     }
 }
 
-/** The desktop's sidebar as a drawer: projects to switch between, and the phone's own things. */
+/** The "+" menu by the Workbench tab (#wb-add-menu): every kind of pane, Fit to screen, and the layout (columns or stack). */
+@Composable
+fun AddMenuBody(callbacks: ShellCallbacks, onDone: () -> Unit = {}) {
+    Column(Modifier.widthIn(min = 200.dp).padding(4.dp)) {
+        for (k in PaneKind.addable) MenuItem(k.icon, k.label) { onDone(); callbacks.onAdd(k) }
+        CrundiDivider(Modifier.padding(vertical = 4.dp))
+        MenuItem("maximize", "Fit to screen") { onDone(); callbacks.onFit() }
+        MenuItem(
+            if (callbacks.layout == WbLayout.Columns) "rows" else "columns",
+            if (callbacks.layout == WbLayout.Columns) "Layout: stack the panes" else "Layout: swipe between columns",
+        ) { onDone(); callbacks.onToggleLayout() }
+    }
+}
+
+// ─── Projects drawer ───
+
+/**
+ * The sidebar as a drawer (280dp, from the left, under the top bar): each
+ * project with its icon or initials, state dot, name, the services
+ * heartbeat, the schedule clock and the factory mark; then "Add project",
+ * "App settings" and "Connect to another server".
+ */
 @Composable
 fun ProjectDrawer(
     data: ShellData,
     onProject: (String) -> Unit,
+    onAddProject: () -> Unit,
     onAppSettings: () -> Unit,
     onPairAnother: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ModalDrawerSheet(
-        modifier = modifier.width(288.dp),
-        drawerContainerColor = CrundiColors.BgSecondary,
-        drawerContentColor = CrundiColors.TextPrimary,
-        drawerShape = RoundedCornerShape(topEnd = Dimens.Radius, bottomEnd = Dimens.Radius),
+    Column(
+        modifier.width(280.dp).fillMaxHeight().background(CrundiColors.BgSecondary)
+            .drawBehind { drawLine(CrundiColors.Border, Offset(size.width, 0f), Offset(size.width, size.height), 1.dp.toPx()) },
     ) {
-        Row(Modifier.fillMaxWidth().height(Dimens.TopBarHeight).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            CrundiMark(size = 24.dp)
-            Text("crundi", style = CrundiType.Wordmark, modifier = Modifier.padding(start = 9.dp))
-            Spacer(Modifier.weight(1f))
-            Text(data.serverHost, style = CrundiType.Meta, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp))
-        }
-        CrundiDivider(strong = true)
-        SectionHeader("Projects")
-        LazyColumn(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-            items(data.projects, key = { it.alias }) { p ->
-                ListRow(
-                    title = p.name,
-                    active = p.alias == data.currentProject,
-                    leading = { StateDot(p.state) },
-                    onClick = { onProject(p.alias) },
-                )
-            }
-            if (data.projects.isEmpty()) item {
-                Text("No projects yet. Add one on the desktop, or ask Claude in a chat.", style = CrundiType.Small, modifier = Modifier.padding(12.dp))
-            }
-        }
+        SectionHeader("Projects", trailing = { Text(data.serverHost, style = CrundiType.Meta, maxLines = 1, overflow = TextOverflow.Ellipsis) })
         CrundiDivider()
-        Column(Modifier.padding(8.dp)) {
-            ListRow("App settings", icon = "smartphone", onClick = onAppSettings)
-            ListRow("Connect to another server", icon = "link", onClick = onPairAnother)
+        LazyColumn(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 4.dp)) {
+            items(data.projects, key = { it.alias }) { p -> ProjectRow(p, p.alias == data.currentProject) { onProject(p.alias) } }
+            if (data.projects.isEmpty()) item {
+                Text("No projects yet. Add one below, or ask Claude in a chat.", style = CrundiType.Small, modifier = Modifier.padding(12.dp))
+            }
         }
+        Column(Modifier.drawBehind { drawLine(CrundiColors.BorderSubtle, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            DashedButton("smartphone", "App settings", onAppSettings)
+            DashedButton("plus", "Add project", onAddProject)
+            DashedButton("link", "Connect to another server", onPairAnother)
+        }
+    }
+}
+
+@Composable
+private fun ProjectRow(p: ProjectSummary, active: Boolean, onClick: () -> Unit) {
+    ListRow(
+        title = p.name,
+        active = active,
+        leading = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (p.icon != null) ProjectIcon(p.icon, 18.dp)
+                else Box(Modifier.size(18.dp).clip(RoundedCornerShape(5.dp)).background(CrundiColors.BgTertiary), contentAlignment = Alignment.Center) {
+                    Text(p.initials, style = CrundiType.Meta.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold, color = CrundiColors.TextSecondary))
+                }
+                StateDot(p.state)
+            }
+        },
+        trailing = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (p.hasService) CrundiIcon("heartbeat", size = 16.dp, tint = if (p.liveService) CrundiColors.Green else CrundiColors.TextMuted, contentDescription = if (p.liveService) "A service is running" else "Services stopped")
+                if (p.scheduled) CrundiIcon("clock", size = 14.dp, tint = if (active) CrundiColors.AccentHover else CrundiColors.TextMuted, contentDescription = "Scheduled")
+                p.factory?.let { CrundiIcon("factory", size = 14.dp, tint = if (it == FactoryMark.Needs) CrundiColors.Yellow else CrundiColors.Green, contentDescription = "Factory run") }
+            }
+        },
+        onClick = onClick,
+    )
+}
+
+/** .sidebar-footer button: dashed, muted, full width. */
+@Composable
+private fun DashedButton(icon: String, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(Dimens.ShapeSm).drawBehind {
+            drawRoundRect(CrundiColors.Border, style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()))), cornerRadius = CornerRadius(Dimens.RadiusSm.toPx()))
+        }.clickable(onClick = onClick).padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+    ) {
+        CrundiIcon(icon, size = 15.dp, tint = CrundiColors.TextMuted)
+        Text(label, style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
     }
 }

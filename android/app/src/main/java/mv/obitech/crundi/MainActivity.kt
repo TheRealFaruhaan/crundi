@@ -73,12 +73,16 @@ class MainActivity : ComponentActivity() {
                     when (val s = screen) {
                         is Screen.Connecting -> LoadingState(text = if (s.host.isEmpty()) null else "Connecting to ${s.host}")
                         is Screen.Notice -> NoticeScreen(s.text, s.action, s.onAction) { startActivity(Intent(this@MainActivity, PairActivity::class.java)) }
-                        is Screen.Ready -> CrundiApp(
-                            services = AppGraph.forServer(this@MainActivity, s.server),
-                            host = host,
-                            openRoute = pendingRoute,
-                            onOpened = { pendingRoute = null },
-                        )
+                        is Screen.Ready -> androidx.compose.runtime.CompositionLocalProvider(
+                            mv.obitech.crundi.ui.workbench.LocalWorkbenchStore provides androidx.compose.runtime.remember(s.server.id) { mv.obitech.crundi.ui.workbench.WorkbenchStore.forServer(this@MainActivity, s.server.id) },
+                        ) {
+                            CrundiApp(
+                                services = AppGraph.forServer(this@MainActivity, s.server),
+                                host = host,
+                                openRoute = pendingRoute,
+                                onOpened = { pendingRoute = null },
+                            )
+                        }
                     }
                 }
             }

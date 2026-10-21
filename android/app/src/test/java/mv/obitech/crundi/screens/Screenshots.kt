@@ -46,7 +46,7 @@ abstract class ScreenshotTest {
         require(Regex("^[a-z0-9]+(-[a-z0-9]+)*$").matches(name)) { "Screenshot names are lower-case-with-dashes: $name" }
         captureRoboImage(filePath = "build/outputs/screens/$name.png") {
             CrundiTheme {
-                CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalInspectionMode provides true) {
+                CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalInspectionMode provides true, mv.obitech.crundi.ui.workbench.LocalWorkbenchStore provides mv.obitech.crundi.ui.workbench.WorkbenchStore.memory()) {
                     Box(Modifier.fillMaxSize().background(CrundiColors.BgPrimary)) { content() }
                 }
             }

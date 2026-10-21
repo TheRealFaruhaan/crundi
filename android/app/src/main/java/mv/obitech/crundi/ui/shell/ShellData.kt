@@ -21,14 +21,39 @@ data class ProjectSummary(
     val state: DotState = DotState.Idle,
     /** Server path of its icon (/api/project-icon?...), or null. */
     val icon: String? = null,
-)
+    /** A service of this project is running: the sidebar's heartbeat, moving. */
+    val liveService: Boolean = false,
+    /** It has a service, running or not: the heartbeat, still. */
+    val hasService: Boolean = false,
+    /** It has an enabled schedule: the sidebar's clock. */
+    val scheduled: Boolean = false,
+    /** Its factory run: null, running (green) or waiting on the person (yellow). */
+    val factory: FactoryMark? = null,
+) {
+    /** The two letters of the collapsed sidebar's round tile. */
+    val initials: String get() = name.split(Regex("[^A-Za-z0-9]+")).filter { it.isNotEmpty() }.let { w ->
+        if (w.size >= 2) "${w[0][0]}${w[1][0]}" else name.take(2)
+    }.uppercase()
+}
+
+enum class FactoryMark { Running, Needs }
 
 /**
  * The top bar's usage glance: the desktop draws two thin rows behind its top
  * bar, weekly and 5-hour, each a usage bar over a time-to-reset bar. Values
  * are 0..1; null when the server has no usage to show.
  */
-data class UsageGlance(val weekUsed: Float, val weekElapsed: Float, val fiveHourUsed: Float, val fiveHourElapsed: Float)
+data class UsageGlance(
+    val weekUsed: Float,
+    val weekElapsed: Float,
+    val fiveHourUsed: Float,
+    val fiveHourElapsed: Float,
+    /** When each window resets (epoch ms, 0 = unknown): the time labels ("2h 1m"). */
+    val weekResetsAt: Long = 0,
+    val fiveHourResetsAt: Long = 0,
+    /** When the server last read usage (epoch ms, 0 = unknown): the "2m ago" badge. */
+    val fetchedAt: Long = 0,
+)
 
 /** Everything the shell (top bar, tabs, project drawer) shows. */
 data class ShellData(
@@ -40,6 +65,10 @@ data class ShellData(
     /** Things waiting on the person (permission requests, questions, factory waits): the top bar's counter. */
     val approvals: Int = 0,
     val usage: UsageGlance? = null,
+    /** Counts on tabs, by area key: factories waiting on the person, secret requests; -1 is a dot (settings: an update). */
+    val tabBadges: Map<String, Int> = emptyMap(),
+    /** Panels (widget chips) Claude has put in the top bar: the Panels button's count. */
+    val panels: Int = 0,
 ) {
     val project: ProjectSummary? get() = projects.firstOrNull { it.alias == currentProject }
 }

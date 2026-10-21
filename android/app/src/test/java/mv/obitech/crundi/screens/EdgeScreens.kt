@@ -65,9 +65,9 @@ class EdgeScreens : ScreenshotTest() {
         shoot(name, services) { CompositionLocalProvider(LocalInspectionMode provides true) { content() } }
 
     private fun everyArea(case: String, shell: ShellData, transport: () -> Transport) {
-        for (a in Area.entries) {
+        for (a in Area.entries.filter { it.tab }) {
             val s = services(shell, transport())
-            still("edge-$case-${a.key}", s) { CrundiApp(services = s, host = Host.None, openRoute = if (a == Area.Chats) null else a.key) }
+            still("edge-$case-${a.key}", s) { CrundiApp(services = s, host = Host.None, openRoute = if (a == Area.Workbench) null else a.key) }
         }
     }
 

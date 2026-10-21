@@ -17,8 +17,8 @@ import mv.obitech.crundi.ui.shell.UsageGlance
  */
 object FakeServices {
     val projects = listOf(
-        ProjectSummary("crundi", "crundi", "/home/crundi/projects/crundi", DotState.Working),
-        ProjectSummary("dhivo-socials", "dhivo-socials", "/home/crundi/projects/dhivo-socials", DotState.Running),
+        ProjectSummary("crundi", "crundi", "/home/crundi/projects/crundi", DotState.Working, liveService = true, hasService = true, scheduled = true, factory = mv.obitech.crundi.ui.shell.FactoryMark.Running),
+        ProjectSummary("dhivo-socials", "dhivo-socials", "/home/crundi/projects/dhivo-socials", DotState.Running, hasService = true, factory = mv.obitech.crundi.ui.shell.FactoryMark.Needs),
         ProjectSummary("faruhaan.com", "faruhaan.com", "/home/crundi/projects/faruhaan.com", DotState.NeedsInput),
         ProjectSummary("ledger", "ledger", "/home/crundi/projects/ledger", DotState.Idle),
         ProjectSummary("home-automation", "home-automation", "/home/crundi/projects/home-automation", DotState.Waiting),
@@ -31,7 +31,14 @@ object FakeServices {
         projects = projects,
         currentProject = "crundi",
         approvals = 2,
-        usage = UsageGlance(weekUsed = 0.46f, weekElapsed = 0.52f, fiveHourUsed = 0.31f, fiveHourElapsed = 0.64f),
+        usage = UsageGlance(
+            weekUsed = 0.61f, weekElapsed = 0.70f, fiveHourUsed = 0.39f, fiveHourElapsed = 0.58f,
+            weekResetsAt = System.currentTimeMillis() + 2 * 86_400_000L + 3 * 3_600_000L,
+            fiveHourResetsAt = System.currentTimeMillis() + 2 * 3_600_000L + 61_000L,
+            fetchedAt = System.currentTimeMillis() - 2 * 60_000L,
+        ),
+        tabBadges = mapOf("factories" to 1, "secrets" to 2, "settings" to -1),
+        panels = 2,
     )
 
     /**

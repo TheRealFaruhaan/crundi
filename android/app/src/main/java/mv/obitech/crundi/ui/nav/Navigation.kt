@@ -24,7 +24,7 @@ object Routes {
     fun areaOf(route: String?): Area? = Area.byKey(route?.substringBefore('/')?.substringBefore('?'))
 
     /** True for an area's front page: the shell shows its top bar and tabs there and nowhere else. */
-    fun isAreaRoot(route: String?): Boolean = route != null && Area.byKey(route) != null
+    fun isAreaRoot(route: String?): Boolean = route != null && Area.byKey(route)?.tab == true
 }
 
 /** Moving round the app. Get it with LocalNavigator.current. */
