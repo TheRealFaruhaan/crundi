@@ -3908,6 +3908,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
       return true;
     }
 
+    // Crundi's own pages embedded in this one (a factory transcript in the
+    // live graph) borrow this page's sign-in rather than look for their own:
+    // inside the phone app it is not in this page's storage at all.
+    window.crundiFrameSession = { token: function () { return token || ''; }, renew: function () { return refreshSession(); } };
+
     function clearSession() {
       token = null; refreshToken = null;
       localStorage.removeItem('crundi_token');

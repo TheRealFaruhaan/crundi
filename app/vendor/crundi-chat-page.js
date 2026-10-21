@@ -49,7 +49,10 @@
   // the bridge, which holds them outside the web view.
   var token = '', refreshToken = '';
   // See window.CrundiLogin above. The same rule as the main page.
-  var APP_LOGIN = !!window.CrundiLogin;
+  // Embedded in Crundi's own page (the live graph): use its sign-in, which
+  // works wherever that page does, the phone app included.
+  var FRAME_LOGIN = (function () { try { return window.top !== window.self && window.top.location.origin === location.origin && window.top.crundiFrameSession ? window.top.crundiFrameSession : null; } catch (e) { return null; } })();
+  var APP_LOGIN = !FRAME_LOGIN && !!window.CrundiLogin;
   var appSeq = 0, appWait = {};
   if (APP_LOGIN) {
     window.CrundiLogin.onmessage = function (e) {
@@ -76,6 +79,7 @@
     return true;
   }
   function readSession() {
+    if (FRAME_LOGIN) { token = FRAME_LOGIN.token(); return; }
     if (APP_LOGIN) return;   // asked for at start, over the channel
     var fromApp = bridge('session');
     if (typeof fromApp === 'string' && fromApp) {
@@ -94,6 +98,10 @@
   var refreshing = null;
   function refreshSession() {
     if (refreshing) return refreshing;
+    if (FRAME_LOGIN) {
+      refreshing = Promise.resolve(FRAME_LOGIN.renew()).then(function (ok) { token = FRAME_LOGIN.token(); refreshing = null; return !!ok && !!token; }, function () { refreshing = null; return false; });
+      return refreshing;
+    }
     if (APP_LOGIN) {
       refreshing = askAppLogin('renew').then(takeAppLogin).then(function (ok) { refreshing = null; return ok; });
       return refreshing;
@@ -605,6 +613,7 @@
     if (!sid || !/^[A-Za-z0-9_-]{1,80}$/.test(sid)) { note('Not a chat', 'This address does not name a chat.', 'Open Crundi', function () { openMain('/'); }); return; }
     if (!window.CrundiChat) { note('Could not load', 'The chat could not be loaded. Check the connection and try again.', 'Try again', function () { location.reload(); }); return; }
     readSession();
+    if (FRAME_LOGIN) token = FRAME_LOGIN.token();
     if (!APP_LOGIN && !token && !refreshToken) { note('Signed out', 'Sign in to Crundi to see this chat.', 'Sign in', function () { openMain('/'); }); return; }
     var ready = APP_LOGIN
       ? askAppLogin('get').then(function (m) { return takeAppLogin(m) || refreshSession(); })

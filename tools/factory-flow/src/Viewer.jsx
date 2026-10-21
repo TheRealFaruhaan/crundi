@@ -117,6 +117,15 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
   const [chat, setChat] = useState(null);      // panel: { chatId, name } open over the graph
   const [drawer, setDrawer] = useState(false); // panel: the run / timeline pane, on demand
   const [follow, setFollow] = useState(mode === 'panel'); // the camera follows where people are working
+  const rootRef = useRef(null);
+  const [compact, setCompact] = useState(false);          // a narrow panel: icon-only buttons
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => setCompact(el.clientWidth < 560));
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
   const rf = useReactFlow();
   const [events, setEvents] = useState([]);
   const [run, setRun] = useState(null);         // the server's summary (live chat ids, status)
@@ -393,18 +402,21 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
   ].filter(Boolean) : [];
 
   return (
-    <div className={'ff-editor ff-viewer' + (panel ? ' ff-panelmode' : '')}>
+    <div ref={rootRef} className={'ff-editor ff-viewer' + (panel ? ' ff-panelmode' : '') + (compact ? ' ff-compact' : '')}>
       <div className="ff-top">
         {onClose && <button className="ff-iconbtn" title="Back" onClick={onClose}><Icon name="back" size={16} /></button>}
-        <span className="ff-name">{f.name}</span>
+        {panel && chat && <button className="ff-btn primary" title="Back to the graph" onClick={() => setChat(null)}><Icon name="back" size={14} />{!compact && 'Graph'}</button>}
+        <span className="ff-name" title={f.name}>{f.name}</span>
         <span className={'ff-runstate ' + st}>{live ? stateLabel : 'Replay'}</span>
-        {progress && <span className="ff-progress">{progress}</span>}
+        {progress && !compact && <span className="ff-progress">{progress}</span>}
         <div className="ff-top-sp" />
-        {panel && <button className={'ff-btn' + (follow ? ' primary' : '')} title="Keep the view on where people are working" onClick={() => setFollow(v => !v)}><Icon name="route" size={14} />Follow</button>}
-        {panel && <button className={'ff-btn' + (drawer ? ' primary' : '')} onClick={() => setDrawer(v => !v)}><Icon name="sliders" size={14} />Details</button>}
+        {panel && !chat && <button className={'ff-btn' + (follow ? ' primary' : '')} title="Follow: keep the view on where people are working" aria-label="Follow" onClick={() => setFollow(v => !v)}><Icon name="route" size={14} />{!compact && 'Follow'}</button>}
+        {panel && <button className={'ff-btn' + (drawer ? ' primary' : '')} title="Details: the run and its timeline" aria-label="Details" onClick={() => setDrawer(v => !v)}><Icon name="sliders" size={14} />{!compact && 'Details'}</button>}
         {controls.map(([a, label]) => (
-          <button key={a} className={'ff-btn' + (a === 'stop' ? ' ghost' : '')} disabled={!!busy}
-            onClick={() => { if (a === 'stop' && !window.confirm('Stop this factory? Its team stops; the worktree is kept.')) return; act({ action: a }, a); }}>{label}</button>
+          <button key={a} className={'ff-btn' + (a === 'stop' ? ' ghost' : '')} disabled={!!busy} title={label} aria-label={label}
+            onClick={() => { if (a === 'stop' && !window.confirm('Stop this factory? Its team stops; the worktree is kept.')) return; act({ action: a }, a); }}>
+            {compact ? <Icon name={a === 'resume' ? 'play' : a} size={14} /> : label}
+          </button>
         ))}
       </div>
       {needsBar}

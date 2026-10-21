@@ -261,3 +261,9 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 .ff-needs.you { background: rgba(245,158,11,.12); color: #fcd34d; }
 .ff-needs.info { background: var(--ff-card); color: var(--ff-sub); }
 .ff-worker.queued { opacity: .6; cursor: default; border-style: dashed; }
+/* Narrow panel: the name gets the room, buttons go icon-only. */
+.ff-viewer .ff-top { min-width: 0; }
+.ff-viewer .ff-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.ff-compact .ff-top { gap: 4px; padding-left: 8px; padding-right: 8px; }
+.ff-compact .ff-top .ff-btn { padding: 6px 8px; flex: none; }
+.ff-compact .ff-runstate { flex: none; }

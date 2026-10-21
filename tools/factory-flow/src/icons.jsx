@@ -2,6 +2,8 @@
 // The editor runs outside the page's script, so it carries its own few.
 const P = {
   play: <polygon points="6 4 20 12 6 20 6 4" />,
+  pause: <><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></>,
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   crown: <><path d="M2 18h20" /><path d="M4 18 2 7l6 4 4-7 4 7 6-4-2 11" /></>,
   user: <><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 4-6 8-6s8 2 8 6" /></>,
   branch: <><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="9" r="2" /><path d="M6 7v10" /><path d="M18 11c0 4-6 3-12 6" /></>,
