@@ -1,24 +1,28 @@
 package mv.obitech.crundi.ui.operations
 
-import androidx.compose.runtime.Composable
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import mv.obitech.crundi.ui.shell.Area
-import mv.obitech.crundi.ui.shell.AreaPlaceholder
 
-/** Owned by the operations developer: Services, Forwards, Docker, Secrets, Usage, Settings. Add detail routes here, prefixed with the area key. */
+/**
+ * Owned by the operations developer: Services, Forwards, Docker, Secrets,
+ * Usage, Settings. Detail routes are prefixed with the area key
+ * (docker/container/{id}, settings/server, ...).
+ */
 fun NavGraphBuilder.operationsGraph() {
-    composable(Area.Services.key) { ServicesScreen() }
-    composable(Area.Forwards.key) { ForwardsScreen() }
-    composable(Area.Docker.key) { DockerScreen() }
-    composable(Area.Secrets.key) { SecretsScreen() }
-    composable(Area.Usage.key) { UsageScreen() }
-    composable(Area.Settings.key) { SettingsScreen() }
+    composable(Area.Services.key) { ServicesRoute() }
+    composable(Area.Forwards.key) { ForwardsRoute() }
+    composable(Area.Docker.key) { DockerRoute() }
+    dockerRoutes()
+    composable(Area.Secrets.key) { SecretsRoute() }
+    composable(Area.Usage.key) { UsageRoute() }
+    composable(Area.Settings.key) { SettingsRoute() }
+    composable(SettingsPage.Server.route) { ServerPageRoute() }
+    composable(SettingsPage.Notifications.route) { NotificationsRoute() }
+    composable(SettingsPage.Prompt.route) { PromptRoute() }
+    composable(SettingsPage.General.route) { GeneralRoute() }
+    composable(SettingsPage.Config.route) { ConfigRoute() }
+    composable(SettingsPage.Machine.route) { MachineRoute() }
+    composable(SettingsPage.Logs.route) { LogsRoute() }
+    composable(SettingsPage.Sessions.route) { SessionsRoute() }
 }
-
-@Composable fun ServicesScreen() = AreaPlaceholder(Area.Services)
-@Composable fun ForwardsScreen() = AreaPlaceholder(Area.Forwards)
-@Composable fun DockerScreen() = AreaPlaceholder(Area.Docker)
-@Composable fun SecretsScreen() = AreaPlaceholder(Area.Secrets)
-@Composable fun UsageScreen() = AreaPlaceholder(Area.Usage)
-@Composable fun SettingsScreen() = AreaPlaceholder(Area.Settings)
