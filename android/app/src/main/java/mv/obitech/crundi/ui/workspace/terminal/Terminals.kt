@@ -59,21 +59,14 @@ import mv.obitech.crundi.ui.shell.LocalAppServices
 import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.workspace.WorkspaceRoutes
+import mv.obitech.crundi.ui.workspace.rememberFilePicker
+import mv.obitech.crundi.ui.workbench.LocalPane
+import mv.obitech.crundi.ui.workbench.LocalWorkbench
+import mv.obitech.crundi.ui.workbench.WbLayout
 import mv.obitech.crundi.ui.components.errorText
 import mv.obitech.crundi.ui.workspace.rememberToast
 
-// ─── The list ───
-
-data class TerminalsState(
-    val project: String? = null,
-    val loading: Boolean = false,
-    val terminals: List<Pane> = emptyList(),
-    val parked: List<Pane> = emptyList(),
-    val busy: Boolean = false,
-    val notice: String? = null,
-    /** Why nothing has loaded (the server cannot be reached); shown with Try again instead of the spinner. */
-    val loadError: String? = null,
-)
+// ─── State words ───
 
 fun dotOf(p: Pane): DotState = when (p.state) {
     AgentState.Working -> DotState.Working
@@ -83,137 +76,12 @@ fun dotOf(p: Pane): DotState = when (p.state) {
     AgentState.Exited -> if (p.status == "running") DotState.Running else DotState.Idle
 }
 
-private fun stateWords(p: Pane): String = when (p.state) {
+fun stateWords(p: Pane): String = when (p.state) {
     AgentState.Working -> "working"
     AgentState.NeedsInput -> "needs input"
     AgentState.Waiting -> "waiting"
     AgentState.Idle -> "idle"
     AgentState.Exited -> if (p.status == "exited") "exited" else "running"
-}
-
-/** What "New terminal" can open, as the desktop's launch cell. */
-enum class TerminalKind(val label: String, val detail: String, val icon: String) {
-    Shell("Empty shell", "A plain shell in the project's folder", "terminal"),
-    Claude("Claude", "Claude in a terminal, asking before it acts", "terminal"),
-    ClaudeSkip("Claude, skip permissions", "Claude in a terminal that never asks", "shield-alert"),
-}
-
-/** The Terminals tab: the current project's terminals, the parked ones, and New terminal. */
-@Composable
-fun TerminalsScreen(
-    state: TerminalsState,
-    onOpen: (Pane) -> Unit = {},
-    onNew: (TerminalKind) -> Unit = {},
-    onClose: (Pane) -> Unit = {},
-    onResume: (Pane) -> Unit = {},
-    modifier: Modifier = Modifier,
-    showNew: Boolean = false,
-    onRetry: () -> Unit = {},
-) {
-    var newOpen by remember { mutableStateOf(showNew) }
-    var closing by remember { mutableStateOf<Pane?>(null) }
-    Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
-        if (state.project == null) {
-            EmptyState("terminal", "Pick a project", body = "Terminals belong to a project. Choose one from the menu to see its terminals.")
-            return@Column
-        }
-        PanelHeader("Terminals", meta = if (state.terminals.isEmpty()) state.project else "${state.project} · ${state.terminals.size} open") {
-            CrundiIconButton("plus", { newOpen = true }, contentDescription = "New terminal", enabled = !state.busy)
-        }
-        if (state.notice != null) Banner(state.notice, Modifier.fillMaxWidth().padding(12.dp), kind = BadgeKind.Bad, icon = "alert-triangle")
-        when {
-            state.loading && state.loadError != null -> ErrorState(state.loadError, onRetry = onRetry)
-            state.loading -> LoadingState(text = "Loading terminals")
-            state.terminals.isEmpty() && state.parked.isEmpty() -> EmptyState(
-                "terminal", "No terminals open",
-                body = "Open a shell, or Claude in a terminal, in ${state.project}.",
-                action = "New terminal", onAction = { newOpen = true },
-            )
-            else -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                item { Column(Modifier.padding(top = 6.dp)) {} }
-                items(state.terminals, key = { it.id }) { p ->
-                    ListRow(
-                        p.label.ifEmpty { "Terminal" },
-                        subtitle = stateWords(p),
-                        leading = { StateDot(dotOf(p)) },
-                        trailing = { CrundiIconButton("x", { closing = p }, contentDescription = "Close terminal", size = 16.dp) },
-                        onClick = { onOpen(p) },
-                    )
-                }
-                if (state.parked.isNotEmpty()) {
-                    item { SectionHeader("Parked") }
-                    items(state.parked, key = { "p-" + it.id }) { p ->
-                        ListRow(
-                            p.label.ifEmpty { "Terminal" },
-                            subtitle = if (p.reason == "restart") "Put away when Crundi restarted" else "Put away to resume later",
-                            leading = { StateDot(DotState.Idle) },
-                            trailing = { CrundiButton("Resume", { onResume(p) }, kind = ButtonKind.Ghost, icon = "play") },
-                        )
-                    }
-                }
-            }
-        }
-    }
-    if (newOpen) NewTerminalDialog(onPick = { newOpen = false; onNew(it) }, onDismiss = { newOpen = false })
-    closing?.let { p ->
-        CrundiDialog(
-            "Close terminal?", onDismiss = { closing = null },
-            message = "\"${p.label.ifEmpty { "Terminal" }}\" stops, and what it was running ends with it.",
-            confirm = "Close terminal", danger = true, onConfirm = { closing = null; onClose(p) },
-        )
-    }
-}
-
-@Composable
-fun NewTerminalDialog(onPick: (TerminalKind) -> Unit, onDismiss: () -> Unit) {
-    CrundiDialog("New terminal", onDismiss = onDismiss, message = "What should it run?") {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (k in TerminalKind.entries) ListRow(k.label, subtitle = k.detail, icon = k.icon, onClick = { onPick(k) })
-        }
-    }
-}
-
-/** The Terminals tab's front page, with live data. */
-@Composable
-fun TerminalsRoute() {
-    val services = LocalAppServices.current
-    val api = services.api
-    val nav = LocalNavigator.current
-    val shell by services.shell.state.collectAsState()
-    val project = shell.currentProject
-    val server by remember(api) { api.events.state }.collectAsState(initial = api.events.lastState)
-    val live by api.events.status.collectAsState()
-    val failure by api.events.failure.collectAsState()
-    val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
-    val toast = rememberToast()
-    val state = TerminalsState(
-        project = project,
-        loading = server == null,
-        terminals = server?.terminalsOf(project).orEmpty(),
-        parked = server?.parked(project).orEmpty().filter { it.paneKind == "terminal" },
-        busy = busy,
-        notice = notice,
-        loadError = if (server == null) liveErrorText(live, failure) else null,
-    )
-    TerminalsScreen(
-        state,
-        onRetry = { api.events.reconnect() },
-        onOpen = { nav.to(WorkspaceRoutes.terminal(it.id)) },
-        onNew = { kind ->
-            if (project == null) return@TerminalsScreen
-            busy = true
-            scope.launch {
-                runCatching {
-                    api.terminals.create(project, shell = kind == TerminalKind.Shell, cols = 60, rows = 30, skipPermissions = if (kind == TerminalKind.ClaudeSkip) true else null)
-                }.onSuccess { notice = null; nav.to(WorkspaceRoutes.terminal(it.id)) }.onFailure { notice = "Could not open a terminal: " + errorText(it) }
-                busy = false
-            }
-        },
-        onClose = { p -> scope.launch { runCatching { api.terminals.close(p.id) }.onFailure { toast("Could not close it: " + errorText(it)) } } },
-        onResume = { p -> scope.launch { runCatching { api.terminals.resume(p.id) }.onSuccess { nav.to(WorkspaceRoutes.terminal(it)) }.onFailure { toast("Could not resume it: " + errorText(it)) } } },
-    )
 }
 
 // ─── One terminal ───
@@ -225,28 +93,46 @@ data class TerminalUi(
     val dot: DotState = DotState.Running,
     val exited: Int? = null,
     val fontSize: Int = 12,
-    val ctrl: Boolean = false,
     val input: String = "",
     val connected: Boolean = true,
+    /** The keyboard tools panel is open. */
+    val tools: Boolean = false,
+    /** Select mode: plain selectable text instead of the live view. */
+    val selecting: Boolean = false,
+    val upload: TermUpload? = null,
+    /** The workbench is in swipe columns (lights Layout); null outside the workbench (no Layout button). */
+    val columns: Boolean? = null,
 )
 
+/**
+ * One terminal. Inside a workbench pane ([inPane]) the pane frame draws the
+ * title, dot, text size and rename, so this draws only the view, the tools
+ * and the input bar, as the mobile web's terminal cell does. Full screen from
+ * a notification or a route, it has its own top bar.
+ */
 @Composable
 fun TerminalScreen(
     ui: TerminalUi,
     emu: TermEmulator,
     version: Long,
+    inPane: Boolean = false,
     onBack: () -> Unit = {},
     onSend: (String) -> Unit = {},
     onInput: (String) -> Unit = {},
     onSubmit: () -> Unit = {},
-    onCtrl: () -> Unit = {},
     onFont: (Int) -> Unit = {},
     onRename: () -> Unit = {},
+    onTools: () -> Unit = {},
+    onSelect: () -> Unit = {},
+    onAttach: (() -> Unit)? = null,
+    onLayout: (() -> Unit)? = null,
     onSize: (Int, Int) -> Unit = { _, _ -> },
+    radialAt: androidx.compose.ui.geometry.Offset? = null,
+    startAtTop: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary).imePadding()) {
-        TopBar(ui.title, subtitle = ui.subtitle, onBack = onBack) {
+    Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary).then(if (inPane) Modifier else Modifier.imePadding())) {
+        if (!inPane) TopBar(ui.title, subtitle = ui.subtitle, onBack = onBack) {
             StateDot(ui.dot)
             CrundiIconButton("minus", { onFont(-1) }, contentDescription = "Smaller text", size = 16.dp)
             CrundiIconButton("plus", { onFont(1) }, contentDescription = "Larger text", size = 16.dp)
@@ -254,23 +140,26 @@ fun TerminalScreen(
         }
         if (ui.exited != null) Banner("The process ended (code ${ui.exited}). Close this terminal or open a new one.", Modifier.fillMaxWidth().padding(8.dp), kind = BadgeKind.Warn, icon = "alert-triangle")
         else if (!ui.connected) Banner("Reconnecting to the server", Modifier.fillMaxWidth().padding(8.dp), kind = BadgeKind.Warn, icon = "refresh")
-        TerminalView(emu, version, ui.fontSize, Modifier.weight(1f).fillMaxWidth(), onSize = onSize)
-        TerminalKeyRow(ui.ctrl, onCtrl, emu.appCursorKeys, onSend)
-        Row(
-            Modifier.fillMaxWidth().background(CrundiColors.BgSecondary).padding(start = 8.dp, end = 4.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            CrundiTextField(
-                ui.input, onInput,
-                placeholder = if (ui.ctrl) "Ctrl + the next key" else "Type here, then send",
-                mono = true,
-                modifier = Modifier.weight(1f),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSubmit() }),
+        val appCursor = emu.appCursorKeys
+        androidx.compose.foundation.layout.Box(Modifier.weight(1f).fillMaxWidth()) {
+            TerminalView(
+                emu, version, ui.fontSize, Modifier.fillMaxSize(), onSize = onSize,
+                onKey = if (ui.exited == null) onSend else null,
+                selecting = ui.selecting, onSelect = onSelect, radialAt = radialAt, follow = !startAtTop,
             )
-            CrundiIconButton("send", onSubmit, contentDescription = "Send", tint = CrundiColors.AccentHover, enabled = ui.exited == null)
+            if (ui.tools) TermToolPanel(
+                onKey = { k -> onSend(TermKeyMap.bytes(k, appCursor)) },
+                onLayout = onLayout?.takeIf { ui.columns != null },
+                columns = ui.columns == true,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
+            )
         }
+        TermInputBar(
+            ui.input, onInput, onSubmit,
+            toolsOpen = ui.tools, onTools = onTools,
+            onAttach = onAttach, upload = ui.upload,
+            enabled = ui.exited == null,
+        )
     }
 }
 
@@ -282,16 +171,21 @@ fun TerminalRoute(id: String) {
     val nav = LocalNavigator.current
     val toast = rememberToast()
     val scope = rememberCoroutineScope()
+    val pane = LocalPane.current
+    val wb = LocalWorkbench.current
     val stream: TerminalStream = remember(id) { api.terminal(id) }
     val emu = remember(id) { TermEmulator(60, 30) }
     var version by remember { mutableLongStateOf(0L) }
     var exited by remember { mutableStateOf<Int?>(null) }
     var fontSize by rememberSaveable { mutableIntStateOf(12) }
-    var ctrl by remember { mutableStateOf(false) }
     var input by rememberSaveable { mutableStateOf("") }
+    var tools by rememberSaveable { mutableStateOf(false) }
+    var selecting by remember { mutableStateOf(false) }
+    var upload by remember { mutableStateOf<TermUpload?>(null) }
     var renaming by remember { mutableStateOf(false) }
-    val pane by remember(api, id) { api.events.state.map { s -> s?.terminals?.firstOrNull { it.id == id } } }.collectAsState(initial = null)
+    val live by remember(api, id) { api.events.state.map { s -> s?.terminals?.firstOrNull { it.id == id } } }.collectAsState(initial = null)
     val status by remember(api) { api.socket.status }.collectAsState(initial = null)
+    val project = live?.project ?: services.shell.state.collectAsState().value.currentProject
 
     LaunchedEffect(id) {
         emu.respond = { stream.input(it) }
@@ -301,25 +195,36 @@ fun TerminalRoute(id: String) {
             version = emu.version
         }
     }
-    fun send(s: String) { if (exited == null) stream.input(s) }
+    fun send(s: String) { if (exited == null && s.isNotEmpty()) stream.input(s) }
+    val pick = rememberFilePicker { files ->
+        val p = project ?: return@rememberFilePicker
+        scope.launch {
+            for (f in files) {
+                upload = TermUpload(f.name, 0, f.size)
+                runCatching { api.chats.attach(p, f.name, f.size, progress = { d, t -> upload = TermUpload(f.name, d, t) }, open = f.open) }
+                    .onSuccess { a -> input = if (input.isEmpty() || input.endsWith(" ")) input + a.path else input + " " + a.path }
+                    .onFailure { toast("Upload failed: " + errorText(it)) }
+            }
+            upload = null
+        }
+    }
+    // In a pane the frame's A- / A+ sets the size, as the web's pane menu does.
+    val size = if (pane != null) (12 * pane.fontScale).toInt().coerceIn(8, 22) else fontSize
     TerminalScreen(
         TerminalUi(
-            title = pane?.label?.ifEmpty { null } ?: emu.title ?: "Terminal",
-            subtitle = (pane?.project ?: "") + (pane?.let { " · " + stateWords(it) } ?: ""),
-            dot = pane?.let(::dotOf) ?: DotState.Idle,
-            exited = exited, fontSize = fontSize, ctrl = ctrl, input = input,
+            title = live?.label?.ifEmpty { null } ?: emu.title ?: "Terminal",
+            subtitle = (live?.project ?: "") + (live?.let { " · " + stateWords(it) } ?: ""),
+            dot = live?.let(::dotOf) ?: DotState.Idle,
+            exited = exited, fontSize = size, input = input,
             connected = status != LiveStatus.Reconnecting && status != LiveStatus.Offline,
+            tools = tools, selecting = selecting, upload = upload,
+            columns = if (pane != null && wb != null) wb.layout == WbLayout.Columns else null,
         ),
         emu, version,
+        inPane = pane != null && !pane.full,
         onBack = { nav.back() },
-        onSend = { k -> if (ctrl && k.length == 1) { ctrl = false }; send(k) },
-        onInput = { v ->
-            if (ctrl && v.length > input.length) {
-                // Ctrl is held: the key just typed goes now, as a control key.
-                ctrl = false
-                send(TermKeys.ctrl(v.last()))
-            } else input = v
-        },
+        onSend = ::send,
+        onInput = { input = it },
         onSubmit = {
             val text = input
             input = ""
@@ -327,13 +232,16 @@ fun TerminalRoute(id: String) {
             else if (emu.bracketedPaste && text.contains('\n')) send("\u001b[200~$text\u001b[201~\r")
             else send(text + TermKeys.ENTER)
         },
-        onCtrl = { ctrl = !ctrl },
         onFont = { d -> fontSize = (fontSize + d).coerceIn(8, 20) },
         onRename = { renaming = true },
+        onTools = { tools = !tools },
+        onSelect = { selecting = !selecting },
+        onAttach = if (project != null) pick else null,
+        onLayout = wb?.let { { it.toggleLayout() } },
         onSize = { c, r -> emu.resize(c, r); version = emu.version; stream.resize(c, r) },
     )
     if (renaming) {
-        var name by remember { mutableStateOf(pane?.title.orEmpty()) }
+        var name by remember { mutableStateOf(live?.title.orEmpty()) }
         CrundiDialog(
             "Rename terminal", onDismiss = { renaming = false }, confirm = "Rename",
             onConfirm = {
@@ -342,4 +250,19 @@ fun TerminalRoute(id: String) {
             },
         ) { CrundiTextField(name, { name = it }, placeholder = "Terminal", modifier = Modifier.fillMaxWidth()) }
     }
+}
+
+/**
+ * What a parked terminal last showed (GET /api/panes/<id>/preview), drawn
+ * through the emulator, for behind the parked veil's blur and Resume.
+ */
+@Composable
+fun TerminalPreview(id: String) {
+    val api = LocalAppServices.current.api
+    val emu = remember(id) { TermEmulator(80, 24) }
+    var version by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(id) {
+        runCatching { api.terminals.preview(id) }.onSuccess { p -> if (p.screen.isNotEmpty()) { emu.write(p.screen); version = emu.version } }
+    }
+    TerminalView(emu, version, 11, Modifier.fillMaxSize())
 }

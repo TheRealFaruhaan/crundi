@@ -27,7 +27,7 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
         when (v.kind) {
             PaneKind.Chat -> ChatRoute(v.paneId!!)                                          // ui.chats
             PaneKind.Terminal -> TerminalRoute(v.paneId!!)                                  // ui.workspace
-            PaneKind.Parked -> ParkedBody(v, { wb.resume(v) }, busy = wb.resuming[v.key] == true) // Lead (preview: ui.chats / ui.workspace)
+            PaneKind.Parked -> ParkedBody(v, { wb.resume(v) }, busy = wb.resuming[v.key] == true, preview = if (v.parkedAs == PaneKind.Terminal) { { mv.obitech.crundi.ui.workspace.terminal.TerminalPreview(v.paneId!!) } } else { { GhostLines() } }) // Lead (preview: ui.chats / ui.workspace)
             PaneKind.Pending -> TerminalLauncher({ wb.launch(v.key, it) }, busy = wb.launching[v.key] == true, error = wb.launchErrors[v.key]) // Lead
             PaneKind.Files -> FilesRoute()                                                  // ui.workspace
             PaneKind.Git -> GitRoute()                                                      // ui.workspace

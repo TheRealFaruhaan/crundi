@@ -16,10 +16,10 @@ import mv.obitech.crundi.ui.workspace.media.MediaViewRoute
 import mv.obitech.crundi.ui.workspace.terminal.TerminalRoute
 
 /**
- * Owned by the workspace developer: Git, Files, Media, and the terminal
- * screens (the Terminals tab's front page is registered by chatsGraph and
- * shows [mv.obitech.crundi.ui.workspace.terminal.TerminalsRoute]). Detail
- * routes are in [WorkspaceRoutes], each prefixed with its area key.
+ * Owned by the workspace developer: Git, Files, Media, Browsers, and one
+ * terminal full screen (from a notification; in the Workbench a terminal is
+ * a pane). Detail routes are in [WorkspaceRoutes], each prefixed with its
+ * area key.
  */
 fun NavGraphBuilder.workspaceGraph() {
     composable(Area.Git.key) { GitRoute() }

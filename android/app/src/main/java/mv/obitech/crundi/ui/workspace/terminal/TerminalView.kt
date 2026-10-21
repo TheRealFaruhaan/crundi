@@ -1,6 +1,29 @@
 package mv.obitech.crundi.ui.workspace.terminal
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.DpOffset
+import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -134,31 +157,192 @@ fun termTextStyle(fontSize: Int): TextStyle = CrundiType.Code.copy(
  * Measures how many cells fit and calls [onSize] (cols, rows) whenever that
  * changes, so the program on the server can lay itself out to the phone.
  * Follows the output while the view is at the bottom; scrolling up stops
- * that until the person scrolls back down.
+ * that until the person scrolls back down (or taps the round arrow).
+ *
+ * As on the mobile web: a vertical swipe scrolls the scrollback; a long
+ * press opens the radial key menu ([TermRadial], release over a key sends
+ * it through [onKey]); "Select" swaps in plain selectable text so a drag
+ * selects instead of scrolling, "Done" swaps back.
  */
 @Composable
-fun TerminalView(emu: TermEmulator, version: Long, fontSize: Int, modifier: Modifier = Modifier, onSize: (cols: Int, rows: Int) -> Unit = { _, _ -> }) {
+fun TerminalView(
+    emu: TermEmulator,
+    version: Long,
+    fontSize: Int,
+    modifier: Modifier = Modifier,
+    onSize: (cols: Int, rows: Int) -> Unit = { _, _ -> },
+    onKey: ((String) -> Unit)? = null,
+    selecting: Boolean = false,
+    onSelect: (() -> Unit)? = null,
+    radialAt: Offset? = null,
+    /** Follow new output to the bottom (false only for pictures of a scrolled-up view). */
+    follow: Boolean = true,
+) {
     val style = remember(fontSize) { termTextStyle(fontSize) }
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val cell = remember(fontSize, density) { measurer.measure("MMMMMMMMMM", style).size.width / 10f }
     val rowH = with(density) { style.lineHeight.toDp() }
-    BoxWithConstraints(modifier.background(TermPalette.Background).padding(horizontal = 6.dp, vertical = 4.dp)) {
-        val cols = with(density) { (maxWidth.toPx() / cell).toInt() }.coerceIn(20, 300)
-        val rows = (maxHeight / rowH).toInt().coerceIn(4, 200)
+    val scope = rememberCoroutineScope()
+    BoxWithConstraints(modifier.background(TermPalette.Background)) {
+        val box = this
+        val cols = with(density) { ((maxWidth - 12.dp).toPx() / cell).toInt() }.coerceIn(20, 300)
+        val rows = ((maxHeight - 8.dp) / rowH).toInt().coerceIn(4, 200)
         LaunchedEffect(cols, rows) { onSize(cols, rows) }
         val list = rememberLazyListState()
         val atBottom by remember { derivedStateOf { val info = list.layoutInfo; info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 2 } ?: true } }
         val count = emu.lineCount
-        LaunchedEffect(version, count) { if (atBottom && count > 0) list.scrollToItem(count - 1) }
-        SelectionContainer {
-            LazyColumn(state = list, modifier = Modifier.fillMaxSize()) {
+        LaunchedEffect(version, count) { if (follow && atBottom && count > 0) list.scrollToItem(count - 1) }
+        var radial by remember { mutableStateOf(radialAt?.let { RadialState(it, null) }) }
+        val keys = remember(emu) { radialKeys(emu) }
+        val radiusPx = with(density) { RADIAL_R.toPx() }
+        val edgePx = with(density) { (RADIAL_R + 26.dp).toPx() }
+        val wPx = with(density) { box.maxWidth.toPx() }
+        val hPx = with(density) { box.maxHeight.toPx() }
+        fun clamp(o: Offset) = Offset(o.x.coerceIn(edgePx, maxOf(edgePx, wPx - edgePx)), o.y.coerceIn(edgePx, maxOf(edgePx, hPx - edgePx)))
+        if (selecting) {
+            // Plain text of the whole buffer, selectable; no gestures of ours on top.
+            val plain = remember(version, count) { buildString { for (i in 0 until count) { if (i > 0) append('\n'); append(emu.line(i).text()) } } }
+            val sel = rememberScrollState()
+            LaunchedEffect(Unit) { sel.scrollTo(sel.maxValue) }
+            SelectionContainer(Modifier.fillMaxSize().verticalScroll(sel).padding(horizontal = 6.dp, vertical = 4.dp)) {
+                Text(plain, style = style.copy(lineHeightStyle = null), softWrap = false)
+            }
+        } else {
+            LazyColumn(
+                state = list,
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxSize().then(
+                    if (onKey == null) Modifier else Modifier.pointerInput(emu) {
+                        longPressRadial(
+                            onOpen = { radial = RadialState(clamp(it), null) },
+                            onMove = { p -> radial = radial?.let { r -> r.copy(active = radialPick(r.center, p, radiusPx)) } },
+                            onEnd = { send -> val a = radial?.active; radial = null; if (send && a != null) onKey(keys[a].send()) },
+                        )
+                    },
+                ),
+            ) {
                 items(count) { i ->
                     val cursorAt = if (emu.cursorVisible && i == emu.scrollbackSize + emu.cursorY) emu.cursorX else -1
                     val text = remember(version, i, count) { termLine(emu.line(i), cursorAt) }
                     Text(text, style = style, softWrap = false, maxLines = 1, modifier = Modifier.fillMaxWidth().height(rowH))
                 }
             }
+        }
+        if (onSelect != null) {
+            val on = selecting
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(8.dp)
+                    .background(if (on) CrundiColors.Accent else CrundiColors.BgSecondary, Dimens.ShapeSm)
+                    .border(Dimens.Hairline, if (on) CrundiColors.Accent else CrundiColors.Border, Dimens.ShapeSm)
+                    .clickable(onClick = onSelect)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) { Text(if (on) "Done" else "Select", style = CrundiType.Small.copy(color = if (on) Color.White else CrundiColors.TextSecondary)) }
+        }
+        if (!selecting && !atBottom && count > 0) {
+            Box(
+                Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp).size(36.dp)
+                    .shadow(6.dp, CircleShape)
+                    .background(CrundiColors.BgSecondary, CircleShape)
+                    .border(Dimens.Hairline, CrundiColors.Border, CircleShape)
+                    .clickable { scope.launch { list.scrollToItem(count - 1) } },
+                contentAlignment = Alignment.Center,
+            ) { CrundiIcon("chevron-down", size = 18.dp, tint = CrundiColors.TextSecondary) }
+        }
+        radial?.let { r -> TermRadial(r, keys) }
+    }
+}
+
+// ─── The radial key menu (long-press a terminal) ───
+
+/** One key on the radial menu: what it shows, where it sits (degrees, 0 = right), what it sends. */
+class RadialKey(val label: String, val angle: Float, val send: () -> String)
+
+/** The web's RADIAL_SLOTS: arrows on the cardinals, Esc / Tab / ^C / Enter on the diagonals. */
+fun radialKeys(emu: TermEmulator): List<RadialKey> = listOf(
+    RadialKey("\u25B2", -90f) { TermKeys.arrow('A', emu.appCursorKeys) },
+    RadialKey("\u25BC", 90f) { TermKeys.arrow('B', emu.appCursorKeys) },
+    RadialKey("\u25C0", 180f) { TermKeys.arrow('D', emu.appCursorKeys) },
+    RadialKey("\u25B6", 0f) { TermKeys.arrow('C', emu.appCursorKeys) },
+    RadialKey("Esc", -135f) { TermKeys.ESC },
+    RadialKey("Tab", -45f) { TermKeys.TAB },
+    RadialKey("^C", 135f) { TermKeys.CTRL_C },
+    RadialKey("\u23CE", 45f) { TermKeys.ENTER },
+)
+
+data class RadialState(val center: Offset, val active: Int?)
+
+private val RADIAL_R = 80.dp
+
+/** Which key the finger at [p] points to, from the menu's [center]: the nearest by angle, none within 30 dp of the centre. */
+fun radialPick(center: Offset, p: Offset, radiusPx: Float, slots: List<Float> = listOf(-90f, 90f, 180f, 0f, -135f, -45f, 135f, 45f)): Int? {
+    val d = p - center
+    if (d.getDistance() < radiusPx * 30f / 80f) return null
+    val ang = atan2(d.y, d.x)
+    var best = Float.MAX_VALUE; var at = 0
+    slots.forEachIndexed { i, deg ->
+        val sa = Math.toRadians(deg.toDouble()).toFloat()
+        var diff = abs(ang - sa); if (diff > PI.toFloat()) diff = 2 * PI.toFloat() - diff
+        if (diff < best) { best = diff; at = i }
+    }
+    return at
+}
+
+/**
+ * A long press (380 ms, the finger still within 12 dp) opens the menu; the
+ * finger then picks a key and releasing sends it. Anything else (a swipe, a
+ * tap, a second finger) is left alone, so the list scrolls as usual.
+ */
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.longPressRadial(onOpen: (Offset) -> Unit, onMove: (Offset) -> Unit, onEnd: (send: Boolean) -> Unit) {
+    val slop = 12.dp.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        val start = down.position
+        val gaveUp = withTimeoutOrNull(380L) {
+            while (true) {
+                val ev = awaitPointerEvent(PointerEventPass.Initial)
+                val c = ev.changes.firstOrNull { it.id == down.id }
+                if (c == null || !c.pressed || ev.changes.size > 1 || c.isConsumed || (c.position - start).getDistance() > slop) return@withTimeoutOrNull true
+            }
+            @Suppress("UNREACHABLE_CODE") true
+        }
+        if (gaveUp != null) return@awaitEachGesture
+        onOpen(start)
+        while (true) {
+            val ev = awaitPointerEvent(PointerEventPass.Initial)
+            val c = ev.changes.firstOrNull { it.id == down.id }
+            if (c == null) { onEnd(false); return@awaitEachGesture }
+            c.consume()
+            if (!c.pressed) { onEnd(true); return@awaitEachGesture }
+            onMove(c.position)
+        }
+    }
+}
+
+/** The menu itself: a dashed centre and eight round keys, the picked one lit and larger (.term-radial). */
+@Composable
+fun TermRadial(r: RadialState, keys: List<RadialKey>) {
+    val density = LocalDensity.current
+    Box(Modifier.fillMaxSize()) {
+        val c = with(density) { DpOffset(r.center.x.toDp(), r.center.y.toDp()) }
+        Box(
+            Modifier.offset(c.x - 18.dp, c.y - 18.dp).size(36.dp)
+                .background(Color(0x590A0A0F), CircleShape)
+                .border(BorderStroke(2.dp, CrundiColors.TextMuted), CircleShape),
+        )
+        keys.forEachIndexed { i, k ->
+            val a = Math.toRadians(k.angle.toDouble())
+            val x = c.x + RADIAL_R * cos(a).toFloat()
+            val y = c.y + RADIAL_R * sin(a).toFloat()
+            val on = r.active == i
+            Box(
+                Modifier.offset(x - 24.dp, y - 24.dp).size(48.dp)
+                    .graphicsLayer { scaleX = if (on) 1.22f else 1f; scaleY = if (on) 1.22f else 1f }
+                    .shadow(8.dp, CircleShape)
+                    .background(if (on) CrundiColors.Accent else CrundiColors.BgSecondary, CircleShape)
+                    .border(Dimens.Hairline, if (on) CrundiColors.Accent else CrundiColors.Border, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { Text(k.label, style = CrundiType.Code.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (on) Color.White else CrundiColors.TextPrimary)) }
         }
     }
 }
@@ -184,44 +368,3 @@ object TermKeys {
     }
 }
 
-/**
- * The row of keys under a terminal: Esc, Tab, Ctrl (held for the next key
- * typed), ^C, the arrows and Enter. Sends through [onKey].
- */
-@Composable
-fun TerminalKeyRow(ctrl: Boolean, onCtrl: () -> Unit, appCursor: Boolean, onKey: (String) -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier.fillMaxWidth().background(CrundiColors.BgSecondary).horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        TermKey("Esc") { onKey(TermKeys.ESC) }
-        TermKey("Tab") { onKey(TermKeys.TAB) }
-        TermKey("Ctrl", active = ctrl, onClick = onCtrl)
-        TermKey("^C") { onKey(TermKeys.CTRL_C) }
-        TermKey(icon = "chevron-left") { onKey(TermKeys.arrow('D', appCursor)) }
-        TermKey(icon = "chevron-up") { onKey(TermKeys.arrow('A', appCursor)) }
-        TermKey(icon = "chevron-down") { onKey(TermKeys.arrow('B', appCursor)) }
-        TermKey(icon = "chevron-right") { onKey(TermKeys.arrow('C', appCursor)) }
-        TermKey("Enter") { onKey(TermKeys.ENTER) }
-        TermKey("⇧Tab") { onKey(TermKeys.SHIFT_TAB) }
-    }
-}
-
-@Composable
-private fun TermKey(label: String? = null, icon: String? = null, active: Boolean = false, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .defaultMinSize(minWidth = 44.dp)
-            .height(36.dp)
-            .background(if (active) CrundiColors.AccentDim else CrundiColors.BgTertiary, Dimens.ShapeSm)
-            .border(Dimens.Hairline, if (active) CrundiColors.Accent else CrundiColors.Border, Dimens.ShapeSm)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        val c = if (active) CrundiColors.AccentHover else CrundiColors.TextPrimary
-        if (icon != null) CrundiIcon(icon, size = 16.dp, tint = c)
-        else Text(label.orEmpty(), style = CrundiType.Code.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = c))
-    }
-}
