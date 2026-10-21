@@ -1914,6 +1914,39 @@ export function createFactoryRunner({
     return { ok: false, error: 'action is pause, resume or limits.' };
   }
 
+  /**
+   * factory_message, from the Manager's chat: a message into the chat of
+   * someone who is mid-step (a correction, a heads-up), delivered like the
+   * person typing into it. Only while that person holds a step: otherwise
+   * there is nobody to tell, and factory_delegate or the next step's notes
+   * are the way.
+   */
+  async function messageFromManager(chatId, employee, text) {
+    const info = chatInfo(chatId);
+    if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run can do this.' };
+    const entry = runs.get(info.runId);
+    if (!entry) return { ok: false, error: 'That factory run no longer exists.' };
+    const body = String(text || '').trim().slice(0, 6000);
+    if (!body) return { ok: false, error: 'Say what to tell them (text).' };
+    return locked(entry, async () => {
+      const roster = st(entry).snapshot.roster;
+      const want = String(employee || '').trim().toLowerCase();
+      const r = roster.find(x => x.id !== MANAGER_ID && (x.id.toLowerCase() === want || x.name.toLowerCase() === want));
+      if (!r) return { ok: false, error: `Nobody called "${employee}" is on your team. The team: ${roster.filter(x => x.id !== MANAGER_ID).map(x => x.name).join(', ')}.` };
+      const emp = entry.live.employees[r.id];
+      if (!emp || !emp.busy || !emp.chatId || !agents.isAlive(emp.chatId)) {
+        const busy = Object.entries(entry.live.employees).filter(([id, e]) => id !== MANAGER_ID && e.busy && e.chatId).map(([id]) => roster.find(x => x.id === id)?.name).filter(Boolean);
+        return { ok: false, error: `${r.name} is not working on a step right now, so there is nobody to tell. Hand them a job with factory_delegate when it is your turn, or leave a note for their next step.${busy.length ? ` Working now: ${busy.join(', ')}.` : ''}` };
+      }
+      const t = st(entry).tokens.find(x => x.id === emp.busy);
+      const node = st(entry).snapshot.nodes.find(n => n.id === t?.nodeId);
+      const sent = agents.send(emp.chatId, `[Factory] A message from the Manager while you work on "${node?.label || (t?.delegate ? 'the job it gave you' : 'your step')}":\n\n${body}\n\nCarry on with your step; this message does not end it.`);
+      if (sent && sent.ok === false) return { ok: false, error: `Could not reach ${r.name}: ${sent.error}` };
+      commit(entry, { type: 'manager-message', employeeId: r.id, text: body });
+      return { ok: true, message: `Told ${r.name}. They read it in their running step; it does not end it.` };
+    });
+  }
+
   /** Switch the team between asking (the Manager or Gatekeeper) and bypass. */
   async function setTeamMode(runId, mode) {
     const entry = runs.get(runId);
@@ -1944,7 +1977,7 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /**

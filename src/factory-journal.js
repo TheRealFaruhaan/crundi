@@ -245,6 +245,9 @@ export function reduce(prev, ev) {
       r.capHit = { which: ev.which, limit: ev.limit, at };
       if (ev.which === 'maxMinutes') closeClock(r, at);
       break;
+    case 'manager-message':
+      // Told someone mid-step: shown on the timeline, changes no state.
+      break;
     case 'limits':
       // Changed on a running run: overrides the factory's own.
       r.limits = ev.limits || null;

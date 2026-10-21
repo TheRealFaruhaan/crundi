@@ -117,6 +117,20 @@ function setup(name, limits, usage = { value: null }) {
   await r.stopRun(st.run.id); r.dispose();
 }
 
+// ─── The Manager messages someone mid-step ───
+{
+  const { team, r } = setup('l6', {});
+  const st = await r.startRun({ project: 'l6', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length);
+  const mgr = team.of('manager')[0], fe = team.of('fe')[0];
+  const m = await r.messageFromManager(mgr.id, 'Frontend dev', 'Delete your Terminals.kt; the workspace owns terminals.');
+  ok(m.ok && /A message from the Manager while you work on "Frontend dev"/.test(fe.msgs.at(-1)) && /Terminals\.kt/.test(fe.msgs.at(-1)) && /does not end it/.test(fe.msgs.at(-1)), 'message: reaches the running step, saying it does not end it');
+  ok(!(await r.messageFromManager(fe.id, 'Backend dev', 'x')).ok, 'message: only the Manager sends them');
+  const idle = await r.messageFromManager(mgr.id, 'Security dev', 'x');
+  ok(!idle.ok && /not working on a step/.test(idle.error) && /Working now: .*Frontend dev/.test(idle.error), 'message: refused for someone not mid-step, naming who is');
+  await r.stopRun(st.run.id); r.dispose();
+}
+
 // ─── Paused, restarted, recovered while paused, then resumed ───
 {
   const f = standard(); f.settings = { presets: [] };

@@ -6011,6 +6011,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         try { return json(res, await factoryRunner.answerPermissions(String(a.sessionId || ''), a.decisions, { rules: a.rules, policy: a.policy })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
+      if (body.tool === 'factory_message') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.messageFromManager(String(a.sessionId || ''), a.employee, a.text)); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
       if (body.tool === 'factory_control') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
         try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null })); }
