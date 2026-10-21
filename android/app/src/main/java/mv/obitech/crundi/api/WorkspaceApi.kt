@@ -3,7 +3,9 @@ package mv.obitech.crundi.api
 import mv.obitech.crundi.api.model.Folder
 import mv.obitech.crundi.api.model.FileSearch
 import mv.obitech.crundi.api.model.FileText
+import mv.obitech.crundi.api.model.GitCommitDetail
 import mv.obitech.crundi.api.model.GitDiff
+import mv.obitech.crundi.api.model.GitLog
 import mv.obitech.crundi.api.model.GitStatus
 import mv.obitech.crundi.api.model.MediaItem
 import mv.obitech.crundi.api.model.Project
@@ -57,7 +59,7 @@ class FilesApi internal constructor(private val rpc: Rpc) {
     suspend fun delete(project: String, file: String) { rpc.post("/api/files/delete", mapOf("project" to project, "file" to file)) }
 }
 
-/** Git of a project. There is no history (log) route on the server. */
+/** Git of a project. */
 class GitApi internal constructor(private val rpc: Rpc) {
     /** Branch, changed files, ahead/behind. Not a repo: ApiException with the server's words. */
     suspend fun status(project: String): GitStatus = rpc.read(rpc.get("/api/git/info", mapOf("project" to project)), null)
@@ -72,6 +74,11 @@ class GitApi internal constructor(private val rpc: Rpc) {
     suspend fun push(project: String) { rpc.post("/api/git/push", mapOf("project" to project), slow = true) }
     /** Answers git's output. */
     suspend fun pull(project: String): String = rpc.post("/api/git/pull", mapOf("project" to project), slow = true).str("output") ?: ""
+    /** The branch's history, newest first: [limit] commits after skipping [skip] (GET /api/git/log). */
+    suspend fun log(project: String, limit: Int = 50, skip: Int = 0): GitLog =
+        rpc.read(rpc.get("/api/git/log", mapOf("project" to project, "limit" to limit.toString(), "skip" to skip.toString())), null)
+    /** One commit: message, files with line counts, and its patch (cut at 400 KB, see [GitCommitDetail.truncated]). */
+    suspend fun show(project: String, hash: String): GitCommitDetail = rpc.read(rpc.get("/api/git/show", mapOf("project" to project, "hash" to hash)), "commit")
 }
 
 /** The media library. Pictures and files show through [CrundiClient.images] / download with [MediaItem.rawPath]. */

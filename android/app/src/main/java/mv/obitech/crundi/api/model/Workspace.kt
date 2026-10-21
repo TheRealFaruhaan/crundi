@@ -72,6 +72,43 @@ data class GitFile(
 /** GET /api/git/diff: the unified diff and both whole versions. */
 @Serializable data class GitDiff(val diff: String = "", val old: String = "", val new: String = "", val file: String = "")
 
+/** One commit of the history (GET /api/git/log). [date] is ISO 8601; [refs] are branch and tag names ("HEAD -> main"). */
+@Serializable
+data class GitCommit(
+    val hash: String,
+    val short: String = hash.take(7),
+    val parents: List<String> = emptyList(),
+    val author: String = "",
+    val email: String = "",
+    val date: String = "",
+    val refs: List<String> = emptyList(),
+    val subject: String = "",
+    val body: String = "",
+)
+
+/** GET /api/git/log: a page of history; [more] when older commits follow. */
+@Serializable data class GitLog(val commits: List<GitCommit> = emptyList(), val more: Boolean = false)
+
+/** A file a commit changed, with its line counts. */
+@Serializable data class GitCommitFile(val file: String, val add: Int = 0, val del: Int = 0, val binary: Boolean = false)
+
+/** GET /api/git/show: one commit with its files and patch. */
+@Serializable
+data class GitCommitDetail(
+    val hash: String,
+    val short: String = hash.take(7),
+    val parents: List<String> = emptyList(),
+    val author: String = "",
+    val email: String = "",
+    val date: String = "",
+    val refs: List<String> = emptyList(),
+    val subject: String = "",
+    val body: String = "",
+    val files: List<GitCommitFile> = emptyList(),
+    val diff: String = "",
+    val truncated: Boolean = false,
+)
+
 // ─── Media library ───
 
 @Serializable data class MediaLink(val type: String = "", val taskId: String = "", val todoId: String = "", val nodeId: String = "")
