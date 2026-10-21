@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -80,7 +81,7 @@ class RunCallbacks(
 enum class RunTab(val label: String) { Run("Run"), Timeline("Timeline") }
 
 @Composable
-fun FactoryRunRoute(id: String) {
+fun FactoryRunRoute(id: String, onAllRuns: (() -> Unit)? = null) {
     val api = LocalAppServices.current.api
     val nav = LocalNavigator.current
     val loader = rememberLoader(id, events = arrayOf("factoryRun"), accept = { it.id == null || it.id == id }) { api.factories.run(id) }
@@ -89,7 +90,7 @@ fun FactoryRunRoute(id: String) {
     LaunchedEffect(loader) { while (true) { delay(10_000); if (loader.load.valueOrNull?.active != false) loader.refresh() } }
     val cb = remember(id) {
         RunCallbacks(
-            onBack = { nav.back() },
+            onBack = { onAllRuns?.invoke() ?: nav.back() },
             onPause = { actions.run { api.factories.pause(id) } },
             onResume = { actions.run { api.factories.resume(id) } },
             onStop = { actions.run { api.factories.stop(id) } },
@@ -117,12 +118,14 @@ fun FactoryRunScreen(run: Load<FactoryRun>, cb: RunCallbacks = RunCallbacks(), i
     var stopping by remember { mutableStateOf(false) }
     val r = run.valueOrNull
     Column(Modifier.fillMaxSize().imePadding()) {
-        TopBar(r?.factoryName ?: "Factory run", subtitle = r?.let { it.cr?.title?.ifBlank { null } ?: it.task.ifBlank { it.project } }, onBack = cb.onBack) {
+        val status: @Composable RowScope.() -> Unit = {
             if (r != null) {
                 val (label, color) = if (r.awaitingFinish) "Done: your decision" to CrundiColors.Sky else runStatus(r.status, r.waitingOn)
                 OutlineChip(label, color, Modifier.padding(end = 4.dp))
             }
         }
+        if (inPane()) PaneSubBar("All runs", cb.onBack, status)
+        else TopBar(r?.factoryName ?: "Factory run", subtitle = r?.let { it.cr?.title?.ifBlank { null } ?: it.task.ifBlank { it.project } }, onBack = cb.onBack, actions = status)
         when (run) {
             is Load.Loading -> LoadingState(text = "Loading the run")
             is Load.Failed -> ErrorState(run.message, onRetry = cb.onRetry)
