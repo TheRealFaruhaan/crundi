@@ -203,6 +203,15 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
         const tok = (run.tokens || []).find(t => t.nodeId === node.id && (t.status === 'work' || t.status === 'answer'));
         const emp = tok && run.employees?.[tok.employeeId];
         if (tok) node.data.doing = { who: tok.employee || names.get(tok.employeeId) || '', text: emp?.activity?.text || (tok.status === 'answer' ? 'Deciding' : 'Starting'), state: emp?.activity?.state || '', chatId: emp?.chatId || '' };
+        // A job the Manager handed out belongs to no step: draw it on the
+        // person's own step, which lights up as working.
+        const who = rosterOf(raw);
+        const job = !tok && who && (run.tokens || []).find(t => t.job && t.employeeId === who && t.status === 'work');
+        if (job && !out.nodes.some(n2 => n2 !== node && n2.data.doing && n2.data.doing.job === job.id)) {
+          const e = run.employees?.[who];
+          node.data.doing = { job: job.id, who: job.employee || names.get(who) || '', text: e?.activity?.text ? 'Job: ' + e.activity.text : 'Job: ' + first(job.job, 60), state: e?.activity?.state || '', chatId: e?.chatId || '' };
+          node.data.tokens = [...node.data.tokens, { id: job.id, status: 'work' }];
+        }
       }
     }
     // The connection(s) just taken flow for a moment. Finishing is not a
@@ -213,6 +222,22 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
       const fin = e.data.edge.sourceHandle === 'finish';
       e.data.pulse = fin ? finished && !prev?.state?.outcome : (rec.state.edgeCounts[e.id] || 0) > (before[e.id] || 0);
       if (fin && finished) e.data.used = 1;
+    }
+    // A job the Manager handed out: a temporary line from the Manager straight
+    // to the person, until it comes back.
+    if (at == null && run) {
+      const mgrNode = out.nodes.find(n => n.data.node.type === 'manager');
+      for (const t of (run.tokens || []).filter(x => x.job && x.status === 'work')) {
+        const target = out.nodes.find(n => n.data.doing && n.data.doing.job === t.id) || out.nodes.find(n => n.data.node.type === 'employee' && n.data.node.employeeId === t.employeeId);
+        if (!mgrNode || !target) continue;
+        out.edges.push({
+          id: 'job-' + t.id, source: mgrNode.id, sourceHandle: 'out', target: target.id, targetHandle: 'in',
+          type: 'smoothstep', animated: true, selectable: false, focusable: false, zIndex: 5,
+          label: 'Job', labelStyle: { fill: '#c4b5fd', fontSize: 11, fontWeight: 600 }, labelBgStyle: { fill: '#1e1b2e' }, labelBgPadding: [6, 3], labelBgBorderRadius: 6,
+          style: { stroke: '#a78bfa', strokeWidth: 2.5, strokeDasharray: '6 5' },
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#a78bfa' },
+        });
+      }
     }
     for (const node of out.nodes) if (sizes[node.id]) node.measured = sizes[node.id];
     return out;
@@ -236,7 +261,9 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
 
   // Follow the work: zoom to the steps where someone is working, and move
   // with it. Panning or zooming by hand stops following.
-  const activeKey = at == null && run ? (run.tokens || []).filter(t => t.nodeId && ['work', 'answer', 'ask', 'wait', 'join'].includes(t.status)).map(t => t.nodeId).sort().join(',') : '';
+  const activeKey = at == null && run ? (run.tokens || []).map(t => t.nodeId && ['work', 'answer', 'ask', 'wait', 'join'].includes(t.status) ? t.nodeId
+    // a job the Manager handed out: the person's own step
+    : t.job && t.status === 'work' ? (rec?.state?.snapshot?.nodes || []).find(n => n.type === 'employee' && n.employeeId === t.employeeId)?.id : null).filter(Boolean).sort().join(',') : '';
   useEffect(() => {
     if (!follow || !rec) return;
     const ids = activeKey ? [...new Set(activeKey.split(','))] : [];

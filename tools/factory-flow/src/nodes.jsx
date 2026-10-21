@@ -28,7 +28,7 @@ function Badge({ issues }) {
 function Tokens({ tokens, blocked }) {
   if (!tokens.length) return null;
   const t = tokens[0];
-  const label = blocked ? 'needs permission' : { work: 'working', answer: 'deciding', ask: 'waiting on you', join: 'waiting', wait: 'waiting', finished: 'finished' }[t.status] || t.status;
+  const label = blocked ? 'needs permission' : { work: 'working', answer: 'deciding', ask: 'waiting on you', join: 'waiting', wait: 'waiting', delegated: 'waiting on a job', finished: 'finished' }[t.status] || t.status;
   return <div className={'ff-token ' + (blocked ? 'blocked' : t.status)} title={blocked ? 'Waiting for the Manager (or the Gatekeeper) to answer a permission request' : ''}>{label}{tokens.length > 1 ? ' ×' + tokens.length : ''}</div>;
 }
 
