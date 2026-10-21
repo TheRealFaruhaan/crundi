@@ -298,10 +298,12 @@ fun DockerScreen(state: DockerState, events: DockerEvents = DockerEvents()) {
 
 @Composable
 private fun DockerNav(state: DockerState, events: DockerEvents, showFilter: Boolean = true) {
+    // Counts only once the engine answers: before that the lists are stand-ins, not real empties.
+    val live = showFilter
     Column(Modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = Dimens.ScreenPad, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (v in DockerView.entries) {
-                val n = when (v) {
+                val n = if (!live) null else when (v) {
                     DockerView.Containers -> state.containers.valueOrNull?.size
                     DockerView.Stacks -> state.stacks.valueOrNull?.size
                     DockerView.Images -> state.images.valueOrNull?.size
