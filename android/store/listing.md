@@ -61,6 +61,24 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.0.2-dev.3 (en-US)
+
+Version code 15. The app's code is the same as 1.0.2-dev.2 (code 14); the
+notes describe what is new since 1.0.1, the last release with notes.
+
+```
+<en-US>
+Steadier connection and quieter notifications.
+
+- The app stays connected while a bubble or live card is up, so a tap shows the chat at once instead of "Reconnecting".
+- A renamed chat's live card follows the new name.
+- No more being signed out when two windows renewed their login at the same moment.
+- No bubble or buzz for the chat you already have open.
+
+Needs a Crundi server, version 1.20 or newer.
+</en-US>
+```
+
 ## Release notes, 1.0.1 (en-US)
 
 ```
