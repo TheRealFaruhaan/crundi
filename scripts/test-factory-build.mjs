@@ -95,7 +95,7 @@ ok(/FACTORY_RUN_TOOLS = new Set\(\['factory_handoff', 'factory_permission', 'fac
 for (const t of ['factory_guide', 'factory_list', 'factory_get', 'factory_validate', 'factory_save', 'factory_start', 'factory_triggers']) {
   if (!mcp.includes(`name: '${t}'`)) ok(false, 'mcp: tool defined: ' + t);
 }
-ok(readFileSync(new URL('../skills/crundi-factories/SKILL.md', import.meta.url), 'utf-8').startsWith('---\nname: crundi-factories\n'), 'skill: crundi-factories ships');
+ok(readFileSync(new URL('../skills/crundi-factories/SKILL.md', import.meta.url), 'utf-8').replace(/\r\n/g, '\n').startsWith('---\nname: crundi-factories\n'), 'skill: crundi-factories ships');
 
 rmSync(base, { recursive: true, force: true });
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
