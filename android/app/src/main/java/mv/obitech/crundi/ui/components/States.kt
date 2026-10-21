@@ -54,7 +54,11 @@ fun EmptyState(
 fun LoadingState(modifier: Modifier = Modifier, text: String? = null) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            CircularProgressIndicator(color = CrundiColors.Accent, trackColor = CrundiColors.BgTertiary, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
+            // Inspection mode (previews, screenshot tests) draws it still: a spinning one never lets Robolectric go idle.
+            if (androidx.compose.ui.platform.LocalInspectionMode.current)
+                CircularProgressIndicator(progress = { 0.3f }, color = CrundiColors.Accent, trackColor = CrundiColors.BgTertiary, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
+            else
+                CircularProgressIndicator(color = CrundiColors.Accent, trackColor = CrundiColors.BgTertiary, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
             if (text != null) Text(text, style = CrundiType.Meta)
         }
     }

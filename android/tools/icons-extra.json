@@ -1,6 +1,8 @@
 {
   "_note": "Icons the desktop's ICON_PATHS does not have, in the same style (24 grid, stroke 2, round caps and joins, Lucide/Feather shapes). Add here only after checking ICON_PATHS has nothing that fits; ICON_PATHS wins on a name clash.",
   "search": "<circle cx=\"11\" cy=\"11\" r=\"8\"/><line x1=\"21\" y1=\"21\" x2=\"16.65\" y2=\"16.65\"/>",
+  "shield": "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/>",
+  "ban": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><line x1=\"5.6\" y1=\"5.6\" x2=\"18.4\" y2=\"18.4\"/>",
   "chevron-down": "<polyline points=\"6 9 12 15 18 9\"/>",
   "chevron-up": "<polyline points=\"18 15 12 9 6 15\"/>",
   "arrow-left": "<line x1=\"19\" y1=\"12\" x2=\"5\" y2=\"12\"/><polyline points=\"12 19 5 12 12 5\"/>",
