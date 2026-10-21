@@ -210,6 +210,8 @@ fun TerminalRoute(id: String) {
     }
     // In a pane the frame's A- / A+ sets the size, as the web's pane menu does.
     val size = if (pane != null) (12 * pane.fontScale).toInt().coerceIn(8, 22) else fontSize
+    // The key panel steps aside while a chat pane is the one in use (spec 8, as the web's mobile tool panel).
+    val chatFocused = pane != null && wb?.focused?.let { k -> wb.panes()[k]?.kind == mv.obitech.crundi.ui.workbench.PaneKind.Chat } == true
     TerminalScreen(
         TerminalUi(
             title = live?.label?.ifEmpty { null } ?: emu.title ?: "Terminal",
@@ -217,7 +219,7 @@ fun TerminalRoute(id: String) {
             dot = live?.let(::dotOf) ?: DotState.Idle,
             exited = exited, fontSize = size, input = input,
             connected = status != LiveStatus.Reconnecting && status != LiveStatus.Offline,
-            tools = tools, selecting = selecting, upload = upload,
+            tools = tools && !chatFocused, selecting = selecting, upload = upload,
             columns = if (pane != null && wb != null) wb.layout == WbLayout.Columns else null,
         ),
         emu, version,

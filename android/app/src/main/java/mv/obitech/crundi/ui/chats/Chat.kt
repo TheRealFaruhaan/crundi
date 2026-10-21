@@ -124,6 +124,8 @@ data class ChatUi(
     val enterSends: Boolean = true,
     /** The project's own icon (/api/project-icon?..), for the header's tile. */
     val projectIcon: String? = null,
+    /** Show the panels docked to this chat (the live route turns it on). */
+    val panelDock: Boolean = false,
 ) {
     val title get() = pane?.label?.takeIf { it.isNotEmpty() } ?: chat.title.ifEmpty { "Chat" }
     val pending get() = chat.pendingInjections + localPending.filter { l -> chat.pendingInjections.none { it.uuid == l.uuid && l.uuid.isNotEmpty() } }
@@ -179,6 +181,9 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
                 if (nearEnd && info.totalItemsCount > 0) list.animateScrollToItem(info.totalItemsCount - 1)
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
+              // Panels Claude docked to this chat sit above the conversation, at most 42% of it (ui.panels).
+              DockedPanels(ui.panelDock, c.id) {
+              Box(Modifier.fillMaxSize()) {
                 LazyColumn(
                     Modifier.fillMaxSize(), state = list,
                     contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 48.dp),
@@ -198,6 +203,8 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
                     AgentBadge("terminal", shown.filter { it.kind == "task" }, "background command", "background commands", actions::tasks)
                     AgentBadge("layers", shown.filter { it.kind != "task" }, "agent", "agents", actions::agents)
                 }
+              }
+              }
             }
             if (ui.error != null) Banner(ui.error, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), kind = BadgeKind.Bad, icon = "alert-triangle")
             if (ui.notice != null) Banner(ui.notice, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), kind = BadgeKind.Good, icon = "check")
@@ -218,6 +225,12 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
         ui.sheet?.let { s -> SheetOverlay({ actions.sheet(null) }) { ChatSheetContent(s, ui, actions) } }
     }
     }
+}
+
+/** The chat's docked panels (ui.panels.WithPanelDock) when [on]; just the content otherwise (screenshots of the chat alone). */
+@Composable
+private fun DockedPanels(on: Boolean, chatId: String, content: @Composable () -> Unit) {
+    if (on) mv.obitech.crundi.ui.panels.WithPanelDock(chatId) { content() } else content()
 }
 
 /** The compact chat page's header (#cp-head): back, the tile, the title over a dot and the project, then the menu. */
@@ -399,7 +412,7 @@ fun ChatRoute(chatId: String) {
     val scope = rememberCoroutineScope()
     val paneRow = server?.terminals?.firstOrNull { it.id == chatId }
     val project = chat.project.ifEmpty { paneRow?.project.orEmpty() }
-    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon)
+    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true)
 
     // The clock's list: loaded with the chat, again when a turn ends (turn-end
     // items go then), and every minute while the chat is on screen.

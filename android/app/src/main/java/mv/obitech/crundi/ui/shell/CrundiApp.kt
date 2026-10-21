@@ -71,6 +71,7 @@ fun CrundiApp(
     var drawer by remember { mutableStateOf(drawerOpenAtStart) }
     var addingProject by remember { mutableStateOf(false) }
     var approvalsOpen by remember { mutableStateOf(approvalsOpenAtStart) }
+    var panelsOpen by remember { mutableStateOf(false) }
     val wb = rememberWorkbench(services.api, data.currentProject, LocalWorkbenchStore.current, host)
     LaunchedEffect(openRoute) {
         if (openRoute != null) { navigator.to(openRoute); onOpened() }
@@ -97,7 +98,7 @@ fun CrundiApp(
                 onProject = { services.shell.selectProject(it); navigator.area(Area.Workbench) },
                 onApprovals = { drawer = false; approvalsOpen = !approvalsOpen },
                 onUsage = { navigator.to(Area.Usage.key) },
-                onPanels = { navigator.area(Area.Panels) },
+                onPanels = { drawer = false; panelsOpen = true },
                 onAddProject = { addingProject = true },
                 onAppSettings = host::openAppSettings,
                 onPairAnother = host::pairAnother,
@@ -120,6 +121,10 @@ fun CrundiApp(
                 operationsGraph()
             }
         }
+        // The top bar's Panels button: its chips and their panels (ui.panels).
+        if (panelsOpen) mv.obitech.crundi.ui.panels.PanelChipsPopover(onDismiss = { panelsOpen = false }, onOpenTab = { navigator.area(Area.Panels) })
+        // Claude asking to use a secret: a card over every screen, answered with the PIN (ui.operations).
+        mv.obitech.crundi.ui.operations.SecretPromptRoute()
         if (addingProject) AddProjectDialog(services, onDone = { alias ->
             addingProject = false
             if (alias != null) { services.shell.selectProject(alias); navigator.area(Area.Workbench) }

@@ -159,9 +159,10 @@ fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, 
             data.usage?.let { UsageBackdrop(it, Modifier.clickable(onClick = callbacks.onUsage)) }
             Row(Modifier.fillMaxSize().padding(start = 2.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CrundiIconButton("menu", onMenu, contentDescription = "Projects", tint = CrundiColors.TextPrimary, size = 22.dp)
-                RobotHead(size = 24.dp, motion = if (data.connection == Connection.Connected) MarkMotion.Idle else MarkMotion.Load)
+                RobotHead(size = 24.dp, motion = if (data.connection == Connection.Connected) MarkMotion.Intro else MarkMotion.Load)
                 Text("/", style = CrundiType.Body.copy(color = CrundiColors.TextMuted))
-                data.project?.icon?.let { ProjectIcon(it, 18.dp) }
+                // The project's icon, or its initials on its own colour (the web's mark).
+                data.project?.let { mv.obitech.crundi.ui.chats.MarkTile(mv.obitech.crundi.ui.chats.projectMark(it.name), it.icon, 18.dp) }
                 Text(
                     data.project?.name ?: "No project",
                     style = CrundiType.Body.copy(color = CrundiColors.TextSecondary),
@@ -423,10 +424,7 @@ private fun ProjectRow(p: ProjectSummary, active: Boolean, onClick: () -> Unit) 
         active = active,
         leading = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (p.icon != null) ProjectIcon(p.icon, 18.dp)
-                else Box(Modifier.size(18.dp).clip(RoundedCornerShape(5.dp)).background(CrundiColors.BgTertiary), contentAlignment = Alignment.Center) {
-                    Text(p.initials, style = CrundiType.Meta.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold, color = CrundiColors.TextSecondary))
-                }
+                mv.obitech.crundi.ui.chats.MarkTile(mv.obitech.crundi.ui.chats.projectMark(p.name), p.icon, 22.dp)
                 StateDot(p.state)
             }
         },
