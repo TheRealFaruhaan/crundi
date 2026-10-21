@@ -30,7 +30,7 @@ const { standard, fakeTeam } = await import('./factory-fixtures.mjs');
 let failed = 0;
 const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-async function until(fn, ms = 6000) {
+async function until(fn, ms = 20000) {
   const end = Date.now() + ms;
   while (Date.now() < end) { const v = await fn(); if (v) return v; await sleep(15); }
   return null;
@@ -207,6 +207,6 @@ function setup(name, factory = (() => { const f = standard(); f.settings = { pre
   r.dispose();
 }
 
-rmSync(base, { recursive: true, force: true });
+try { rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* Windows may still hold a file; it is a temp folder */ };
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);

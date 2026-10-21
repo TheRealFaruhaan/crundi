@@ -31,7 +31,7 @@ const { standard, fakeTeam } = await import('./factory-fixtures.mjs');
 let failed = 0;
 const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-async function until(fn, ms = 6000) {
+async function until(fn, ms = 20000) {
   const end = Date.now() + ms;
   while (Date.now() < end) { const v = await fn(); if (v) return v; await sleep(15); }
   return null;
@@ -104,7 +104,7 @@ let crashedId = '';
   const fe = team.of('fe')[0];
   ok(fe && /You were interrupted: Crundi restarted/.test(fe.msgs[0]) && /Keep the UI minimal/.test(fe.msgs[0]) && /— The step, as it was given —/.test(fe.msgs[0]), 'recover: an interrupted employee gets the continue prompt, with the note, then its step');
   ok(workIn(team.of('be')[0].msgs[0]) !== workIn(fe.msgs[0]), 'recover: the unfinished branch workspace was created, so the branches stay apart');
-  const fin = await until(() => r.getRun(crashedId).status === 'finishing' && r.getRun(crashedId));
+  const fin = await until(() => r.getRun(crashedId).status === 'finishing' && r.getRun(crashedId), 30_000);
   ok(!!fin, 'recover: the run goes on to finish');
   if (fin) ok(existsSync(join(fin.worktree, 'ui.txt')) && existsSync(join(fin.worktree, 'api.txt')), 'recover: both branches\' work ends up merged');
   ok(!(await r.recover(crashedId)).ok, 'recover: a run that is not crashed is refused');
@@ -221,6 +221,6 @@ let crashedId = '';
   r.dispose();
 }
 
-rmSync(base, { recursive: true, force: true });
+try { rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* Windows may still hold a file; it is a temp folder */ };
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);

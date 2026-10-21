@@ -104,6 +104,6 @@ ok(card({ status: 'crashed' }).title === 'Std: crashed', 'live card: crashed');
 ok(card({ status: 'paused' }).state === 'waiting' && card({ status: 'paused' }).title === 'Std: paused', 'live card: paused');
 ok(card({ status: 'finished' }).state === 'idle' && card({ status: 'stopped' }).state === 'idle', 'live card: over, the card goes');
 
-rmSync(base, { recursive: true, force: true });
+try { rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* Windows may still hold a file; it is a temp folder */ };
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);

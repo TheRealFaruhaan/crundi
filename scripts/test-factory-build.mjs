@@ -97,6 +97,6 @@ for (const t of ['factory_guide', 'factory_list', 'factory_get', 'factory_valida
 }
 ok(readFileSync(new URL('../skills/crundi-factories/SKILL.md', import.meta.url), 'utf-8').replace(/\r\n/g, '\n').startsWith('---\nname: crundi-factories\n'), 'skill: crundi-factories ships');
 
-rmSync(base, { recursive: true, force: true });
+try { rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* Windows may still hold a file; it is a temp folder */ };
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);
