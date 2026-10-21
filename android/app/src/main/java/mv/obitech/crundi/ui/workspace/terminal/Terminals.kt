@@ -183,6 +183,7 @@ fun TerminalsRoute() {
     val project = shell.currentProject
     val server by remember(api) { api.events.state }.collectAsState(initial = api.events.lastState)
     val live by api.events.status.collectAsState()
+    val failure by api.events.failure.collectAsState()
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -194,7 +195,7 @@ fun TerminalsRoute() {
         parked = server?.parked(project).orEmpty().filter { it.paneKind == "terminal" },
         busy = busy,
         notice = notice,
-        loadError = if (server == null) liveErrorText(live) else null,
+        loadError = if (server == null) liveErrorText(live, failure) else null,
     )
     TerminalsScreen(
         state,

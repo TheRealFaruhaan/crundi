@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalInspectionMode
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import mv.obitech.crundi.api.ApiException
 import mv.obitech.crundi.api.ApiRequest
@@ -47,7 +46,10 @@ class EdgeScreens : ScreenshotTest() {
         }
         override suspend fun download(request: ApiRequest, sink: OutputStream, progress: Progress?): DownloadInfo =
             throw ApiException(if (offline) 0 else 500, if (offline) "Could not reach dev.example.com" else "Internal server error")
-        override fun events(path: String): Flow<SseFrame> = if (offline) flow { throw ApiException(0, "Could not reach dev.example.com") } else emptyFlow()
+        // As OkHttpTransport does: an error answer to the stream throws its HTTP error.
+        override fun events(path: String): Flow<SseFrame> = flow {
+            if (offline) throw ApiException(0, "Could not reach dev.example.com") else throw ApiException(500, "Internal server error")
+        }
         override fun socket(listener: SocketListener): SocketConnection {
             listener.onClosed(0, if (offline) "offline" else "error")
             return object : SocketConnection { override fun send(text: String) = false; override fun close() {} }

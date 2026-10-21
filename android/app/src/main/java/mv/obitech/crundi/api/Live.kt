@@ -75,6 +75,14 @@ class LiveEvents internal constructor(private val transport: Transport, scope: C
     private val _changes = MutableSharedFlow<ServerEvent>(extraBufferCapacity = 64)
     private val kick = MutableStateFlow(0)
 
+    private val _failure = MutableStateFlow<ApiException?>(null)
+    /**
+     * Why the stream last failed, when the server answered with an error
+     * (a 500, a 403) or could not be reached; null once it is connected again,
+     * or when it only dropped. Lets a screen word it with errorText.
+     */
+    val failure: StateFlow<ApiException?> = _failure
+
     /** The last state seen, without connecting (null before the first). */
     val lastState: ServerState? get() = _state.value
 
@@ -84,12 +92,13 @@ class LiveEvents internal constructor(private val transport: Transport, scope: C
             _status.value = if (failures == 0) LiveStatus.Connecting else if (failures >= 3) LiveStatus.Offline else LiveStatus.Reconnecting
             try {
                 transport.events().collect { f ->
-                    if (_status.value != LiveStatus.Connected) { _status.value = LiveStatus.Connected; failures = 0 }
+                    if (_status.value != LiveStatus.Connected) { _status.value = LiveStatus.Connected; failures = 0; _failure.value = null }
                     dispatch(f)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {
+                _failure.value = e
                 if (e.signedOut) {
                     _status.value = LiveStatus.SignedOut
                     onSignedOut()

@@ -54,4 +54,17 @@ class FoundationTest {
         assertEquals(Markdown.Table(listOf(listOf("a", "b"), listOf("1", "2"))), b[4])
         assertEquals("Some bold text", Markdown.inline("Some **bold** text").text)
     }
+
+    /** F13: a server answering with an error is not "cannot be reached"; only a real network failure is. */
+    @Test
+    fun liveErrorWording() {
+        val st = mv.obitech.crundi.api.LiveStatus.Reconnecting
+        assertEquals(mv.obitech.crundi.ui.components.ErrorWords.OFFLINE, mv.obitech.crundi.ui.components.liveErrorText(st))
+        assertEquals(mv.obitech.crundi.ui.components.ErrorWords.OFFLINE, mv.obitech.crundi.ui.components.liveErrorText(st, mv.obitech.crundi.api.ApiException(0, "Could not reach x")))
+        assertEquals(
+            "The server ran into a problem (Internal server error). Try again in a moment.",
+            mv.obitech.crundi.ui.components.liveErrorText(mv.obitech.crundi.api.LiveStatus.Offline, mv.obitech.crundi.api.ApiException(500, "Internal server error")),
+        )
+        assertNull(mv.obitech.crundi.ui.components.liveErrorText(mv.obitech.crundi.api.LiveStatus.Connected, mv.obitech.crundi.api.ApiException(500, "x")))
+    }
 }

@@ -267,6 +267,7 @@ fun ChatsRoute() {
     val shell by services.shell.state.collectAsState()
     val server by api.events.state.collectAsState(initial = api.events.lastState)
     val live by api.events.status.collectAsState()
+    val failure by api.events.failure.collectAsState()
     val project = shell.currentProject
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
@@ -286,7 +287,7 @@ fun ChatsRoute() {
         chats = server?.chats(project).orEmpty(),
         parked = server?.parked(project).orEmpty().filter { it.paneKind != "terminal" },
         error = error,
-        loadError = if (server == null) liveErrorText(live) else null,
+        loadError = if (server == null) liveErrorText(live, failure) else null,
     )
     ChatsScreen(state, object : ChatsListActions {
         override fun retry() = api.events.reconnect()

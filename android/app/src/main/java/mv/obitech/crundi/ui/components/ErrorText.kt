@@ -23,9 +23,14 @@ fun errorText(t: Throwable): String = when {
     else -> t.message?.trim()?.takeIf { it.isNotEmpty() } ?: ErrorWords.UNKNOWN
 }
 
-/** Why live data is not arriving, for a screen that has none yet; null while it is still connecting. */
-fun liveErrorText(status: LiveStatus): String? = when (status) {
-    LiveStatus.Reconnecting, LiveStatus.Offline -> ErrorWords.OFFLINE
+/**
+ * Why live data is not arriving, for a screen that has none yet; null while it
+ * is still connecting. `failure` is the stream's last error (LiveEvents.failure):
+ * a server that answers with an error is worded as such (errorText), and only
+ * a stream that could not reach the server says it cannot be reached.
+ */
+fun liveErrorText(status: LiveStatus, failure: Throwable? = null): String? = when (status) {
+    LiveStatus.Reconnecting, LiveStatus.Offline -> failure?.let { errorText(it) } ?: ErrorWords.OFFLINE
     LiveStatus.SignedOut -> ErrorWords.SIGNED_OUT
     else -> null
 }
