@@ -16,5 +16,6 @@ fun NavGraphBuilder.chatsGraph() {
 }
 
 @Composable fun ChatsScreen() = AreaPlaceholder(Area.Chats)
-@Composable fun TerminalsScreen() = AreaPlaceholder(Area.Terminals)
+/** Terminals are built by ui.workspace (the workspace dev's persona); this only hands over. */
+@Composable fun TerminalsScreen() = mv.obitech.crundi.ui.workspace.terminal.TerminalsRoute()
 

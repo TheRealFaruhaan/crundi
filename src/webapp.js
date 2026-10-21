@@ -72,6 +72,7 @@ import * as serverUpdate from './server-update.js';
 import * as whatsNew from './whatsnew.js';
 import * as clientVersion from './client-version.js';
 import { createPairing, pairingLink, cleanDevice } from './pairing.js';
+import { gitLog, gitShow } from './git-log.js';
 import { toSvg as qrSvg } from './qr.js';
 import { toSvg as crundiCodeSvg, doneClass as crundiCodeDoneClass, DONE_MS as CRUNDI_CODE_DONE_MS } from './crundi-code.js';
 import * as forwards from './forwards.js';
@@ -5845,6 +5846,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         });
         return json(res, { ok: true });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    // History (read-only): the phone's Git tab lists commits and opens one.
+    if (path === '/api/git/log' && req.method === 'GET') {
+      const project = getProject(url.searchParams.get('project'));
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      try { return json(res, { ok: true, ...gitLog(project.path, { limit: url.searchParams.get('limit'), skip: url.searchParams.get('skip') }) }); }
+      catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    if (path === '/api/git/show' && req.method === 'GET') {
+      const project = getProject(url.searchParams.get('project'));
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      try { return json(res, { ok: true, commit: gitShow(project.path, url.searchParams.get('hash')) }); }
+      catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
     // ─── Internal MCP dispatch (from stdio MCP servers) ───

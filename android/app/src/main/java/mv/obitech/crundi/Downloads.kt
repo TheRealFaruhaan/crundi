@@ -1,54 +1,74 @@
 package mv.obitech.crundi
 
-import android.app.DownloadManager
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.webkit.CookieManager
-import android.webkit.URLUtil
-import android.widget.Toast
+import android.provider.MediaStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import mv.obitech.crundi.api.DownloadInfo
+import java.io.File
+import java.io.OutputStream
 
 /**
- * Saving a file to the phone, with the phone's own downloader: it goes to the
- * Downloads folder, with the system's progress and its "open" when done.
+ * Saving a file from the server to the phone's Downloads folder. The bytes
+ * come through the API client (signed in with the phone's login, streamed,
+ * any size); this only decides where they land:
+ * - Android 10 and later: the shared Downloads folder, through MediaStore,
+ *   with no permission needed. The entry stays hidden until it is complete.
+ * - Before that: the app's own Downloads folder (the shared one would need a
+ *   storage permission this app does not otherwise want).
  *
- * Used by every window that shows a page of the server's: the main one, and a
- * bubble. A file Claude offers in a chat has to be savable from wherever the
- * chat is being read.
+ *   Downloads.save(ctx, "report.pdf") { sink -> api.files.download(project, path, sink, progress) }
  */
 object Downloads {
-    /** A page asked, through the bridge, for a file at an address it gave. Only the paired server's own addresses are fetched. */
-    fun fromPage(ctx: Context, server: Server?, url: String, name: String, userAgent: String?) {
-        if (server == null) return
-        // Callable from any frame in the page, so it must not become a way to
-        // make the phone fetch an address of a frame's choosing.
-        if (!url.startsWith(server.baseUrl + "/")) return
-        val clean = name.filter { it.code >= 32 && it !in "\\/:*?\"<>|" }.trim().take(120).ifEmpty { "download" }
-        start(ctx, url, userAgent, "attachment; filename=\"$clean\"", null)
+    /** Where a saved file went: [uri] to open or share it, [where] to tell the person. */
+    data class Saved(val uri: Uri, val name: String, val where: String, val size: Long)
+
+    suspend fun save(ctx: Context, name: String, mime: String? = null, fetch: suspend (OutputStream) -> DownloadInfo): Saved = withContext(Dispatchers.IO) {
+        val clean = cleanName(name)
+        val type = mime?.takeIf { it.isNotEmpty() && it != "application/octet-stream" }
+            ?: java.net.URLConnection.guessContentTypeFromName(clean)
+            ?: "application/octet-stream"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = ctx.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, clean)
+                put(MediaStore.Downloads.MIME_TYPE, type)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("The phone would not make a file in Downloads")
+            try {
+                val info = resolver.openOutputStream(uri)!!.use { fetch(it) }
+                resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+                Saved(uri, clean, "Downloads", info.size)
+            } catch (t: Throwable) {
+                runCatching { resolver.delete(uri, null, null) }
+                throw t
+            }
+        } else {
+            val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: File(ctx.filesDir, "downloads")
+            dir.mkdirs()
+            val file = freeFile(dir, clean)
+            try {
+                val info = file.outputStream().use { fetch(it) }
+                Saved(Uri.fromFile(file), file.name, "the app's Downloads folder", info.size)
+            } catch (t: Throwable) {
+                file.delete(); throw t
+            }
+        }
     }
 
-    fun start(ctx: Context, url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            // A file the page made in memory. The phone's downloader cannot
-            // reach that; the page hands real addresses over, so this is only
-            // an old page or an unusual link.
-            Toast.makeText(ctx, "This kind of file cannot be saved by the app. Update the server, or open Crundi in a browser to save it.", Toast.LENGTH_LONG).show()
-            return
-        }
-        val name = URLUtil.guessFileName(url, contentDisposition, mimeType)
-        val req = DownloadManager.Request(Uri.parse(url)).apply {
-            setTitle(name)
-            setMimeType(mimeType)
-            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("Cookie", it) }
-            if (userAgent != null) addRequestHeader("User-Agent", userAgent)
-            // Before Android 10 the shared Downloads folder needs a permission
-            // this app does not otherwise want; its own folder does not.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-            else setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_DOWNLOADS, name)
-        }
-        (ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-        Toast.makeText(ctx, "Downloading $name", Toast.LENGTH_SHORT).show()
+    /** A name safe for any file system: no path separators or control characters. */
+    fun cleanName(name: String): String = name.filter { it.code >= 32 && it !in "\\/:*?\"<>|" }.trim().take(120).ifEmpty { "download" }
+
+    private fun freeFile(dir: File, name: String): File {
+        var f = File(dir, name)
+        var n = 2
+        val base = name.substringBeforeLast('.'); val ext = name.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
+        while (f.exists()) { f = File(dir, "$base ($n)$ext"); n++ }
+        return f
     }
 }

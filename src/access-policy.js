@@ -87,6 +87,8 @@ const COLLABORATOR_ROUTES = [
   // undo. See COLLABORATOR_NEVER.
   ['GET', '/api/git/info'],
   ['GET', '/api/git/diff'],
+  ['GET', '/api/git/log'],                  // history, read-only
+  ['GET', '/api/git/show'],
   ['POST', '/api/git/stage'],
   ['POST', '/api/git/unstage'],
   ['POST', '/api/git/commit'],
