@@ -108,7 +108,7 @@ class LiveEvents internal constructor(private val transport: Transport, scope: C
                     failures = 0
                     continue
                 }
-            } catch (_: Exception) { /* dropped: try again */ }
+            } catch (_: Exception) { _failure.value = null /* dropped, not refused: try again */ }
             failures++
             _status.value = if (failures >= 3) LiveStatus.Offline else LiveStatus.Reconnecting
             val k = kick.value
