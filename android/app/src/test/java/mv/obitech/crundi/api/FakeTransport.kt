@@ -3,6 +3,8 @@ package mv.obitech.crundi.api
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import java.io.OutputStream
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -42,7 +44,13 @@ class FakeTransport(override val baseUrl: String = "https://dev.example.com") : 
         return DownloadInfo(OkHttpTransport.filenameOf(r.headers["Content-Disposition"], request), r.headers["Content-Type"].orEmpty(), bytes.size.toLong())
     }
 
-    override fun events(path: String): Flow<SseFrame> = if (eventsEnabled) sse else emptyFlow()
+    /** Frames every new event-stream connection gets first, as the server sends its "state" on connect. */
+    val initialEvents = CopyOnWriteArrayList<SseFrame>()
+
+    override fun events(path: String): Flow<SseFrame> = if (!eventsEnabled) emptyFlow() else flow {
+        for (f in initialEvents) emit(f)
+        emitAll(sse)
+    }
     /** Off: the event stream connects and ends at once (screens that need no live data). */
     var eventsEnabled = true
 

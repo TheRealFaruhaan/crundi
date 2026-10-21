@@ -1,20 +1,25 @@
 package mv.obitech.crundi
 
-import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
-import android.text.InputType
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.inputmethod.EditorInfo
-import android.widget.EditText
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import mv.obitech.crundi.ui.components.CrundiDialog
+import mv.obitech.crundi.ui.pair.PairScreen
+import mv.obitech.crundi.ui.pair.PairUi
+import mv.obitech.crundi.ui.theme.CrundiColors
+import mv.obitech.crundi.ui.theme.CrundiTheme
 import java.util.UUID
 
 /**
@@ -25,75 +30,60 @@ import java.util.UUID
  * swapped for a login. No password is typed on the phone and the phone never
  * holds one.
  */
-class PairActivity : Activity() {
-    private lateinit var status: TextView
-    private lateinit var input: EditText
-    private var busy = false
+class PairActivity : ComponentActivity() {
+    private var ui by mutableStateOf(PairUi())
+    /** A plain-http link waiting for "Connect anyway". */
+    private var insecure by mutableStateOf<PairingLink?>(null)
+    private val busy get() = ui.busy
+
+    private val scan = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == RESULT_OK) r.data?.getStringExtra(ScanActivity.EXTRA_LINK)?.let { ui = ui.copy(link = it); submit(it) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val col = Ui.column(this).apply { gravity = Gravity.CENTER }
-        col.addView(ImageView(this).apply { setImageResource(R.drawable.ic_logo) }, LinearLayout.LayoutParams(Ui.dp(this, 84), Ui.dp(this, 84)))
+        enableEdgeToEdge()
         // Pairing AGAIN: the server ended this phone's sign-in, and the app
         // has no other way back in (the server refuses a password from it).
         val again = intent.getStringExtra(EXTRA_AGAIN)?.let { Servers.byId(this, it) }
-        if (again == null) {
-            col.addView(Ui.title(this, "Connect to your Crundi server"), Ui.wide(this, 18))
-            col.addView(Ui.body(this, "On the server, open Settings, then Connect a phone, and point this phone at the picture it shows."), Ui.wide(this, 10))
-        } else {
-            col.addView(Ui.title(this, "Pair this phone again"), Ui.wide(this, 18))
-            col.addView(Ui.body(this, "${again.host} ended this phone's sign-in. Open Crundi on a computer, or in this phone's browser, go to Settings, then Connect a phone, and point this phone at the picture it shows."), Ui.wide(this, 10))
+        ui = PairUi(againHost = again?.host)
+        setContent {
+            CrundiTheme {
+                Box(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
+                    PairScreen(
+                        ui,
+                        onScan = { scan.launch(Intent(this@PairActivity, ScanActivity::class.java)) },
+                        onLinkChange = { ui = ui.copy(link = it) },
+                        onConnect = { submit(ui.link) },
+                    )
+                    insecure?.let { link ->
+                        // Plain http: everything, the login included, would cross the
+                        // network readable. Fine on a home network; never without being asked.
+                        CrundiDialog(
+                            title = "This connection is not private",
+                            message = "${link.baseUrl} does not use https. Anyone on the same network could read what is sent, including your login.\n\nOnly continue if this is your own server on a network you trust.",
+                            confirm = "Connect anyway", danger = true,
+                            onConfirm = { insecure = null; pair(link) },
+                            onDismiss = { insecure = null },
+                        )
+                    }
+                }
+            }
         }
-        col.addView(Ui.button(this, "Scan the picture", true) { startActivityForResult(Intent(this, ScanActivity::class.java), REQ_SCAN) }, Ui.wide(this, 26))
-
-        col.addView(Ui.body(this, "Or paste a pairing link"), Ui.wide(this, 28))
-        input = EditText(this).apply {
-            hint = "https://your-server/pair#…"
-            setHintTextColor(getColor(R.color.text_dim))
-            setTextColor(getColor(R.color.text))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            imeOptions = EditorInfo.IME_ACTION_GO
-            setSingleLine(true)
-            val p = Ui.dp(this@PairActivity, 12)
-            setPadding(p, p, p, p)
-            background = GradientDrawable().apply { cornerRadius = Ui.dp(this@PairActivity, 10).toFloat(); setColor(getColor(R.color.surface)); setStroke(Ui.dp(this@PairActivity, 1), getColor(R.color.border)) }
-            setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { submit(text.toString()); true } else false }
-        }
-        col.addView(input, Ui.wide(this, 10))
-        col.addView(Ui.button(this, "Connect", false) { submit(input.text.toString()) }, Ui.wide(this, 10))
-
-        status = Ui.body(this, "").apply { setTextColor(getColor(R.color.amber)) }
-        col.addView(status, Ui.wide(this, 18))
-        setContentView(ScrollView(this).apply { isFillViewport = true; setBackgroundColor(getColor(R.color.bg)); addView(col) })
     }
 
-    @Deprecated("The platform's own result call; enough for one request.")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_SCAN && resultCode == RESULT_OK) submit(data?.getStringExtra(ScanActivity.EXTRA_LINK) ?: "")
-    }
-
-    private fun say(text: String) { status.text = text }
+    private fun say(text: String) { ui = ui.copy(status = text) }
 
     private fun submit(text: String) {
         if (busy) return
-        val link = PairingLink.parse(text)
+        val link = PairingLink.parse(text.trim())
         if (link == null) { say("That is not a Crundi pairing link. It looks like https://your-server/pair#… and comes from the server's Connect a phone screen."); return }
         if (!link.insecure) { pair(link); return }
-        // Plain http: everything, the login included, would cross the network
-        // readable. Fine on a home network; never without being asked.
-        AlertDialog.Builder(this)
-            .setTitle("This connection is not private")
-            .setMessage("${link.baseUrl} does not use https. Anyone on the same network could read what is sent, including your login.\n\nOnly continue if this is your own server on a network you trust.")
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Connect anyway") { _, _ -> pair(link) }
-            .show()
+        insecure = link
     }
 
     private fun pair(link: PairingLink) {
-        busy = true
-        say("Connecting to ${link.baseUrl.substringAfter("://")}…")
+        ui = ui.copy(busy = true, status = "Connecting to ${link.baseUrl.substringAfter("://")}…")
         val device = listOf(Build.MANUFACTURER, Build.MODEL).filter { !it.isNullOrBlank() }.joinToString(" ").replaceFirstChar { it.uppercase() }
         Bg.run({
             // Ask first whether we can work together at all. A code is spent
@@ -103,7 +93,7 @@ class PairActivity : Activity() {
             val verdict = hs.json?.let { Gate.judge(it, BuildConfig.VERSION_NAME, BuildConfig.MIN_SERVER) }
             if (verdict == null || !verdict.ok) Pair(verdict, null) else Pair(verdict, Api.claim(link, device))
         }) { result ->
-            busy = false
+            ui = ui.copy(busy = false)
             val (verdict, reply) = result.getOrElse { say("Could not reach ${link.baseUrl.substringAfter("://")}. Check the address and that this phone can reach the server."); return@run }
             when {
                 verdict == null -> say("That address did not answer as a Crundi server. It may be running a version from before phone pairing existed.")
@@ -149,7 +139,6 @@ class PairActivity : Activity() {
     }
 
     companion object {
-        private const val REQ_SCAN = 1
         /** The id of a server whose pairing has ended and is being made again. */
         const val EXTRA_AGAIN = "again"
     }

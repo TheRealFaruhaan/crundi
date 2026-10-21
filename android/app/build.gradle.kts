@@ -139,25 +139,37 @@ android {
     }
 }
 
-// The reader for the pairing picture is the server's own file, not a copy of
-// it kept here: one implementation, drawn by the server and read by the app.
-val copyCrundiCode = tasks.register<Copy>("copyCrundiCode") {
-    from(rootProject.file("../src/crundi-code.js"))
-    into(layout.projectDirectory.dir("src/main/assets"))
-}
-tasks.named("preBuild") { dependsOn(copyCrundiCode) }
 
 // The screenshot tests write every screen to build/outputs/screens/. This
-// copies them to where the team wants them:
+// copies them to where the team wants them, filed by area:
+// "<area>-<screen>.png" goes to <area>/, "edge-<case>-<area>.png" to <area>/.
 //   ./gradlew --no-daemon testPlayDebugUnitTest exportScreens -PscreensDir=/path/to/shared/screens
 val exportScreens = tasks.register<Copy>("exportScreens") {
     from(layout.projectDirectory.dir("build/outputs/screens"))
     include("*.png")
+    eachFile {
+        val stem = name.removeSuffix(".png")
+        val area = if (stem.startsWith("edge-")) stem.substringAfterLast('-') else stem.substringBefore('-')
+        path = "$area/$name"
+    }
+    includeEmptyDirs = false
+    // Run in one command with the tests, it must copy what they wrote.
+    mustRunAfter(tasks.matching { it.name.startsWith("test") && it.name.endsWith("UnitTest") })
     into(providers.gradleProperty("screensDir").orElse(layout.buildDirectory.dir("screens-export").map { it.asFile.path }))
 }
 
 dependencies {
-    implementation("androidx.webkit:webkit:1.12.1")
+    // Scanning the pairing picture (ScanActivity): the camera through
+    // CameraX, the Crundi code read by our Kotlin port of the server's reader
+    // (pair/CrundiCode.kt), its fallback QR code by ZXing. All in both flavours.
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
+    implementation("com.google.zxing:core:3.5.3")
+    // Firebase brings Fragment 1.1, which predates the ActivityResult APIs the
+    // pairing and scan screens use (release lint refuses it). A current one wins.
+    implementation("androidx.fragment:fragment-ktx:1.8.6")
     implementation("androidx.core:core-ktx:1.17.0")
 
     // The native UI: Jetpack Compose, one BOM pins every Compose library.

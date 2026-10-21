@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.chats
 
+import mv.obitech.crundi.ui.components.errorText
+
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
@@ -320,7 +322,7 @@ fun ChatRoute(chatId: String) {
 
     fun act(entry: String? = null, block: suspend () -> Unit) = scope.launch {
         ui = ui.copy(error = null, busyEntries = if (entry != null) ui.busyEntries + entry else ui.busyEntries)
-        try { block() } catch (e: Exception) { ui = ui.copy(error = e.message ?: "That did not work. Try again.") }
+        try { block() } catch (e: Exception) { ui = ui.copy(error = errorText(e)) }
         if (entry != null) ui = ui.copy(busyEntries = ui.busyEntries - entry)
     }
 
@@ -339,7 +341,7 @@ fun ChatRoute(chatId: String) {
                     }) { ctx.contentResolver.openInputStream(u) ?: throw java.io.FileNotFoundException(name) }
                     ui = ui.copy(draft = (ui.draft.trimEnd() + (if (ui.draft.isBlank()) "" else " ") + att.path + " "))
                 } catch (e: Exception) {
-                    ui = ui.copy(error = "Could not upload $name: " + (e.message ?: "try again"))
+                    ui = ui.copy(error = "Could not upload $name: " + errorText(e))
                 }
                 ui = ui.copy(uploads = ui.uploads.filter { it.name != name })
             }
@@ -361,7 +363,7 @@ fun ChatRoute(chatId: String) {
                     val r = api.chats.send(chatId, text)
                     if (r.injected || wasBusy) ui = ui.copy(localPending = ui.localPending + PendingInjection(text, r.uuid, if (r.uuid.isNotEmpty()) "queued" else "sent"))
                 } catch (e: Exception) {
-                    ui = ui.copy(draft = text, error = e.message ?: "The message did not go. Try again.")
+                    ui = ui.copy(draft = text, error = "The message did not go: " + errorText(e))
                 }
             }
         }

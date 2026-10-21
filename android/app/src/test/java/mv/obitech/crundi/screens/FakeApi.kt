@@ -56,6 +56,8 @@ object FakeApi {
     /** A server in memory answering every route above (and {"ok":true} to any POST). */
     fun transport(): FakeTransport {
         val t = FakeTransport()
+        // The server sends the whole workbench when the event stream connects.
+        t.initialEvents.add(mv.obitech.crundi.api.SseFrame("state", text("state.json")))
         for ((route, file) in routes) t.on(route, text("$file.json"))
         t.on("GET /api/services/crundi%3Adocs/logs", text("service-logs.json"))
         for (post in listOf("/api/kanban", "/api/notes", "/api/mindmap", "/api/schedules", "/api/git/stage", "/api/git/unstage", "/api/git/commit"))

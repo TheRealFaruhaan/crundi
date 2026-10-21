@@ -196,7 +196,23 @@ fun FactoryGraph(factory: Factory, run: FactoryRun?, selected: String?, onSelect
         scale = s
         offset = Offset((box.width - width * density * s) / 2f, max(0f, (box.height - height * density * s) / 2f))
     }
-    LaunchedEffect(box, heights.size == nodes.size) { if (!fitted && box.width > 0 && heights.size == nodes.size) { fit(); fitted = true } }
+    /**
+     * Readable, not everything: fitting a whole factory onto a phone made step
+     * titles a few pixels high. Opens at full size centred on the step at work
+     * (or the last one reached, or the start); the fit button is the overview.
+     */
+    fun focus() {
+        if (box.width == 0) return
+        val at = nodes.firstOrNull { view.tokens(it.id).isNotEmpty() }
+            ?: run?.history?.lastOrNull { it.nodeId.isNotEmpty() }?.let { h -> byId[h.nodeId] }
+            ?: nodes.firstOrNull { it.type == "start" } ?: nodes.first()
+        val s = 1f
+        val cx = (x(at) + w(at) / 2) * density * s
+        val cy = (y(at) + (heights[at.id] ?: 80f) / 2) * density * s
+        scale = s
+        offset = Offset(box.width / 2f - cx, box.height * 0.4f - cy)
+    }
+    LaunchedEffect(box, heights.size == nodes.size) { if (!fitted && box.width > 0 && heights.size == nodes.size) { focus(); fitted = true } }
 
     Box(
         modifier.fillMaxSize().clipToBounds().background(CrundiColors.BgPrimary).onSizeChanged { box = it }
@@ -283,6 +299,7 @@ fun FactoryGraph(factory: Factory, run: FactoryRun?, selected: String?, onSelect
             CrundiIconButton("plus", { scale = (scale * 1.25f).coerceAtMost(3f) }, contentDescription = "Zoom in", touch = 40.dp)
             CrundiIconButton("minus", { scale = (scale / 1.25f).coerceAtLeast(0.15f) }, contentDescription = "Zoom out", touch = 40.dp)
             CrundiIconButton("maximize", { fit() }, contentDescription = "Fit to screen", touch = 40.dp)
+            CrundiIconButton("pin", { focus() }, contentDescription = if (run != null) "Go to the current step" else "Go to the start", touch = 40.dp)
         }
     }
 }

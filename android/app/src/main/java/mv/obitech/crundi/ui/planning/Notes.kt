@@ -1,5 +1,11 @@
 package mv.obitech.crundi.ui.planning
 
+import androidx.compose.ui.focus.onFocusChanged
+
+import androidx.compose.foundation.layout.heightIn
+
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -454,7 +460,7 @@ fun NotePageRoute(id: String) {
     var toast by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     fun fetch() = scope.launch {
-        load = try { Load.Ready(NoteEditor(api.notes.page(project, id))) } catch (e: ApiException) { Load.Failed(if (e.notFound) "This page could not be opened." else e.message) }
+        load = try { Load.Ready(NoteEditor(api.notes.page(project, id))) } catch (e: ApiException) { Load.Failed(if (e.notFound) "This page could not be opened. It may have been deleted." else errorText(e)) }
     }
     LaunchedEffect(id) { fetch() }
     val editor = (load as? Load.Ready)?.value
@@ -478,7 +484,7 @@ fun NotePageRoute(id: String) {
             }
         } catch (e: ApiException) {
             ed.status = if (e.offline) SaveStatus.Offline else SaveStatus.Failed
-            ed.error = e.message
+            ed.error = errorText(e)
             if (!e.offline) throw e
         }
     }
@@ -516,7 +522,7 @@ fun NotePageRoute(id: String) {
             load, onBack = { nav.back() }, onRetry = { fetch() },
             onTrash = {
                 scope.launch {
-                    try { api.notes.delete(project, id); nav.back() } catch (e: ApiException) { toast = e.message }
+                    try { api.notes.delete(project, id); nav.back() } catch (e: ApiException) { toast = errorText(e) }
                 }
             },
         )
@@ -784,6 +790,7 @@ private fun CodeNoteBlock(ed: NoteEditor, b: EditBlock, readOnly: Boolean) {
 @Composable
 private fun TableNoteBlock(ed: NoteEditor, b: EditBlock, readOnly: Boolean) {
     var active by remember { mutableStateOf(false) }
+    var editingCell by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val cols = b.rows.maxOfOrNull { it.size } ?: 0
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.horizontalScroll(rememberScrollState()).border(Dimens.Hairline, CrundiColors.Border)) {
@@ -796,12 +803,27 @@ private fun TableNoteBlock(ed: NoteEditor, b: EditBlock, readOnly: Boolean) {
                                 .border(Dimens.Hairline, CrundiColors.Border).padding(horizontal = 9.dp, vertical = 6.dp),
                         ) {
                             val st = CrundiType.Body.copy(fontSize = 14.sp, fontWeight = if (head) FontWeight.SemiBold else null)
-                            if (readOnly) Text(NoteText.annotated(NoteText.parseSource(row.getOrElse(c) { "" })), style = st)
-                            else BasicTextField(
-                                row.getOrElse(c) { "" },
-                                { v -> active = true; ed.set(b.copy(rows = b.rows.mapIndexed { ri, rr -> if (ri != r) rr else List(cols) { ci -> if (ci == c) v else rr.getOrElse(ci) { "" } } })) },
-                                textStyle = st, cursorBrush = SolidColor(CrundiColors.AccentHover), modifier = Modifier.fillMaxWidth(),
+                            val src = row.getOrElse(c) { "" }
+                            // A cell reads as formatted text (bold, ~~struck~~, links) like
+                            // a paragraph does, and shows its marks only while it is edited.
+                            if (readOnly || editingCell != r to c) Text(
+                                NoteText.annotated(NoteText.parseSource(src)), style = st,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 20.dp)
+                                    .then(if (readOnly) Modifier else Modifier.clickable { editingCell = r to c }),
                             )
+                            else {
+                                val focus = remember { FocusRequester() }
+                                var had by remember { mutableStateOf(false) }
+                                BasicTextField(
+                                    src,
+                                    { v -> active = true; ed.set(b.copy(rows = b.rows.mapIndexed { ri, rr -> if (ri != r) rr else List(cols) { ci -> if (ci == c) v else rr.getOrElse(ci) { "" } } })) },
+                                    textStyle = st, cursorBrush = SolidColor(CrundiColors.AccentHover),
+                                    modifier = Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged {
+                                        if (it.isFocused) had = true else if (had && editingCell == r to c) editingCell = null
+                                    },
+                                )
+                                LaunchedEffect(Unit) { focus.requestFocus() }
+                            }
                         }
                     }
                 }

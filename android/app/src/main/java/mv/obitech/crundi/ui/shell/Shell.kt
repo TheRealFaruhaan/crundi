@@ -28,6 +28,16 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -176,9 +186,22 @@ private fun UsageBackdrop(u: UsageGlance) {
  */
 @Composable
 fun AreaTabs(current: Area?, onArea: (Area) -> Unit, modifier: Modifier = Modifier) {
+    val scroll = rememberScrollState()
+    // Where each tab is in the strip, and how wide the strip shows: enough
+    // to bring the current tab into the middle whenever it changes, so the
+    // person always sees where they are (16 tabs do not fit on a phone).
+    val spans = remember { mutableStateMapOf<Area, IntArray>() }
+    var viewport by remember { mutableIntStateOf(0) }
+    var placed by remember { mutableStateOf(false) }
+    val span = current?.let { spans[it] }
+    LaunchedEffect(current, span?.get(0), span?.get(1), viewport) {
+        if (span == null || viewport == 0) return@LaunchedEffect
+        val target = (span[0] + span[1] / 2 - viewport / 2).coerceIn(0, scroll.maxValue)
+        if (placed) scroll.animateScrollTo(target) else { scroll.scrollTo(target); placed = true }
+    }
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Row(
-            Modifier.fillMaxWidth().height(Dimens.TabBarHeight).horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().height(Dimens.TabBarHeight).onSizeChanged { viewport = it.width }.horizontalScroll(scroll).padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             for (a in Area.entries) {
@@ -187,6 +210,7 @@ fun AreaTabs(current: Area?, onArea: (Area) -> Unit, modifier: Modifier = Modifi
                 Row(
                     Modifier
                         .fillMaxHeight()
+                        .onGloballyPositioned { c -> spans[a] = intArrayOf(c.positionInParent().x.toInt(), c.size.width) }
                         .clickable { onArea(a) }
                         .drawBehind {
                             if (on) {
@@ -204,7 +228,7 @@ fun AreaTabs(current: Area?, onArea: (Area) -> Unit, modifier: Modifier = Modifi
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     CrundiIcon(a.icon, size = 17.dp, tint = fg, contentDescription = a.label)
-                    if (on) Text(a.label, style = CrundiType.Tab.copy(color = fg), maxLines = 1)
+                    if (on) Text(a.label, style = CrundiType.Tab.copy(color = fg), maxLines = 1, softWrap = false)
                 }
             }
         }

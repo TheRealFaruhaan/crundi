@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.chats
 
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -149,7 +151,7 @@ fun ApprovalsRoute() {
     val scope = rememberCoroutineScope()
     fun act(id: String?, block: suspend () -> Unit) = scope.launch {
         st = st.copy(error = null, busy = if (id != null) st.busy + id else st.busy)
-        try { block() } catch (e: Exception) { st = st.copy(error = e.message ?: "That did not work. Try again.") }
+        try { block() } catch (e: Exception) { st = st.copy(error = errorText(e)) }
         if (id != null) st = st.copy(busy = st.busy - id)
     }
     ApprovalsScreen(st.copy(approvals = approvals), object : ApprovalsActions {

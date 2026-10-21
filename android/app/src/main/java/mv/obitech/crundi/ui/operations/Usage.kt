@@ -116,7 +116,7 @@ fun UsageScreen(state: UsageState, events: UsageEvents = UsageEvents()) {
         ) { CrundiIconButton("refresh", events.onRefresh, contentDescription = "Refresh") }
         when (val l = state.usage) {
             Load.Loading -> LoadingState(text = "Claude usage: loading…")
-            is Load.Failed -> ErrorState("Claude usage unavailable: ${l.message}", onRetry = events.onRefresh)
+            is Load.Failed -> ErrorState(l.message, onRetry = events.onRefresh)
             is Load.Ready -> {
                 val usage = l.value
                 if (usage == null) EmptyState("bar-chart", "No usage to show", body = "Usage is the owner's account. A collaborator's sign-in does not see it.")

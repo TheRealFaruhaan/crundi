@@ -275,7 +275,7 @@ fun SessionsScreen(state: SessionsState, onRevoke: (LoginSession) -> Unit = {}, 
     SettingsPageFrame(SettingsPage.Sessions, state.note, onCloseNote, onBack) {
         when (val l = state.sessions) {
             Load.Loading -> LoadingState(text = "Loading…")
-            is Load.Failed -> ErrorState("Could not load sessions: ${l.message}")
+            is Load.Failed -> ErrorState(l.message)
             is Load.Ready -> if (l.value.isEmpty()) EmptyState("smartphone", "No active sessions.") else ScrollBody {
                 Group("Signed-in devices") {
                     for ((i, s) in l.value.withIndex()) {

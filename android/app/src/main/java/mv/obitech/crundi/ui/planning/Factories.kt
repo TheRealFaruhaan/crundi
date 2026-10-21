@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.planning
 
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -516,7 +518,7 @@ fun StartRunRoute(factoryId: String) {
                 try {
                     val run = api.factories.start(form.project, f.id, form.title.trim(), form.sections.filterValues { it.isNotBlank() }, mergeMode = form.mergeMode.ifEmpty { null })
                     nav.back(); nav.to(FactoryRoutes.run(run.id))
-                } catch (e: ApiException) { form.error = e.message }
+                } catch (e: ApiException) { form.error = errorText(e) }
                 busy = false
             }
         },
@@ -612,9 +614,9 @@ fun TriggerEditRoute(id: String) {
                 cr = TriggerCr("{{card.title}}", mapOf("goal" to "{{card.description}}", "done" to "{{card.todos}}")))
             else api.factories.triggers(null).firstOrNull { it.id == id } ?: throw ApiException(404, "This trigger is gone. It may have been deleted elsewhere.")
             Load.Ready(t to fs)
-        } catch (e: ApiException) { Load.Failed(e.message) }
+        } catch (e: ApiException) { Load.Failed(errorText(e)) }
     }
-    fun act(block: suspend () -> Unit) = scope.launch { try { block() } catch (e: ApiException) { message = e.message } }
+    fun act(block: suspend () -> Unit) = scope.launch { try { block() } catch (e: ApiException) { message = errorText(e) } }
     TriggerEditScreen(
         load, shell.serverHost, message,
         onBack = { nav.back() },

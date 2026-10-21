@@ -1,5 +1,9 @@
 package mv.obitech.crundi.ui.workspace.terminal
 
+import mv.obitech.crundi.ui.components.liveErrorText
+
+import mv.obitech.crundi.ui.components.ErrorState
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -55,7 +59,7 @@ import mv.obitech.crundi.ui.shell.LocalAppServices
 import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.workspace.WorkspaceRoutes
-import mv.obitech.crundi.ui.workspace.errorText
+import mv.obitech.crundi.ui.components.errorText
 import mv.obitech.crundi.ui.workspace.rememberToast
 
 // ─── The list ───
@@ -67,6 +71,8 @@ data class TerminalsState(
     val parked: List<Pane> = emptyList(),
     val busy: Boolean = false,
     val notice: String? = null,
+    /** Why nothing has loaded (the server cannot be reached); shown with Try again instead of the spinner. */
+    val loadError: String? = null,
 )
 
 fun dotOf(p: Pane): DotState = when (p.state) {
@@ -102,6 +108,7 @@ fun TerminalsScreen(
     onResume: (Pane) -> Unit = {},
     modifier: Modifier = Modifier,
     showNew: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     var newOpen by remember { mutableStateOf(showNew) }
     var closing by remember { mutableStateOf<Pane?>(null) }
@@ -115,6 +122,7 @@ fun TerminalsScreen(
         }
         if (state.notice != null) Banner(state.notice, Modifier.fillMaxWidth().padding(12.dp), kind = BadgeKind.Bad, icon = "alert-triangle")
         when {
+            state.loading && state.loadError != null -> ErrorState(state.loadError, onRetry = onRetry)
             state.loading -> LoadingState(text = "Loading terminals")
             state.terminals.isEmpty() && state.parked.isEmpty() -> EmptyState(
                 "terminal", "No terminals open",
@@ -173,7 +181,8 @@ fun TerminalsRoute() {
     val nav = LocalNavigator.current
     val shell by services.shell.state.collectAsState()
     val project = shell.currentProject
-    val server by remember(api) { api.events.state }.collectAsState(initial = null)
+    val server by remember(api) { api.events.state }.collectAsState(initial = api.events.lastState)
+    val live by api.events.status.collectAsState()
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -185,9 +194,11 @@ fun TerminalsRoute() {
         parked = server?.parked(project).orEmpty().filter { it.paneKind == "terminal" },
         busy = busy,
         notice = notice,
+        loadError = if (server == null) liveErrorText(live) else null,
     )
     TerminalsScreen(
         state,
+        onRetry = { api.events.reconnect() },
         onOpen = { nav.to(WorkspaceRoutes.terminal(it.id)) },
         onNew = { kind ->
             if (project == null) return@TerminalsScreen

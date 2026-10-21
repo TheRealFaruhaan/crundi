@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.planning
 
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -78,10 +80,10 @@ class Loader<T>(private val scope: CoroutineScope, private val fetch: suspend ()
     fun refresh() {
         scope.launch {
             try { load = Load.Ready(fetch()) } catch (e: ApiException) {
-                if (load !is Load.Ready) load = Load.Failed(e.message)
+                if (load !is Load.Ready) load = Load.Failed(errorText(e))
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                if (load !is Load.Ready) load = Load.Failed(e.message ?: "Could not reach the server.")
+                if (load !is Load.Ready) load = Load.Failed(errorText(e))
             }
         }
     }
@@ -123,9 +125,9 @@ class Actions(private val scope: CoroutineScope, private val after: () -> Unit) 
     fun run(refresh: Boolean = true, block: suspend () -> Unit) {
         scope.launch {
             busy = true
-            try { block(); message = null } catch (e: ApiException) { message = e.message } catch (e: Exception) {
+            try { block(); message = null } catch (e: ApiException) { message = errorText(e) } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                message = e.message ?: "That did not work. Try again."
+                message = errorText(e)
             } finally {
                 busy = false
                 if (refresh) after()

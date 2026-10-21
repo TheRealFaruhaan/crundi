@@ -53,7 +53,7 @@ typealias Progress = (done: Long, total: Long) -> Unit
 
 /**
  * How the client reaches the server. [OkHttpTransport] is the real one;
- * [FakeTransport] answers from canned JSON for tests and screenshots.
+ * FakeTransport (in src/test) answers from canned JSON for tests and screenshots.
  *
  * Every call here is authenticated as the phone's page login and renews it
  * once on a 401 before giving up (see [Credentials]).

@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.operations
 
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -138,7 +140,7 @@ fun SecretsScreen(state: SecretsState, events: SecretsEvents = SecretsEvents(), 
         NoteBanner(state.note, events.onCloseNote)
         when (val l = state.secrets) {
             Load.Loading -> LoadingState(text = "Loading secrets")
-            is Load.Failed -> ErrorState("Failed to load: ${l.message}", onRetry = events.onRetry)
+            is Load.Failed -> ErrorState(l.message, onRetry = events.onRetry)
             is Load.Ready -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = Dimens.S6)) {
                 if (state.requests.isNotEmpty()) {
                     item { SectionHeader("Pending access requests") { StatusBadge("${state.requests.size} waiting", BadgeKind.Info) } }
@@ -284,7 +286,7 @@ private fun PinDialog(ask: PinAsk, onDone: () -> Unit) {
         if (!Regex("^\\d{6}$").matches(pin)) { error = "Enter a 6-digit PIN"; return }
         working = true
         scope.launch {
-            try { ask.run(pin); pin = ""; onDone() } catch (e: ApiException) { error = e.message ?: "Wrong PIN"; pin = "" } finally { working = false }
+            try { ask.run(pin); pin = ""; onDone() } catch (e: ApiException) { error = errorText(e); pin = "" } finally { working = false }
         }
     }
     androidx.compose.ui.window.Dialog(onDismissRequest = { pin = ""; onDone() }) {

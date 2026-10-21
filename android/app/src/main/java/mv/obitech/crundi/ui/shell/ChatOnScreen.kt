@@ -2,20 +2,9 @@ package mv.obitech.crundi.ui.shell
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import mv.obitech.crundi.ui.components.EmptyState
-
-/**
- * FOUNDATION ONLY: what an area shows until its developer builds it. Every
- * use of this must be gone before the run is done (the tester greps for it).
- */
-@Composable
-fun AreaPlaceholder(area: Area, modifier: Modifier = Modifier) {
-    EmptyState(icon = area.icon, title = area.label, body = "Not built yet. ${area.owner} builds this screen.", modifier = modifier)
-}
 
 /**
  * Tells the window a chat is in front of the person while this is composed

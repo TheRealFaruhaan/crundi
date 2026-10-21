@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.operations
 
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -190,7 +192,7 @@ fun ServicesRoute() {
                 if (logs.containsKey(s.key)) logs.remove(s.key) else {
                     logs[s.key] = Load.Loading
                     actions.run(s.key) {
-                        logs[s.key] = try { Load.Ready(api.services.logs(s.key)) } catch (e: ApiException) { Load.Failed(e.message ?: "Could not read the logs") }
+                        logs[s.key] = try { Load.Ready(api.services.logs(s.key)) } catch (e: ApiException) { Load.Failed(errorText(e)) }
                     }
                 }
             },
@@ -240,7 +242,7 @@ fun ServicesScreen(state: ServicesState, events: ServicesEvents = ServicesEvents
         NoteBanner(state.note, events.onCloseNote)
         when (val s = state.services) {
             Load.Loading -> LoadingState(text = "Loading services")
-            is Load.Failed -> ErrorState("Failed to load services: ${s.message}", onRetry = events.onRetry)
+            is Load.Failed -> ErrorState(s.message, onRetry = events.onRetry)
             is Load.Ready -> {
                 val shown = state.shown
                 LazyColumn(

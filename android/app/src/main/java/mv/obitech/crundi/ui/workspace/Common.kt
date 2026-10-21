@@ -41,11 +41,6 @@ object WorkspaceRoutes {
 }
 
 /** Words for a failure, fit to show: the server's own when it gave some. */
-fun errorText(t: Throwable): String = when (t) {
-    is ApiException -> if (t.status == 0) "The server cannot be reached. Check the connection and try again." else t.message
-    else -> t.message ?: "Something went wrong"
-}
-
 /** A short message at the bottom of the screen, as the desktop's toasts. */
 @Composable
 fun rememberToast(): (String) -> Unit {

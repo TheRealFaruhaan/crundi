@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.planning
 
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -133,7 +135,7 @@ fun MindMapRoute() {
             onNeedBoard = { p ->
                 if (boards[p] !is Load.Ready) {
                     boards[p] = Load.Loading
-                    scope.launch { boards[p] = try { Load.Ready(api.kanban.board(p)) } catch (e: mv.obitech.crundi.api.ApiException) { Load.Failed(e.message) } }
+                    scope.launch { boards[p] = try { Load.Ready(api.kanban.board(p)) } catch (e: mv.obitech.crundi.api.ApiException) { Load.Failed(errorText(e)) } }
                 }
             },
             onOpenKanban = { nav.area(Area.Kanban) },
@@ -223,7 +225,7 @@ fun MindMapScreen(
         CrundiDivider()
         when (map) {
             is Load.Loading -> LoadingState(text = "Loading the mind map")
-            is Load.Failed -> ErrorState("Failed to load mindmap: ${map.message}", onRetry = cb.onRetry)
+            is Load.Failed -> ErrorState(map.message, onRetry = cb.onRetry)
             is Load.Ready -> if (map.value.nodes.isEmpty()) EmptyState(
                 "mindmap", "No ideas yet",
                 body = "Add one, or use “Brainstorm in the Mind map” on a Kanban card to extend a task here.",

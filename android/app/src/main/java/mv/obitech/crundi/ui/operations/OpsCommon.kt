@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.operations
 
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -67,7 +69,7 @@ fun <T> rememberLoad(vararg keys: Any?, fetch: suspend () -> T): Loader<T> {
     var tick by remember(*keys) { mutableIntStateOf(0) }
     LaunchedEffect(tick, *keys) {
         state.value = try { Load.Ready(fetch()) } catch (e: ApiException) {
-            if (state.value is Load.Ready) state.value else Load.Failed(e.message ?: "The server did not answer.")
+            if (state.value is Load.Ready) state.value else Load.Failed(errorText(e))
         }
     }
     return remember(state) { Loader(state) { tick++ } }
@@ -93,7 +95,7 @@ class Actions(private val scope: CoroutineScope) {
                 if (done != null) note = Note(done, false)
                 after()
             } catch (e: ApiException) {
-                note = Note(e.message ?: "That did not work. Try again.", true)
+                note = Note(errorText(e), true)
             } finally {
                 if (busy == key) busy = null
             }

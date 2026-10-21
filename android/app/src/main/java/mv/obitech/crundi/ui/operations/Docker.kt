@@ -65,6 +65,7 @@ import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.components.DialogCard
 import mv.obitech.crundi.ui.components.EmptyState
 import mv.obitech.crundi.ui.components.ErrorState
+import mv.obitech.crundi.ui.components.PanelHeader
 import mv.obitech.crundi.ui.components.LoadingState
 import mv.obitech.crundi.ui.components.StatusBadge
 import mv.obitech.crundi.ui.icons.CrundiIcon
@@ -260,25 +261,34 @@ fun DockerRoute() {
 @Composable
 fun DockerScreen(state: DockerState, events: DockerEvents = DockerEvents()) {
     Column(Modifier.fillMaxSize()) {
-        when (val st = state.status) {
-            Load.Loading -> LoadingState(text = "Loading…")
-            is Load.Failed -> ErrorState(st.message, onRetry = events.onRetryStatus)
-            is Load.Ready -> when {
-                !st.value.installed -> EmptyState("docker", "Docker is not installed", body = "Install Docker Engine on this machine and this tab will manage it.")
-                !st.value.reachable -> EmptyState("docker", "Docker is installed, but Crundi cannot reach it", body = st.value.error.ifEmpty { null }, action = "Try again", onAction = events.onRetryStatus)
-                else -> {
-                    DockerNav(state, events)
-                    NoteBanner(state.note, events.onCloseNote)
-                    Box(Modifier.weight(1f)) {
-                        when (state.view) {
-                            DockerView.Containers -> ContainersView(state, events)
-                            DockerView.Stacks -> StacksView(state, events)
-                            DockerView.Images -> ImagesView(state, events)
-                            DockerView.Volumes -> VolumesView(state, events)
-                            DockerView.Networks -> NetworksView(state, events)
-                            DockerView.System -> SystemView(state, events)
-                        }
-                    }
+        val st = state.status
+        val ready = (st as? Load.Ready)?.value
+        // The title and the sections stay whatever the engine is doing, so the
+        // person always sees where they are and can still switch section.
+        PanelHeader(
+            "Docker",
+            meta = when {
+                ready != null && ready.reachable -> listOf(ready.version.takeIf { it.isNotBlank() }?.let { "Engine $it" }.orEmpty(), ready.os, ready.arch).filter { it.isNotBlank() }.joinToString(" · ")
+                st is Load.Failed -> "Not answering"
+                else -> null
+            },
+        )
+        val live = ready != null && ready.installed && ready.reachable
+        if (ready == null || live) DockerNav(state, events, showFilter = live)
+        if (live) NoteBanner(state.note, events.onCloseNote)
+        Box(Modifier.weight(1f)) {
+            when {
+                st is Load.Loading -> LoadingState(text = "Loading…")
+                st is Load.Failed -> ErrorState(st.message, onRetry = events.onRetryStatus)
+                ready != null && !ready.installed -> EmptyState("docker", "Docker is not installed", body = "Install Docker Engine on this machine and this tab will manage it.")
+                ready != null && !ready.reachable -> EmptyState("docker", "Docker is installed, but Crundi cannot reach it", body = ready.error.ifEmpty { null }, action = "Try again", onAction = events.onRetryStatus)
+                else -> when (state.view) {
+                    DockerView.Containers -> ContainersView(state, events)
+                    DockerView.Stacks -> StacksView(state, events)
+                    DockerView.Images -> ImagesView(state, events)
+                    DockerView.Volumes -> VolumesView(state, events)
+                    DockerView.Networks -> NetworksView(state, events)
+                    DockerView.System -> SystemView(state, events)
                 }
             }
         }
@@ -287,7 +297,7 @@ fun DockerScreen(state: DockerState, events: DockerEvents = DockerEvents()) {
 }
 
 @Composable
-private fun DockerNav(state: DockerState, events: DockerEvents) {
+private fun DockerNav(state: DockerState, events: DockerEvents, showFilter: Boolean = true) {
     Column(Modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = Dimens.ScreenPad, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (v in DockerView.entries) {
@@ -303,7 +313,7 @@ private fun DockerNav(state: DockerState, events: DockerEvents) {
             }
             CrundiChip("Forwards", selected = false, onClick = events.onForwards, icon = "globe")
         }
-        if (state.view != DockerView.System) Row(Modifier.fillMaxWidth().padding(start = Dimens.ScreenPad, end = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (showFilter && state.view != DockerView.System) Row(Modifier.fillMaxWidth().padding(start = Dimens.ScreenPad, end = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             CrundiTextField(state.filter, events.onFilter, Modifier.weight(1f), placeholder = "Filter", icon = "search")
             CrundiIconButton("refresh", events.onRefresh, contentDescription = "Refresh")
         }
@@ -316,7 +326,7 @@ private fun DockerNav(state: DockerState, events: DockerEvents) {
 private fun <T> ListFrame(load: Load<List<T>>, emptyTitle: String, emptyBody: String?, emptyIcon: String, body: LazyListScope.(List<T>) -> Unit, header: (LazyListScope.(List<T>) -> Unit)? = null) {
     when (load) {
         Load.Loading -> LoadingState(text = "Loading…")
-        is Load.Failed -> ErrorState("Docker did not answer: ${load.message}")
+        is Load.Failed -> ErrorState(load.message)
         is Load.Ready -> if (load.value.isEmpty() && header == null) EmptyState(emptyIcon, emptyTitle, body = emptyBody)
         else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 8.dp)) {
             header?.invoke(this, load.value)

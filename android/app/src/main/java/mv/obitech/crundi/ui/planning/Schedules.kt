@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.planning
 
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -297,7 +299,7 @@ fun ScheduleEditRoute(id: String) {
             services = all.services
             val s = if (id.isEmpty()) ScheduleForm(ScheduleForm.blank(shell.currentProject)) else all.schedules.firstOrNull { it.id == id }?.let { ScheduleForm(it) }
             next = if (s == null) Load.Failed("This schedule is gone. It may have been deleted elsewhere.") else Load.Ready(s)
-        } catch (e: ApiException) { next = Load.Failed(e.message) }
+        } catch (e: ApiException) { next = Load.Failed(errorText(e)) }
         form = next
     }
     val f = form.valueOrNull
@@ -312,7 +314,7 @@ fun ScheduleEditRoute(id: String) {
         ff.problem(services.filter { it.alias.equals(ff.project, true) })?.let { message = it; return null }
         return try {
             if (ff.id.isEmpty()) api.schedules.add(ff.toSchedule(tz)) else api.schedules.update(ff.toSchedule(tz))
-        } catch (e: ApiException) { message = "Save failed: ${e.message}"; null }
+        } catch (e: ApiException) { message = "Save failed: ${errorText(e)}"; null }
     }
     ScheduleEditScreen(
         form, shell.projects.map { it.alias }, services, board, message, busy,
@@ -323,7 +325,7 @@ fun ScheduleEditRoute(id: String) {
                 busy = true
                 val saved = save(ff)
                 if (saved != null) {
-                    try { val s = api.schedules.provisionChat(saved.id); ff.sessionId = s.action.sessionId; message = "Conversation created" } catch (e: ApiException) { message = e.message }
+                    try { val s = api.schedules.provisionChat(saved.id); ff.sessionId = s.action.sessionId; message = "Conversation created" } catch (e: ApiException) { message = errorText(e) }
                 }
                 busy = false
             }

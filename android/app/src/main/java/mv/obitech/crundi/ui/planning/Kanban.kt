@@ -200,7 +200,7 @@ fun KanbanScreen(
         KanbanToolbar(view, b?.deletedTasks?.size ?: 0, onView, onAdd = { popup = KanbanPopup.AddTask("todo") })
         when (board) {
             is Load.Loading -> LoadingState(text = "Loading the board")
-            is Load.Failed -> ErrorState("Failed to load board: ${board.message}", onRetry = cb.onRetry)
+            is Load.Failed -> ErrorState(board.message, onRetry = cb.onRetry)
             is Load.Ready -> when (view) {
                 KanbanView.Board -> KanbanBoardView(board.value, cb) { popup = it }
                 KanbanView.Trash -> KanbanTrash(board.value, cb)

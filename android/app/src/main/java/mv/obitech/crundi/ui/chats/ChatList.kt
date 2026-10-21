@@ -1,5 +1,11 @@
 package mv.obitech.crundi.ui.chats
 
+import mv.obitech.crundi.ui.components.liveErrorText
+
+import mv.obitech.crundi.ui.components.ErrorState
+
+import mv.obitech.crundi.ui.components.errorText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,6 +70,8 @@ data class ChatsListState(
     val chats: List<Pane> = emptyList(),
     val parked: List<Pane> = emptyList(),
     val error: String? = null,
+    /** Why nothing has loaded (the server cannot be reached); shown with Try again instead of the spinner. */
+    val loadError: String? = null,
 )
 
 /** What a chat row does. */
@@ -73,6 +81,7 @@ interface ChatsListActions {
     fun menu(chat: Pane) {}
     fun resume(parked: Pane) {}
     fun discard(parked: Pane) {}
+    fun retry() {}
 }
 
 /** One row's subtitle: what it is doing, what it is waiting on, its model. */
@@ -109,6 +118,7 @@ fun ChatsScreen(state: ChatsListState, actions: ChatsListActions, modifier: Modi
         }
         if (state.error != null) Banner(state.error, Modifier.fillMaxWidth().padding(Dimens.ScreenPad), kind = BadgeKind.Bad, icon = "alert-triangle")
         when {
+            !state.loaded && state.loadError != null -> ErrorState(state.loadError, onRetry = actions::retry)
             !state.loaded -> LoadingState(text = "Loading chats")
             state.chats.isEmpty() && state.parked.isEmpty() -> EmptyState(
                 "message-square", "No chats in ${state.project}",
@@ -256,6 +266,7 @@ fun ChatsRoute() {
     val api = services.api
     val shell by services.shell.state.collectAsState()
     val server by api.events.state.collectAsState(initial = api.events.lastState)
+    val live by api.events.status.collectAsState()
     val project = shell.currentProject
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
@@ -266,7 +277,7 @@ fun ChatsRoute() {
 
     fun act(block: suspend () -> Unit) = scope.launch {
         error = null
-        try { block() } catch (e: Exception) { error = e.message ?: "That did not work. Try again." }
+        try { block() } catch (e: Exception) { error = errorText(e) }
     }
 
     val state = ChatsListState(
@@ -275,8 +286,10 @@ fun ChatsRoute() {
         chats = server?.chats(project).orEmpty(),
         parked = server?.parked(project).orEmpty().filter { it.paneKind != "terminal" },
         error = error,
+        loadError = if (server == null) liveErrorText(live) else null,
     )
     ChatsScreen(state, object : ChatsListActions {
+        override fun retry() = api.events.reconnect()
         override fun open(chat: Pane) = nav.chat(chat.id)
         override fun newChat() {
             val p = project ?: return
@@ -311,7 +324,7 @@ fun ChatsRoute() {
                         newChat = null
                         nav.chat(created.id)
                     } catch (e: Exception) {
-                        newChat = newChat?.copy(starting = false, error = e.message ?: "The chat did not start. Try again.")
+                        newChat = newChat?.copy(starting = false, error = "The chat did not start: " + errorText(e))
                     }
                 }
             }, onDismiss = { newChat = null })

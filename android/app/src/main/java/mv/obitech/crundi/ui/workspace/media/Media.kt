@@ -76,7 +76,7 @@ import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.theme.Dimens
 import mv.obitech.crundi.ui.workspace.WorkspaceRoutes
-import mv.obitech.crundi.ui.workspace.errorText
+import mv.obitech.crundi.ui.components.errorText
 import mv.obitech.crundi.ui.workspace.formatSize
 import mv.obitech.crundi.ui.workspace.rememberFilePicker
 import mv.obitech.crundi.ui.workspace.rememberToast
