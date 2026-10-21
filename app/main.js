@@ -961,19 +961,62 @@ async function confirmAndInstall() {
  * does this with spawnSync, which froze the app ("Not Responding"), and Force
  * Quit then killed the install half way. Resolves { ok, code, output }.
  */
-function installDebAsync(file) {
+function installDebAsync(file, hold = {}) {
   return new Promise((resolve) => {
     let out = '';
     let child;
     try {
       // dpkg first; if dependencies are missing, let apt pull them in.
       child = spawn('pkexec', ['/bin/sh', '-c', 'dpkg -i "$1" || apt-get install -f -y', 'crundi-update', file], { stdio: ['ignore', 'pipe', 'pipe'] });
+      hold.child = child;
     } catch (err) { resolve({ ok: false, code: -1, output: err.message }); return; }
     const add = (b) => { out = (out + b.toString()).slice(-4000); };
     child.stdout.on('data', add); child.stderr.on('data', add);
     child.on('error', (err) => resolve({ ok: false, code: -1, output: err.message }));
     child.on('close', (code) => resolve({ ok: code === 0, code, output: out.trim() }));
   });
+}
+
+/** The first terminal emulator this desktop has, with how to run a command in it. */
+function findTerminal() {
+  const dirs = (process.env.PATH || '/usr/bin:/bin').split(':');
+  const has = (b) => dirs.some(d => d && existsSync(join(d, b)));
+  const list = [
+    ['x-terminal-emulator', (c) => ['-e', 'bash', '-c', c]],
+    ['gnome-terminal', (c) => ['--', 'bash', '-c', c]],
+    ['konsole', (c) => ['-e', 'bash', '-c', c]],
+    ['xfce4-terminal', (c) => ['-x', 'bash', '-c', c]],
+    ['kitty', (c) => ['bash', '-c', c]],
+    ['alacritty', (c) => ['-e', 'bash', '-c', c]],
+    ['foot', (c) => ['bash', '-c', c]],
+    ['wezterm', (c) => ['start', '--', 'bash', '-c', c]],
+    ['xterm', (c) => ['-e', 'bash', '-c', c]],
+  ];
+  const hit = list.find(([b]) => has(b));
+  return hit ? { bin: hit[0], args: hit[1] } : null;
+}
+
+const shq = (v) => "'" + String(v).replace(/'/g, "'\\''") + "'";
+
+/**
+ * The fallback when no password prompt appears: install in a terminal (sudo
+ * asks there), then start the new version. Returns false when there is no
+ * terminal to open.
+ */
+function installInTerminal(file) {
+  const term = findTerminal();
+  if (!term) return false;
+  const exe = process.env.APPIMAGE || app.getPath('exe');
+  const script = `echo "Installing the Crundi Client update. sudo asks for your password."; sudo apt install -y ${shq(file)} && echo "Installed. Starting Crundi Client…" || echo "The install did not finish."; (nohup ${shq(exe)} >/dev/null 2>&1 &); sleep 3`;
+  try {
+    const child = spawn(term.bin, term.args(script), { detached: true, stdio: 'ignore' });
+    child.unref();
+    appendLog(`[update] Installing in a terminal (${term.bin})`);
+    return true;
+  } catch (err) {
+    appendLog('[update] Could not open a terminal: ' + err.message);
+    return false;
+  }
 }
 
 async function installUpdateNow() {
@@ -984,8 +1027,49 @@ async function installUpdateNow() {
     // leaves Crundi exactly as it was. Only a successful install restarts it.
     appendLog('[update] Installing ' + updateFile + ' with pkexec…');
     updateState.installing = true; sendUpdateStatus();
-    const r = await installDebAsync(updateFile);
+    // pkexec needs the desktop's password agent. Where there is none (some
+    // window managers), or its prompt opens out of sight, pkexec just waits.
+    // After 20 s, offer a terminal instead; after 10 min, give up.
+    const hold = {};
+    let viaTerminal = false;
+    const offer = setTimeout(async () => {
+      if (!hold.child || hold.child.exitCode != null || !mainWindow || mainWindow.isDestroyed()) return;
+      const term = findTerminal();
+      const buttons = [...(term ? ['Install in a terminal'] : []), 'Copy the install command', 'Keep waiting'];
+      try {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: 'question', buttons, defaultId: 0, cancelId: buttons.length - 1,
+          title: 'No password prompt?',
+          message: 'Your system has not shown a password prompt for the update.',
+          detail: 'Some desktops have no password agent, or open its prompt out of sight. You can install it in a terminal instead (sudo asks for your password there), then Crundi Client starts again by itself.',
+        });
+        const pick = buttons[response];
+        if (pick === 'Install in a terminal' && hold.child && hold.child.exitCode == null) {
+          viaTerminal = true;
+          try { hold.child.kill('SIGTERM'); } catch { /* gone */ }
+        } else if (pick === 'Copy the install command') {
+          clipboard.writeText('sudo apt install ' + shq(updateFile));
+          appendLog('[update] Install command copied');
+        }
+      } catch { /* the window went away */ }
+    }, 20_000);
+    const giveUp = setTimeout(() => { if (hold.child && hold.child.exitCode == null) { appendLog('[update] No answer from pkexec after 10 minutes; giving up'); try { hold.child.kill('SIGTERM'); } catch { /* gone */ } } }, 10 * 60_000);
+    const r = await installDebAsync(updateFile, hold);
+    clearTimeout(offer); clearTimeout(giveUp);
     updateState.installing = false; sendUpdateStatus();
+    if (viaTerminal) {
+      if (installInTerminal(updateFile)) {
+        // The terminal installs and starts the new version: get out of its way.
+        app.isQuitting = true;
+        quitting = true;
+        try { await stopServerProcess(); } catch { /* ignore */ }
+        app.exit(0);
+        return;
+      }
+      updateInstalling = false;
+      dialog.showMessageBox(mainWindow, { type: 'info', message: 'No terminal found.', detail: 'Install it yourself with:\n\nsudo apt install ' + updateFile }).catch(() => {});
+      return;
+    }
     if (!r.ok) {
       updateInstalling = false;
       appendLog(`[update] Install did not finish (exit ${r.code}): ${r.output}`);
