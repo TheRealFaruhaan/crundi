@@ -426,6 +426,11 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, text: { type: 'string' }, interrupt: { type: 'boolean', description: 'Stop their current turn first (like the Stop button), so they read it now' }, hold: { type: 'boolean', description: 'Tell them to stop and wait until your next message; their idle step is not treated as stalled' } }, required: ['employee', 'text'] },
   },
   {
+    name: 'factory_tick',
+    description: 'Manager of a Crundi factory run only: how often, in minutes (5 to 1440), you want a wake-up message while you are idle, so you can check on the run. Ticks are skipped when you are busy or the run is paused: a wake-up, not a guaranteed timer. Set it once at the start (longer for long, steady work); the person may have fixed it in the factory.',
+    inputSchema: { type: 'object', properties: { minutes: { type: 'number' } }, required: ['minutes'] },
+  },
+  {
     name: 'factory_delegate',
     description: 'Manager of a Crundi factory run only: hand someone on your team a one-off job outside the drawn flow (resolve a merge conflict, check something, make a small fix). Your own step waits; their result comes back to you as a message and then it is your turn again. Stop after calling it.',
     inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, task: { type: 'string', description: 'The job: what to do and what done looks like' } }, required: ['employee', 'task'] },
@@ -662,7 +667,7 @@ const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show
 const IN_CHAT = !!process.env.CRUNDI_CHAT_ID;
 // Only a factory run's chats are offered factory_handoff.
 const IN_FACTORY = !!process.env.CRUNDI_FACTORY_RUN;
-const FACTORY_RUN_TOOLS = new Set(['factory_handoff', 'factory_permission', 'factory_delegate', 'factory_result', 'factory_status', 'factory_control', 'factory_message']);
+const FACTORY_RUN_TOOLS = new Set(['factory_handoff', 'factory_permission', 'factory_delegate', 'factory_result', 'factory_status', 'factory_control', 'factory_message', 'factory_tick']);
 const FACTORY_LIBRARY_TOOLS = new Set(['factory_guide', 'factory_list', 'factory_get', 'factory_validate', 'factory_save', 'factory_start', 'factory_triggers']);
 const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))

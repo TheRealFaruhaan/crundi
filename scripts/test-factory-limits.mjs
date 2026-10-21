@@ -137,6 +137,42 @@ function setup(name, limits, usage = { value: null }) {
   await r.stopRun(st.run.id); r.dispose();
 }
 
+// ─── The Manager's ticker ───
+{
+  const f = standard(); f.settings = { presets: [] };
+  const team = fakeTeam({ manager: async () => null, fe: async () => null, be: async () => null });
+  const r = createFactoryRunner({ dataDir: process.env.DATA_DIR, agents: team.agents, getProject: () => ({ path: repo('l7') }), getFactory: () => ({ factory: f }), settleMs: 10_000, permissionBatchMs: 30, tickScale: 2 / 60000 });   // a minute is 2 ms
+  team.setRunner(r);
+  const st = await r.startRun({ project: 'l7', factoryId: 'x', task: 'Do it' });
+  const mgr = team.of('manager')[0];
+  const ticks = () => mgr.msgs.filter(m => m.startsWith('[Factory] Tick')).length;
+  await until(() => ticks() > 0, 3000);
+  ok(ticks() > 0 && /not a task/.test(mgr.msgs.find(m => m.startsWith('[Factory] Tick'))) && /have not set your ticker/.test(mgr.msgs.find(m => m.startsWith('[Factory] Tick'))), 'tick: an idle Manager is woken, told it is not a task, and asked to set its ticker');
+  ok(/Set how often at the start with factory_tick/.test(mgr.systemPromptExtra), 'prompt: the Manager is told to set its ticker');
+  mgr.state = 'working';
+  const before = ticks(); await sleep(150);
+  ok(ticks() === before, 'tick: skipped entirely while the Manager is busy');
+  mgr.state = 'idle';
+  ok(!(await r.tickFromManager(mgr.id, 2)).ok && !(await r.tickFromManager(mgr.id, 2000)).ok, 'factory_tick: 5 minutes to 24 hours');
+  const set = await r.tickFromManager(mgr.id, 30);
+  ok(set.ok && /not a guaranteed timer/.test(set.message), 'factory_tick: set, and told it is a wake-up, not a timer');
+  await r.pause(st.run.id);
+  const p0 = ticks(); await sleep(200);
+  ok(ticks() === p0, 'tick: none while the run is paused');
+  await r.stopRun(st.run.id); r.dispose();
+}
+{
+  const f = standard(); f.settings = { presets: [], tickMinutes: 60 };
+  const team = fakeTeam({ manager: async () => null, fe: async () => null, be: async () => null });
+  const r = createFactoryRunner({ dataDir: process.env.DATA_DIR, agents: team.agents, getProject: () => ({ path: repo('l8') }), getFactory: () => ({ factory: f }), settleMs: 10_000, permissionBatchMs: 30 });
+  team.setRunner(r);
+  const st = await r.startRun({ project: 'l8', factoryId: 'x', task: 'Do it' });
+  const mgr = team.of('manager')[0];
+  const no = await r.tickFromManager(mgr.id, 10);
+  ok(!no.ok && /set your ticker to every 60 minutes/.test(no.error) && /every 60 minutes \(the person set it\)/.test(mgr.systemPromptExtra), 'ticker fixed in the factory: the Manager is told, and cannot change it');
+  await r.stopRun(st.run.id); r.dispose();
+}
+
 // ─── Paused, restarted, recovered while paused, then resumed ───
 {
   const f = standard(); f.settings = { presets: [] };

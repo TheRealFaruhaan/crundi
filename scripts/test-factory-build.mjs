@@ -91,7 +91,7 @@ ok(c2.factory.nodes.find(n => n.id === 'start').position.x === 999, 'store: draw
 
 // MCP tool lists.
 const mcp = readFileSync(new URL('../src/mcp-stdio.js', import.meta.url), 'utf-8');
-ok(/FACTORY_RUN_TOOLS = new Set\(\['factory_handoff', 'factory_permission', 'factory_delegate', 'factory_result', 'factory_status', 'factory_control', 'factory_message'\]\)/.test(mcp) && /IN_FACTORY \? !FACTORY_LIBRARY_TOOLS\.has\(t\.name\) : !FACTORY_RUN_TOOLS\.has\(t\.name\)/.test(mcp), 'mcp: run tools only in a run, building tools everywhere else');
+ok(/FACTORY_RUN_TOOLS = new Set\(\['factory_handoff', 'factory_permission', 'factory_delegate', 'factory_result', 'factory_status', 'factory_control', 'factory_message', 'factory_tick'\]\)/.test(mcp) && /IN_FACTORY \? !FACTORY_LIBRARY_TOOLS\.has\(t\.name\) : !FACTORY_RUN_TOOLS\.has\(t\.name\)/.test(mcp), 'mcp: run tools only in a run, building tools everywhere else');
 for (const t of ['factory_guide', 'factory_list', 'factory_get', 'factory_validate', 'factory_save', 'factory_start', 'factory_triggers']) {
   if (!mcp.includes(`name: '${t}'`)) ok(false, 'mcp: tool defined: ' + t);
 }

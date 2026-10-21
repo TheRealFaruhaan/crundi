@@ -294,6 +294,19 @@ word), journaled as a `limits` event that overrides the factory's:
   pauses or resumes with a reason shown to the person, or changes the limits.
 - Models stay a per-person choice in the Team panel.
 
+### 4.4d The Manager's ticker
+- `settings.tickMinutes` (5-1440; 0 = the Manager chooses with
+  `factory_tick` at the start; 15 until it does). Fixed by the person, the
+  Manager cannot change it.
+- Every N minutes, only if the Manager is idle and the run is running or
+  waiting, it gets one "[Factory] Tick" message: a wake-up, not a task and not
+  a guaranteed timer. Skipped entirely (nothing sent) while it is busy, or the
+  run is paused, crashed or finishing. Rides on the run clock: armed on start,
+  resume and recovery, cleared on pause and stop.
+- `factory_message {employee, text, interrupt?, hold?}`: the Manager tells
+  someone mid-step; interrupt stops their turn first, hold makes them wait
+  (not nudged) until its next message.
+
 ### 4.5 Sessions: no sleep, reachability GC
 - The pane parker (`src/panes.js`) **never parks** a session of an unfinished
   run (running, waiting, paused). Employee sessions are owned by the runner, not

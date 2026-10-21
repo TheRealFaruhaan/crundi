@@ -40,6 +40,7 @@ export const ALLOW_RULES = [
   'mcp__crundi__factory_status',
   'mcp__crundi__factory_control',
   'mcp__crundi__factory_message',
+  'mcp__crundi__factory_tick',
   'mcp__crundi__rename_chat',
   // Skills are part of how a factory is meant to work (spec §2.5).
   'Skill',

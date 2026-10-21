@@ -248,6 +248,10 @@ export function reduce(prev, ev) {
     case 'manager-message':
       // Told someone mid-step: shown on the timeline, changes no state.
       break;
+    case 'tick':
+      // The Manager set its check-in ticker (when the factory leaves it open).
+      r.tickMinutes = ev.minutes || 0;
+      break;
     case 'limits':
       // Changed on a running run: overrides the factory's own.
       r.limits = ev.limits || null;

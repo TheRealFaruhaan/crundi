@@ -80,6 +80,7 @@ export function createFactoryRunner({
   notify = () => {}, onChange = () => {},
   settleMs = SETTLE_MS, setupTimeoutMs = SETUP_TIMEOUT_MS, permissionBatchMs = PERMISSION_BATCH_MS,
   autoRecoverDelays = AUTO_RECOVER_DELAYS,
+  tickScale = 1,   // tests shrink the ticker's minutes
   now = () => new Date().toISOString(),
 }) {
   const RUNS = join(dataDir, 'factory-runs');
@@ -1302,6 +1303,7 @@ export function createFactoryRunner({
   function startClock(entry) {
     clearClock(entry);
     if (!['running', 'waiting'].includes(st(entry).status) || rr(entry).capHit) return;
+    armTick(entry);
     const left = timeLeft(entry.rec, Date.now());
     const fire = () => locked(entry, () => {
       if (!['running', 'waiting'].includes(st(entry).status) || rr(entry).capHit) return;
@@ -1315,7 +1317,51 @@ export function createFactoryRunner({
     entry.timers.clock.unref?.();
   }
 
-  function clearClock(entry) { clearTimeout(entry.timers.clock); }
+  function clearClock(entry) { clearTimeout(entry.timers.clock); clearTimeout(entry.timers.tick); }
+
+  // ─── The Manager's ticker ───
+  //
+  // A wake-up, not a task: every N minutes, if the Manager is idle and the run
+  // is going, it gets one short message so it can look around. Skipped
+  // entirely (nothing sent) while the Manager is busy, or the run is held.
+
+  const TICK_DEFAULT = 15;   // until the Manager sets it, when the factory leaves it open
+  function tickOf(entry) {
+    const fixed = st(entry).snapshot.settings.tickMinutes || 0;
+    return { minutes: fixed || rr(entry).tickMinutes || TICK_DEFAULT, fixed: !!fixed, chosen: !!(fixed || rr(entry).tickMinutes) };
+  }
+
+  function armTick(entry) {
+    clearTimeout(entry.timers.tick);
+    const ms = tickOf(entry).minutes * 60_000 * tickScale;
+    entry.timers.tick = setTimeout(() => { fireTick(entry).finally(() => { if (!isHeld(entry.rec) && UNFINISHED.has(st(entry).status) && st(entry).status !== 'crashed' && st(entry).status !== 'finishing') armTick(entry); }); }, ms);
+    entry.timers.tick.unref?.();
+  }
+
+  async function fireTick(entry) {
+    if (isHeld(entry.rec) || !['running', 'waiting'].includes(st(entry).status)) return;
+    const m = entry.live.employees[MANAGER_ID];
+    if (!m || !m.chatId || !agents.isAlive(m.chatId)) return;
+    if (agents.state(m.chatId) !== 'idle') return;   // busy: skip, send nothing
+    const t = tickOf(entry);
+    agents.send(m.chatId, `[Factory] Tick (every ${t.minutes} min). A wake-up, not a task: glance at the run only if something might be stuck or wrong (factory_status shows it in one block). Almost always nothing needs doing; then answer in a word, or not at all.${t.chosen ? '' : ' You have not set your ticker yet: choose how often you want these with factory_tick.'}`);
+  }
+
+  /** factory_tick, from the Manager: how often it wants waking, when the factory leaves it open. */
+  async function tickFromManager(chatId, minutes) {
+    const info = chatInfo(chatId);
+    if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run can do this.' };
+    const entry = runs.get(info.runId);
+    if (!entry) return { ok: false, error: 'That factory run no longer exists.' };
+    const n = Math.round(Number(minutes));
+    if (!Number.isFinite(n) || n < 5 || n > 1440) return { ok: false, error: 'minutes is between 5 and 1440 (24 hours).' };
+    return locked(entry, async () => {
+      if (tickOf(entry).fixed) return { ok: false, error: `The person set your ticker to every ${tickOf(entry).minutes} minutes in this factory; it stays.` };
+      commit(entry, { type: 'tick', minutes: n });
+      if (!isHeld(entry.rec) && ['running', 'waiting'].includes(st(entry).status)) armTick(entry);
+      return { ok: true, message: `Ticker set: a wake-up every ${n} minutes, only when you are idle. It is not a guaranteed timer.` };
+    });
+  }
 
   // ─── Usage limit ───
 
@@ -1888,6 +1934,8 @@ export function createFactoryRunner({
     if (recent.length) lines.push('', 'Recent handoffs:', ...recent);
     const u = usageOf(r);
     lines.push('', `Spent so far: ${u.turns} turns in ${u.chats} chats${u.costUsd ? `, about $${u.costUsd.toFixed(2)}` : ''}; ${Math.round(timeLeft(entry.rec, Date.now()) / 60000)} min of the time limit left.`);
+    const Tk = tickOf(entry);
+    lines.push(`Your ticker: every ${Tk.minutes} min${Tk.fixed ? ' (set by the person)' : Tk.chosen ? '' : ' (default; set it with factory_tick)'}, only when you are idle.`);
     const Lm = limitsOf(entry);
     lines.push(`Usage limits the person set: pause at ${Lm.pauseAt5h}% of the 5-hour window and ${Lm.pauseAtWeek}% of the week${usageNow?.fiveHour ? ` (now ${Math.round(usageNow.fiveHour.utilization)}% and ${Math.round(usageNow.week?.utilization || 0)}%)` : ''}; ${Lm.maxParallel ? `at most ${Lm.maxParallel} at once` : 'no limit on people at once'}${Lm.oneAtATimeAbove ? `, one at a time above ${Lm.oneAtATimeAbove}%` : ''}.${entry.live.seats.length ? ` Waiting for a seat: ${entry.live.seats.length}.` : ''}`);
     return { ok: true, content: [{ type: 'text', text: lines.join('\n') }] };
@@ -1988,7 +2036,7 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /**

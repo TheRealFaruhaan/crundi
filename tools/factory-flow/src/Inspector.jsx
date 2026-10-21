@@ -232,6 +232,9 @@ export function FactorySettings({ f, mutate, skills }) {
         <Field label="Max minutes"><Num value={s.caps.maxMinutes} min={1} max={10080} onChange={v => set(d => { d.settings.caps.maxMinutes = v || 1; }, 'caps2')} /></Field>
       </div>
       <p className="ff-hint">When a limit is reached the run waits for you; you can let it carry on.</p>
+      <Field label="Manager check-in every (minutes)" hint={s.tickMinutes ? `A wake-up every ${s.tickMinutes} minutes, only while the Manager is idle; skipped otherwise. Each one is a short Manager turn.` : 'Blank: the Manager chooses at the start of each run (5 minutes to 24 hours). A wake-up only while it is idle, so it can check on things.'}>
+        <Num value={s.tickMinutes || ''} min={0} max={1440} placeholder="The Manager chooses" onChange={v => set(d => { d.settings.tickMinutes = v ? Math.min(1440, Math.max(5, v)) : 0; }, 'tick')} />
+      </Field>
       <div className="ff-subtitle">Usage</div>
       <p className="ff-hint">Your Claude usage is shared with your own chats. These keep a run inside what you choose; each can also be changed on a running run.</p>
       <div className="ff-grid2">

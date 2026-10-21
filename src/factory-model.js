@@ -169,6 +169,9 @@ export function normalizeFactory(input) {
       // choice: 100 / 0 keep today's behaviour (pause only when a window is
       // full; no limit on people at once).
       limits: normalizeLimits(s.limits),
+      // The Manager's check-in ticker, in minutes (5 to 1440). 0: the Manager
+      // chooses it at the start of each run (factory_tick).
+      tickMinutes: (() => { const n = Math.round(Number(s.tickMinutes)); return Number.isFinite(n) && n > 0 ? Math.min(1440, Math.max(5, n)) : 0; })(),
       gatekeeper: {
         enabled: !!(s.gatekeeper && s.gatekeeper.enabled),
         model: str(s.gatekeeper && s.gatekeeper.model, 60) || 'haiku',
