@@ -1,0 +1,14 @@
+{
+ "logs": [
+  {
+   "time": 1792322000000,
+   "level": "info",
+   "text": "[webapp] Listening on 8888"
+  },
+  {
+   "time": 1792322001000,
+   "level": "warn",
+   "text": "[tunnel] Reconnecting"
+  }
+ ]
+}

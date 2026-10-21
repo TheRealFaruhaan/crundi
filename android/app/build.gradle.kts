@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 // Firebase's description of this app, for notifications. It is read from
@@ -174,6 +175,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    // The API client (package api): OkHttp for HTTP, the live event stream
+    // (SSE) and the WebSocket; kotlinx.serialization for the typed models.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("com.google.firebase:firebase-messaging:24.1.0")
     // Draws a project's icon when it is a drawing (.svg): Android itself
     // reads pictures made of dots only, and many a favicon is not one.
@@ -188,4 +193,6 @@ dependencies {
     testImplementation("io.github.takahirom.roborazzi:roborazzi-junit-rule:1.43.1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.json:json:20240303")
+    // A local HTTP/WebSocket server for the API client's tests.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

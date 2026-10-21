@@ -1,0 +1,20 @@
+{
+ "ok": true,
+ "subscriptionType": "max",
+ "rateLimitTier": "default_claude_max_20x",
+ "fiveHour": {
+  "utilization": 31,
+  "resetsAt": "2026-10-21T14:00:00.000Z"
+ },
+ "week": {
+  "utilization": 46,
+  "resetsAt": "2026-10-24T08:00:00.000Z"
+ },
+ "weekOpus": {
+  "utilization": 12,
+  "resetsAt": "2026-10-24T08:00:00.000Z"
+ },
+ "weekSonnet": null,
+ "extraUsage": null,
+ "fetchedAt": "2026-10-21T11:12:09.402Z"
+}

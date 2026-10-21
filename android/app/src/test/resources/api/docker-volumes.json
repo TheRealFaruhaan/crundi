@@ -1,0 +1,16 @@
+{
+ "ok": true,
+ "volumes": [
+  {
+   "name": "ledger_pg",
+   "driver": "local",
+   "mountpoint": "/var/lib/docker/volumes/ledger_pg/_data",
+   "created": "2026-09-01T08:00:00Z",
+   "project": "ledger",
+   "anonymous": false,
+   "usedBy": [
+    "ledger-db-1"
+   ]
+  }
+ ]
+}

@@ -1,5 +1,7 @@
 package mv.obitech.crundi.screens
 
+import mv.obitech.crundi.api.CrundiClient
+import mv.obitech.crundi.api.FakeTransport
 import mv.obitech.crundi.ui.components.DotState
 import mv.obitech.crundi.ui.shell.AppServices
 import mv.obitech.crundi.ui.shell.Connection
@@ -32,7 +34,12 @@ object FakeServices {
         usage = UsageGlance(weekUsed = 0.46f, weekElapsed = 0.52f, fiveHourUsed = 0.31f, fiveHourElapsed = 0.64f),
     )
 
-    fun default(shell: ShellData = shellData): AppServices = object : AppServices {
+    /**
+     * Services over a server in memory: [FakeApi.transport] answers every
+     * route with realistic data (see FakeApi), so a Route can be shot too.
+     */
+    fun default(shell: ShellData = shellData, transport: FakeTransport = FakeApi.transport()): AppServices = object : AppServices {
         override val shell: ShellSource = StaticShellSource(shell)
+        override val api: CrundiClient = CrundiClient(transport)
     }
 }

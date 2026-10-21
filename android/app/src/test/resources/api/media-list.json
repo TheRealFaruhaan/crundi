@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "items": [
+  {
+   "id": "4f3e2d1c0b9a8776",
+   "originalName": "login-redirect.png",
+   "mime": "image/png",
+   "ext": ".png",
+   "size": 233901,
+   "kind": "image",
+   "project": "crundi",
+   "projectName": "crundi",
+   "link": {
+    "type": "task",
+    "taskId": "t1a2b3c4d5e6f708"
+   },
+   "linkStatus": "alive",
+   "linkLabel": "Fix login redirect",
+   "createdAt": "2026-10-20T09:12:44.000Z",
+   "path": "/home/crundi/.config/crundi/data/media/4f3e2d1c0b9a8776.png"
+  },
+  {
+   "id": "5a4b3c2d1e0f9a8b",
+   "originalName": "invoice-2026-09.pdf",
+   "mime": "application/pdf",
+   "ext": ".pdf",
+   "size": 88123,
+   "kind": "pdf",
+   "project": null,
+   "projectName": null,
+   "link": null,
+   "linkStatus": "none",
+   "linkLabel": null,
+   "createdAt": "2026-10-02T15:40:00.000Z",
+   "path": "/home/crundi/.config/crundi/data/media/5a4b3c2d1e0f9a8b.pdf"
+  }
+ ]
+}

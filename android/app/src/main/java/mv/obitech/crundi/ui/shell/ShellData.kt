@@ -65,11 +65,13 @@ class StaticShellSource(initial: ShellData) : ShellSource {
 
 /**
  * The app's services, handed down the tree. One object per paired server
- * session, built by AppGraph. The API engineer adds the API client (and the
- * fakes) here; screens get what they need with `LocalAppServices.current`.
+ * session, built by AppGraph; screens get what they need with
+ * `LocalAppServices.current`: the shell's data, and [api], the one client
+ * for the server (see shared/api.md). Tests build one over a FakeTransport.
  */
 interface AppServices {
     val shell: ShellSource
+    val api: mv.obitech.crundi.api.CrundiClient
 }
 
 val LocalAppServices = staticCompositionLocalOf<AppServices> { error("CrundiTheme content needs LocalAppServices (see AppGraph)") }

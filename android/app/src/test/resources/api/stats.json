@@ -1,0 +1,79 @@
+{
+ "system": {
+  "at": 1792322000000,
+  "cpu": {
+   "overall": 12.4,
+   "cores": [
+    10.1,
+    14.7,
+    null,
+    9.9
+   ]
+  },
+  "mem": {
+   "total": 16777216000,
+   "available": 9663676416,
+   "used": 7113539584,
+   "cached": 3221225472,
+   "swapTotal": 0,
+   "swapUsed": 0
+  },
+  "disk": {
+   "path": "/",
+   "total": 160000000000,
+   "free": 61000000000,
+   "used": 99000000000
+  },
+  "net": {
+   "rxPerSec": 18233.5,
+   "txPerSec": 9021.0
+  },
+  "load": {
+   "one": 0.42,
+   "five": 0.51,
+   "fifteen": 0.48
+  },
+  "interfaces": [],
+  "uptimeSec": 1209600,
+  "processUptimeSec": 273600,
+  "processRssBytes": 201326592,
+  "host": {
+   "hostname": "dev",
+   "platform": "linux",
+   "release": "6.8.0-147-generic",
+   "arch": "x64",
+   "cpuModel": "AMD EPYC",
+   "cores": 4,
+   "nodeVersion": "v22.11.0"
+  },
+  "history": {
+   "cpu": [
+    9.1,
+    10.2,
+    12.4
+   ],
+   "mem": [
+    41.0,
+    42.2,
+    42.4
+   ]
+  }
+ },
+ "services": {
+  "crundi:docs": {
+   "status": "running",
+   "pid": 48121,
+   "cpuPct": 0.4,
+   "memory": 61235200,
+   "containers": null,
+   "cpuHistory": [
+    0.3,
+    0.4
+   ],
+   "memHistory": [
+    61000000,
+    61235200
+   ]
+  }
+ }
+}

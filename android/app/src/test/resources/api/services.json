@@ -1,0 +1,53 @@
+{
+ "services": [
+  {
+   "key": "crundi:docs",
+   "name": "docs",
+   "alias": "crundi",
+   "command": "npx serve -l 4811 docs",
+   "projectPath": "/home/crundi/projects/crundi",
+   "status": "running",
+   "pid": 48121,
+   "memory": 61235200,
+   "cpuPct": 0.4,
+   "containers": null,
+   "uptime": "2h 14m",
+   "tunnelPort": 4811,
+   "tunnelEnabled": true,
+   "tunnelStatus": "active",
+   "tunnelUrl": "https://docs.dev.faruhaan.com",
+   "byCollaborator": false
+  },
+  {
+   "key": "ledger:stack",
+   "name": "stack",
+   "alias": "ledger",
+   "command": "docker compose up",
+   "projectPath": "/home/crundi/projects/ledger",
+   "status": "running",
+   "pid": 51200,
+   "memory": 402653184,
+   "cpuPct": 3.1,
+   "containers": [
+    {
+     "name": "ledger-db-1",
+     "service": "db",
+     "rssBytes": 301989888,
+     "cpuPct": 1.2
+    },
+    {
+     "name": "ledger-api-1",
+     "service": "api",
+     "rssBytes": 100663296,
+     "cpuPct": 1.9
+    }
+   ],
+   "uptime": "6d 1h",
+   "tunnelPort": 0,
+   "tunnelEnabled": false,
+   "tunnelStatus": null,
+   "tunnelUrl": null,
+   "byCollaborator": false
+  }
+ ]
+}

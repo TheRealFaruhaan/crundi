@@ -44,6 +44,8 @@ fun CrundiApp(
     LaunchedEffect(openRoute) {
         if (openRoute != null) { navigator.to(openRoute); onOpened() }
     }
+    // Presence, reconnect on resume, pair again when signed out (API engineer).
+    mv.obitech.crundi.api.LiveClientEffects(services.api, data.currentProject, host)
     CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalNavigator provides navigator) {
         ShellScaffold(
             data = data,

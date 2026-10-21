@@ -1,0 +1,20 @@
+{
+ "ok": true,
+ "update": {
+  "current": "1.21.0-dev.4",
+  "latest": "1.21.0-dev.5",
+  "notesUrl": "https://github.com/faruhaan/crundi/releases/tag/v1.21.0-dev.5",
+  "available": true,
+  "checkedAt": 1792320000000,
+  "error": "",
+  "applying": false,
+  "log": "",
+  "blocker": "",
+  "channel": "dev",
+  "latestKind": "dev",
+  "currentIsDev": true
+ },
+ "log": "",
+ "canRestart": true,
+ "embedded": false
+}

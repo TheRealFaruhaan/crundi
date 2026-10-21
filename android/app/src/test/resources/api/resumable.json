@@ -1,0 +1,23 @@
+{
+ "ok": true,
+ "sessions": [
+  {
+   "id": "5f1c9a2e-7d1b-4c3a-9e1f-0a2b3c4d5e6f",
+   "title": "Build the Kotlin client for the server API",
+   "updatedAt": "2026-10-21T10:58:01.000Z",
+   "sizeBytes": 4821933,
+   "tokens": 142000,
+   "ageHours": 0.3,
+   "inUse": true
+  },
+  {
+   "id": "0c9b8a7d-6e5f-4a3b-2c1d-0e9f8a7b6c5d",
+   "title": "Fix the redirect loop after password login",
+   "updatedAt": "2026-10-19T16:20:44.000Z",
+   "sizeBytes": 912334,
+   "tokens": 38000,
+   "ageHours": 43.2,
+   "inUse": false
+  }
+ ]
+}

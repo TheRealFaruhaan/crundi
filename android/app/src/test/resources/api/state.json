@@ -1,0 +1,201 @@
+{
+ "uptime": "3d 4h",
+ "projects": [
+  {
+   "alias": "crundi",
+   "path": "/home/crundi/projects/crundi",
+   "name": "crundi",
+   "systemPrompt": "",
+   "icon": "/api/project-icon?project=crundi&v=lx3k2a-1f4"
+  },
+  {
+   "alias": "dhivo-socials",
+   "path": "/home/crundi/projects/dhivo-socials",
+   "name": "Dhivo socials",
+   "icon": ""
+  },
+  {
+   "alias": "faruhaan.com",
+   "path": "/home/crundi/projects/faruhaan.com",
+   "name": "faruhaan.com",
+   "systemPrompt": "Keep the site static. No trackers.",
+   "icon": ""
+  },
+  {
+   "alias": "ledger",
+   "path": "/home/crundi/projects/ledger",
+   "name": "ledger",
+   "icon": ""
+  }
+ ],
+ "services": [
+  {
+   "key": "crundi:docs",
+   "name": "docs",
+   "alias": "crundi",
+   "command": "npx serve -l 4811 docs",
+   "projectPath": "/home/crundi/projects/crundi",
+   "status": "running",
+   "pid": 48121,
+   "memory": 61235200,
+   "uptime": "2h 14m",
+   "tunnelPort": 4811,
+   "tunnelEnabled": true,
+   "tunnelStatus": "active",
+   "tunnelUrl": "https://docs.dev.faruhaan.com",
+   "createdBy": "",
+   "byCollaborator": false
+  },
+  {
+   "key": "faruhaan.com:dev",
+   "name": "dev",
+   "alias": "faruhaan.com",
+   "command": "npm run dev -- --port 4812",
+   "projectPath": "/home/crundi/projects/faruhaan.com",
+   "status": "stopped",
+   "pid": null,
+   "memory": null,
+   "uptime": null,
+   "tunnelPort": 0,
+   "tunnelEnabled": false,
+   "tunnelStatus": null,
+   "tunnelUrl": null,
+   "createdBy": "",
+   "byCollaborator": false
+  },
+  {
+   "key": "ledger:api",
+   "name": "api",
+   "alias": "ledger",
+   "command": "node server.js",
+   "projectPath": "/home/crundi/projects/ledger",
+   "status": "crashed",
+   "pid": null,
+   "memory": null,
+   "uptime": null,
+   "tunnelPort": 0,
+   "tunnelEnabled": false,
+   "tunnelStatus": null,
+   "tunnelUrl": null,
+   "createdBy": "",
+   "byCollaborator": false
+  }
+ ],
+ "terminals": [
+  {
+   "id": "a1b2c3d4e5f60718",
+   "project": "crundi",
+   "title": "Android API",
+   "longTitle": "Typed Kotlin client for the Crundi server API",
+   "order": 0,
+   "kind": "ui",
+   "status": "running",
+   "agentState": "needs-input",
+   "model": "claude-opus-5-5",
+   "permissionMode": "default",
+   "skipPermissions": false,
+   "sessionId": "5f1c9a2e-7d1b-4c3a-9e1f-0a2b3c4d5e6f",
+   "background": false,
+   "planStatus": "",
+   "pending": [
+    {
+     "id": "m9k2a1",
+     "kind": "permission",
+     "requestId": "req-4b1c",
+     "toolUseId": "toolu_01Hx",
+     "toolName": "Bash",
+     "displayName": "Bash",
+     "description": "Run the Android unit tests",
+     "title": "",
+     "input": {
+      "command": "cd android && ./gradlew --no-daemon testPlayDebugUnitTest",
+      "description": "Run the Android unit tests"
+     },
+     "suggestions": [
+      {
+       "type": "addRules",
+       "rules": [
+        {
+         "toolName": "Bash",
+         "ruleContent": "cd android && ./gradlew:*"
+        }
+       ],
+       "behavior": "allow",
+       "destination": "localSettings"
+      }
+     ],
+     "decisionReason": "",
+     "decisionReasonType": "",
+     "requiresUserInteraction": false,
+     "suppressAlwaysAllow": false,
+     "status": "pending",
+     "seq": 412
+    }
+   ],
+   "collaborator": null,
+   "factory": null
+  },
+  {
+   "id": "b2c3d4e5f6071829",
+   "project": "crundi",
+   "title": "Fix login redirect",
+   "longTitle": "",
+   "order": 1,
+   "kind": "ui",
+   "status": "running",
+   "agentState": "working",
+   "model": "claude-sonnet-5",
+   "permissionMode": "acceptEdits",
+   "skipPermissions": false,
+   "sessionId": "",
+   "background": false,
+   "planStatus": "executing",
+   "pending": [],
+   "collaborator": null,
+   "factory": {
+    "runId": "run_mvhwe7gr9b668d",
+    "role": "manager"
+   }
+  },
+  {
+   "id": "c3d4e5f607182930",
+   "project": "faruhaan.com",
+   "title": "Shell",
+   "longTitle": "",
+   "order": 0,
+   "status": "running",
+   "kind": "terminal",
+   "agentState": "idle"
+  },
+  {
+   "id": "d4e5f60718293041",
+   "project": "ledger",
+   "title": "Chat",
+   "order": 0,
+   "kind": "parked",
+   "paneKind": "ui",
+   "shellOnly": false,
+   "status": "parked",
+   "agentState": null,
+   "parkedAt": 1792310400000,
+   "reason": "restart",
+   "hasSession": true,
+   "tokens": 183000,
+   "heavy": true
+  }
+ ],
+ "scheduled": [
+  "crundi"
+ ],
+ "factoryRuns": [
+  {
+   "id": "run_mvhwe7gr9b668d",
+   "project": "crundi",
+   "status": "running",
+   "waitingOn": "",
+   "factoryName": "Android team",
+   "managerChatId": "b2c3d4e5f6071829"
+  }
+ ],
+ "role": "owner"
+}

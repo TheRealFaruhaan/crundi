@@ -1,0 +1,19 @@
+{
+ "ok": true,
+ "entries": [
+  {
+   "name": "webapp.js",
+   "rel": "src/webapp.js",
+   "type": "file",
+   "path": "/home/crundi/projects/crundi/src/webapp.js"
+  },
+  {
+   "name": "webapp-html.js",
+   "rel": "src/webapp-html.js",
+   "type": "file",
+   "path": "/home/crundi/projects/crundi/src/webapp-html.js"
+  }
+ ],
+ "truncated": false,
+ "gitignoreApplied": true
+}

@@ -1,0 +1,188 @@
+{
+ "type": "ui-history",
+ "id": "a1b2c3d4e5f60718",
+ "session": {
+  "id": "a1b2c3d4e5f60718",
+  "project": "crundi",
+  "title": "Android API",
+  "kind": "ui",
+  "factory": null,
+  "status": "running",
+  "state": "idle",
+  "sessionId": "5f1c9a2e-7d1b-4c3a-9e1f-0a2b3c4d5e6f",
+  "model": "claude-opus-5-5",
+  "permissionMode": "default",
+  "skipPermissions": false,
+  "slashCommands": [
+   "compact",
+   "clear",
+   {
+    "name": "review",
+    "description": "Review a pull request",
+    "argumentHint": "<pr>"
+   },
+   "init"
+  ],
+  "totalCostUsd": 0.4182,
+  "cwd": "/home/crundi/projects/crundi",
+  "messages": [
+   {
+    "id": "n1",
+    "kind": "notice",
+    "text": "\u2014 earlier messages in this conversation \u2014",
+    "seq": 1
+   },
+   {
+    "id": "u1",
+    "kind": "user",
+    "text": "Build the Kotlin client for the server API and write api.md.",
+    "seq": 2
+   },
+   {
+    "id": "t1",
+    "kind": "thinking",
+    "text": "",
+    "tokens": 812,
+    "streaming": false,
+    "seq": 3
+   },
+   {
+    "id": "a1",
+    "kind": "assistant-text",
+    "text": "I'll start by reading **src/webapp.js** for the routes, then `claude-ui.js` for the chat stream.",
+    "streaming": false,
+    "seq": 4
+   },
+   {
+    "id": "x1",
+    "kind": "tool",
+    "toolUseId": "toolu_01Ab",
+    "name": "Read",
+    "input": {
+     "file_path": "/home/crundi/projects/crundi/src/webapp.js",
+     "limit": 200
+    },
+    "status": "done",
+    "result": "  2578\t    if (path === '/api/auth' && req.method === 'POST') {",
+    "isError": false,
+    "seq": 5
+   },
+   {
+    "id": "x2",
+    "kind": "tool",
+    "toolUseId": "toolu_01Cd",
+    "name": "mcp__crundi__show_image",
+    "input": {
+     "path": "/tmp/chats-chat.png",
+     "caption": "The chat screen"
+    },
+    "status": "done",
+    "result": "{\"ok\": true, \"shown\": 1, \"items\": [{\"kind\": \"image\", \"name\": \"3fa9c0d1e2b4a5f6.png\", \"filename\": \"chats-chat.png\", \"size\": 184233, \"w\": 1080, \"h\": 2400}], \"note\": \"Shown to the person in this chat, under this call.\"}",
+    "isError": false,
+    "seq": 6
+   },
+   {
+    "id": "x3",
+    "kind": "tool",
+    "toolUseId": "toolu_01Ef",
+    "name": "Task",
+    "input": {
+     "description": "Map planning API shapes",
+     "subagent_type": "Explore",
+     "prompt": "Document the kanban routes"
+    },
+    "status": "running",
+    "result": null,
+    "isError": false,
+    "seq": 7
+   },
+   {
+    "id": "q0",
+    "kind": "question",
+    "requestId": "req-old",
+    "toolUseId": "toolu_00",
+    "toolName": "AskUserQuestion",
+    "displayName": "AskUserQuestion",
+    "description": "",
+    "title": "",
+    "input": {
+     "questions": [
+      {
+       "question": "Which HTTP library?",
+       "header": "Library",
+       "options": [
+        {
+         "label": "OkHttp",
+         "description": "WebSocket and SSE built in"
+        },
+        {
+         "label": "Ktor",
+         "description": "Multiplatform"
+        }
+       ],
+       "multiSelect": false
+      }
+     ]
+    },
+    "suggestions": [],
+    "requiresUserInteraction": true,
+    "suppressAlwaysAllow": false,
+    "status": "allowed",
+    "answeredInput": {
+     "answers": {
+      "Which HTTP library?": "OkHttp"
+     }
+    },
+    "seq": 8
+   },
+   {
+    "id": "r1",
+    "kind": "result",
+    "subtype": "success",
+    "costUsd": 0.4182,
+    "durationMs": 184211,
+    "numTurns": 23,
+    "isError": false,
+    "text": "",
+    "seq": 9
+   },
+   {
+    "id": "x4",
+    "kind": "tool",
+    "toolUseId": "toolu_01Gh",
+    "name": "mcp__crundi__show_file",
+    "input": {
+     "path": "/tmp/api.md"
+    },
+    "status": "done",
+    "result": "{\"ok\": true, \"shown\": 1, \"items\": [{\"kind\": \"file\", \"id\": \"9e8d7c6b5a4f3e2d\", \"filename\": \"api.md\", \"size\": 18422, \"ext\": \"md\"}], \"note\": \"Offered\"}",
+    "isError": false,
+    "seq": 10
+   },
+   {
+    "id": "g1",
+    "kind": "gone",
+    "text": "",
+    "seq": 11
+   }
+  ],
+  "agents": [
+   {
+    "toolUseId": "toolu_01Ef",
+    "kind": "agent",
+    "description": "Map planning API shapes",
+    "subagentType": "Explore",
+    "prompt": "Document the kanban routes",
+    "status": "running",
+    "step": "Reading src/kanban-store.js",
+    "lastTool": "Read",
+    "count": 0,
+    "messages": []
+   }
+  ],
+  "goal": null,
+  "plan": null,
+  "suggestion": null,
+  "pendingInjections": []
+ }
+}

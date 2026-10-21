@@ -1,0 +1,30 @@
+{
+ "projects": [
+  {
+   "alias": "crundi",
+   "path": "/home/crundi/projects/crundi",
+   "name": "crundi",
+   "systemPrompt": "",
+   "icon": "/api/project-icon?project=crundi&v=lx3k2a-1f4"
+  },
+  {
+   "alias": "dhivo-socials",
+   "path": "/home/crundi/projects/dhivo-socials",
+   "name": "Dhivo socials",
+   "icon": ""
+  },
+  {
+   "alias": "faruhaan.com",
+   "path": "/home/crundi/projects/faruhaan.com",
+   "name": "faruhaan.com",
+   "systemPrompt": "Keep the site static. No trackers.",
+   "icon": ""
+  },
+  {
+   "alias": "ledger",
+   "path": "/home/crundi/projects/ledger",
+   "name": "ledger",
+   "icon": ""
+  }
+ ]
+}

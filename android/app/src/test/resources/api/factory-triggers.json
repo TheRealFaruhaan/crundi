@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "triggers": [
+  {
+   "id": "trg_0a1b2c3d4e5f",
+   "name": "Nightly polish",
+   "enabled": true,
+   "project": "crundi",
+   "factoryId": "fac_android",
+   "kind": "schedule",
+   "schedule": {
+    "at": "02:00",
+    "days": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ]
+   },
+   "cr": {
+    "title": "Polish pass",
+    "sections": {
+     "goal": "Fix the open nits"
+    }
+   },
+   "mergeMode": "ask",
+   "ifBusy": "skip",
+   "createdAt": 1792000000000,
+   "lastFired": 1792288800000,
+   "history": [
+    {
+     "at": 1792288800000,
+     "outcome": "started",
+     "source": "schedule",
+     "runId": "run_prev"
+    }
+   ],
+   "queue": []
+  }
+ ]
+}

@@ -1,0 +1,21 @@
+{
+ "ok": true,
+ "channels": [
+  {
+   "id": "telegram",
+   "label": "Telegram",
+   "describe": "Messages from your bot",
+   "available": false,
+   "unavailableReason": "Set a bot token first",
+   "enabled": false
+  },
+  {
+   "id": "mobile",
+   "label": "Phone app",
+   "describe": "Notifications on paired phones",
+   "available": true,
+   "unavailableReason": "",
+   "enabled": true
+  }
+ ]
+}

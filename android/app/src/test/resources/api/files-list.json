@@ -1,0 +1,52 @@
+{
+ "ok": true,
+ "entries": [
+  {
+   "name": "android",
+   "type": "dir",
+   "size": 0,
+   "path": "/home/crundi/projects/crundi/android"
+  },
+  {
+   "name": "app",
+   "type": "dir",
+   "size": 0,
+   "path": "/home/crundi/projects/crundi/app"
+  },
+  {
+   "name": "src",
+   "type": "dir",
+   "size": 0,
+   "path": "/home/crundi/projects/crundi/src"
+  },
+  {
+   "name": ".gitignore",
+   "type": "file",
+   "size": 412,
+   "path": "/home/crundi/projects/crundi/.gitignore"
+  },
+  {
+   "name": "README.md",
+   "type": "file",
+   "size": 8231,
+   "path": "/home/crundi/projects/crundi/README.md"
+  },
+  {
+   "name": "package.json",
+   "type": "file",
+   "size": 2210,
+   "path": "/home/crundi/projects/crundi/package.json"
+  }
+ ],
+ "crumbs": [
+  {
+   "name": "crundi",
+   "path": "/home/crundi/projects/crundi"
+  }
+ ],
+ "path": "/home/crundi/projects/crundi",
+ "root": "/home/crundi/projects/crundi",
+ "parent": "/home/crundi/projects",
+ "inside": true,
+ "localShell": null
+}

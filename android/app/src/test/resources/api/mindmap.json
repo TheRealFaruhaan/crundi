@@ -1,0 +1,58 @@
+{
+ "ok": true,
+ "mindmap": {
+  "nodes": [
+   {
+    "id": "mm1",
+    "text": "Login flow",
+    "notes": [
+     "Cookies are SameSite=Lax"
+    ],
+    "parentId": null,
+    "project": "crundi",
+    "linkedTask": {
+     "project": "crundi",
+     "taskId": "t1a2b3c4d5e6f708"
+    },
+    "createdAt": "2026-10-19T08:00:00.000Z",
+    "updatedAt": "2026-10-19T08:00:00.000Z",
+    "effectiveProject": "crundi",
+    "linkedTaskInfo": {
+     "kind": "task",
+     "project": "crundi",
+     "taskId": "t1a2b3c4d5e6f708",
+     "title": "Fix login redirect",
+     "description": "",
+     "status": "in_progress",
+     "deleted": false,
+     "todosDone": 1,
+     "todosTotal": 2
+    }
+   },
+   {
+    "id": "mm2",
+    "text": "Session refresh",
+    "notes": [],
+    "parentId": "mm1",
+    "project": null,
+    "linkedTask": null,
+    "createdAt": "2026-10-19T08:01:00.000Z",
+    "updatedAt": "2026-10-19T08:01:00.000Z",
+    "effectiveProject": "crundi",
+    "linkedTaskInfo": null
+   },
+   {
+    "id": "mm3",
+    "text": "Ideas",
+    "notes": [],
+    "parentId": null,
+    "project": null,
+    "linkedTask": null,
+    "createdAt": "2026-10-01T08:00:00.000Z",
+    "updatedAt": "2026-10-01T08:00:00.000Z",
+    "effectiveProject": null,
+    "linkedTaskInfo": null
+   }
+  ]
+ }
+}

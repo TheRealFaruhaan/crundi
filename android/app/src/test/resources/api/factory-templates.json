@@ -1,0 +1,16 @@
+{
+ "ok": true,
+ "templates": [
+  {
+   "id": "tpl_feature",
+   "name": "Feature team",
+   "description": "Plan, build, review.",
+   "goodFor": "A feature in an existing project",
+   "team": [
+    "Developer",
+    "Reviewer"
+   ],
+   "steps": 6
+  }
+ ]
+}
