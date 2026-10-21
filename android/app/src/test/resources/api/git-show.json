@@ -1,0 +1,32 @@
+{
+ "ok": true,
+ "commit": {
+  "hash": "7c74f587e9ac3156bbec88e3bbdc51198da73588",
+  "short": "7c74f58",
+  "parents": [
+   "4aa77705271a04ee730e3ed222c1d7ab25255cc1"
+  ],
+  "author": "TheRealFaruhaan",
+  "email": "faruhan@outlook.com",
+  "date": "2026-10-21T13:58:38+05:00",
+  "refs": [],
+  "subject": "Android 1.0.2-dev.3 (version code 15) for Google Play",
+  "body": "Same app code as 1.0.2-dev.2; a new version code so Play accepts it. Release\nnotes in android/store/listing.md.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+  "files": [
+   {
+    "file": "android/app/build.gradle.kts",
+    "add": 2,
+    "del": 2,
+    "binary": false
+   },
+   {
+    "file": "android/store/listing.md",
+    "add": 18,
+    "del": 0,
+    "binary": false
+   }
+  ],
+  "diff": "diff --git a/android/app/build.gradle.kts b/android/app/build.gradle.kts\nindex 40f5564..0f9f0e4 100644\n--- a/android/app/build.gradle.kts\n+++ b/android/app/build.gradle.kts\n@@ -32,8 +32,8 @@ android {\n         applicationId = \"mv.obitech.crundi\"\n         minSdk = 26\n         targetSdk = 36\n-        versionCode = 14\n-        versionName = \"1.0.2-dev.2\"\n+        versionCode = 15\n+        versionName = \"1.0.2-dev.3\"\n \n         // The oldest server this app can work with. The server holds the\n         // mirror of this (MIN_CLIENT in src/client-version.js) and each side\ndiff --git a/android/store/listing.md b/android/store/listing.md\nindex da15134..e342b63 100644\n--- a/android/store/listing.md\n+++ b/android/store/listing.md\n@@ -61,6 +61,24 @@ app has been run on one.\n   `docs/privacy.html`; it is live once that file is on `main`).\n - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.\n \n+## Release notes, 1.0.2-dev.3 (en-US)\n+\n+Version code 15. The app's code is the same as 1.0.2-dev.2 (code 14); the\n+notes describe what is new since 1.0.1, the last release with notes.\n+\n+```\n+<en-US>\n+Steadier connection and quieter notifications.\n+\n+- The app stays connected while a bubble or live card is up, so a tap shows the chat at once instead of \"Reconnecting\".\n+- A renamed chat's live card follows the new name.\n+- No more being signed out when two windows renewed their login at the same moment.\n+- No bubble or buzz for the chat you already have open.\n+\n+Needs a Crun",
+  "truncated": false
+ }
+}

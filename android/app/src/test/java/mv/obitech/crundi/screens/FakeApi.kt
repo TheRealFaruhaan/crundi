@@ -41,7 +41,7 @@ object FakeApi {
         "GET /api/state" to "state", "GET /api/projects" to "projects", "GET /api/usage" to "usage", "GET /api/approvals" to "approvals",
         "GET /api/secrets" to "secrets", "GET /api/ui-sessions/resumable" to "resumable", "GET /api/chat-schedule" to "chat-schedule",
         "GET /api/files/list" to "files-list", "GET /api/files/search" to "files-search", "GET /api/files/read" to "files-read",
-        "GET /api/git/info" to "git-info", "GET /api/git/diff" to "git-diff", "GET /api/media/list" to "media-list",
+        "GET /api/git/info" to "git-info", "GET /api/git/diff" to "git-diff", "GET /api/git/log" to "git-log", "GET /api/git/show" to "git-show", "GET /api/media/list" to "media-list",
         "GET /api/kanban" to "kanban", "GET /api/notes" to "notes", "GET /api/notes/page" to "notes-page", "GET /api/mindmap" to "mindmap",
         "GET /api/schedules" to "schedules", "GET /api/factories" to "factories", "GET /api/factory-templates" to "factory-templates",
         "GET /api/factories/get" to "factory-get", "GET /api/factory-runs" to "factory-runs", "GET /api/factory-runs/get" to "factory-run-get",
