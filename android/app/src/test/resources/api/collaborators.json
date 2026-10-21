@@ -1,0 +1,59 @@
+{
+ "ok": true,
+ "collaborators": [
+  {
+   "id": "c0ll4b0r4t0r0001",
+   "name": "Aisha",
+   "project": "faruhaan.com",
+   "telegram": "aisha_m",
+   "worktreePath": "/home/crundi/collab-worktrees/faruhaan.com/aisha",
+   "branch": "collab/aisha",
+   "baseCommit": "9d8c7b6",
+   "createdAt": 1792200000000,
+   "expiresAt": 1792459200000,
+   "ttlHours": 72,
+   "tokenLimit": 2000000,
+   "tokensUsed": 412000,
+   "usageAt": 1792320000000,
+   "revoked": false,
+   "seenAt": 1792321000000,
+   "briefed": true,
+   "hasPasscode": true,
+   "expired": false
+  },
+  {
+   "id": "c0ll4b0r4t0r0002",
+   "name": "Ibrahim",
+   "project": "ledger",
+   "telegram": "",
+   "worktreePath": "/home/crundi/collab-worktrees/ledger/ibrahim",
+   "branch": "collab/ibrahim",
+   "baseCommit": "1a2b3c4",
+   "createdAt": 1791000000000,
+   "expiresAt": 1791600000000,
+   "ttlHours": 24,
+   "tokenLimit": 0,
+   "tokensUsed": 90000,
+   "usageAt": 0,
+   "revoked": false,
+   "seenAt": 0,
+   "briefed": false,
+   "hasPasscode": true,
+   "expired": true
+  }
+ ],
+ "staleWorktrees": [],
+ "sandbox": {
+  "ok": true,
+  "supported": true,
+  "works": true,
+  "bwrap": true,
+  "socat": true,
+  "setpriv": true,
+  "apparmorRestricted": true,
+  "profileInstalled": true,
+  "problems": [],
+  "testError": "",
+  "canAutoFix": false
+ }
+}

@@ -97,4 +97,17 @@ class LiveTest {
         assertEquals("ledger", withTimeout(5_000) { src.state.first { it.currentProject == "ledger" } }.currentProject)
         job.cancel()
     }
+
+    @Test fun panelsCountAndUpdateBadge() = runBlocking {
+        val t = FakeApi.transport()
+        val src = LiveShellSource(CrundiClient(t), "dev.faruhaan.com", "faruhaan", null, "project.x")
+        val job = launch { src.state.collect {} }
+        val d = withTimeout(5_000) { src.state.first { it.panels > 0 && it.tabBadges["settings"] == -1 } }
+        assertEquals(2, d.panels)
+        // A panel moved out of the top bar: the count follows on the `widget` list event.
+        t.on("GET /api/widgets", FakeApi.text("widgets.json").replace("\"slot\": \"chip\"", "\"slot\": \"tab\""))
+        t.pushEvent("widget", """{"project":"crundi","id":"test-count","kind":"list"}""")
+        assertEquals(0, withTimeout(5_000) { src.state.first { it.panels == 0 } }.panels)
+        job.cancel()
+    }
 }

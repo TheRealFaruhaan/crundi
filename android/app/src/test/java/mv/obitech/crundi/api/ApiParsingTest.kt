@@ -174,4 +174,36 @@ class ApiParsingTest {
         assertFalse(client.system.channels()[0].available)
         assertEquals(2, client.usage.history().size)
     }
+
+    @Test fun panelsBrowsersCollaborators() = runTest {
+        val ws = client.widgets.list("crundi")
+        assertEquals(5, ws.size)
+        assertEquals(2, ws.count { it.isChip })            // the Panels button's count
+        assertEquals(listOf("build-board"), ws.filter { it.isPane() }.map { it.id })
+        assertTrue(ws.first { it.id == "usage-gauge" }.global)
+        assertEquals("passed", ws.first { it.id == "test-count" }.chip?.path)
+        val doc = client.widgets.doc("crundi", "build-board")
+        assertTrue(doc.html.startsWith("<!doctype html>"))
+        assertTrue(doc.grant.needed && !doc.grant.granted)
+        assertEquals("command", doc.grant.items[0].what)
+        assertEquals(listOf("retry"), doc.actions)
+        val data = client.widgets.data("crundi", "build-board")
+        assertEquals("command", data.data["build"]?.kind)
+        assertEquals("No such file: build.log", data.data["log"]?.error)
+        assertTrue(data.store!!.containsKey("collapsed"))
+        assertEquals(2, client.widgets.versions("crundi", "build-board")[0].version)
+        val r = client.widgets.call("crundi", "build-board", "store.set", kotlinx.serialization.json.JsonObject(mapOf("key" to kotlinx.serialization.json.JsonPrimitive("filter"))))
+        assertEquals("filter", r.str("key"))
+        val b = client.browsers.list("crundi")
+        assertEquals("server", b.browsers.single().on)
+        assertTrue(b.places!!.server)
+        assertEquals(0x89.toByte(), client.browsers.screenshot("crundi:default")[0]) // PNG
+        val c = client.collaborators.list()
+        assertTrue(c.sandbox.ok)
+        assertEquals(2000000L, c.collaborators[0].tokenLimit)
+        assertTrue(c.collaborators[1].expired)
+        val t = client.services.tunnels()
+        assertEquals("active", t.tunnels["crundi:docs"]?.status)
+        assertEquals("127.0.0.1:8888", t.target)
+    }
 }

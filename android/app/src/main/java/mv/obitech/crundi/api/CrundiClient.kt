@@ -61,6 +61,12 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
     val approvals = ApprovalsApi(rpc)
     val usage = UsageApi(rpc)
     val system = SystemApi(rpc)
+    /** Panels (widgets): list, frame documents, data, calls from frames. See api.md "Panels". */
+    val widgets = WidgetsApi(rpc)
+    /** The server's own browsers (Browsers tab list). */
+    val browsers = BrowsersApi(rpc)
+    /** Outside collaborators (Info tab). */
+    val collaborators = CollaboratorsApi(rpc)
 
     /**
      * A chat, live: its whole conversation, then every change, as

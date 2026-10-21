@@ -50,7 +50,9 @@ object FakeApi {
         "GET /api/docker/stacks" to "docker-stacks", "GET /api/docker/images" to "docker-images", "GET /api/docker/volumes" to "docker-volumes",
         "GET /api/docker/networks" to "docker-networks", "GET /api/docker/system" to "docker-system", "GET /api/docker/system/df" to "docker-df",
         "GET /api/settings" to "settings", "GET /api/stats" to "stats", "GET /api/update/status" to "update", "GET /api/auth/sessions" to "sessions",
-        "GET /api/server-logs" to "server-logs", "GET /api/notify/channels" to "notify-channels", "GET /api/usage/history" to "usage-history",
+        "GET /api/server-logs" to "server-logs", "GET /api/widgets" to "widgets", "GET /api/widgets/doc" to "widget-doc",
+        "GET /api/widgets/data" to "widget-data", "GET /api/widgets/versions" to "widget-versions", "GET /api/browsers" to "browsers",
+        "GET /api/browsers/crundi%3Adefault/screenshot" to "browser-screenshot", "GET /api/collaborators" to "collaborators", "GET /api/tunnel" to "tunnel", "GET /api/notify/channels" to "notify-channels", "GET /api/usage/history" to "usage-history",
     )
 
     /** A server in memory answering every route above (and {"ok":true} to any POST). */
@@ -60,7 +62,9 @@ object FakeApi {
         t.initialEvents.add(mv.obitech.crundi.api.SseFrame("state", text("state.json")))
         for ((route, file) in routes) t.on(route, text("$file.json"))
         t.on("GET /api/services/crundi%3Adocs/logs", text("service-logs.json"))
-        for (post in listOf("/api/kanban", "/api/notes", "/api/mindmap", "/api/schedules", "/api/git/stage", "/api/git/unstage", "/api/git/commit"))
+        t.on("POST /api/widgets/call") { ApiResponse(200, """{"ok":true,"key":"filter","value":"failed"}""") }
+        t.on("POST /api/widgets/user") { ApiResponse(200, json("widgets")["widgets"]!!.let { w -> """{"ok":true,"widget":${(w as kotlinx.serialization.json.JsonArray)[0]}}""" }) }
+        for (post in listOf("/api/kanban", "/api/notes", "/api/mindmap", "/api/schedules", "/api/git/stage", "/api/git/unstage", "/api/git/commit", "/api/widgets/grant", "/api/widgets/watch", "/api/widgets/fault"))
             t.on("POST $post") { ApiResponse(200, """{"ok":true}""") }
         return t
     }

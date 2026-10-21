@@ -17,6 +17,15 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.delay
 import mv.obitech.crundi.api.model.AgentState
 import mv.obitech.crundi.api.model.Approvals
 import mv.obitech.crundi.api.model.ServerState
@@ -32,9 +41,11 @@ import mv.obitech.crundi.ui.shell.UsageGlance
 /**
  * The shell's data from the live stream: the project list (state.projects,
  * with each project's dot), the connection badge, the approvals count and
- * the usage backdrop. The current project is remembered per server in
+ * the usage backdrop, the Panels count (top-bar chips) and the tab badges
+ * (factories waiting, secret requests, settings = -1 for an update). The current project is remembered per server in
  * [prefs] under [key].
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LiveShellSource(
     private val client: CrundiClient,
     private val serverHost: String,
@@ -45,10 +56,37 @@ class LiveShellSource(
 ) : ShellSource {
     private val chosen = MutableStateFlow(prefs?.getString(key, null))
 
-    override val state: StateFlow<ShellData> = combine(
+    private val base = combine(
         combine(client.events.state, client.events.approvals, client.events.usage, client.status, chosen) { st, ap, us, status, pick -> build(st, ap, us, status, pick) },
         client.events.secretRequests,
-    ) { d, secrets -> if (secrets.isEmpty()) d else d.copy(tabBadges = d.tabBadges + ("secrets" to secrets.size)) }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), ShellData(serverHost = serverHost, username = username, connection = Connection.Reconnecting))
+    ) { d, secrets -> if (secrets.isEmpty()) d else d.copy(tabBadges = d.tabBadges + ("secrets" to secrets.size)) }
+        .shareIn(scope, SharingStarted.WhileSubscribed(5_000), replay = 1)
+
+    /**
+     * The top bar's Panels count: open panels placed as top-bar chips in the
+     * current project (and global ones), fetched again when the panel list
+     * or a panel's document changes (`widget` events of kind list or doc).
+     */
+    private val panels: Flow<Int> = base.map { it.currentProject ?: "" }.distinctUntilChanged().flatMapLatest { p ->
+        channelFlow {
+            send(chipCount(p))
+            client.events.changes("widget").collect { e -> if (e.data.str("kind") in setOf("list", "doc")) send(chipCount(p)) }
+        }
+    }.onStart { emit(0) }
+
+    /** A Crundi update is available: the Settings tab's dot. Asked on start and every 30 minutes (owner only; anyone else gets false). */
+    private val updateAvailable: Flow<Boolean> = flow {
+        while (true) {
+            emit(runCatching { client.system.update().update.available }.getOrDefault(false))
+            delay(UPDATE_EVERY_MS)
+        }
+    }.onStart { emit(false) }
+
+    override val state: StateFlow<ShellData> = combine(base, panels, updateAvailable) { d, n, upd ->
+        d.copy(panels = n, tabBadges = if (upd) d.tabBadges + ("settings" to -1) else d.tabBadges)
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), ShellData(serverHost = serverHost, username = username, connection = Connection.Reconnecting))
+
+    private suspend fun chipCount(project: String): Int = runCatching { client.widgets.list(project).count { it.isChip } }.getOrDefault(0)
 
     override fun selectProject(alias: String) {
         chosen.value = alias
@@ -100,6 +138,7 @@ class LiveShellSource(
             LiveStatus.Idle, LiveStatus.SignedOut -> Connection.Disconnected
         }
 
+        private const val UPDATE_EVERY_MS = 30 * 60_000L
         private const val WEEK_MS = 7 * 24 * 3600_000L
         private const val FIVE_H_MS = 5 * 3600_000L
 

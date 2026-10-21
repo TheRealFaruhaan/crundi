@@ -1,0 +1,21 @@
+{
+ "browsers": [
+  {
+   "key": "crundi:default",
+   "alias": "crundi",
+   "name": "default",
+   "url": "http://localhost:4811/",
+   "width": 1280,
+   "height": 720,
+   "status": "ready",
+   "createdAt": 1792320000000,
+   "lastActivityAt": 1792322000000,
+   "consoleLogCount": 3,
+   "on": "server"
+  }
+ ],
+ "places": {
+  "server": true,
+  "desktop": false
+ }
+}

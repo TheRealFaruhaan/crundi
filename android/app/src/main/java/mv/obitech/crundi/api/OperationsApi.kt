@@ -60,8 +60,8 @@ class ServicesApi internal constructor(private val rpc: Rpc) {
     suspend fun logs(key: String): List<String> = rpc.read(rpc.get(at(key, "logs")), "logs", emptyList())
     /** Exposure on the server's tunnel: [port] to expose, [enabled] on/off (port 0 turns it off). */
     suspend fun setTunnel(key: String, enabled: Boolean, port: Int? = null): TunnelResult = rpc.read(rpc.post(at(key, "tunnel"), mapOf("enabled" to enabled, "port" to port)), null)
-    /** The tunnel states by service key (GET /api/tunnel). */
-    suspend fun tunnels(): JsonObject = rpc.get("/api/tunnel")
+    /** The server's own tunnel and each service's (GET /api/tunnel): the Info tab's Tunnel section. */
+    suspend fun tunnels(): mv.obitech.crundi.api.model.Tunnels = rpc.read(rpc.get("/api/tunnel"), null)
 }
 
 /** Forwards: a port on this machine reached at a subdomain or /tunnel/<name>/. */
