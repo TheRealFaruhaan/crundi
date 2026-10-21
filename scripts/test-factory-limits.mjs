@@ -117,6 +117,30 @@ function setup(name, limits, usage = { value: null }) {
   await r.stopRun(st.run.id); r.dispose();
 }
 
+// ─── Paused, restarted, recovered while paused, then resumed ───
+{
+  const f = standard(); f.settings = { presets: [] };
+  const team = fakeTeam({
+    manager: async (msg) => msg.includes('answers.dPlan') ? { payload: { summary: 'go', answers: { dPlan: 'no', dWho: ['ui', 'backend'] } } } : null,
+    fe: async () => null, be: async () => null,
+  });
+  const opts = { dataDir: process.env.DATA_DIR, agents: team.agents, getProject: () => ({ path: repo('l5') }), getFactory: () => ({ factory: f }), settleMs: 10_000, permissionBatchMs: 30 };
+  let r = createFactoryRunner(opts); team.setRunner(r);
+  const st = await r.startRun({ project: 'l5', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length && team.of('be')[0]?.msgs.length);
+  await r.pause(st.run.id);
+  r.dispose();
+  for (const sid of [...team.sessions.keys()]) team.sessions.get(sid).alive = false;   // the restart ends every chat
+  r = createFactoryRunner(opts); team.setRunner(r); r.load();
+  const rec = await r.recover(st.run.id);
+  const feBefore = team.of('fe').reduce((n, x) => n + x.msgs.length, 0);
+  ok(rec.ok && r.getRun(st.run.id).paused, 'recovered while paused: the steps wait for Resume');
+  const res = await r.resume(st.run.id);
+  await until(() => team.of('fe').reduce((n, x) => n + x.msgs.length, 0) > feBefore && team.of('be').some(x => x.alive && x.msgs.some(m => /interrupted/.test(m))));
+  ok(res.ok && team.of('fe').some(x => x.alive && x.msgs.some(m => /You were interrupted/.test(m))) && team.of('be').some(x => x.alive && x.msgs.some(m => /You were interrupted/.test(m))), 'resume: steps whose chats ended with the restart are started again, told to carry on');
+  await r.stopRun(st.run.id); r.dispose();
+}
+
 try { rmSync(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* a temp folder */ }
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);

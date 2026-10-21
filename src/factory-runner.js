@@ -1267,9 +1267,30 @@ export function createFactoryRunner({
         const ef = activationFor(entry, emp.busy);
         if (ef) await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, eid, ef, why, '') });
       }
+      // Steps nobody is working on: a recovery while paused leaves them for
+      // here (their chats ended with the restart), so start them now.
+      await startOrphanedSteps(entry, why);
       await drain(entry);
       return { ok: true, run: summary(entry) };
     });
+  }
+
+  /**
+   * Every step waiting on someone who is not working on it (no busy step, not
+   * queued, not waiting for a seat) is started, with a continue prompt.
+   */
+  async function startOrphanedSteps(entry, why) {
+    if (isHeld(entry.rec) || !UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return;
+    for (const t of st(entry).tokens.filter(x => x.status === 'work' || x.status === 'answer')) {
+      const who = Engine.personOf(st(entry), t);
+      if (!who) continue;
+      const emp = empOf(entry, who);
+      if (emp.busy === t.id || (emp.queue || []).some(q => q.tokenId === t.id) || entry.live.seats.some(x => x.ef.tokenId === t.id)) continue;
+      const ef = activationFor(entry, t.id);
+      if (!ef) continue;
+      if (emp.busy) { emp.queue.push(ef); continue; }
+      await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, who, ef, why, '') });
+    }
   }
 
   /**
