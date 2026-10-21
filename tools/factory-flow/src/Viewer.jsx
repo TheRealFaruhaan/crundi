@@ -63,6 +63,27 @@ function describe(ev, names, nodes) {
   }
 }
 
+/** A running run's usage limits, changed in place. */
+function LimitsEditor({ limits, busy, onSave }) {
+  const [l, setL] = useState(limits);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (!open) setL(limits); }, [limits, open]);
+  const num = (k, lo, hi) => <input className="ff-input" type="number" min={lo} max={hi} value={l[k]} onChange={e => setL({ ...l, [k]: Number(e.target.value) })} />;
+  const sum = `Pause at ${limits.pauseAt5h}% / ${limits.pauseAtWeek}% · ${limits.maxParallel ? 'at most ' + limits.maxParallel + ' at once' : 'no limit on people'}${limits.oneAtATimeAbove ? ' · one at a time above ' + limits.oneAtATimeAbove + '%' : ''}`;
+  return (
+    <details className="ff-more" open={open} onToggle={e => setOpen(e.currentTarget.open)}>
+      <summary>Usage limits: {sum}</summary>
+      <div className="ff-grid2">
+        <label className="ff-field"><span className="ff-field-label">5-hour, pause at %</span>{num('pauseAt5h', 50, 100)}</label>
+        <label className="ff-field"><span className="ff-field-label">Weekly, pause at %</span>{num('pauseAtWeek', 50, 100)}</label>
+        <label className="ff-field"><span className="ff-field-label">People at once (0: any)</span>{num('maxParallel', 0, 20)}</label>
+        <label className="ff-field"><span className="ff-field-label">One at a time above %</span>{num('oneAtATimeAbove', 0, 100)}</label>
+      </div>
+      <div className="ff-btnrow"><button className="ff-btn primary" disabled={!!busy} onClick={() => { onSave(l); setOpen(false); }}>Apply to this run</button></div>
+    </details>
+  );
+}
+
 /** A Wait in progress: what it waits for, how long is left, end it early. */
 function WaitCard({ t, busy, act }) {
   const [, tick] = useState(0);
@@ -238,13 +259,17 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
     const e = run.employees?.[t.employeeId] || {};
     return { id: t.id, nodeId: t.nodeId, name: t.employee || names.get(t.employeeId) || 'Someone', what: t.job ? 'Job: ' + first(t.job, 50) : (e.activity?.text || (t.status === 'answer' ? 'Deciding' : 'Starting')), state: e.activity?.state || '', chatId: e.chatId || '', blocked: !!t.blocked };
   }) : [];
-  const strip = working.length > 0 && (
+  const seats = live && run ? (run.waitingForSeat || []) : [];
+  const strip = (working.length > 0 || seats.length > 0) && (
     <div className="ff-working">
       {working.map(w => (
         <button key={w.id} className={'ff-worker' + (w.state === 'working' ? ' busy' : '') + (w.blocked ? ' blocked' : '')} disabled={!w.chatId}
           title={w.chatId ? 'Open ' + w.name + "'s transcript" : ''} onClick={() => openPerson(w.chatId, w.name)}>
           <span className="ff-pulse" /><b>{w.name}</b><span>{w.blocked ? 'Needs permission' : w.what}</span>
         </button>
+      ))}
+      {seats.map(x => (
+        <span key={x.tokenId} className="ff-worker queued" title="Waiting for a free seat: the run's limit on people at once"><span className="ff-pulse" /><b>{x.employee}</b><span>Waiting its turn</span></span>
       ))}
     </div>
   );
@@ -255,7 +280,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
     : run.capHit ? { k: 'you', text: 'It reached its limit (' + (run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs') + ').', act: ['Let it carry on', () => act({ action: 'resume' }, 'resume')] }
     : (run.asks || []).length ? { k: 'you', text: 'A question for you: ' + run.asks[0].prompt, act: ['Answer', () => { setSel(null); setTab('run'); setDrawer(true); }] }
     : run.waitingOn === 'manager' ? { k: 'you', text: 'The Manager is talking to you in its chat.', act: run.managerChatId ? ['Open its chat', () => openPerson(run.managerChatId, 'Manager')] : null }
-    : run.paused ? { k: 'info', text: run.paused.by === 'usage' ? 'Paused: the usage limit is full; it carries on when it resets.' : 'Paused.', act: ['Resume', () => act({ action: 'resume' }, 'resume')] }
+    : run.paused ? { k: 'info', text: run.paused.by === 'usage' ? 'Paused: usage reached the limit set for this run; it carries on by itself after the window resets.' : run.paused.by === 'manager' ? 'Paused by the Manager' + (run.paused.reason ? ': ' + run.paused.reason : '.') : 'Paused.', act: ['Resume', () => act({ action: 'resume' }, 'resume')] }
     : null) : null;
   const needsBar = needs && (
     <div className={'ff-needs ' + needs.k}>
@@ -313,6 +338,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
         {run && live && run.liveSessions != null && <><span>Sessions</span><span>{run.liveSessions} live</span></>}
         {run?.usage?.turns > 0 && <><span>Spent</span><span>{run.usage.costUsd ? '$' + run.usage.costUsd.toFixed(2) + ' · ' : ''}{run.usage.turns} turns in {run.usage.chats} chats</span></>}
       </div>
+      {live && run?.limits && <LimitsEditor limits={run.limits} busy={busy} onSave={(l) => act({ action: 'limits', limits: l }, 'limits')} />}
       {live && run?.waitingOn === 'manager' && <p className="ff-hint">The Manager is talking to you in its chat.</p>}
       {live && run?.managerChatId && openChat && <button className="ff-btn" onClick={() => openChat(run.managerChatId, 'Manager')}><Icon name="crown" size={14} />Open the Manager's chat</button>}
       {asks.map(a => (

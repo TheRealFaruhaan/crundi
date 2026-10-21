@@ -165,6 +165,10 @@ export function normalizeFactory(input) {
       managerRules: s.managerRules === undefined ? true : !!s.managerRules,
       // The change request form the run starts from (factory-cr.js).
       crTemplate: normalizeTemplate(s.crTemplate),
+      // How hard a run may use the person's Claude usage. All the person's
+      // choice: 100 / 0 keep today's behaviour (pause only when a window is
+      // full; no limit on people at once).
+      limits: normalizeLimits(s.limits),
       gatekeeper: {
         enabled: !!(s.gatekeeper && s.gatekeeper.enabled),
         model: str(s.gatekeeper && s.gatekeeper.model, 60) || 'haiku',
@@ -290,6 +294,24 @@ function normalizeChoices(list) {
 // ─── Skeleton ───
 
 /** The smallest factory that validates: Start -> Manager -> (finish) End. */
+/**
+ * A run's usage limits, cleaned.
+ *   pauseAt5h, pauseAtWeek  pause when the 5-hour / weekly window reaches this % (50-100)
+ *   maxParallel             at most this many people working at once (0: no limit)
+ *   oneAtATimeAbove         above this % of the 5-hour window, one at a time (0: off)
+ */
+export function normalizeLimits(l) {
+  const x = l && typeof l === 'object' ? l : {};
+  const pct = (v, lo, dflt) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 ? Math.min(100, Math.max(lo, n)) : dflt; };
+  const n = Math.round(Number(x.maxParallel));
+  return {
+    pauseAt5h: pct(x.pauseAt5h, 50, 100),
+    pauseAtWeek: pct(x.pauseAtWeek, 50, 100),
+    maxParallel: Number.isFinite(n) && n > 0 ? Math.min(20, n) : 0,
+    oneAtATimeAbove: pct(x.oneAtATimeAbove, 10, 0),
+  };
+}
+
 export function skeletonFactory(name = 'New factory') {
   return normalizeFactory({
     name,

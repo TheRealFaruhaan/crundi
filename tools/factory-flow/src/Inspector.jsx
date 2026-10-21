@@ -232,6 +232,18 @@ export function FactorySettings({ f, mutate, skills }) {
         <Field label="Max minutes"><Num value={s.caps.maxMinutes} min={1} max={10080} onChange={v => set(d => { d.settings.caps.maxMinutes = v || 1; }, 'caps2')} /></Field>
       </div>
       <p className="ff-hint">When a limit is reached the run waits for you; you can let it carry on.</p>
+      <div className="ff-subtitle">Usage</div>
+      <p className="ff-hint">Your Claude usage is shared with your own chats. These keep a run inside what you choose; each can also be changed on a running run.</p>
+      <div className="ff-grid2">
+        <Field label="5-hour, pause at %"><Num value={s.limits.pauseAt5h} min={50} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, pauseAt5h: v || 100 }; }, 'lim1')} /></Field>
+        <Field label="Weekly, pause at %"><Num value={s.limits.pauseAtWeek} min={50} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, pauseAtWeek: v || 100 }; }, 'lim2')} /></Field>
+      </div>
+      <p className="ff-hint">{s.limits.pauseAt5h < 100 || s.limits.pauseAtWeek < 100 ? 'It pauses there and carries on by itself after the window resets, leaving the rest for you.' : 'At 100% it pauses only when a window is full, and carries on by itself after the reset.'}</p>
+      <div className="ff-grid2">
+        <Field label="People at once" hint="0: no limit"><Num value={s.limits.maxParallel} min={0} max={20} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, maxParallel: v || 0 }; }, 'lim3')} /></Field>
+        <Field label="One at a time above %" hint="Of the 5-hour. 0: off"><Num value={s.limits.oneAtATimeAbove} min={0} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, oneAtATimeAbove: v || 0 }; }, 'lim4')} /></Field>
+      </div>
+      <p className="ff-hint">Parallel steps beyond the limit wait their turn instead of all running together, which spreads the load. Each person's model is in the Team panel: a cheaper model for routine roles stretches usage too.</p>
     </div>
   );
 }

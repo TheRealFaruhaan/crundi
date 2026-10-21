@@ -47,7 +47,7 @@ import { randomBytes, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import * as Engine from './factory-engine.js';
 import * as Git from './factory-git.js';
-import { validateFactory, normalizeFactory, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
+import { validateFactory, normalizeFactory, normalizeLimits, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
 import { reduce, replay, asksOf, timeLeft, isHeld, UNFINISHED as UNFINISHED_SET, JOURNAL_VERSION } from './factory-journal.js';
 import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage, recoveryOverview } from './factory-prompts.js';
 import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES, GATEKEEPER_ID, gatekeeperPrompt, startRules, scopedRules, rulesFor } from './factory-permissions.js';
@@ -101,7 +101,7 @@ export function createFactoryRunner({
   function newEntry(rec) {
     return {
       rec,
-      live: { employees: {}, permissions: [], managerIdle: false, error: '' },
+      live: { employees: {}, permissions: [], managerIdle: false, error: '', seats: [] },
       lock: Promise.resolve(), timers: {}, watchers: {}, waits: {}, draining: false, skills: null, autoTries: 0,
     };
   }
@@ -230,6 +230,8 @@ export function createFactoryRunner({
       })),
       liveSessions: Object.values(L.employees).filter(e => e.chatId).length,
       usage: usageOf(r),
+      limits: limitsOf(entry),
+      waitingForSeat: entry.live.seats.map(x => ({ tokenId: x.ef.tokenId, employeeId: x.ef.employeeId, employee: s.snapshot.roster.find(p => p.id === x.ef.employeeId)?.name || x.ef.employeeId })),
       findings: Engine.ledgerOf(s).items.map(i => ({ id: i.id, text: i.text, where: i.where, blocking: i.blocking, status: i.status, by: roster.get(i.by)?.name || i.by, reopened: i.reopened || 0 })),
       asks,
       managerMode: r.managerMode,
@@ -365,6 +367,11 @@ export function createFactoryRunner({
         entry.live.error = `Could not start the Manager: ${mgr.error}`;
         commit(entry, { type: 'stop' });
         return { ok: false, error: entry.live.error };
+      }
+      // A run starting while usage is already high must not wait a minute
+      // for the one-at-a-time rule: read it now (briefly; best effort).
+      if (usageSource) {
+        try { const u = await Promise.race([usageSource(), new Promise(res => setTimeout(() => res(null), 3000))]); if (u && u.ok !== false) usageNow = u; } catch { /* keep the last reading */ }
       }
       await locked(entry, async () => {
         commit(entry, { type: 'begin' });
@@ -590,6 +597,7 @@ export function createFactoryRunner({
       entry.draining = false;
     }
     collect(entry);
+    await releaseSeats(entry);
   }
 
   async function runOne(entry, ef) {
@@ -627,6 +635,12 @@ export function createFactoryRunner({
   }
 
   async function startStep(entry, emp, ef, { recovery = null } = {}) {
+    // The person's limit on people working at once: wait for a free seat.
+    if (ef.employeeId !== MANAGER_ID && !emp.busy && seatsFull(entry)) {
+      if (!entry.live.seats.some(x => x.ef.tokenId === ef.tokenId)) entry.live.seats.push({ ef, recovery });
+      writeCache(entry);
+      return;
+    }
     const r = st(entry).snapshot.roster.find(x => x.id === ef.employeeId);
     const fresh = !!(r && r.memory === 'fresh' && ef.employeeId !== MANAGER_ID && emp.chatId);
     const s = await ensureSession(entry, ef.employeeId, { fresh });
@@ -648,6 +662,52 @@ export function createFactoryRunner({
     const sent = agents.send(s.chatId, msg);
     if (sent && sent.ok === false) entry.live.error = `Could not message ${r?.name || ef.employeeId}: ${sent.error}`;
     else if (notice) commit(entry, { type: 'notice-clear', tokenId: ef.tokenId });
+  }
+
+  // ─── Usage limits (the person's choice, per factory, changeable per run) ───
+
+  /** The limits in force for a run: changed on the run, else the factory's. */
+  function limitsOf(entry) {
+    return normalizeLimits(rr(entry).limits || st(entry).snapshot.settings.limits);
+  }
+
+  /** How many people may work at once right now (Infinity: no limit). */
+  function seatLimit(entry) {
+    const L = limitsOf(entry);
+    let n = L.maxParallel > 0 ? L.maxParallel : Infinity;
+    const five = usageNow?.fiveHour?.utilization;
+    if (L.oneAtATimeAbove > 0 && Number.isFinite(five) && five >= L.oneAtATimeAbove) n = Math.min(n, 1);
+    return n;
+  }
+
+  function busyPeople(entry) {
+    return Object.entries(entry.live.employees).filter(([id, e]) => id !== MANAGER_ID && id !== GATEKEEPER_ID && e.busy).length;
+  }
+
+  function seatsFull(entry) { return busyPeople(entry) >= seatLimit(entry); }
+
+  /** Start whoever waits for a seat, as far as the limit allows. */
+  async function releaseSeats(entry) {
+    if (isHeld(entry.rec) || !UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return;
+    while (entry.live.seats.length && !seatsFull(entry)) {
+      const { ef, recovery } = entry.live.seats.shift();
+      const t = st(entry).tokens.find(x => x.id === ef.tokenId);
+      if (!t || (t.status !== 'work' && t.status !== 'answer')) continue;
+      await startStep(entry, empOf(entry, ef.employeeId), ef, { recovery });
+    }
+    writeCache(entry);
+  }
+
+  /** Change a running run's limits (the Details drawer, or the Manager on the person's word). */
+  async function setLimits(runId, limits) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'Run not found.' };
+    return locked(entry, async () => {
+      const next = normalizeLimits({ ...limitsOf(entry), ...(limits || {}) });
+      commit(entry, { type: 'limits', limits: next });
+      await releaseSeats(entry);
+      return { ok: true, run: summary(entry) };
+    });
   }
 
   /**
@@ -918,6 +978,7 @@ export function createFactoryRunner({
 
   async function dequeue(entry, employeeId) {
     const emp = entry.live.employees[employeeId];
+    if (emp && !emp.busy && !emp.queue.length) { await releaseSeats(entry); return; }
     if (!emp || emp.busy || !emp.queue.length) return;
     const next = emp.queue.shift();
     await activate(entry, next);
@@ -1173,14 +1234,15 @@ export function createFactoryRunner({
    * Pause: nobody new is started; employees finish the turn they are in and
    * their handoffs are routed, but what follows is held until resume().
    */
-  async function pause(runId, { by = 'person', resetsAt = '' } = {}) {
+  async function pause(runId, { by = 'person', resetsAt = '', reason = '' } = {}) {
     const entry = runs.get(runId);
     if (!entry) return { ok: false, error: 'Run not found.' };
     return locked(entry, async () => {
       if (!['running', 'waiting'].includes(st(entry).status)) return { ok: false, error: `The run is ${st(entry).status}; it cannot be paused.` };
-      commit(entry, { type: 'pause', by, ...(resetsAt ? { resetsAt } : {}) });
+      commit(entry, { type: 'pause', by, ...(resetsAt ? { resetsAt } : {}), ...(reason ? { reason: String(reason).slice(0, 300) } : {}) });
       clearClock(entry);
-      if (by === 'usage') notify('paused', summary(entry), `Factory "${st(entry).snapshot.name}" paused: the usage limit is reached.${resetsAt ? ` It carries on by itself after ${resetsAt}.` : ''}`);
+      if (by === 'usage') notify('paused', summary(entry), `Factory "${st(entry).snapshot.name}" paused: usage reached the limit you set.${resetsAt ? ` It carries on by itself after ${resetsAt}.` : ''}`);
+      if (by === 'manager') notify('paused', summary(entry), `Factory "${st(entry).snapshot.name}" paused by its Manager${reason ? `: ${reason}` : ''}.`);
       return { ok: true, run: summary(entry) };
     });
   }
@@ -1236,6 +1298,8 @@ export function createFactoryRunner({
   // ─── Usage limit ───
 
   let usageTimer = null;
+  let usageNow = null;   // the last usage reading, for the one-at-a-time rule
+  let usageSource = null; // watchUsage's getUsage, to read it when a run starts
   /**
    * Pause running factories when a usage window is full, and carry them on by
    * themselves once it has reset. Polls getUsage (usage.js shape:
@@ -1243,15 +1307,20 @@ export function createFactoryRunner({
    * is going or waiting on the limit.
    */
   function watchUsage(getUsage, { tickMs = 60_000 } = {}) {
+    usageSource = getUsage;
     const tick = async () => {
       const relevant = [...runs.values()].filter(e => ['running', 'waiting'].includes(st(e).status) || rr(e).paused?.by === 'usage');
       if (!relevant.length) return;
       let u;
       try { u = await getUsage(); } catch { return; }
       if (!u || u.ok === false) return;
-      const full = [u.fiveHour, u.week].filter(w => w && w.utilization >= 100);
-      const resetsAt = full.map(w => w.resetsAt).filter(Boolean).sort().pop() || '';
+      usageNow = u;
       for (const e of relevant) {
+        // Each run's own thresholds: the person may keep headroom for themselves.
+        const L = limitsOf(e);
+        const full = [[u.fiveHour, L.pauseAt5h], [u.week, L.pauseAtWeek]].filter(([w, at]) => w && w.utilization >= at).map(([w]) => w);
+        const resetsAt = full.map(w => w.resetsAt).filter(Boolean).sort().pop() || '';
+        if (!full.length) await locked(e, () => releaseSeats(e));   // the one-at-a-time rule may have lifted
         if (full.length && !rr(e).paused && ['running', 'waiting'].includes(st(e).status)) {
           await pause(st(e).id, { by: 'usage', resetsAt });
         } else if (!full.length && rr(e).paused?.by === 'usage') {
@@ -1316,6 +1385,7 @@ export function createFactoryRunner({
       emp.chatId = ''; emp.busy = null; emp.queue = []; emp.nudged = false;
     }
     entry.live.permissions = [];
+    entry.live.seats = [];   // rebuilt below from the tokens
     entry.live.error = '';
     entry.skills = null;   // skills may have been installed since
     const missingWs = Object.entries(r.ws).filter(([id, w]) => id !== 'main' && w.path && !existsSync(w.path)).map(([id]) => id);
@@ -1685,6 +1755,7 @@ export function createFactoryRunner({
       clearClock(entry);
       clearTimeout(entry.timers.auto);
       for (const id of Object.keys(entry.waits)) clearWait(entry, id);
+      entry.live.seats = [];
       commit(entry, { type: 'stop' });
       return { ok: true, run: summary(entry) };
     });
@@ -1795,7 +1866,31 @@ export function createFactoryRunner({
     if (recent.length) lines.push('', 'Recent handoffs:', ...recent);
     const u = usageOf(r);
     lines.push('', `Spent so far: ${u.turns} turns in ${u.chats} chats${u.costUsd ? `, about $${u.costUsd.toFixed(2)}` : ''}; ${Math.round(timeLeft(entry.rec, Date.now()) / 60000)} min of the time limit left.`);
+    const Lm = limitsOf(entry);
+    lines.push(`Usage limits the person set: pause at ${Lm.pauseAt5h}% of the 5-hour window and ${Lm.pauseAtWeek}% of the week${usageNow?.fiveHour ? ` (now ${Math.round(usageNow.fiveHour.utilization)}% and ${Math.round(usageNow.week?.utilization || 0)}%)` : ''}; ${Lm.maxParallel ? `at most ${Lm.maxParallel} at once` : 'no limit on people at once'}${Lm.oneAtATimeAbove ? `, one at a time above ${Lm.oneAtATimeAbove}%` : ''}.${entry.live.seats.length ? ` Waiting for a seat: ${entry.live.seats.length}.` : ''}`);
     return { ok: true, content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+
+  /**
+   * factory_control, from the Manager's chat: pause or resume the run, or
+   * change its usage limits, when the person asks (or to stay inside them).
+   */
+  async function controlFromManager(chatId, { action, reason = '', limits = null } = {}) {
+    const info = chatInfo(chatId);
+    if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run can do this.' };
+    if (action === 'pause') {
+      const r = await pause(info.runId, { by: 'manager', reason });
+      return r.ok ? { ok: true, message: 'Paused. Nobody new starts a step; whoever is mid-turn finishes it. Resume with action "resume" when the person says so.' } : r;
+    }
+    if (action === 'resume') {
+      const r = await resume(info.runId, { reason: reason ? 'the Manager resumed it: ' + reason : '' });
+      return r.ok ? { ok: true, message: 'Resumed.' } : r;
+    }
+    if (action === 'limits') {
+      const r = await setLimits(info.runId, limits || {});
+      return r.ok ? { ok: true, message: 'Limits now: ' + JSON.stringify(r.run.limits) } : r;
+    }
+    return { ok: false, error: 'action is pause, resume or limits.' };
   }
 
   /** Switch the team between asking (the Manager or Gatekeeper) and bypass. */
@@ -1828,7 +1923,7 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /**

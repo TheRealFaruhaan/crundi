@@ -245,8 +245,12 @@ export function reduce(prev, ev) {
       r.capHit = { which: ev.which, limit: ev.limit, at };
       if (ev.which === 'maxMinutes') closeClock(r, at);
       break;
+    case 'limits':
+      // Changed on a running run: overrides the factory's own.
+      r.limits = ev.limits || null;
+      break;
     case 'pause':
-      r.paused = { by: ev.by || 'person', at, ...(ev.resetsAt ? { resetsAt: ev.resetsAt } : {}) };
+      r.paused = { by: ev.by || 'person', at, ...(ev.resetsAt ? { resetsAt: ev.resetsAt } : {}), ...(ev.reason ? { reason: ev.reason } : {}) };
       closeClock(r, at);
       break;
     case 'resume':

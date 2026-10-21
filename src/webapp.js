@@ -3534,6 +3534,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'pause': result = await factoryRunner.pause(body.id); break;
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
+        case 'limits': result = await factoryRunner.setLimits(body.id, body.limits || {}); break;
         case 'endWait': result = await factoryRunner.endWait(body.id, body.tokenId, { outcome: body.outcome, note: body.note || '' }); break;
         case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
         case 'teamMode': result = await factoryRunner.setTeamMode(body.id, body.mode); break;
@@ -6008,6 +6009,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (body.tool === 'factory_permission') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
         try { return json(res, await factoryRunner.answerPermissions(String(a.sessionId || ''), a.decisions, { rules: a.rules, policy: a.policy })); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      if (body.tool === 'factory_control') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
       if (body.tool === 'factory_status') {

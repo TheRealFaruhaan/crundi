@@ -278,6 +278,22 @@ exhaustion only allows exits; run caps bound everything.
 - **`factory_result {action}`:** the Manager carries out the person's decision
   given in the chat (merge, keep, discard, changes, undo).
 
+### 4.4c Usage limits (the person's choice)
+`settings.limits` per factory, and changeable on a running run (Details
+drawer, `limits` action, or the Manager's `factory_control` on the person's
+word), journaled as a `limits` event that overrides the factory's:
+- **pauseAt5h / pauseAtWeek** (50-100, default 100): pause when the window
+  reaches it; resume by itself once the window has reset. Pausing holds new
+  steps; whoever is mid-turn finishes.
+- **maxParallel** (default 0, no limit): at most this many people working at
+  once; the rest wait for a seat (`waitingForSeat`, shown as "Waiting its
+  turn" in the working strip) and start as seats free.
+- **oneAtATimeAbove** (default 0, off): above this share of the 5-hour
+  window, one at a time. Usage is read every minute and when a run starts.
+- `factory_control {action: pause|resume|limits, reason}`: the Manager
+  pauses or resumes with a reason shown to the person, or changes the limits.
+- Models stay a per-person choice in the Team panel.
+
 ### 4.5 Sessions: no sleep, reachability GC
 - The pane parker (`src/panes.js`) **never parks** a session of an unfinished
   run (running, waiting, paused). Employee sessions are owned by the runner, not
