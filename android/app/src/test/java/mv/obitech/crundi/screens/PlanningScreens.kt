@@ -24,6 +24,16 @@ import mv.obitech.crundi.api.model.FactoryDetail
 import mv.obitech.crundi.api.model.FactoryValidation
 import mv.obitech.crundi.api.model.RunPrecheck
 import mv.obitech.crundi.ui.planning.*
+import mv.obitech.crundi.ui.shell.ShellCallbacks
+import mv.obitech.crundi.ui.shell.ShellScaffold
+import androidx.compose.runtime.Composable
+import mv.obitech.crundi.ui.workbench.PaneView
+import mv.obitech.crundi.ui.workbench.WorkbenchActions
+import mv.obitech.crundi.ui.workbench.WorkbenchScreen
+import mv.obitech.crundi.ui.workbench.WorkbenchUi
+import mv.obitech.crundi.ui.workbench.Mosaic
+import mv.obitech.crundi.ui.workbench.PaneKind
+import mv.obitech.crundi.ui.workbench.WbCell
 import org.junit.Test
 
 /** Kanban, notes, mind map, schedules and factories at phone size. */
@@ -118,4 +128,20 @@ class PlanningScreens : ScreenshotTest() {
     @Test fun mindmapLink() = sheet("mindmap-link", "Scope to a project \u2014 or link a task", under = { MindMapScreen(Load.Ready(mm), projects, "crundi") }) {
         LinkPicker(mm, mm.nodes[8], projects, "crundi", mapOf("crundi" to Load.Ready(board)), MindMapCallbacks()) {}
     }
+
+    // ─── Inside workbench panes (change 2): the shell, the workbench and the pane frame around the stateless screen ───
+    private fun pane(name: String, kind: PaneKind, title: String = kind.label, font: Float = 1f, body: @Composable () -> Unit) = shoot(name) {
+        val v = PaneView("w:c" + kind.key, kind, title, cell = WbCell("c" + kind.key, kind))
+        val ui = WorkbenchUi("crundi", Mosaic.leaf(v.key), mapOf(v.key to v), focused = v.key, fontScales = mapOf(v.key to font))
+        ShellScaffold(FakeServices.shellData, Area.Workbench, true, ShellCallbacks(), drawerOpen = false, onDrawer = {}) {
+            WorkbenchScreen(ui, WorkbenchActions.None) { PaneScaled { body() } }
+        }
+    }
+    @Test fun kanbanPane() = pane("kanban-pane", PaneKind.Kanban) { KanbanScreen(Load.Ready(board), KanbanView.Board, {}) }
+    @Test fun kanbanPaneLargeText() = pane("kanban-pane-large-text", PaneKind.Kanban, font = 1.25f) { KanbanScreen(Load.Ready(board), KanbanView.Board, {}) }
+    @Test fun notesPanePicker() = pane("notes-pane-picker", PaneKind.Notes) { NotesListScreen(Load.Ready(notes), false, {}, "", {}) }
+    @Test fun notesPanePage() = pane("notes-pane-page", PaneKind.Notes, PlanningFakes.page.title) { NotePageScreen(Load.Ready(NoteEditor(PlanningFakes.page))) }
+    @Test fun mindmapPane() = pane("mindmap-pane", PaneKind.MindMap) { MindMapScreen(Load.Ready(mm), projects, "crundi") }
+    @Test fun factoriesPane() = pane("factories-pane", PaneKind.Factory) { FactoriesScreen(fdata, FactoriesTab.Runs, {}, "crundi") }
+    @Test fun factoriesPaneRun() = pane("factories-pane-run", PaneKind.Factory, PlanningFakes.run.factoryName) { FactoryRunScreen(Load.Ready(PlanningFakes.run)) }
 }

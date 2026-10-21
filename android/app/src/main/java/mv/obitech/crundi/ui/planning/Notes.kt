@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -127,7 +128,7 @@ class NotesListCallbacks(
 )
 
 @Composable
-fun NotesRoute() = WithProject(Area.Notes) { project ->
+fun NotesRoute(pane: NotePickerHooks? = null) = WithProject(Area.Notes) { project ->
     val api = LocalAppServices.current.api
     val nav = LocalNavigator.current
     val loader = rememberLoader(project, events = arrayOf("notes"), accept = { it.project == null || it.project.equals(project, true) }) {
@@ -138,8 +139,14 @@ fun NotesRoute() = WithProject(Area.Notes) { project ->
     var query by remember(project) { mutableStateOf("") }
     val cb = remember(project) {
         NotesListCallbacks(
-            onOpen = { nav.to(NotesRoutes.page(it.id)) },
-            onNew = { actions.run { val p = api.notes.create(project); nav.to(NotesRoutes.page(p.id)) } },
+            onOpen = { s ->
+                when {
+                    pane == null -> nav.to(NotesRoutes.page(s.id))
+                    pane.busy(s.id) -> actions.message = "That page is open in another pane"
+                    else -> pane.onPick(s.id, s.title)
+                }
+            },
+            onNew = { actions.run { val p = api.notes.create(project); if (pane != null) pane.onPick(p.id, p.title) else nav.to(NotesRoutes.page(p.id)) } },
             onTrash = { s -> loader.update { l -> l.map { if (it.id == s.id) it.copy(deleted = true) else it } }; actions.run { api.notes.delete(project, s.id) } },
             onRestore = { s -> actions.run { api.notes.restore(project, s.id) } },
             onPurge = { s -> actions.run { api.notes.purge(project, s.id) } },
@@ -451,7 +458,7 @@ class NoteEditor(page: NotePage) {
 }
 
 @Composable
-fun NotePageRoute(id: String) {
+fun NotePageRoute(id: String, pane: NotePaneHooks? = null) {
     val project = currentProject()
     if (project == null) { WithProject(Area.Notes) {}; return }
     val api = LocalAppServices.current.api
@@ -511,6 +518,10 @@ fun NotePageRoute(id: String) {
                 }
             }
         }
+        // In a pane, the page's title is the pane's title.
+        if (pane != null) LaunchedEffect(editor) {
+            snapshotFlow { editor.title }.collectLatest { delay(400); pane.onTitle(it) }
+        }
         // Leaving with unsaved edits: save them anyway.
         DisposableEffect(editor) {
             onDispose { if (editor.dirty && !editor.deleted) PlanningScope.launch { runCatching { saveNow(editor) } } }
@@ -519,10 +530,10 @@ fun NotePageRoute(id: String) {
 
     Box(Modifier.fillMaxSize()) {
         NotePageScreen(
-            load, onBack = { nav.back() }, onRetry = { fetch() },
+            load, onBack = { pane?.onPages?.invoke() ?: nav.back() }, onRetry = { fetch() },
             onTrash = {
                 scope.launch {
-                    try { api.notes.delete(project, id); nav.back() } catch (e: ApiException) { toast = errorText(e) }
+                    try { api.notes.delete(project, id); pane?.onPages?.invoke() ?: nav.back() } catch (e: ApiException) { toast = errorText(e) }
                 }
             },
         )
@@ -545,10 +556,12 @@ fun NotePageScreen(load: Load<NoteEditor>, onBack: () -> Unit = {}, onRetry: () 
     var menu by remember { mutableStateOf(false) }
     val ed = load.valueOrNull
     Column(Modifier.fillMaxSize().imePadding()) {
-        TopBar(ed?.title?.ifBlank { "Untitled" } ?: "Notes", onBack = onBack) {
+        val tools: @Composable RowScope.() -> Unit = {
             if (ed != null) SaveIndicator(ed.status)
             if (ed != null && !ed.deleted) CrundiIconButton("more", { menu = true }, contentDescription = "Page actions")
         }
+        if (inPane()) PaneSubBar("Pages", onBack, tools)
+        else TopBar(ed?.title?.ifBlank { "Untitled" } ?: "Notes", onBack = onBack, actions = tools)
         when (load) {
             is Load.Loading -> LoadingState(text = "Loading…")
             is Load.Failed -> ErrorState(load.message, onRetry = onRetry)

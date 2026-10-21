@@ -159,6 +159,23 @@ class WorkbenchController(
         act("Rename failed") { if (v.kind == PaneKind.Chat) api?.chats?.rename(id, t) else api?.terminals?.rename(id, t) }
     }
 
+    /**
+     * Change what a panel cell shows, kept with the cell (notes: pageId and
+     * title; factory: runId and title). A null value removes that key.
+     */
+    fun setCellData(key: String, vararg changes: Pair<String, String?>) {
+        val cell = cells.firstOrNull { it.key == key } ?: return
+        if (changes.all { (k, value) -> cell.data[k] == value }) return
+        cells = cells.map { c ->
+            if (c.key != key) c else {
+                val d = c.data.toMutableMap()
+                for ((k, value) in changes) if (value == null) d.remove(k) else d[k] = value
+                c.copy(data = d)
+            }
+        }
+        save()
+    }
+
     override fun close(v: PaneView) {
         when (v.kind) {
             PaneKind.Chat -> act("Could not close the chat") { api?.chats?.close(v.paneId!!) }

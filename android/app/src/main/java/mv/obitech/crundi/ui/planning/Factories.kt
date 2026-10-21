@@ -129,7 +129,7 @@ class FactoriesCallbacks(
 // ═══ Front page ═══
 
 @Composable
-fun FactoriesRoute() {
+fun FactoriesRoute(onOpenRunInPane: ((FactoryRun) -> Unit)? = null) {
     val api = LocalAppServices.current.api
     val nav = LocalNavigator.current
     val project = currentProject()
@@ -146,7 +146,7 @@ fun FactoriesRoute() {
             onCopy = { f -> actions.run { api.factories.duplicate(f.id) } },
             onDelete = { f -> actions.run { api.factories.delete(f.id) } },
             onUseTemplate = { t -> actions.run { val d = api.factories.fromTemplate(t.id); nav.to(FactoryRoutes.factory(d.factory.id)) } },
-            onOpenRun = { nav.to(FactoryRoutes.run(it.id)) },
+            onOpenRun = { r -> onOpenRunInPane?.invoke(r) ?: nav.to(FactoryRoutes.run(r.id)) },
             onOpenTrigger = { nav.to(FactoryRoutes.trigger(it?.id)) },
             onToggleTrigger = { t -> actions.run { api.factories.saveTrigger(t.copy(enabled = !t.enabled)) } },
             onAutoDelete = { d -> actions.run(refresh = false) { api.factories.setAutoDelete(d) } },
