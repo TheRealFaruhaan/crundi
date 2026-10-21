@@ -30,6 +30,7 @@ export function getChatPageHtml({ version, rootCss, tag }) {
 ${rootCss}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg-primary);color:var(--text-primary);font-family:-apple-system,"Segoe UI",system-ui,sans-serif;-webkit-text-size-adjust:100%;overscroll-behavior:none}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
 button{font:inherit;color:inherit}
 #cp{display:flex;flex-direction:column;height:100dvh;min-height:0}
 #cp-factory{display:block;width:100%;text-align:left;padding:7px 12px;background:rgba(99,102,241,.12);color:var(--text-secondary);border:0;border-bottom:1px solid var(--border-subtle);font:inherit;font-size:.82rem;cursor:pointer;flex:none}#cp-factory b{color:var(--accent-hover,#818cf8);font-weight:600}#cp-factory[hidden]{display:none}

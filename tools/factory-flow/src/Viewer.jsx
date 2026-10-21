@@ -297,7 +297,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
             <div className="ff-step-head"><span>{names.get(h.by) || h.by}{h.finish ? ' · finished' : ''}</span><span>#{steps.length - i}</span></div>
             <div>{h.summary}</div>
             {h.answers && Object.keys(h.answers).length > 0 && <div className="ff-hint">Answers: {Object.entries(h.answers).map(([k, v]) => `${nodesById.get(k)?.label || k}: ${Array.isArray(v) ? (v.length ? v.join(', ') : 'none') : v}`).join(' · ')}</div>}
-            {h.skills && h.skills.length > 0 && <div className="ff-node-skills">{h.skills.map(k => <span key={k}>/{k}</span>)}</div>}
+            {h.skills && h.skills.length > 0 && <div className="ff-node-skills">{h.skills.map(k => <span key={k} title={'/' + k}>/{String(k).split(':').pop()}</span>)}</div>}
           </div>
         ))}
       </div>

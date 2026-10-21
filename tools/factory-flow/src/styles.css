@@ -104,7 +104,8 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 .ff-node.active { border-color: var(--ff-green); box-shadow: 0 0 0 3px rgba(16,185,129,.3), 0 0 24px rgba(16,185,129,.25); }
 .ff-node-head { display: flex; align-items: center; gap: 6px; color: var(--ff-sub); font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; }
 .ff-node-title { font-weight: 650; font-size: 13.5px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ff-node-body { font-size: 11.5px; color: var(--ff-muted); margin-top: 2px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; padding-bottom: 9px; }
+/* Clamped to two lines; the space below is a margin, not padding, so a third line never shows through it. */
+.ff-node-body { font-size: 11.5px; color: var(--ff-muted); margin: 2px 0 9px; line-height: 1.35; max-height: calc(2 * 1.35em); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .ff-start, .ff-end { width: 170px; }
 .ff-manager .ff-node-head { color: var(--ff-amber); }
 .ff-decision .ff-node-head { color: var(--ff-sky); }
@@ -175,8 +176,8 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 /* Live graph */
 .ff-node.visited { border-color: rgba(16,185,129,.45); }
 .ff-node.retired { opacity: .6; border-style: dashed; }
-.ff-node-skills { display: flex; flex-wrap: wrap; gap: 3px; margin: -4px 0 8px; }
-.ff-node-skills span { font-size: 10px; color: var(--ff-green); border: 1px solid rgba(16,185,129,.35); border-radius: 99px; padding: 0 6px; }
+.ff-node-skills { display: flex; flex-wrap: wrap; gap: 3px; margin: 0 0 8px; min-width: 0; }
+.ff-node-skills span { font-size: 10px; color: var(--ff-green); border: 1px solid rgba(16,185,129,.35); border-radius: 99px; padding: 0 6px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ff-host .react-flow__edge-path.ff-edge.pulse { stroke: var(--ff-green); stroke-width: 2.6; stroke-dasharray: 8 6; animation: ff-flow .7s linear infinite; }
 @keyframes ff-flow { to { stroke-dashoffset: -14; } }
 @media (prefers-reduced-motion: reduce) { .ff-host .react-flow__edge-path.ff-edge.pulse { animation: none; } }
@@ -238,9 +239,9 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 .ff-worker.blocked .ff-pulse { background: var(--ff-amber); }
 @keyframes ff-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,.55); } 50% { box-shadow: 0 0 0 5px rgba(16,185,129,0); } }
 @media (prefers-reduced-motion: reduce) { .busy > .ff-pulse { animation: none; } }
-.ff-node-doing { display: flex; align-items: flex-start; gap: 6px; font-size: 11.5px; color: var(--ff-text); margin-top: 3px; padding-bottom: 9px; line-height: 1.35; }
+.ff-node-doing { display: flex; align-items: flex-start; gap: 6px; font-size: 11.5px; color: var(--ff-text); margin: 3px 0 9px; line-height: 1.35; min-width: 0; }
 .ff-node-doing .ff-pulse { margin-top: 4px; }
-.ff-node-doing > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ff-node-doing > span:last-child { max-height: calc(2 * 1.35em); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; min-width: 0; }
 /* ─── Panel mode: the graph fills the panel ─── */
 .ff-panelmode .ff-body { position: relative; }
 .ff-panelmode .ff-canvas { flex: 1; }
