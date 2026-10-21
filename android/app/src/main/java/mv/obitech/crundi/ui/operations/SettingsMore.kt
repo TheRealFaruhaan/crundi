@@ -87,53 +87,65 @@ private fun loadColor(p: Double?): androidx.compose.ui.graphics.Color = when {
 fun MachineScreen(state: MachineState, onRun: (MaintenanceTask) -> Unit = {}, onCloseNote: () -> Unit = {}, onBack: () -> Unit = {}) {
     SettingsPageFrame(SettingsPage.Machine, state.note, onCloseNote, onBack) {
         ScrollBody {
-            Group("This machine") {
-                when (val l = state.stats) {
-                    Load.Loading -> Text("Reading the machine…", style = CrundiType.Small)
-                    is Load.Failed -> Text(l.message, style = CrundiType.Small.copy(color = CrundiColors.Red))
-                    is Load.Ready -> {
-                        val s = l.value.system
-                        if (s == null) Text("The machine's numbers are for the owner.", style = CrundiType.Small) else {
-                            val cpu = s.cpu.overall
-                            KeyValue("CPU", Fmt.pct(cpu), valueColor = loadColor(cpu))
-                            CoreBars(s.cpu.cores)
-                            Sparkline(s.history.cpu.map { it?.toFloat() }, loadColor(cpu), 100f, Modifier.fillMaxWidth().height(28.dp))
-                            CrundiDivider()
-                            val memPct = if (s.mem.total > 0) s.mem.used * 100.0 / s.mem.total else null
-                            KeyValue("Memory", "${Fmt.bytes(s.mem.used)} of ${Fmt.bytes(s.mem.total)}")
-                            Meter(((memPct ?: 0.0) / 100).toFloat(), color = loadColor(memPct))
-                            if (s.mem.swapTotal > 0) {
-                                KeyValue("Swap", "${Fmt.bytes(s.mem.swapUsed)} of ${Fmt.bytes(s.mem.swapTotal)}")
-                                Meter((s.mem.swapUsed.toFloat() / s.mem.swapTotal))
-                            }
-                            val diskPct = if (s.disk.total > 0) s.disk.used * 100.0 / s.disk.total else null
-                            KeyValue("Disk", "${Fmt.bytes(s.disk.used)} of ${Fmt.bytes(s.disk.total)}")
-                            Meter(((diskPct ?: 0.0) / 100).toFloat(), color = loadColor(diskPct))
-                            CrundiDivider()
-                            s.load?.let { KeyValue("Load", String.format(Locale.US, "%.2f  %.2f  %.2f", it.one, it.five, it.fifteen)) }
-                            KeyValue("Traffic", "down ${Fmt.rate(s.net.rxPerSec)}   up ${Fmt.rate(s.net.txPerSec)}")
-                            KeyValue("Uptime", Fmt.span((s.uptimeSec * 1000).toLong()))
-                            KeyValue("Crundi", "${Fmt.span((s.processUptimeSec * 1000).toLong())} · ${Fmt.bytes(s.processRssBytes)}")
-                            KeyValue("Machine", s.host.hostname)
-                            KeyValue("Processor", "${s.host.cores} cores · ${s.host.cpuModel}")
-                            KeyValue("System", "${s.host.platform} ${s.host.release} · ${s.host.arch}")
-                        }
+            MachineGroup(state.stats)
+            ReclaimGroup(state.tasks, state.busy, onRun)
+        }
+    }
+}
+
+/** This machine's numbers, as the desktop's sys-stats: shared by Settings and Info. */
+@Composable
+fun MachineGroup(stats: Load<Stats>) {
+    Group("This machine") {
+        when (val l = stats) {
+            Load.Loading -> Text("Reading the machine…", style = CrundiType.Small)
+            is Load.Failed -> Text(l.message, style = CrundiType.Small.copy(color = CrundiColors.Red))
+            is Load.Ready -> {
+                val s = l.value.system
+                if (s == null) Text("The machine's numbers are for the owner.", style = CrundiType.Small) else {
+                    val cpu = s.cpu.overall
+                    KeyValue("CPU", Fmt.pct(cpu), valueColor = loadColor(cpu))
+                    CoreBars(s.cpu.cores)
+                    Sparkline(s.history.cpu.map { it?.toFloat() }, loadColor(cpu), 100f, Modifier.fillMaxWidth().height(28.dp))
+                    CrundiDivider()
+                    val memPct = if (s.mem.total > 0) s.mem.used * 100.0 / s.mem.total else null
+                    KeyValue("Memory", "${Fmt.bytes(s.mem.used)} of ${Fmt.bytes(s.mem.total)}")
+                    Meter(((memPct ?: 0.0) / 100).toFloat(), color = loadColor(memPct))
+                    if (s.mem.swapTotal > 0) {
+                        KeyValue("Swap", "${Fmt.bytes(s.mem.swapUsed)} of ${Fmt.bytes(s.mem.swapTotal)}")
+                        Meter((s.mem.swapUsed.toFloat() / s.mem.swapTotal))
                     }
+                    val diskPct = if (s.disk.total > 0) s.disk.used * 100.0 / s.disk.total else null
+                    KeyValue("Disk", "${Fmt.bytes(s.disk.used)} of ${Fmt.bytes(s.disk.total)}")
+                    Meter(((diskPct ?: 0.0) / 100).toFloat(), color = loadColor(diskPct))
+                    CrundiDivider()
+                    s.load?.let { KeyValue("Load", String.format(Locale.US, "%.2f  %.2f  %.2f", it.one, it.five, it.fifteen)) }
+                    KeyValue("Traffic", "down ${Fmt.rate(s.net.rxPerSec)}   up ${Fmt.rate(s.net.txPerSec)}")
+                    KeyValue("Uptime", Fmt.span((s.uptimeSec * 1000).toLong()))
+                    KeyValue("Crundi", "${Fmt.span((s.processUptimeSec * 1000).toLong())} · ${Fmt.bytes(s.processRssBytes)}")
+                    KeyValue("Machine", s.host.hostname)
+                    KeyValue("Processor", "${s.host.cores} cores · ${s.host.cpuModel}")
+                    KeyValue("System", "${s.host.platform} ${s.host.release} · ${s.host.arch}")
                 }
             }
-            Group("Reclaim disk space") {
-                when (val l = state.tasks) {
-                    Load.Loading -> Text("Measuring…", style = CrundiType.Small)
-                    is Load.Failed -> Text("Could not read reclaimable space.", style = CrundiType.Small.copy(color = CrundiColors.Red))
-                    is Load.Ready -> {
-                        val tasks = l.value.filter { it.available }
-                        if (tasks.isEmpty()) Text("Nothing on this machine to reclaim.", style = CrundiType.Small)
-                        else {
-                            val total = tasks.sumOf { it.bytes }
-                            Text(if (total > 0) "${Fmt.bytes(total)} can be reclaimed" else "Nothing to reclaim right now", style = CrundiType.Heading)
-                            for (t in tasks) { CrundiDivider(); TaskRow(t, state.busy == t.id, onRun) }
-                        }
-                    }
+        }
+    }
+}
+
+/** Reclaim disk space, as the desktop's maint-body: shared by Settings and Info. */
+@Composable
+fun ReclaimGroup(tasks: Load<List<MaintenanceTask>>, busy: String?, onRun: (MaintenanceTask) -> Unit) {
+    Group("Reclaim disk space") {
+        when (val l = tasks) {
+            Load.Loading -> Text("Measuring…", style = CrundiType.Small)
+            is Load.Failed -> Text("Could not read reclaimable space.", style = CrundiType.Small.copy(color = CrundiColors.Red))
+            is Load.Ready -> {
+                val open = l.value.filter { it.available }
+                if (open.isEmpty()) Text("Nothing on this machine to reclaim.", style = CrundiType.Small)
+                else {
+                    val total = open.sumOf { it.bytes }
+                    Text(if (total > 0) "${Fmt.bytes(total)} can be reclaimed" else "Nothing to reclaim right now", style = CrundiType.Heading)
+                    for (t in open) { CrundiDivider(); TaskRow(t, busy == t.id, onRun) }
                 }
             }
         }

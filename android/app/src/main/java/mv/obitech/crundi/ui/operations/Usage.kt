@@ -45,7 +45,6 @@ import mv.obitech.crundi.ui.components.CrundiIconButton
 import mv.obitech.crundi.ui.components.EmptyState
 import mv.obitech.crundi.ui.components.ErrorState
 import mv.obitech.crundi.ui.components.LoadingState
-import mv.obitech.crundi.ui.components.PanelHeader
 import mv.obitech.crundi.ui.components.StatusBadge
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.shell.LocalAppServices
@@ -71,6 +70,7 @@ class UsageEvents(
     val onShowWeek: (Boolean) -> Unit = {},
     val onShowFive: (Boolean) -> Unit = {},
     val onRefresh: () -> Unit = {},
+    val onBack: () -> Unit = {},
 )
 
 /** The share of a window gone by at [now]: 0 at its start, 1 at its reset. */
@@ -91,6 +91,7 @@ fun remaining(ms: Long): String {
 @Composable
 fun UsageRoute() {
     val api = LocalAppServices.current.api
+    val nav = mv.obitech.crundi.ui.nav.LocalNavigator.current
     val live by api.events.usage.collectAsStateWithLifecycle(initialValue = null)
     var range by remember { mutableStateOf("week") }
     var week by remember { mutableStateOf(true) }
@@ -102,7 +103,7 @@ fun UsageRoute() {
     val usage: Load<Usage?> = live?.let { Load.Ready(it) } ?: first.value
     UsageScreen(
         UsageState(usage, history.value, range, week, five, now),
-        UsageEvents(onRange = { range = it }, onShowWeek = { week = it }, onShowFive = { five = it }, onRefresh = { first.reload(); history.reload() }),
+        UsageEvents(onRange = { range = it }, onShowWeek = { week = it }, onShowFive = { five = it }, onRefresh = { first.reload(); history.reload() }, onBack = { nav.back() }),
     )
 }
 
@@ -110,9 +111,12 @@ fun UsageRoute() {
 fun UsageScreen(state: UsageState, events: UsageEvents = UsageEvents()) {
     Column(Modifier.fillMaxSize()) {
         val u = state.usage.valueOrNull
-        PanelHeader(
+        // Not a tab since change 2 (the top bar's usage badge opens it): the
+        // shell draws no chrome here, so this is a detail screen with a back arrow.
+        mv.obitech.crundi.ui.components.TopBar(
             "Claude usage",
-            meta = u?.let { listOfNotNull(it.subscriptionType?.let { p -> "Plan: $p" }, Fmt.iso(it.fetchedAt).takeIf { t -> t > 0 }?.let { t -> "updated " + Fmt.ago(t, state.now) }).joinToString(" · ") },
+            onBack = events.onBack,
+            subtitle = u?.let { listOfNotNull(it.subscriptionType?.let { p -> "Plan: $p" }, Fmt.iso(it.fetchedAt).takeIf { t -> t > 0 }?.let { t -> "updated " + Fmt.ago(t, state.now) }).joinToString(" · ") },
         ) { CrundiIconButton("refresh", events.onRefresh, contentDescription = "Refresh") }
         when (val l = state.usage) {
             Load.Loading -> LoadingState(text = "Claude usage: loading…")

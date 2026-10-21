@@ -48,7 +48,6 @@ import mv.obitech.crundi.ui.components.EmptyState
 import mv.obitech.crundi.ui.components.ErrorState
 import mv.obitech.crundi.ui.components.ListRow
 import mv.obitech.crundi.ui.components.LoadingState
-import mv.obitech.crundi.ui.components.PanelHeader
 import mv.obitech.crundi.ui.components.StatusBadge
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.shell.LocalAppServices
@@ -77,6 +76,7 @@ class ForwardsEvents(
     val onOpen: (String) -> Unit = {},
     val onCloseNote: () -> Unit = {},
     val onRetry: () -> Unit = {},
+    val onBack: () -> Unit = {},
 )
 
 /** The desktop's groups, in its order, with its help words. */
@@ -100,6 +100,7 @@ fun ForwardsRoute() {
     val app = LocalAppServices.current
     val api = app.api
     val host = LocalHost.current
+    val nav = mv.obitech.crundi.ui.nav.LocalNavigator.current
     val shell by app.shell.state.collectAsStateWithLifecycle()
     val actions = rememberActions()
     val list = rememberLoad { api.forwards.list() }
@@ -131,6 +132,7 @@ fun ForwardsRoute() {
             onOpen = host::openExternal,
             onCloseNote = actions::clear,
             onRetry = reload,
+            onBack = { nav.back() },
         ),
     )
 }
@@ -141,9 +143,11 @@ fun ForwardsScreen(state: ForwardsState, events: ForwardsEvents = ForwardsEvents
     Column(Modifier.fillMaxSize()) {
         val all = state.forwards.valueOrNull
         val orphans = all?.count { behindOf(state.behind[it.host]) == Behind.Nothing } ?: 0
-        PanelHeader(
+        // Reached from Info and Docker, not a tab: a detail screen with a back arrow.
+        mv.obitech.crundi.ui.components.TopBar(
             "Forwards",
-            meta = all?.let { "${it.size} forward${if (it.size == 1) "" else "s"}" + (if (orphans > 0) ", $orphans with nothing behind them" else "") + (if (state.domain.isNotEmpty()) " · ${state.domain}" else "") },
+            onBack = events.onBack,
+            subtitle = all?.let { "${it.size} forward${if (it.size == 1) "" else "s"}" + (if (orphans > 0) ", $orphans with nothing behind them" else "") + (if (state.domain.isNotEmpty()) " · ${state.domain}" else "") },
         ) { CrundiButton("Add forward", { add = true }, kind = ButtonKind.Primary, icon = "plus") }
         NoteBanner(state.note, events.onCloseNote)
         when (val l = state.forwards) {
