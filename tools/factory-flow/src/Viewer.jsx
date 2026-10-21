@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, MarkerType } from '@xyflow/react';
+import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, MarkerType, useReactFlow } from '@xyflow/react';
 import { reduce, asksOf } from '../../../src/factory-journal.js';
 import { rosterOf } from '../../../src/factory-engine.js';
 import { MANAGER_ID } from '../../../src/factory-model.js';
@@ -9,7 +9,12 @@ import { Icon } from './icons.jsx';
 
 const NO_ISSUES = { ok: true, errors: [], warnings: [] };
 const POLL_MS = 4000;
+const ACTIVITY_MS = 3000;
 
+function dur(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+}
 function time(at) {
   const d = new Date(at);
   return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -85,7 +90,12 @@ function WaitCard({ t, busy, act }) {
   );
 }
 
-function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
+function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' }) {
+  const panel = mode === 'panel';
+  const [chat, setChat] = useState(null);      // panel: { chatId, name } open over the graph
+  const [drawer, setDrawer] = useState(false); // panel: the run / timeline pane, on demand
+  const [follow, setFollow] = useState(mode === 'panel'); // the camera follows where people are working
+  const rf = useReactFlow();
   const [events, setEvents] = useState([]);
   const [run, setRun] = useState(null);         // the server's summary (live chat ids, status)
   const [at, setAt] = useState(null);           // null = live; else event count shown
@@ -125,6 +135,14 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
     else poll = setInterval(fetchAll, POLL_MS);
     return () => { if (off) off(); clearInterval(poll); };
   }, [fetchAll, subscribe, runId]);
+  // Who is doing what changes all the time without changing the run: the
+  // summary is fetched every few seconds while anyone is at work.
+  useEffect(() => {
+    // New journal events too (only what is new): a missed push must not
+    // leave the graph behind the run.
+    const t = setInterval(() => { if (!document.hidden) fetchAll(); }, ACTIVITY_MS);
+    return () => clearInterval(t);
+  }, [fetchAll]);
 
   const n = at == null ? events.length : at;
   const rec = recs.current[n] || null;
@@ -149,6 +167,12 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
       node.data.blocked = !!(who && node.data.tokens.length && (rec.run.perms?.outstanding || []).some(p => p.employeeId === who));
       const last = [...rec.state.history].reverse().find(h => h.type === 'handoff' && h.nodeId === node.id);
       if (last && last.summary) node.data.live = first(last.summary, 110);
+      // Live: who is here now and what they are doing this second.
+      if (at == null && run && !['crashed', 'paused', 'stopped', 'finished'].includes(run.status)) {
+        const tok = (run.tokens || []).find(t => t.nodeId === node.id && (t.status === 'work' || t.status === 'answer'));
+        const emp = tok && run.employees?.[tok.employeeId];
+        if (tok) node.data.doing = { who: tok.employee || names.get(tok.employeeId) || '', text: emp?.activity?.text || (tok.status === 'answer' ? 'Deciding' : 'Starting'), state: emp?.activity?.state || '', chatId: emp?.chatId || '' };
+      }
     }
     // The connection(s) just taken flow for a moment. Finishing is not a
     // traversal in the engine, so the Finish connection lights up from the outcome.
@@ -161,7 +185,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
     }
     for (const node of out.nodes) if (sizes[node.id]) node.measured = sizes[node.id];
     return out;
-  }, [rec, prev, f, sel, sizes]);
+  }, [rec, prev, f, sel, sizes, run, at, names]);
   const onNodesChange = useCallback((changes) => {
     const dims = changes.filter(c => c.type === 'dimensions' && c.dimensions);
     if (dims.length) setSizes(p => { const next = { ...p }; for (const c of dims) next[c.id] = { width: c.dimensions.width, height: c.dimensions.height }; return next; });
@@ -179,11 +203,72 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
     setBusy('');
   };
 
+  // Follow the work: zoom to the steps where someone is working, and move
+  // with it. Panning or zooming by hand stops following.
+  const activeKey = at == null && run ? (run.tokens || []).filter(t => t.nodeId && ['work', 'answer', 'ask', 'wait', 'join'].includes(t.status)).map(t => t.nodeId).sort().join(',') : '';
+  useEffect(() => {
+    if (!follow || !rec) return;
+    const ids = activeKey ? [...new Set(activeKey.split(','))] : [];
+    const t = setTimeout(() => {
+      try { rf.fitView(ids.length ? { nodes: ids.map(id => ({ id })), padding: 0.45, maxZoom: 0.95, duration: 450 } : { padding: 0.15, maxZoom: 1, duration: 450 }); } catch { /* not measured yet */ }
+    }, 120);
+    return () => clearTimeout(t);
+  }, [follow, activeKey, rf, !!rec, Object.keys(sizes).length]);
+  // The embedded chat page's back arrow asks to be closed.
+  useEffect(() => {
+    if (!panel) return undefined;
+    const onMsg = (e) => { if (e.origin === location.origin && e.data && e.data.type === 'crundi-chat-close') setChat(null); };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [panel]);
   if (!rec) return <div className="ff-loading">Loading the run…</div>;
   const live = at == null;
   const st = run && live ? run.status : rec.state.status;
   const stateLabel = { running: 'Running', waiting: 'Waiting on you', paused: 'Paused', crashed: 'Crashed', finishing: 'Done: your decision', finished: 'Finished', stopped: 'Stopped', starting: 'Starting' }[st] || st;
   const asks = live ? (run?.asks || []) : asksOf(rec);
+
+  // A person's transcript: inside the panel, or the host's chat window.
+  const openPerson = (chatId, name) => {
+    if (!chatId) return;
+    if (panel) { setChat({ chatId, name }); return; }
+    if (openChat) openChat(chatId, name);
+  };
+  // Everyone at work right now, with what they are doing.
+  const working = live && run && !['crashed', 'paused', 'stopped', 'finished'].includes(run.status) ? (run.tokens || []).filter(t => t.status === 'work' || t.status === 'answer').map(t => {
+    const e = run.employees?.[t.employeeId] || {};
+    return { id: t.id, nodeId: t.nodeId, name: t.employee || names.get(t.employeeId) || 'Someone', what: t.job ? 'Job: ' + first(t.job, 50) : (e.activity?.text || (t.status === 'answer' ? 'Deciding' : 'Starting')), state: e.activity?.state || '', chatId: e.chatId || '', blocked: !!t.blocked };
+  }) : [];
+  const strip = working.length > 0 && (
+    <div className="ff-working">
+      {working.map(w => (
+        <button key={w.id} className={'ff-worker' + (w.state === 'working' ? ' busy' : '') + (w.blocked ? ' blocked' : '')} disabled={!w.chatId}
+          title={w.chatId ? 'Open ' + w.name + "'s transcript" : ''} onClick={() => openPerson(w.chatId, w.name)}>
+          <span className="ff-pulse" /><b>{w.name}</b><span>{w.blocked ? 'Needs permission' : w.what}</span>
+        </button>
+      ))}
+    </div>
+  );
+  // What needs the person, said once, at the top, with the one action that answers it.
+  const needs = live && run ? (
+    run.status === 'crashed' ? { k: 'bad', text: 'It stopped: ' + (run.crash?.reason || 'it was interrupted') + '. Recover picks it up where it was.', act: ['Recover', () => act({ action: 'recover', note: '' }, 'recover')] }
+    : run.status === 'finishing' ? { k: 'you', text: 'Done. The result is in the Manager\'s chat: merge it, ask for changes, keep the branch or discard it.', act: run.managerChatId ? ['Open the result', () => openPerson(run.managerChatId, 'Manager')] : null }
+    : run.capHit ? { k: 'you', text: 'It reached its limit (' + (run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs') + ').', act: ['Let it carry on', () => act({ action: 'resume' }, 'resume')] }
+    : (run.asks || []).length ? { k: 'you', text: 'A question for you: ' + run.asks[0].prompt, act: ['Answer', () => { setSel(null); setTab('run'); setDrawer(true); }] }
+    : run.waitingOn === 'manager' ? { k: 'you', text: 'The Manager is talking to you in its chat.', act: run.managerChatId ? ['Open its chat', () => openPerson(run.managerChatId, 'Manager')] : null }
+    : run.paused ? { k: 'info', text: run.paused.by === 'usage' ? 'Paused: the usage limit is full; it carries on when it resets.' : 'Paused.', act: ['Resume', () => act({ action: 'resume' }, 'resume')] }
+    : null) : null;
+  const needsBar = needs && (
+    <div className={'ff-needs ' + needs.k}>
+      <Icon name="alert" size={14} /><span>{needs.text}</span>
+      {needs.act && <button className="ff-btn primary" disabled={!!busy} onClick={needs.act[1]}>{needs.act[0]}</button>}
+    </div>
+  );
+  const progress = run ? [
+    `${run.handoffs} handoff${run.handoffs === 1 ? '' : 's'}`,
+    run.createdAt ? dur(Date.now() - Date.parse(run.createdAt)) : '',
+    run.usage?.turns ? `${run.usage.turns} turns${run.usage.costUsd ? ' · $' + run.usage.costUsd.toFixed(2) : ''}` : '',
+    (run.findings || []).length ? `${run.findings.filter(i => i.status === 'open' || i.status === 'claimed').length} open findings` : '',
+  ].filter(Boolean).join(' · ') : '';
 
   // ─── Side panel ───
   const nodeInfo = () => {
@@ -205,7 +290,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
           <span>Now</span><span>{tokens.length ? { work: 'working on it', answer: 'deciding', ask: 'waiting for your reply', join: 'waiting for the other branches', wait: 'waiting', finished: 'finished' }[tokens[0].status] : steps.length ? 'done' : 'not reached yet'}{who && rec.run.retired[who] ? ' · session stopped for now' : ''}</span>
           {steps.length > 0 && <><span>Visits</span><span>{steps.length}</span></>}
         </div>
-        {chatId && openChat && <button className="ff-btn primary" onClick={() => openChat(chatId, person?.name || 'Chat')}><Icon name="ask" size={14} />Open {who === MANAGER_ID ? 'the Manager\'s' : 'their'} chat</button>}
+        {chatId && (openChat || panel) && <button className="ff-btn primary" onClick={() => openPerson(chatId, person?.name || 'Chat')}><Icon name="ask" size={14} />Open {who === MANAGER_ID ? 'the Manager\'s' : 'their'} transcript</button>}
         {!chatId && person && live && <p className="ff-hint">{who && rec.run.retired[who] ? 'Their session is stopped for now; it comes back with its memory when the work needs them.' : 'No live session right now.'}</p>}
         {steps.slice().reverse().map((h, i) => (
           <div key={i} className="ff-step">
@@ -257,7 +342,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
       )}
       {live && run?.capHit && <div className="ff-actor"><div className="ff-actor-head"><Icon name="alert" size={14} />It reached its limit ({run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs'}).</div><div className="ff-btnrow"><button className="ff-btn primary" disabled={!!busy} onClick={() => act({ action: 'resume' }, 'resume')}>Let it carry on</button></div></div>}
       {err && <div className="ff-issue error"><Icon name="alert" size={13} /><div>{err}</div></div>}
-      <p className="ff-hint">Tap a step to see what happened there and open that person's chat.</p>
+      <p className="ff-hint">{panel ? 'Tap someone at work to read their transcript live; tap a finished step to see what happened there.' : "Tap a step to see what happened there and open that person's transcript."}</p>
     </div>
   );
 
@@ -281,30 +366,48 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
   ].filter(Boolean) : [];
 
   return (
-    <div className="ff-editor ff-viewer">
+    <div className={'ff-editor ff-viewer' + (panel ? ' ff-panelmode' : '')}>
       <div className="ff-top">
         {onClose && <button className="ff-iconbtn" title="Back" onClick={onClose}><Icon name="back" size={16} /></button>}
         <span className="ff-name">{f.name}</span>
         <span className={'ff-runstate ' + st}>{live ? stateLabel : 'Replay'}</span>
+        {progress && <span className="ff-progress">{progress}</span>}
         <div className="ff-top-sp" />
+        {panel && <button className={'ff-btn' + (follow ? ' primary' : '')} title="Keep the view on where people are working" onClick={() => setFollow(v => !v)}><Icon name="route" size={14} />Follow</button>}
+        {panel && <button className={'ff-btn' + (drawer ? ' primary' : '')} onClick={() => setDrawer(v => !v)}><Icon name="sliders" size={14} />Details</button>}
         {controls.map(([a, label]) => (
           <button key={a} className={'ff-btn' + (a === 'stop' ? ' ghost' : '')} disabled={!!busy}
             onClick={() => { if (a === 'stop' && !window.confirm('Stop this factory? Its team stops; the worktree is kept.')) return; act({ action: a }, a); }}>{label}</button>
         ))}
       </div>
+      {needsBar}
+      {strip}
       <div className="ff-body">
         <div className="ff-canvas">
           <ReactFlow nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={onNodesChange}
             nodesDraggable={false} nodesConnectable={false} elementsSelectable
-            onNodeClick={(_, x) => { setSel(x.id); setTab('run'); }} onPaneClick={() => setSel(null)}
+            onNodeClick={(_, x) => {
+              const d = x.data?.doing;
+              const who = rosterOf(x.data?.node);
+              const chatId = d?.chatId || (live && run && who ? (who === MANAGER_ID ? run.managerChatId : run.employees?.[who]?.chatId) : '');
+              if (panel && chatId) { openPerson(chatId, d?.who || names.get(who) || 'Chat'); return; }
+              setSel(x.id); setTab('run'); if (panel) setDrawer(true);
+            }} onPaneClick={() => setSel(null)}
             fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.15} maxZoom={2} colorMode="dark" deleteKeyCode={null}
+            onMoveStart={(e) => { if (e && follow) setFollow(false); }}
             defaultEdgeOptions={{ markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 } }}>
             <Background gap={16} size={1} />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable nodeColor={(x) => x.data?.tokens?.length ? '#10b981' : x.data?.visited ? '#2f6f5a' : '#4b4b70'} nodeStrokeWidth={0} maskColor="rgba(10,10,15,0.65)" />
+            {!panel && <MiniMap pannable zoomable nodeColor={(x) => x.data?.tokens?.length ? '#10b981' : x.data?.visited ? '#2f6f5a' : '#4b4b70'} nodeStrokeWidth={0} maskColor="rgba(10,10,15,0.65)" />}
           </ReactFlow>
         </div>
-        <div className="ff-right">
+        {panel && chat && (
+          <div className="ff-chatover">
+            {/* The chat page brings its own header; its back arrow comes back here. */}
+            <iframe key={chat.chatId} src={'/chat/' + encodeURIComponent(chat.chatId) + '?in=graph'} title={chat.name} />
+          </div>
+        )}
+        <div className={'ff-right' + (panel ? ' ff-drawer' + (drawer ? ' open' : '') : '')}>
           <div className="ff-tabs">
             <button className={'ff-tab' + (tab === 'run' ? ' on' : '')} onClick={() => setTab('run')}><Icon name="sliders" size={14} /><span>{sel ? 'Step' : 'Run'}</span></button>
             <button className={'ff-tab' + (tab === 'timeline' ? ' on' : '')} onClick={() => setTab('timeline')}><Icon name="route" size={14} /><span>Timeline</span></button>
@@ -312,7 +415,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose }) {
           <div className="ff-panel">{tab === 'timeline' ? timelinePane() : sel ? nodeInfo() : runInfo()}</div>
         </div>
       </div>
-      {events.length > 1 && (
+      {events.length > 1 && !panel && (
         <div className="ff-replay">
           <button className="ff-iconbtn" title="Step back" disabled={n <= 1} onClick={() => setAt(Math.max(1, n - 1))}><Icon name="undo" size={15} /></button>
           <input type="range" min={1} max={events.length} value={n} onChange={e => { const v = +e.target.value; setAt(v >= events.length ? null : v); }} />

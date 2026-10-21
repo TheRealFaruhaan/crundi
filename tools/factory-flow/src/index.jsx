@@ -26,10 +26,10 @@ function mountEditor(el, { apiFetch, factoryId, onClose }) {
  * (its factoryRun event); without it the view polls. openChat(chatId, name)
  * opens a person's chat.
  */
-function mountViewer(el, { apiFetch, runId, subscribe, openChat, onClose }) {
+function mountViewer(el, { apiFetch, runId, subscribe, openChat, onClose, mode }) {
   const root = createRoot(el);
   el.classList.add('ff-host');
-  root.render(<Viewer apiFetch={apiFetch} runId={runId} subscribe={subscribe} openChat={openChat} onClose={onClose} />);
+  root.render(<Viewer apiFetch={apiFetch} runId={runId} subscribe={subscribe} openChat={openChat} onClose={onClose} mode={mode} />);
   return { destroy() { root.unmount(); el.classList.remove('ff-host'); } };
 }
 

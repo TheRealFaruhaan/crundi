@@ -80,7 +80,9 @@ export function FactoryNode({ data, selected }) {
       <Tokens tokens={data.tokens} blocked={data.blocked} />
       <div className="ff-node-head"><Icon name={m.icon} size={14} /><span className="ff-node-kind">{m.kind}</span></div>
       <div className="ff-node-title">{title(n, data)}</div>
-      <div className="ff-node-body">{data.live ? data.live : body(n, data)}</div>
+      {data.doing
+        ? <div className={'ff-node-doing' + (data.doing.state === 'working' ? ' busy' : '')} title={data.doing.chatId ? 'Tap to read the transcript' : ''}><span className="ff-pulse" /><span><b>{data.doing.who}</b> {data.doing.text}</span></div>
+        : <div className="ff-node-body">{data.live ? data.live : body(n, data)}</div>}
       {data.skills && data.skills.length > 0 && <div className="ff-node-skills">{data.skills.map(k => <span key={k}>/{k}</span>)}</div>}
       {outs.length > 0 && (
         <div className="ff-outs">

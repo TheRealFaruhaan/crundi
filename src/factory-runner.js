@@ -224,7 +224,9 @@ export function createFactoryRunner({
       }),
       employees: Object.fromEntries(s.snapshot.roster.map(x => {
         const e = L.employees[x.id] || {};
-        return [x.id, { chatId: e.chatId || '', busy: e.busy || null, queued: (e.queue || []).length, retired: !!r.retired[x.id], name: x.name }];
+        let activity = null;
+        if (e.chatId && agents.activity) { try { activity = agents.activity(e.chatId); } catch { activity = null; } }
+        return [x.id, { chatId: e.chatId || '', busy: e.busy || null, queued: (e.queue || []).length, retired: !!r.retired[x.id], name: x.name, ...(activity ? { activity } : {}) }];
       })),
       liveSessions: Object.values(L.employees).filter(e => e.chatId).length,
       usage: usageOf(r),
@@ -1942,6 +1944,44 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
       .map(m => String(m.input?.skill || m.input?.command || m.input?.name || '').replace(/^\//, ''))
       .filter(Boolean),
     patchCard: (id, entryId, patch) => claudeUi.patchCard(id, entryId, patch),
+    // What this person is doing right now, in a few words, for the live graph:
+    // the tool in flight (or the last one), thinking, or writing.
+    activity: (id) => {
+      const h = claudeUi.history(id);
+      if (!h) return null;
+      const msgs = h.messages || [];
+      const base = (p) => String(p || '').split(/[\\/]/).pop();
+      const clip = (t, n = 60) => { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+      let text = '';
+      for (let i = msgs.length - 1; i >= 0 && i >= msgs.length - 40; i--) {
+        const m = msgs[i];
+        if (m.kind === 'tool') {
+          const n = String(m.name || ''), inp = m.input || {};
+          text = /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(n) ? 'Editing ' + base(inp.file_path || inp.notebook_path)
+            : n === 'Read' ? 'Reading ' + base(inp.file_path)
+            : n === 'Bash' ? 'Running ' + clip(inp.command, 50)
+            : /^(Grep|Glob)$/.test(n) ? 'Searching ' + clip(inp.pattern, 40)
+            : /^Web/.test(n) ? 'Reading the web'
+            : /^(Task|Agent)$/.test(n) ? 'Delegating: ' + clip(inp.description, 40)
+            : n === 'Skill' ? 'Using /' + clip(inp.skill || inp.command, 30)
+            : /factory_handoff$/.test(n) ? 'Handing off'
+            : /factory_permission$/.test(n) ? 'Answering permissions'
+            : /factory_delegate$/.test(n) ? 'Handing out a job'
+            : /factory_status$/.test(n) ? 'Checking where the run stands'
+            : /factory_result$/.test(n) ? 'Acting on your decision'
+            : /rename_chat$/.test(n) ? 'Naming its chat'
+            : n === 'ToolSearch' ? 'Loading its tools'
+            : n === 'TodoWrite' ? 'Updating its to-do list'
+            : n.replace(/^mcp__\w+__/, '').replace(/_/g, ' ');
+          break;
+        }
+        if (m.kind === 'thinking') { text = 'Thinking'; break; }
+        if (m.kind === 'assistant-text') { text = 'Writing: ' + clip(m.text, 50); break; }
+        if (m.kind === 'user') { text = 'Reading its instructions'; break; }
+      }
+      const state = h.state || '';
+      return { state, text: state === 'idle' ? (text ? 'Idle · last: ' + text : 'Idle') : (text || 'Starting'), at: msgs.length ? (msgs[msgs.length - 1].at || '') : '' };
+    },
     // Cost and turns so far. The CLI's cost is cumulative per process, so a
     // relaunch on the same chat id (bypass, recovery) starts a new segment.
     usage: (id) => {

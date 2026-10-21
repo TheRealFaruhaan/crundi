@@ -510,6 +510,28 @@ pkill/killall joining the factory deny rules.
 - Start button, disabled with reason while a run exists.
 - Badge on the project and the Factories tab when a run is active or needs you.
 
+### 5.2a The panel during a run: the god's-eye view
+While a run is going, the project's Factory panel is its live graph, filling
+the panel (the same viewer as the Factories tab, `mode: 'panel'`):
+- **Working now** strip under the top bar: everyone at work, with what they
+  are doing this second (from their chat: the tool in flight, thinking,
+  writing), a pulse while their turn runs, amber when waiting on a
+  permission. Each opens that person's transcript.
+- **On the graph** each active step shows who is there and what they are
+  doing; the camera **follows the work** (zooms to the active steps and moves
+  with them; panning by hand stops it, the Follow button resumes).
+- **Tapping** someone at work opens their live transcript inside the panel
+  (the chat page with `?in=graph`, its own back arrow returns to the graph);
+  tapping a finished step opens its history in the Details drawer.
+- **Needs you** banner: crashed (Recover), done (Open the result), a limit
+  (Let it carry on), a question (Answer), the Manager talking to you (Open its
+  chat), paused (Resume).
+- Top bar: progress (handoffs, time, turns and spend, open findings), Follow,
+  Details (the run and timeline drawer), Pause and Stop.
+The summary carries each person's `activity`; the view refreshes every 3 s
+while visible. Without a run the panel is as before: Start, triggers,
+earlier runs.
+
 ### 5.2b Phone
 - The Manager's chat is an ordinary chat: it has its bubble, and its result
   card renders on the compact `/chat/<id>` page, which also shows a "Part of a

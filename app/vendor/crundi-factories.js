@@ -65,6 +65,7 @@
     '.fx-modal h3{margin:0;font-size:15px}',
     '.fx-modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}',
     '.fx-modal.fx-modal-wide{width:min(680px,100%)}',
+    '.fx-panel-live{position:absolute;inset:0;display:flex;flex-direction:column;min-height:0}',
     '.fx-section{display:flex;flex-direction:column;gap:2px;margin:18px 2px 10px;font-size:14px}',
     '.fx-section span{font-size:12.5px;color:var(--text-secondary)}',
     '.fx-tpl .fx-card-desc{-webkit-line-clamp:3}',
@@ -477,14 +478,43 @@
     var project = '';
     var off = onEvent(function (d) { if (!d.project || d.project === project) load(project); });
     var busy = false;
+    var live = null;   // { runId, view, host }: the live graph filling the panel while a run is going
+    function dropLive() { if (live) { try { live.view.destroy(); } catch (e) { /* gone */ } live = null; } }
     async function load(p) {
-      project = String(p || ctx.currentProject() || '').toLowerCase();
+      var next = String(p || ctx.currentProject() || '').toLowerCase();
+      if (next !== project) dropLive();
+      project = next;
       if (!project || busy) return;
       busy = true;
       var j = await getJson(ctx, '/api/factory-runs?project=' + encodeURIComponent(project)).catch(function () { return { runs: [] }; });
       busy = false;
       var runs = j.runs || [];
       var active = runs.filter(function (r) { return ['starting', 'running', 'waiting', 'paused', 'crashed', 'finishing'].indexOf(r.status) >= 0; })[0];
+      // A run is going: the panel is its live graph, the god's-eye view. It
+      // keeps itself up to date; only a different run (or none) replaces it.
+      if (active && live && live.runId === active.id) return;
+      dropLive();
+      // The live graph fills the panel; the list scrolls as before.
+      root.style.position = active ? 'relative' : '';
+      root.style.overflow = active ? 'hidden' : '';
+      // The pane gives its body a height, not the panel: take all of it.
+      root.style.height = active ? '100%' : '';
+      root.style.minHeight = active ? '0' : '';
+      if (active) {
+        root.innerHTML = '';
+        var host = el('div', 'fx-panel-live');
+        root.appendChild(host);
+        live = { runId: active.id, host: host, view: { destroy: function () {} } };
+        var mine = live;
+        try {
+          var F = await loadFlow(ctx);
+          if (live !== mine) return;
+          live.view = F.mountViewer(host, { apiFetch: ctx.apiFetch, runId: active.id, subscribe: onEvent, mode: 'panel', openChat: function (chatId, name) { openChat(ctx, chatId, name); } });
+        } catch (err) {
+          host.innerHTML = '<div class="fx-err">' + esc(err.message || 'The live graph did not load.') + '</div>';
+        }
+        return;
+      }
       var past = runs.filter(function (r) { return r !== active; }).slice(0, 8);
       root.innerHTML = '';
       var box = el('div', 'fx-panel');
@@ -544,7 +574,7 @@
       box.appendChild(await triggersSection(ctx, project, function () { load(project); }));
       root.appendChild(box);
     }
-    return { load: load, destroy: off };
+    return { load: load, destroy: function () { dropLive(); off(); } };
   }
 
   // ─── Waits ───

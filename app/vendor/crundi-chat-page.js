@@ -511,7 +511,8 @@
         view.applyHistory(msg.session);
         // The Manager of a factory run: a way to its live graph.
         var fb = $('cp-factory');
-        if (fb && msg.session && msg.session.factory && msg.session.factory.runId) {
+        // Not when shown inside the live graph itself (?in=graph): it is right there.
+        if (fb && !/[?&]in=graph(&|$)/.test(location.search) && msg.session && msg.session.factory && msg.session.factory.runId) {
           var runId = msg.session.factory.runId;
           fb.hidden = false;
           fb.onclick = function () { openMain('/#factory-run=' + encodeURIComponent(runId)); };
