@@ -3,6 +3,7 @@ import groovy.json.JsonSlurper
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Firebase's description of this app, for notifications. It is read from
@@ -32,8 +33,8 @@ android {
         applicationId = "mv.obitech.crundi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.0.2-dev.3"
+        versionCode = 16
+        versionName = "1.1.0-dev.1"
 
         // The oldest server this app can work with. The server holds the
         // mirror of this (MIN_CLIENT in src/client-version.js) and each side
@@ -113,6 +114,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -123,6 +125,16 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric (screenshot tests) needs the app's resources and manifest.
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.maxHeapSize = "1g"
+            // Screenshot tests always record (write the PNG), never compare:
+            // there is no golden set to compare with, the images are for people.
+            it.systemProperty("roborazzi.test.record", "true")
+            it.systemProperty("robolectric.graphicsMode", "NATIVE")
+            it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
+        }
     }
 }
 
@@ -134,13 +146,46 @@ val copyCrundiCode = tasks.register<Copy>("copyCrundiCode") {
 }
 tasks.named("preBuild") { dependsOn(copyCrundiCode) }
 
+// The screenshot tests write every screen to build/outputs/screens/. This
+// copies them to where the team wants them:
+//   ./gradlew --no-daemon testPlayDebugUnitTest exportScreens -PscreensDir=/path/to/shared/screens
+val exportScreens = tasks.register<Copy>("exportScreens") {
+    from(layout.projectDirectory.dir("build/outputs/screens"))
+    include("*.png")
+    into(providers.gradleProperty("screensDir").orElse(layout.buildDirectory.dir("screens-export").map { it.asFile.path }))
+}
+
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.core:core-ktx:1.17.0")
+
+    // The native UI: Jetpack Compose, one BOM pins every Compose library.
+    val composeBom = platform("androidx.compose:compose-bom:2025.05.01")
+    implementation(composeBom)
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.navigation:navigation-compose:2.9.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     implementation("com.google.firebase:firebase-messaging:24.1.0")
     // Draws a project's icon when it is a drawing (.svg): Android itself
     // reads pictures made of dots only, and many a favicon is not one.
     implementation("com.caverock:androidsvg-aar:1.4")
     testImplementation("junit:junit:4.13.2")
+    // Screenshot tests on the JVM (no emulator here): Robolectric draws, Roborazzi saves.
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("org.robolectric:robolectric:4.15.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.43.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.43.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-junit-rule:1.43.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.json:json:20240303")
 }

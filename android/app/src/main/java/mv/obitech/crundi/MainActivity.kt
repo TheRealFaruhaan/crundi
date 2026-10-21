@@ -1,8 +1,6 @@
 package mv.obitech.crundi
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -10,59 +8,84 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.ValueCallback
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import mv.obitech.crundi.ui.components.ButtonKind
+import mv.obitech.crundi.ui.components.CrundiButton
+import mv.obitech.crundi.ui.components.LoadingState
+import mv.obitech.crundi.ui.nav.DeepLinks
+import mv.obitech.crundi.ui.shell.CrundiApp
+import mv.obitech.crundi.ui.shell.CrundiMark
+import mv.obitech.crundi.ui.shell.Host
+import mv.obitech.crundi.ui.theme.CrundiColors
+import mv.obitech.crundi.ui.theme.CrundiType
+import mv.obitech.crundi.ui.theme.CrundiTheme
 
 /**
- * The app itself: the server's own page, in a web view, with the phone's
- * features round it.
+ * The app itself: the native Crundi UI for the current server.
  *
- * Before the page is shown the app asks the server who it is (the handshake)
- * and each side checks the other is not too old. Only then is the page loaded.
- * The first time after pairing, the page's login is handed to it in the part
- * of the address a browser never sends (#token=…), which the page already
- * knows how to take; after that the page keeps and renews it by itself.
+ * Before anything is shown the app asks the server who it is (the handshake)
+ * and each side checks the other is not too old. Only then is the UI shown.
+ * A tapped notification or live card arrives here with a server path
+ * (/chat/<id>), which is turned into a route (DeepLinks) and opened.
  */
-class MainActivity : Activity() {
-    private lateinit var root: FrameLayout
-    private var web: WebView? = null
+class MainActivity : ComponentActivity() {
     private var server: Server? = null
-    // Where to go once the page is up: set by a tapped notification.
-    private var pendingPath: String? = null
-    // Until when a "this chat is on screen" from the page is ignored: a bubble was just asked for.
-    @Volatile private var bubbleAskedUntil = 0L
-    private var fileCallback: ValueCallback<Array<Uri>>? = null
-    private var pendingPermission: PermissionRequest? = null
+    /** What is on screen: null while connecting, a Notice, or Ready. */
+    private var screen by mutableStateOf<Screen>(Screen.Connecting(""))
+    /** A route to open once the UI is up (from a notification). */
+    private var pendingRoute by mutableStateOf<String?>(null)
+    private var caughtUpAt = 0L
+
+    private sealed interface Screen {
+        data class Connecting(val host: String) : Screen
+        data class Notice(val text: String, val action: String?, val onAction: (() -> Unit)?) : Screen
+        data class Ready(val server: Server) : Screen
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        root = FrameLayout(this).apply { setBackgroundColor(getColor(R.color.bg)); fitsSystemWindows = true }
-        setContentView(root)
+        enableEdgeToEdge()
         take(intent)
+        setContent {
+            CrundiTheme {
+                Box(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
+                    when (val s = screen) {
+                        is Screen.Connecting -> LoadingState(text = if (s.host.isEmpty()) null else "Connecting to ${s.host}")
+                        is Screen.Notice -> NoticeScreen(s.text, s.action, s.onAction) { startActivity(Intent(this@MainActivity, PairActivity::class.java)) }
+                        is Screen.Ready -> CrundiApp(
+                            services = AppGraph.forServer(this@MainActivity, s.server),
+                            host = host,
+                            openRoute = pendingRoute,
+                            onOpened = { pendingRoute = null },
+                        )
+                    }
+                }
+            }
+        }
         open()
     }
 
-    private var caughtUpAt = 0L
-
-    /**
-     * Each time the app comes to the front: ask the server which chats are at
-     * work. The live card is otherwise drawn only from messages sent as a
-     * state changes, and a phone that missed one (it was paired a moment too
-     * late, or the message never arrived) showed nothing for that chat.
-     */
     /** Any touch or key: the hour before the app lets go of its connection starts again (Link). */
     override fun onUserInteraction() {
         super.onUserInteraction()
@@ -74,6 +97,11 @@ class MainActivity : Activity() {
         OnScreen.mainFocused = hasFocus
     }
 
+    /**
+     * Each time the app comes to the front: ask the server which chats are at
+     * work. The live card is otherwise drawn only from messages sent as a
+     * state changes, and a phone that missed one showed nothing for that chat.
+     */
     override fun onResume() {
         super.onResume()
         val s = server ?: return
@@ -88,38 +116,8 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         take(intent)
-        // Back from pairing, or sent to another server by a notification:
-        // there may be a different server to show.
-        if (server?.id != Servers.current(this)?.id) { open(); return }
-        // Same server, already showing: go there without loading anything.
-        if (web?.visibility == View.VISIBLE) go()
-    }
-
-    /**
-     * Go where the last intent pointed, in the page that is already loaded.
-     *
-     * Loading the address would work, and did, but it threw the whole page
-     * away to show one chat: a loading screen every time a bubble or a
-     * notification led here. A chat is opened by asking the page for it; the
-     * front page needs nothing at all. Only an address this cannot handle,
-     * or a page too old to be asked, is loaded.
-     */
-    private fun go() {
-        val path = pendingPath ?: return
-        val s = server ?: return
-        val w = web ?: return
-        pendingPath = null
-        val chat = Regex("^/chat/([A-Za-z0-9_-]{1,80})/?$").find(path)?.groupValues?.get(1)
-        val onMainPage = Uri.parse(w.url ?: "").path.let { it == null || it == "/" || it.isEmpty() }
-        when {
-            chat != null && onMainPage ->
-                w.evaluateJavascript("(function(){try{return !!(window.crundiOpenChat&&window.crundiOpenChat('$chat'))}catch(e){return false}})()") { answer ->
-                    if (answer != "true") w.loadUrl(s.baseUrl + path)
-                }
-            chat != null -> { pendingPath = path; w.loadUrl(s.baseUrl + "/") }      // the page will be asked once it has loaded
-            path == "/" || path.startsWith("/?") -> if (!onMainPage) w.loadUrl(s.baseUrl + "/")
-            else -> w.loadUrl(s.baseUrl + path)
-        }
+        // Back from pairing, or sent to another server by a notification.
+        if (server?.id != Servers.current(this)?.id) open()
     }
 
     /** Read where an intent wants to go: which server, and which of its pages. */
@@ -127,8 +125,7 @@ class MainActivity : Activity() {
         val id = intent?.getStringExtra(Notifier.EXTRA_SERVER).orEmpty()
         val path = intent?.getStringExtra(Notifier.EXTRA_PATH).orEmpty()
         if (id.isNotEmpty() && Servers.byId(this, id) != null) Servers.setCurrent(this, id)
-        // A path on the server and nothing else.
-        if (path.startsWith("/") && !path.startsWith("//")) pendingPath = path
+        DeepLinks.route(path)?.let { pendingRoute = it }
     }
 
     /** Show the current server, or the pairing screen if there is none. */
@@ -140,7 +137,7 @@ class MainActivity : Activity() {
             return
         }
         server = s
-        notice("Connecting to ${s.host}…", null)
+        screen = Screen.Connecting(s.host)
         Bg.run({ Api.handshake(s.baseUrl) }) { result ->
             if (server?.id != s.id || isFinishing) return@run
             val reply = result.getOrNull()
@@ -161,137 +158,29 @@ class MainActivity : Activity() {
                     "Try again",
                 ) { open() }
                 else -> {
-                    // The page's login is kept by the app when the server
-                    // offers that and this phone's web view can carry it
-                    // safely (see PageLogin). Decided here, at every opening,
-                    // and remembered for the bubbles, which do not ask.
-                    val appLogin = LoginChannel.supported && "app-page-login" in verdict.capabilities
-                    LoginChannel.setOn(applicationContext, s.id, appLogin)
-                    showPage(s, appLogin)
-                }
-            }
-        }
-    }
-
-    /** A plain statement over the whole screen, with at most one thing to do, and a way to another server. */
-    private fun notice(text: String, action: String?, onAction: (() -> Unit)? = null) {
-        web?.visibility = View.GONE
-        root.findViewWithTag<View>("notice")?.let { root.removeView(it) }
-        val col = Ui.column(this).apply { tag = "notice"; gravity = Gravity.CENTER }
-        col.addView(ImageView(this).apply { setImageResource(R.drawable.ic_logo) }, LinearLayout.LayoutParams(Ui.dp(this, 72), Ui.dp(this, 72)))
-        col.addView(Ui.body(this, text).apply { setTextColor(getColor(R.color.text)) }, Ui.wide(this, 20))
-        if (action != null && onAction != null) col.addView(Ui.button(this, action, true, onAction), Ui.wide(this, 24))
-        if (action != null) col.addView(Ui.button(this, "Connect to another server", false) { startActivity(Intent(this, PairActivity::class.java)) }, Ui.wide(this, 10))
-        root.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun showPage(s: Server, appLogin: Boolean = false) {
-        root.findViewWithTag<View>("notice")?.let { root.removeView(it) }
-        web?.let { root.removeView(it); it.destroy() }
-        val view = CrundiWebView(this)
-        web = view
-        view.setBackgroundColor(getColor(R.color.bg))
-        view.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            mediaPlaybackRequiresUserGesture = false
-            allowFileAccess = false
-            allowContentAccess = false
-            // The server reads this to know which app, and which version, is
-            // asking: it is how a too-old app is refused on every request.
-            userAgentString = "$userAgentString ${Api.UA_SUFFIX}"
-        }
-        CookieManager.getInstance().setAcceptCookie(true)
-        val base = Uri.parse(s.baseUrl)
-
-        view.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(v: WebView, url: String?) {
-                // A chat asked for before the page existed: ask now.
-                if (pendingPath != null) go()
-            }
-
-            override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
-                val u = request.url
-                // The server's own pages stay here. Anything else is somebody
-                // else's site, and opens in the browser, where the person can
-                // see where they are.
-                if (u.scheme == base.scheme && u.host == base.host && u.port == base.port) return false
-                if (!request.isForMainFrame) return false
-                try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (e: ActivityNotFoundException) { /* nothing can open it */ }
-                return true
-            }
-        }
-        view.webChromeClient = object : WebChromeClient() {
-            override fun onShowFileChooser(v: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
-                fileCallback?.onReceiveValue(null)
-                fileCallback = callback
-                return try {
-                    @Suppress("DEPRECATION")
-                    startActivityForResult(params.createIntent().apply { putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.mode == FileChooserParams.MODE_OPEN_MULTIPLE) }, REQ_FILE)
-                    true
-                } catch (e: ActivityNotFoundException) {
-                    fileCallback = null
-                    false
-                }
-            }
-
-            override fun onPermissionRequest(request: PermissionRequest) {
-                // Only the server's own page may have the camera or microphone,
-                // and only once Android has been asked on the person's behalf.
-                val o = request.origin
-                if (!(o.scheme == base.scheme && o.host == base.host && o.port == base.port)) { request.deny(); return }
-                val need = request.resources.mapNotNull {
-                    when (it) {
-                        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> Manifest.permission.CAMERA
-                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> Manifest.permission.RECORD_AUDIO
-                        else -> null
+                    // What this server can do, for the API client to read.
+                    ServerCaps.set(applicationContext, s.id, verdict.capabilities)
+                    // The login a pairing has just handed over for the UI is
+                    // taken into the app's keeping (PageLogin), where the API
+                    // client renews it, one renewal at a time.
+                    if (s.pageToken.isNotEmpty()) {
+                        PageLogin.adopt(applicationContext, s)
+                        s.pageToken = ""; s.pageRefresh = ""
+                        Servers.save(this, s)
                     }
+                    screen = Screen.Ready(s)
+                    askToNotify()
+                    Push.registerAll(this)
                 }
-                if (need.isEmpty()) { request.deny(); return }
-                val missing = need.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-                if (missing.isEmpty()) { request.grant(request.resources); return }
-                pendingPermission = request
-                requestPermissions(missing.toTypedArray(), REQ_PERMISSION)
             }
         }
-        view.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ -> Downloads.start(this, url, userAgent, contentDisposition, mimeType) }
-        // What the page may ask of the app. Nothing here returns anything
-        // private: these are reachable from any frame in the page, including
-        // ones showing other people's content, so they are limited to things
-        // it would be harmless for such a frame to ask for.
-        view.addJavascriptInterface(Bridge(), "CrundiNative")
-
-        root.addView(view, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        // Always the front page. If an intent pointed at a chat, the page is
-        // asked for it once it has loaded (see go).
-        if (appLogin) {
-            // The app keeps the page's login and renews it for every page
-            // (PageLogin). A login a pairing has just handed over is taken
-            // into its keeping; the page asks for it over the channel.
-            LoginChannel.attach(view, s)
-            if (s.pageToken.isNotEmpty()) {
-                PageLogin.adopt(applicationContext, s)
-                s.pageToken = ""; s.pageRefresh = ""
-                Servers.save(this, s)
-            }
-            view.loadUrl(s.baseUrl + "/")
-        } else {
-            // An older server: hand the page its login on the first load after
-            // pairing, then forget our copy. A refresh token is spent by using
-            // it, so two holders of one would cut each other off.
-            val handoff = if (s.pageToken.isNotEmpty()) "/#token=${s.pageToken}" + (if (s.pageRefresh.isNotEmpty()) "&refresh=${s.pageRefresh}" else "") else "/"
-            if (s.pageToken.isNotEmpty()) {
-                s.pageToken = ""; s.pageRefresh = ""
-                Servers.save(this, s)
-            }
-            view.loadUrl(s.baseUrl + handoff)
-        }
-        askToNotify()
-        Push.registerAll(this)
     }
 
-    /** Android 13 and later ask the person before an app may notify. Asked once, here, when there is a server to be notified by. */
+    private fun notice(text: String, action: String?, onAction: (() -> Unit)?) {
+        screen = Screen.Notice(text, action, onAction)
+    }
+
+    /** Android 13 and later ask the person before an app may notify. Asked once, when there is a server to be notified by. */
     private fun askToNotify() {
         if (!Push.available || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
@@ -299,6 +188,45 @@ class MainActivity : Activity() {
         if (prefs.getBoolean("asked.notify", false)) return
         prefs.edit().putBoolean("asked.notify", true).apply()
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+    }
+
+    // Until when "this chat is on screen" is ignored: a bubble was just asked for.
+    @Volatile private var bubbleAskedUntil = 0L
+
+    /** What the native screens ask of this window (the old page bridge, CrundiNative). */
+    private val host = object : Host {
+        override fun chatOnScreen(chatId: String, onScreen: Boolean) {
+            val s = server ?: return
+            if (!onScreen || !Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) return
+            // The bubble was asked for a moment ago, from this very screen:
+            // the app is on its way out, and this is the last look.
+            if (System.currentTimeMillis() < bubbleAskedUntil) return
+            // With a bubble open over it this window is still drawn but nobody
+            // is reading it: the bubble has the focus.
+            if (!hasWindowFocus()) return
+            OnScreen.seenInMain("chat:${s.id}:$chatId")
+            Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true, why = "the same chat is open in the main window")
+        }
+
+        override fun openBubble(chatId: String) {
+            withChat(chatId) { chat ->
+                val problem = Notifier.bubble(this@MainActivity, chat)
+                if (problem != null) { Toast.makeText(this@MainActivity, problem, Toast.LENGTH_LONG).show(); return@withChat }
+                // A chat open in this window loses its bubble, so the app steps aside.
+                bubbleAskedUntil = System.currentTimeMillis() + 6000
+                moveTaskToBack(true)
+            }
+        }
+
+        override fun openInMain(path: String) { DeepLinks.route(path)?.let { pendingRoute = it } }
+        override fun close() { moveTaskToBack(true) }
+        override fun pairAgain(reason: String) { this@MainActivity.pairAgain(reason) }
+        override fun pairAnother() { startActivity(Intent(this@MainActivity, PairActivity::class.java)) }
+        override fun openAppSettings() { startActivity(Intent(this@MainActivity, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)) }
+        override fun openExternal(url: String) {
+            if (!url.startsWith("https://") && !url.startsWith("http://")) return
+            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (e: ActivityNotFoundException) { /* nothing can open it */ }
+        }
     }
 
     /** Look a chat up on the server, for its name and mark, then hand it on. */
@@ -324,9 +252,6 @@ class MainActivity : Activity() {
                 if (x.optString("id") == chatId) found = ChatRef.from(s.id, org.json.JSONObject().put("id", chatId).put("title", x.optString("longTitle").ifEmpty { x.optString("title") }).put("project", x.optString("project")).put("mark", x.optJSONObject("mark")))
             }
             if (found != null) { then(found); return@run }
-            // Three different failures, and they used to read the same. The
-            // one that matters most is the app's own sign-in having ended:
-            // then nothing here works until the phone is paired again.
             val reply = result.getOrNull()
             when {
                 reply != null && (reply.status == 401 || reply.status == 403) -> pairAgain("This phone is no longer paired with ${s.host}. Pair it again to use bubbles and notifications.")
@@ -343,136 +268,53 @@ class MainActivity : Activity() {
         startActivity(Intent(this, PairActivity::class.java).putExtra(PairActivity.EXTRA_AGAIN, s.id))
     }
 
-    private inner class Bridge {
-        /** "Pair this phone", on the screen the page shows in place of a sign-in form. */
-        @JavascriptInterface fun pair() { runOnUiThread { pairAgain() } }
-
-        /** The page saying it is signed out. Nothing to do yet: the person is looking at that screen, and its button is pair(). */
-        @JavascriptInterface fun unpaired() { }
-
-        /** The back arrow in the compact chat. Here there is no bubble to put away, so it is plain back. */
-        @JavascriptInterface fun close() { runOnUiThread { goBack() } }
-
-        /** "Open in Crundi" from the compact chat: show a path of the server's in this window. */
-        @JavascriptInterface fun openMain(path: String) {
-            val s = server ?: return
-            // A path on the server and nothing else: never an address a frame chose.
-            if (!path.startsWith("/") || path.startsWith("//")) return
-            runOnUiThread { web?.loadUrl(s.baseUrl + path) }
-        }
-
-        /** The compact chat saying what it is showing. */
-        @JavascriptInterface fun chatState(json: String) { /* nothing listens here */ }
-
-        /** What this build of the app can do, so the page offers only that: a comma-separated list. */
-        @JavascriptInterface fun can(): String = listOfNotNull(
-            "settings", "download", "pair",
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) "bubble" else null,
-        ).joinToString(",")
-
-        /** The page saying a chat is on screen: its notification has done its job. */
-        @JavascriptInterface fun seen(chatId: String) {
-            val s = server ?: return
-            if (!Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) return
-            // Bubble and all: the chat is open right here. Unless the bubble
-            // was asked for a moment ago, from this very screen: then the app
-            // is on its way out, and this is the last look before it goes.
-            if (System.currentTimeMillis() < bubbleAskedUntil) return
-            runOnUiThread {
-                // With a bubble open over it this window is still drawn, and
-                // its page still counts itself visible, but nobody is
-                // reading it: the bubble has the focus. Taking the bubble
-                // down from underneath is exactly the wrong way round.
-                if (!hasWindowFocus()) return@runOnUiThread
-                // In front of the person: a notification for it is left out (OnScreen).
-                OnScreen.seenInMain("chat:${s.id}:$chatId")
-                Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true, why = "the same chat is open in the main window")
-            }
-        }
-
-        /** "App settings" in the sidebar. */
-        @JavascriptInterface fun openSettings() { runOnUiThread { startActivity(Intent(this@MainActivity, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION)) } }
-
-        /**
-         * Save a file from the server. The page gives a full address on the
-         * server; the phone's own downloader fetches it into Downloads.
-         */
-        @JavascriptInterface fun download(url: String, name: String) {
-            runOnUiThread { Downloads.fromPage(this@MainActivity, server, url, name, web?.settings?.userAgentString) }
-        }
-
-        /** "Open as bubble" in a chat's menu. */
-        @JavascriptInterface fun openBubble(chatId: String) {
-            runOnUiThread {
-                withChat(chatId) { chat ->
-                    val problem = Notifier.bubble(this@MainActivity, chat)
-                    if (problem != null) { Toast.makeText(this@MainActivity, problem, Toast.LENGTH_LONG).show(); return@withChat }
-                    // The point of a bubble is to carry on with something
-                    // else while the chat floats, so the app steps aside. It
-                    // has to: a chat open in this window loses its bubble.
-                    bubbleAskedUntil = System.currentTimeMillis() + 6000
-                    moveTaskToBack(true)
-                }
-            }
-        }
-
-    }
-
-    @Deprecated("The platform's own result call; enough for the file chooser.")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_FILE) return
-        fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data) ?: multiple(data))
-        fileCallback = null
-    }
-
-    // Several files come back as clip data, which parseResult does not read.
-    private fun multiple(data: Intent?): Array<Uri>? {
-        val clip = data?.clipData ?: return null
-        return Array(clip.itemCount) { clip.getItemAt(it).uri }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQ_PERMISSION) return
-        val req = pendingPermission ?: return
-        pendingPermission = null
-        if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) req.grant(req.resources) else req.deny()
-    }
-
     /**
      * The person is leaving the app (home, or another app) while chats are
      * still at work. Put a bubble up for each, closed, so that what is
-     * running stays one touch away. It has to be done here, on the way out:
-     * Android lets an app raise a bubble only while it is still in front.
+     * running stays one touch away. Android lets an app raise a bubble only
+     * while it is still in front, so it is done here, on the way out.
      */
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val s = server ?: return
-        // Picking a file also "leaves" for a moment. That is not leaving.
-        if (fileCallback != null || pendingPermission != null) return
+        if (Pickers.active) return     // picking a file "leaves" for a moment: that is not leaving
         if (!getSharedPreferences("crundi", Context.MODE_PRIVATE).getBoolean(PREF_BUBBLE_ON_LEAVE, true)) return
         for (chat in LiveCards.active(this, s.id)) Notifier.bubble(this, chat, expand = false)
     }
 
-    private fun goBack() {
-        val w = web
-        if (w != null && w.visibility == View.VISIBLE && w.canGoBack()) w.goBack() else moveTaskToBack(true)
-    }
-
-    @Deprecated("Still what a plain Activity is given for the back gesture.")
-    override fun onBackPressed() = goBack()
-
-    override fun onDestroy() {
-        web?.destroy()
-        web = null
-        super.onDestroy()
-    }
-
     companion object {
-        private const val REQ_FILE = 2
-        private const val REQ_PERMISSION = 3
         private const val REQ_NOTIFY = 4
         const val PREF_BUBBLE_ON_LEAVE = "bubble.onleave"
     }
+}
+
+/** A plain statement over the whole screen, with at most one thing to do, and a way to another server. */
+@Composable
+private fun NoticeScreen(text: String, action: String?, onAction: (() -> Unit)?, onOtherServer: () -> Unit) {
+    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 380.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            CrundiMark(size = 72.dp)
+            Text(text, style = CrundiType.Body, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
+            if (action != null && onAction != null) CrundiButton(action, onAction, kind = ButtonKind.Primary, modifier = Modifier.fillMaxWidth())
+            if (action != null) CrundiButton("Connect to another server", onOtherServer, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/**
+ * Whether a system picker (files, camera) is open on top of the app. Set by
+ * whoever launches one, so leaving for it does not put bubbles up.
+ */
+object Pickers {
+    @Volatile var active: Boolean = false
+}
+
+/** What each server said it can do in its handshake (Gate.Verdict.capabilities). */
+object ServerCaps {
+    fun set(ctx: Context, serverId: String, caps: Set<String>) {
+        ctx.getSharedPreferences("crundi", Context.MODE_PRIVATE).edit().putStringSet("caps.$serverId", caps).apply()
+    }
+
+    fun get(ctx: Context, serverId: String): Set<String> =
+        ctx.getSharedPreferences("crundi", Context.MODE_PRIVATE).getStringSet("caps.$serverId", emptySet()) ?: emptySet()
 }

@@ -139,6 +139,7 @@ class PairActivity : Activity() {
             LiveCards.forget(applicationContext, old.id)
             Icons.forget(old.id)
             PageLogin.forget(applicationContext, old.id)
+            AppGraph.forget(old.id)
             Servers.remove(this, old.id)
         }
         Servers.save(this, server)
