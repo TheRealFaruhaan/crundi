@@ -16,6 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import java.util.Locale
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import mv.obitech.crundi.api.model.AgentState
 import mv.obitech.crundi.api.model.ChatSuggestion
 import mv.obitech.crundi.api.model.PendingInjection
 import mv.obitech.crundi.api.model.SlashCommand
@@ -75,9 +81,27 @@ interface ComposerActions {
     fun useSuggestion(s: ChatSuggestion) {}
     fun dismissSuggestion() {}
     fun agents() {}
+    fun tasks() {}
+    /** Swap what the keyboard's Enter does: send, or a new line. */
+    fun toggleEnter() {}
 }
 
-/** The bottom of a chat: what is queued, the suggestion, uploads, slash list, the box and its controls. */
+/** The status line's first words (the web's stateLbl). */
+fun stateLine(state: AgentState, exited: Boolean): String = when {
+    exited -> "exited"
+    state == AgentState.Working -> "working…"
+    state == AgentState.NeedsInput -> "needs your input"
+    else -> "idle"
+}
+
+/**
+ * The bottom of a chat, as the mobile web lays it out (.cc-narrow): what is
+ * queued, the suggestion, uploads and the slash list; then the message box on
+ * its own full-width row; under it attach, the schedule clock, Stop (only
+ * while a turn runs; the first tap asks "Sure?") and a wide Send, which says
+ * Queue while Claude is busy; and the status line: state, the permission-mode
+ * icon, the Enter toggle, the model and the cost.
+ */
 @Composable
 fun Composer(
     draft: String,
@@ -94,8 +118,12 @@ fun Composer(
     pending: List<PendingInjection> = emptyList(),
     suggestion: ChatSuggestion? = null,
     uploads: List<UploadUi> = emptyList(),
-    agentsRunning: Int = 0,
-    agentsTotal: Int = 0,
+    /** Messages waiting on the clock for this chat's project: the count on it. */
+    scheduled: Int = 0,
+    scheduleOpen: Boolean = false,
+    onSchedule: () -> Unit = {},
+    /** Enter sends (the keyboard's action key is Send) or makes a new line. */
+    enterSends: Boolean = true,
 ) {
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.Border))
@@ -111,13 +139,6 @@ fun Composer(
                     Text(suggestion.text, style = ChatType.Small.copy(color = CrundiColors.TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 6.dp).widthIn(max = 280.dp))
                     CrundiIconButton("x", actions::dismissSuggestion, contentDescription = "Dismiss suggestion", size = 13.dp, touch = 34.dp)
                 }
-            }
-            for (u in uploads) Row(Modifier.fillMaxWidth().padding(bottom = 6.dp, start = 2.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(u.name, style = CrundiType.Meta, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Box(Modifier.weight(2f).height(4.dp).clip(RoundedCornerShape(99.dp)).background(CrundiColors.BgTertiary)) {
-                    Box(Modifier.fillMaxWidth(u.fraction.coerceIn(0f, 1f)).height(4.dp).clip(RoundedCornerShape(99.dp)).background(CrundiColors.Accent))
-                }
-                Text("${(u.fraction * 100).toInt()}%", style = CrundiType.Meta, modifier = Modifier.widthIn(min = 34.dp))
             }
             val matches = slashMatches(draft, commands)
             if (matches.isNotEmpty()) {
@@ -140,49 +161,84 @@ fun Composer(
                 draft, actions::draft,
                 placeholder = if (ended) "Session ended." else "Message Claude…",
                 singleLine = false, maxLines = 6, enabled = !ended,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = if (enterSends) ImeAction.Send else ImeAction.Default),
+                keyboardActions = KeyboardActions(onSend = { actions.send() }),
                 modifier = Modifier.fillMaxWidth(),
             )
+            // Upload progress sits between the box and its buttons (.cc-up).
+            for (u in uploads) Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 2.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(u.name, style = CrundiType.Meta, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Box(Modifier.weight(2f).height(4.dp).clip(RoundedCornerShape(99.dp)).background(CrundiColors.BgTertiary)) {
+                    Box(Modifier.fillMaxWidth(u.fraction.coerceIn(0f, 1f)).height(4.dp).clip(RoundedCornerShape(99.dp)).background(CrundiColors.Accent))
+                }
+                Text("${(u.fraction * 100).toInt()}%", style = CrundiType.Meta, modifier = Modifier.widthIn(min = 34.dp))
+            }
             Row(Modifier.fillMaxWidth().padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 BoxButton("paperclip", "Attach a file", actions::attach, enabled = !ended && uploads.isEmpty())
-                val m = permMode(mode)
-                BoxButton(m.icon, "Permission mode: ${m.name}. Change", actions::modeSheet, tint = m.color, enabled = !ended,
-                    border = if (m.key == "plan") CrundiColors.Sky.copy(alpha = 0.45f) else if (m.key == "bypassPermissions") CrundiColors.Red.copy(alpha = 0.5f) else CrundiColors.Border)
-                Row(
-                    Modifier.height(40.dp).clip(Dimens.ShapeSm).background(CrundiColors.BgPrimary).border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm)
-                        .clickable(enabled = !ended, onClick = actions::modelSheet).padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    Text(shortModel(model).ifEmpty { "model" }, style = CrundiType.Meta.copy(color = CrundiColors.TextSecondary), maxLines = 1)
-                    CrundiIcon("chevron-down", size = 11.dp, tint = CrundiColors.TextMuted)
+                Box {
+                    BoxButton(
+                        "clock", if (scheduled > 0) "Schedule a message. $scheduled waiting" else "Schedule a message", onSchedule,
+                        tint = if (scheduleOpen || scheduled > 0) CrundiColors.AccentHover else CrundiColors.TextSecondary,
+                        border = if (scheduleOpen) CrundiColors.Accent else CrundiColors.Border,
+                    )
+                    ScheduleCount(scheduled, Modifier.align(Alignment.TopEnd).padding(top = 2.dp, end = 2.dp))
                 }
-                if (agentsTotal > 0) Row(
-                    Modifier.height(40.dp).clip(RoundedCornerShape(99.dp)).background(CrundiColors.BgPrimary).border(Dimens.Hairline, CrundiColors.Border, RoundedCornerShape(99.dp))
-                        .clickable(onClick = actions::agents).padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (agentsRunning > 0) Spinner(10.dp) else CrundiIcon("layers", size = 14.dp, tint = CrundiColors.TextSecondary)
-                    Text("$agentsTotal", style = CrundiType.Meta.copy(color = CrundiColors.TextPrimary, fontWeight = FontWeight.SemiBold))
-                }
-                Spacer(Modifier.weight(1f))
                 if (busy) Row(
-                    Modifier.height(40.dp).clip(Dimens.ShapeSm).background(if (stopArmed) CrundiColors.RedDim else CrundiColors.BgPrimary)
+                    Modifier.height(40.dp).widthIn(min = 40.dp).clip(Dimens.ShapeSm).background(if (stopArmed) CrundiColors.RedDim else CrundiColors.BgPrimary)
                         .border(Dimens.Hairline, if (stopArmed) CrundiColors.Red else CrundiColors.Border, Dimens.ShapeSm)
-                        .clickable(onClick = actions::stop).padding(horizontal = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        .clickable(onClickLabel = if (stopArmed) "Stop: tap again to be sure" else "Stop", onClick = actions::stop).padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
                 ) {
                     CrundiIcon("stop", size = 15.dp, tint = CrundiColors.Red, contentDescription = "Stop")
                     if (stopArmed) Text("Sure?", style = CrundiType.Meta.copy(color = CrundiColors.Red, fontFamily = CrundiType.Sans))
                 }
-                CrundiButton("Send", actions::send, kind = ButtonKind.Primary, icon = "send", enabled = !ended && draft.isNotBlank())
+                CrundiButton(
+                    if (busy) "Queue" else "Send", actions::send, kind = ButtonKind.Primary, icon = if (busy) "layers" else "send",
+                    enabled = !ended && draft.isNotBlank(), modifier = Modifier.weight(1f).height(40.dp),
+                )
             }
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(top = 7.dp, start = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                val lively = busy || stateWords == "needs your input"
                 if (busy) Spinner(8.dp)
-                Text(stateWords, style = CrundiType.Meta.copy(color = if (busy) CrundiColors.AccentHover else CrundiColors.TextMuted, fontFamily = CrundiType.Sans, fontSize = 10.5.sp))
-                Text(permMode(mode).name.lowercase(), style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 10.5.sp))
+                Text(stateWords, style = CrundiType.Meta.copy(color = if (lively) CrundiColors.AccentHover else CrundiColors.TextMuted, fontFamily = CrundiType.Sans, fontSize = 10.5.sp), maxLines = 1)
+                val m = permMode(mode)
+                Box(
+                    Modifier.height(28.dp).widthIn(min = 34.dp).clip(RoundedCornerShape(5.dp)).background(CrundiColors.BgPrimary)
+                        .border(Dimens.Hairline, if (m.key == "plan") CrundiColors.Sky.copy(alpha = 0.45f) else if (m.key == "bypassPermissions") CrundiColors.Red.copy(alpha = 0.5f) else CrundiColors.Border, RoundedCornerShape(5.dp))
+                        .clickable(enabled = !ended, onClickLabel = "Change the permission mode", onClick = actions::modeSheet),
+                    contentAlignment = Alignment.Center,
+                ) { CrundiIcon(m.icon, size = 14.dp, tint = m.color, contentDescription = "Permission mode: ${m.name}") }
+                EnterToggle(enterSends, actions::toggleEnter)
                 Spacer(Modifier.weight(1f))
-                if (cost > 0) Text("$" + "%.2f".format(cost), style = CrundiType.Meta.copy(fontSize = 10.5.sp))
+                if (model.isNotEmpty()) Text(
+                    model, style = CrundiType.Meta.copy(fontSize = 10.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 130.dp).clip(RoundedCornerShape(4.dp)).clickable(enabled = !ended, onClickLabel = "Change the model", onClick = actions::modelSheet).padding(vertical = 4.dp),
+                )
+                if (cost > 0) Text("$" + "%.4f".format(Locale.US, cost), style = CrundiType.Meta.copy(fontSize = 10.5.sp))
             }
         }
+    }
+}
+
+/** The "sends" switch (.cc-toggle .cc-sw): the thumb sits over what the Enter key does now. */
+@Composable
+private fun EnterToggle(sends: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(RoundedCornerShape(99.dp)).clickable(onClickLabel = if (sends) "Enter sends. Make it a new line" else "Enter makes a new line. Make it send", onClick = onClick).padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Row(Modifier.clip(RoundedCornerShape(99.dp)).background(CrundiColors.BgTertiary).padding(2.dp)) {
+            for ((i, label) in listOf("\u23CE", "\u2303\u23CE").withIndex()) {
+                val on = (i == 0) == sends
+                Text(
+                    label, style = CrundiType.Code.copy(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = if (on) CrundiColors.AccentHover else CrundiColors.TextSecondary.copy(alpha = 0.45f)),
+                    modifier = Modifier.clip(RoundedCornerShape(99.dp))
+                        .then(if (on) Modifier.background(CrundiColors.AccentDim).border(Dimens.Hairline, CrundiColors.Accent, RoundedCornerShape(99.dp)) else Modifier)
+                        .padding(horizontal = 7.dp, vertical = 1.dp),
+                )
+            }
+        }
+        Text("sends", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 10.5.sp, color = CrundiColors.TextSecondary))
     }
 }
 

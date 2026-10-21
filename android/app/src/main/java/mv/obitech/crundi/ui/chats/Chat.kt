@@ -11,6 +11,18 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.sp
+import mv.obitech.crundi.ui.workbench.LocalPane
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -63,7 +75,6 @@ import mv.obitech.crundi.ui.components.Banner
 import mv.obitech.crundi.ui.components.CrundiIconButton
 import mv.obitech.crundi.ui.components.DialogCard
 import mv.obitech.crundi.ui.components.LoadingState
-import mv.obitech.crundi.ui.components.TopBar
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.nav.LocalNavigator
 import mv.obitech.crundi.ui.shell.ChatOnScreenEffect
@@ -80,7 +91,8 @@ sealed interface ChatSheet {
     data object Model : ChatSheet
     data class Rename(val value: String) : ChatSheet
     data object Close : ChatSheet
-    data object Agents : ChatSheet
+    /** The subagents (kind "agent") or the background commands ("task"). */
+    data class Agents(val kind: String = "agent") : ChatSheet
     data class Agent(val toolUseId: String) : ChatSheet
     data class Picture(val media: ChatMedia) : ChatSheet
 }
@@ -104,6 +116,14 @@ data class ChatUi(
     val notice: String? = null,
     val error: String? = null,
     val isBubble: Boolean = false,
+    /** Inside a Workbench pane: the pane's frame draws the header, so this leaves its own out. */
+    val inPane: Boolean = false,
+    /** The composer's clock and its panel. */
+    val schedule: ScheduleUi = ScheduleUi(),
+    /** The keyboard's Enter sends (true) or makes a new line. */
+    val enterSends: Boolean = true,
+    /** The project's own icon (/api/project-icon?..), for the header's tile. */
+    val projectIcon: String? = null,
 ) {
     val title get() = pane?.label?.takeIf { it.isNotEmpty() } ?: chat.title.ifEmpty { "Chat" }
     val pending get() = chat.pendingInjections + localPending.filter { l -> chat.pendingInjections.none { it.uuid == l.uuid && l.uuid.isNotEmpty() } }
@@ -111,7 +131,7 @@ data class ChatUi(
 }
 
 /** Everything the chat screen can be asked to do. */
-interface ChatActions : EntryActions, ComposerActions {
+interface ChatActions : EntryActions, ComposerActions, ScheduleActions {
     fun back() {}
     fun sheet(s: ChatSheet?) {}
     fun setMode(mode: String) {}
@@ -131,26 +151,23 @@ private fun activity(c: ChatState): String? {
     return when (last.kind) { "user" -> "Thinking"; "tool" -> "Working"; else -> "Working" }
 }
 
-/** One chat: the conversation, live, and the composer. The same screen in the app and in a bubble. */
+/**
+ * One chat: the conversation, live, and the composer. Full screen and in a
+ * bubble it has the compact page's own header (crundi-chat-page.js #cp-head:
+ * back, the project's tile, the chat's title over its state and project, the
+ * menu); inside a Workbench pane the pane's frame is the header. The pane's
+ * text size (A-/A+) scales every word in it.
+ */
 @Composable
 fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) {
     val c = ui.chat
-    Box(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
+    val pane = LocalPane.current
+    val d = LocalDensity.current
+    CompositionLocalProvider(LocalDensity provides Density(d.density, d.fontScale * (pane?.fontScale ?: 1f))) {
+    BoxWithConstraints(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
+        val tall = maxHeight
         Column(Modifier.fillMaxSize().imePadding()) {
-            TopBar(
-                ui.title,
-                subtitle = listOfNotNull(
-                    if (c.exited) "ended" else c.state.words(),
-                    shortModel(c.model).takeIf { it.isNotEmpty() },
-                    c.factory?.role?.takeIf { it.isNotEmpty() }?.let { "factory " + it.lowercase() },
-                ).joinToString(" · "),
-                onBack = actions::back,
-                actions = {
-                    if (ui.isBubble) CrundiIconButton("maximize", actions::openInMain, contentDescription = "Open in Crundi")
-                    else CrundiIconButton("layers", actions::bubble, contentDescription = "Open as bubble")
-                    CrundiIconButton("more", { actions.sheet(ChatSheet.Menu) }, contentDescription = "Chat actions")
-                },
-            )
+            if (!ui.inPane) ChatHeader(ui, actions)
             if (!c.loaded) { LoadingState(Modifier.weight(1f), text = "Opening the chat"); return@Column }
             val entries = c.visible
             val act = activity(c)
@@ -161,32 +178,96 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
                 val nearEnd = info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 3 } ?: true
                 if (nearEnd && info.totalItemsCount > 0) list.animateScrollToItem(info.totalItemsCount - 1)
             }
-            LazyColumn(
-                Modifier.weight(1f).fillMaxWidth(), state = list,
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(entries, key = { it.id.ifEmpty { it.seq.toString() } }) { e ->
-                    ChatEntryView(e, c.id, ui.open, actions, c.agents, ui.busyEntries, ui.factoryDiffs)
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    Modifier.fillMaxSize(), state = list,
+                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 48.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(entries, key = { it.id.ifEmpty { it.seq.toString() } }) { e ->
+                        ChatEntryView(e, c.id, ui.open, actions, c.agents, ui.busyEntries, ui.factoryDiffs)
+                    }
+                    if (act != null) item(key = "~activity") { ActivityRow(act) }
+                    if (c.exited) item(key = "~ended") {
+                        Banner("This chat's Claude has ended" + (c.exitCode?.takeIf { it != 0 }?.let { " (code $it)" } ?: "") + ". Put it away and resume it from the Workbench, or start a new chat.", kind = BadgeKind.Neutral, icon = "info")
+                    }
                 }
-                if (act != null) item(key = "~activity") { ActivityRow(act) }
-                if (c.exited) item(key = "~ended") {
-                    Banner("This chat's Claude has ended" + (c.exitCode?.takeIf { it != 0 }?.let { " (code $it)" } ?: "") + ". Start a new chat or resume this conversation from Chats.", kind = BadgeKind.Neutral, icon = "info")
+                // Background commands and subagents, each a pill with a count (.cc-agbadges).
+                val shown = c.agents.values.filter { !it.dismissed }
+                Row(Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AgentBadge("terminal", shown.filter { it.kind == "task" }, "background command", "background commands", actions::tasks)
+                    AgentBadge("layers", shown.filter { it.kind != "task" }, "agent", "agents", actions::agents)
                 }
             }
             if (ui.error != null) Banner(ui.error, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), kind = BadgeKind.Bad, icon = "alert-triangle")
             if (ui.notice != null) Banner(ui.notice, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), kind = BadgeKind.Good, icon = "check")
-            val agents = c.agents.values.filter { !it.dismissed }
             Composer(
                 ui.draft, actions,
                 busy = ui.busy, ended = c.exited, stopArmed = ui.stopArmed,
                 mode = c.permissionMode.ifEmpty { if (c.skipPermissions) "bypassPermissions" else "default" },
-                model = c.model, stateWords = if (c.exited) "ended" else c.state.words(), cost = c.totalCostUsd,
+                model = c.model, stateWords = stateLine(c.state, c.exited), cost = c.totalCostUsd,
                 commands = c.slashCommands, pending = ui.pending, suggestion = c.suggestion, uploads = ui.uploads,
-                agentsRunning = agents.count { it.running }, agentsTotal = agents.size,
+                scheduled = ui.schedule.items.size, scheduleOpen = ui.schedule.open, onSchedule = actions::schedule,
+                enterSends = ui.enterSends,
             )
         }
+        if (ui.schedule.open && c.loaded) SchedulePanel(
+            ui.schedule, actions,
+            Modifier.align(Alignment.BottomCenter).padding(8.dp).heightIn(max = tall * 0.82f),
+        )
         ui.sheet?.let { s -> SheetOverlay({ actions.sheet(null) }) { ChatSheetContent(s, ui, actions) } }
+    }
+    }
+}
+
+/** The compact chat page's header (#cp-head): back, the tile, the title over a dot and the project, then the menu. */
+@Composable
+private fun ChatHeader(ui: ChatUi, actions: ChatActions) {
+    val c = ui.chat
+    val project = c.project.ifEmpty { ui.pane?.project.orEmpty() }
+    Column(Modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 56.dp).padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            CrundiIconButton("arrow-left", actions::back, contentDescription = if (ui.isBubble) "Put the bubble away" else "Back")
+            MarkTile(chatMark(project, ui.title), ui.projectIcon, 38.dp)
+            Column(Modifier.weight(1f)) {
+                Text(ui.title, style = CrundiType.Body.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Dot(if (c.exited) CrundiColors.TextMuted else c.state.dot().color, 7.dp)
+                    Text(
+                        listOfNotNull(
+                            project.ifEmpty { null },
+                            if (c.exited) "ended" else stateLine(c.state, false).takeIf { it != "idle" },
+                            c.factory?.role?.takeIf { it.isNotEmpty() }?.let { "factory " + it.lowercase() },
+                        ).joinToString(" · ").ifEmpty { "idle" },
+                        style = CrundiType.Small.copy(fontSize = 12.sp, color = CrundiColors.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (ui.isBubble) CrundiIconButton("maximize", actions::openInMain, contentDescription = "Open in Crundi")
+            CrundiIconButton("more", { actions.sheet(ChatSheet.Menu) }, contentDescription = "Chat actions")
+        }
+        Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.BorderSubtle))
+    }
+}
+
+/** One of the floating pills over the log (.cc-agbadge): icon, count, a spinner while any runs, else a green dot. */
+@Composable
+private fun AgentBadge(icon: String, list: List<mv.obitech.crundi.api.model.ChatAgent>, one: String, many: String, onClick: () -> Unit) {
+    if (list.isEmpty()) return
+    val running = list.count { it.running }
+    val shape = RoundedCornerShape(99.dp)
+    Row(
+        Modifier.heightIn(min = 32.dp).shadow(6.dp, shape).clip(shape).background(CrundiColors.BgSecondary).border(Dimens.Hairline, CrundiColors.Border, shape)
+            .clickable(onClickLabel = "${list.size} " + (if (list.size == 1) one else many) + if (running > 0) ", $running running" else ", all finished", onClick = onClick)
+            .padding(start = 9.dp, end = 11.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        CrundiIcon(icon, size = 15.dp, tint = if (running > 0) CrundiColors.AccentHover else CrundiColors.TextSecondary)
+        Text("${list.size}", style = CrundiType.Code.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = CrundiColors.TextPrimary))
+        if (running > 0) Spinner(10.dp) else Dot(CrundiColors.Green)
     }
 }
 
@@ -232,9 +313,9 @@ private fun ChatSheetContent(s: ChatSheet, ui: ChatUi, a: ChatActions) {
             "Close chat", message = "Its Claude ends now. The conversation stays on the server and can be resumed from a new chat.",
             confirm = "Close chat", danger = true, onConfirm = { close(); a.close() }, onDismiss = close,
         )
-        ChatSheet.Agents -> SheetCard("Agents", close) {
-            val agents = ui.chat.agents.values.filter { !it.dismissed }
-            if (agents.isEmpty()) Text("No agents in this chat.", style = CrundiType.Small, modifier = Modifier.padding(10.dp))
+        is ChatSheet.Agents -> SheetCard(if (s.kind == "task") "Background commands" else "Agents", close) {
+            val agents = ui.chat.agents.values.filter { !it.dismissed && (it.kind == "task") == (s.kind == "task") }
+            if (agents.isEmpty()) Text(if (s.kind == "task") "No background commands in this chat." else "No agents in this chat.", style = CrundiType.Small, modifier = Modifier.padding(10.dp))
             Column(Modifier.heightIn(max = 420.dp)) {
                 for (ag in agents) Row(
                     Modifier.fillMaxWidth().clickable { a.sheet(ChatSheet.Agent(ag.toolUseId)) }.padding(horizontal = 8.dp, vertical = 9.dp),
@@ -310,9 +391,30 @@ fun ChatRoute(chatId: String) {
     ChatOnScreenEffect(chatId, host)
     val chat by remember(chatId) { api.chat(chatId) }.collectAsState(ChatState(chatId))
     val server by api.events.state.collectAsState(initial = api.events.lastState)
-    var ui by remember(chatId) { mutableStateOf(ChatUi(ChatState(chatId), isBubble = host.isBubble)) }
+    val services = LocalAppServices.current
+    val shellData by services.shell.state.collectAsState()
+    val prefs = remember { ctx.getSharedPreferences("crundi_chat", Context.MODE_PRIVATE) }
+    val inPane = LocalPane.current != null
+    var ui by remember(chatId) { mutableStateOf(ChatUi(ChatState(chatId), isBubble = host.isBubble, enterSends = prefs.getString("enter", "send") != "newline")) }
     val scope = rememberCoroutineScope()
-    val view = ui.copy(chat = chat, pane = server?.terminals?.firstOrNull { it.id == chatId })
+    val paneRow = server?.terminals?.firstOrNull { it.id == chatId }
+    val project = chat.project.ifEmpty { paneRow?.project.orEmpty() }
+    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon)
+
+    // The clock's list: loaded with the chat, again when a turn ends (turn-end
+    // items go then), and every minute while the chat is on screen.
+    suspend fun loadSchedule() {
+        if (project.isEmpty()) return
+        try {
+            val r = api.chats.scheduled(project)
+            ui = ui.copy(schedule = ui.schedule.copy(items = r.items, limitWarmup = r.limitWarmup, loaded = true, loadFailed = false))
+        } catch (e: Exception) {
+            ui = ui.copy(schedule = ui.schedule.copy(loaded = true, loadFailed = true))
+        }
+    }
+    LaunchedEffect(project, chat.state) {
+        while (true) { loadSchedule(); delay(60_000) }
+    }
 
     // Mid-turn sends leave once the turn ends or the server lists them.
     LaunchedEffect(chat.state, chat.pendingInjections) {
@@ -328,7 +430,6 @@ fun ChatRoute(chatId: String) {
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         Pickers.active = false
-        val project = chat.project.ifEmpty { view.pane?.project.orEmpty() }
         if (uris.isEmpty() || project.isEmpty()) return@rememberLauncherForActivityResult
         scope.launch {
             for (u in uris) {
@@ -377,9 +478,67 @@ fun ChatRoute(chatId: String) {
             act { api.chats.stop(chatId) }
         }
         override fun attach() { Pickers.active = true; picker.launch("*/*") }
+        override fun toggleEnter() {
+            val sends = !ui.enterSends
+            prefs.edit().putString("enter", if (sends) "send" else "newline").apply()
+            ui = ui.copy(enterSends = sends)
+        }
+        override fun schedule() {
+            if (ui.schedule.open) { scheduleClose(); return }
+            // Opens with what is in the box already copied in: write it, then decide it goes later.
+            ui = ui.copy(schedule = ui.schedule.copy(open = true, text = ui.draft, note = null, at = ScheduleUi.soonest()))
+            scope.launch { loadSchedule() }
+        }
+        override fun scheduleClose() { ui = ui.copy(schedule = ui.schedule.copy(open = false, note = null)) }
+        override fun scheduleText(text: String) { ui = ui.copy(schedule = ui.schedule.copy(text = text.take(20_000), note = null)) }
+        override fun scheduleTrigger(trigger: String) {
+            if (trigger == "limit-reset" && !ui.schedule.limitWarmup) {
+                ui = ui.copy(schedule = ui.schedule.copy(note = "Turn on the limit warmer in Settings to use this: it is what notices the window rolling over."))
+                return
+            }
+            ui = ui.copy(schedule = ui.schedule.copy(trigger = trigger, note = null))
+        }
+        override fun schedulePickTime() {
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = ui.schedule.at }
+            android.app.DatePickerDialog(ctx, { _, y, m, day ->
+                android.app.TimePickerDialog(ctx, { _, h, min ->
+                    val c2 = java.util.Calendar.getInstance().apply { set(y, m, day, h, min, 0); set(java.util.Calendar.MILLISECOND, 0) }
+                    ui = ui.copy(schedule = ui.schedule.copy(at = c2.timeInMillis, note = null))
+                }, cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE), android.text.format.DateFormat.is24HourFormat(ctx)).show()
+            }, cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH), cal.get(java.util.Calendar.DAY_OF_MONTH)).apply {
+                datePicker.minDate = System.currentTimeMillis() - 60_000
+            }.show()
+        }
+        override fun scheduleSave() {
+            val sc = ui.schedule
+            val text = sc.text.trim()
+            if (text.isEmpty()) { ui = ui.copy(schedule = sc.copy(note = "Write a message first.")); return }
+            if (project.isEmpty()) { ui = ui.copy(schedule = sc.copy(note = "This chat has no project to schedule for.")); return }
+            if (sc.trigger == "time" && sc.at <= System.currentTimeMillis()) { ui = ui.copy(schedule = sc.copy(note = "Pick a time that has not passed yet.")); return }
+            ui = ui.copy(schedule = sc.copy(saving = true, note = null))
+            scope.launch {
+                try {
+                    api.chats.schedule(project, text, sc.trigger, if (sc.trigger == "time") java.time.Instant.ofEpochMilli(sc.at).toString() else null)
+                    // Queued now, so the box it came from is cleared: leaving it invites sending it twice.
+                    if (ui.draft.trim() == text) ui = ui.copy(draft = "")
+                    ui = ui.copy(schedule = ui.schedule.copy(text = "", saving = false, note = null))
+                    loadSchedule()
+                } catch (e: Exception) {
+                    ui = ui.copy(schedule = ui.schedule.copy(saving = false, note = "Could not schedule that: " + errorText(e)))
+                }
+            }
+        }
+        override fun scheduleCancel(item: mv.obitech.crundi.api.model.ChatScheduleItem) {
+            ui = ui.copy(schedule = ui.schedule.copy(items = ui.schedule.items.filter { it.id != item.id }))
+            scope.launch {
+                try { api.chats.unschedule(item.id) } catch (e: Exception) { ui = ui.copy(error = "Could not cancel it: " + errorText(e)) }
+                loadSchedule()
+            }
+        }
         override fun modeSheet() { ui = ui.copy(sheet = ChatSheet.Mode) }
         override fun modelSheet() { ui = ui.copy(sheet = ChatSheet.Model) }
-        override fun agents() { ui = ui.copy(sheet = ChatSheet.Agents) }
+        override fun agents() { ui = ui.copy(sheet = ChatSheet.Agents("agent")) }
+        override fun tasks() { ui = ui.copy(sheet = ChatSheet.Agents("task")) }
         override fun openAgent(toolUseId: String) { ui = ui.copy(sheet = ChatSheet.Agent(toolUseId)) }
         override fun recall(p: PendingInjection) {
             act {
