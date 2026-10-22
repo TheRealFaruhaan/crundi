@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.workbench
 
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.positionInWindow
@@ -113,8 +115,25 @@ fun WorkbenchScreen(
     // Splits made from now on open with a short slide; the ones already there do not.
     val bornAt = remember { System.currentTimeMillis() }
     val node: @Composable (Mosaic) -> Unit = { n -> MosaicNode(n, ui, actions, open, body) }
-    CompositionLocalProvider(LocalPaneSlot provides slot, LocalWorkbenchBorn provides bornAt) {
-    Box(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
+    // Full screen grows the pane from where it sits to the whole workbench,
+    // and shrinks it back (no fade, no backdrop: that flashed black). Its
+    // place in the layout stays empty while it is out.
+    var shownFull by remember { mutableStateOf<String?>(null) }
+    val fullProg = remember { androidx.compose.animation.core.Animatable(0f) }
+    val leafRects = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
+    var rootRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    LaunchedEffect(ui.full) {
+        val want = ui.full?.takeIf { ui.panes[it] != null }
+        if (want != null) {
+            if (shownFull != want) { shownFull = want; fullProg.snapTo(0f) }
+            fullProg.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 520f))
+        } else if (shownFull != null) {
+            fullProg.animateTo(0f, androidx.compose.animation.core.tween(220))
+            shownFull = null
+        }
+    }
+    CompositionLocalProvider(LocalPaneSlot provides slot, LocalWorkbenchBorn provides bornAt, LocalShownFull provides shownFull, LocalLeafRects provides leafRects) {
+    Box(modifier.fillMaxSize().background(CrundiColors.BgPrimary).onGloballyPositioned { rootRect = it.boundsInWindow() }) {
         when {
             ui.layout == WbLayout.Stack -> StackLayout(ui, actions, open, body)
             else -> {
@@ -166,22 +185,29 @@ fun WorkbenchScreen(
                 }
             }
         }
-        // Full screen: the pane moves (alive) into a layer over the workbench, and
-        // the shell slides its own bars away (FullScreen). It grows in from a
-        // little smaller rather than appearing at once.
+        // Full screen: the pane moves (alive) into this layer, growing from
+        // its own place; the shell slides its bars away meanwhile (FullScreen).
         val fullView = ui.full?.let { ui.panes[it] }
         androidx.compose.runtime.DisposableEffect(fullView?.key) {
             mv.obitech.crundi.ui.shell.FullScreen.pane = fullView?.key
             onDispose { mv.obitech.crundi.ui.shell.FullScreen.pane = null }
         }
-        if (fullView != null) {
-            androidx.activity.compose.BackHandler { actions.full(fullView, false) }
-            val grow = remember(fullView.key) { androidx.compose.animation.core.Animatable(0f) }
-            LaunchedEffect(fullView.key) { grow.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.85f, stiffness = 500f)) }
+        if (fullView != null) androidx.activity.compose.BackHandler { actions.full(fullView, false) }
+        val shownView = shownFull?.let { ui.panes[it] }
+        if (shownView != null) {
+            val from = leafRects[shownView.key]?.let { r -> r.translate(-rootRect.left, -rootRect.top) }
             Box(
-                Modifier.fillMaxSize().then(Modifier.graphicsLayer { val s = 0.94f + 0.06f * grow.value; scaleX = s; scaleY = s; alpha = 0.4f + 0.6f * grow.value })
-                    .background(CrundiColors.BgPrimary),
-            ) { LocalPaneSlot.current(fullView, 3) }
+                Modifier.fillMaxSize().layout { m, c ->
+                    val t = fullProg.value
+                    val fw = c.maxWidth.toFloat(); val fh = c.maxHeight.toFloat()
+                    val r = from ?: androidx.compose.ui.geometry.Rect(0f, 0f, fw, fh)
+                    val x = r.left * (1 - t); val y = r.top * (1 - t)
+                    val w = (r.width + (fw - r.width) * t).toInt().coerceIn(1, c.maxWidth)
+                    val h = (r.height + (fh - r.height) * t).toInt().coerceIn(1, c.maxHeight)
+                    val p = m.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
+                    layout(c.maxWidth, c.maxHeight) { p.place(x.toInt(), y.toInt()) }
+                },
+            ) { LocalPaneSlot.current(shownView, if (fullView != null) 3 else 1) }
         }
     }
     }
@@ -204,8 +230,8 @@ private fun MosaicNode(n: Mosaic, ui: WorkbenchUi, actions: WorkbenchActions, op
         is Mosaic.Leaf -> {
             val v = n.key?.let { ui.panes[it] }
             if (v == null) EmptySlot(open, { actions.launch(n.id, it) }, { actions.splitSlot(n.id, it) }, if (ui.tree.leaves().size > 1) ({ actions.removeSlot(n.id) }) else null)
-            else if (ui.full == v.key) Box(Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(CrundiColors.BgSecondary))
-            else LocalPaneSlot.current(v, if (ui.focused == v.key) 1 else 0)
+            else if (LocalShownFull.current == v.key) Box(Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(CrundiColors.BgSecondary).androidx_leafRect(v.key))
+            else Box(Modifier.fillMaxSize().androidx_leafRect(v.key)) { LocalPaneSlot.current(v, if (ui.focused == v.key) 1 else 0) }
         }
         is Mosaic.Split -> SplitNode(n, ui, actions, open, body)
     }
@@ -290,6 +316,16 @@ private fun StackLayout(ui: WorkbenchUi, actions: WorkbenchActions, open: Set<Pa
 /** Draws a pane where it stands in the layout, keeping it alive as it moves (see WorkbenchScreen). */
 private val LocalPaneSlot = androidx.compose.runtime.staticCompositionLocalOf<@Composable (PaneView, Int) -> Unit> { { _, _ -> } }
 private val LocalWorkbenchBorn = androidx.compose.runtime.staticCompositionLocalOf { 0L }
+/** The pane shown full screen (or animating to or from it), drawn in the layer, not in its slot. */
+private val LocalShownFull = androidx.compose.runtime.compositionLocalOf<String?> { null }
+/** Where each pane sits on screen, for full screen to grow from. */
+private val LocalLeafRects = androidx.compose.runtime.staticCompositionLocalOf<MutableMap<String, androidx.compose.ui.geometry.Rect>> { mutableMapOf() }
+
+@Composable
+private fun Modifier.androidx_leafRect(key: String): Modifier {
+    val rects = LocalLeafRects.current
+    return this.then(Modifier.onGloballyPositioned { rects[key] = it.boundsInWindow() })
+}
 
 /** A pane's body with [LocalPane] set, so the screen inside knows it is in a pane. */
 @Composable
