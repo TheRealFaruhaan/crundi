@@ -770,8 +770,13 @@ private fun PathMenu(path: String, project: String, onOpen: (String) -> Unit, on
             Text(path, style = mv.obitech.crundi.ui.theme.CrundiType.Code.copy(color = CrundiColors.TextMuted), modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
             // Over the chat, which stays as it is underneath.
             mv.obitech.crundi.ui.components.ListRow("Open", icon = "file", onClick = { onDismiss(); onOpen(full) })
-            mv.obitech.crundi.ui.components.ListRow("Copy path", icon = "copy", onClick = {
+            // Copy text: exactly what Claude wrote. Copy path: the full path worked out from it.
+            mv.obitech.crundi.ui.components.ListRow("Copy text", icon = "copy", onClick = {
                 clipboard.setText(androidx.compose.ui.text.AnnotatedString(path)); onDismiss()
+                android.widget.Toast.makeText(ctx, "Text copied", android.widget.Toast.LENGTH_SHORT).show()
+            })
+            if (full != path) mv.obitech.crundi.ui.components.ListRow("Copy path", icon = "copy", onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(full)); onDismiss()
                 android.widget.Toast.makeText(ctx, "Path copied", android.widget.Toast.LENGTH_SHORT).show()
             })
         }
