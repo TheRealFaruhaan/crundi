@@ -70,12 +70,12 @@ itself instead of the server's web page.
 <en-US>
 Crundi is now a native app.
 
-- Every screen is rebuilt for the phone: chats, the workbench with its panes, files, git, the board, the mind map, schedules and settings.
-- Smoother scrolling, quicker opening, and full screen for any pane.
-- Pictures and videos open in a viewer with pinch to zoom; audio plays in the chat.
-- Live embeds, tables and code blocks in replies, each with copy.
-- Downloads show their progress and say where they were saved.
-- Tap a path or a link in a reply to open it or copy it.
+- Every screen rebuilt for the phone: chats, workbench panes, files, git, board, mind map, schedules.
+- Smoother scrolling, faster opening, full screen for any pane.
+- Pictures and videos open with pinch to zoom; audio plays in the chat.
+- Embeds, tables and code in replies, each with copy.
+- Downloads show progress and where they were saved.
+- Tap a path or link to open or copy it.
 
 Needs a Crundi server, version 1.20 or newer.
 </en-US>
