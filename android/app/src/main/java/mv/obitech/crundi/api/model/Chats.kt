@@ -133,6 +133,11 @@ data class ChatMedia(
     val durationSec: Double = 0.0,
     val title: String = "",
     val provider: String = "",
+    /** An embed's frame address (a site's own player, or any https page), loaded live in the chat. */
+    val src: String? = null,
+    /** An embed's box when it has no aspect (w:h in [width]/[height]): its stated width and height, in dp. */
+    val frameWidth: Int = 0,
+    val frameHeight: Int = 0,
 )
 
 /**
@@ -336,10 +341,22 @@ object ChatMediaParser {
                 width = n("w").toInt(), height = n("h").toInt(), durationSec = n("duration"))
             when (s("kind")) {
                 "embed" -> {
+                    // As the web's parser: w:h is an aspect (16:9, 9:16), bounded
+                    // so a forged item cannot ask for a huge frame; width and
+                    // height are the box when there is no aspect.
                     val open = s("url").takeIf { it.startsWith("https://") }
+                    fun bounded(k: String, max: Int) = n(k).toInt().takeIf { it in 1..max } ?: 0
+                    val e = base.copy(
+                        title = s("title").take(200), provider = s("provider").take(60),
+                        width = bounded("w", 100), height = bounded("h", 100),
+                        frameWidth = bounded("width", 2000), frameHeight = bounded("height", 1200),
+                    )
                     if (s("name").isNotEmpty()) {
-                        if (!EMBED.matches(s("name"))) null else base.copy(path = media(s("name")), openUrl = open, title = s("title"), provider = s("provider"), height = n("height").toInt())
-                    } else base.copy(openUrl = open ?: s("src").takeIf { it.startsWith("https://") }, title = s("title"), provider = s("provider"), height = n("height").toInt())
+                        if (!EMBED.matches(s("name"))) null else e.copy(path = media(s("name")), openUrl = open)
+                    } else {
+                        val src = s("src").takeIf { it.startsWith("https://") && runCatching { java.net.URI(it).host }.getOrNull() != null }
+                        if (src == null) null else e.copy(src = src, openUrl = open)
+                    }
                 }
                 "file" -> if (!ID.matches(s("id"))) null else base.copy(path = "/api/chat-media/file?session=$sid&id=${s("id")}")
                 "image", "video", "audio" -> if (!NAME.matches(s("name"))) null else base.copy(

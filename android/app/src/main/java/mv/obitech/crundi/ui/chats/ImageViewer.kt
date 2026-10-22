@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import mv.obitech.crundi.api.model.ChatMedia
-import mv.obitech.crundi.api.rememberServerImage
 import mv.obitech.crundi.ui.components.CrundiIconButton
 import androidx.compose.foundation.clickable
 import mv.obitech.crundi.ui.icons.CrundiIcon
@@ -48,7 +48,12 @@ import mv.obitech.crundi.ui.theme.CrundiType
 @Composable
 fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
     Dialog(onClose, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        val img = rememberServerImage(media.path, 4096)
+        // The preview's copy (already in memory from the chat) at once, then
+        // the full one in its place when it arrives; it had shown a bare icon
+        // until the 4096px copy came, or for good if that one failed.
+        val preview = rememberMediaImage(media.path, 1280)
+        val fullLoad = rememberMediaImage(media.path, 4096)
+        val img = fullLoad.image ?: preview.image
         var scale by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }
         var box by remember { mutableStateOf(IntSize.Zero) }
@@ -80,7 +85,8 @@ fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
                                 val s = 2.5f
                                 // Zoom in on the place tapped.
                                 val c = Offset(box.width / 2f, box.height / 2f)
-                                scale = s; offset = clamp((c - at) * (s - 1f), s)
+                                // From 1x the tapped point stays under the finger: o' = (at - c) * (1 - s).
+                                scale = s; offset = clamp((at - c) * (1f - s), s)
                             }
                         })
                     }
@@ -89,7 +95,9 @@ fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
                             val ns = (scale * zoom).coerceIn(1f, 8f)
                             val c = Offset(box.width / 2f, box.height / 2f)
                             // Zoom about the fingers, then follow the drag.
-                            val o = (offset + (centroid - c) * (1 - ns / scale)) + pan
+                            // The point under the fingers stays there: with q the picture's
+                            // point, centroid = c + q*s + o, so the old offset scales too.
+                            val o = offset * (ns / scale) + (centroid - c) * (1 - ns / scale) + pan
                             scale = ns
                             offset = if (ns <= 1f) Offset.Zero else clamp(o, ns)
                         }
@@ -100,7 +108,8 @@ fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
                     img, contentDescription = media.caption.ifEmpty { "Image" }, contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y },
                 )
-                else CrundiIcon("image", size = 40.dp, tint = CrundiColors.TextMuted)
+                else if (fullLoad.failed && preview.failed) Box(Modifier.size(220.dp, 140.dp)) { LoadFailed({ preview.retry(); fullLoad.retry() }) }
+                else Box(Modifier.fillMaxSize().shimmer())
             }
             // A slim bar: the caption on one line (tap for all of it), then icons.
             var whole by remember { mutableStateOf(false) }

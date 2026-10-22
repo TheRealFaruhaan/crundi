@@ -26,7 +26,6 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.DialogProperties
-import mv.obitech.crundi.api.rememberServerImage
 import mv.obitech.crundi.ui.components.CrundiIconButton
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.theme.CrundiType
@@ -37,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -57,59 +57,26 @@ import mv.obitech.crundi.ui.shell.LocalAppServices
 import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.Dimens
 
-/**
- * A video or a sound Claude showed (show_video, show_audio), playing in the
- * chat as the web's <video> and <audio> do. It used to be only a download
- * card. Streamed from the server with the phone's sign-in, with seeking
- * (the server honours byte ranges). Nothing plays until it is tapped.
- */
-@OptIn(UnstableApi::class)
-@Composable
-fun MediaPlayerView(m: ChatMedia, modifier: Modifier = Modifier) {
-    val ctx = LocalContext.current
-    val transport = LocalAppServices.current.api.transport
-    val path = m.path ?: return
-    val video = m.kind == "video"
-    val player = remember(path) {
-        val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setDefaultRequestProperties(transport.streamHeaders())
-        ExoPlayer.Builder(ctx).setMediaSourceFactory(DefaultMediaSourceFactory(ctx).setDataSourceFactory(http)).build().apply {
-            setMediaItem(MediaItem.fromUri(transport.baseUrl + path))
-            prepare()
-            playWhenReady = false
-        }
-    }
-    DisposableEffect(player) { onDispose { player.release() } }
-    val ratio = if (m.width > 0 && m.height > 0) (m.width.toFloat() / m.height).coerceIn(0.4f, 3f) else 16f / 9f
-    Column(modifier) {
-        AndroidView(
-            factory = { c ->
-                PlayerView(c).apply {
-                    this.player = player
-                    useController = true
-                    setShowNextButton(false); setShowPreviousButton(false)
-                    if (!video) { controllerShowTimeoutMs = 0; controllerHideOnTouch = false; showController() }
-                }
-            },
-            modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth()
-                .then(if (video) Modifier.aspectRatio(ratio).heightIn(max = 420.dp) else Modifier.height(96.dp))
-                .clip(Dimens.ShapeSm).background(androidx.compose.ui.graphics.Color.Black)
-                .border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm),
-        )
-    }
-}
-
 /** A video in the log: its poster (or a dark frame), a play button and its length, the size a picture gets. */
 @Composable
-fun VideoPreview(m: ChatMedia, onOpen: () -> Unit) {
-    val poster = rememberServerImage(m.posterPath, 1280)
+fun VideoPreview(m: ChatMedia, rowHeight: androidx.compose.ui.unit.Dp? = null, maxWidth: androidx.compose.ui.unit.Dp = 360.dp, onOpen: () -> Unit) {
+    val posterLoad = rememberMediaImage(m.posterPath, 1280)
+    val poster = posterLoad.image
     val ratio = when {
         poster != null && poster.height > 0 -> poster.width.toFloat() / poster.height
         m.width > 0 && m.height > 0 -> m.width.toFloat() / m.height
         else -> 16f / 9f
     }.coerceIn(0.3f, 3f)
+    // In a row of several: that tall, as wide as its shape, within the row's cap.
+    val frame = if (rowHeight != null) Modifier.height(rowHeight).width((rowHeight * ratio).coerceIn(90.dp, maxWidth))
+    else Modifier.widthIn(max = 360.dp).heightIn(max = 420.dp).aspectRatio(ratio)
     Box(
-        Modifier.widthIn(max = 360.dp).heightIn(max = 420.dp).aspectRatio(ratio).clip(Dimens.ShapeSm).background(Color.Black)
-            .border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm).clickable(onClickLabel = "Play", onClick = onOpen),
+        frame.clip(Dimens.ShapeSm).background(Color.Black)
+            .border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm)
+            // The poster's sweep while it loads. A poster that fails leaves the
+            // dark frame: the video itself may still play, so the play button stays.
+            .then(if (m.posterPath != null && posterLoad.loading) Modifier.shimmer() else Modifier)
+            .clickable(onClickLabel = "Play", onClick = onOpen),
         contentAlignment = Alignment.Center,
     ) {
         if (poster != null) Image(poster, contentDescription = m.caption.ifEmpty { "Video" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
@@ -146,6 +113,20 @@ fun VideoViewer(m: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
         }
     }
     var full by remember { mutableStateOf(false) }
+    // Loading until the first frame is drawn, and again while it buffers; a
+    // failure says so and can be tried again.
+    var firstFrame by remember { mutableStateOf(false) }
+    var buffering by remember { mutableStateOf(true) }
+    var failed by remember { mutableStateOf(false) }
+    DisposableEffect(player) {
+        val l = object : androidx.media3.common.Player.Listener {
+            override fun onRenderedFirstFrame() { firstFrame = true }
+            override fun onPlaybackStateChanged(state: Int) { buffering = state == androidx.media3.common.Player.STATE_BUFFERING || state == androidx.media3.common.Player.STATE_IDLE && !failed }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) { failed = true; buffering = false }
+        }
+        player.addListener(l)
+        onDispose { player.removeListener(l) }
+    }
     val before = remember { activity?.requestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
     DisposableEffect(player) {
         onDispose {
@@ -180,6 +161,7 @@ fun VideoViewer(m: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
                 o.x.coerceIn(-size.width * (s - 1f) / 2f, size.width * (s - 1f) / 2f),
                 o.y.coerceIn(-size.height * (s - 1f) / 2f, size.height * (s - 1f) / 2f),
             )
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             AndroidView(
                 factory = { c ->
                     (android.view.LayoutInflater.from(c).inflate(mv.obitech.crundi.R.layout.crundi_video_player, null) as PlayerView).apply {
@@ -193,24 +175,31 @@ fun VideoViewer(m: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
                     it.setFullscreenButtonState(full)
                     it.videoSurfaceView?.apply { scaleX = scale; scaleY = scale; translationX = pan.x; translationY = pan.y }
                 },
-                modifier = Modifier.weight(1f).fillMaxWidth()
+                modifier = Modifier.fillMaxSize()
                     .onSizeChanged { size = it }
                     .pointerInput(Unit) {
                         detectTapGestures(onDoubleTap = { at ->
                             if (scale > 1.05f) { scale = 1f; pan = androidx.compose.ui.geometry.Offset.Zero }
-                            else { val c = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f); scale = 2.5f; pan = clamp((c - at) * 1.5f, 2.5f) }
+                            // From 1x the tapped point stays under the finger: o' = (at - c) * (1 - s).
+                            else { val c = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f); scale = 2.5f; pan = clamp((at - c) * (1f - 2.5f), 2.5f) }
                         })
                     }
                     .pointerInput(Unit) {
                         detectTransformGestures { centroid, p, zoom, _ ->
                             val ns = (scale * zoom).coerceIn(1f, 6f)
                             val c = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
-                            val o = (pan + (centroid - c) * (1 - ns / scale)) + p
+                            // The point under the fingers stays there: the old
+                            // offset scales with the picture, then the drag is added.
+                            val o = pan * (ns / scale) + (centroid - c) * (1 - ns / scale) + p
                             scale = ns
                             pan = if (ns <= 1f) androidx.compose.ui.geometry.Offset.Zero else clamp(o, ns)
                         }
                     },
             )
+            if (failed) Box(Modifier.size(200.dp, 120.dp)) {
+                LoadFailed({ failed = false; buffering = true; player.prepare(); player.play() })
+            } else if (!firstFrame || buffering) LoadingRing()
+            }
             if (!full) Row(
                 Modifier.fillMaxWidth().background(Color.Black).navigationBarsPadding().padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,

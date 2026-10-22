@@ -51,7 +51,6 @@ import mv.obitech.crundi.api.CrundiJson
 import mv.obitech.crundi.api.model.ChatAgent
 import mv.obitech.crundi.api.model.ChatEntry
 import mv.obitech.crundi.api.model.ChatMedia
-import mv.obitech.crundi.api.rememberServerImage
 import mv.obitech.crundi.ui.components.ButtonKind
 import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.components.MarkdownText
@@ -184,7 +183,7 @@ fun ChatEntryView(
             if (agent != null && agent.kind != "task") AgentRow(agent, actions)
             else Tool(e, e.id in open, actions)
             val media = if (e.status == "done") e.media(chatId) else emptyList()
-            if (media.isNotEmpty()) Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { for (m in media) MediaView(m, actions) }
+            if (media.isNotEmpty()) MediaGroup(media, actions, Modifier.padding(top = 6.dp))
         }
         "permission" -> PermissionCard(e, actions, busy = e.id in busy)
         "question" -> QuestionCard(e, actions, busy = e.id in busy)
@@ -306,12 +305,42 @@ fun AgentRow(a: ChatAgent, actions: EntryActions) {
     }
 }
 
-/** A picture, clip, sound, file or frame Claude showed. */
+/** The height of each card when several pictures, clips or frames share a row, as the web's .wg-media-row. */
+private val RowHeight = 200.dp
+
+/**
+ * What one show_* call showed, laid out as the web's mediaNode: several
+ * pictures, clips and frames in one row that scrolls sideways (each a card of
+ * the same height); a single one at its own size; sounds and files stacked,
+ * after the row.
+ */
 @Composable
-fun MediaView(m: ChatMedia, actions: EntryActions) {
+fun MediaGroup(media: List<ChatMedia>, actions: EntryActions, modifier: Modifier = Modifier) {
+    val visual = media.filter { it.kind == "image" || it.kind == "video" || it.kind == "embed" }
+    val rest = media - visual.toSet()
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (visual.size == 1) MediaView(visual[0], actions)
+        else if (visual.isNotEmpty()) androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // No card is wider than most of the chat, so the next one always peeks in to say the row scrolls.
+            val cap = maxWidth * 0.85f
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                for (m in visual) MediaView(m, actions, rowHeight = RowHeight, maxWidth = cap)
+            }
+        }
+        for (m in rest) MediaView(m, actions)
+    }
+}
+
+/**
+ * A picture, clip, sound, file or frame Claude showed. [rowHeight]: drawn as
+ * one card of a row, that tall and at most [maxWidth] wide.
+ */
+@Composable
+fun MediaView(m: ChatMedia, actions: EntryActions, rowHeight: androidx.compose.ui.unit.Dp? = null, maxWidth: androidx.compose.ui.unit.Dp = 360.dp) {
     when (m.kind) {
-        "image" -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            val img = rememberServerImage(m.path, 1280)
+        "image" -> Column(Modifier.width(IntrinsicSize.Min), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val load = rememberMediaImage(m.path, 1280)
+            val img = load.image
             // The picture's own shape, once loaded: the server does not always
             // send its size, and a guessed 16:10 frame left a tall screenshot
             // small in the middle of an empty box.
@@ -320,52 +349,61 @@ fun MediaView(m: ChatMedia, actions: EntryActions) {
                 m.width > 0 && m.height > 0 -> m.width.toFloat() / m.height
                 else -> 16f / 10f
             }.coerceIn(0.3f, 3f)
+            val frame = if (rowHeight != null) Modifier.height(rowHeight).width((rowHeight * ratio).coerceIn(90.dp, maxWidth))
+            else Modifier.widthIn(max = 360.dp).heightIn(max = 420.dp).aspectRatio(ratio)
             Box(
-                Modifier.widthIn(max = 360.dp).heightIn(max = 420.dp).aspectRatio(ratio).clip(Dimens.ShapeSm).background(CrundiColors.BgSecondary)
-                    .border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm).clickable { actions.media(m) },
+                frame.clip(Dimens.ShapeSm).background(CrundiColors.BgSecondary)
+                    .border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm)
+                    .then(if (load.loading) Modifier.shimmer() else Modifier)
+                    .then(if (img != null) Modifier.clickable { actions.media(m) } else Modifier),
                 contentAlignment = Alignment.Center,
             ) {
-                if (img != null) Image(img, contentDescription = m.caption.ifEmpty { "Image" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-                else CrundiIcon("image", size = 28.dp, tint = CrundiColors.TextMuted)
-            }
-            if (m.caption.isNotEmpty()) Text(m.caption, style = ChatType.Small)
-        }
-        // Played in place; the caption under it, and Download beside it.
-        "video", "audio" -> if (m.path != null) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            // A video is a preview the size of a picture's; it plays when opened.
-            if (m.kind == "video") VideoPreview(m) { actions.media(m) } else MediaPlayerView(m)
-            Row(Modifier.widthIn(max = 360.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(m.caption.ifEmpty { m.filename.ifEmpty { if (m.kind == "video") "Video" else "Audio" } }, style = ChatType.Small, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                mv.obitech.crundi.ui.components.CrundiIconButton("download", { actions.media(m.copy(kind = "file-" + m.kind)) }, contentDescription = "Download", size = 16.dp, tint = CrundiColors.TextSecondary)
-            }
-        }
-        else -> {
-            val (icon, label, verb) = when (m.kind) {
-                "video" -> Triple("film", m.caption.ifEmpty { "Video" }, "Download")
-                "audio" -> Triple("music", m.caption.ifEmpty { "Audio" }, "Download")
-                "embed" -> Triple("globe", m.title.ifEmpty { m.provider.ifEmpty { "Live frame" } }, if (m.openUrl != null) "Open" else "Download")
-                else -> Triple("file", m.filename.ifEmpty { "File" }, "Download")
-            }
-            Row(
-                Modifier.widthIn(max = 360.dp).fillMaxWidth().clip(Dimens.ShapeSm).background(CrundiColors.BgSecondary)
-                    .border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm).padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                CrundiIcon(icon, size = 20.dp, tint = CrundiColors.AccentHover)
-                Column(Modifier.weight(1f)) {
-                    Text(label, style = ChatType.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val meta = listOfNotNull(
-                        m.filename.takeIf { it.isNotEmpty() && it != label },
-                        if (m.size > 0) bytes(m.size) else null,
-                        if (m.durationSec > 0) "%d:%02d".format(m.durationSec.toInt() / 60, m.durationSec.toInt() % 60) else null,
-                        m.provider.takeIf { m.kind == "embed" && it.isNotEmpty() && it != label },
-                    ).joinToString(" · ")
-                    if (meta.isNotEmpty()) Text(meta, style = CrundiType.Meta, maxLines = 1)
-                    if (m.kind != "file" && m.caption.isNotEmpty() && m.caption != label) Text(m.caption, style = ChatType.Small, maxLines = 2)
+                when {
+                    img != null -> Image(img, contentDescription = m.caption.ifEmpty { "Image" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    load.failed -> LoadFailed(load.retry, compact = rowHeight != null)
                 }
-                CrundiButton(verb, { actions.media(m) }, kind = ButtonKind.Ghost, icon = if (verb == "Open") "external-link" else "download")
             }
+            if (m.caption.isNotEmpty()) Text(m.caption, style = ChatType.Small, maxLines = if (rowHeight != null) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
         }
+        // A video is a preview the size of a picture's; it plays when opened.
+        "video" -> if (m.path != null) Column(Modifier.width(IntrinsicSize.Min), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            VideoPreview(m, rowHeight = rowHeight, maxWidth = maxWidth) { actions.media(m) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(m.caption.ifEmpty { m.filename.ifEmpty { "Video" } }, style = ChatType.Small, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                mv.obitech.crundi.ui.components.CrundiIconButton("download", { actions.media(m.copy(kind = "file-video")) }, contentDescription = "Download", size = 16.dp, tint = CrundiColors.TextSecondary)
+            }
+        } else FileCard(m, actions)
+        "audio" -> if (m.path != null) AudioCard(m) { actions.media(m.copy(kind = "file-audio")) } else FileCard(m, actions)
+        "embed" -> EmbedItem(m, actions, maxWidth = if (rowHeight != null) maxWidth else null)
+        else -> FileCard(m, actions)
+    }
+}
+
+/** A file to download (or anything that cannot be shown here). */
+@Composable
+private fun FileCard(m: ChatMedia, actions: EntryActions) {
+    val (icon, label) = when (m.kind) {
+        "video" -> "film" to m.caption.ifEmpty { "Video" }
+        "audio" -> "music" to m.caption.ifEmpty { "Audio" }
+        else -> "file" to m.filename.ifEmpty { "File" }
+    }
+    Row(
+        Modifier.widthIn(max = 360.dp).fillMaxWidth().clip(Dimens.ShapeSm).background(CrundiColors.BgSecondary)
+            .border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm).padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CrundiIcon(icon, size = 20.dp, tint = CrundiColors.AccentHover)
+        Column(Modifier.weight(1f)) {
+            Text(label, style = ChatType.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val meta = listOfNotNull(
+                m.filename.takeIf { it.isNotEmpty() && it != label },
+                if (m.size > 0) bytes(m.size) else null,
+                if (m.durationSec > 0) "%d:%02d".format(m.durationSec.toInt() / 60, m.durationSec.toInt() % 60) else null,
+            ).joinToString(" · ")
+            if (meta.isNotEmpty()) Text(meta, style = CrundiType.Meta, maxLines = 1)
+            if (m.kind != "file" && m.caption.isNotEmpty() && m.caption != label) Text(m.caption, style = ChatType.Small, maxLines = 2)
+        }
+        CrundiButton("Download", { actions.media(m) }, kind = ButtonKind.Ghost, icon = "download")
     }
 }
 
