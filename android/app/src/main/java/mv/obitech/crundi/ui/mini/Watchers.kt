@@ -124,6 +124,7 @@ internal class ChatWatcher(val host: MiniHost, val id: String) {
 
     private fun start(name: String) {
         val h = MiniDirector.holder
+        if (h is TopLife) { h.cut(); return }                // it is out in the top bar: call it away
         if (h != null && h !== this) return                  // it is busy in another chat
         MiniDirector.holder = this
         // First it has to get here: out of the logo and off the top bar.
@@ -297,7 +298,7 @@ internal class ChatWatcher(val host: MiniHost, val id: String) {
         lastSig = sig
         if (scene != null) return
         val h = MiniDirector.holder
-        if (h != null && h !== this) return
+        if (h != null && h !== this && h !is TopLife) return
         if (!seen) return
 
         if (hasQ && t - sinceQueue >= MiniDelays.queue) start("queue")

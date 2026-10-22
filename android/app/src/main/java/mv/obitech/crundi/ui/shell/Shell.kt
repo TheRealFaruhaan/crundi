@@ -1,6 +1,7 @@
 package mv.obitech.crundi.ui.shell
 
 import mv.obitech.crundi.ui.mini.miniLogo
+import mv.obitech.crundi.ui.mini.miniTarget
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.fadeIn
@@ -156,6 +157,8 @@ fun ShellScaffold(
  */
 @Composable
 fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, modifier: Modifier = Modifier) {
+    // Mini's life up here (ui.mini Top.kt): the limits, what is waiting, an update.
+    mv.obitech.crundi.ui.mini.MiniTop(data.usage?.fiveHourUsed, data.usage?.weekUsed, data.approvals, data.tabBadges[Area.Settings.key] == -1)
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Box(Modifier.fillMaxWidth().height(Dimens.TopBarHeight)) {
             data.usage?.let { UsageBackdrop(it, Modifier.clickable(onClick = callbacks.onUsage)) }
@@ -205,7 +208,7 @@ private fun TopBarRight(data: ShellData, callbacks: ShellCallbacks, compact: Boo
             }
         }
         if (data.panels > 0) TopBarAct("panel", "Panels", data.panels.toString(), false, callbacks.onPanels)
-        if (data.approvals > 0) TopBarAct("shield-alert", "Things waiting on you", data.approvals.toString(), true, callbacks.onApprovals)
+        if (data.approvals > 0) TopBarAct("shield-alert", "Things waiting on you", data.approvals.toString(), true, callbacks.onApprovals, Modifier.miniTarget("top", "bell"))
         ConnectionDot(data.connection)
     }
 }
@@ -252,10 +255,10 @@ fun ProjectIcon(path: String, size: androidx.compose.ui.unit.Dp) {
 
 /** .topbar-act: a small bordered button with an icon and a count (approvals: yellow). */
 @Composable
-private fun TopBarAct(icon: String, description: String, count: String, warn: Boolean, onClick: () -> Unit) {
+private fun TopBarAct(icon: String, description: String, count: String, warn: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = if (warn) CrundiColors.Yellow else CrundiColors.TextSecondary
     Row(
-        Modifier.clip(Dimens.ShapeSm).border(Dimens.Hairline, if (warn) CrundiColors.Yellow else CrundiColors.Border, Dimens.ShapeSm)
+        modifier.clip(Dimens.ShapeSm).border(Dimens.Hairline, if (warn) CrundiColors.Yellow else CrundiColors.Border, Dimens.ShapeSm)
             .clickable(onClickLabel = description, onClick = onClick).padding(horizontal = 6.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -290,9 +293,9 @@ fun ConnectionDot(c: Connection) {
 private fun UsageBackdrop(u: UsageGlance, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            UsageBar(u.weekUsed, u.weekElapsed, Modifier.weight(1f))
+            UsageBar(u.weekUsed, u.weekElapsed, Modifier.weight(1f).miniTarget("top", "week"))
             Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x0DFFFFFF)))
-            UsageBar(u.fiveHourUsed, u.fiveHourElapsed, Modifier.weight(1f))
+            UsageBar(u.fiveHourUsed, u.fiveHourElapsed, Modifier.weight(1f).miniTarget("top", "five"))
         }
         // The labels sit in the 10dp bands along the bar's top and bottom
         // edges. Every chip, the name and the buttons are at most 26dp tall
@@ -396,9 +399,11 @@ fun AreaTabs(current: Area?, data: ShellData, callbacks: ShellCallbacks, addMenu
     }
     var menu by remember(addMenuOpen) { mutableStateOf(addMenuOpen) }
     val hasProject = data.currentProject != null
+    // Mini may haul the tabs along to show Settings (ui.mini Top.kt, the update outing).
+    mv.obitech.crundi.ui.mini.MiniTabScroll(scroll)
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Row(
-            Modifier.fillMaxWidth().height(Dimens.TabBarHeight).onSizeChanged { viewport = it.width }.horizontalScroll(scroll).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().height(Dimens.TabBarHeight).onSizeChanged { viewport = it.width }.miniTarget("top", "tabs").horizontalScroll(scroll).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             for (a in Area.tabs(hasProject)) {
@@ -407,6 +412,7 @@ fun AreaTabs(current: Area?, data: ShellData, callbacks: ShellCallbacks, addMenu
                 Box(
                     Modifier.fillMaxHeight()
                         .onGloballyPositioned { c -> spans[a] = intArrayOf(c.positionInParent().x.toInt(), c.size.width) }
+                        .miniTarget("top", "tab-" + a.key)
                         .clickable(onClickLabel = a.label) { callbacks.onArea(a) }
                         .drawBehind {
                             if (on) {

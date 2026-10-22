@@ -93,6 +93,11 @@ class MiniHost {
     internal var running = true
     internal val wake = Channel<Unit>(Channel.CONFLATED)
     internal var logoChain: Job? = null
+    /** Mini's life in the top bar (Top.kt): fed by the top bar, ticked with the watchers. */
+    internal val top = TopLife(this)
+    /** The tab strip's scroll, so Mini can haul the tabs along (the update outing). */
+    internal var tabScroll: androidx.compose.foundation.ScrollState? = null
+    internal var prefs: android.content.SharedPreferences? = null
 
     init { fx.onAdd = { wake.trySend(Unit) } }
 
@@ -124,9 +129,9 @@ class MiniHost {
     // screen; when it has left the chat it comes back along the top bar at the
     // pace it left with and folds away again.
 
-    private class Stage(val actor: Actor, val homeX: Float, val edge: Float)
+    internal class Stage(val actor: Actor, val homeX: Float, val homeY: Float, val edge: Float, val homeSurf: () -> Surf?)
 
-    private fun stage(): Stage? {
+    internal fun stage(): Stage? {
         val r = box("logo") ?: return null
         if (r.w < 8) return null
         val k = (r.w * 74 / 96) / 50                       // so its head is exactly the size of the logo's
@@ -134,11 +139,12 @@ class MiniHost {
         val homeX = r.l + r.w * 11 / 96 + 25 * k
         val homeY = r.t + r.h * 26 / 96 + 78 * k
         a.clampX = false
-        a.surf = { Surf(homeY, -200f, width + 200) }
+        val homeSurf = { Surf(homeY, -200f, width + 200) }
+        a.surf = homeSurf
         a.baseY = homeY
         val edge = if (homeX < width / 2) -46f else width + 46
         add(a)
-        return Stage(a, homeX, edge)
+        return Stage(a, homeX, homeY, edge, homeSurf)
     }
 
     internal fun logoLeave(): Job {
@@ -174,6 +180,7 @@ class MiniHost {
     /** The window went to the background: Mini goes home at once, and nobody holds it. */
     internal fun pause() {
         running = false
+        top.pause()
         chats.values.forEach { it.gone(quiet = true) }
         parked.values.forEach { it.gone(quiet = true) }
         logoChain?.cancel(); logoChain = null
@@ -181,11 +188,12 @@ class MiniHost {
         fx.clear()
         if (MiniDirector.logoAway) MiniDirector.logoAway = false
         val h = MiniDirector.holder
-        if (h is ChatWatcher && h.host === this || h is ParkedWatcher && h.host === this) MiniDirector.holder = null
+        if (h is ChatWatcher && h.host === this || h is ParkedWatcher && h.host === this || h === top) MiniDirector.holder = null
     }
 
     internal fun tick() {
         if (!running) return
+        top.tick()
         chats.values.toList().forEach { it.tick() }
         parked.values.toList().forEach { it.tick() }
     }
