@@ -118,32 +118,20 @@ fun WorkbenchScreen(
     // Full screen grows the pane from where it sits to the whole workbench,
     // and shrinks it back (no fade, no backdrop: that flashed black). Its
     // place in the layout stays empty while it is out.
-    // The pane covers the whole app frame (bars included) while it is out,
-    // so the bars are swapped out of sight underneath and the pane's grow is
-    // one smooth move; it is laid out once, only scale and position animate.
     var shownFull by remember { mutableStateOf<String?>(null) }
-    var fromRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }   // the slot, in window coordinates
     val fullProg = remember { androidx.compose.animation.core.Animatable(0f) }
     val leafRects = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
     var rootRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     LaunchedEffect(ui.full) {
         val want = ui.full?.takeIf { ui.panes[it] != null }
         if (want != null) {
-            if (shownFull != want) { fromRect = leafRects[want]; shownFull = want; fullProg.snapTo(0f) }
-            mv.obitech.crundi.ui.shell.FullScreen.pane = want
+            if (shownFull != want) { shownFull = want; fullProg.snapTo(0f) }
             fullProg.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 520f))
         } else if (shownFull != null) {
-            // The bars come back underneath first; once the layout has settled,
-            // shrink into the slot where it now is.
-            val key = shownFull
-            mv.obitech.crundi.ui.shell.FullScreen.pane = null
-            androidx.compose.runtime.withFrameNanos { }; androidx.compose.runtime.withFrameNanos { }
-            fromRect = leafRects[key] ?: fromRect
-            fullProg.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.95f, stiffness = 600f))
+            fullProg.animateTo(0f, androidx.compose.animation.core.tween(220))
             shownFull = null
         }
     }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { mv.obitech.crundi.ui.shell.FullScreen.pane = null } }
     CompositionLocalProvider(LocalPaneSlot provides slot, LocalWorkbenchBorn provides bornAt, LocalShownFull provides shownFull, LocalLeafRects provides leafRects) {
     Box(modifier.fillMaxSize().background(CrundiColors.BgPrimary).onGloballyPositioned { rootRect = it.boundsInWindow() }) {
         when {
@@ -200,18 +188,30 @@ fun WorkbenchScreen(
         // Full screen: the pane moves (alive) into this layer, growing from
         // its own place; the shell slides its bars away meanwhile (FullScreen).
         val fullView = ui.full?.let { ui.panes[it] }
+        androidx.compose.runtime.DisposableEffect(fullView?.key) {
+            mv.obitech.crundi.ui.shell.FullScreen.pane = fullView?.key
+            onDispose { mv.obitech.crundi.ui.shell.FullScreen.pane = null }
+        }
         if (fullView != null) androidx.activity.compose.BackHandler { actions.full(fullView, false) }
         val shownView = shownFull?.let { ui.panes[it] }
-        // Handed to the app's top layer (FullScreen.layer), which draws it over
-        // everything; the slot function is passed in, not read from here.
-        val paneSlot = LocalPaneSlot.current
-        val flags = if (fullView != null) 3 else 1
-        androidx.compose.runtime.SideEffect {
-            mv.obitech.crundi.ui.shell.FullScreen.layer = if (shownView == null) null else ({
-                FullLayer(fromRect, { fullProg.value }) { paneSlot(shownView, flags) }
-            })
+        if (shownView != null) {
+            val from = leafRects[shownView.key]?.let { r -> r.translate(-rootRect.left, -rootRect.top) }
+            // Laid out once at full size; only scale and position move, so a
+            // chat is not laid out again on every frame (which stuttered).
+            Box(
+                Modifier.fillMaxSize().graphicsLayer {
+                    val t = fullProg.value
+                    val fw = size.width.coerceAtLeast(1f); val fh = size.height.coerceAtLeast(1f)
+                    val r = from ?: androidx.compose.ui.geometry.Rect(0f, 0f, fw, fh)
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                    scaleX = (r.width / fw) + (1f - r.width / fw) * t
+                    scaleY = (r.height / fh) + (1f - r.height / fh) * t
+                    translationX = r.left * (1f - t)
+                    translationY = r.top * (1f - t)
+                    clip = true
+                },
+            ) { LocalPaneSlot.current(shownView, if (fullView != null) 3 else 1) }
         }
-        androidx.compose.runtime.DisposableEffect(Unit) { onDispose { mv.obitech.crundi.ui.shell.FullScreen.layer = null } }
     }
     }
 }
@@ -350,27 +350,3 @@ private fun Modifier.focusOnTouch(onFocus: () -> Unit): Modifier = pointerInput(
 
 /** Used by the add menu's "Fit" and the empty workbench: at least one slot to launch into. */
 fun Mosaic.withSlot(): Mosaic = if (leaves().isEmpty()) Mosaic.leaf(null) else this
-
-/**
- * The full-screen pane, drawn over the whole app: laid out once at the full
- * size, and drawn from [from] (its slot, window coordinates) to the whole
- * layer as [progress] goes from 0 to 1. Only scale and position change.
- */
-@Composable
-private fun FullLayer(from: androidx.compose.ui.geometry.Rect?, progress: () -> Float, content: @Composable () -> Unit) {
-    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    Box(
-        Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() }.graphicsLayer {
-            val t = progress()
-            val w = size.width.coerceAtLeast(1f); val h = size.height.coerceAtLeast(1f)
-            val r = from?.translate(-origin.x, -origin.y) ?: androidx.compose.ui.geometry.Rect(0f, 0f, w, h)
-            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
-            val sx = r.width / w; val sy = r.height / h
-            scaleX = sx + (1f - sx) * t
-            scaleY = sy + (1f - sy) * t
-            translationX = r.left * (1f - t)
-            translationY = r.top * (1f - t)
-            clip = true
-        },
-    ) { content() }
-}

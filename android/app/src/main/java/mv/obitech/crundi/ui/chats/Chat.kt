@@ -188,9 +188,11 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
     // viewer or copy it (the web opens it on click and offers copy on hover).
     var pathMenu by remember { mutableStateOf<String?>(null) }
     var viewing by remember { mutableStateOf<String?>(null) }
+    var linkMenu by remember { mutableStateOf<String?>(null) }
     CompositionLocalProvider(
         LocalDensity provides Density(d.density, d.fontScale * (pane?.fontScale ?: 1f)),
         mv.obitech.crundi.ui.components.LocalPathTap provides { p: String -> pathMenu = p },
+        mv.obitech.crundi.ui.components.LocalLinkTap provides { u: String -> linkMenu = u },
     ) {
     // A file (or folder) dragged here from Files: its reference goes into the
     // message box, as dropping it on a chat does on the web.
@@ -282,6 +284,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
         )
         pathMenu?.let { p -> PathMenu(p, c.project.ifEmpty { ui.pane?.project.orEmpty() }, onOpen = { viewing = it }) { pathMenu = null } }
         viewing?.let { p -> mv.obitech.crundi.ui.workspace.files.FileViewDialog(p) { viewing = null } }
+        linkMenu?.let { u -> LinkMenu(u) { linkMenu = null } }
         ui.sheet?.let { s ->
             if (s is ChatSheet.Picture) ImageViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-image")); actions.sheet(null) }, onClose = { actions.sheet(null) })
             else if (s is ChatSheet.Video) VideoViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-video")) }, onClose = { actions.sheet(null) })
@@ -786,6 +789,25 @@ private fun PathMenu(path: String, project: String, onOpen: (String) -> Unit, on
             if (full != path) mv.obitech.crundi.ui.components.ListRow("Copy path", icon = "copy", onClick = {
                 clipboard.setText(androidx.compose.ui.text.AnnotatedString(full)); onDismiss()
                 android.widget.Toast.makeText(ctx, "Path copied", android.widget.Toast.LENGTH_SHORT).show()
+            })
+        }
+    }
+}
+
+/** A link in the chat: open it, or copy it. */
+@Composable
+private fun LinkMenu(url: String, onDismiss: () -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val host = mv.obitech.crundi.ui.shell.LocalHost.current
+    val name = runCatching { java.net.URI(url).host }.getOrNull()?.removePrefix("www.") ?: "Link"
+    mv.obitech.crundi.ui.components.CrundiDialog(name, onDismiss = onDismiss, dismiss = null) {
+        Column {
+            Text(url, style = mv.obitech.crundi.ui.theme.CrundiType.Code.copy(color = CrundiColors.TextMuted), maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+            mv.obitech.crundi.ui.components.ListRow("Open", icon = "external-link", onClick = { onDismiss(); host.openExternal(url) })
+            mv.obitech.crundi.ui.components.ListRow("Copy link", icon = "copy", onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(url)); onDismiss()
+                android.widget.Toast.makeText(ctx, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
             })
         }
     }

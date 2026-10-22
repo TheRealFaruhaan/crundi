@@ -124,8 +124,6 @@ fun CrundiApp(
                 operationsGraph()
             }
         }
-        // A workbench pane full screen: drawn here, over the whole app (FullScreen).
-        FullScreen.layer?.invoke()
         // The top bar's Panels button: its chips and their panels (ui.panels).
         if (panelsOpen) mv.obitech.crundi.ui.panels.PanelChipsPopover(onDismiss = { panelsOpen = false }, onOpenTab = { navigator.area(Area.Panels) })
         // Claude asking to use a secret: a card over every screen, answered with the PIN (ui.operations).

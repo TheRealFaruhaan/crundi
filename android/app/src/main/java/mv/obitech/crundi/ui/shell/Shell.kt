@@ -1,6 +1,5 @@
 package mv.obitech.crundi.ui.shell
 
-import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.graphics.Brush
 import mv.obitech.crundi.ui.mini.miniLogo
@@ -131,13 +130,13 @@ fun ShellScaffold(
     // The status bar stays: full screen is inside the app now, and hiding it
     // only left an empty band where it had been.
     val paneFull = FullScreen.pane != null
-    Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary).onGloballyPositioned { FullScreen.area = it.boundsInWindow() }) {
-        androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.EnterTransition.None, exit = androidx.compose.animation.ExitTransition.None) {
+    Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
+        androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.expandVertically() + fadeIn(), exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
             ShellTopBar(data, onMenu = { onDrawer(!drawerOpen) }, callbacks = callbacks)
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.fillMaxSize()) {
-                androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.EnterTransition.None, exit = androidx.compose.animation.ExitTransition.None) {
+                androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.expandVertically() + fadeIn(), exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
                     AreaTabs(current, data, callbacks, addMenuOpen)
                 }
                 Box(Modifier.fillMaxWidth().weight(1f)) { content() }
@@ -568,15 +567,6 @@ private fun DashedButton(icon: String, label: String, onClick: () -> Unit) {
 /** Which workbench pane is full screen, if any: the shell hides its chrome for it. */
 object FullScreen {
     var pane by androidx.compose.runtime.mutableStateOf<String?>(null)
-    /** The whole frame of the app (top bar and tabs included), in window coordinates: what full screen fills. */
-    var area by androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Rect.Zero)
-    /**
-     * The full-screen pane's layer, drawn by the app over everything (CrundiApp).
-     * Drawn from inside the workbench it was cut to the workbench's screen
-     * (the navigation clips each screen), so its growth over the bars was
-     * hidden and it seemed to jump.
-     */
-    var layer by androidx.compose.runtime.mutableStateOf<(@androidx.compose.runtime.Composable () -> Unit)?>(null)
 }
 
 /**

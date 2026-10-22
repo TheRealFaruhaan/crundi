@@ -120,7 +120,13 @@ object Markdown {
     private val TEXT_PATH = Regex("^/(?:[\\w.@+~%,=-]+/)+[\\w.@+~%,=-]+(?::\\d+(?::\\d+)?)?")
 
     /** Inline marks to styled text. [onPath]: file paths become tappable (code spans that are paths, and absolute paths in the text). */
-    fun inline(src: String, base: SpanStyle = SpanStyle(), onPath: ((String) -> Unit)? = null): AnnotatedString = buildAnnotatedString {
+    fun inline(src: String, base: SpanStyle = SpanStyle(), onPath: ((String) -> Unit)? = null, onLink: ((String) -> Unit)? = null): AnnotatedString = buildAnnotatedString {
+        // A link opens directly, or (in a chat) asks first: open or copy.
+        fun link(url: String, text: String) {
+            val style = TextLinkStyles(SpanStyle(color = CrundiColors.AccentHover, textDecoration = TextDecoration.Underline))
+            if (onLink != null) withLink(LinkAnnotation.Clickable("link:$url", style) { onLink(url) }) { append(text) }
+            else withLink(LinkAnnotation.Url(url, style)) { append(text) }
+        }
         var i = 0
         val n = src.length
         while (i < n) {
@@ -138,7 +144,7 @@ object Markdown {
                 }
                 src.startsWith("**", i) || src.startsWith("__", i) -> {
                     val tok = src.substring(i, i + 2); val e = closing(tok, i + 2)
-                    if (e != null) { withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(inline(src.substring(i + 2, e), onPath = onPath)) }; i = e + 2 } else { append(tok); i += 2 }
+                    if (e != null) { withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(inline(src.substring(i + 2, e), onPath = onPath, onLink = onLink)) }; i = e + 2 } else { append(tok); i += 2 }
                 }
                 src.startsWith("~~", i) -> {
                     val e = closing("~~", i + 2)
@@ -151,7 +157,7 @@ object Markdown {
                 c == '[' -> {
                     val m = Regex("^\\[([^\\]]+)]\\(([^)\\s]+)\\)").find(src.substring(i))
                     if (m != null) {
-                        withLink(LinkAnnotation.Url(m.groupValues[2], TextLinkStyles(SpanStyle(color = CrundiColors.AccentHover, textDecoration = TextDecoration.Underline)))) { append(m.groupValues[1]) }
+                        link(m.groupValues[2], m.groupValues[1])
                         i += m.value.length
                     } else { append(c); i++ }
                 }
@@ -161,7 +167,7 @@ object Markdown {
                     while (e < n && !src[e].isWhitespace() && src[e] != '<' && src[e] != '`') e++
                     var u = src.substring(i, e)
                     u = u.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '\'', '"', '*', '_')
-                    withLink(LinkAnnotation.Url(u, TextLinkStyles(SpanStyle(color = CrundiColors.AccentHover, textDecoration = TextDecoration.Underline)))) { append(u) }
+                    link(u, u)
                     i += u.length
                 }
                 // An absolute path written in the text ("in /a/b.js:12,"), as the web's linkify.
@@ -179,6 +185,8 @@ object Markdown {
 
 /** Where a tapped file path goes (the chat sets it); null leaves paths as plain text. */
 val LocalPathTap = androidx.compose.runtime.staticCompositionLocalOf<((String) -> Unit)?> { null }
+/** Where a tapped link goes (the chat asks: open or copy); null opens it directly. */
+val LocalLinkTap = androidx.compose.runtime.staticCompositionLocalOf<((String) -> Unit)?> { null }
 
 /** Draw markdown. `compact` tightens spacing (chat bubbles, notes previews). */
 @Composable
@@ -192,15 +200,16 @@ fun MarkdownText(markdown: String, modifier: Modifier = Modifier, compact: Boole
 @Composable
 private fun MarkdownBlock(b: Markdown.Block) {
     val onPath = LocalPathTap.current
+    val onLink = LocalLinkTap.current
     when (b) {
         is Markdown.Heading -> Text(
-            Markdown.inline(b.text, onPath = onPath),
+            Markdown.inline(b.text, onPath = onPath, onLink = onLink),
             style = CrundiType.Heading.copy(fontSize = when (b.level) { 1 -> 19.sp; 2 -> 17.sp; 3 -> 15.sp; else -> 14.sp }),
         )
-        is Markdown.Paragraph -> Text(Markdown.inline(b.text, onPath = onPath), style = CrundiType.Body)
+        is Markdown.Paragraph -> Text(Markdown.inline(b.text, onPath = onPath, onLink = onLink), style = CrundiType.Body)
         is Markdown.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
             Box(Modifier.width(3.dp).fillMaxHeight().background(CrundiColors.Border))
-            Text(Markdown.inline(b.text, onPath = onPath), style = CrundiType.Body.copy(color = CrundiColors.TextSecondary), modifier = Modifier.padding(start = 10.dp))
+            Text(Markdown.inline(b.text, onPath = onPath, onLink = onLink), style = CrundiType.Body.copy(color = CrundiColors.TextSecondary), modifier = Modifier.padding(start = 10.dp))
         }
         is Markdown.Fence -> CodeBlock(b.code, language = b.language)
         is Markdown.Rule -> CrundiDivider(strong = true)
@@ -219,7 +228,7 @@ private fun MarkdownBlock(b: Markdown.Block) {
                         style = CrundiType.Body.copy(color = CrundiColors.TextSecondary),
                         modifier = Modifier.widthIn(min = 18.dp),
                     )
-                    Text(Markdown.inline(text, onPath = onPath), style = CrundiType.Body, modifier = Modifier.padding(start = 6.dp))
+                    Text(Markdown.inline(text, onPath = onPath, onLink = onLink), style = CrundiType.Body, modifier = Modifier.padding(start = 6.dp))
                 }
             }
         }
