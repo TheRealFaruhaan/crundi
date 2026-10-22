@@ -402,8 +402,21 @@ private fun FileCard(m: ChatMedia, actions: EntryActions) {
             ).joinToString(" · ")
             if (meta.isNotEmpty()) Text(meta, style = CrundiType.Meta, maxLines = 1)
             if (m.kind != "file" && m.caption.isNotEmpty() && m.caption != label) Text(m.caption, style = ChatType.Small, maxLines = 2)
+            // Its download, here on the card: progress, then where it went.
+            val dl = m.path?.let { mv.obitech.crundi.MediaDownloads.states[it] }
+            when {
+                dl == null -> {}
+                dl.failed -> Text("Download failed", style = CrundiType.Meta.copy(color = CrundiColors.Red))
+                dl.savedWhere != null -> Text("Saved to " + dl.savedWhere, style = CrundiType.Meta.copy(color = CrundiColors.Green), maxLines = 2)
+                else -> Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (dl.total > 0) androidx.compose.material3.LinearProgressIndicator(progress = { (dl.done.toFloat() / dl.total).coerceIn(0f, 1f) }, color = CrundiColors.Accent, trackColor = CrundiColors.BgTertiary, modifier = Modifier.fillMaxWidth().height(3.dp))
+                    else androidx.compose.material3.LinearProgressIndicator(color = CrundiColors.Accent, trackColor = CrundiColors.BgTertiary, modifier = Modifier.fillMaxWidth().height(3.dp))
+                    Text("Downloading" + (if (dl.done > 0) " · " + bytes(dl.done) + (if (dl.total > 0) " of " + bytes(dl.total) else "") else "…"), style = CrundiType.Meta)
+                }
+            }
         }
-        CrundiButton("Download", { actions.media(m) }, kind = ButtonKind.Ghost, icon = "download")
+        val busy = m.path?.let { mv.obitech.crundi.MediaDownloads.states[it] }?.let { it.savedWhere == null && !it.failed } == true
+        CrundiButton(if (busy) "Downloading" else "Download", { actions.media(m) }, kind = ButtonKind.Ghost, icon = "download", enabled = !busy)
     }
 }
 

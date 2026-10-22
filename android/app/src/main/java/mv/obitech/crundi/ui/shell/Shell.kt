@@ -570,6 +570,13 @@ object FullScreen {
     var pane by androidx.compose.runtime.mutableStateOf<String?>(null)
     /** The whole frame of the app (top bar and tabs included), in window coordinates: what full screen fills. */
     var area by androidx.compose.runtime.mutableStateOf(androidx.compose.ui.geometry.Rect.Zero)
+    /**
+     * The full-screen pane's layer, drawn by the app over everything (CrundiApp).
+     * Drawn from inside the workbench it was cut to the workbench's screen
+     * (the navigation clips each screen), so its growth over the bars was
+     * hidden and it seemed to jump.
+     */
+    var layer by androidx.compose.runtime.mutableStateOf<(@androidx.compose.runtime.Composable () -> Unit)?>(null)
 }
 
 /**

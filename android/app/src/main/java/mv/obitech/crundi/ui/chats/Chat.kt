@@ -705,10 +705,18 @@ fun ChatRoute(chatId: String) {
                 m.kind == "video" -> ui = ui.copy(sheet = ChatSheet.Video(m))
                 m.kind == "embed" && m.openUrl != null -> host.openExternal(m.openUrl)
                 m.path != null -> act {
-                    val name = saveToDownloads(ctx, m.filename.ifEmpty { m.path.substringAfter("name=", "file").substringBefore('&') }) { sink ->
-                        api.transport.download(ApiRequest("GET", m.path.substringBefore('?'), queryOf(m.path)), sink).filename
-                    }
-                    ui = ui.copy(notice = "Saved $name to Downloads")
+                    // Through the app's downloads: a notification with progress, then tap to open.
+                    val name = m.filename.ifEmpty { m.path.substringAfter("name=", "file").substringBefore('&') }
+                    // The file's card shows the progress, then where it went.
+                    val key = m.path
+                    val dl = mv.obitech.crundi.MediaDownloads.states
+                    dl[key] = mv.obitech.crundi.MediaDownloads.State(0, m.size)
+                    try {
+                        val saved = mv.obitech.crundi.Downloads.save(ctx, name, size = m.size, onProgress = { n -> dl[key] = mv.obitech.crundi.MediaDownloads.State(n, m.size) }) { sink ->
+                            api.transport.download(ApiRequest("GET", m.path.substringBefore('?'), queryOf(m.path)), sink)
+                        }
+                        dl[key] = mv.obitech.crundi.MediaDownloads.State(saved.size, saved.size, savedWhere = saved.where + "/" + saved.name)
+                    } catch (e: Exception) { dl[key] = mv.obitech.crundi.MediaDownloads.State(failed = true); throw e }
                 }
             }
         }

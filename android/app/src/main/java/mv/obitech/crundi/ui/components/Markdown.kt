@@ -155,6 +155,15 @@ object Markdown {
                         i += m.value.length
                     } else { append(c); i++ }
                 }
+                // A bare web address in the text is a link, as the web's linkify.
+                (src.startsWith("https://", i) || src.startsWith("http://", i)) && (i == 0 || !src[i - 1].isLetterOrDigit()) -> {
+                    var e = i
+                    while (e < n && !src[e].isWhitespace() && src[e] != '<' && src[e] != '`') e++
+                    var u = src.substring(i, e)
+                    u = u.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '\'', '"', '*', '_')
+                    withLink(LinkAnnotation.Url(u, TextLinkStyles(SpanStyle(color = CrundiColors.AccentHover, textDecoration = TextDecoration.Underline)))) { append(u) }
+                    i += u.length
+                }
                 // An absolute path written in the text ("in /a/b.js:12,"), as the web's linkify.
                 onPath != null && c == '/' && (i == 0 || src[i - 1].isWhitespace() || src[i - 1] in "([\"'") && TEXT_PATH.find(src.substring(i)) != null -> {
                     var p = TEXT_PATH.find(src.substring(i))!!.value

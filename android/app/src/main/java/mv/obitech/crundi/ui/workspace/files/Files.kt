@@ -440,7 +440,7 @@ fun FilesRoute() {
                 is FileAction.Download -> scope.launch {
                     state = state.copy(transfer = Transfer("Downloading ${a.item.name}", 0, a.item.size))
                     runCatching {
-                        Downloads.save(ctx, a.item.name) { sink -> api.files.download(p, a.item.path, sink) { d, t -> state = state.copy(transfer = Transfer("Downloading ${a.item.name}", d, t)) } }
+                        Downloads.save(ctx, a.item.name, size = a.item.size) { sink -> api.files.download(p, a.item.path, sink) { d, t -> state = state.copy(transfer = Transfer("Downloading ${a.item.name}", d, t)) } }
                     }.onSuccess { toast("Saved ${it.name} to ${it.where}") }.onFailure { toast("Download failed: " + errorText(it)) }
                     state = state.copy(transfer = null)
                 }

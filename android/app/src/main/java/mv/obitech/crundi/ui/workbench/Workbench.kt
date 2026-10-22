@@ -202,28 +202,16 @@ fun WorkbenchScreen(
         val fullView = ui.full?.let { ui.panes[it] }
         if (fullView != null) androidx.activity.compose.BackHandler { actions.full(fullView, false) }
         val shownView = shownFull?.let { ui.panes[it] }
-        if (shownView != null) {
-            val area = mv.obitech.crundi.ui.shell.FullScreen.area.takeIf { it.width > 0f } ?: rootRect
-            val from = fromRect ?: area
-            // Placed over the whole app frame (it may reach above this layer,
-            // over the bars), at the frame's size; drawn from the slot to it.
-            Box(
-                Modifier.layout { m, c ->
-                    val w = area.width.toInt().coerceAtLeast(1); val h = area.height.toInt().coerceAtLeast(1)
-                    val p = m.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
-                    layout(c.maxWidth, c.maxHeight) { p.place((area.left - rootRect.left).toInt(), (area.top - rootRect.top).toInt()) }
-                }.graphicsLayer {
-                    val t = fullProg.value
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
-                    val sx = from.width / area.width.coerceAtLeast(1f); val sy = from.height / area.height.coerceAtLeast(1f)
-                    scaleX = sx + (1f - sx) * t
-                    scaleY = sy + (1f - sy) * t
-                    translationX = (from.left - area.left) * (1f - t)
-                    translationY = (from.top - area.top) * (1f - t)
-                    clip = true
-                },
-            ) { LocalPaneSlot.current(shownView, if (fullView != null) 3 else 1) }
+        // Handed to the app's top layer (FullScreen.layer), which draws it over
+        // everything; the slot function is passed in, not read from here.
+        val paneSlot = LocalPaneSlot.current
+        val flags = if (fullView != null) 3 else 1
+        androidx.compose.runtime.SideEffect {
+            mv.obitech.crundi.ui.shell.FullScreen.layer = if (shownView == null) null else ({
+                FullLayer(fromRect, { fullProg.value }) { paneSlot(shownView, flags) }
+            })
         }
+        androidx.compose.runtime.DisposableEffect(Unit) { onDispose { mv.obitech.crundi.ui.shell.FullScreen.layer = null } }
     }
     }
 }
@@ -362,3 +350,27 @@ private fun Modifier.focusOnTouch(onFocus: () -> Unit): Modifier = pointerInput(
 
 /** Used by the add menu's "Fit" and the empty workbench: at least one slot to launch into. */
 fun Mosaic.withSlot(): Mosaic = if (leaves().isEmpty()) Mosaic.leaf(null) else this
+
+/**
+ * The full-screen pane, drawn over the whole app: laid out once at the full
+ * size, and drawn from [from] (its slot, window coordinates) to the whole
+ * layer as [progress] goes from 0 to 1. Only scale and position change.
+ */
+@Composable
+private fun FullLayer(from: androidx.compose.ui.geometry.Rect?, progress: () -> Float, content: @Composable () -> Unit) {
+    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    Box(
+        Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInWindow() }.graphicsLayer {
+            val t = progress()
+            val w = size.width.coerceAtLeast(1f); val h = size.height.coerceAtLeast(1f)
+            val r = from?.translate(-origin.x, -origin.y) ?: androidx.compose.ui.geometry.Rect(0f, 0f, w, h)
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+            val sx = r.width / w; val sy = r.height / h
+            scaleX = sx + (1f - sx) * t
+            scaleY = sy + (1f - sy) * t
+            translationX = r.left * (1f - t)
+            translationY = r.top * (1f - t)
+            clip = true
+        },
+    ) { content() }
+}
