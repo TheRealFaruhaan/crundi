@@ -302,31 +302,36 @@ private class BrowserMemory(ctx: Context, private val id: String) {
 
 /**
  * The CSS width an emulated device gives its page (0 = the view's own, for
- * Responsive), kept on the WebView so its client can re-apply it on every
- * page. See [applyViewport].
+ * Responsive / Fill), and the script that sets it, kept per WebView.
  */
 private val emulatedWidth = java.util.WeakHashMap<WebView, Int>()
+private val viewportScript = java.util.WeakHashMap<WebView, androidx.webkit.ScriptHandler>()
 
 /**
  * Give the page the device's width. The WebView is laid out at the size it
- * is shown at (scaled to the stage), and the page is told the device's
- * width through its viewport tag, so the browser zooms it to fit: the page
- * lays out at e.g. 393 wide and its screen is exactly the device frame.
- * (Shrinking a device-sized WebView with a view scale instead left part of it
- * outside the window, and Android then took only the visible part as the
- * screen: fixed bars sat mid-page over an empty, scrollable band.)
+ * is shown at (scaled to the stage), and the page is told the device's width
+ * through its viewport tag, so the browser zooms it to fit: the page lays out
+ * at e.g. 393 wide and its screen is exactly the device frame. (Shrinking a
+ * device-sized WebView with a view scale instead left part of it outside the
+ * window, and Android then took only the visible part as the screen.)
+ *
+ * The tag is set before the page's own scripts run (a document-start script
+ * that also rewrites the page's tag as it arrives), so the page loads at that
+ * width from the start. Changing it on a page already shown kept the old
+ * zoom (switching device left Google huge, and pinching could not undo it),
+ * so a change of device loads the page again.
  */
-private fun applyViewport(web: WebView) {
-    val w = emulatedWidth[web] ?: 0
-    val content = if (w > 0) "width=$w" else ""
-    web.evaluateJavascript(
-        "(function(c){var m=document.querySelector('meta[name=viewport]');" +
-            "if(!c){if(m&&m.dataset.crundiWas!==undefined){m.setAttribute('content',m.dataset.crundiWas);delete m.dataset.crundiWas;}return;}" +
-            "if(!m){m=document.createElement('meta');m.name='viewport';(document.head||document.documentElement).appendChild(m);m.dataset.crundiWas='';}" +
-            "else if(m.dataset.crundiWas===undefined){m.dataset.crundiWas=m.getAttribute('content')||'';}" +
-            "m.setAttribute('content',c);})('" + content + "')",
-        null,
-    )
+private fun setViewport(web: WebView, width: Int) {
+    viewportScript.remove(web)?.remove()
+    if (width <= 0) return
+    if (!androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) return
+    val js = "(function(){var c='width=$width';" +
+        "function fix(m){if(m.getAttribute('content')!==c)m.setAttribute('content',c);}" +
+        "function ensure(){var ms=document.querySelectorAll('meta[name=viewport]');" +
+        "if(!ms.length){var m=document.createElement('meta');m.name='viewport';(document.head||document.documentElement).appendChild(m);ms=[m];}" +
+        "for(var i=0;i<ms.length;i++)fix(ms[i]);}" +
+        "ensure();new MutationObserver(ensure).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['content']});})();"
+    viewportScript[web] = androidx.webkit.WebViewCompat.addDocumentStartJavaScript(web, js, setOf("*"))
 }
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -351,8 +356,7 @@ private fun newWebView(ctx: Context, onState: (WebView, String?, Boolean, String
             return s != "http" && s != "https" && s != "about"   // intent:, file:, mailto: ... stay out
         }
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) = onState(view, url, true, null)
-        override fun onPageCommitVisible(view: WebView, url: String?) { applyViewport(view) }
-        override fun onPageFinished(view: WebView, url: String?) { applyViewport(view); onState(view, url, false, null) }
+        override fun onPageFinished(view: WebView, url: String?) = onState(view, url, false, null)
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) = onState(view, url, view.progress < 100, null)
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
             if (request.isForMainFrame) onState(view, request.url.toString(), false, "Could not open this page: " + error.description)
@@ -416,14 +420,21 @@ fun LiveBrowser(id: String, modifier: Modifier = Modifier, startUrl: String? = n
                 update = {
                     val px = density.density
                     // Laid out at the size it is shown at; the page gets the
-                    // device's width from applyViewport, not from a view scale.
+                    // device's width from setViewport, not from a view scale.
                     val lp = if (dev.responsive) FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     else FrameLayout.LayoutParams((dev.w * scale * px).toInt(), (dev.h * scale * px).toInt())
                     web.layoutParams = lp
                     web.scaleX = 1f; web.scaleY = 1f
                     web.translationX = left * px; web.translationY = top * px
                     val want = if (dev.responsive) 0 else dev.w.toInt()
-                    if (emulatedWidth[web] != want) { emulatedWidth[web] = want; applyViewport(web) }
+                    if (emulatedWidth[web] != want) {
+                        val first = emulatedWidth[web] == null
+                        emulatedWidth[web] = want
+                        setViewport(web, want)
+                        // A fresh load, not reload(): a reload brings back the old zoom and scroll.
+                        // The first time, only if a page is already there without it.
+                        if (!first || want > 0) web.url?.let { web.loadUrl(it) }
+                    }
                 },
             )
         }

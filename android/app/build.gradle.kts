@@ -190,6 +190,8 @@ dependencies {
     // The API client (package api): OkHttp for HTTP, the live event stream
     // (SSE) and the WebSocket; kotlinx.serialization for the typed models.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Device emulation sets the page's width before its scripts run (Browser.kt setViewport).
+    implementation("androidx.webkit:webkit:1.12.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("com.google.firebase:firebase-messaging:24.1.0")
     // Draws a project's icon when it is a drawing (.svg): Android itself
