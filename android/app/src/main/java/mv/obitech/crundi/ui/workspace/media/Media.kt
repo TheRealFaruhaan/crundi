@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import mv.obitech.crundi.ui.workbench.paneDragSource
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
@@ -165,7 +166,9 @@ fun MediaScreen(
 
 @Composable
 private fun MediaCard(m: MediaItem, onOpen: (MediaItem) -> Unit, onDownload: (MediaItem) -> Unit, onCopyPath: (MediaItem) -> Unit, onDelete: (MediaItem) -> Unit) {
-    Column(Modifier.clip(Dimens.Shape).background(CrundiColors.BgCard).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape)) {
+    // The whole card is held and dragged onto a chat, terminal or notes page
+    // for its path, as the web's media card.
+    Column(Modifier.paneDragSource("media", m.path, m.originalName).clip(Dimens.Shape).background(CrundiColors.BgCard).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape)) {
         Box(Modifier.fillMaxWidth().height(110.dp).background(CrundiColors.BgSecondary).clickable { onOpen(m) }, contentAlignment = Alignment.Center) {
             val img = if (m.kind == "image") rememberServerImage(m.rawPath, maxPx = 400) else null
             if (img != null) Image(img, contentDescription = m.originalName, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())

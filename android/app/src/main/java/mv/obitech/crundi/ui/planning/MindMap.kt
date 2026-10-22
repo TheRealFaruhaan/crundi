@@ -343,8 +343,14 @@ private fun MindCanvas(
     var dragId by remember { mutableStateOf<String?>(null) }
     var finger by remember { mutableStateOf(Offset.Zero) }
     var rootAt by remember { mutableStateOf(Offset.Zero) }
+    // In a workbench pane a held idea can also go to a chat, terminal or notes
+    // page in another pane: over one, that wins over the ideas here.
+    val inPane = mv.obitech.crundi.ui.workbench.LocalPane.current != null
+    val paneDrop = mv.obitech.crundi.ui.workbench.PaneDrop
+    var canvas by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     fun under(at: Offset): String? {
         val d = dragId ?: return null
+        if (paneDrop.target() != null || !canvas.contains(at)) return null
         val banned = setOf(d) + descendants(m, d).map { it.id }
         return boxes.entries.firstOrNull { it.key !in banned && it.value.contains(at) }?.key
     }
@@ -385,6 +391,7 @@ private fun MindCanvas(
     Box(
         Modifier.fillMaxSize().clipToBounds().onSizeChanged { view = it }
             .androidx_onPlacedMind { rootAt = it }
+            .onGloballyPositioned { canvas = it.boundsInWindow() }
             .pointerInput(Unit) { detectTapGestures { focusManager.clearFocus(); keyboard?.hide() } }
             .drawBehind {
                 val step = 22.dp.toPx() * scale
@@ -427,10 +434,18 @@ private fun MindCanvas(
                                 .onGloballyPositioned { c -> coords = c; boxes[n.id] = c.boundsInWindow() }
                                 .then(if (n.id == editing) Modifier else Modifier.pointerInput(n.id) {
                                     detectDragGesturesAfterLongPress(
-                                        onDragStart = { at -> dragId = n.id; finger = coords?.localToWindow(at) ?: at },
-                                        onDrag = { c, _ -> c.consume(); finger = coords?.localToWindow(c.position) ?: finger },
-                                        onDragEnd = { val t = under(finger); dragId = null; if (t != null && t != n.parentId) onMoveTo(n, t) },
-                                        onDragCancel = { dragId = null },
+                                        onDragStart = { at ->
+                                            dragId = n.id; finger = coords?.localToWindow(at) ?: at
+                                            if (inPane) { paneDrop.start("mindmap", n.id, n.text, finger); paneDrop.ownGhost = canvas }
+                                        },
+                                        onDrag = { c, _ -> c.consume(); finger = coords?.localToWindow(c.position) ?: finger; if (inPane) paneDrop.finger = finger },
+                                        onDragEnd = {
+                                            // Over a chat, terminal or notes page its id goes there; otherwise onto the idea under it.
+                                            if (inPane && paneDrop.target() != null) { dragId = null; paneDrop.drop(); return@detectDragGesturesAfterLongPress }
+                                            if (inPane) paneDrop.cancel()
+                                            val t = under(finger); dragId = null; if (t != null && t != n.parentId) onMoveTo(n, t)
+                                        },
+                                        onDragCancel = { dragId = null; if (inPane) paneDrop.cancel() },
                                     )
                                 }),
                         ) {
@@ -469,8 +484,9 @@ private fun MindCanvas(
                 }
             }
         }
-        // The held idea, under the finger.
-        dragId?.let { id -> byId[id] }?.let { d ->
+        // The held idea, under the finger, while it is over the map (beyond it
+        // the workbench draws the held label).
+        if (canvas.contains(finger)) dragId?.let { id -> byId[id] }?.let { d ->
             Box(
                 Modifier.offset { androidx.compose.ui.unit.IntOffset((finger.x - rootAt.x - 60.dp.toPx()).toInt(), (finger.y - rootAt.y - 30.dp.toPx()).toInt()) }
                     .width(MindLayout.WIDTH.dp).shadow(10.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))

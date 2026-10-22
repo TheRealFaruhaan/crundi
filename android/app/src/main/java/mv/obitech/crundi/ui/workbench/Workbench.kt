@@ -128,13 +128,15 @@ fun WorkbenchScreen(
                 }
             }
         }
-        // Something held from a pane (a file from Files): drawn over every
-        // pane, and resting at the screen's edge slides to the next column.
+        // Something held from a pane (a file from Files, a Kanban card): drawn
+        // over every pane, and resting at the screen's edge slides to the next
+        // column. A source that draws its own held item in its pane (ownGhost)
+        // keeps this label away until the finger leaves that pane.
         PaneDrop.text?.let { _ ->
             var rootAt by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
             var rootW by remember { mutableIntStateOf(0) }
             Box(Modifier.fillMaxSize().onGloballyPositioned { rootAt = it.positionInWindow(); rootW = it.size.width }) {
-                Row(
+                if (PaneDrop.ownGhost?.contains(PaneDrop.finger) != true) Row(
                     Modifier.offset { androidx.compose.ui.unit.IntOffset((PaneDrop.finger.x - rootAt.x - 40.dp.toPx()).toInt(), (PaneDrop.finger.y - rootAt.y - 28.dp.toPx()).toInt()) }
                         .shadow(8.dp, RoundedCornerShape(8.dp)).background(CrundiColors.BgTertiary, RoundedCornerShape(8.dp))
                         .border(1.dp, CrundiColors.Accent, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 8.dp),

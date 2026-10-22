@@ -1,6 +1,15 @@
 package mv.obitech.crundi.ui.planning
 
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.TextLayoutResult
+import mv.obitech.crundi.ui.workbench.DropKind
+import mv.obitech.crundi.ui.workbench.PaneDrop
+import mv.obitech.crundi.ui.workbench.paneDropTarget
 
 import androidx.compose.foundation.layout.heightIn
 
@@ -455,6 +464,54 @@ class NoteEditor(page: NotePage) {
     }
 
     fun toBlocks(): List<NoteBlock> = blocks.map { it.toBlock() }
+
+    /** Where a block's text is drawn: its layout and place, and whether it shows the source as is (or rendered, marks hidden). */
+    class DropSpot(var layout: TextLayoutResult? = null, var coords: LayoutCoordinates? = null, var raw: Boolean = true)
+    /** Each block's area in the window and its text's [DropSpot], for something dropped from another pane. */
+    val boxes = HashMap<String, Rect>()
+    val spots = HashMap<String, DropSpot>()
+    fun spot(id: String) = spots.getOrPut(id) { DropSpot() }
+    fun blockAt(at: Offset): EditBlock? = blocks.firstOrNull { boxes[it.id]?.contains(at) == true }
+
+    /**
+     * Something dropped from another pane (a path, a task's reference) at
+     * [at], as the web's drop on a notes page: into the text under the finger
+     * at that point, padded with spaces like typed words (a code block takes
+     * it as it is). Over a divider, a table or below the blocks it becomes a
+     * paragraph of its own.
+     */
+    fun dropText(at: Offset, text: String) {
+        if (deleted || text.isEmpty()) return
+        val b = blockAt(at)
+        if (b == null || !(b.isText || b.type == "code")) {
+            val i = b?.let { index(it.id) + 1 } ?: blocks.size
+            val nb = EditBlock(EditBlock.newId(), "p", source = "$text ")
+            blocks.add(i.coerceIn(0, blocks.size), nb); touched(); focus(nb.id)
+            return
+        }
+        val src = if (focused == b.id) value.text else b.source
+        var pos = src.length
+        val sp = spots[b.id]; val lay = sp?.layout; val c = sp?.coords
+        if (lay != null && c != null && c.isAttached) {
+            val o = lay.getOffsetForPosition(c.windowToLocal(at))
+            pos = if (sp.raw) o.coerceIn(0, src.length) else sourceOffset(src, lay.layoutInput.text.text, o)
+        }
+        val ins = if (b.type == "code") text else (if (pos > 0 && !src[pos - 1].isWhitespace()) " " else "") + text + " "
+        set(b.copy(source = src.substring(0, pos) + ins + src.substring(pos)))
+        if (b.isText) focus(b.id, pos + ins.length)
+    }
+
+    // A point in rendered text (bold and link marks hidden) back to the same
+    // point in its source: walk both, skipping source characters not shown.
+    private fun sourceOffset(src: String, shown: String, o: Int): Int {
+        if (o >= shown.length) return src.length
+        var j = 0
+        for (i in 0 until o) {
+            while (j < src.length && src[j] != shown[i]) j++
+            if (j < src.length) j++
+        }
+        return j.coerceIn(0, src.length)
+    }
 }
 
 @Composable
@@ -590,7 +647,18 @@ private fun SaveIndicator(s: SaveStatus) {
 @Composable
 fun NoteEditorBody(ed: NoteEditor, modifier: Modifier = Modifier) {
     val readOnly = ed.deleted
-    Column(modifier.fillMaxWidth()) {
+    // A path or a reference dragged here from another pane goes in where it is let go.
+    val dropKey = "notes:" + (mv.obitech.crundi.ui.workbench.LocalPane.current?.key ?: ed.id)
+    LaunchedEffect(ed, dropKey) {
+        PaneDrop.inserts.collect { ins -> if (ins.key == dropKey) ed.dropText(ins.at, ins.text) }
+    }
+    val dropHere = !readOnly && PaneDrop.hovered(dropKey)
+    val dropOver = if (dropHere) ed.blockAt(PaneDrop.finger)?.id else null
+    Column(
+        modifier.fillMaxWidth()
+            .then(if (readOnly) Modifier else Modifier.paneDropTarget(dropKey, DropKind.Notes))
+            .then(if (dropHere) Modifier.border(2.dp, CrundiColors.Accent) else Modifier),
+    ) {
         if (readOnly) Banner("This page is in the trash. Restore it from the Notes tab to edit it.", Modifier.fillMaxWidth().padding(12.dp), kind = BadgeKind.Warn, icon = "trash")
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 18.dp, end = 16.dp, top = 16.dp, bottom = 120.dp),
@@ -607,7 +675,7 @@ fun NoteEditorBody(ed: NoteEditor, modifier: Modifier = Modifier) {
             var number = 0
             for (b in ed.blocks) {
                 number = if (b.type == "number") number + 1 else 0
-                NoteBlockView(ed, b, number, readOnly)
+                NoteBlockView(ed, b, number, readOnly, dropOver = b.id == dropOver)
             }
             if (!readOnly) {
                 Row(
@@ -704,9 +772,11 @@ private fun placeholderFor(type: String) = when (type) {
 }
 
 @Composable
-private fun NoteBlockView(ed: NoteEditor, b: EditBlock, number: Int, readOnly: Boolean) {
+private fun NoteBlockView(ed: NoteEditor, b: EditBlock, number: Int, readOnly: Boolean, dropOver: Boolean = false) {
     val top = when (b.type) { "h1" -> 14.dp; "h2" -> 10.dp; "h3" -> 6.dp; else -> 1.dp }
-    Row(Modifier.fillMaxWidth().padding(top = top, bottom = 1.dp).then(if (b.type == "quote") Modifier.height(IntrinsicSize.Min) else Modifier), verticalAlignment = Alignment.Top) {
+    Row(Modifier.fillMaxWidth().padding(top = top, bottom = 1.dp)
+        .onGloballyPositioned { ed.boxes[b.id] = it.boundsInWindow() }
+        .then(if (dropOver) Modifier.background(CrundiColors.AccentDim, Dimens.ShapeSm) else Modifier).then(if (b.type == "quote") Modifier.height(IntrinsicSize.Min) else Modifier), verticalAlignment = Alignment.Top) {
         when (b.type) {
             "bullet" -> Box(Modifier.width(22.dp).padding(top = 9.dp), contentAlignment = Alignment.TopCenter) { Box(Modifier.size(6.dp).clip(CircleShape).background(CrundiColors.TextSecondary)) }
             "number" -> Text("$number.", style = styleFor("p").copy(color = CrundiColors.TextSecondary, textAlign = TextAlign.End), modifier = Modifier.width(22.dp).padding(end = 4.dp))
@@ -735,7 +805,8 @@ private fun TextBlock(ed: NoteEditor, b: EditBlock, readOnly: Boolean) {
         BasicTextField(
             ed.value, { ed.edit(b.id, it) },
             textStyle = style, cursorBrush = SolidColor(CrundiColors.AccentHover),
-            modifier = Modifier.fillMaxWidth().focusRequester(fr).onPreviewKeyEvent { e ->
+            onTextLayout = { ed.spot(b.id).apply { layout = it; raw = true } },
+            modifier = Modifier.fillMaxWidth().onGloballyPositioned { ed.spot(b.id).coords = it }.focusRequester(fr).onPreviewKeyEvent { e ->
                 e.type == KeyEventType.KeyDown && e.key == Key.Backspace && ed.value.selection.collapsed && ed.value.selection.start == 0 && ed.backspaceAtStart(b.id)
             },
             decorationBox = { inner -> Box { if (ed.value.text.isEmpty()) Text(placeholderFor(b.type), style = style.copy(color = CrundiColors.TextMuted, textDecoration = null)); inner() } },
@@ -746,7 +817,8 @@ private fun TextBlock(ed: NoteEditor, b: EditBlock, readOnly: Boolean) {
         Text(
             if (text.isEmpty()) AnnotatedString(" ") else text,
             style = style,
-            modifier = Modifier.fillMaxWidth().clickable(enabled = !readOnly, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) { ed.focus(b.id) },
+            onTextLayout = { ed.spot(b.id).apply { layout = it; raw = false } },
+            modifier = Modifier.fillMaxWidth().onGloballyPositioned { ed.spot(b.id).coords = it }.clickable(enabled = !readOnly, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) { ed.focus(b.id) },
         )
     }
 }
@@ -782,14 +854,16 @@ private fun CodeNoteBlock(ed: NoteEditor, b: EditBlock, readOnly: Boolean) {
                 val fr = remember { FocusRequester() }
                 BasicTextField(
                     b.source, { ed.set(b.copy(source = it.replace("\t", "  "))) }, textStyle = style, cursorBrush = SolidColor(CrundiColors.AccentHover),
-                    modifier = Modifier.focusRequester(fr).then(if (b.wrap) Modifier.fillMaxWidth() else Modifier.widthIn(min = 200.dp)),
+                    onTextLayout = { ed.spot(b.id).apply { layout = it; raw = true } },
+                    modifier = Modifier.onGloballyPositioned { ed.spot(b.id).coords = it }.focusRequester(fr).then(if (b.wrap) Modifier.fillMaxWidth() else Modifier.widthIn(min = 200.dp)),
                     visualTransformation = { t -> androidx.compose.ui.text.input.TransformedText(Highlighter.highlight(t.text, b.lang), androidx.compose.ui.text.input.OffsetMapping.Identity) },
                 )
                 LaunchedEffect(Unit) { fr.requestFocus() }
             } else {
                 Text(
                     remember(b.source, b.lang) { Highlighter.highlight(b.source.ifEmpty { " " }, b.lang) }, style = style, softWrap = b.wrap,
-                    modifier = Modifier.clickable(enabled = !readOnly, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) { ed.focused = null; editing = true },
+                    onTextLayout = { ed.spot(b.id).apply { layout = it; raw = true } },
+                    modifier = Modifier.onGloballyPositioned { ed.spot(b.id).coords = it }.clickable(enabled = !readOnly, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) { ed.focused = null; editing = true },
                 )
             }
         }

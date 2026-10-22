@@ -38,6 +38,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import mv.obitech.crundi.api.model.GitFile
+import mv.obitech.crundi.ui.workbench.paneDragSource
 import mv.obitech.crundi.api.model.GitStatus
 import mv.obitech.crundi.ui.components.ButtonKind
 import mv.obitech.crundi.ui.components.CrundiButton
@@ -108,6 +109,8 @@ fun GitScreen(
     onPull: () -> Unit = {},
     onHistory: () -> Unit = {},
     onRefresh: () -> Unit = {},
+    /** The project's folder on the server, so a dragged row carries an absolute path as the web's does. */
+    root: String? = null,
 ) {
     var discarding by remember { mutableStateOf<GitFile?>(null) }
     Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary).imePadding()) {
@@ -139,12 +142,12 @@ fun GitScreen(
                 else -> LazyColumn(Modifier.fillMaxSize().padding(vertical = 4.dp)) {
                     if (s.staged.isNotEmpty()) {
                         item(key = "sh") { GitSection("Staged", s.staged.size, "minus", "Unstage all") { onUnstage(s.staged) } }
-                        items(s.staged, key = { "s:" + it.file }) { f -> GitRow(f, onOpen = { onOpen(f) }, actions = { CrundiIconButton("minus", { onUnstage(listOf(f)) }, contentDescription = "Unstage", size = 15.dp, touch = 40.dp) }) }
+                        items(s.staged, key = { "s:" + it.file }) { f -> GitRow(f, root, onOpen = { onOpen(f) }, actions = { CrundiIconButton("minus", { onUnstage(listOf(f)) }, contentDescription = "Unstage", size = 15.dp, touch = 40.dp) }) }
                     }
                     if (s.unstaged.isNotEmpty()) {
                         item(key = "uh") { GitSection("Changes", s.unstaged.size, "plus", "Stage all") { onStage(s.unstaged) } }
                         items(s.unstaged, key = { "u:" + it.file }) { f ->
-                            GitRow(f, onOpen = { onOpen(f) }, actions = {
+                            GitRow(f, root, onOpen = { onOpen(f) }, actions = {
                                 CrundiIconButton("rotate-ccw", { discarding = f }, contentDescription = "Discard", size = 15.dp, touch = 40.dp)
                                 CrundiIconButton("plus", { onStage(listOf(f)) }, contentDescription = "Stage", size = 15.dp, touch = 40.dp)
                             })
@@ -176,10 +179,11 @@ private fun GitSection(title: String, count: Int, icon: String, action: String, 
 }
 
 @Composable
-private fun GitRow(f: GitFile, onOpen: () -> Unit, actions: @Composable () -> Unit) {
+private fun GitRow(f: GitFile, root: String?, onOpen: () -> Unit, actions: @Composable () -> Unit) {
     val letter = statusLetter(f)
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(start = 16.dp, end = 4.dp).height(Dimens.Touch),
+        // Hold and drag onto a chat, terminal or notes page: its path, as the web's git rows.
+        Modifier.fillMaxWidth().paneDragSource("file", if (root.isNullOrEmpty()) f.file else absPath(root, f.file), f.file.substringAfterLast('/')).clickable(onClick = onOpen).padding(start = 16.dp, end = 4.dp).height(Dimens.Touch),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -278,5 +282,13 @@ fun GitRoute() {
         },
         onHistory = { nav.to(WorkspaceRoutes.HISTORY) },
         onRefresh = { reload++ },
+        root = shell.project?.path,
     )
+}
+
+/** [rel] (as git reports it, with forward slashes) under [root], with the root's own separator. */
+fun absPath(root: String, rel: String): String {
+    if (rel.startsWith("/") || Regex("^[A-Za-z]:[\\\\/]").containsMatchIn(rel)) return rel
+    val sep = if (root.contains('\\') && !root.contains('/')) '\\' else '/'
+    return root.trimEnd('/', '\\') + sep + rel.replace('/', sep)
 }

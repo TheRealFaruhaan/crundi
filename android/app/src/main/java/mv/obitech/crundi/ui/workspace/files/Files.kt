@@ -138,7 +138,7 @@ fun FilesScreen(
         onStart = { item, at ->
             dragging = item; finger = at
             // Also droppable on a chat, in this pane's neighbours: its path, as the web's drag ref.
-            mv.obitech.crundi.ui.workbench.PaneDrop.start("[" + (if (item.isDir) "Folder Path" else "File Path") + ": " + item.path + "]", item.name, at)
+            mv.obitech.crundi.ui.workbench.PaneDrop.start(if (item.isDir) "folder" else "file", item.path, item.name, at)
         },
         onMove = { at -> finger = at; mv.obitech.crundi.ui.workbench.PaneDrop.finger = at },
         onEnd = { item, drop ->

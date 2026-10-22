@@ -45,6 +45,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -266,10 +267,23 @@ class KanbanDrag {
     var width = 0
     val cards = mutableStateMapOf<String, Rect>()
     val columns = mutableStateMapOf<String, Rect>()
+    /** Subtask rows: id -> (its card's task id, its area). Held there, a card hands out the subtask instead. */
+    val todos = HashMap<String, Pair<String, Rect>>()
+    /** A subtask is held (for a chat, terminal or notes page), not the card. */
+    var sub = false
+    /** Root coordinates plus this is window coordinates, where the panes' drop targets are. */
+    var toWindow = Offset.Zero
+    /** The board's area in the window: inside it the card under the finger is drawn here, not by the workbench. */
+    var area = Rect.Zero
+
+    fun todoAt(task: KanbanTask, at: Offset): KanbanTodo? =
+        task.todos.firstOrNull { d -> !d.deleted && todos[d.id]?.let { it.first == task.id && it.second.contains(at) } == true }
 
     /** (status, index among that column's other cards) for the pointer now. */
     fun target(board: KanbanBoard): Pair<String, Int>? {
         val t = task ?: return null
+        // Over a chat, terminal or notes page in another pane: it goes there, not into a column.
+        if (mv.obitech.crundi.ui.workbench.PaneDrop.target() != null) return null
         if (columns.isEmpty()) return null
         val col = columns.entries.firstOrNull { it.value.contains(pointer) }?.key
             ?: columns.entries.minByOrNull { e -> kotlin.math.abs(e.value.center.y - pointer.y) }?.key ?: return null
@@ -302,7 +316,7 @@ private fun KanbanBoardView(board: KanbanBoard, cb: KanbanCallbacks, open: (Kanb
         }
     }
 
-    Box(Modifier.fillMaxSize().onGloballyPositioned { val r = it.boundsInRoot(); origin = r.topLeft; viewport = r }) {
+    Box(Modifier.fillMaxSize().onGloballyPositioned { val r = it.boundsInRoot(); origin = r.topLeft; viewport = r; drag.toWindow = it.positionInWindow() - r.topLeft; drag.area = r.translate(drag.toWindow) }) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             for (s in statuses) {
                 KanbanColumn(s, board.column(s), s !in board.statuses, drag, target, cb, open,
@@ -313,8 +327,9 @@ private fun KanbanBoardView(board: KanbanBoard, cb: KanbanCallbacks, open: (Kanb
             }
             Spacer(Modifier.height(40.dp))
         }
-        // The card under the finger.
-        drag.task?.let { t ->
+        // The card under the finger, while it is over the board (beyond it the
+        // workbench draws the held label).
+        if (viewport.contains(drag.pointer)) drag.task?.let { t ->
             val d = LocalDensity.current
             Box(
                 Modifier
@@ -341,6 +356,9 @@ private fun KanbanColumn(
     board: KanbanBoard,
 ) {
     val over = target?.first == status
+    // In a workbench pane a held card or subtask can also go to a chat, terminal or notes page.
+    val inPane = mv.obitech.crundi.ui.workbench.LocalPane.current != null
+    val paneDrop = mv.obitech.crundi.ui.workbench.PaneDrop
     val border = when { over -> CrundiColors.Accent; other -> CrundiColors.Yellow; else -> CrundiColors.Border }
     DisposableEffect(status) { onDispose { drag.columns.remove(status) } }
     Column(
@@ -377,10 +395,24 @@ private fun KanbanColumn(
                             detectDragGesturesAfterLongPress(
                                 onDragStart = { off ->
                                     val r = drag.cards[t.id] ?: return@detectDragGesturesAfterLongPress
-                                    drag.grab = off; drag.width = r.width.toInt(); drag.pointer = r.topLeft + off; drag.task = t
+                                    val at = r.topLeft + off
+                                    drag.pointer = at
+                                    // Held on one of its subtasks: that subtask is what is carried
+                                    // (only to another pane), as the web's separately draggable subtasks.
+                                    val todo = if (inPane) drag.todoAt(t, at) else null
+                                    if (todo != null) { drag.sub = true; paneDrop.start("kanban-subtask", todo.id, todo.text, at + drag.toWindow); return@detectDragGesturesAfterLongPress }
+                                    drag.grab = off; drag.width = r.width.toInt(); drag.task = t
+                                    if (inPane) {
+                                        paneDrop.start("kanban-task", t.id, t.title, at + drag.toWindow)
+                                        paneDrop.ownGhost = drag.area
+                                    }
                                 },
-                                onDrag = { ch, amt -> ch.consume(); drag.pointer += amt },
+                                onDrag = { ch, amt -> ch.consume(); drag.pointer += amt; if (inPane) paneDrop.finger = drag.pointer + drag.toWindow },
                                 onDragEnd = {
+                                    if (drag.sub) { drag.sub = false; paneDrop.drop(); return@detectDragGesturesAfterLongPress }
+                                    // Let go over a chat, terminal or notes page: its id goes there and the board stays as it was.
+                                    if (inPane && paneDrop.target() != null) { drag.task = null; paneDrop.drop(); return@detectDragGesturesAfterLongPress }
+                                    if (inPane) paneDrop.cancel()
                                     val tg = drag.target(board); val d = drag.task
                                     drag.task = null
                                     if (tg != null && d != null) {
@@ -388,10 +420,10 @@ private fun KanbanColumn(
                                         if (tg.first != d.status || tg.second != oldIdx) onDrop(d, tg.first, tg.second)
                                     }
                                 },
-                                onDragCancel = { drag.task = null },
+                                onDragCancel = { drag.task = null; drag.sub = false; if (inPane) paneDrop.cancel() },
                             )
                         },
-                ) { KanbanCard(t, cb, open) }
+                ) { KanbanCard(t, cb, open, onTodoPlaced = { d, r -> drag.todos[d.id] = t.id to r }) }
                 DisposableEffect(t.id) { onDispose { drag.cards.remove(t.id) } }
             }
             if (over && target?.second == tasks.count { it.id != drag.task?.id }) DropLine()
@@ -432,7 +464,7 @@ fun Modifier.dashedBorder(color: Color, radius: androidx.compose.ui.unit.Dp, wid
 // ─── Card ───
 
 @Composable
-fun KanbanCard(task: KanbanTask, cb: KanbanCallbacks, open: (KanbanPopup) -> Unit, dragging: Boolean = false) {
+fun KanbanCard(task: KanbanTask, cb: KanbanCallbacks, open: (KanbanPopup) -> Unit, dragging: Boolean = false, onTodoPlaced: ((KanbanTodo, Rect) -> Unit)? = null) {
     var adding by remember(task.id) { mutableStateOf(false) }
     var newTodo by remember(task.id) { mutableStateOf("") }
     val todos = task.todos.filter { !it.deleted }
@@ -464,7 +496,10 @@ fun KanbanCard(task: KanbanTask, cb: KanbanCallbacks, open: (KanbanPopup) -> Uni
         }
         if (todos.isNotEmpty()) {
             Column(Modifier.padding(top = 4.dp, end = 4.dp)) {
-                for (d in todos) TodoRow(d, { cb.onToggleTodo(task, d) }, { open(KanbanPopup.TodoMenu(task, d)) })
+                for (d in todos) TodoRow(
+                    d, { cb.onToggleTodo(task, d) }, { open(KanbanPopup.TodoMenu(task, d)) },
+                    if (onTodoPlaced == null) Modifier else Modifier.onGloballyPositioned { onTodoPlaced(d, it.boundsInRoot()) },
+                )
             }
             val done = todos.count { it.done }
             Row(Modifier.fillMaxWidth().padding(top = 6.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -503,9 +538,9 @@ private fun SmallGhost(text: String, icon: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TodoRow(todo: KanbanTodo, onToggle: () -> Unit, onMore: () -> Unit) {
+private fun TodoRow(todo: KanbanTodo, onToggle: () -> Unit, onMore: () -> Unit, modifier: Modifier = Modifier) {
     Row(
-        Modifier.fillMaxWidth().clip(Dimens.ShapeSm).clickable(onClick = onToggle).padding(start = 0.dp, top = 3.dp, bottom = 3.dp),
+        modifier.fillMaxWidth().clip(Dimens.ShapeSm).clickable(onClick = onToggle).padding(start = 0.dp, top = 3.dp, bottom = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {

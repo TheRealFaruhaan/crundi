@@ -61,6 +61,10 @@ import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.workspace.WorkspaceRoutes
 import mv.obitech.crundi.ui.workspace.rememberFilePicker
 import mv.obitech.crundi.ui.workbench.LocalPane
+import mv.obitech.crundi.ui.workbench.DropKind
+import mv.obitech.crundi.ui.workbench.PaneDrop
+import mv.obitech.crundi.ui.workbench.paneDropTarget
+import androidx.compose.foundation.border
 import mv.obitech.crundi.ui.workbench.LocalWorkbench
 import mv.obitech.crundi.ui.workbench.WbLayout
 import mv.obitech.crundi.ui.components.errorText
@@ -196,6 +200,18 @@ fun TerminalRoute(id: String) {
         }
     }
     fun send(s: String) { if (exited == null && s.isNotEmpty()) stream.input(s) }
+    // Something dragged here from another pane (a file, a task, an idea) goes
+    // to the shell as typed, as the web's drop on a terminal: a trailing space
+    // so the next word does not run into it, and several lines as one
+    // bracketed paste so the first newline does not run it. The terminal
+    // becomes the pane in use.
+    LaunchedEffect(id) {
+        PaneDrop.inserts.collect { ins ->
+            if (ins.key != "term:$id") return@collect
+            send(if (ins.text.contains('\n')) "\u001b[200~" + ins.text + "\u001b[201~" else ins.text + " ")
+            if (pane != null && wb != null) wb.panes()[pane.key]?.let { wb.focus(it) }
+        }
+    }
     val pick = rememberFilePicker { files ->
         val p = project ?: return@rememberFilePicker
         scope.launch {
@@ -241,6 +257,8 @@ fun TerminalRoute(id: String) {
         onAttach = if (project != null) pick else null,
         onLayout = wb?.let { { it.toggleLayout() } },
         onSize = { c, r -> emu.resize(c, r); version = emu.version; stream.resize(c, r) },
+        modifier = Modifier.paneDropTarget("term:$id", DropKind.Terminal)
+            .then(if (PaneDrop.hovered("term:$id")) Modifier.border(2.dp, CrundiColors.Accent) else Modifier),
     )
     if (renaming) {
         var name by remember { mutableStateOf(live?.title.orEmpty()) }

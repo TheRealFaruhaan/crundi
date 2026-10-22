@@ -1,7 +1,7 @@
 package mv.obitech.crundi.ui.chats
 
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
+import mv.obitech.crundi.ui.workbench.DropKind
+import mv.obitech.crundi.ui.workbench.paneDropTarget
 import mv.obitech.crundi.ui.components.errorText
 
 import android.content.ContentValues
@@ -187,15 +187,14 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
     // message box, as dropping it on a chat does on the web.
     val draftNow = androidx.compose.runtime.rememberUpdatedState(ui.draft)
     LaunchedEffect(c.id) {
-        mv.obitech.crundi.ui.workbench.PaneDrop.inserts.collect { (id, text) ->
-            if (id == c.id) { val d0 = draftNow.value; actions.draft(if (d0.isBlank()) "$text " else d0.trimEnd() + " " + text + " ") }
+        mv.obitech.crundi.ui.workbench.PaneDrop.inserts.collect { ins ->
+            if (ins.key == "chat:" + c.id) { val d0 = draftNow.value; actions.draft(if (d0.isBlank()) ins.text + " " else d0.trimEnd() + " " + ins.text + " ") }
         }
     }
-    androidx.compose.runtime.DisposableEffect(c.id) { onDispose { mv.obitech.crundi.ui.workbench.PaneDrop.targets.remove(c.id) } }
-    val dropHere = mv.obitech.crundi.ui.workbench.PaneDrop.text != null && mv.obitech.crundi.ui.workbench.PaneDrop.target() == c.id
+    val dropHere = mv.obitech.crundi.ui.workbench.PaneDrop.hovered("chat:" + c.id)
     BoxWithConstraints(
         modifier.fillMaxSize().background(CrundiColors.BgPrimary).miniTarget(c.id, "root").miniActivity(c.id)
-            .androidx_dropArea(c.id)
+            .paneDropTarget("chat:" + c.id, DropKind.Chat)
             .then(if (dropHere) Modifier.border(2.dp, CrundiColors.Accent) else Modifier),
     ) {
         val tall = maxHeight
@@ -726,7 +725,3 @@ private suspend fun saveToDownloads(ctx: Context, fallback: String, fetch: suspe
         name
     } finally { tmp.delete() }
 }
-
-private fun Modifier.androidx_dropArea(chatId: String) = this.then(
-    Modifier.onGloballyPositioned { mv.obitech.crundi.ui.workbench.PaneDrop.targets[chatId] = it.boundsInWindow() },
-)
