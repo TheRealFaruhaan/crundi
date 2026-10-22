@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.theme.CrundiColors
@@ -74,7 +75,9 @@ fun CrundiButton(
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
         if (icon != null) CrundiIcon(icon, size = Dimens.IconSm, tint = fg)
-        Text(text, style = CrundiType.Button.copy(color = fg, fontWeight = if (kind == ButtonKind.Primary) CrundiType.Button.fontWeight else null))
+        // A label never breaks mid-word: a row that cannot fit its buttons
+        // wraps the buttons (FlowRow), not the words inside them.
+        Text(text, style = CrundiType.Button.copy(color = fg, fontWeight = if (kind == ButtonKind.Primary) CrundiType.Button.fontWeight else null), maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
 

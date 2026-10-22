@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -90,11 +91,24 @@ class LiveEvents internal constructor(private val transport: Transport, scope: C
         var failures = 0
         while (true) {
             _status.value = if (failures == 0) LiveStatus.Connecting else if (failures >= 3) LiveStatus.Offline else LiveStatus.Reconnecting
+            // A kick (the app back in front, a retry) restarts even a stream
+            // that looks connected: after a sleep it may be dead without
+            // knowing, and a new connection brings the whole state at once.
+            val k0 = kick.value
+            var kicked = false
             try {
-                transport.events().collect { f ->
-                    if (_status.value != LiveStatus.Connected) { _status.value = LiveStatus.Connected; failures = 0; _failure.value = null }
-                    dispatch(f)
+                coroutineScope {
+                    val stream = launch {
+                        transport.events().collect { f ->
+                            if (_status.value != LiveStatus.Connected) { _status.value = LiveStatus.Connected; failures = 0; _failure.value = null }
+                            dispatch(f)
+                        }
+                    }
+                    val watch = launch { kick.first { it != k0 }; kicked = true; stream.cancel() }
+                    stream.join()
+                    watch.cancel()
                 }
+                if (kicked) { failures = 0; continue }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiException) {

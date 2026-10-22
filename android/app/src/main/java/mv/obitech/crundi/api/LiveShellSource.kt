@@ -116,6 +116,7 @@ class LiveShellSource(
             serverHost = serverHost, username = username, connection = connectionOf(status),
             projects = projects, currentProject = current, approvals = ap.count, usage = glance(us),
             tabBadges = if (waiting > 0) mapOf("factories" to waiting) else emptyMap(),
+            working = st?.terminals.orEmpty().any { !it.isParked && it.state == mv.obitech.crundi.api.model.AgentState.Working },
         )
     }
 

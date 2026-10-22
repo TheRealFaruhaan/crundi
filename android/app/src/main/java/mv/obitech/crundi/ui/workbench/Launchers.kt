@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,7 +69,15 @@ fun EmptySlot(open: Set<PaneKind>, onLaunch: (PaneKind) -> Unit, onSplit: (Mosai
         },
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(16.dp)) {
+      // A short slot (a split) cut its buttons off: it scrolls now, and is
+      // centred as before whenever it all fits.
+      androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        val tall = maxHeight
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+            modifier = Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState()).heightIn(min = tall).padding(16.dp),
+        ) {
             Text("Launch a new panel here", style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
@@ -76,12 +86,17 @@ fun EmptySlot(open: Set<PaneKind>, onLaunch: (PaneKind) -> Unit, onSplit: (Mosai
             ) {
                 for (k in PaneKind.addable) if (!(k.unique && k in open)) RoundLauncher(k) { onLaunch(k) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Wraps as whole buttons on a narrow pane (Remove went to two lines).
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 CrundiButton("Split right", { onSplit(Mosaic.Dir.Row) }, icon = "split-right")
                 CrundiButton("Split down", { onSplit(Mosaic.Dir.Col) }, icon = "split-down")
                 if (onRemove != null) CrundiButton("Remove", onRemove, kind = ButtonKind.Ghost, icon = "x")
             }
         }
+      }
     }
 }
 
@@ -151,7 +166,15 @@ private fun LaunchButton(text: String?, icon: String?, modifier: Modifier, style
  * the copy; until a kind supplies one, a still outline of lines stands in.
  */
 @Composable
-fun ParkedBody(v: PaneView, onResume: () -> Unit, busy: Boolean = false, preview: @Composable () -> Unit = { GhostLines() }) {
+fun ParkedBody(v: PaneView, onResume: (mode: String) -> Unit, busy: Boolean = false, busyMode: String = "resume", preview: @Composable () -> Unit = { GhostLines() }) {
+    val p = v.pane
+    val isChat = v.parkedAs == PaneKind.Chat
+    // The web's parkedChoicesHtml: whenever there is a conversation to leave
+    // behind, "New session" (the pane and its place, a fresh conversation);
+    // for a long chat, the token warning and "Compact and resume". A plain
+    // shell has nothing to resume, so Resume already starts it fresh.
+    val choices = p != null && !p.shellOnly && p.hasSession
+    val heavy = choices && p!!.heavy
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(6.dp) else Modifier)) { preview() }
         Box(Modifier.fillMaxSize().background(CrundiColors.BgPrimary.copy(alpha = 0.72f)), contentAlignment = Alignment.Center) {
@@ -164,7 +187,14 @@ fun ParkedBody(v: PaneView, onResume: () -> Unit, busy: Boolean = false, preview
                     if (v.parkedAs == PaneKind.Chat) "The conversation is kept. Resume starts its Claude again where it left off." else "Resume opens the terminal again.",
                     style = CrundiType.Small, textAlign = TextAlign.Center,
                 )
-                CrundiButton(if (busy) "Resuming…" else "Resume", onResume, kind = ButtonKind.Primary, icon = "play", enabled = !busy)
+                if (heavy) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CrundiIcon("shield-alert", size = 14.dp, tint = CrundiColors.Yellow)
+                    Text("%.1fk tokens, a long conversation".format(p!!.tokens / 1000.0), style = CrundiType.Small.copy(color = CrundiColors.Yellow))
+                }
+                CrundiButton(if (busy && busyMode == "resume") "Resuming…" else "Resume", { onResume("resume") }, kind = ButtonKind.Primary, icon = "play", enabled = !busy)
+                if (isChat && heavy) CrundiButton(if (busy && busyMode == "compact") "Compacting…" else "Compact and resume", { onResume("compact") }, enabled = !busy)
+                if (choices) CrundiButton(if (busy && busyMode == "new") "Starting…" else "New session", { onResume("new") }, kind = ButtonKind.Ghost, icon = "plus", enabled = !busy)
+                if (choices) Text("New session starts a fresh conversation here. The old one is kept and can be resumed from the session list.", style = CrundiType.Meta.copy(color = CrundiColors.TextMuted), textAlign = TextAlign.Center)
             }
         }
     }

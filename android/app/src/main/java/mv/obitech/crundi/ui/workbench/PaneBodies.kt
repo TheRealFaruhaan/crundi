@@ -22,7 +22,7 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
         when (v.kind) {
             PaneKind.Chat -> ChatRoute(v.paneId!!)                                          // ui.chats
             PaneKind.Terminal -> TerminalRoute(v.paneId!!)                                  // ui.workspace
-            PaneKind.Parked -> ParkedBody(v, { wb.resume(v) }, busy = wb.resuming[v.key] == true, preview = {
+            PaneKind.Parked -> ParkedBody(v, { mode -> wb.resume(v, mode) }, busy = wb.resuming[v.key] == true, busyMode = wb.resumingMode[v.key] ?: "resume", preview = {
                 val id = v.paneId
                 when {
                     id == null -> GhostLines()

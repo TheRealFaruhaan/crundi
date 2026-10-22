@@ -214,6 +214,7 @@ class MainActivity : ComponentActivity() {
 
         override fun openBubble(chatId: String) {
             withChat(chatId) { chat ->
+                if (BubbleHelp.blocked(this@MainActivity)) { BubbleHelp.show(this@MainActivity); return@withChat }
                 val problem = Notifier.bubble(this@MainActivity, chat)
                 if (problem != null) { Toast.makeText(this@MainActivity, problem, Toast.LENGTH_LONG).show(); return@withChat }
                 // A chat open in this window loses its bubble, so the app steps aside.

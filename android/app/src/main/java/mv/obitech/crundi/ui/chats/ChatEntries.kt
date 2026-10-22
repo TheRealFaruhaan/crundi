@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 
 import androidx.compose.foundation.layout.height
@@ -311,13 +312,20 @@ fun MediaView(m: ChatMedia, actions: EntryActions) {
     when (m.kind) {
         "image" -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val img = rememberServerImage(m.path, 1280)
-            val ratio = if (m.width > 0 && m.height > 0) (m.width.toFloat() / m.height).coerceIn(0.4f, 3f) else 16f / 10f
+            // The picture's own shape, once loaded: the server does not always
+            // send its size, and a guessed 16:10 frame left a tall screenshot
+            // small in the middle of an empty box.
+            val ratio = when {
+                img != null && img.height > 0 -> img.width.toFloat() / img.height
+                m.width > 0 && m.height > 0 -> m.width.toFloat() / m.height
+                else -> 16f / 10f
+            }.coerceIn(0.3f, 3f)
             Box(
                 Modifier.widthIn(max = 360.dp).heightIn(max = 420.dp).aspectRatio(ratio).clip(Dimens.ShapeSm).background(CrundiColors.BgSecondary)
                     .border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm).clickable { actions.media(m) },
                 contentAlignment = Alignment.Center,
             ) {
-                if (img != null) Image(img, contentDescription = m.caption.ifEmpty { "Image" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth())
+                if (img != null) Image(img, contentDescription = m.caption.ifEmpty { "Image" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                 else CrundiIcon("image", size = 28.dp, tint = CrundiColors.TextMuted)
             }
             if (m.caption.isNotEmpty()) Text(m.caption, style = ChatType.Small)

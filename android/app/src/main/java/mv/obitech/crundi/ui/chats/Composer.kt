@@ -129,17 +129,7 @@ fun Composer(
         Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.Border))
         Column(Modifier.fillMaxWidth().padding(8.dp)) {
             for (p in pending) QueueCard(p) { actions.recall(p) }
-            if (suggestion != null && !busy && !ended && draft.isEmpty()) {
-                Row(
-                    Modifier.padding(bottom = 7.dp).clip(RoundedCornerShape(99.dp)).background(CrundiColors.BgTertiary).border(Dimens.Hairline, CrundiColors.Border, RoundedCornerShape(99.dp))
-                        .clickable { actions.useSuggestion(suggestion) }.padding(start = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CrundiIcon("zap", size = 13.dp, tint = CrundiColors.AccentHover)
-                    Text(suggestion.text, style = ChatType.Small.copy(color = CrundiColors.TextPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 6.dp).widthIn(max = 280.dp))
-                    CrundiIconButton("x", actions::dismissSuggestion, contentDescription = "Dismiss suggestion", size = 13.dp, touch = 34.dp)
-                }
-            }
+            // The suggestion floats over the log now (Chat.kt SuggestionBubble), as on the web.
             val matches = slashMatches(draft, commands)
             if (matches.isNotEmpty()) {
                 LazyColumn(

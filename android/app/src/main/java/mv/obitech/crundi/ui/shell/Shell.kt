@@ -162,7 +162,11 @@ fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, 
                 left = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CrundiIconButton("menu", onMenu, contentDescription = "Projects", tint = CrundiColors.TextPrimary, size = 22.dp)
-                        RobotHead(size = 24.dp, motion = if (data.connection == Connection.Connected) MarkMotion.Intro else MarkMotion.Load)
+                        RobotHead(size = 24.dp, motion = when {
+                            data.connection != Connection.Connected -> MarkMotion.Load
+                            data.working -> MarkMotion.Working
+                            else -> MarkMotion.Intro
+                        })
                         Text("/", style = CrundiType.Body.copy(color = CrundiColors.TextMuted))
                         // The project's icon, or its initials on its own colour (the web's mark).
                         data.project?.let { mv.obitech.crundi.ui.chats.MarkTile(mv.obitech.crundi.ui.chats.projectMark(it.name), it.icon, 18.dp) }

@@ -52,6 +52,13 @@ class OkHttpTransport(
     private val slowHttp = http.newBuilder().readTimeout(5, TimeUnit.MINUTES).build()
     /** The event stream and the socket stay open indefinitely; the socket pings to notice a dead network. */
     private val longHttp = http.newBuilder().readTimeout(0, TimeUnit.SECONDS).pingInterval(25, TimeUnit.SECONDS).build()
+    /**
+     * The event stream. The server pushes the whole state every 5 seconds, so
+     * 20 seconds of silence means the connection is dead (a phone that slept,
+     * a network that changed) even though nothing said so. Without a limit
+     * the app went on showing hours-old state, connected dot and all.
+     */
+    private val sseHttp = http.newBuilder().readTimeout(20, TimeUnit.SECONDS).build()
 
     private fun url(path: String, query: Map<String, String?>): HttpUrl {
         val b = (baseUrl + path).toHttpUrl().newBuilder()
@@ -127,14 +134,18 @@ class OkHttpTransport(
 
     override fun events(path: String): Flow<SseFrame> = flow {
         val token = credentials.token() ?: credentials.renew(null)
-        var call = longHttp.newCall(build(ApiRequest("GET", path, headers = mapOf("Accept" to "text/event-stream")), token, null))
+        var call = sseHttp.newCall(build(ApiRequest("GET", path, headers = mapOf("Accept" to "text/event-stream")), token, null))
         var resp = call.executeCancellable()
         if (resp.code == 401) {
             resp.close()
             val fresh = credentials.renew(token)
-            call = longHttp.newCall(build(ApiRequest("GET", path, headers = mapOf("Accept" to "text/event-stream")), fresh, null))
+            call = sseHttp.newCall(build(ApiRequest("GET", path, headers = mapOf("Accept" to "text/event-stream")), fresh, null))
             resp = call.executeCancellable()
         }
+        // A blocked read does not see coroutine cancellation: cancel the call
+        // itself, so a restart (the app coming back to the front) is immediate.
+        val live = call
+        currentCoroutineContext()[Job]?.invokeOnCompletion { live.cancel() }
         resp.use { r ->
             if (!r.isSuccessful) throw httpError(r.code, runCatching { r.body?.string() }.getOrNull().orEmpty())
             val src = r.body!!.source()

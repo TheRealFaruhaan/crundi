@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.draw.clip
+import mv.obitech.crundi.ui.planning.dashedBorder
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
@@ -103,6 +105,12 @@ data class ChatUi(
     /** The list's row for it (title, factory role), when known. */
     val pane: Pane? = null,
     val draft: String = "",
+    /**
+     * The suggestion a message just went out over (its uuid, or its text):
+     * hidden at once, as on the web, rather than flashing back in the moment
+     * before the server says the chat is working and withdraws it.
+     */
+    val retiredSuggestion: String? = null,
     val uploads: List<UploadUi> = emptyList(),
     val stopArmed: Boolean = false,
     /** Mid-turn sends not yet echoed by the server. */
@@ -199,9 +207,15 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
                 }
                 // Background commands and subagents, each a pill with a count (.cc-agbadges).
                 val shown = c.agents.values.filter { !it.dismissed }
-                Row(Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AgentBadge("terminal", shown.filter { it.kind == "task" }, "background command", "background commands", actions::tasks)
-                    AgentBadge("layers", shown.filter { it.kind != "task" }, "agent", "agents", actions::agents)
+                // The floating dock (.cc-agdock): the badges, then the suggested
+                // next message, at the right like a message of yours would be.
+                Column(Modifier.align(Alignment.BottomEnd).padding(start = 40.dp, end = 10.dp, bottom = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AgentBadge("terminal", shown.filter { it.kind == "task" }, "background command", "background commands", actions::tasks)
+                        AgentBadge("layers", shown.filter { it.kind != "task" }, "agent", "agents", actions::agents)
+                    }
+                    val sug = c.suggestion
+                    if (sug != null && !ui.busy && !c.exited && sug.text.isNotBlank() && sug.uuid.ifEmpty { sug.text } != ui.retiredSuggestion) SuggestionBubble(sug.text, { actions.useSuggestion(sug) }, actions::dismissSuggestion)
                 }
               }
               }
@@ -222,7 +236,10 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
             ui.schedule, actions,
             Modifier.align(Alignment.BottomCenter).padding(8.dp).heightIn(max = tall * 0.82f),
         )
-        ui.sheet?.let { s -> SheetOverlay({ actions.sheet(null) }) { ChatSheetContent(s, ui, actions) } }
+        ui.sheet?.let { s ->
+            if (s is ChatSheet.Picture) ImageViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-image")); actions.sheet(null) }, onClose = { actions.sheet(null) })
+            else SheetOverlay({ actions.sheet(null) }) { ChatSheetContent(s, ui, actions) }
+        }
     }
     }
 }
@@ -263,6 +280,26 @@ private fun ChatHeader(ui: ChatUi, actions: ChatActions) {
             CrundiIconButton("more", { actions.sheet(ChatSheet.Menu) }, contentDescription = "Chat actions")
         }
         Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.BorderSubtle))
+    }
+}
+
+/** The suggested next message (.cc-sug-row): "Suggested, tap to send", then a dashed bubble; a tap sends it, the x drops it. */
+@Composable
+private fun SuggestionBubble(text: String, onSend: () -> Unit, onDismiss: () -> Unit) {
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text("Suggested, tap to send", style = ChatType.Small.copy(fontSize = 10.5.sp, color = CrundiColors.TextMuted),
+            modifier = Modifier.padding(end = 4.dp).clip(RoundedCornerShape(4.dp)).background(CrundiColors.BgPrimary).padding(horizontal = 4.dp))
+        val shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomEnd = 3.dp, bottomStart = 12.dp)
+        Box(
+            Modifier.shadow(6.dp, shape).clip(shape).background(CrundiColors.BgSecondary)
+                .dashedBorder(CrundiColors.Accent.copy(alpha = 0.55f), 12.dp, 1.dp, 4f)
+                .clickable(onClickLabel = "Send it", onClick = onSend).padding(start = 11.dp, top = 7.dp, bottom = 7.dp, end = 30.dp),
+        ) {
+            Text(text, style = ChatType.Small.copy(color = CrundiColors.TextSecondary))
+            Box(Modifier.align(Alignment.TopEnd).offset(x = 26.dp, y = (-3).dp).size(24.dp).clip(RoundedCornerShape(6.dp)).clickable(onClickLabel = "Dismiss suggestion", onClick = onDismiss), contentAlignment = Alignment.Center) {
+                CrundiIcon("x", size = 12.dp, tint = CrundiColors.TextMuted)
+            }
+        }
     }
 }
 
@@ -471,7 +508,7 @@ fun ChatRoute(chatId: String) {
             val text = ui.draft.trim()
             if (text.isEmpty()) return
             val wasBusy = view.busy
-            ui = ui.copy(draft = "", stopArmed = false)
+            ui = ui.copy(draft = "", stopArmed = false, retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion)
             scope.launch {
                 try {
                     val r = api.chats.send(chatId, text)
@@ -559,7 +596,15 @@ fun ChatRoute(chatId: String) {
                 else ui = ui.copy(notice = "Claude already has it")
             }
         }
-        override fun useSuggestion(s: ChatSuggestion) { ui = ui.copy(draft = s.text) }
+        // A tap sends it as written (the web's sendSuggestion), whatever is in the box.
+        override fun useSuggestion(s: ChatSuggestion) {
+            val text = s.text.trim()
+            if (text.isEmpty() || view.busy) return
+            ui = ui.copy(retiredSuggestion = s.uuid.ifEmpty { s.text })
+            scope.launch {
+                try { api.chats.send(chatId, text) } catch (e: Exception) { ui = ui.copy(draft = text, error = "The message did not go: " + errorText(e)) }
+            }
+        }
         override fun dismissSuggestion() { act { api.chats.dismissSuggestion(chatId) } }
         override fun dismissAgents() { act { api.chats.dismissAgents(chatId, all = true) } }
         override fun setMode(mode: String) { act { api.chats.setPermissionMode(chatId, mode) } }

@@ -69,6 +69,8 @@ data class ShellData(
     val tabBadges: Map<String, Int> = emptyMap(),
     /** Panels (widget chips) Claude has put in the top bar: the Panels button's count. */
     val panels: Int = 0,
+    /** Some chat or terminal is working right now: the robot in the top bar shows it. */
+    val working: Boolean = false,
 ) {
     val project: ProjectSummary? get() = projects.firstOrNull { it.alias == currentProject }
 }

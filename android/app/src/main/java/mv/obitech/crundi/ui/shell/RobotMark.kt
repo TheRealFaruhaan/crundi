@@ -13,6 +13,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -39,6 +40,8 @@ enum class MarkMotion {
     Intro,
     /** While loading: the light at the tip pulses and it blinks faster. */
     Load,
+    /** A chat is working: it nods, the tip pulses, it blinks more often (the web's cb-load, on the head). */
+    Working,
 }
 
 /**
@@ -54,36 +57,41 @@ fun RobotHead(modifier: Modifier = Modifier, size: Dp = 24.dp, motion: MarkMotio
         runCatching { Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
     if (still) { Canvas(modifier.size(size)) { drawHead(1f, 1f) }; return }
 
-    // cb-blink: open until 40%, shut at 44%, open again at 48%.
-    val period = if (motion == MarkMotion.Load) 3200 else 5000
-    val loop = rememberInfiniteTransition(label = "mark")
-    val eye by loop.animateFloat(
-        1f, 1f,
-        infiniteRepeatable(keyframes {
-            durationMillis = period
-            1f at (period * 0.40f).toInt()
-            0.1f at (period * 0.44f).toInt()
-            1f at (period * 0.48f).toInt()
-        }),
-        label = "blink",
-    )
-    val tip by loop.animateFloat(
-        1f, if (motion == MarkMotion.Load) 0.7f else 1f,
-        infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
-        label = "pulse",
-    )
-    // cb-intro: one blink 0.5 s in, over 1.4 s, before the idle blinking.
-    val intro = remember { Animatable(1f) }
+    // Driven step by step rather than as an infinite transition from 1 to 1:
+    // that one never ran, and the head sat still. cb-blink: open, shut for a
+    // moment at 44% of the period, open again.
+    val busy = motion == MarkMotion.Load || motion == MarkMotion.Working
+    val eye = remember { Animatable(1f) }
     LaunchedEffect(motion) {
-        if (motion == MarkMotion.Intro) intro.animateTo(1f, keyframes {
-            durationMillis = 1900
-            1f at 500 + (1400 * 0.40f).toInt()
-            0.1f at 500 + (1400 * 0.44f).toInt()
-            1f at 500 + (1400 * 0.48f).toInt()
-        })
+        if (motion == MarkMotion.Intro) delay(500)
+        while (true) {
+            val period = if (busy) 3200L else 5000L
+            if (motion != MarkMotion.Intro) delay((period * 0.40f).toLong())
+            eye.animateTo(0.1f, tween((period * 0.04f).toInt()))
+            eye.animateTo(1f, tween((period * 0.04f).toInt()))
+            delay(if (motion == MarkMotion.Intro) 1900L else (period * 0.52f).toLong())
+            if (motion == MarkMotion.Intro) break
+        }
+        // After the intro's blink, the idle blinking.
+        while (true) {
+            delay(2000)
+            eye.animateTo(0.1f, tween(200)); eye.animateTo(1f, tween(200))
+            delay(2600)
+        }
     }
-    Canvas(modifier.size(size).graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)) {
-        drawHead(minOf(eye, intro.value), tip)
+    val loop = rememberInfiniteTransition(label = "mark")
+    // cb-pulse 1.2s and cb-nod 1.2s while busy.
+    val tip by loop.animateFloat(1f, 0.7f, infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse), label = "pulse")
+    val nod by loop.animateFloat(0f, -3f, infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "nod")
+    val unit = with(androidx.compose.ui.platform.LocalDensity.current) { size.toPx() } / 96f
+    Canvas(
+        modifier.size(size).graphicsLayer {
+            compositingStrategy = CompositingStrategy.Offscreen
+            // cb-nod: up 3 units of the 96-unit drawing and back.
+            translationY = if (motion == MarkMotion.Working) nod * unit else 0f
+        },
+    ) {
+        drawHead(eye.value, if (busy) tip else 1f)
     }
 }
 

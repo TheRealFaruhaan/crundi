@@ -57,7 +57,8 @@ interface PaneActions {
     fun split(v: PaneView, dir: Mosaic.Dir) {}
     fun move(v: PaneView, by: Int) {}
     fun refresh(v: PaneView) {}
-    fun resume(v: PaneView) {}
+    /** mode: resume (as it was), compact (resume, then summarise), new (a fresh conversation in the same pane). */
+    fun resume(v: PaneView, mode: String = "resume") {}
     fun focus(v: PaneView) {}
     object None : PaneActions
 }
@@ -183,11 +184,15 @@ fun KindTag(text: String) {
 fun HeadButton(icon: String?, description: String, text: String? = null, active: Boolean = false, danger: Boolean = false, onClick: () -> Unit) {
     val fg = when { danger -> CrundiColors.Red; active -> CrundiColors.AccentHover; else -> CrundiColors.TextSecondary }
     val border = when { danger -> CrundiColors.Red; active -> CrundiColors.Accent; else -> CrundiColors.Border }
+    // No bigger than the top row's icons: a bare icon, boxed only when it
+    // means something (full screen on, close armed). The boxed 38dp buttons
+    // made every pane header as tall as a toolbar.
+    val boxed = danger || active
     Box(
-        Modifier.defaultMinSize(minWidth = 38.dp, minHeight = 34.dp).clip(Dimens.ShapeSm)
-            .background(if (danger) CrundiColors.RedDim else CrundiColors.BgPrimary)
-            .border(Dimens.Hairline, border, Dimens.ShapeSm)
-            .clickable(onClickLabel = description, onClick = onClick).padding(horizontal = 8.dp),
+        Modifier.defaultMinSize(minWidth = 30.dp, minHeight = 28.dp).clip(Dimens.ShapeSm)
+            .background(if (danger) CrundiColors.RedDim else Color.Transparent)
+            .then(if (boxed) Modifier.border(Dimens.Hairline, border, Dimens.ShapeSm) else Modifier)
+            .clickable(onClickLabel = description, onClick = onClick).padding(horizontal = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         if (icon != null) CrundiIcon(icon, size = 16.dp, tint = fg, contentDescription = description)

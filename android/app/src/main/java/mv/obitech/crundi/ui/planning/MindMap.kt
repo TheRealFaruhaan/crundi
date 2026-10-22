@@ -4,7 +4,18 @@ import mv.obitech.crundi.ui.components.errorText
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -215,9 +226,15 @@ fun MindMapScreen(
     val hidden = remember { mutableStateListOf<String>() }
     val collapsed = remember { mutableStateListOf<String>() }
     var selected by remember { mutableStateOf(initialSelected) }
+    // Typed in place, as on the desktop: the idea being edited, and where a
+    // new one is being typed (drafting; draftParent null = top level).
+    var editing by remember { mutableStateOf<String?>(null) }
+    var drafting by remember { mutableStateOf(false) }
+    var draftParent by remember { mutableStateOf<String?>(null) }
+    fun startDraft(parent: String?) { editing = null; draftParent = parent; drafting = true; if (parent != null) selected = parent }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CrundiButton("Add idea", { popup = MindPopup.Add(null) }, kind = ButtonKind.Primary, icon = "plus")
+            CrundiButton("Add idea", { startDraft(null) }, kind = ButtonKind.Primary, icon = "plus")
             CrundiTextField(filter, { filter = it }, Modifier.weight(1f), placeholder = "Filter ideas…", icon = "search")
         }
         val m = map.valueOrNull
@@ -226,22 +243,29 @@ fun MindMapScreen(
         when (map) {
             is Load.Loading -> LoadingState(text = "Loading the mind map")
             is Load.Failed -> ErrorState(map.message, onRetry = cb.onRetry)
-            is Load.Ready -> if (map.value.nodes.isEmpty()) EmptyState(
+            is Load.Ready -> if (map.value.nodes.isEmpty() && !drafting) EmptyState(
                 "mindmap", "No ideas yet",
                 body = "Add one, or use “Brainstorm in the Mind map” on a Kanban card to extend a task here.",
-                action = "Add idea", onAction = { popup = MindPopup.Add(null) },
-            ) else MindCanvas(map.value, filter.trim(), hidden, collapsed, selected, onTap = { selected = it; popup = MindPopup.Details(it) }, onAdd = { popup = MindPopup.Add(it) })
+                action = "Add idea", onAction = { startDraft(null) },
+            ) else MindCanvas(
+                map.value, filter.trim(), hidden, collapsed, selected,
+                editing = editing, draft = if (drafting) (draftParent ?: "") else null,
+                // One tap edits the idea where it is; two (or a long press) open its details.
+                onTap = { drafting = false; selected = it; editing = it },
+                onOpen = { drafting = false; editing = null; selected = it; popup = MindPopup.Details(it) },
+                onAdd = { startDraft(it) },
+                onEdited = { n, text -> editing = null; if (text != null && text.isNotBlank() && text.trim() != n.text) cb.onSave(n, text.trim(), n.notes) },
+                onDrafted = { text -> drafting = false; if (text != null && text.isNotBlank()) cb.onAdd(text.trim(), draftParent) },
+            )
         }
     }
     val m = map.valueOrNull ?: return
     fun node(id: String) = m.nodes.firstOrNull { it.id == id }
     when (val p = popup) {
         null -> {}
-        is MindPopup.Add -> Dialog({ popup = null }) {
-            TextAskCard(if (p.parentId == null) "New idea" else "New idea under “${node(p.parentId)?.text.orEmpty()}”", "Idea", "", "Add idea", onDismiss = { popup = null }, placeholder = "New idea") {
-                cb.onAdd(it, p.parentId); popup = null
-            }
-        }
+        // "Add child" from an idea's details: the details close and the new
+        // idea is typed on the map, where it will sit.
+        is MindPopup.Add -> LaunchedEffect(p) { popup = null; startDraft(p.parentId) }
         is MindPopup.Details -> node(p.id)?.let { n ->
             PlanningSheet(n.text, { popup = null }) { IdeaDetails(m, n, cb, { popup = it }, collapsed) }
         }
@@ -296,16 +320,25 @@ private fun MindCanvas(
     hidden: List<String>,
     collapsed: MutableList<String>,
     selected: String?,
+    editing: String?,
+    /** Where a new idea is being typed: its parent's id, "" for the top level, null for none. */
+    draft: String?,
     onTap: (String) -> Unit,
+    onOpen: (String) -> Unit,
     onAdd: (String) -> Unit,
+    onEdited: (MindNode, String?) -> Unit,
+    onDrafted: (String?) -> Unit,
 ) {
     val q = filter.lowercase()
     fun matches(n: MindNode) = q.isNotEmpty() && (n.text.lowercase().contains(q) || n.notes.any { it.lowercase().contains(q) } ||
         n.linkedTaskInfo?.let { it.title.lowercase().contains(q) || it.text.lowercase().contains(q) } == true)
     val byId = remember(m) { m.nodes.associateBy { it.id } }
-    val roots = m.nodes.filter { it.parentId == null || byId[it.parentId] == null }.filter { (it.effectiveProject ?: "") !in hidden }.map { it.id }
+    val roots = m.nodes.filter { it.parentId == null || byId[it.parentId] == null }.filter { (it.effectiveProject ?: "") !in hidden }.map { it.id } +
+        (if (draft == "") listOf("draft:") else emptyList())
     fun kids(id: String): List<String> {
-        if (id.startsWith("add:")) return emptyList()
+        if (id.startsWith("add:") || id.startsWith("draft:")) return emptyList()
+        // The box being typed into stands where the idea will be, in place of "add idea".
+        if (draft == id) return m.children(id).filter { (it.effectiveProject ?: "") !in hidden }.map { it.id } + "draft:$id"
         if (q.isEmpty() && id in collapsed) return emptyList()
         val c = m.children(id).filter { (it.effectiveProject ?: "") !in hidden }.map { it.id }
         return if (q.isEmpty() && id == selected) c + "add:$id" else c
@@ -345,7 +378,11 @@ private fun MindCanvas(
         Layout(
             content = {
                 for (pl in places.values) {
-                    if (pl.id.startsWith("add:")) {
+                    if (pl.id.startsWith("draft:")) {
+                        Box(Modifier.layoutId(pl.id).width(MindLayout.WIDTH.dp).onSizeChanged { heights[pl.id] = it.height / density }) {
+                            InlineIdea("", placeholder = "New idea", onDone = onDrafted)
+                        }
+                    } else if (pl.id.startsWith("add:")) {
                         val parent = pl.id.removePrefix("add:")
                         Row(
                             Modifier.layoutId(pl.id).width(MindLayout.WIDTH.dp).height(MindLayout.ADD_H.dp).alpha(0.6f)
@@ -359,10 +396,11 @@ private fun MindCanvas(
                     } else byId[pl.id]?.let { n ->
                         val dim = q.isNotEmpty() && !matches(n)
                         Box(Modifier.layoutId(pl.id).width(MindLayout.WIDTH.dp).onSizeChanged { heights[n.id] = it.height / density }.alpha(if (dim) 0.18f else 1f)) {
-                            IdeaNode(
+                            if (n.id == editing) InlineIdea(n.text, placeholder = "Idea", onDone = { onEdited(n, it) })
+                            else IdeaNode(
                                 n, root = n.parentId == null, hit = matches(n), selected = n.id == selected,
                                 hasKids = m.children(n.id).isNotEmpty(), collapsed = n.id in collapsed && q.isEmpty(),
-                                onTap = { onTap(n.id) }, onToggle = { if (n.id in collapsed) collapsed.remove(n.id) else collapsed.add(n.id) },
+                                onTap = { onTap(n.id) }, onOpen = { onOpen(n.id) }, onToggle = { if (n.id in collapsed) collapsed.remove(n.id) else collapsed.add(n.id) },
                             )
                         }
                     }
@@ -401,7 +439,8 @@ private fun MindCanvas(
 }
 
 @Composable
-private fun IdeaNode(n: MindNode, root: Boolean, hit: Boolean, selected: Boolean, hasKids: Boolean, collapsed: Boolean, onTap: () -> Unit, onToggle: () -> Unit) {
+@OptIn(ExperimentalFoundationApi::class)
+private fun IdeaNode(n: MindNode, root: Boolean, hit: Boolean, selected: Boolean, hasKids: Boolean, collapsed: Boolean, onTap: () -> Unit, onOpen: () -> Unit, onToggle: () -> Unit) {
     val shape = RoundedCornerShape(14.dp)
     val linked = n.linkedTask != null
     val border = when {
@@ -416,7 +455,7 @@ private fun IdeaNode(n: MindNode, root: Boolean, hit: Boolean, selected: Boolean
                 .shadow(4.dp, shape).clip(shape)
                 .background(if (root) CrundiColors.AccentDim.compositeOver(CrundiColors.BgCard) else CrundiColors.BgCard)
                 .border(if (selected || hit) 2.dp else Dimens.Hairline, border, shape)
-                .clickable(onClick = onTap).padding(horizontal = 11.dp, vertical = 8.dp),
+                .combinedClickable(onClick = onTap, onDoubleClick = onOpen, onLongClick = onOpen).padding(horizontal = 11.dp, vertical = 8.dp),
         ) {
             Text(n.text, style = CrundiType.Body.copy(fontSize = 13.3.sp, fontWeight = FontWeight.SemiBold, lineHeight = 17.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
             val chips = ideaChips(n, root)
@@ -429,6 +468,38 @@ private fun IdeaNode(n: MindNode, root: Boolean, hit: Boolean, selected: Boolean
             contentAlignment = Alignment.Center,
         ) { CrundiIcon(if (collapsed) "plus" else "minus", size = 11.dp, tint = CrundiColors.TextSecondary) }
     }
+}
+
+/**
+ * An idea typed where it stands (the desktop's mm-draft and mm-edit-input).
+ * The keyboard's Done saves; leaving the box saves too, since on a phone that
+ * is how the keyboard goes away, and losing what was typed is worse. Empty
+ * or unchanged text saves nothing. [onDone] gets the text, once.
+ */
+@Composable
+private fun InlineIdea(initial: String, placeholder: String, onDone: (String?) -> Unit) {
+    var text by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(initial, androidx.compose.ui.text.TextRange(initial.length))) }
+    val focus = remember { FocusRequester() }
+    var had by remember { mutableStateOf(false) }
+    var finished by remember { mutableStateOf(false) }
+    fun finish() { if (!finished) { finished = true; onDone(text.text) } }
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        Modifier.fillMaxWidth().shadow(4.dp, shape).clip(shape).background(CrundiColors.BgCard)
+            .border(2.dp, CrundiColors.AccentHover, shape).padding(horizontal = 11.dp, vertical = 8.dp),
+    ) {
+        if (text.text.isEmpty()) Text(placeholder, style = CrundiType.Body.copy(fontSize = 13.3.sp, color = CrundiColors.TextMuted, lineHeight = 17.sp))
+        BasicTextField(
+            text, { text = it },
+            Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged { if (it.isFocused) had = true else if (had) finish() },
+            textStyle = CrundiType.Body.copy(fontSize = 13.3.sp, fontWeight = FontWeight.SemiBold, lineHeight = 17.sp, color = CrundiColors.TextPrimary),
+            cursorBrush = SolidColor(CrundiColors.AccentHover),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { finish() }),
+            maxLines = 7,
+        )
+    }
+    LaunchedEffect(Unit) { focus.requestFocus() }
 }
 
 private fun Color.compositeOver(bg: Color): Color {

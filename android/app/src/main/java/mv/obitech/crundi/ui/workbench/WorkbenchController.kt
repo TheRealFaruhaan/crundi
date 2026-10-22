@@ -53,6 +53,8 @@ class WorkbenchController(
     val launchErrors = mutableStateMapOf<String, String>()
     /** Panes resuming. */
     val resuming = mutableStateMapOf<String, Boolean>()
+    /** Which way each is coming back (resume, compact, new), for the button's label. */
+    val resumingMode = mutableStateMapOf<String, String>()
     /** Bumped to reload a panel (the header's Refresh). */
     val refreshes = mutableStateMapOf<String, Int>()
 
@@ -208,12 +210,13 @@ class WorkbenchController(
 
     override fun refresh(v: PaneView) { refreshes[v.key] = (refreshes[v.key] ?: 0) + 1 }
 
-    override fun resume(v: PaneView) {
+    override fun resume(v: PaneView, mode: String) {
         val id = v.paneId ?: return
         resuming[v.key] = true
+        resumingMode[v.key] = mode
         scope.launch {
             try {
-                val newId = api?.terminals?.resume(id) ?: return@launch
+                val newId = api?.terminals?.resume(id, mode) ?: return@launch
                 val newKey = "t:$newId"
                 if (newKey != v.key) {
                     grace[newKey] = System.currentTimeMillis()
@@ -222,7 +225,7 @@ class WorkbenchController(
                 }
             } catch (e: Exception) {
                 notice = "Could not resume it: " + errorText(e)
-            } finally { resuming.remove(v.key) }
+            } finally { resuming.remove(v.key); resumingMode.remove(v.key) }
         }
     }
 

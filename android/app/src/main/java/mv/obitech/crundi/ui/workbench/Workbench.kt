@@ -27,6 +27,9 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,7 +88,24 @@ fun WorkbenchScreen(
         return
     }
     val open = ui.panes.values.map { it.kind }.toSet()
+    // Each pane's frame and content, movable: when the layout changes (a
+    // split, a removed slot, a column added) the pane moves to its new place
+    // with everything in it, instead of being built again; a chat was
+    // "Opening the chat" all over after every split.
+    val movables = remember { HashMap<String, @Composable (PaneView, WorkbenchUi, Boolean, @Composable (PaneView) -> Unit) -> Unit>() }
+    movables.keys.retainAll(ui.panes.keys)
+    val slot: @Composable (PaneView, Boolean) -> Unit = { v, focused ->
+        val m = movables.getOrPut(v.key) {
+            movableContentOf { pv: PaneView, u: WorkbenchUi, f: Boolean, b: @Composable (PaneView) -> Unit ->
+                PaneFrame(pv, actions, Modifier.fillMaxSize().focusOnTouch { actions.focus(pv) }, focused = f) { PaneContent(pv, u, full = false, b) }
+            }
+        }
+        m(v, ui, focused, body)
+    }
+    // Splits made from now on open with a short slide; the ones already there do not.
+    val bornAt = remember { System.currentTimeMillis() }
     val node: @Composable (Mosaic) -> Unit = { n -> MosaicNode(n, ui, actions, open, body) }
+    CompositionLocalProvider(LocalPaneSlot provides slot, LocalWorkbenchBorn provides bornAt) {
     Box(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
         when {
             ui.layout == WbLayout.Stack -> StackLayout(ui, actions, open, body)
@@ -101,9 +121,22 @@ fun WorkbenchScreen(
             }
         }
     }
+    }
     ui.full?.let { k ->
         val v = ui.panes[k] ?: return@let
         Dialog(onDismissRequest = { actions.full(v, false) }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            // Full screen means the whole screen: the status bar goes (a
+            // swipe from the top shows it for a moment), and it comes back
+            // when the pane leaves full screen. Before, the pane's header was
+            // drawn under the clock and icons.
+            val view = androidx.compose.ui.platform.LocalView.current
+            androidx.compose.runtime.DisposableEffect(view) {
+                val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+                val ctl = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
+                ctl?.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                ctl?.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+                onDispose { ctl?.show(androidx.core.view.WindowInsetsCompat.Type.statusBars()) }
+            }
             PaneFrame(v, actions, Modifier.fillMaxSize(), focused = true, full = true) { PaneContent(v, ui, full = true, body) }
         }
     }
@@ -127,9 +160,7 @@ private fun MosaicNode(n: Mosaic, ui: WorkbenchUi, actions: WorkbenchActions, op
             val v = n.key?.let { ui.panes[it] }
             if (v == null) EmptySlot(open, { actions.launch(n.id, it) }, { actions.splitSlot(n.id, it) }, if (ui.tree.leaves().size > 1) ({ actions.removeSlot(n.id) }) else null)
             else if (ui.full == v.key) Box(Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(CrundiColors.BgSecondary))
-            else key(v.key) {
-                PaneFrame(v, actions, Modifier.fillMaxSize().focusOnTouch { actions.focus(v) }, focused = ui.focused == v.key) { PaneContent(v, ui, full = false, body) }
-            }
+            else LocalPaneSlot.current(v, ui.focused == v.key)
         }
         is Mosaic.Split -> SplitNode(n, ui, actions, open, body)
     }
@@ -139,6 +170,22 @@ private fun MosaicNode(n: Mosaic, ui: WorkbenchUi, actions: WorkbenchActions, op
 @Composable
 private fun SplitNode(s: Mosaic.Split, ui: WorkbenchUi, actions: WorkbenchActions, open: Set<PaneKind>, body: @Composable (PaneView) -> Unit) {
     var sizes by remember(s.id, s.sizes) { mutableStateOf(s.sizes) }
+    // A split just made grows its new part from nothing (the web's slot
+    // sliding in), rather than the layout jumping.
+    val born = LocalWorkbenchBorn.current
+    val grow = remember(s.id) { androidx.compose.animation.core.Animatable(if (System.currentTimeMillis() - born > 800) 0f else 1f) }
+    LaunchedEffect(s.id) { grow.animateTo(1f, androidx.compose.animation.core.tween(260)) }
+    fun weightOf(i: Int): Float {
+        val base = sizes.getOrElse(i) { 1f }.coerceAtLeast(1f)
+        val last = s.kids.lastIndex
+        if (grow.value >= 1f || last < 1) return base
+        val newest = sizes.getOrElse(last) { 1f }.coerceAtLeast(1f)
+        return when (i) {
+            last -> (newest * grow.value).coerceAtLeast(0.01f)
+            last - 1 -> base + newest * (1f - grow.value)
+            else -> base
+        }
+    }
     var total by remember { mutableIntStateOf(1) }
     val density = LocalDensity.current
     val vertical = s.dir == Mosaic.Dir.Col
@@ -152,12 +199,12 @@ private fun SplitNode(s: Mosaic.Split, ui: WorkbenchUi, actions: WorkbenchAction
     if (vertical) Column(Modifier.fillMaxSize().onSizeChanged { total = it.height.coerceAtLeast(1) }) {
         s.kids.forEachIndexed { i, kid ->
             content(i)
-            Box(Modifier.fillMaxWidth().weight(sizes.getOrElse(i) { 1f }.coerceAtLeast(1f))) { MosaicNode(kid, ui, actions, open, body) }
+            Box(Modifier.fillMaxWidth().weight(weightOf(i)).clipToBounds()) { MosaicNode(kid, ui, actions, open, body) }
         }
     } else Row(Modifier.fillMaxSize().onSizeChanged { total = it.width.coerceAtLeast(1) }) {
         s.kids.forEachIndexed { i, kid ->
             content(i)
-            Box(Modifier.fillMaxHeight().weight(sizes.getOrElse(i) { 1f }.coerceAtLeast(1f))) { MosaicNode(kid, ui, actions, open, body) }
+            Box(Modifier.fillMaxHeight().weight(weightOf(i)).clipToBounds()) { MosaicNode(kid, ui, actions, open, body) }
         }
     }
 }
@@ -194,6 +241,10 @@ private fun StackLayout(ui: WorkbenchUi, actions: WorkbenchActions, open: Set<Pa
         }
     }
 }
+
+/** Draws a pane where it stands in the layout, keeping it alive as it moves (see WorkbenchScreen). */
+private val LocalPaneSlot = androidx.compose.runtime.staticCompositionLocalOf<@Composable (PaneView, Boolean) -> Unit> { { _, _ -> } }
+private val LocalWorkbenchBorn = androidx.compose.runtime.staticCompositionLocalOf { 0L }
 
 /** A pane's body with [LocalPane] set, so the screen inside knows it is in a pane. */
 @Composable
