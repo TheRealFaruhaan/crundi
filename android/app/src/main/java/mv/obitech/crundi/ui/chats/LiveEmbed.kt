@@ -1,5 +1,6 @@
 package mv.obitech.crundi.ui.chats
 
+import androidx.compose.ui.input.pointer.pointerInput
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.pm.ActivityInfo
@@ -198,16 +199,36 @@ fun LiveEmbed(m: ChatMedia, modifier: Modifier = Modifier) {
             failed -> LoadFailed({ failed = false; loading = true; attempt++ })
             near && (src != null || html != null) -> androidx.compose.runtime.key(attempt) {
                 val doc = html
+                var frame by remember { mutableStateOf<WebView?>(null) }
                 AndroidView(
                     factory = { c ->
                         loading = true
-                        makeFrame(c, ownHtml = src == null, onLoaded = { loading = false }, onFailed = { failed = true; loading = false }, onOpen = { host.openExternal(it) }, full = full).apply {
+                        makeFrame(c, ownHtml = src == null, onLoaded = { loading = false }, onFailed = { failed = true; loading = false }, onOpen = { host.openExternal(it) }, full = full).also { frame = it }.apply {
                             if (src != null) loadUrl(src, mapOf("Referer" to transport.baseUrl.trimEnd('/') + "/"))
                             else loadDataWithBaseURL(HTML_ORIGIN, doc ?: "", "text/html", "utf-8", null)
                         }
                     },
-                    onRelease = { wv -> full.hide(); destroyFrame(wv) },
-                    modifier = Modifier.fillMaxSize(),
+                    onRelease = { wv -> frame = null; full.hide(); destroyFrame(wv) },
+                    // A swipe that starts here scrolls the frame while it can
+                    // scroll that way (and any sideways swipe is the frame's);
+                    // at its end the chat scrolls instead, so a tall embed
+                    // never traps the page. The chat took every swipe before.
+                    modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Main)
+                                val w = frame ?: continue
+                                for (ch in e.changes) {
+                                    if (!ch.pressed || !ch.previousPressed) continue
+                                    val dx = ch.position.x - ch.previousPosition.x
+                                    val dy = ch.position.y - ch.previousPosition.y
+                                    if (dx == 0f && dy == 0f) continue
+                                    val mine = kotlin.math.abs(dx) > kotlin.math.abs(dy) || w.canScrollVertically(if (dy < 0) 1 else -1)
+                                    if (mine) ch.consume()
+                                }
+                            }
+                        }
+                    },
                 )
             }
         }
@@ -232,8 +253,11 @@ private fun makeFrame(c: android.content.Context, ownHtml: Boolean, onLoaded: ()
             mediaPlaybackRequiresUserGesture = true
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             setSupportZoom(false)
-            loadWithOverviewMode = true
-            useWideViewPort = true
+            // Laid out at the frame's own width, as an iframe is. With a wide
+            // viewport a page without its own viewport tag (an X post) laid out
+            // at desktop width and was zoomed out, small in a large empty box.
+            loadWithOverviewMode = false
+            useWideViewPort = false
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, !ownHtml)
         webViewClient = object : WebViewClient() {
