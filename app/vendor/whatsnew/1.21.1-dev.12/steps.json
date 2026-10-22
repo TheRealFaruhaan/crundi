@@ -1,6 +1,14 @@
 {
   "steps": [
     {
+      "id": "native-phone",
+      "tag": "Phone app",
+      "title": "The phone app is now native",
+      "body": "The Android app is rebuilt natively: every area of Crundi in proper phone screens instead of a web page inside an app. It has the workbench with swipe columns, splits and full screen, chats with live embeds, players and pictures you can zoom, files with drag and drop, the kanban, notes and mind map, and Mini walking about. Notifications, bubbles and replying from them work as before. Update it from the Play Store or the latest release.",
+      "art": "native-phone.html",
+      "artTitle": "Crundi"
+    },
+    {
       "id": "factory-webhook",
       "tag": "Factories",
       "title": "Start a factory from an alert",

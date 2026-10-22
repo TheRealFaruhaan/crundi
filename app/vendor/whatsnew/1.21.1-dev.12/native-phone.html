@@ -1,0 +1,30 @@
+<div class="wna a-np">
+  <div class="phone">
+    <div class="bar"><i></i><span>Demo</span><b></b></div>
+    <div class="tabs"><s></s><s></s><s></s><s></s><s></s></div>
+    <div class="pane p1"><div class="h"><i></i>Chat</div><div class="l w8"></div><div class="l w6"></div><div class="me">Ship it</div></div>
+    <div class="pane p2"><div class="h"><i class="g"></i>Files</div><div class="l w7"></div><div class="l w5"></div><div class="l w6"></div></div>
+  </div>
+  <style>
+    .a-np{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:11px}
+    .a-np .phone{position:absolute;left:50%;top:14px;bottom:14px;width:190px;margin-left:-95px;border-radius:22px;border:2px solid var(--border);background:var(--bg-primary);overflow:hidden}
+    .a-np .bar{display:flex;align-items:center;gap:6px;padding:10px 12px 6px}
+    .a-np .bar i{width:16px;height:12px;border-radius:4px;background:var(--accent)}
+    .a-np .bar span{flex:1;font-weight:600}
+    .a-np .bar b{width:8px;height:8px;border-radius:50%;background:var(--green)}
+    .a-np .tabs{display:flex;gap:10px;padding:4px 12px 8px;border-bottom:1px solid var(--border)}
+    .a-np .tabs s{width:14px;height:10px;border-radius:3px;background:var(--bg-tertiary)}
+    .a-np .tabs s:first-child{background:var(--accent)}
+    .a-np .pane{position:absolute;left:8px;right:8px;border:1px solid var(--border);border-radius:10px;background:var(--bg-secondary);padding:6px 8px}
+    .a-np .p1{top:66px;height:120px;border-color:var(--accent);animation:anp-a 7s ease-in-out infinite}
+    .a-np .p2{top:196px;height:80px;animation:anp-b 7s ease-in-out infinite}
+    .a-np .h{display:flex;align-items:center;gap:5px;font-weight:600;margin-bottom:6px}
+    .a-np .h i{width:6px;height:6px;border-radius:50%;background:var(--green)}
+    .a-np .h i.g{background:var(--accent)}
+    .a-np .l{height:6px;border-radius:3px;background:var(--bg-tertiary);margin:5px 0}
+    .a-np .w8{width:80%}.a-np .w7{width:70%}.a-np .w6{width:60%}.a-np .w5{width:50%}
+    .a-np .me{position:absolute;right:8px;bottom:8px;padding:3px 7px;border-radius:8px 8px 2px 8px;background:var(--accent-dim);border:1px solid var(--accent)}
+    @keyframes anp-a{0%,40%{top:66px;height:120px;left:8px;right:8px}55%,85%{top:40px;height:236px;left:4px;right:4px}100%{top:66px;height:120px;left:8px;right:8px}}
+    @keyframes anp-b{0%,40%{opacity:1}55%,85%{opacity:0}100%{opacity:1}}
+  </style>
+</div>
