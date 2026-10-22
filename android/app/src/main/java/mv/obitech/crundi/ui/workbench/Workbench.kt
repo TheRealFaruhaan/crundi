@@ -196,16 +196,19 @@ fun WorkbenchScreen(
         val shownView = shownFull?.let { ui.panes[it] }
         if (shownView != null) {
             val from = leafRects[shownView.key]?.let { r -> r.translate(-rootRect.left, -rootRect.top) }
+            // Laid out once at full size; only scale and position move, so a
+            // chat is not laid out again on every frame (which stuttered).
             Box(
-                Modifier.fillMaxSize().layout { m, c ->
+                Modifier.fillMaxSize().graphicsLayer {
                     val t = fullProg.value
-                    val fw = c.maxWidth.toFloat(); val fh = c.maxHeight.toFloat()
+                    val fw = size.width.coerceAtLeast(1f); val fh = size.height.coerceAtLeast(1f)
                     val r = from ?: androidx.compose.ui.geometry.Rect(0f, 0f, fw, fh)
-                    val x = r.left * (1 - t); val y = r.top * (1 - t)
-                    val w = (r.width + (fw - r.width) * t).toInt().coerceIn(1, c.maxWidth)
-                    val h = (r.height + (fh - r.height) * t).toInt().coerceIn(1, c.maxHeight)
-                    val p = m.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
-                    layout(c.maxWidth, c.maxHeight) { p.place(x.toInt(), y.toInt()) }
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                    scaleX = (r.width / fw) + (1f - r.width / fw) * t
+                    scaleY = (r.height / fh) + (1f - r.height / fh) * t
+                    translationX = r.left * (1f - t)
+                    translationY = r.top * (1f - t)
+                    clip = true
                 },
             ) { LocalPaneSlot.current(shownView, if (fullView != null) 3 else 1) }
         }

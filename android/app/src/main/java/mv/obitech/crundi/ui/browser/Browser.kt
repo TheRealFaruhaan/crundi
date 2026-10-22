@@ -391,7 +391,7 @@ fun LiveBrowser(id: String, modifier: Modifier = Modifier, startUrl: String? = n
             )
         }.also { it.loadUrl(startUrl ?: memory.url) }
     }
-    val holder = remember(id) { FrameLayout(ctx).apply { clipChildren = true; addView(web) } }
+    val holder = remember(id) { mv.obitech.crundi.ui.components.ClaimTouchesFrame(ctx).apply { clipChildren = true; addView(web) } }
     DisposableEffect(id) { onDispose { holder.removeAllViews(); web.stopLoading(); web.destroy() } }
     var lastUa by remember { mutableStateOf<String?>(null) }
     val pane = LocalPane.current

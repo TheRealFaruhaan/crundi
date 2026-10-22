@@ -305,7 +305,8 @@ fun PanelFrame(
         val frameMod = if (autoHeight) Modifier.fillMaxWidth().height(if (heightPx > 0) hDp.coerceIn(36.dp, maxHeight) else 80.dp.coerceAtMost(maxHeight))
         else Modifier.fillMaxSize()
         if (error == null) androidx.compose.runtime.key(fh) { AndroidView(
-            factory = { fh.web },
+            // Its touches are its own (see ClaimTouchesFrame).
+            factory = { c -> (fh.web.parent as? android.view.ViewGroup)?.removeView(fh.web); mv.obitech.crundi.ui.components.ClaimTouchesFrame(c).apply { addView(fh.web) } },
             modifier = frameMod.onSizeChanged { with(density) { size = it.width.toDp().value.toInt() to it.height.toDp().value.toInt() } },
         ) }
     }

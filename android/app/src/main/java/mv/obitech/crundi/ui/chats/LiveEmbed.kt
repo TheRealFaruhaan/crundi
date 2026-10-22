@@ -219,32 +219,14 @@ fun LiveEmbed(m: ChatMedia, modifier: Modifier = Modifier, onContentHeight: ((Fl
                 AndroidView(
                     factory = { c ->
                         loading = true
-                        makeFrame(c, ownHtml = src == null, onLoaded = { loading = false }, onFailed = { failed = true; loading = false }, onOpen = { host.openExternal(it) }, full = full).also { frame = it }.apply {
+                        val wv = makeFrame(c, ownHtml = src == null, onLoaded = { loading = false }, onFailed = { failed = true; loading = false }, onOpen = { host.openExternal(it) }, full = full).also { frame = it }.apply {
                             if (src != null) loadUrl(src, mapOf("Referer" to transport.baseUrl.trimEnd('/') + "/"))
                             else loadDataWithBaseURL(HTML_ORIGIN, doc ?: "", "text/html", "utf-8", null)
                         }
+                        EmbedTouchFrame(c, wv)
                     },
-                    onRelease = { wv -> frame = null; full.hide(); destroyFrame(wv) },
-                    // A swipe that starts here scrolls the frame while it can
-                    // scroll that way (and any sideways swipe is the frame's);
-                    // at its end the chat scrolls instead, so a tall embed
-                    // never traps the page. The chat took every swipe before.
-                    modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Main)
-                                val w = frame ?: continue
-                                for (ch in e.changes) {
-                                    if (!ch.pressed || !ch.previousPressed) continue
-                                    val dx = ch.position.x - ch.previousPosition.x
-                                    val dy = ch.position.y - ch.previousPosition.y
-                                    if (dx == 0f && dy == 0f) continue
-                                    val mine = kotlin.math.abs(dx) > kotlin.math.abs(dy) || w.canScrollVertically(if (dy < 0) 1 else -1)
-                                    if (mine) ch.consume()
-                                }
-                            }
-                        }
-                    },
+                    onRelease = { holder -> frame = null; full.hide(); (holder as? EmbedTouchFrame)?.web?.let { destroyFrame(it) } },
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }
@@ -379,3 +361,35 @@ private class EmbedFullscreen(private val activity: Activity?, private val m: Ch
 private const val MEASURE_JS = "(function(){var b=document.body;if(!b)return 0;var m=0;var a=b.querySelectorAll('*');" +
     "for(var i=0;i<a.length&&i<5000;i++){var r=a[i].getBoundingClientRect();if(r.width>0&&r.height>0&&r.bottom>m)m=r.bottom;}" +
     "return Math.ceil(m+(window.scrollY||0));})()"
+
+/**
+ * The frame's touch handling. Compose gives an Android view its touches only
+ * after the chat has had them, and any touch the chat (or anything else)
+ * claims reaches the view as cancelled; so the chat's scrolling and the embed
+ * fought, and neither won. Here the embed claims every touch from the moment
+ * the finger lands (taps, buttons, its own scrolling, sideways swipes), and
+ * gives it back only when the first movement is a vertical swipe the page
+ * cannot scroll that way: then the chat scrolls instead.
+ */
+internal class EmbedTouchFrame(context: android.content.Context, val web: WebView) : android.widget.FrameLayout(context) {
+    private val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+    private var x0 = 0f
+    private var y0 = 0f
+    private var decided = false
+
+    init { addView(web, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)) }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> { x0 = ev.x; y0 = ev.y; decided = false; parent?.requestDisallowInterceptTouchEvent(true) }
+            android.view.MotionEvent.ACTION_MOVE -> if (!decided) {
+                val dx = ev.x - x0; val dy = ev.y - y0
+                if (dx * dx + dy * dy > slop * slop) {
+                    decided = true
+                    if (kotlin.math.abs(dy) > kotlin.math.abs(dx) && !web.canScrollVertically(if (dy < 0) 1 else -1)) parent?.requestDisallowInterceptTouchEvent(false)
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+}

@@ -26,7 +26,9 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
       // took every sideways drag and you could not pan or select in it.
       // Here those drags are marked used once the view has had them, and the
       // columns are swiped from the pane's header or another pane instead.
-      val owns = v.kind == PaneKind.Browser || v.kind == PaneKind.Panel || v.kind == PaneKind.Terminal
+      // The browser and panels hold their own touches at the view (ClaimTouchesFrame);
+      // marking them used here as well reached those views as cancelled.
+      val owns = v.kind == PaneKind.Terminal
       androidx.compose.foundation.layout.Box(if (owns) androidx.compose.ui.Modifier.keepTouches() else androidx.compose.ui.Modifier) {
         when (v.kind) {
             PaneKind.Chat -> ChatRoute(v.paneId!!)                                          // ui.chats
