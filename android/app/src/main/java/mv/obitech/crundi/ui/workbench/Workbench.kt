@@ -119,12 +119,18 @@ fun WorkbenchScreen(
             ui.layout == WbLayout.Stack -> StackLayout(ui, actions, open, body)
             else -> {
                 val cols = ui.tree.columns()
-                if (cols.size <= 1) Box(Modifier.fillMaxSize().padding(4.dp)) { node(ui.tree) }
-                else {
-                    HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1, key = { cols.getOrNull(it)?.id ?: it }) { i ->
-                        Box(Modifier.fillMaxSize().padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 10.dp)) { cols.getOrNull(i)?.let { node(it) } }
+                // Always the pager, even for one column: going from one column
+                // to two then keeps the pane where it is (in the same page)
+                // instead of moving it into a new container, which rebuilt it.
+                run {
+                    // A page is known by the first pane in its column, not the
+                    // column's own id: splitting a pane makes the column a new
+                    // split with a new id, and the pager then threw the page
+                    // away and built the chat in it again.
+                    HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1, key = { i -> cols.getOrNull(i)?.let { c -> c.leaves().firstNotNullOfOrNull { it.key } ?: c.id } ?: i }) { i ->
+                        Box(Modifier.fillMaxSize().padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = if (cols.size > 1) 10.dp else 4.dp)) { cols.getOrNull(i)?.let { node(it) } }
                     }
-                    ColumnIndicator(pager, cols.size, Modifier.align(Alignment.BottomCenter))
+                    if (cols.size > 1) ColumnIndicator(pager, cols.size, Modifier.align(Alignment.BottomCenter))
                 }
             }
         }
