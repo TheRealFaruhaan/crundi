@@ -1,5 +1,6 @@
 package mv.obitech.crundi.ui.shell
 
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.graphics.Brush
 import mv.obitech.crundi.ui.mini.miniLogo
 import mv.obitech.crundi.ui.mini.miniTarget
@@ -173,6 +174,7 @@ fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, 
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
         Box(Modifier.fillMaxWidth().height(Dimens.TopBarHeight)) {
             data.usage?.let { UsageBackdrop(it, Modifier.clickable(onClick = callbacks.onUsage)) }
+            ReconnectLine(data.connection, Modifier.align(Alignment.BottomStart))
             TopBarRow(
                 Modifier.fillMaxSize().padding(start = 2.dp, end = 10.dp),
                 left = {
@@ -565,4 +567,41 @@ private fun DashedButton(icon: String, label: String, onClick: () -> Unit) {
 /** Which workbench pane is full screen, if any: the shell hides its chrome for it. */
 object FullScreen {
     var pane by androidx.compose.runtime.mutableStateOf<String?>(null)
+}
+
+/**
+ * The web's #reconn-line: a thin line along the bottom of the top bar, amber
+ * and sweeping while the app reconnects, red and still when offline, a moment
+ * of green when it is back. It waits 1.2 s first, so a blip shows nothing.
+ */
+@Composable
+private fun ReconnectLine(connection: Connection, modifier: Modifier = Modifier) {
+    var shown by remember { mutableStateOf<Connection?>(null) }
+    var back by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(connection) {
+        if (connection == Connection.Connected) {
+            if (shown != null) { shown = null; back = true; kotlinx.coroutines.delay(1600); back = false }
+        } else {
+            back = false
+            if (shown == null) kotlinx.coroutines.delay(1200)
+            shown = connection
+        }
+    }
+    val alpha by androidx.compose.animation.core.animateFloatAsState(if (shown != null || back) 1f else 0f, androidx.compose.animation.core.tween(if (back) 900 else 300), label = "reconn")
+    if (alpha <= 0f) return
+    val sweep = androidx.compose.animation.core.rememberInfiniteTransition(label = "reconn-sweep")
+    val x by sweep.animateFloat(-0.4f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.FastOutSlowInEasing)), label = "x")
+    androidx.compose.foundation.Canvas(modifier.fillMaxWidth().height(2.dp)) {
+        when {
+            back -> drawRect(CrundiColors.Green.copy(alpha = alpha))
+            shown == Connection.Offline -> drawRect(CrundiColors.Red.copy(alpha = 0.75f * alpha))
+            else -> {
+                val w = size.width * 0.4f; val left = size.width * x
+                drawRect(
+                    Brush.horizontalGradient(listOf(Color.Transparent, CrundiColors.Yellow.copy(alpha = alpha), Color.Transparent), startX = left, endX = left + w),
+                    topLeft = Offset(left, 0f), size = Size(w, size.height),
+                )
+            }
+        }
+    }
 }
