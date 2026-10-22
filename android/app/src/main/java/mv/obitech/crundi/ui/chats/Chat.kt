@@ -687,7 +687,7 @@ private fun nameAndSize(ctx: Context, u: Uri): Pair<String, Long> {
 
 /** Stream a download into the phone's Downloads. Answers the file's name. */
 private suspend fun saveToDownloads(ctx: Context, fallback: String, fetch: suspend (java.io.OutputStream) -> String?): String = withContext(Dispatchers.IO) {
-    val tmp = java.io.File.createTempFile("dl", null, ctx.cacheDir)
+    val tmp = java.io.File.createTempFile("crundi-download", null, ctx.cacheDir)   // the prefix must be 3+ characters ("dl" threw)
     try {
         val name = (tmp.outputStream().use { fetch(it) } ?: fallback).ifEmpty { fallback }.replace('/', '_')
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

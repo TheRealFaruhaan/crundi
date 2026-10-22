@@ -184,6 +184,12 @@ class OkHttpTransport(
 
     override fun renewLogin() { credentials.renew(lastSocketToken) }
 
+    override fun streamHeaders(): Map<String, String> = buildMap {
+        put("X-Crundi-Client", clientTag)
+        put("User-Agent", userAgent)
+        credentials.token()?.let { put("Authorization", "Bearer $it") }
+    }
+
     private class StreamBody(private val upload: Upload, private val progress: Progress?) : RequestBody() {
         override fun contentType() = upload.contentType.toMediaType()
         override fun contentLength() = upload.length

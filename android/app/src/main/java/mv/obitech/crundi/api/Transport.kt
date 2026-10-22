@@ -76,6 +76,9 @@ interface Transport {
 
     /** The socket was refused with 401: get a fresh login before opening it again. Blocking. Throws [ApiException]. */
     fun renewLogin() {}
+
+    /** What a media player must send to stream from this server (its sign-in): video and audio Claude showed. */
+    fun streamHeaders(): Map<String, String> = emptyMap()
 }
 
 interface SocketListener {
