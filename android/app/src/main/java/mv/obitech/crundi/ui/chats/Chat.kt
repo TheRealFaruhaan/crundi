@@ -517,9 +517,9 @@ fun ChatRoute(chatId: String) {
         if (entry != null) ui = ui.copy(busyEntries = ui.busyEntries - entry)
     }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
-        Pickers.active = false
-        if (uris.isEmpty() || project.isEmpty()) return@rememberLauncherForActivityResult
+    // Uploads attachments (picked, or pasted from the keyboard) and puts their paths in the draft.
+    val uploadUris: (List<android.net.Uri>) -> Unit = uploadUris@{ uris ->
+        if (uris.isEmpty() || project.isEmpty()) return@uploadUris
         scope.launch {
             for (u in uris) {
                 val (name, size) = withContext(Dispatchers.IO) { nameAndSize(ctx, u) }
@@ -537,8 +537,13 @@ fun ChatRoute(chatId: String) {
             }
         }
     }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        Pickers.active = false
+        uploadUris(uris)
+    }
 
     ChatScreen(view, object : ChatActions {
+        override fun pasteImages(uris: List<android.net.Uri>) = uploadUris(uris)
         override fun back() { if (host.isBubble) host.close() else nav.back() }
         override fun sheet(s: ChatSheet?) { ui = ui.copy(sheet = s) }
         override fun toggle(id: String) { ui = ui.copy(open = if (id in ui.open) ui.open - id else ui.open + id) }

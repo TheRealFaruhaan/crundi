@@ -76,6 +76,8 @@ interface ComposerActions {
     fun send() {}
     fun stop() {}
     fun attach() {}
+    /** Pictures pasted from the keyboard or the clipboard: upload them like attachments. */
+    fun pasteImages(uris: List<android.net.Uri>) {}
     fun modeSheet() {}
     fun modelSheet() {}
     fun recall(p: PendingInjection) {}
@@ -150,12 +152,13 @@ fun Composer(
                     }
                 }
             }
-            CrundiTextField(
+            ComposerField(
                 draft, actions::draft,
                 placeholder = if (ended) "Session ended." else "Message Claude…",
-                singleLine = false, maxLines = 6, enabled = !ended,
+                enabled = !ended,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = if (enterSends) ImeAction.Send else ImeAction.Default),
-                keyboardActions = KeyboardActions(onSend = { actions.send() }),
+                onSend = { if (enterSends) actions.send() },
+                onImages = actions::pasteImages,
                 modifier = Modifier.fillMaxWidth().miniTarget(miniId, "input"),
             )
             // Upload progress sits between the box and its buttons (.cc-up).

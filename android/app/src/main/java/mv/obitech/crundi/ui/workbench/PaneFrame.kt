@@ -111,7 +111,8 @@ fun PaneHeader(v: PaneView, actions: PaneActions, full: Boolean = false) {
     LaunchedEffect(armed) { if (armed) { delay(3000); armed = false } }
     val live = v.kind == PaneKind.Chat || v.kind == PaneKind.Terminal
     Row(
-        Modifier.fillMaxWidth().background(CrundiColors.BgSecondary).padding(start = 2.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+        // Full screen has no drag handle, so the dot needs the room it gave.
+        Modifier.fillMaxWidth().background(CrundiColors.BgSecondary).padding(start = if (full) 12.dp else 2.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {

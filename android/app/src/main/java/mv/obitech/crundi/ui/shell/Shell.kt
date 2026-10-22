@@ -126,14 +126,9 @@ fun ShellScaffold(
     // A pane full screen: the top bar and tabs slide away and the status bar
     // goes, and the pane grows into the room (the workbench keeps it alive,
     // so a chat does not load again).
+    // The status bar stays: full screen is inside the app now, and hiding it
+    // only left an empty band where it had been.
     val paneFull = FullScreen.pane != null
-    val view = androidx.compose.ui.platform.LocalView.current
-    androidx.compose.runtime.LaunchedEffect(paneFull) {
-        val window = (view.context as? android.app.Activity)?.window ?: return@LaunchedEffect
-        val ctl = androidx.core.view.WindowCompat.getInsetsController(window, view)
-        ctl.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (paneFull) ctl.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars()) else ctl.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-    }
     Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
         androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.expandVertically() + fadeIn(), exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
             ShellTopBar(data, onMenu = { onDrawer(!drawerOpen) }, callbacks = callbacks)
