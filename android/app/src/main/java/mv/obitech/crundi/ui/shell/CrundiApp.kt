@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -88,6 +89,8 @@ fun CrundiApp(
         else { lastBack = now; Toast.makeText(ctx.applicationContext, "Press back again to exit", Toast.LENGTH_SHORT).show() }
     }
 
+    // Mini's stage: one layer over the whole app, where the robot walks (ui.mini).
+    mv.obitech.crundi.ui.mini.MiniStage(Modifier.fillMaxSize()) {
     CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalNavigator provides navigator, LocalWorkbench provides wb) {
         ShellScaffold(
             data = data,
@@ -129,6 +132,7 @@ fun CrundiApp(
             addingProject = false
             if (alias != null) { services.shell.selectProject(alias); navigator.area(Area.Workbench) }
         })
+    }
     }
 }
 

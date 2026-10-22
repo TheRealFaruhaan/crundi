@@ -54,7 +54,8 @@ class ChatActivity : ComponentActivity() {
         setContent {
             CrundiTheme {
                 CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host) {
-                    Box(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
+                    // The bubble's chat has Mini too (ui.mini); there is no top bar, so it walks straight in.
+                    mv.obitech.crundi.ui.mini.MiniStage(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
                         ChatRoute(chatId)
                     }
                 }

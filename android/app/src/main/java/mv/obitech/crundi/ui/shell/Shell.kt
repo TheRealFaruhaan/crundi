@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.shell
 
+import mv.obitech.crundi.ui.mini.miniLogo
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -162,7 +164,8 @@ fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, 
                 left = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CrundiIconButton("menu", onMenu, contentDescription = "Projects", tint = CrundiColors.TextPrimary, size = 22.dp)
-                        RobotHead(size = 24.dp, motion = when {
+                        // Mini (ui.mini) comes out of this head and goes back into it; while it is out the spot is empty.
+                        RobotHead(Modifier.miniLogo(), size = 24.dp, motion = when {
                             data.connection != Connection.Connected -> MarkMotion.Load
                             data.working -> MarkMotion.Working
                             else -> MarkMotion.Intro

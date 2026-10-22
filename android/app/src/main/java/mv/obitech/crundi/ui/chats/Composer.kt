@@ -41,6 +41,7 @@ import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.components.CrundiIconButton
 import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.icons.CrundiIcon
+import mv.obitech.crundi.ui.mini.miniTarget
 import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.theme.Dimens
@@ -124,11 +125,13 @@ fun Composer(
     onSchedule: () -> Unit = {},
     /** Enter sends (the keyboard's action key is Send) or makes a new line. */
     enterSends: Boolean = true,
+    /** The chat's id, so Mini (ui.mini) knows where the box, Send and the queued message are. */
+    miniId: String? = null,
 ) {
-    Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary)) {
+    Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary).miniTarget(miniId, "composer")) {
         Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.Border))
         Column(Modifier.fillMaxWidth().padding(8.dp)) {
-            for (p in pending) QueueCard(p) { actions.recall(p) }
+            for ((i, p) in pending.withIndex()) QueueCard(p, if (i == 0) Modifier.miniTarget(miniId, "queue") else Modifier) { actions.recall(p) }
             // The suggestion floats over the log now (Chat.kt SuggestionBubble), as on the web.
             val matches = slashMatches(draft, commands)
             if (matches.isNotEmpty()) {
@@ -153,7 +156,7 @@ fun Composer(
                 singleLine = false, maxLines = 6, enabled = !ended,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = if (enterSends) ImeAction.Send else ImeAction.Default),
                 keyboardActions = KeyboardActions(onSend = { actions.send() }),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().miniTarget(miniId, "input"),
             )
             // Upload progress sits between the box and its buttons (.cc-up).
             for (u in uploads) Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 2.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -184,7 +187,7 @@ fun Composer(
                 }
                 CrundiButton(
                     if (busy) "Queue" else "Send", actions::send, kind = ButtonKind.Primary, icon = if (busy) "layers" else "send",
-                    enabled = !ended && draft.isNotBlank(), modifier = Modifier.weight(1f).height(40.dp),
+                    enabled = !ended && draft.isNotBlank(), modifier = Modifier.weight(1f).height(40.dp).miniTarget(miniId, "send"),
                 )
             }
             Row(Modifier.fillMaxWidth().padding(top = 7.dp, start = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -243,11 +246,11 @@ private fun BoxButton(icon: String, label: String, onClick: () -> Unit, tint: Co
 
 /** A message sent mid-turn that Claude has not taken yet (.cc-queue): queued ones can be taken back. */
 @Composable
-private fun QueueCard(p: PendingInjection, onRecall: () -> Unit) {
+private fun QueueCard(p: PendingInjection, mini: Modifier = Modifier, onRecall: () -> Unit) {
     val recallable = p.state == "queued"
     val shape = RoundedCornerShape(10.dp)
     Column(
-        Modifier.fillMaxWidth().padding(bottom = 7.dp).clip(shape)
+        mini.fillMaxWidth().padding(bottom = 7.dp).clip(shape)
             .background(if (recallable) CrundiColors.Accent.copy(alpha = 0.08f) else CrundiColors.TextSecondary.copy(alpha = 0.09f))
             .border(Dimens.Hairline, if (recallable) CrundiColors.Accent.copy(alpha = 0.55f) else CrundiColors.TextSecondary.copy(alpha = 0.45f), shape)
             .clickable(enabled = recallable, onClick = onRecall).padding(horizontal = 11.dp, vertical = 7.dp),

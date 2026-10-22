@@ -79,6 +79,9 @@ import mv.obitech.crundi.ui.components.DialogCard
 import mv.obitech.crundi.ui.components.LoadingState
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.nav.LocalNavigator
+import mv.obitech.crundi.ui.mini.MiniChat
+import mv.obitech.crundi.ui.mini.miniActivity
+import mv.obitech.crundi.ui.mini.miniTarget
 import mv.obitech.crundi.ui.shell.ChatOnScreenEffect
 import mv.obitech.crundi.ui.shell.LocalAppServices
 import mv.obitech.crundi.ui.shell.LocalHost
@@ -174,8 +177,11 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
     val pane = LocalPane.current
     val d = LocalDensity.current
     CompositionLocalProvider(LocalDensity provides Density(d.density, d.fontScale * (pane?.fontScale ?: 1f))) {
-    BoxWithConstraints(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
+    BoxWithConstraints(modifier.fillMaxSize().background(CrundiColors.BgPrimary).miniTarget(c.id, "root").miniActivity(c.id)) {
         val tall = maxHeight
+        // Mini (ui.mini) watches this chat: its state, the box, what is queued, the suggestion.
+        val sugOn = c.suggestion?.let { sug -> !ui.busy && !c.exited && sug.text.isNotBlank() && sug.uuid.ifEmpty { sug.text } != ui.retiredSuggestion } == true
+        MiniChat(c.id, if (c.exited) "exited" else c.state.wire, ui.draft, ui.pending.map { it.text }, sugOn)
         Column(Modifier.fillMaxSize().imePadding()) {
             if (!ui.inPane) ChatHeader(ui, actions)
             if (!c.loaded) { LoadingState(Modifier.weight(1f), text = "Opening the chat"); return@Column }
@@ -200,7 +206,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
                     items(entries, key = { it.id.ifEmpty { it.seq.toString() } }) { e ->
                         ChatEntryView(e, c.id, ui.open, actions, c.agents, ui.busyEntries, ui.factoryDiffs)
                     }
-                    if (act != null) item(key = "~activity") { ActivityRow(act) }
+                    if (act != null) item(key = "~activity") { Box(Modifier.miniTarget(c.id, "activity")) { ActivityRow(act) } }
                     if (c.exited) item(key = "~ended") {
                         Banner("This chat's Claude has ended" + (c.exitCode?.takeIf { it != 0 }?.let { " (code $it)" } ?: "") + ". Put it away and resume it from the Workbench, or start a new chat.", kind = BadgeKind.Neutral, icon = "info")
                     }
@@ -210,12 +216,12 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
                 // The floating dock (.cc-agdock): the badges, then the suggested
                 // next message, at the right like a message of yours would be.
                 Column(Modifier.align(Alignment.BottomEnd).padding(start = 40.dp, end = 10.dp, bottom = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.miniTarget(c.id, "badges"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         AgentBadge("terminal", shown.filter { it.kind == "task" }, "background command", "background commands", actions::tasks)
                         AgentBadge("layers", shown.filter { it.kind != "task" }, "agent", "agents", actions::agents)
                     }
                     val sug = c.suggestion
-                    if (sug != null && !ui.busy && !c.exited && sug.text.isNotBlank() && sug.uuid.ifEmpty { sug.text } != ui.retiredSuggestion) SuggestionBubble(sug.text, { actions.useSuggestion(sug) }, actions::dismissSuggestion)
+                    if (sug != null && sugOn) SuggestionBubble(sug.text, { actions.useSuggestion(sug) }, actions::dismissSuggestion, Modifier.miniTarget(c.id, "sug"))
                 }
               }
               }
@@ -229,7 +235,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
                 model = c.model, stateWords = stateLine(c.state, c.exited), cost = c.totalCostUsd,
                 commands = c.slashCommands, pending = ui.pending, suggestion = c.suggestion, uploads = ui.uploads,
                 scheduled = ui.schedule.items.size, scheduleOpen = ui.schedule.open, onSchedule = actions::schedule,
-                enterSends = ui.enterSends,
+                enterSends = ui.enterSends, miniId = c.id,
             )
         }
         if (ui.schedule.open && c.loaded) SchedulePanel(
@@ -285,13 +291,13 @@ private fun ChatHeader(ui: ChatUi, actions: ChatActions) {
 
 /** The suggested next message (.cc-sug-row): "Suggested, tap to send", then a dashed bubble; a tap sends it, the x drops it. */
 @Composable
-private fun SuggestionBubble(text: String, onSend: () -> Unit, onDismiss: () -> Unit) {
+private fun SuggestionBubble(text: String, onSend: () -> Unit, onDismiss: () -> Unit, mini: Modifier = Modifier) {
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text("Suggested, tap to send", style = ChatType.Small.copy(fontSize = 10.5.sp, color = CrundiColors.TextMuted),
             modifier = Modifier.padding(end = 4.dp).clip(RoundedCornerShape(4.dp)).background(CrundiColors.BgPrimary).padding(horizontal = 4.dp))
         val shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomEnd = 3.dp, bottomStart = 12.dp)
         Box(
-            Modifier.shadow(6.dp, shape).clip(shape).background(CrundiColors.BgSecondary)
+            mini.shadow(6.dp, shape).clip(shape).background(CrundiColors.BgSecondary)
                 .dashedBorder(CrundiColors.Accent.copy(alpha = 0.55f), 12.dp, 1.dp, 4f)
                 .clickable(onClickLabel = "Send it", onClick = onSend).padding(start = 11.dp, top = 7.dp, bottom = 7.dp, end = 30.dp),
         ) {

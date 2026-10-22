@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import mv.obitech.crundi.ui.components.ButtonKind
 import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.icons.CrundiIcon
+import mv.obitech.crundi.ui.mini.miniActivity
+import mv.obitech.crundi.ui.mini.miniTarget
 import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.theme.Dimens
@@ -175,7 +177,10 @@ fun ParkedBody(v: PaneView, onResume: (mode: String) -> Unit, busy: Boolean = fa
     // shell has nothing to resume, so Resume already starts it fresh.
     val choices = p != null && !p.shellOnly && p.hasSession
     val heavy = choices && p!!.heavy
-    Box(Modifier.fillMaxSize()) {
+    // Mini (ui.mini) may come and stand on Resume, or fret over a long conversation.
+    val miniId = p?.id
+    mv.obitech.crundi.ui.mini.MiniParked(miniId, ready = !busy, long = isChat && heavy)
+    Box(Modifier.fillMaxSize().miniTarget(miniId, "pk-veil").miniActivity(miniId)) {
         Box(Modifier.fillMaxSize().then(if (Build.VERSION.SDK_INT >= 31) Modifier.blur(6.dp) else Modifier)) { preview() }
         Box(Modifier.fillMaxSize().background(CrundiColors.BgPrimary.copy(alpha = 0.72f)), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.widthIn(max = 280.dp).padding(16.dp)) {
@@ -191,8 +196,8 @@ fun ParkedBody(v: PaneView, onResume: (mode: String) -> Unit, busy: Boolean = fa
                     CrundiIcon("shield-alert", size = 14.dp, tint = CrundiColors.Yellow)
                     Text("%.1fk tokens, a long conversation".format(p!!.tokens / 1000.0), style = CrundiType.Small.copy(color = CrundiColors.Yellow))
                 }
-                CrundiButton(if (busy && busyMode == "resume") "Resuming…" else "Resume", { onResume("resume") }, kind = ButtonKind.Primary, icon = "play", enabled = !busy)
-                if (isChat && heavy) CrundiButton(if (busy && busyMode == "compact") "Compacting…" else "Compact and resume", { onResume("compact") }, enabled = !busy)
+                CrundiButton(if (busy && busyMode == "resume") "Resuming…" else "Resume", { onResume("resume") }, Modifier.miniTarget(miniId, "pk-resume"), kind = ButtonKind.Primary, icon = "play", enabled = !busy)
+                if (isChat && heavy) CrundiButton(if (busy && busyMode == "compact") "Compacting…" else "Compact and resume", { onResume("compact") }, Modifier.miniTarget(miniId, "pk-compact"), enabled = !busy)
                 if (choices) CrundiButton(if (busy && busyMode == "new") "Starting…" else "New session", { onResume("new") }, kind = ButtonKind.Ghost, icon = "plus", enabled = !busy)
                 if (choices) Text("New session starts a fresh conversation here. The old one is kept and can be resumed from the session list.", style = CrundiType.Meta.copy(color = CrundiColors.TextMuted), textAlign = TextAlign.Center)
             }
