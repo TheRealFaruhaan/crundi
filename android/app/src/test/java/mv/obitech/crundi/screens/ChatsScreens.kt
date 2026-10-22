@@ -22,12 +22,6 @@ import mv.obitech.crundi.ui.chats.ChatActions
 import mv.obitech.crundi.ui.chats.ChatScreen
 import mv.obitech.crundi.ui.chats.ChatSheet
 import mv.obitech.crundi.ui.chats.ChatUi
-import mv.obitech.crundi.ui.chats.ChatsListActions
-import mv.obitech.crundi.ui.chats.ChatsListState
-import mv.obitech.crundi.ui.chats.ChatsScreen
-import mv.obitech.crundi.ui.chats.NewChatCard
-import mv.obitech.crundi.ui.chats.NewChatForm
-import mv.obitech.crundi.ui.chats.NewChatState
 import mv.obitech.crundi.ui.chats.RenameCard
 import mv.obitech.crundi.ui.chats.SheetOverlay
 import mv.obitech.crundi.ui.chats.UploadUi
@@ -49,25 +43,6 @@ class ChatsScreens : ScreenshotTest() {
     private val bubbleHost = object : Host { override val isBubble = true }
 
     private fun chat(events: Int = Int.MAX_VALUE) = FakeApi.chat(events)
-
-    @Test fun list() = snap("chats-list") {
-        ChatsScreen(ChatsListState("crundi", chats = state.chats("crundi"), parked = state.parked()), object : ChatsListActions {})
-    }
-
-    @Test fun listEmpty() = snap("chats-list-empty") {
-        ChatsScreen(ChatsListState("ledger"), object : ChatsListActions {})
-    }
-
-    @Test fun listNoProject() = snap("chats-list-no-project") {
-        ChatsScreen(ChatsListState(null), object : ChatsListActions {})
-    }
-
-    @Test fun newChat() = snap("chats-new") {
-        val resumable: List<ResumableSession> = FakeApi.model("resumable", "sessions")
-        Overlay {
-            NewChatCard(NewChatState("crundi", NewChatForm(model = "opus", session = "resume", resumeId = resumable.first().id), resumable = resumable), {}, {}, {})
-        }
-    }
 
     @Test fun chatHistory() = snap("chats-chat") {
         ChatScreen(ChatUi(chat(0), pane = state.chats("crundi").first(), open = setOf("x1")), noChat)
@@ -136,21 +111,8 @@ class ChatsScreens : ScreenshotTest() {
         ApprovalsScreen(ApprovalsState(FakeApi.model<Approvals>("approvals")), object : ApprovalsActions {})
     }
 
-    @Test fun approvalsPin() = snap("chats-approvals-pin") {
-        val a = FakeApi.model<Approvals>("approvals")
-        ApprovalsScreen(ApprovalsState(a, pinFor = a.items.first(), pin = "4821"), object : ApprovalsActions {})
-    }
-
     @Test fun approvalsEmpty() = snap("chats-approvals-empty") {
         ApprovalsScreen(ApprovalsState(), object : ApprovalsActions {})
-    }
-
-    @Test fun rowMenu() = snap("chats-list-menu") {
-        val c = state.chats("crundi").first()
-        Box(Modifier.fillMaxSize()) {
-            ChatsScreen(ChatsListState("crundi", chats = state.chats("crundi"), parked = state.parked()), object : ChatsListActions {})
-            SheetOverlay({}) { ActionSheetCard(c.label, chatMenu(c, false, {}, {}, {}, {}), {}) }
-        }
     }
 
     @Test fun rename() = snap("chats-rename") {

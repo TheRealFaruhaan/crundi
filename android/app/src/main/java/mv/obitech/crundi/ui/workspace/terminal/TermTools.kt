@@ -84,7 +84,7 @@ fun TermToolPanel(onKey: (String) -> Unit, onLayout: (() -> Unit)?, columns: Boo
             }
             Spacer(Modifier.weight(1f))
             // The d-pad: Home (two cells) End / . Up . / Left Enter Right / . Down .
-            val c = 42.dp
+            val c = 48.dp
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { ToolKey("Home", w = c * 2 + 4.dp) { onKey("Home") }; ToolKey("End", w = c) { onKey("End") } }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { Spacer(Modifier.width(c)); ToolKey("▲", w = c) { onKey("ArrowUp") } }

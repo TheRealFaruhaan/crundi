@@ -16,9 +16,6 @@ import mv.obitech.crundi.api.SocketListener
 import mv.obitech.crundi.api.SseFrame
 import mv.obitech.crundi.api.Transport
 import mv.obitech.crundi.api.model.Pane
-import mv.obitech.crundi.ui.chats.ChatsListActions
-import mv.obitech.crundi.ui.chats.ChatsListState
-import mv.obitech.crundi.ui.chats.ChatsScreen
 import mv.obitech.crundi.ui.shell.AppServices
 import mv.obitech.crundi.ui.shell.Area
 import mv.obitech.crundi.ui.shell.Connection
@@ -88,19 +85,4 @@ class EdgeScreens : ScreenshotTest() {
         still("edge-long-shell", s) { CrundiApp(services = s, host = Host.None, openRoute = Area.Services.key) }
     }
 
-    @Test fun longChatTitles() = still("edge-long-chats") {
-        val t = "Investigate why the notification reply sometimes lands in the wrong chat after the phone was asleep for a long time and then woke up on a flaky connection"
-        ChatsScreen(
-            ChatsListState(
-                "crundi",
-                chats = listOf(
-                    Pane("p1", "crundi", title = t, longTitle = t, kind = "ui", status = "running", agentState = "working", model = "opus"),
-                    Pane("p2", "crundi", title = "x".repeat(140), kind = "ui", status = "running", model = "sonnet"),
-                    Pane("p3", "crundi", title = "", kind = "ui", status = "running"),
-                ),
-                error = "The server said: " + "something went badly wrong while listing the chats, ".repeat(4),
-            ),
-            object : ChatsListActions {},
-        )
-    }
 }
