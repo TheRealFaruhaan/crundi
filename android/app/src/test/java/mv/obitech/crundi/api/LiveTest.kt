@@ -87,10 +87,10 @@ class LiveTest {
         val t = FakeApi.transport()
         val src = LiveShellSource(CrundiClient(t), "dev.faruhaan.com", "faruhaan", null, "project.x")
         val job = launch { src.state.collect {} }
-        kotlinx.coroutines.delay(300)
-        t.pushEvent("state", FixtureText.state)
-        t.pushEvent("approvals", FakeApi.text("approvals.json"))
-        val d = withTimeout(5_000) { src.state.first { it.approvals == 3 && it.projects.isNotEmpty() } }
+        val d = pushUntil(src, { it.approvals == 3 && it.projects.isNotEmpty() }) {
+            t.pushEvent("state", FixtureText.state)
+            t.pushEvent("approvals", FakeApi.text("approvals.json"))
+        }
         assertEquals("crundi", d.currentProject)
         assertEquals(DotState.Running, d.projects.first { it.alias == "faruhaan.com" }.state)
         src.selectProject("ledger")
@@ -106,8 +106,25 @@ class LiveTest {
         assertEquals(2, d.panels)
         // A panel moved out of the top bar: the count follows on the `widget` list event.
         t.on("GET /api/widgets", FakeApi.text("widgets.json").replace("\"slot\": \"chip\"", "\"slot\": \"tab\""))
-        t.pushEvent("widget", """{"project":"crundi","id":"test-count","kind":"list"}""")
-        assertEquals(0, withTimeout(5_000) { src.state.first { it.panels == 0 } }.panels)
+        assertEquals(0, pushUntil(src, { it.panels == 0 }) { t.pushEvent("widget", """{"project":"crundi","id":"test-count","kind":"list"}""") }.panels)
         job.cancel()
     }
+
+    /**
+     * Push with [push] until [src]'s state matches [ok]. A pushed frame goes
+     * only to whoever listens at that moment (the fake stream has no replay,
+     * as the real one), and the source subscribes to the stream and to its
+     * events asynchronously; so a frame pushed too early is lost. Pushing
+     * again is harmless (these events only make the source fetch again), so
+     * the test keeps pushing until it sees the result, under load as well.
+     */
+    private suspend fun pushUntil(src: LiveShellSource, ok: (mv.obitech.crundi.ui.shell.ShellData) -> Boolean, push: () -> Unit): mv.obitech.crundi.ui.shell.ShellData =
+        withTimeout(20_000) {
+            var got: mv.obitech.crundi.ui.shell.ShellData? = null
+            while (got == null) {
+                push()
+                got = kotlinx.coroutines.withTimeoutOrNull(300) { src.state.first(ok) }
+            }
+            got
+        }
 }
