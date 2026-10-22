@@ -22,3 +22,5 @@ A factory pays off for large, multi-part work carried from start to finish: a ne
 ## Starting and triggers
 
 Start a run (`factory_start`) or add a trigger (`factory_triggers`) only when asked. A run starts from a change request: a title plus the factory's CR sections (by default goal, current situation, expected result, done when, out of scope, constraints). Ask for what is missing rather than guessing: "done when" is what the reviewers and the Manager hold the work to.
+
+For a webhook trigger (alerts such as Grafana, CI): prefer `webhook.auth: "signature"` when the sender can sign (Grafana's contact point has HMAC Signature: set signatureHeader `X-Grafana-Alerting-Signature` and timestampHeader `X-Grafana-Alerting-Signature-Timestamp`), set `webhook.idempotency` to the field that identifies a repeat (`{{payload.groupKey}}` for Grafana), and write the CR with `{{payload.…}}` placeholders. Missing fields come out empty, never an error, and the Manager always gets the full request. Leave `ifBusy` as `"manager"` so calls that arrive mid-run reach the running Manager. Saving returns the URL and secret: give them to the person.

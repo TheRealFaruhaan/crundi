@@ -1,0 +1,30 @@
+<div class="wna a-fxw">
+  <div class="call c1"><b>POST</b> alert · groupKey <code>a1</code> <span class="ok">signed</span></div>
+  <div class="cr"><div class="t">Alert: HighCPU on web-1</div><div class="s">Goal: CPU at 97% for 10 minutes</div><div class="s m">From <code>{{payload.alerts.0.labels.alertname}}</code></div></div>
+  <div class="call c2"><b>POST</b> alert · groupKey <code>a1</code> <span class="dup">repeat, ignored</span></div>
+  <div class="call c3"><b>POST</b> alert · groupKey <code>b7</code> <span class="ok">signed</span></div>
+  <div class="mgr"><span class="dot"></span>Manager<div class="msg">Mid-run: a new alert arrived. Same issue as this run, or something new?</div></div>
+  <style>
+    .a-fxw{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-fxw code{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--accent)}
+    .a-fxw .call{position:absolute;left:36px;padding:8px 12px;border-radius:9px;border:1px solid var(--border);background:var(--bg-card);opacity:0}
+    .a-fxw .call b{font-size:10.5px;letter-spacing:.04em;color:var(--text-secondary);margin-right:6px}
+    .a-fxw .ok{margin-left:8px;color:var(--green);font-size:11px}
+    .a-fxw .dup{margin-left:8px;color:var(--text-muted);font-size:11px}
+    .a-fxw .c1{top:34px;animation:afxw-a 12s ease infinite}
+    .a-fxw .cr{position:absolute;left:36px;right:36px;top:84px;padding:10px 13px;border-radius:10px;border:1px solid var(--accent);background:var(--bg-card);opacity:0;animation:afxw-b 12s ease infinite}
+    .a-fxw .cr .t{font-weight:600;margin-bottom:4px}
+    .a-fxw .cr .s{color:var(--text-secondary);font-size:12px}
+    .a-fxw .cr .m{color:var(--text-muted);font-size:11px;margin-top:3px}
+    .a-fxw .c2{top:172px;animation:afxw-c 12s ease infinite}
+    .a-fxw .c3{top:214px;animation:afxw-d 12s ease infinite}
+    .a-fxw .mgr{position:absolute;left:36px;right:36px;top:262px;display:flex;flex-wrap:wrap;align-items:center;gap:7px;font-weight:600;opacity:0;animation:afxw-e 12s ease infinite}
+    .a-fxw .dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+    .a-fxw .msg{flex-basis:100%;font-weight:400;padding:9px 12px;border-radius:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--text-secondary)}
+    @keyframes afxw-a{0%{opacity:0;transform:translateX(-10px)}5%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afxw-b{0%,12%{opacity:0;transform:translateY(6px)}18%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afxw-c{0%,30%{opacity:0;transform:translateX(-10px)}35%,92%{opacity:.55;transform:none}100%{opacity:0}}
+    @keyframes afxw-d{0%,48%{opacity:0;transform:translateX(-10px)}53%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afxw-e{0%,62%{opacity:0;transform:translateY(6px)}68%,92%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

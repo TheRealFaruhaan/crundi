@@ -40,6 +40,7 @@ function describe(ev, names, nodes) {
     case 'perm-decided': return ev.by === 'manager' || ev.by === 'deny-list' || ev.by === 'gatekeeper' ? { k: ev.decision === 'allowed' ? 'info' : 'escalate', main: `${ev.employee}: ${ev.toolName} ${ev.decision === 'escalated' ? 'passed to the Manager' : ev.decision}${ev.by === 'deny-list' ? ' (never allowed)' : ev.decision === 'escalated' ? ' by the Gatekeeper' : ev.by === 'gatekeeper' ? ' by the Gatekeeper' : ' by the Manager'}`, sub: first(ev.reason || ev.input?.command || ev.input?.url || '') } : null;
     case 'delegate': return { k: 'handoff', main: `The Manager handed ${who(ev.employeeId)} a job`, sub: first(ev.task) };
     case 'manager-message': return { k: 'info', main: `The Manager ${ev.hold ? 'held' : ev.interrupt ? 'stopped and told' : 'told'} ${who(ev.employeeId)}`, sub: first(ev.text) };
+    case 'trigger-message': return { k: 'info', main: `Mid-run: trigger "${ev.name}" fired again; passed to the Manager`, sub: (ev.key ? '[' + ev.key + '] ' : '') + (ev.title || '') };
     case 'team-mode': return { k: 'info', main: ev.mode === 'bypass' ? 'The team now runs with bypass' : 'The team asks again' };
     case 'policy': return { k: 'info', main: 'The Manager set its permission policy', sub: first(ev.text) };
     case 'rule': return { k: 'info', main: 'Rule granted', sub: ev.rule };

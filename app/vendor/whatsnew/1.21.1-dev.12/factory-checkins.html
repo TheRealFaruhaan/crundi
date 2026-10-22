@@ -1,0 +1,21 @@
+<div class="wna a-fxc">
+  <div class="n mg"><i></i>Manager</div>
+  <div class="n em"><i></i>Backend<span>on a job</span></div>
+  <svg class="ln" viewBox="0 0 400 200" preserveAspectRatio="none"><path d="M120 60 C 200 60, 220 140, 280 140"/></svg>
+  <div class="tk">Check-in every 15 min</div>
+  <div class="say">The Manager told Backend: wait before the full build</div>
+  <style>
+    .a-fxc{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-fxc .n{position:absolute;display:flex;align-items:center;gap:7px;padding:9px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card);font-weight:600}
+    .a-fxc .n i{width:8px;height:8px;border-radius:50%;background:var(--green)}
+    .a-fxc .n span{font-weight:400;font-size:11px;color:#a78bfa;margin-left:4px}
+    .a-fxc .mg{left:36px;top:60px}
+    .a-fxc .em{right:36px;top:150px;border-color:#a78bfa}
+    .a-fxc .ln{position:absolute;left:40px;right:40px;top:60px;height:130px;width:calc(100% - 80px)}
+    .a-fxc .ln path{fill:none;stroke:#a78bfa;stroke-width:2;stroke-dasharray:6 5;animation:afxc-d 1.2s linear infinite}
+    .a-fxc .tk{position:absolute;left:36px;top:26px;font-size:11px;color:var(--text-muted)}
+    .a-fxc .say{position:absolute;left:36px;right:36px;top:240px;padding:10px 13px;border-radius:10px;background:var(--bg-card);border:1px solid var(--border);color:var(--text-secondary);opacity:0;animation:afxc-s 9s ease infinite}
+    @keyframes afxc-d{to{stroke-dashoffset:-22}}
+    @keyframes afxc-s{0%,30%{opacity:0;transform:translateY(6px)}38%,90%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

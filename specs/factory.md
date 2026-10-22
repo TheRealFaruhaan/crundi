@@ -423,16 +423,43 @@ chat header carries a Factory badge.
 - A trigger (src/factory-triggers.js, `<dataDir>/factory-triggers.json`)
   starts a factory in a project by itself: **schedule** (HH:MM server time,
   chosen weekdays), **kanban** (a card enters a column), **webhook** (a POST to
-  `/api/factory-hook/trigger/<id>?key=…`, JSON body, outside the auth gate; the
-  key is the credential and can be replaced).
+  `/api/factory-hook/trigger/<id>`, outside the auth gate, at most 1 MB).
+- Webhook security, per trigger: **key** (`?key=`, `X-Crundi-Key` or
+  `Authorization: Bearer`) or **signature** (HMAC-SHA256 of the raw body with
+  the trigger's secret, hex / `sha256=<hex>` / base64, in a header the person
+  names; with a timestamp header the signed text is `<timestamp>:<body>` and
+  the timestamp must be within 5 minutes, which is Grafana's form). Key and
+  secret are replaced separately. Comparisons are constant-time.
 - Each carries a CR with placeholders filled when it fires: `{{date}}`,
-  `{{time}}`, `{{card.title|description|todos|id}}`, `{{body.path}}`,
-  `{{body}}`. Only the title must come out filled (lenient check); the
-  Manager asks the person about what is missing.
-- One run per project still holds: a busy project makes the firing **wait its
-  turn** (queued, started on the next tick once the project is free) or
-  **skip**. Every outcome (started, queued, skipped, failed) goes in the
-  trigger's history; Run now fires it by hand.
+  `{{time}}`, `{{card.title|description|todos|id}}`; for webhooks
+  `{{payload.path}}` (alias `{{body.path}}`; arrays by `.0` or `[0]`; own
+  properties only), `{{payload}}`, `{{headers.name}}`, `{{query.name}}`.
+  Credentials (authorization, cookie, the key, any signature header) are never
+  readable or passed on. A placeholder the call does not have comes out empty
+  and is listed for the Manager; a title that comes out empty becomes
+  "<trigger>: webhook at <date time>". Nothing a caller sends can stop a
+  firing (lenient CR check).
+- The Manager always gets the whole call: `webhook-request.json` (method,
+  headers and query with credentials removed, body as it came) in the CR's
+  folder, and a "How this started" section in the CR naming the trigger, the
+  idempotency key, what was missing, and the body inline (clipped at 12k).
+- Idempotency: a webhook may name its key with a placeholder
+  (`{{payload.groupKey}}`). Keys are remembered 30 days (1000 per trigger); a
+  call with a seen key is answered 200 `{duplicate: true}` and recorded, not
+  processed. Check-and-claim is synchronous, so a burst lets one through; a
+  start that fails releases the key so the sender's retry is tried. A call
+  with no key is processed and the Manager is told repeats cannot be told
+  apart.
+- One run per project still holds. A busy project makes the firing **tell
+  the Manager** (webhooks' default; only when the running run is of the same
+  factory), **wait its turn** (queued, started on the next tick once the
+  project is free) or **skip**. Told: the Manager gets a message marked
+  "Mid-run" (queued behind its turn) with the filled CR, the key and the full
+  request in `shared/triggers/NNN-<key>.json`, and decides whether it is the
+  same issue; journal event `trigger-message`, shown on the timeline. A
+  Manager that cannot be reached, or a run of another factory, queues it.
+  Every outcome (started, told the Manager, queued, duplicate, skipped,
+  failed) goes in the trigger's history; Run now fires it by hand.
 - A run started from a kanban card moves the card to In progress, and to Done
   when the result is merged.
 - UI: the project Factory panel, under "Triggers".

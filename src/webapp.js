@@ -44,7 +44,7 @@ import * as factoryStore from './factory-store.js';
 import { validateFactory } from './factory-model.js';
 import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-runner.js';
 import * as factoryCleanup from './factory-cleanup.js';
-import { createTriggerStore, createTriggerDispatcher } from './factory-triggers.js';
+import { createTriggerStore, createTriggerDispatcher, publicTrigger } from './factory-triggers.js';
 import { FACTORY_GUIDE } from './factory-guide.js';
 import { factoryTemplates } from './factory-templates.js';
 import { inspectRepo as inspectFactoryRepo } from './factory-git.js';
@@ -1053,6 +1053,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     store: factoryTriggers,
     startRun: (a) => factoryRunner.startRun(a),
     activeRunFor: (p) => factoryRunner.activeRunFor(p),
+    tellRun: (runId, x) => factoryRunner.tellFromTrigger(runId, x),
     notify: (text) => { try { notifyEvent('factory', text, {}); } catch { /* best effort */ } },
   }) : null;
   if (triggerDispatch) {
@@ -2746,11 +2747,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const m = /^\/api\/factory-hook\/trigger\/(trg_[0-9a-f]{12})$/.exec(path);
       if (m && req.method === 'POST') {
         if (!triggerDispatch) return json(res, { ok: false, error: 'Factories are not available.' }, 503);
-        const raw = await readBody(req);
+        // Public: read at most 1 MB, and never let a bad call throw.
+        const raw = await new Promise((resolve) => {
+          let b = ''; let over = false;
+          req.on('data', (c) => { if (over) return; b += c; if (b.length > 1_000_000) { over = true; resolve(null); } });
+          req.on('end', () => { if (!over) resolve(b); });
+          req.on('error', () => resolve(null));
+        });
+        if (raw === null) return json(res, { ok: false, error: 'Too large (1 MB at most).' }, 413);
         let body;
-        try { body = raw ? JSON.parse(raw) : {}; } catch { body = { text: raw.slice(0, 20000) }; }
-        const r = await triggerDispatch.onWebhook(m[1], url.searchParams.get('key') || req.headers['x-crundi-key'] || '', body);
-        return json(res, r.ok ? { ok: true, queued: r.queued, runId: r.runId } : { ok: false, error: r.error }, r.ok ? 200 : r.status || 400);
+        try { body = raw ? JSON.parse(raw) : {}; } catch { body = { text: raw.slice(0, 200000) }; }
+        let r;
+        try {
+          r = await triggerDispatch.onWebhook(m[1], { raw, body, headers: req.headers, query: Object.fromEntries(url.searchParams), key: url.searchParams.get('key') || '', method: req.method });
+        } catch (err) { console.error('[factory] webhook:', err.message); r = { ok: false, status: 500, error: 'It could not be handled.' }; }
+        return json(res, r.ok ? { ok: true, ...(r.duplicate ? { duplicate: true } : {}), queued: !!r.queued, toldManager: !!r.told, runId: r.runId || '' } : { ok: false, error: r.error }, r.ok ? 200 : r.status || 400);
       }
     }
 
@@ -3480,7 +3491,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // ─── Factory triggers ───
     if (path === '/api/factory-triggers' && req.method === 'GET') {
       const project = url.searchParams.get('project') || '';
-      return json(res, { ok: true, triggers: factoryTriggers.list(project ? { project } : {}) });
+      return json(res, { ok: true, triggers: factoryTriggers.list(project ? { project } : {}).map(publicTrigger) });
     }
     if (path === '/api/factory-triggers' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req));
@@ -3488,11 +3499,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       switch (body.action) {
         case 'save': result = factoryTriggers.upsert(body.trigger); break;
         case 'delete': result = factoryTriggers.remove(body.id); break;
-        case 'rotate': result = factoryTriggers.rotateKey(body.id); break;
+        case 'rotate': result = factoryTriggers.rotateKey(body.id, body.which === 'secret' ? 'secret' : 'key'); break;
         case 'run': result = triggerDispatch ? await triggerDispatch.runNow(body.id) : { ok: false, error: 'Factories are not available.' }; break;
         case 'preview': result = triggerDispatch ? { ok: true, cr: triggerDispatch.preview(body.trigger || {}, body.sample || {}) } : { ok: false }; break;
         default: result = { ok: false, error: 'Unknown action.' };
       }
+      if (result && result.trigger) result = { ...result, trigger: publicTrigger(result.trigger) };
       return json(res, result);
     }
 
@@ -6075,13 +6087,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
               return json(res, r.ok ? { ok: true, runId: r.run.id, managerChatId: r.run.managerChatId, note: 'Started. The person follows it in the project\'s Factory panel and the Manager\'s chat.' } : { ok: false, error: r.error, ...(r.field ? { field: r.field } : {}), ...(r.missingSkills ? { missingSkills: r.missingSkills } : {}) });
             }
             case 'factory_triggers': {
-              if (a.action === 'list') return json(res, { ok: true, triggers: factoryTriggers.list(a.project || a.alias ? { project: a.project || a.alias } : {}) });
+              if (a.action === 'list') return json(res, { ok: true, triggers: factoryTriggers.list(a.project || a.alias ? { project: a.project || a.alias } : {}).map(publicTrigger) });
               if (a.action === 'delete') return json(res, factoryTriggers.remove(String(a.id || '')));
               if (a.action === 'save') {
                 const t = { ...(a.trigger || {}) };
                 if (!t.project) t.project = a.project || a.alias || '';
                 const r = factoryTriggers.upsert(t);
-                return json(res, r.ok && r.trigger.kind === 'webhook' ? { ...r, webhookPath: `/api/factory-hook/trigger/${r.trigger.id}?key=${r.trigger.webhook.key}` } : r);
+                if (!r.ok) return json(res, r);
+                const tr = publicTrigger(r.trigger);
+                if (tr.kind !== 'webhook') return json(res, { ok: true, trigger: tr });
+                const base = config.tlsDomain ? `https://${config.tlsDomain}` : '';
+                const p2 = `/api/factory-hook/trigger/${tr.id}`;
+                return json(res, { ok: true, trigger: tr, webhook: tr.webhook.auth === 'signature'
+                  ? { url: base + p2, auth: 'signature', secret: tr.webhook.secret, header: tr.webhook.signatureHeader, timestampHeader: tr.webhook.timestampHeader || '', note: 'Sign the raw body with HMAC-SHA256 and this secret (hex, optionally "sha256=..."). With a timestamp header, sign "<timestamp>:<body>" (Grafana\'s form).' }
+                  : { url: `${base}${p2}?key=${tr.webhook.key}`, auth: 'key', note: 'Or send the key as X-Crundi-Key or Authorization: Bearer <key>.' } });
               }
               return json(res, { ok: false, error: 'action is list, save or delete.' });
             }

@@ -86,12 +86,12 @@ ok(!r[0].ok && r[0].skipped && store.get(k.id).history[0].outcome === 'skipped',
 // Webhooks.
 busy = new Set();
 const w = store.upsert({ name: 'Issues', project: 'q', factoryId: 'f3', kind: 'webhook', cr: { title: 'Fix: {{body.title}}', sections: {} } }).trigger;
-ok((await d.onWebhook(w.id, 'wrong', {})).status === 403, 'webhook: a wrong key is refused');
-ok((await d.onWebhook('trg_000000000000', w.webhook.key, {})).status === 404, 'webhook: an unknown trigger');
-const wr = await d.onWebhook(w.id, w.webhook.key, { title: 'Crash on save' });
+ok((await d.onWebhook(w.id, { key: 'wrong', body: {} })).status === 403, 'webhook: a wrong key is refused');
+ok((await d.onWebhook('trg_000000000000', { key: w.webhook.key, body: {} })).status === 404, 'webhook: an unknown trigger');
+const wr = await d.onWebhook(w.id, { key: w.webhook.key, body: { title: 'Crash on save' } });
 ok(wr.ok && started.at(-1).cr.title === 'Fix: Crash on save' && started.at(-1).project === 'q', 'webhook: the right key starts a run from the body');
 store.upsert({ ...store.get(w.id), enabled: false });
-ok((await d.onWebhook(w.id, w.webhook.key, {})).status === 409, 'webhook: not when turned off');
+ok((await d.onWebhook(w.id, { key: w.webhook.key, body: {} })).status === 409, 'webhook: not when turned off');
 
 // Failures are recorded; Run now.
 busy = new Set();

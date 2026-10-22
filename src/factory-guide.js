@@ -121,6 +121,17 @@ result, Done when, Out of scope, Constraints and references).
 - Ship gate: ... -> "Ship it?" (ask) -> go: manager; hold: manager.
 - CI gate: dev -> wait (command: "gh run watch --exit-status", timeout 30)
   -> done: reviewer; timeout: dev (maxRounds 2).
+
+## Triggers (factory_triggers, only when asked)
+schedule (at, days), kanban (a card enters a column) or webhook (a public URL,
+e.g. Grafana alerts or CI). For webhooks: webhook.auth "key" (the URL key) or
+"signature" (HMAC-SHA256 of the body with the trigger's secret; Grafana:
+signatureHeader "X-Grafana-Alerting-Signature", timestampHeader
+"X-Grafana-Alerting-Signature-Timestamp"); webhook.idempotency names what
+makes a repeat ("{{payload.groupKey}}"); the CR reads the call with
+{{payload.some.path}} (arrays by index). ifBusy "manager" passes calls that
+arrive during a run of the same factory to its Manager, marked mid-run.
+
 Factories suit large features and new projects carried from start to
 finish; everyday changes are better done in a normal chat.
 `;

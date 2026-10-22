@@ -245,6 +245,10 @@ export function reduce(prev, ev) {
       r.capHit = { which: ev.which, limit: ev.limit, at };
       if (ev.which === 'maxMinutes') closeClock(r, at);
       break;
+    case 'trigger-message':
+      // A trigger fired again mid-run and was passed to the Manager.
+      history(rec, { type: 'trigger-message', name: ev.name || '', title: ev.title || '', key: ev.key || '' });
+      break;
     case 'manager-message':
       // Told someone mid-step: shown on the timeline, changes no state.
       break;

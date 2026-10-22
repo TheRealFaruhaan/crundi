@@ -11,7 +11,7 @@
  * Spec: specs/factory.md §4.1.
  */
 
-export const CR_LIMITS = { title: 120, section: 6000, sections: 12, label: 60, hint: 300, attachments: 10 };
+export const CR_LIMITS = { title: 120, section: 6000, sections: 12, label: 60, hint: 300, attachments: 10, context: 20000 };
 
 /** The default template. `list` sections are one item per line (rendered as a checklist). */
 export const DEFAULT_CR_TEMPLATE = [
@@ -73,7 +73,9 @@ export function checkCr(cr, template, { lenient = false } = {}) {
   const attachments = (Array.isArray(c.attachments) ? c.attachments : []).slice(0, CR_LIMITS.attachments)
     .map(a => ({ path: str(a && a.path), name: str(a && a.name).slice(0, 120) || str(a && a.path).split(/[\\/]/).pop() }))
     .filter(a => a.path);
-  return { ok: true, cr: { title, sections, attachments } };
+  // How the run came about (a trigger's account of the call that started it).
+  const context = str(c.context).replace(/\r/g, '').trim().slice(0, CR_LIMITS.context);
+  return { ok: true, cr: { title, sections, attachments, ...(context ? { context } : {}) } };
 }
 
 /**
@@ -91,6 +93,7 @@ export function crMarkdown(cr, template) {
     else out.push(v);
     out.push('');
   }
+  if (cr.context) out.push('## How this started', cr.context, '');
   if ((cr.attachments || []).length) {
     out.push('## Attachments', 'Open each one (images can be read directly):');
     for (const a of cr.attachments) out.push(`- ${a.name}: ${a.path}`);

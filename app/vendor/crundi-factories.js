@@ -650,16 +650,56 @@
     var title = el('input', 'fx-input'); title.value = cur.cr.title;
     var inputs = {};
     var mm = sel([['', 'As the factory says'], ['ask', 'Show me first, I decide'], ['auto', 'Merge automatically (with Undo)']], cur.mergeMode);
-    var busy = sel([['queue', 'Wait its turn, then start'], ['skip', 'Skip it']], cur.ifBusy);
+    var busy = sel([['manager', 'Tell its Manager (a run of the same factory)'], ['queue', 'Wait its turn, then start'], ['skip', 'Skip it']], cur.ifBusy);
     var row2 = el('div', 'fx-cr-row'); row2.appendChild(field('When the work is done', mm)); row2.appendChild(field('If a run is already going', busy)); b.appendChild(row2);
     var en = el('label', 'fx-check'); var enI = el('input'); enI.type = 'checkbox'; enI.checked = cur.enabled !== false; en.appendChild(enI); en.appendChild(el('span', '', 'On')); b.appendChild(en);
+    // Webhook settings: how calls prove who they are from, and what makes a repeat.
+    var wh = cur.webhook || {};
+    var whBox = el('div', 'fx-list'); b.appendChild(whBox);
+    var auth = sel([['key', 'A key in the URL (or X-Crundi-Key / Bearer header)'], ['signature', 'Signed with a secret (HMAC-SHA256)']], wh.auth || 'key');
+    var sigH = el('input', 'fx-input mono'); sigH.value = wh.signatureHeader || 'x-crundi-signature'; sigH.placeholder = 'x-crundi-signature';
+    var tsH = el('input', 'fx-input mono'); tsH.value = wh.timestampHeader || ''; tsH.placeholder = 'None (Grafana: X-Grafana-Alerting-Signature-Timestamp)';
+    var idemI = el('input', 'fx-input mono'); idemI.value = wh.idempotency || ''; idemI.placeholder = '{{payload.messageId}}';
+    var sample = el('textarea', 'fx-input mono'); sample.rows = 4; sample.placeholder = '{"messageId": "a1", "message": "CPU above 90% on web-1"}';
+    var prevOut = el('div', 'fx-list');
+    function renderWebhookSettings() {
+      whBox.innerHTML = '';
+      if (kind.value !== 'webhook') return;
+      whBox.appendChild(el('div', 'fx-cr-head', '<b>Webhook</b><span>Public URL, so every call must prove it is from you: the key, or a signature made with the secret. Calls are answered at once; the change request above is filled from the call\'s JSON.</span>'));
+      whBox.appendChild(field('Security', auth));
+      var sigRow = el('div', 'fx-cr-row');
+      sigRow.appendChild(field('Signature header', sigH)); sigRow.appendChild(field('Timestamp header (optional)', tsH));
+      if (auth.value === 'signature') whBox.appendChild(sigRow);
+      whBox.appendChild(field('Idempotency key <i>a call with a key already seen is not processed again</i>', idemI));
+      var pd = el('details', ''); pd.appendChild(el('summary', 'fx-meta', 'Try it with a sample payload'));
+      pd.appendChild(sample);
+      var pb = btn('Preview', 'ghost'); pb.onclick = previewSample;
+      var pr = el('div', 'fx-row-btns'); pr.appendChild(pb); pd.appendChild(pr); pd.appendChild(prevOut);
+      whBox.appendChild(pd);
+    }
+    async function previewSample() {
+      var body;
+      try { body = sample.value.trim() ? JSON.parse(sample.value) : {}; } catch (e) { prevOut.innerHTML = ''; prevOut.appendChild(el('div', 'fx-note', 'That is not valid JSON: ' + esc(e.message))); return; }
+      var r = await post(ctx, '/api/factory-triggers', { action: 'preview', trigger: collect(), sample: { body: body } }).catch(function (e) { return { ok: false, error: e.message }; });
+      prevOut.innerHTML = '';
+      if (!r.ok || !r.cr) { prevOut.appendChild(el('div', 'fx-note', esc(r.error || 'No preview.'))); return; }
+      var c = r.cr;
+      var html = '<div><b>' + esc(c.title) + '</b></div>';
+      Object.keys(c.sections || {}).forEach(function (k) { html += '<div class="fx-meta"><b>' + esc(k) + ':</b> ' + esc(c.sections[k]) + '</div>'; });
+      html += '<div class="fx-meta">Idempotency key: ' + (c.idem ? '<code>' + esc(c.idem) + '</code>' : '<i>none in this call' + (idemI.value.trim() ? ', so repeats cannot be told apart' : '') + '</i>') + '</div>';
+      var miss = (c.missing || []).concat(c.idemMissing || []);
+      if (miss.length) html += '<div class="fx-meta">Not in this payload (left empty, never an error): ' + miss.map(function (m) { return '<code>{{' + esc(m) + '}}</code>'; }).join(' ') + '</div>';
+      html += '<div class="fx-meta">The Manager also gets the whole request (headers, query, body) as a file.</div>';
+      prevOut.appendChild(el('div', 'fx-note', html));
+    }
+    auth.onchange = renderWebhookSettings;
     var hookBox = el('div', 'fx-list'); b.appendChild(hookBox);
     var hist = el('div', 'fx-list'); b.appendChild(hist);
 
     function placeholders() {
       var k = kind.value;
       return k === 'kanban' ? '{{card.title}}, {{card.description}}, {{card.todos}} (one per line), {{date}}'
-        : k === 'webhook' ? '{{body.some.field}}, {{body}} (all of it), {{date}}' : '{{date}}, {{time}}';
+        : k === 'webhook' ? '{{payload.some.field}}, {{payload.alerts.0.labels.alertname}} (arrays by index), {{payload}} (all of it), {{headers.name}}, {{date}}' : '{{date}}, {{time}}';
     }
     function renderKind() {
       kindBox.innerHTML = '';
@@ -670,6 +710,9 @@
         kindBox.appendChild(field('On (none = every day)', dw));
       }
       if (kind.value === 'kanban') kindBox.appendChild(field('Column', col));
+      // New webhook triggers default to telling the running Manager.
+      if (kind.value === 'webhook' && !t && busy.value === 'queue') busy.value = 'manager';
+      renderWebhookSettings();
       renderCr();
     }
     function renderCr() {
@@ -679,7 +722,7 @@
       // Switched away from kanban: card placeholders would come out empty.
       if (kind.value !== 'kanban') { Object.keys(keep).forEach(function (k) { if (/\{\{\s*card\./.test(keep[k])) keep[k] = ''; }); if (/\{\{\s*card\./.test(title.value)) title.value = ''; }
       crBox.innerHTML = '';
-      crBox.appendChild(el('div', 'fx-cr-head', '<b>Change request</b><span>Filled in when it fires. Placeholders: ' + esc(placeholders()) + '. Only the title has to come out filled; the Manager asks you about anything missing.</span>'));
+      crBox.appendChild(el('div', 'fx-cr-head', '<b>Change request</b><span>Filled in when it fires. Placeholders: ' + esc(placeholders()) + '. ' + (kind.value === 'webhook' ? 'Anything a call does not have comes out empty and never stops it; the Manager gets the full request as well.' : 'Only the title has to come out filled; the Manager asks you about anything missing.') + '</span>'));
       if (!title.value && kind.value === 'kanban') title.value = '{{card.title}}';
       crBox.appendChild(field('Title <i>required</i>', title));
       inputs = {};
@@ -695,11 +738,22 @@
     function renderHook(tr) {
       hookBox.innerHTML = '';
       if (!tr || tr.kind !== 'webhook') return;
-      var u = location.origin + '/api/factory-hook/trigger/' + tr.id + '?key=' + tr.webhook.key;
-      var inp = el('input', 'fx-input mono'); inp.readOnly = true; inp.value = u; inp.onfocus = function () { inp.select(); };
-      hookBox.appendChild(field('Webhook URL (POST, JSON body)', inp));
-      hookBox.appendChild(el('div', 'fx-meta', esc("curl -X POST -H 'Content-Type: application/json' -d '{\"title\": \"…\"}' '" + u + "'")));
-      var rot = btn('New key', 'ghost'); rot.onclick = async function () { if (!window.confirm('The old URL stops working. Make a new key?')) return; var r = await post(ctx, '/api/factory-triggers', { action: 'rotate', id: tr.id }); if (r.ok) renderHook(r.trigger); };
+      var signed = tr.webhook.auth === 'signature';
+      var u = location.origin + '/api/factory-hook/trigger/' + tr.id + (signed ? '' : '?key=' + tr.webhook.key);
+      var ro = function (v) { var i = el('input', 'fx-input mono'); i.readOnly = true; i.value = v; i.onfocus = function () { i.select(); }; return i; };
+      hookBox.appendChild(field('Webhook URL (POST, JSON body)', ro(u)));
+      if (signed) {
+        hookBox.appendChild(field('Secret (sign the raw body with HMAC-SHA256)', ro(tr.webhook.secret)));
+        var ts = tr.webhook.timestampHeader;
+        hookBox.appendChild(el('div', 'fx-meta', esc('Send the signature in ' + tr.webhook.signatureHeader + ' as hex (or sha256=<hex>)' + (ts ? ', and the time in ' + ts + '; sign "<time>:<body>"' : '') + '. Grafana: in the webhook contact point set HMAC Signature with this secret' + (ts ? ' and this timestamp header' : '') + '.')));
+        var sh = "body='{\"messageId\": \"a1\", \"message\": \"test\"}'; sig=$(printf '%s' " + (ts ? '"$(date +%s):$body"' : '"$body"') + " | openssl dgst -sha256 -hmac '" + tr.webhook.secret + "' -hex | sed 's/.* //'); curl -X POST -H 'Content-Type: application/json' -H \"" + tr.webhook.signatureHeader + ": $sig\" -d \"$body\" '" + u + "'";
+        if (!ts) hookBox.appendChild(el('div', 'fx-meta mono', esc(sh)));
+      } else {
+        hookBox.appendChild(el('div', 'fx-meta mono', esc("curl -X POST -H 'Content-Type: application/json' -d '{\"messageId\": \"a1\", \"message\": \"test\"}' '" + u + "'")));
+      }
+      if (tr.seenCount) hookBox.appendChild(el('div', 'fx-meta', esc(tr.seenCount + ' idempotency key' + (tr.seenCount === 1 ? '' : 's') + ' remembered (30 days).')));
+      var which = signed ? 'secret' : 'key';
+      var rot = btn(signed ? 'New secret' : 'New key', 'ghost'); rot.onclick = async function () { if (!window.confirm(signed ? 'Calls signed with the old secret stop working. Make a new one?' : 'The old URL stops working. Make a new key?')) return; var r = await post(ctx, '/api/factory-triggers', { action: 'rotate', id: tr.id, which: which }); if (r.ok) renderHook(r.trigger); };
       var rr = el('div', 'fx-row-btns'); rr.appendChild(rot); hookBox.appendChild(rr);
     }
     function renderHistory(tr) {
@@ -726,9 +780,13 @@
     var cancel = btn('Close', 'ghost'); cancel.onclick = md.close; actions.appendChild(cancel);
     var save = btn('Save', 'primary', 'check', ctx); actions.appendChild(save);
     b.appendChild(actions);
-    save.onclick = async function () {
+    function collect() {
       var sections = {}; Object.keys(inputs).forEach(function (k) { if (inputs[k].value.trim()) sections[k] = inputs[k].value; });
-      var tr = { id: saved ? saved.id : undefined, name: name.value, enabled: enI.checked, project: project, factoryId: fSel.value, kind: kind.value, schedule: { at: at.value || '09:00', days: days }, kanban: { status: col.value }, cr: { title: title.value, sections: sections }, mergeMode: mm.value, ifBusy: busy.value };
+      return { id: saved ? saved.id : undefined, name: name.value, enabled: enI.checked, project: project, factoryId: fSel.value, kind: kind.value, schedule: { at: at.value || '09:00', days: days }, kanban: { status: col.value }, cr: { title: title.value, sections: sections }, mergeMode: mm.value, ifBusy: busy.value,
+        webhook: { auth: auth.value, signatureHeader: sigH.value, timestampHeader: tsH.value, idempotency: idemI.value } };
+    }
+    save.onclick = async function () {
+      var tr = collect();
       var r = await post(ctx, '/api/factory-triggers', { action: 'save', trigger: tr }).catch(function (e) { return { ok: false, error: e.message }; });
       if (!r.ok) { ctx.toast(r.error || 'Could not save.', 'error'); return; }
       saved = r.trigger;

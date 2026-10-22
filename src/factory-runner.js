@@ -52,7 +52,8 @@ import { reduce, replay, asksOf, timeLeft, isHeld, UNFINISHED as UNFINISHED_SET,
 import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage, recoveryOverview } from './factory-prompts.js';
 import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES, GATEKEEPER_ID, gatekeeperPrompt, startRules, scopedRules, rulesFor } from './factory-permissions.js';
 import { missingSkills } from './factory-skills.js';
-import { checkCr, crMarkdown, crBrief, crText } from './factory-cr.js';
+import { checkCr, crMarkdown, crBrief, crText, normalizeTemplate } from './factory-cr.js';
+import { requestContext } from './factory-triggers.js';
 
 /** Runs in these states hold their project: no second run can start. */
 export const UNFINISHED = UNFINISHED_SET;
@@ -284,7 +285,11 @@ export function createFactoryRunner({
 
   // ─── Start ───
 
-  async function startRun({ project, factoryId, task, cr, mergeMode, ignoreMissingSkills = false, trigger = null } = {}) {
+  /**
+   * files: [{ name, content }] written into the change request's folder and
+   * listed with its attachments (a trigger's copy of the call that started it).
+   */
+  async function startRun({ project, factoryId, task, cr, files = [], mergeMode, ignoreMissingSkills = false, trigger = null } = {}) {
     const key = String(project || '').toLowerCase();
     const proj = getProject(key);
     if (!proj) return { ok: false, error: `Project "${project}" not found.` };
@@ -341,6 +346,11 @@ export function createFactoryRunner({
           copyFileSync(a.path, join(dir, name));
           return { name: a.name, path: join(dir, name) };
         });
+        for (const f of (Array.isArray(files) ? files : []).slice(0, 5)) {
+          const name = basename(String(f.name || 'file.txt')).replace(/[^\w.\-]+/g, '_').slice(-80) || 'file.txt';
+          writeFileSync(join(dir, name), String(f.content ?? '').slice(0, 2_000_000));
+          attachments.push({ name, path: join(dir, name) });
+        }
         crRec = { ...crIn, attachments, file: join(runDir(id), 'shared', 'CHANGE-REQUEST.md') };
         writeFileSync(crRec.file, crMarkdown(crRec, factory.settings.crTemplate));
       }
@@ -2006,6 +2016,46 @@ export function createFactoryRunner({
     });
   }
 
+  /**
+   * A trigger of this run's factory fired again while the run is going (a
+   * second alert, a repeat call): the Manager hears about it, marked as
+   * arriving mid-run, with the whole request in a file, and decides whether
+   * it changes anything. Queued behind the Manager's turn if it is busy.
+   */
+  async function tellFromTrigger(runId, { trigger, cr, request = null, idem = '', source = '' } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return { ok: false, error: 'That run no longer exists.' };
+    if (!UNFINISHED.has(st(entry).status)) return { ok: false, error: 'That run has finished.' };
+    const m = entry.live.employees[MANAGER_ID];
+    if (!m || !m.chatId || !agents.isAlive(m.chatId)) return { ok: false, error: 'The Manager is not running.' };
+    return locked(entry, async () => {
+      let file = '';
+      if (request) {
+        const dir = join(runDir(runId), 'shared', 'triggers');
+        mkdirSync(dir, { recursive: true });
+        const n = (st(entry).history || []).filter(h => h.type === 'trigger-message').length + 1;
+        file = join(dir, `${String(n).padStart(3, '0')}-${(idem || 'request').replace(/[^\w.\-]+/g, '_').slice(0, 60)}.json`);
+        writeFileSync(file, JSON.stringify(request, null, 2));
+      }
+      const t = normalizeTemplate(st(entry).snapshot.settings.crTemplate);
+      const filled = t.filter(sec => (cr.sections || {})[sec.id]).map(sec => `${sec.label}:\n${cr.sections[sec.id]}`);
+      const text = [
+        `[Factory] Mid-run: the trigger "${trigger.name}" fired again while this run is under way (${source || trigger.kind}${request?.receivedAt ? `, ${request.receivedAt}` : ''}). This is not a new run and not an instruction by itself.`,
+        'Decide whether it needs acting on: it may be the same issue you are already working on (a repeat, an update, a resolution), in which case fold in what is new or note it and carry on; or something different, which you can take on in this run if it fits, or leave and tell the person in your result. Nothing needs doing just because it arrived.',
+        '',
+        `Title: ${cr.title}`,
+        ...(filled.length ? ['', ...filled] : []),
+        '',
+        requestContext(trigger, { cr, idem, file, request }),
+      ].join('\n');
+      const sent = agents.send(m.chatId, text.slice(0, 30000));
+      if (sent && sent.ok === false) return { ok: false, error: sent.error || 'Could not reach the Manager.' };
+      commit(entry, { type: 'trigger-message', triggerId: trigger.id, name: trigger.name, title: cr.title, key: idem || '', file });
+      writeCache(entry);
+      return { ok: true };
+    });
+  }
+
   /** Switch the team between asking (the Manager or Gatekeeper) and bypass. */
   async function setTeamMode(runId, mode) {
     const entry = runs.get(runId);
@@ -2036,7 +2086,7 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
 }
 
 /**
