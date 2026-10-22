@@ -61,6 +61,26 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.0-dev.1 (en-US)
+
+Version code 16. The app is now native: every screen is drawn by the app
+itself instead of the server's web page.
+
+```
+<en-US>
+Crundi is now a native app.
+
+- Every screen is rebuilt for the phone: chats, the workbench with its panes, files, git, the board, the mind map, schedules and settings.
+- Smoother scrolling, quicker opening, and full screen for any pane.
+- Pictures and videos open in a viewer with pinch to zoom; audio plays in the chat.
+- Live embeds, tables and code blocks in replies, each with copy.
+- Downloads show their progress and say where they were saved.
+- Tap a path or a link in a reply to open it or copy it.
+
+Needs a Crundi server, version 1.20 or newer.
+</en-US>
+```
+
 ## Release notes, 1.0.2-dev.3 (en-US)
 
 Version code 15. The app's code is the same as 1.0.2-dev.2 (code 14); the
