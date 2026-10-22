@@ -1,5 +1,13 @@
 package mv.obitech.crundi.ui.components
 
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.fillMaxWidth
+import mv.obitech.crundi.ui.theme.Dimens
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -215,14 +223,7 @@ private fun MarkdownBlock(b: Markdown.Block) {
         }
         is Markdown.Fence -> CodeBlock(b.code, language = b.language)
         is Markdown.Rule -> CrundiDivider(strong = true)
-        is Markdown.Table -> CodeBlock(
-            b.rows.let { rows ->
-                val w = IntArray(rows.maxOf { it.size }) { c -> rows.maxOf { it.getOrNull(c)?.length ?: 0 } }
-                rows.joinToString("\n") { r -> r.mapIndexed { c, s -> s.padEnd(w[c]) }.joinToString("  ") }
-            },
-            // A header with its copy button, as every code block has.
-            language = "table", highlight = false,
-        )
+        is Markdown.Table -> MarkdownTable(b.rows, onPath, onLink)
         is Markdown.ListBlock -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             b.items.forEachIndexed { idx, (depth, text) ->
                 Row(Modifier.padding(start = (depth * 16).dp)) {
@@ -258,4 +259,62 @@ fun linkifyPlain(src: String, onPath: ((String) -> Unit)?, onLink: ((String) -> 
         i = m.range.first + raw.length
     }
     append(src.substring(i))
+}
+
+/**
+ * A table as the web draws one: a header row, cells with their own
+ * formatting (code, links, paths), hairline rules, sideways scrolling when
+ * wide, and a copy button for the table's text.
+ */
+@Composable
+private fun MarkdownTable(rows: List<List<String>>, onPath: ((String) -> Unit)?, onLink: ((String) -> Unit)?) {
+    if (rows.isEmpty()) return
+    val cols = rows.maxOf { it.size }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var copied by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1500); copied = false } }
+    val shape = Dimens.ShapeSm
+    Column(Modifier.fillMaxWidth().border(Dimens.Hairline, CrundiColors.Border, shape).clip(shape)) {
+        Row(Modifier.fillMaxWidth().background(CrundiColors.BgPrimary).padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("table", style = CrundiType.Meta, modifier = Modifier.weight(1f))
+            CrundiIconButton(if (copied) "check" else "copy", {
+                clipboard.setText(AnnotatedString(rows.joinToString("\n") { r -> r.joinToString("\t") }))
+                copied = true
+            }, contentDescription = "Copy table", size = 14.dp, touch = 32.dp, tint = if (copied) CrundiColors.Green else CrundiColors.TextMuted)
+        }
+        Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.Border))
+        Box(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState())) {
+            // Columns as wide as their widest cell, up to a limit, then wrapping.
+            androidx.compose.ui.layout.Layout(
+                content = {
+                    rows.forEachIndexed { r, row ->
+                        for (c in 0 until cols) {
+                            val cell = row.getOrNull(c).orEmpty()
+                            Text(
+                                Markdown.inline(cell, onPath = onPath, onLink = onLink),
+                                style = CrundiType.Body.copy(fontWeight = if (r == 0) FontWeight.SemiBold else null),
+                                modifier = Modifier.background(if (r == 0) CrundiColors.BgTertiary else androidx.compose.ui.graphics.Color.Transparent)
+                                    .border(androidx.compose.ui.unit.Dp.Hairline, CrundiColors.Border.copy(alpha = 0.6f)).padding(horizontal = 10.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                },
+            ) { measurables, _ ->
+                val maxCol = 260.dp.roundToPx()
+                val widths = IntArray(cols) { c -> (0 until rows.size).maxOf { r -> measurables[r * cols + c].maxIntrinsicWidth(Int.MAX_VALUE) }.coerceAtMost(maxCol) }
+                // Every cell in a row as tall as the tallest, so the rules line up
+                // (sizes from intrinsics: a cell may be measured only once).
+                val heights = IntArray(rows.size) { r -> (0 until cols).maxOf { c -> measurables[r * cols + c].maxIntrinsicHeight(widths[c]) } }
+                val stretched = measurables.mapIndexed { i, m -> m.measure(androidx.compose.ui.unit.Constraints.fixed(widths[i % cols], heights[i / cols])) }
+                layout(widths.sum(), heights.sum()) {
+                    var y = 0
+                    for (r in rows.indices) {
+                        var x = 0
+                        for (c in 0 until cols) { stretched[r * cols + c].place(x, y); x += widths[c] }
+                        y += heights[r]
+                    }
+                }
+            }
+        }
+    }
 }

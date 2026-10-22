@@ -227,16 +227,6 @@ private fun Assistant(e: ChatEntry) {
     Column {
         SelectionContainer { MarkdownText(e.text, compact = true) }
         if (e.streaming) Box(Modifier.padding(top = 2.dp).size(6.dp, 13.dp).background(CrundiColors.Accent))
-        // The whole reply, copied in one tap (a long press selects part of it).
-        else if (e.text.isNotBlank()) {
-            val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
-            var copied by remember(e.id) { mutableStateOf(false) }
-            LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1500); copied = false } }
-            mv.obitech.crundi.ui.components.CrundiIconButton(
-                if (copied) "check" else "copy", { clipboard.setText(androidx.compose.ui.text.AnnotatedString(e.text)); copied = true },
-                contentDescription = "Copy this reply", size = 14.dp, touch = 30.dp, tint = if (copied) CrundiColors.Green else CrundiColors.TextMuted,
-            )
-        }
     }
 }
 
