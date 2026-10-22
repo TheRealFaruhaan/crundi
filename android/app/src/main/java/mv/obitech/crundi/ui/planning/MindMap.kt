@@ -1,5 +1,10 @@
 package mv.obitech.crundi.ui.planning
 
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import mv.obitech.crundi.ui.components.errorText
 
 import androidx.compose.foundation.background
@@ -254,7 +259,8 @@ fun MindMapScreen(
                 onTap = { drafting = false; selected = it; editing = it },
                 onOpen = { drafting = false; editing = null; selected = it; popup = MindPopup.Details(it) },
                 onAdd = { startDraft(it) },
-                onEdited = { n, text -> editing = null; if (text != null && text.isNotBlank() && text.trim() != n.text) cb.onSave(n, text.trim(), n.notes) },
+                onEdited = { n, text -> if (editing == n.id) editing = null; if (text != null && text.isNotBlank() && text.trim() != n.text) cb.onSave(n, text.trim(), n.notes) },
+                onMoveTo = { n, parent -> cb.onMove(n, parent, null) },
                 onDrafted = { text -> drafting = false; if (text != null && text.isNotBlank()) cb.onAdd(text.trim(), draftParent) },
             )
         }
@@ -328,7 +334,20 @@ private fun MindCanvas(
     onAdd: (String) -> Unit,
     onEdited: (MindNode, String?) -> Unit,
     onDrafted: (String?) -> Unit,
+    /** Dragged onto another idea (its new parent) and let go. */
+    onMoveTo: (MindNode, String) -> Unit = { _, _ -> },
 ) {
+    // Hold an idea to drag it; let go over another idea to move it under that
+    // one (the desktop's drag to move). Ideas say where they are on screen.
+    val boxes = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
+    var dragId by remember { mutableStateOf<String?>(null) }
+    var finger by remember { mutableStateOf(Offset.Zero) }
+    var rootAt by remember { mutableStateOf(Offset.Zero) }
+    fun under(at: Offset): String? {
+        val d = dragId ?: return null
+        val banned = setOf(d) + descendants(m, d).map { it.id }
+        return boxes.entries.firstOrNull { it.key !in banned && it.value.contains(at) }?.key
+    }
     val q = filter.lowercase()
     fun matches(n: MindNode) = q.isNotEmpty() && (n.text.lowercase().contains(q) || n.notes.any { it.lowercase().contains(q) } ||
         n.linkedTaskInfo?.let { it.title.lowercase().contains(q) || it.text.lowercase().contains(q) } == true)
@@ -359,8 +378,14 @@ private fun MindCanvas(
     }
     LaunchedEffect(view, total > 0) { if (!fitted && view.height > 0) { val s = view.height / (total * density); scale = if (s < 1f) max(0.25f, s) else 1f; fitted = true } }
 
+    // A tap on the map itself ends any typing there: the box loses focus
+    // (which saves it) and the keyboard goes.
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     Box(
         Modifier.fillMaxSize().clipToBounds().onSizeChanged { view = it }
+            .androidx_onPlacedMind { rootAt = it }
+            .pointerInput(Unit) { detectTapGestures { focusManager.clearFocus(); keyboard?.hide() } }
             .drawBehind {
                 val step = 22.dp.toPx() * scale
                 if (step > 4f) {
@@ -395,12 +420,26 @@ private fun MindCanvas(
                         }
                     } else byId[pl.id]?.let { n ->
                         val dim = q.isNotEmpty() && !matches(n)
-                        Box(Modifier.layoutId(pl.id).width(MindLayout.WIDTH.dp).onSizeChanged { heights[n.id] = it.height / density }.alpha(if (dim) 0.18f else 1f)) {
+                        var coords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+                        Box(
+                            Modifier.layoutId(pl.id).width(MindLayout.WIDTH.dp).onSizeChanged { heights[n.id] = it.height / density }
+                                .alpha(if (dim) 0.18f else if (dragId == n.id) 0.4f else 1f)
+                                .onGloballyPositioned { c -> coords = c; boxes[n.id] = c.boundsInWindow() }
+                                .then(if (n.id == editing) Modifier else Modifier.pointerInput(n.id) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { at -> dragId = n.id; finger = coords?.localToWindow(at) ?: at },
+                                        onDrag = { c, _ -> c.consume(); finger = coords?.localToWindow(c.position) ?: finger },
+                                        onDragEnd = { val t = under(finger); dragId = null; if (t != null && t != n.parentId) onMoveTo(n, t) },
+                                        onDragCancel = { dragId = null },
+                                    )
+                                }),
+                        ) {
                             if (n.id == editing) InlineIdea(n.text, placeholder = "Idea", onDone = { onEdited(n, it) })
                             else IdeaNode(
                                 n, root = n.parentId == null, hit = matches(n), selected = n.id == selected,
                                 hasKids = m.children(n.id).isNotEmpty(), collapsed = n.id in collapsed && q.isEmpty(),
                                 onTap = { onTap(n.id) }, onOpen = { onOpen(n.id) }, onToggle = { if (n.id in collapsed) collapsed.remove(n.id) else collapsed.add(n.id) },
+                                dropTarget = dragId != null && under(finger) == n.id,
                             )
                         }
                     }
@@ -430,6 +469,14 @@ private fun MindCanvas(
                 }
             }
         }
+        // The held idea, under the finger.
+        dragId?.let { id -> byId[id] }?.let { d ->
+            Box(
+                Modifier.offset { androidx.compose.ui.unit.IntOffset((finger.x - rootAt.x - 60.dp.toPx()).toInt(), (finger.y - rootAt.y - 30.dp.toPx()).toInt()) }
+                    .width(MindLayout.WIDTH.dp).shadow(10.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))
+                    .background(CrundiColors.BgCard).border(2.dp, CrundiColors.Accent, RoundedCornerShape(14.dp)).padding(horizontal = 11.dp, vertical = 8.dp),
+            ) { Text(d.text, style = CrundiType.Body.copy(fontSize = 13.3.sp, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+        }
         Column(Modifier.align(Alignment.BottomEnd).padding(12.dp).background(CrundiColors.BgSecondary, Dimens.Shape).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape)) {
             CrundiIconButton("plus", { scale = (scale * 1.25f).coerceAtMost(3f) }, contentDescription = "Zoom in")
             CrundiIconButton("minus", { scale = (scale / 1.25f).coerceAtLeast(0.15f) }, contentDescription = "Zoom out")
@@ -440,11 +487,11 @@ private fun MindCanvas(
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun IdeaNode(n: MindNode, root: Boolean, hit: Boolean, selected: Boolean, hasKids: Boolean, collapsed: Boolean, onTap: () -> Unit, onOpen: () -> Unit, onToggle: () -> Unit) {
+private fun IdeaNode(n: MindNode, root: Boolean, hit: Boolean, selected: Boolean, hasKids: Boolean, collapsed: Boolean, onTap: () -> Unit, onOpen: () -> Unit, onToggle: () -> Unit, dropTarget: Boolean = false) {
     val shape = RoundedCornerShape(14.dp)
     val linked = n.linkedTask != null
     val border = when {
-        selected || hit -> CrundiColors.AccentHover
+        dropTarget || selected || hit -> CrundiColors.AccentHover
         linked -> CrundiColors.Green
         root || n.project != null -> CrundiColors.Accent
         else -> CrundiColors.Border
@@ -455,7 +502,9 @@ private fun IdeaNode(n: MindNode, root: Boolean, hit: Boolean, selected: Boolean
                 .shadow(4.dp, shape).clip(shape)
                 .background(if (root) CrundiColors.AccentDim.compositeOver(CrundiColors.BgCard) else CrundiColors.BgCard)
                 .border(if (selected || hit) 2.dp else Dimens.Hairline, border, shape)
-                .combinedClickable(onClick = onTap, onDoubleClick = onOpen, onLongClick = onOpen).padding(horizontal = 11.dp, vertical = 8.dp),
+                .then(if (dropTarget) Modifier.background(CrundiColors.AccentDim) else Modifier)
+                // A hold drags the idea (see MindCanvas); the pencil and a double tap open its menu.
+                .combinedClickable(onClick = onTap, onDoubleClick = onOpen).padding(horizontal = 11.dp, vertical = 8.dp),
         ) {
             Text(n.text, style = CrundiType.Body.copy(fontSize = 13.3.sp, fontWeight = FontWeight.SemiBold, lineHeight = 17.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
             val chips = ideaChips(n, root)
@@ -467,8 +516,16 @@ private fun IdeaNode(n: MindNode, root: Boolean, hit: Boolean, selected: Boolean
             Modifier.align(Alignment.CenterEnd).size(18.dp).clip(CircleShape).background(CrundiColors.BgTertiary).border(Dimens.Hairline, CrundiColors.Border, CircleShape).clickable(onClick = onToggle),
             contentAlignment = Alignment.Center,
         ) { CrundiIcon(if (collapsed) "plus" else "minus", size = 11.dp, tint = CrundiColors.TextSecondary) }
+        // Selected: a pencil beside it opens what can be done with it.
+        if (selected) Box(
+            Modifier.align(Alignment.CenterEnd).offset(x = if (hasKids) 30.dp else 20.dp).size(26.dp).clip(CircleShape)
+                .background(CrundiColors.Accent).clickable(onClickLabel = "Edit idea", onClick = onOpen),
+            contentAlignment = Alignment.Center,
+        ) { CrundiIcon("pencil", size = 13.dp, tint = Color.White) }
     }
 }
+
+private fun Modifier.androidx_onPlacedMind(at: (Offset) -> Unit) = this.then(Modifier.onGloballyPositioned { at(it.positionInWindow()) })
 
 /**
  * An idea typed where it stands (the desktop's mm-draft and mm-edit-input).
@@ -500,6 +557,8 @@ private fun InlineIdea(initial: String, placeholder: String, onDone: (String?) -
         )
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    // Gone without Done or losing focus (another idea was tapped): still saved.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { finish() } }
 }
 
 private fun Color.compositeOver(bg: Color): Color {
