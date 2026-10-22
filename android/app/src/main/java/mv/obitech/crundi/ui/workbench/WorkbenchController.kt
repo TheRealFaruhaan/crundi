@@ -37,6 +37,8 @@ class WorkbenchController(
     var cells by mutableStateOf(project?.let { store.cells(it) }.orEmpty()); private set
     var pending by mutableStateOf(project?.let { store.pending(it) }.orEmpty()); private set
     var layout by mutableStateOf(store.layout); private set
+    /** The first pane state has arrived: until then the route shows loading (or why it is not coming), not an empty launcher. */
+    var loaded by mutableStateOf(false); private set
     var focused by mutableStateOf<String?>(null); private set
     var full by mutableStateOf<String?>(null); private set
     /** A pane asking for its name to be changed (the route shows the dialog). */
@@ -71,6 +73,7 @@ class WorkbenchController(
 
     /** Follow the live state: the project's panes in their order, then launchers, then panels. */
     fun sync(state: ServerState?) {
+        if (state != null) loaded = true
         if (project == null || state == null) return
         serverPanes = state.terminals.filter { it.project.equals(project, true) }.sortedBy { it.order }
         val now = System.currentTimeMillis()

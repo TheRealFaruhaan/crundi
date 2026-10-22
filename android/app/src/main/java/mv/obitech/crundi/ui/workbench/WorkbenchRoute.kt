@@ -16,6 +16,12 @@ import androidx.navigation.compose.composable
 import mv.obitech.crundi.ui.components.CrundiDialog
 import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.shell.Area
+import mv.obitech.crundi.ui.shell.LocalAppServices
+import mv.obitech.crundi.ui.components.ErrorState
+import mv.obitech.crundi.ui.components.LoadingState
+import mv.obitech.crundi.ui.components.liveErrorText
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
 
 /** The Workbench tab (Lead). */
 fun NavGraphBuilder.workbenchGraph() {
@@ -26,6 +32,16 @@ fun NavGraphBuilder.workbenchGraph() {
 @Composable
 fun WorkbenchRoute() {
     val wb = LocalWorkbench.current ?: return
+    val api = LocalAppServices.current.api
+    // Nothing from the server yet: say so (loading, or why it is not coming) instead of an empty launcher.
+    if (!wb.loaded && wb.project != null) {
+        val status by remember(api) { api.events.status }.collectAsState()
+        val failure by remember(api) { api.events.failure }.collectAsState()
+        val why = liveErrorText(status, failure)
+        if (why != null) ErrorState(why, Modifier.fillMaxSize(), onRetry = { api.events.reconnect() })
+        else LoadingState(Modifier.fillMaxSize(), text = "Opening the workbench")
+        return
+    }
     val ui = wb.ui()
     val cols = ui.tree.columns()
     val pager = rememberPagerState { cols.size }

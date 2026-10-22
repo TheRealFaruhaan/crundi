@@ -7,3 +7,4 @@ local.properties
 # copy of the app), but it holds an API key, and a public repo that contains
 # one gets flagged for it. Kept out until notifications need it in a build.
 app/google-services.json
+.kotlin/
