@@ -28,7 +28,10 @@ class ServerImages internal constructor(private val transport: Transport) {
     private val cache = object : LruCache<String, ImageBitmap>(24 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
     }
-    private val failed = HashSet<String>()
+    // A failure is remembered for a short while, not for good: a large picture
+    // over a slow or broken connection failed once and then never showed again.
+    private val failed = HashMap<String, Long>()
+    private val retryAfterMs = 20_000L
     private val locks = HashMap<String, Mutex>()
 
     /** Already in memory? (No network.) */
@@ -42,7 +45,7 @@ class ServerImages internal constructor(private val transport: Transport) {
     suspend fun load(path: String, maxPx: Int = 1024): ImageBitmap? {
         val key = "$maxPx|$path"
         cache.get(key)?.let { return it }
-        if (synchronized(failed) { key in failed }) return null
+        if (synchronized(failed) { (failed[key] ?: 0L) > System.currentTimeMillis() - retryAfterMs }) return null
         val lock = synchronized(locks) { locks.getOrPut(key) { Mutex() } }
         return lock.withLock {
             cache.get(key)?.let { return@withLock it }
@@ -52,7 +55,7 @@ class ServerImages internal constructor(private val transport: Transport) {
                 if (r.status !in 200..299 || bytes == null) null
                 else withContext(Dispatchers.Default) { decode(bytes, r.headers.entries.firstOrNull { it.key.equals("content-type", true) }?.value.orEmpty(), maxPx) }
             }.getOrNull()
-            if (img == null) synchronized(failed) { failed.add(key) } else cache.put(key, img)
+            if (img == null) synchronized(failed) { failed[key] = System.currentTimeMillis() } else { synchronized(failed) { failed.remove(key) }; cache.put(key, img) }
             img
         }
     }
