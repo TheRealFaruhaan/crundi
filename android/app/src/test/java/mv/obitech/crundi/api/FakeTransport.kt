@@ -31,7 +31,10 @@ class FakeTransport(override val baseUrl: String = "https://dev.example.com") : 
     override suspend fun exchange(request: ApiRequest, progress: Progress?): ApiResponse {
         requests.add(request)
         request.upload?.let { u -> lastUpload = u.toBytes(); progress?.invoke(u.sourceSize, u.sourceSize) }
-        val answer = routes["${request.method} ${request.path}"] ?: return ApiResponse(404, """{"ok":false,"error":"Not found"}""")
+        val answer = routes["${request.method} ${request.path}"] ?: run {
+            System.getProperty("fake.missing")?.let { java.io.File(it).appendText("${request.method} ${request.path} ${request.query}\n") }
+            return ApiResponse(404, """{"ok":false,"error":"Not found"}""")
+        }
         return answer(request)
     }
 
@@ -60,10 +63,18 @@ class FakeTransport(override val baseUrl: String = "https://dev.example.com") : 
         this.listener = listener
         listener.onOpen()
         return object : SocketConnection {
-            override fun send(text: String): Boolean { socketSent.add(text); return true }
+            override fun send(text: String): Boolean {
+                socketSent.add(text)
+                // A server that answers: e.g. subscribe-ui gets the chat's history.
+                onSocketSend?.invoke(text)?.forEach { listener.onMessage(it) }
+                return true
+            }
             override fun close() { listener.onClosed(0, "closed") }
         }
     }
+
+    /** What the fake server answers to a message the app sends on the socket (null: nothing). */
+    var onSocketSend: ((String) -> List<String>?)? = null
 
     /** A message from the server on the socket. */
     fun pushSocket(json: String) { listener?.onMessage(json) }

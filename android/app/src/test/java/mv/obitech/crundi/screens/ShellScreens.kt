@@ -47,7 +47,8 @@ class ShellScreens : ScreenshotTest() {
     /** Every area through the real NavHost, as the person sees it after tapping its tab. */
     @Test
     fun everyArea() {
-        for (a in Area.entries.filter { it.tab }) shoot("shell-${a.key}") {
+        // The Workbench (the tab the app opens on) is shot live in WorkbenchScreens, so its panes have loaded.
+        for (a in Area.entries.filter { it.tab && it != Area.Workbench }) shoot("shell-${a.key}") {
             CrundiApp(services = FakeServices.default(), host = Host.None, openRoute = if (a == Area.Workbench) null else a.key)
         }
     }

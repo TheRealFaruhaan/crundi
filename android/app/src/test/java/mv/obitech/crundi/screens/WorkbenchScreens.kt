@@ -49,14 +49,14 @@ import org.junit.Test
  * real pane screens, with the layout seeded in the phone's store; and the
  * stateless pieces (mid-swipe, full screen, menus) drawn on their own.
  */
-class WorkbenchScreens : ScreenshotTest() {
+class WorkbenchScreens : LiveScreenshotTest() {
     private val chat1 = "t:a1b2c3d4e5f60718"
     private val chat2 = "t:b2c3d4e5f6071829"
 
     /** The app on the Workbench, with [seed] laid out in the store for [project]. */
     private fun app(name: String, project: String = "crundi", addMenu: Boolean = false, seed: (WorkbenchStore) -> Unit = {}) {
         val store = WorkbenchStore.memory().also(seed)
-        shoot(name, FakeServices.default(FakeServices.shellData.copy(currentProject = project))) {
+        shootLive(name, FakeServices.default(FakeServices.shellData.copy(currentProject = project))) {
             CompositionLocalProvider(LocalWorkbenchStore provides store) {
                 CrundiApp(services = mv.obitech.crundi.ui.shell.LocalAppServices.current, host = Host.None, addMenuOpenAtStart = addMenu)
             }
@@ -92,13 +92,22 @@ class WorkbenchScreens : ScreenshotTest() {
         st.setTree("crundi", Mosaic.leaf("p:n1"))
     }
 
-    @Test fun kinds() {
-        for (k in listOf(PaneKind.Files, PaneKind.Git, PaneKind.Kanban, PaneKind.Notes, PaneKind.MindMap, PaneKind.Media, PaneKind.Factory, PaneKind.Browser, PaneKind.Panel)) {
-            app("workbench-pane-${k.key}") { cell(it, "crundi", k) }
-        }
-    }
+    private fun kind(k: PaneKind) = app("workbench-pane-${k.key}") { cell(it, "crundi", k) }
+    @Test fun paneFiles() = kind(PaneKind.Files)
+    @Test fun paneGit() = kind(PaneKind.Git)
+    @Test fun paneKanban() = kind(PaneKind.Kanban)
+    @Test fun paneNotes() = kind(PaneKind.Notes)
+    @Test fun paneMindMap() = kind(PaneKind.MindMap)
+    @Test fun paneMedia() = kind(PaneKind.Media)
+    @Test fun paneFactory() = kind(PaneKind.Factory)
+    @Test fun paneBrowser() = kind(PaneKind.Browser)
+    /** A Panel pane holding Claude's build board (the picker is panels-pane-picker in PanelsScreens). */
+    @Test fun panePanel() = app("workbench-pane-widget") { cell(it, "crundi", PaneKind.Panel, mapOf("widgetId" to "build-board")) }
 
-    @Test fun noProject() = shoot("shell-no-project", FakeServices.default(FakeServices.shellData.copy(currentProject = null, projects = emptyList()))) {
+    /** The app as it opens: the Workbench tab (shell/). */
+    @Test fun shellWorkbench() = app("shell-workbench")
+
+    @Test fun noProject() = shootLive("shell-no-project", FakeServices.default(FakeServices.shellData.copy(currentProject = null, projects = emptyList()))) {
         CrundiApp(services = mv.obitech.crundi.ui.shell.LocalAppServices.current, host = Host.None)
     }
 
@@ -117,17 +126,17 @@ class WorkbenchScreens : ScreenshotTest() {
         }
     }
 
-    @Test fun midSwipe() = shoot("workbench-mid-swipe") {
+    @Test fun midSwipe() = shootLive("workbench-mid-swipe") {
         val tree = Mosaic.split(Mosaic.Dir.Row, listOf(Mosaic.leaf(fakeChat.key), Mosaic.leaf(fakeFactory.key)))
         val ui = WorkbenchUi("crundi", tree, mapOf(fakeChat.key to fakeChat, fakeFactory.key to fakeFactory), focused = fakeChat.key)
         WorkbenchScreen(ui, WorkbenchActions.None, pager = rememberPagerState(0, 0.45f) { 2 }) { FakeBody(it) }
     }
 
-    @Test fun fullScreen() = shoot("workbench-full-screen") {
+    @Test fun fullScreen() = shootLive("workbench-full-screen") {
         PaneFrame(fakeChat, PaneActions.None, Modifier.fillMaxSize(), focused = true, full = true) { FakeBody(fakeChat) }
     }
 
-    @Test fun addMenu() = shoot("workbench-add-menu") {
+    @Test fun addMenu() = shootLive("workbench-add-menu") {
         Box(Modifier.fillMaxSize()) {
             ShellScaffold(FakeServices.shellData, Area.Workbench, true, ShellCallbacks(), drawerOpen = false, onDrawer = {}) {
                 WorkbenchScreen(WorkbenchUi("crundi", Mosaic.leaf(fakeChat.key), mapOf(fakeChat.key to fakeChat), focused = fakeChat.key), WorkbenchActions.None) { FakeBody(it) }
@@ -136,7 +145,7 @@ class WorkbenchScreens : ScreenshotTest() {
         }
     }
 
-    @Test fun paneMenu() = shoot("workbench-pane-menu") {
+    @Test fun paneMenu() = shootLive("workbench-pane-menu") {
         Box(Modifier.fillMaxSize()) {
             WorkbenchScreen(WorkbenchUi("crundi", Mosaic.leaf(fakeChat.key), mapOf(fakeChat.key to fakeChat), focused = fakeChat.key), WorkbenchActions.None) { FakeBody(it) }
             Box(Modifier.align(Alignment.TopEnd).offset(x = (-12).dp, y = 52.dp).width(androidx.compose.foundation.layout.IntrinsicSize.Max).background(CrundiColors.BgSecondary, Dimens.Shape).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape)) { PaneMenuBody(fakeChat, PaneActions.None) }

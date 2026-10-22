@@ -60,6 +60,16 @@ object FakeApi {
         val t = FakeTransport()
         // The server sends the whole workbench when the event stream connects.
         t.initialEvents.add(mv.obitech.crundi.api.SseFrame("state", text("state.json")))
+        // A chat opened on the socket gets its history, as the server answers subscribe-ui:
+        // the fixture conversation, under the id that was asked for.
+        val history = text("chat-history.json")
+        t.onSocketSend = { sent ->
+            val m = runCatching { CrundiJson.parseToJsonElement(sent).jsonObject }.getOrNull()
+            val id = (m?.get("id") as? kotlinx.serialization.json.JsonPrimitive)?.content
+            if (m?.get("type")?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } == "subscribe-ui" && id != null)
+                listOf(history.replace("a1b2c3d4e5f60718", id))
+            else null
+        }
         for ((route, file) in routes) t.on(route, text("$file.json"))
         t.on("GET /api/services/crundi%3Adocs/logs", text("service-logs.json"))
         t.on("POST /api/widgets/call") { ApiResponse(200, """{"ok":true,"key":"filter","value":"failed"}""") }
