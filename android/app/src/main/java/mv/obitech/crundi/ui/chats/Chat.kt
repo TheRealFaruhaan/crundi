@@ -184,7 +184,13 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
     val c = ui.chat
     val pane = LocalPane.current
     val d = LocalDensity.current
-    CompositionLocalProvider(LocalDensity provides Density(d.density, d.fontScale * (pane?.fontScale ?: 1f))) {
+    // A file path in Claude's text: a tap offers to open it in the file
+    // viewer or copy it (the web opens it on click and offers copy on hover).
+    var pathMenu by remember { mutableStateOf<String?>(null) }
+    CompositionLocalProvider(
+        LocalDensity provides Density(d.density, d.fontScale * (pane?.fontScale ?: 1f)),
+        mv.obitech.crundi.ui.components.LocalPathTap provides { p: String -> pathMenu = p },
+    ) {
     // A file (or folder) dragged here from Files: its reference goes into the
     // message box, as dropping it on a chat does on the web.
     val draftNow = androidx.compose.runtime.rememberUpdatedState(ui.draft)
@@ -273,6 +279,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
             ui.schedule, actions,
             Modifier.align(Alignment.BottomCenter).padding(8.dp).heightIn(max = tall * 0.82f),
         )
+        pathMenu?.let { p -> PathMenu(p, c.project.ifEmpty { ui.pane?.project.orEmpty() }) { pathMenu = null } }
         ui.sheet?.let { s ->
             if (s is ChatSheet.Picture) ImageViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-image")); actions.sheet(null) }, onClose = { actions.sheet(null) })
             else if (s is ChatSheet.Video) VideoViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-video")) }, onClose = { actions.sheet(null) })
@@ -744,4 +751,26 @@ private suspend fun saveToDownloads(ctx: Context, fallback: String, fetch: suspe
         }
         name
     } finally { tmp.delete() }
+}
+
+/** Open a path from the chat in the file viewer, or copy it. Relative paths are the project's. */
+@Composable
+private fun PathMenu(path: String, project: String, onDismiss: () -> Unit) {
+    val nav = mv.obitech.crundi.ui.nav.LocalNavigator.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val shell by mv.obitech.crundi.ui.shell.LocalAppServices.current.shell.state.collectAsState()
+    val root = shell.projects.firstOrNull { it.alias.equals(project, true) }?.path.orEmpty()
+    val bare = path.replace(Regex(":\\d+(:\\d+)?$"), "")
+    val full = if (bare.startsWith("/") || root.isEmpty()) bare else root.trimEnd('/') + "/" + bare.removePrefix("./")
+    mv.obitech.crundi.ui.components.CrundiDialog(bare.substringAfterLast('/'), onDismiss = onDismiss, dismiss = null) {
+        Column {
+            Text(full, style = mv.obitech.crundi.ui.theme.CrundiType.Code.copy(color = CrundiColors.TextMuted), modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+            mv.obitech.crundi.ui.components.ListRow("Open", icon = "file", onClick = { onDismiss(); nav.to(mv.obitech.crundi.ui.workspace.WorkspaceRoutes.file(full)) })
+            mv.obitech.crundi.ui.components.ListRow("Copy path", icon = "copy", onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(full)); onDismiss()
+                android.widget.Toast.makeText(ctx, "Path copied", android.widget.Toast.LENGTH_SHORT).show()
+            })
+        }
+    }
 }

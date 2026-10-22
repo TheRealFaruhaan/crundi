@@ -105,8 +105,22 @@ object Markdown {
         return out
     }
 
-    /** Inline marks to styled text. */
-    fun inline(src: String, base: SpanStyle = SpanStyle()): AnnotatedString = buildAnnotatedString {
+    private val FILE_EXT = Regex("\\.(js|mjs|cjs|ts|tsx|jsx|json|md|txt|log|py|sh|bash|yml|yaml|toml|ini|conf|cfg|env|html|htm|css|scss|xml|svg|png|jpe?g|gif|webp|ico|pdf|csv|sql|go|rs|rb|php|java|kt|kts|gradle|swift|c|h|cc|cpp|hpp|vue|lock|dockerfile|service)$", RegexOption.IGNORE_CASE)
+    private val BARE_PATH = Regex("^(\\.{0,2}/)?[\\w.@+~-]+(/[\\w.@+~-]+)+$")
+
+    /** A code span that is only a file path (src/a.js, ./x/y.md, /etc/z): the web's looksLikePath. */
+    fun looksLikePath(c: String): Boolean {
+        if (c.isEmpty() || c.length > 260 || c.any { it.isWhitespace() } || c.startsWith("http:") || c.startsWith("https:") || c.any { it in "<>&*|$`" }) return false
+        val bare = c.replace(Regex(":\\d+(:\\d+)?$"), "")
+        if (BARE_PATH.matches(bare)) return true
+        return Regex("^[\\w-][\\w.@+~-]*$").matches(bare) && FILE_EXT.containsMatchIn(bare)
+    }
+
+    private val PATH_STYLE = TextLinkStyles(SpanStyle(textDecoration = TextDecoration.Underline))
+    private val TEXT_PATH = Regex("^/(?:[\\w.@+~%,=-]+/)+[\\w.@+~%,=-]+(?::\\d+(?::\\d+)?)?")
+
+    /** Inline marks to styled text. [onPath]: file paths become tappable (code spans that are paths, and absolute paths in the text). */
+    fun inline(src: String, base: SpanStyle = SpanStyle(), onPath: ((String) -> Unit)? = null): AnnotatedString = buildAnnotatedString {
         var i = 0
         val n = src.length
         while (i < n) {
@@ -115,11 +129,16 @@ object Markdown {
             when {
                 c == '`' -> {
                     val e = src.indexOf('`', i + 1)
-                    if (e > i) { withStyle(InlineCodeStyle) { append(" " + src.substring(i + 1, e) + " ") }; i = e + 1 } else { append(c); i++ }
+                    if (e > i) {
+                        val code = src.substring(i + 1, e)
+                        if (onPath != null && looksLikePath(code)) withLink(LinkAnnotation.Clickable("path:$code", PATH_STYLE) { onPath(code) }) { withStyle(InlineCodeStyle) { append(" " + code + " ") } }
+                        else withStyle(InlineCodeStyle) { append(" " + code + " ") }
+                        i = e + 1
+                    } else { append(c); i++ }
                 }
                 src.startsWith("**", i) || src.startsWith("__", i) -> {
                     val tok = src.substring(i, i + 2); val e = closing(tok, i + 2)
-                    if (e != null) { withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(inline(src.substring(i + 2, e))) }; i = e + 2 } else { append(tok); i += 2 }
+                    if (e != null) { withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(inline(src.substring(i + 2, e), onPath = onPath)) }; i = e + 2 } else { append(tok); i += 2 }
                 }
                 src.startsWith("~~", i) -> {
                     val e = closing("~~", i + 2)
@@ -136,11 +155,21 @@ object Markdown {
                         i += m.value.length
                     } else { append(c); i++ }
                 }
+                // An absolute path written in the text ("in /a/b.js:12,"), as the web's linkify.
+                onPath != null && c == '/' && (i == 0 || src[i - 1].isWhitespace() || src[i - 1] in "([\"'") && TEXT_PATH.find(src.substring(i)) != null -> {
+                    var p = TEXT_PATH.find(src.substring(i))!!.value
+                    p = p.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '\'', '"')
+                    withLink(LinkAnnotation.Clickable("path:$p", PATH_STYLE) { onPath(p) }) { append(p) }
+                    i += p.length
+                }
                 else -> { append(c); i++ }
             }
         }
     }
 }
+
+/** Where a tapped file path goes (the chat sets it); null leaves paths as plain text. */
+val LocalPathTap = androidx.compose.runtime.staticCompositionLocalOf<((String) -> Unit)?> { null }
 
 /** Draw markdown. `compact` tightens spacing (chat bubbles, notes previews). */
 @Composable
@@ -153,15 +182,16 @@ fun MarkdownText(markdown: String, modifier: Modifier = Modifier, compact: Boole
 
 @Composable
 private fun MarkdownBlock(b: Markdown.Block) {
+    val onPath = LocalPathTap.current
     when (b) {
         is Markdown.Heading -> Text(
-            Markdown.inline(b.text),
+            Markdown.inline(b.text, onPath = onPath),
             style = CrundiType.Heading.copy(fontSize = when (b.level) { 1 -> 19.sp; 2 -> 17.sp; 3 -> 15.sp; else -> 14.sp }),
         )
-        is Markdown.Paragraph -> Text(Markdown.inline(b.text), style = CrundiType.Body)
+        is Markdown.Paragraph -> Text(Markdown.inline(b.text, onPath = onPath), style = CrundiType.Body)
         is Markdown.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
             Box(Modifier.width(3.dp).fillMaxHeight().background(CrundiColors.Border))
-            Text(Markdown.inline(b.text), style = CrundiType.Body.copy(color = CrundiColors.TextSecondary), modifier = Modifier.padding(start = 10.dp))
+            Text(Markdown.inline(b.text, onPath = onPath), style = CrundiType.Body.copy(color = CrundiColors.TextSecondary), modifier = Modifier.padding(start = 10.dp))
         }
         is Markdown.Fence -> CodeBlock(b.code, language = b.language)
         is Markdown.Rule -> CrundiDivider(strong = true)
@@ -180,7 +210,7 @@ private fun MarkdownBlock(b: Markdown.Block) {
                         style = CrundiType.Body.copy(color = CrundiColors.TextSecondary),
                         modifier = Modifier.widthIn(min = 18.dp),
                     )
-                    Text(Markdown.inline(text), style = CrundiType.Body, modifier = Modifier.padding(start = 6.dp))
+                    Text(Markdown.inline(text, onPath = onPath), style = CrundiType.Body, modifier = Modifier.padding(start = 6.dp))
                 }
             }
         }

@@ -188,8 +188,10 @@ fun WorkbenchScreen(
         // Full screen: the pane moves (alive) into this layer, growing from
         // its own place; the shell slides its bars away meanwhile (FullScreen).
         val fullView = ui.full?.let { ui.panes[it] }
-        androidx.compose.runtime.DisposableEffect(fullView?.key) {
-            mv.obitech.crundi.ui.shell.FullScreen.pane = fullView?.key
+        // The bars stay away until the pane has shrunk back: bringing them
+        // back meanwhile resized everything on every frame (it stuttered).
+        androidx.compose.runtime.DisposableEffect(shownFull) {
+            mv.obitech.crundi.ui.shell.FullScreen.pane = shownFull
             onDispose { mv.obitech.crundi.ui.shell.FullScreen.pane = null }
         }
         if (fullView != null) androidx.activity.compose.BackHandler { actions.full(fullView, false) }

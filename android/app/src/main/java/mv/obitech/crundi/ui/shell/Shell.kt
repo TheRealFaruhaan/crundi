@@ -131,12 +131,12 @@ fun ShellScaffold(
     // only left an empty band where it had been.
     val paneFull = FullScreen.pane != null
     Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
-        androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.expandVertically() + fadeIn(), exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
+        androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.slideInVertically { -it / 2 } + fadeIn(), exit = androidx.compose.animation.slideOutVertically { -it / 2 } + fadeOut()) {
             ShellTopBar(data, onMenu = { onDrawer(!drawerOpen) }, callbacks = callbacks)
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.fillMaxSize()) {
-                androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.expandVertically() + fadeIn(), exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
+                androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.slideInVertically { -it / 2 } + fadeIn(), exit = androidx.compose.animation.slideOutVertically { -it / 2 } + fadeOut()) {
                     AreaTabs(current, data, callbacks, addMenuOpen)
                 }
                 Box(Modifier.fillMaxWidth().weight(1f)) { content() }
