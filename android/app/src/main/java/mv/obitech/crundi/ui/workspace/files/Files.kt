@@ -135,12 +135,20 @@ fun FilesScreen(
     var dropOn by remember { mutableStateOf<Pair<FileItem, FileItem>?>(null) }   // item, folder
     fun folderAt(at: androidx.compose.ui.geometry.Offset): String? = folders.entries.firstOrNull { it.value.contains(at) }?.key
     val drag = FileDrag(
-        onStart = { item, at -> dragging = item; finger = at },
-        onMove = { at -> finger = at },
+        onStart = { item, at ->
+            dragging = item; finger = at
+            // Also droppable on a chat, in this pane's neighbours: its path, as the web's drag ref.
+            mv.obitech.crundi.ui.workbench.PaneDrop.start("[" + (if (item.isDir) "Folder Path" else "File Path") + ": " + item.path + "]", item.name, at)
+        },
+        onMove = { at -> finger = at; mv.obitech.crundi.ui.workbench.PaneDrop.finger = at },
         onEnd = { item, drop ->
             val target = folderAt(finger)
             dragging = null
-            if (drop && target != null && target != item.path) {
+            val onFolder = drop && target != null && target != item.path
+            // A chat under the finger takes it; otherwise a folder here does.
+            if (!drop || onFolder) mv.obitech.crundi.ui.workbench.PaneDrop.cancel()
+            else if (mv.obitech.crundi.ui.workbench.PaneDrop.drop()) return@FileDrag
+            if (onFolder && target != null) {
                 val f = state.items.firstOrNull { it.path == target } ?: state.folder?.parent?.takeIf { it == target }?.let { FileItem("..", it, true) }
                 if (f != null) dropOn = item to f
             }
@@ -191,7 +199,8 @@ fun FilesScreen(
                 }
               }
               // The held row, under the finger.
-              dragging?.let { d ->
+              // In a pane the workbench draws the held item over every pane.
+              if (mv.obitech.crundi.ui.workbench.LocalPane.current == null) dragging?.let { d ->
                   Row(
                       Modifier.offset { androidx.compose.ui.unit.IntOffset((finger.x - listTopLeft.x - 40.dp.toPx()).toInt(), (finger.y - listTopLeft.y - 28.dp.toPx()).toInt()) }
                           .shadow(8.dp, Dimens.ShapeSm).background(CrundiColors.BgTertiary, Dimens.ShapeSm).border(Dimens.Hairline, CrundiColors.Accent, Dimens.ShapeSm)

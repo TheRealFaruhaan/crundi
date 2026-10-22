@@ -1,5 +1,9 @@
 package mv.obitech.crundi.ui.workbench
 
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -121,6 +125,36 @@ fun WorkbenchScreen(
                         Box(Modifier.fillMaxSize().padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 10.dp)) { cols.getOrNull(i)?.let { node(it) } }
                     }
                     ColumnIndicator(pager, cols.size, Modifier.align(Alignment.BottomCenter))
+                }
+            }
+        }
+        // Something held from a pane (a file from Files): drawn over every
+        // pane, and resting at the screen's edge slides to the next column.
+        PaneDrop.text?.let { _ ->
+            var rootAt by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+            var rootW by remember { mutableIntStateOf(0) }
+            Box(Modifier.fillMaxSize().onGloballyPositioned { rootAt = it.positionInWindow(); rootW = it.size.width }) {
+                Row(
+                    Modifier.offset { androidx.compose.ui.unit.IntOffset((PaneDrop.finger.x - rootAt.x - 40.dp.toPx()).toInt(), (PaneDrop.finger.y - rootAt.y - 28.dp.toPx()).toInt()) }
+                        .shadow(8.dp, RoundedCornerShape(8.dp)).background(CrundiColors.BgTertiary, RoundedCornerShape(8.dp))
+                        .border(1.dp, CrundiColors.Accent, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
+                ) { androidx.compose.material3.Text(PaneDrop.label, style = mv.obitech.crundi.ui.theme.CrundiType.Code, maxLines = 1) }
+            }
+            val cols = ui.tree.columns()
+            val edge = with(androidx.compose.ui.platform.LocalDensity.current) { 36.dp.toPx() }
+            val side = when {
+                rootW == 0 -> 0
+                PaneDrop.finger.x - rootAt.x < edge -> -1
+                PaneDrop.finger.x - rootAt.x > rootW - edge -> 1
+                else -> 0
+            }
+            LaunchedEffect(side, cols.size) {
+                if (side == 0 || cols.size <= 1) return@LaunchedEffect
+                while (true) {
+                    kotlinx.coroutines.delay(450)
+                    val next = (pager.currentPage + side).coerceIn(0, cols.size - 1)
+                    if (next == pager.currentPage) break
+                    pager.animateScrollToPage(next)
                 }
             }
         }
