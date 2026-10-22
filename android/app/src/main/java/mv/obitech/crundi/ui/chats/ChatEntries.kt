@@ -209,8 +209,12 @@ private fun UserBubble(e: ChatEntry) {
         if (by != null) Text(by, style = CrundiType.Meta.copy(color = CrundiColors.Sky, fontWeight = FontWeight.SemiBold, fontFamily = CrundiType.Sans), modifier = Modifier.padding(end = 4.dp, bottom = 2.dp))
         val shape = RoundedCornerShape(12.dp, 12.dp, 3.dp, 12.dp)
         SelectionContainer {
+            // Its links and paths are tappable too (open or copy), as on the web.
+            val onPath = mv.obitech.crundi.ui.components.LocalPathTap.current
+            val onLink = mv.obitech.crundi.ui.components.LocalLinkTap.current
+            val text = remember(e.text, onPath != null, onLink != null) { mv.obitech.crundi.ui.components.linkifyPlain(e.text, onPath, onLink) }
             Text(
-                e.text, style = ChatType.Body,
+                text, style = ChatType.Body,
                 modifier = Modifier.widthIn(max = 330.dp).clip(shape).background(CrundiColors.AccentDim)
                     .border(Dimens.Hairline, CrundiColors.Accent.copy(alpha = 0.35f), shape).padding(horizontal = 11.dp, vertical = 7.dp),
             )

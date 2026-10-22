@@ -220,7 +220,8 @@ private fun MarkdownBlock(b: Markdown.Block) {
                 val w = IntArray(rows.maxOf { it.size }) { c -> rows.maxOf { it.getOrNull(c)?.length ?: 0 } }
                 rows.joinToString("\n") { r -> r.mapIndexed { c, s -> s.padEnd(w[c]) }.joinToString("  ") }
             },
-            highlight = false, showHeader = false,
+            // A header with its copy button, as every code block has.
+            language = "table", highlight = false,
         )
         is Markdown.ListBlock -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             b.items.forEachIndexed { idx, (depth, text) ->
@@ -235,4 +236,26 @@ private fun MarkdownBlock(b: Markdown.Block) {
             }
         }
     }
+}
+
+/**
+ * Plain text (a message you wrote) with only its links and absolute paths
+ * made tappable, nothing else styled: what the web's linkify does to your
+ * own messages.
+ */
+fun linkifyPlain(src: String, onPath: ((String) -> Unit)?, onLink: ((String) -> Unit)?): AnnotatedString = buildAnnotatedString {
+    val re = Regex("(https?://[^\\s<`]+)|((?<=^|[\\s(\\[\"'])/(?:[\\w.@+~%,=-]+/)+[\\w.@+~%,=-]+(?::\\d+(?::\\d+)?)?)")
+    var i = 0
+    for (m in re.findAll(src)) {
+        if (m.range.first < i) continue
+        append(src.substring(i, m.range.first))
+        val raw = m.value.trimEnd('.', ',', ';', ':', '!', '?', ')', ']', '\'', '"')
+        val style = TextLinkStyles(SpanStyle(textDecoration = TextDecoration.Underline))
+        val isUrl = raw.startsWith("http")
+        val handler = if (isUrl) onLink else onPath
+        if (handler != null) withLink(LinkAnnotation.Clickable((if (isUrl) "link:" else "path:") + raw, style) { handler(raw) }) { append(raw) }
+        else if (isUrl) withLink(LinkAnnotation.Url(raw, style)) { append(raw) } else append(raw)
+        i = m.range.first + raw.length
+    }
+    append(src.substring(i))
 }
