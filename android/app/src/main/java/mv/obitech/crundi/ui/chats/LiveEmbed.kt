@@ -99,8 +99,13 @@ internal fun embedSize(m: ChatMedia, maxWidth: Dp): Pair<Dp, Dp> {
 fun EmbedItem(m: ChatMedia, actions: EntryActions, maxWidth: Dp? = null) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val (w, h) = embedSize(m, min(maxWidth ?: this.maxWidth, this.maxWidth))
+        // A box given only a height shrinks to the page when the page is
+        // shorter (an X post in a box made for a long one). Never grows, and
+        // a shape (a video's 16:9) is kept as it is.
+        var fit by remember(m) { mutableStateOf<Dp?>(null) }
+        val shown by androidx.compose.animation.core.animateDpAsState(fit?.let { min(it, h) } ?: h, label = "embed-fit")
         Column(Modifier.width(IntrinsicSize.Min)) {
-            LiveEmbed(m, Modifier.size(w, h))
+            LiveEmbed(m, Modifier.size(w, shown), onContentHeight = if (m.width > 0 && m.height > 0) null else { px -> if (px in 60f..(h.value - 16f)) fit = (px + 4f).dp })
             EmbedCaption(m, actions, Modifier.width(w).padding(top = 4.dp))
         }
     }
@@ -138,7 +143,7 @@ private fun EmbedCaption(m: ChatMedia, actions: EntryActions, modifier: Modifier
  * phone's browser instead.
  */
 @Composable
-fun LiveEmbed(m: ChatMedia, modifier: Modifier = Modifier) {
+fun LiveEmbed(m: ChatMedia, modifier: Modifier = Modifier, onContentHeight: ((Float) -> Unit)? = null) {
     val services = LocalAppServices.current
     val transport = services.api.transport
     val host = LocalHost.current
@@ -200,6 +205,17 @@ fun LiveEmbed(m: ChatMedia, modifier: Modifier = Modifier) {
             near && (src != null || html != null) -> androidx.compose.runtime.key(attempt) {
                 val doc = html
                 var frame by remember { mutableStateOf<WebView?>(null) }
+                // How tall the page's content is, measured a few times as it
+                // settles (embeds draw themselves after loading). CSS pixels
+                // are dp here (no wide viewport).
+                if (onContentHeight != null) LaunchedEffect(frame, loading) {
+                    val f = frame ?: return@LaunchedEffect
+                    if (loading) return@LaunchedEffect
+                    for (wait in listOf(400L, 1200L, 2500L, 5000L)) {
+                        kotlinx.coroutines.delay(wait)
+                        f.evaluateJavascript(MEASURE_JS) { v -> v?.trim('"')?.toFloatOrNull()?.let { onContentHeight(it) } }
+                    }
+                }
                 AndroidView(
                     factory = { c ->
                         loading = true
@@ -354,3 +370,12 @@ private class EmbedFullscreen(private val activity: Activity?, private val m: Ch
         onChange(false)
     }
 }
+
+/**
+ * The bottom of the lowest visible thing on the page, in CSS pixels. A page
+ * whose content fills its frame (a player, height:100%) measures as the frame
+ * itself, so it is never shrunk.
+ */
+private const val MEASURE_JS = "(function(){var b=document.body;if(!b)return 0;var m=0;var a=b.querySelectorAll('*');" +
+    "for(var i=0;i<a.length&&i<5000;i++){var r=a[i].getBoundingClientRect();if(r.width>0&&r.height>0&&r.bottom>m)m=r.bottom;}" +
+    "return Math.ceil(m+(window.scrollY||0));})()"

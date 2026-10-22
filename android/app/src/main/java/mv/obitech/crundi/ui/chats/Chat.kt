@@ -118,6 +118,8 @@ data class ChatUi(
      * before the server says the chat is working and withdraws it.
      */
     val retiredSuggestion: String? = null,
+    /** Bumped on each message sent from here: the log goes to the bottom and follows the reply. */
+    val sentSeq: Int = 0,
     val uploads: List<UploadUi> = emptyList(),
     val stopArmed: Boolean = false,
     /** Mid-turn sends not yet echoed by the server. */
@@ -208,10 +210,20 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
             val act = activity(c)
             val list = rememberLazyListState(initialFirstVisibleItemIndex = (entries.size + 1).coerceAtLeast(0))
             val lastLen = entries.lastOrNull()?.let { it.text.length + it.status.length } ?: 0
+            // Sending goes to the bottom, wherever the log was, and keeps
+            // following what comes in for a while (the message and the reply
+            // arrive after the send).
+            var followUntil by remember { mutableStateOf(0L) }
+            LaunchedEffect(ui.sentSeq) {
+                if (ui.sentSeq == 0) return@LaunchedEffect
+                followUntil = System.currentTimeMillis() + 8000
+                val n = list.layoutInfo.totalItemsCount
+                if (n > 0) list.animateScrollToItem(n - 1)
+            }
             LaunchedEffect(entries.size, lastLen, act) {
                 val info = list.layoutInfo
                 val nearEnd = info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 3 } ?: true
-                if (nearEnd && info.totalItemsCount > 0) list.animateScrollToItem(info.totalItemsCount - 1)
+                if ((nearEnd || System.currentTimeMillis() < followUntil) && info.totalItemsCount > 0) list.animateScrollToItem(info.totalItemsCount - 1)
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
               // Panels Claude docked to this chat sit above the conversation, at most 42% of it (ui.panels).
@@ -552,7 +564,7 @@ fun ChatRoute(chatId: String) {
             val text = ui.draft.trim()
             if (text.isEmpty()) return
             val wasBusy = view.busy
-            ui = ui.copy(draft = "", stopArmed = false, retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion)
+            ui = ui.copy(draft = "", stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion)
             scope.launch {
                 try {
                     val r = api.chats.send(chatId, text)
@@ -647,7 +659,7 @@ fun ChatRoute(chatId: String) {
         override fun useSuggestion(s: ChatSuggestion) {
             val text = s.text.trim()
             if (text.isEmpty() || view.busy) return
-            ui = ui.copy(retiredSuggestion = s.uuid.ifEmpty { s.text })
+            ui = ui.copy(retiredSuggestion = s.uuid.ifEmpty { s.text }, sentSeq = ui.sentSeq + 1)
             scope.launch {
                 try { api.chats.send(chatId, text) } catch (e: Exception) { ui = ui.copy(draft = text, error = "The message did not go: " + errorText(e)) }
             }
