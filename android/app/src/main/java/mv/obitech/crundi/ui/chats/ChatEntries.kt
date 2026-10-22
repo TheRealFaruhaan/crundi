@@ -332,7 +332,8 @@ fun MediaView(m: ChatMedia, actions: EntryActions) {
         }
         // Played in place; the caption under it, and Download beside it.
         "video", "audio" -> if (m.path != null) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            MediaPlayerView(m)
+            // A video is a preview the size of a picture's; it plays when opened.
+            if (m.kind == "video") VideoPreview(m) { actions.media(m) } else MediaPlayerView(m)
             Row(Modifier.widthIn(max = 360.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(m.caption.ifEmpty { m.filename.ifEmpty { if (m.kind == "video") "Video" else "Audio" } }, style = ChatType.Small, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 mv.obitech.crundi.ui.components.CrundiIconButton("download", { actions.media(m.copy(kind = "file-" + m.kind)) }, contentDescription = "Download", size = 16.dp, tint = CrundiColors.TextSecondary)

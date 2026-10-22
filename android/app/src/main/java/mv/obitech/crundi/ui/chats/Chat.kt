@@ -100,6 +100,8 @@ sealed interface ChatSheet {
     data class Agents(val kind: String = "agent") : ChatSheet
     data class Agent(val toolUseId: String) : ChatSheet
     data class Picture(val media: ChatMedia) : ChatSheet
+    /** A video, open in its own player over everything. */
+    data class Video(val media: ChatMedia) : ChatSheet
 }
 
 /** Everything the chat screen draws. */
@@ -246,6 +248,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
         )
         ui.sheet?.let { s ->
             if (s is ChatSheet.Picture) ImageViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-image")); actions.sheet(null) }, onClose = { actions.sheet(null) })
+            else if (s is ChatSheet.Video) VideoViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-video")) }, onClose = { actions.sheet(null) })
             else SheetOverlay({ actions.sheet(null) }) { ChatSheetContent(s, ui, actions) }
         }
     }
@@ -403,6 +406,7 @@ private fun ChatSheetContent(s: ChatSheet, ui: ChatUi, a: ChatActions) {
                 }
             }
         }
+        is ChatSheet.Video -> {}
         is ChatSheet.Picture -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val img = rememberServerImage(s.media.path, 2048)
             if (img != null) Image(img, contentDescription = s.media.caption.ifEmpty { "Image" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth())
@@ -654,6 +658,7 @@ fun ChatRoute(chatId: String) {
         override fun media(m: ChatMedia) {
             when {
                 m.kind == "image" -> ui = ui.copy(sheet = ChatSheet.Picture(m))
+                m.kind == "video" -> ui = ui.copy(sheet = ChatSheet.Video(m))
                 m.kind == "embed" && m.openUrl != null -> host.openExternal(m.openUrl)
                 m.path != null -> act {
                     val name = saveToDownloads(ctx, m.filename.ifEmpty { m.path.substringAfter("name=", "file").substringBefore('&') }) { sink ->
