@@ -118,6 +118,8 @@ data class ChatUi(
     val stopArmed: Boolean = false,
     /** Mid-turn sends not yet echoed by the server. */
     val localPending: List<PendingInjection> = emptyList(),
+    /** How many log entries there were when each local one was sent (by its text), to tell when Claude took it. */
+    val localSentAt: Map<String, Int> = emptyMap(),
     /** Folded things the person opened (tool ids; "!id" closes a live thought). */
     val open: Set<String> = emptySet(),
     /** Cards whose answer is on its way. */
@@ -473,8 +475,17 @@ fun ChatRoute(chatId: String) {
     }
 
     // Mid-turn sends leave once the turn ends or the server lists them.
-    LaunchedEffect(chat.state, chat.pendingInjections) {
-        if (chat.state != AgentState.Working) ui = ui.copy(localPending = emptyList())
+    // Also the moment Claude takes one: it shows in the log as your message,
+    // which happened mid-turn too, and the card stayed until the turn ended.
+    LaunchedEffect(chat.state, chat.pendingInjections, chat.messages.size) {
+        if (chat.state != AgentState.Working) { ui = ui.copy(localPending = emptyList(), localSentAt = emptyMap()); return@LaunchedEffect }
+        if (ui.localPending.isEmpty()) return@LaunchedEffect
+        val left = ui.localPending.filter { p ->
+            val from = ui.localSentAt[p.text] ?: return@filter true
+            val msgs = chat.messages
+            (from until msgs.size).none { i -> msgs[i].kind == "user" && msgs[i].text.trim() == p.text.trim() }
+        }
+        if (left.size != ui.localPending.size) ui = ui.copy(localPending = left, localSentAt = ui.localSentAt.filterKeys { k -> left.any { it.text == k } })
     }
     LaunchedEffect(ui.notice) { if (ui.notice != null) { delay(3500); ui = ui.copy(notice = null) } }
 
@@ -518,7 +529,10 @@ fun ChatRoute(chatId: String) {
             scope.launch {
                 try {
                     val r = api.chats.send(chatId, text)
-                    if (r.injected || wasBusy) ui = ui.copy(localPending = ui.localPending + PendingInjection(text, r.uuid, if (r.uuid.isNotEmpty()) "queued" else "sent"))
+                    if (r.injected || wasBusy) ui = ui.copy(
+                        localPending = ui.localPending + PendingInjection(text, r.uuid, if (r.uuid.isNotEmpty()) "queued" else "sent"),
+                        localSentAt = ui.localSentAt + (text to ui.chat.messages.size),
+                    )
                 } catch (e: Exception) {
                     ui = ui.copy(draft = text, error = "The message did not go: " + errorText(e))
                 }
