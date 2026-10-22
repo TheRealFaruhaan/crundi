@@ -38,6 +38,13 @@ export function jobPreamble(schedule) {
     'To change what you do on the NEXT run, call the schedule_update MCP tool',
     `with id "${schedule.id}" and a new action.prompt. That is how you leave`,
     'notes for your future self.',
+    ...(schedule.when && schedule.when.mode === 'webhook' ? [
+      '',
+      'This job runs when its webhook is called (an alert, a CI call). Each run',
+      'starts with the request that called it. More calls may arrive while you',
+      'work; they come in as messages marked "Mid-run". Decide for each whether',
+      'it is the same issue you are already on or something new.',
+    ] : []),
     '',
   ].join('\n');
 }
@@ -52,10 +59,13 @@ export function jobPreamble(schedule) {
  */
 export async function runScheduledChat({
   schedule, claudeUi, notify = () => {}, settleMs = SETTLE_MS, maxRunMs = MAX_RUN_MS,
+  // A webhook run: the filled-in prompt with the request, and a hook to learn
+  // the chat's id as soon as it exists (so calls arriving mid-run reach it).
+  prompt: promptOverride = null, onStarted = null,
 }) {
   const a = schedule.action || {};
   const label = schedule.name || 'Scheduled chat';
-  const prompt = String(a.prompt || '').trim();
+  const prompt = String(promptOverride != null ? promptOverride : (a.prompt || '')).trim();
   if (!prompt) {
     // Reported, not silently returned: this runner is now the only thing that
     // says anything about a chat schedule's run.
@@ -91,6 +101,7 @@ export async function runScheduledChat({
   }
 
   const id = created.id;
+  try { onStarted && onStarted(id); } catch { /* non-fatal */ }
   const result = await watchToCompletion({ id, claudeUi, settleMs, maxRunMs, send: () => {
     // The preamble now rides in the system prompt, so the user turn is exactly
     // the prompt the schedule was given — which is also what the transcript

@@ -1049,6 +1049,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   };
   // Triggers: schedules, kanban cards, webhooks start runs by themselves.
   const factoryTriggers = createTriggerStore(config.dataDir);
+  // Scheduled chats started by a webhook; set by index.js (setScheduleHooks).
+  let scheduleHooks = null;
   const triggerDispatch = factoryRunner ? createTriggerDispatcher({
     store: factoryTriggers,
     startRun: (a) => factoryRunner.startRun(a),
@@ -2742,6 +2744,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
     }
 
+    // A scheduled chat's webhook (src/schedule-hooks.js). Outside the auth
+    // gate: the key or the signature is the credential.
+    {
+      const m = /^\/api\/schedule-hook\/([0-9a-f]{16})$/.exec(path);
+      if (m && req.method === 'POST') {
+        if (!scheduleHooks) return json(res, { ok: false, error: 'Not available yet.' }, 503);
+        const raw = await new Promise((resolve) => {
+          let b = ''; let over = false;
+          req.on('data', (c) => { if (over) return; b += c; if (b.length > 1_000_000) { over = true; resolve(null); } });
+          req.on('end', () => { if (!over) resolve(b); });
+          req.on('error', () => resolve(null));
+        });
+        if (raw === null) return json(res, { ok: false, error: 'Too large (1 MB at most).' }, 413);
+        let body;
+        try { body = raw ? JSON.parse(raw) : {}; } catch { body = { text: raw.slice(0, 200000) }; }
+        let r;
+        try {
+          r = await scheduleHooks.onWebhook(m[1], { raw, body, headers: req.headers, query: Object.fromEntries(url.searchParams), key: url.searchParams.get('key') || '', method: req.method });
+        } catch (err) { console.error('[schedule] webhook:', err.message); r = { ok: false, status: 500, error: 'It could not be handled.' }; }
+        if (r.ok) return json(res, { ok: true, ...(r.duplicate ? { duplicate: true } : {}), ...(r.skipped ? { skipped: true, reason: r.reason } : {}), ...(r.midRun ? { midRun: true } : {}), ...(r.started ? { started: true } : {}) });
+        return json(res, { ok: false, error: r.error }, r.status || 400);
+      }
+    }
+
     // A factory trigger's webhook. Outside the auth gate: the key is the credential.
     {
       const m = /^\/api\/factory-hook\/trigger\/(trg_[0-9a-f]{12})$/.exec(path);
@@ -3692,6 +3718,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'provisionChat': result = await provisionChatSession(body.id); break;
         case 'enable': result = schedule.setEnabled(body.id, body.enabled); break;
         case 'delete': result = schedule.deleteSchedule(body.id); break;
+        case 'rotateHook': result = schedule.rotateHookKey(body.id, body.which === 'secret' ? 'secret' : 'key'); break;
         default: return json(res, { ok: false, error: `Unknown schedule action: ${action}` }, 400);
       }
       if (result.ok) broadcastSSE('schedule', {});
@@ -6198,11 +6225,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           case 'schedule_get': r = ownsId(a.id) ? { ok: true, schedule: ownsId(a.id) } : { ok: false, error: 'Schedule not found in this project' }; break;
           case 'schedule_add':
             // project is forced to this project — agents can't target another.
-            r = schedule.addSchedule({ name: a.name, when: a.when, action: a.action, conditions: a.conditions, enabled: a.enabled, project: alias });
+            r = schedule.addSchedule({ name: a.name, when: a.when, action: a.action, conditions: a.conditions, enabled: a.enabled, webhook: a.webhook, project: alias });
             break;
           case 'schedule_update':
             if (!ownsId(a.id)) { r = { ok: false, error: 'Schedule not found in this project' }; break; }
-            r = schedule.updateSchedule(a.id, { name: a.name, when: a.when, action: a.action, conditions: a.conditions, enabled: a.enabled });
+            r = schedule.updateSchedule(a.id, { name: a.name, when: a.when, action: a.action, conditions: a.conditions, enabled: a.enabled, webhook: a.webhook });
             break;
           case 'schedule_set_enabled':
             r = ownsId(a.id) ? schedule.setEnabled(a.id, a.enabled !== false) : { ok: false, error: 'Schedule not found in this project' };
@@ -7048,6 +7075,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     /** Internal API key for MCP stdio servers. */
     getInternalApiKey() { return internalApiKey; },
+    /** index.js hands over the scheduled chats' webhooks once the scheduler is up. */
+    setScheduleHooks(h) { scheduleHooks = h; },
 
     /** Regenerate the HTML cache with an updated bot username (call after bot.init). */
     refreshHtml(botUsername) { htmlCache = getWebappHtml(botUsername, APP_VERSION); chatPageCache = ''; },

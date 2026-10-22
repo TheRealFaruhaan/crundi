@@ -1,0 +1,25 @@
+<div class="wna a-shw">
+  <div class="call c1"><b>POST</b> CPU at 97% on web-1</div>
+  <div class="chat"><div class="hd"><i></i>Alert watcher</div><div class="m m1">Looking into the CPU alert on web-1…</div><div class="m m2"><span>Mid-run</span> Disk at 95% on db-1</div><div class="m m3">That one is separate. Noted for after.</div></div>
+  <div class="call c2"><b>POST</b> Disk at 95% on db-1</div>
+  <style>
+    .a-shw{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-shw .call{position:absolute;left:36px;padding:7px 12px;border-radius:9px;border:1px solid var(--border);background:var(--bg-card);opacity:0}
+    .a-shw .call b{font-size:10.5px;color:var(--text-secondary);margin-right:6px}
+    .a-shw .c1{top:30px;animation:ashw-a 11s ease infinite}
+    .a-shw .c2{top:30px;left:auto;right:36px;animation:ashw-c 11s ease infinite}
+    .a-shw .chat{position:absolute;left:36px;right:36px;top:82px;bottom:30px;border:1px solid var(--border);border-radius:12px;background:var(--bg-card);padding:12px;display:flex;flex-direction:column;gap:8px}
+    .a-shw .hd{display:flex;align-items:center;gap:7px;font-weight:600}
+    .a-shw .hd i{width:8px;height:8px;border-radius:50%;background:var(--green)}
+    .a-shw .m{padding:8px 11px;border-radius:9px;background:var(--bg-primary);color:var(--text-secondary);opacity:0}
+    .a-shw .m span{font-size:10.5px;color:var(--yellow);margin-right:6px;font-weight:600}
+    .a-shw .m1{animation:ashw-b 11s ease infinite}
+    .a-shw .m2{animation:ashw-d 11s ease infinite}
+    .a-shw .m3{animation:ashw-e 11s ease infinite}
+    @keyframes ashw-a{0%{opacity:0}6%,92%{opacity:1}100%{opacity:0}}
+    @keyframes ashw-b{0%,12%{opacity:0}18%,92%{opacity:1}100%{opacity:0}}
+    @keyframes ashw-c{0%,35%{opacity:0}41%,92%{opacity:1}100%{opacity:0}}
+    @keyframes ashw-d{0%,45%{opacity:0}51%,92%{opacity:1}100%{opacity:0}}
+    @keyframes ashw-e{0%,62%{opacity:0}68%,92%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

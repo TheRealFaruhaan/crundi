@@ -16862,6 +16862,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         action: { kind: 'agent', agent: 'claude', mode: 'normal', model: '', effort: '', session: 'new', sessionId: '', prompt: '', command: '', serviceKey: '', op: 'start' },
         when: { mode: 'recurring', time: '09:00', date: '', days: [0, 1, 2, 3, 4, 5, 6] },
         conditions: [],
+        webhook: { auth: 'key', signatureHeader: 'x-crundi-signature', timestampHeader: '', idempotency: '' },
       };
     }
     // Resolve a schedule's time gate, migrating any legacy time-type condition.
@@ -16872,6 +16873,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       return null;
     }
     function schedWhenSummary(w) {
+      if (w && w.mode === 'webhook') return 'When its webhook is called';
       if (!w || !w.time) return 'no time set';
       if (w.mode === 'once') return (w.date || '(no date)') + ' ' + w.time;
       const days = Array.isArray(w.days) ? w.days : [];
@@ -16889,6 +16891,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // Ensure a when-gate exists (migrate any legacy time-type condition).
         scheduleDraft.when = Object.assign(defaultSchedule().when, effectiveWhen(scheduleDraft) || {});
         scheduleDraft.conditions = (scheduleDraft.conditions || []).filter(c => c.type !== 'time');
+        scheduleDraft.webhook = Object.assign(defaultSchedule().webhook, scheduleDraft.webhook || {});
       } else {
         scheduleDraft = defaultSchedule();
         scheduleDraft.project = currentProject || (projects[0] && projects[0].alias) || '';
@@ -16959,14 +16962,38 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
       // When (mandatory, singular): one-time date+time OR recurring days+time.
       h += '<label class="sm-label">When</label><div class="sm-seg">'
-        + schedSeg('whenmode', 'once', 'One-time', w.mode) + schedSeg('whenmode', 'recurring', 'Recurring', w.mode) + '</div>';
-      h += '<div class="sm-when">';
-      if (w.mode === 'once') {
-        h += '<input type="date" class="sm-input" id="sm-when-date" value="' + escHtml(w.date || '') + '">';
+        + schedSeg('whenmode', 'once', 'One-time', w.mode) + schedSeg('whenmode', 'recurring', 'Recurring', w.mode) + schedSeg('whenmode', 'webhook', 'When called', w.mode) + '</div>';
+      if (w.mode === 'webhook') {
+        // Called, not timed: a public URL for alerts (Grafana), CI and the like.
+        const wh = d.webhook || {};
+        h += '<p class="sm-note">Runs a background chat (or a service action) when its URL is called. Calls that arrive while it is still working go into the same chat, marked Mid-run, so it can tell whether it is the same issue. With One ongoing chat, every run comes back to the same conversation.</p>';
+        h += '<label class="sm-label">Security</label><div class="sm-seg">' + schedSeg('hookauth', 'key', 'Key in the URL', wh.auth || 'key') + schedSeg('hookauth', 'signature', 'Signed with a secret', wh.auth || 'key') + '</div>';
+        if (wh.auth === 'signature') {
+          h += '<div class="sm-row2"><div><label class="sm-label">Signature header</label><input class="sm-input" id="sm-hook-sigh" value="' + escHtml(wh.signatureHeader || 'x-crundi-signature') + '"></div>'
+            + '<div><label class="sm-label">Timestamp header <span class="sm-hint">(optional)</span></label><input class="sm-input" id="sm-hook-tsh" value="' + escHtml(wh.timestampHeader || '') + '" placeholder="X-Grafana-Alerting-Signature-Timestamp"></div></div>';
+        }
+        h += '<label class="sm-label">Idempotency key <span class="sm-hint">(a call with a key already seen is not processed again)</span></label>'
+          + '<input class="sm-input" id="sm-hook-idem" value="' + escHtml(wh.idempotency || '') + '" placeholder="{{payload.messageId}}">';
+        if (d.id && wh.key) {
+          const signed = wh.auth === 'signature';
+          const u = location.origin + '/api/schedule-hook/' + d.id + (signed ? '' : '?key=' + wh.key);
+          h += '<label class="sm-label">URL <span class="sm-hint">(POST, JSON body)</span></label><input class="sm-input" readonly onfocus="this.select()" value="' + escHtml(u) + '">';
+          if (signed) {
+            h += '<label class="sm-label">Secret <span class="sm-hint">(HMAC-SHA256 of the raw body' + (wh.timestampHeader ? ', or of time:body with the timestamp header, as Grafana does' : '') + '; hex or sha256=hex)</span></label><input class="sm-input" readonly onfocus="this.select()" value="' + escHtml(wh.secret || '') + '">';
+          }
+          h += '<p class="sm-note"><button class="kanban-btn" data-sched="rotate-hook" data-which="' + (signed ? 'secret' : 'key') + '" type="button">' + (signed ? 'New secret' : 'New key') + '</button></p>';
+        } else {
+          h += '<p class="sm-note">Save the schedule to get its URL.</p>';
+        }
       } else {
-        h += '<div class="sm-days">' + SCHED_DAYS.map((lbl, i) => '<button class="sm-day' + ((w.days || []).includes(i) ? ' on' : '') + '" data-day="' + i + '" type="button">' + lbl + '</button>').join('') + '</div>';
+        h += '<div class="sm-when">';
+        if (w.mode === 'once') {
+          h += '<input type="date" class="sm-input" id="sm-when-date" value="' + escHtml(w.date || '') + '">';
+        } else {
+          h += '<div class="sm-days">' + SCHED_DAYS.map((lbl, i) => '<button class="sm-day' + ((w.days || []).includes(i) ? ' on' : '') + '" data-day="' + i + '" type="button">' + lbl + '</button>').join('') + '</div>';
+        }
+        h += '<input type="time" class="sm-input" id="sm-when-time" value="' + escHtml(w.time || '09:00') + '"></div>';
       }
-      h += '<input type="time" class="sm-input" id="sm-when-time" value="' + escHtml(w.time || '09:00') + '"></div>';
 
       // Action: pick what to run.
       h += '<label class="sm-label">Action</label><div class="sm-seg">'
@@ -17011,7 +17038,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
                   + ' — this opens a chat, says hello, and keeps its id.'
                 : 'Save the schedule first, then create the conversation.') + '</p>';
         }
-        h += '<label class="sm-label">Prompt</label><textarea class="sm-input" id="sm-prompt" rows="3" placeholder="What should it do each time?">' + escHtml(a.prompt || '') + '</textarea>';
+        h += '<label class="sm-label">Prompt</label><textarea class="sm-input" id="sm-prompt" rows="3" placeholder="' + (w.mode === 'webhook' ? 'Look into this alert: {{payload.message}}' : 'What should it do each time?') + '">' + escHtml(a.prompt || '') + '</textarea>';
+        if (w.mode === 'webhook') h += '<p class="sm-note">Read the call with <code>{{payload.some.field}}</code> (arrays by index: <code>{{payload.alerts.0.labels.alertname}}</code>), <code>{{headers.name}}</code>, <code>{{date}}</code>. Anything a call does not have comes out empty and never stops it, and the chat always gets the full request as well.</p>';
         h += '<p class="sm-note">The job can rewrite this prompt for its next run with the <code>schedule_update</code> tool, so it can leave notes for itself.</p>';
       } else if (a.kind === 'command') {
         h += '<label class="sm-label">Command</label><input class="sm-input" id="sm-command" value="' + escHtml(a.command || '') + '" placeholder="e.g. npm run build">';
@@ -17048,6 +17076,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (val('sm-command') !== undefined) a.command = val('sm-command');
       if (val('sm-cwd') !== undefined) a.cwd = val('sm-cwd');
       if (val('sm-service') !== undefined) a.serviceKey = val('sm-service');
+      if (!scheduleDraft.webhook) scheduleDraft.webhook = defaultSchedule().webhook;
+      if (val('sm-hook-sigh') !== undefined) scheduleDraft.webhook.signatureHeader = val('sm-hook-sigh');
+      if (val('sm-hook-tsh') !== undefined) scheduleDraft.webhook.timestampHeader = val('sm-hook-tsh');
+      if (val('sm-hook-idem') !== undefined) scheduleDraft.webhook.idempotency = val('sm-hook-idem');
       card.querySelectorAll('.sm-cond').forEach(row => {
         const c = scheduleDraft.conditions[+row.dataset.ci]; if (!c) return;
         row.querySelectorAll('[data-f]').forEach(el => { c[el.dataset.f] = el.value; });
@@ -17098,7 +17130,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const d = scheduleDraft;
       if (!d.name.trim()) { toast('Give the schedule a name', 'error'); return; }
       if (!d.project) { toast('Pick a project', 'error'); return; }
-      if (!d.when.time) { toast('Set a time', 'error'); return; }
+      const hook = d.when.mode === 'webhook';
+      if (hook && d.action.kind !== 'chat' && d.action.kind !== 'service') { toast('A webhook can run a background chat or a service action', 'error'); return; }
+      if (!hook && !d.when.time) { toast('Set a time', 'error'); return; }
       if (d.when.mode === 'once' && !d.when.date) { toast('Pick a date for the one-time run', 'error'); return; }
       if (d.when.mode === 'recurring' && !(d.when.days || []).length) { toast('Pick at least one day', 'error'); return; }
       if (d.action.kind === 'agent' && !d.action.prompt.trim()) { toast('Agent needs a prompt', 'error'); return; }
@@ -17109,13 +17143,22 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // country, and "09:00" means nine o'clock HERE.
       let tz = '';
       try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { /* older browser */ }
-      const payload = { name: d.name, project: d.project, enabled: d.enabled, tz, action: d.action, when: d.when, conditions: d.conditions };
+      const payload = { name: d.name, project: d.project, enabled: d.enabled, tz, action: d.action, when: d.when, conditions: d.conditions, webhook: d.webhook };
       const body = d.id ? { action: 'update', id: d.id, schedule: payload } : { action: 'add', schedule: payload };
       try {
         const r = await apiFetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const res = await r.json();
         if (!res.ok) { toast('Save failed: ' + (res.error || 'unknown'), 'error'); return; }
-        closeSchedModal(); loadSchedules();
+        loadSchedules();
+        // A new webhook schedule stays open: its URL only exists now.
+        if (hook && !d.id && res.schedule) {
+          scheduleDraft.id = res.schedule.id;
+          scheduleDraft.webhook = Object.assign(defaultSchedule().webhook, res.schedule.webhook || {});
+          toast('Saved. Its URL is below.', 'success');
+          renderSchedModal();
+          return;
+        }
+        closeSchedModal();
       } catch (err) { toast('Error: ' + err.message, 'error'); }
     }
     async function schedPost(body) {
@@ -17153,6 +17196,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
             captureSchedForm();
             if (g === 'kind') scheduleDraft.action.kind = v;
             else if (g === 'whenmode') scheduleDraft.when.mode = v;
+            else if (g === 'hookauth') scheduleDraft.webhook.auth = v;
             else scheduleDraft.action[g] = v; // mode | session | op | agent
             renderSchedModal();
             return;
@@ -17162,6 +17206,18 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (act === 'close') closeSchedModal();
           else if (act === 'save') saveSchedule();
           else if (act === 'provision') provisionChatConversation(b);
+          else if (act === 'rotate-hook') {
+            const which = b.dataset.which;
+            if (!confirm(which === 'secret' ? 'Calls signed with the old secret stop working. Make a new one?' : 'The old URL stops working. Make a new key?')) return;
+            apiFetch('/api/schedules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'rotateHook', id: scheduleDraft.id, which }) })
+              .then(r => r.json()).then(res => {
+                if (!res.ok) { toast(res.error || 'Failed', 'error'); return; }
+                captureSchedForm();
+                scheduleDraft.webhook.key = res.schedule.webhook.key;
+                scheduleDraft.webhook.secret = res.schedule.webhook.secret;
+                renderSchedModal();
+              }).catch(err => toast(err.message, 'error'));
+          }
           else if (act === 'add-cond') {
             captureSchedForm();
             const t = b.dataset.type;

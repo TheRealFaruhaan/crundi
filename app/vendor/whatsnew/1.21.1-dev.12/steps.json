@@ -9,6 +9,14 @@
       "artTitle": "Webhook"
     },
     {
+      "id": "schedule-webhook",
+      "tag": "Schedules",
+      "title": "Background chats that start when called",
+      "body": "A background chat can now start when its URL is called instead of at a time: an alert from Grafana, a CI job. It is secured the same way as factory webhooks, the prompt reads the call with {{payload.message}}, and an idempotency key drops repeats. Calls that come in while it is still working go into the same chat, marked Mid-run. With One ongoing chat, every alert comes back to the same conversation, so it remembers the earlier ones.",
+      "art": "schedule-webhook.html",
+      "artTitle": "Schedule"
+    },
+    {
       "id": "factory-checkins",
       "tag": "Factories",
       "title": "A Manager that checks in and steps in",
