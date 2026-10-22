@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.components
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -123,7 +125,10 @@ fun CodeBlock(code: String, modifier: Modifier = Modifier, language: String? = n
         if (showHeader) {
             Row(Modifier.fillMaxWidth().padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(language.orEmpty(), style = CrundiType.Meta, modifier = Modifier.weight(1f))
-                CrundiIconButton("copy", { clipboard.setText(AnnotatedString(code)) }, contentDescription = "Copy", size = 14.dp, touch = 32.dp, tint = CrundiColors.TextMuted)
+                // Says it copied: the tick for a moment, as the web's copy button.
+                var copied by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                androidx.compose.runtime.LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1500); copied = false } }
+                CrundiIconButton(if (copied) "check" else "copy", { clipboard.setText(AnnotatedString(code)); copied = true }, contentDescription = "Copy", size = 14.dp, touch = 32.dp, tint = if (copied) CrundiColors.Green else CrundiColors.TextMuted)
             }
             CrundiDivider()
         }

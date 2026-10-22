@@ -284,7 +284,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
         )
         pathMenu?.let { p -> PathMenu(p, c.project.ifEmpty { ui.pane?.project.orEmpty() }, onOpen = { viewing = it }) { pathMenu = null } }
         viewing?.let { p -> mv.obitech.crundi.ui.workspace.files.FileViewDialog(p) { viewing = null } }
-        linkMenu?.let { u -> LinkMenu(u) { linkMenu = null } }
+        linkMenu?.let { u -> if (u.startsWith("code:")) CodeMenu(u.removePrefix("code:")) { linkMenu = null } else LinkMenu(u) { linkMenu = null } }
         ui.sheet?.let { s ->
             if (s is ChatSheet.Picture) ImageViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-image")); actions.sheet(null) }, onClose = { actions.sheet(null) })
             else if (s is ChatSheet.Video) VideoViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-video")) }, onClose = { actions.sheet(null) })
@@ -808,6 +808,22 @@ private fun LinkMenu(url: String, onDismiss: () -> Unit) {
             mv.obitech.crundi.ui.components.ListRow("Copy link", icon = "copy", onClick = {
                 clipboard.setText(androidx.compose.ui.text.AnnotatedString(url)); onDismiss()
                 android.widget.Toast.makeText(ctx, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
+            })
+        }
+    }
+}
+
+/** Code in Claude's text, tapped: copy it (the web shows a copy button by it). */
+@Composable
+private fun CodeMenu(code: String, onDismiss: () -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    mv.obitech.crundi.ui.components.CrundiDialog("Code", onDismiss = onDismiss, dismiss = null) {
+        Column {
+            Text(code, style = mv.obitech.crundi.ui.theme.CrundiType.Code.copy(color = CrundiColors.TextPrimary), maxLines = 6, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
+            mv.obitech.crundi.ui.components.ListRow("Copy", icon = "copy", onClick = {
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(code)); onDismiss()
+                android.widget.Toast.makeText(ctx, "Copied", android.widget.Toast.LENGTH_SHORT).show()
             })
         }
     }

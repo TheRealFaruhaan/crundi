@@ -138,6 +138,8 @@ object Markdown {
                     if (e > i) {
                         val code = src.substring(i + 1, e)
                         if (onPath != null && looksLikePath(code)) withLink(LinkAnnotation.Clickable("path:$code", PATH_STYLE) { onPath(code) }) { withStyle(InlineCodeStyle) { append(" " + code + " ") } }
+                        // Other code: copyable on a tap where a chat offers it (the web's copy button on a code span).
+                        else if (onLink != null) withLink(LinkAnnotation.Clickable("code:$code") { onLink("code:" + code) }) { withStyle(InlineCodeStyle) { append(" " + code + " ") } }
                         else withStyle(InlineCodeStyle) { append(" " + code + " ") }
                         i = e + 1
                     } else { append(c); i++ }
