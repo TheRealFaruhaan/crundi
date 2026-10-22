@@ -407,6 +407,7 @@ fun PanelPane(cell: WbCell?) {
     val project = currentPanelProject()
     val scope = rememberCoroutineScope()
     val key = cell?.key.orEmpty()
+    val workbench = mv.obitech.crundi.ui.workbench.LocalWorkbench.current
     var chosen by remember(key) { mutableStateOf(cell?.data?.get("widgetId")?.ifEmpty { null } ?: paneChoice(ctx).getString(key, null)) }
     val list = rememberPanelList(project)
     val id = chosen
@@ -418,10 +419,14 @@ fun PanelPane(cell: WbCell?) {
     PanelPicker(
         list.value, project, error,
         onPick = { w ->
-            chosen = w.id
-            if (key.isNotEmpty()) paneChoice(ctx).edit().putString(key, w.id).apply()
-            if (!w.open) scope.launch {
-                try { api?.widgets?.update(project, w.id, closed = false) } catch (e: ApiException) { error = "Could not open the panel: " + errorText(e) }
+            // As the web: the panel is placed in the workbench (opened if it was
+            // closed) and this chooser's place goes to its own pane. Without a
+            // workbench (a stand-alone screen) it simply shows here.
+            val wb = workbench
+            scope.launch {
+                try { api?.widgets?.update(project, w.id, slot = "cell", closed = false) } catch (e: ApiException) { error = "Could not open the panel: " + errorText(e); return@launch }
+                if (wb != null && key.isNotEmpty()) wb.swapPicker(key, w.id)
+                else { chosen = w.id; if (key.isNotEmpty()) paneChoice(ctx).edit().putString(key, w.id).apply() }
             }
         },
         onRetry = list::reload,

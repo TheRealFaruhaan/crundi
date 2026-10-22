@@ -1,5 +1,6 @@
 package mv.obitech.crundi.ui.workbench
 
+import mv.obitech.crundi.api.str
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
@@ -67,9 +68,43 @@ class WorkbenchController(
 
     private fun save() { project ?: return; store.setTree(project, tree); store.setCells(project, cells); store.setPending(project, pending) }
 
+    /**
+     * Panels Claude put in the workbench, or that were picked into a Panel pane
+     * (the server's "cell" place). Which exist is the server's knowledge, so
+     * they come from its list, not from what this phone saved (the web's
+     * widgetCellIds). Each is a pane of its own.
+     */
+    private var widgetCells by mutableStateOf<List<WbCell>>(emptyList())
+    private var lastState: ServerState? = null
+
+    fun setWidgets(list: List<mv.obitech.crundi.api.model.Widget>) {
+        widgetCells = list.filter { mv.obitech.crundi.ui.panels.placeOf(it) == "cell" }
+            .map { WbCell("widget-" + it.id, PaneKind.Panel, mapOf("widgetId" to it.id, "title" to it.title.ifEmpty { "Panel" })) }
+        sync(lastState)
+    }
+
+    /**
+     * A Panel pane's chooser picked [widgetId]: the chooser hands its place in
+     * the layout to that panel's own pane, as the web's applyWidgetPickSwaps.
+     */
+    fun swapPicker(pickerKey: String, widgetId: String) {
+        val key = "w:widget-$widgetId"
+        val leaf = tree.leafOf(pickerKey)
+        cells = cells.filter { it.key != pickerKey }
+        if (!widgetCells.any { it.key == key }) widgetCells = widgetCells + WbCell("widget-$widgetId", PaneKind.Panel, mapOf("widgetId" to widgetId, "title" to "Panel"))
+        grace[key] = System.currentTimeMillis()
+        tree = when {
+            tree.hasKey(key) -> tree.removeKey(pickerKey)
+            leaf != null -> tree.assign(leaf.id, key)
+            else -> tree.addKey(key)
+        }
+        save(); focused = key; reveal = key
+    }
+
     /** Every pane by key, as the frame draws it. */
     fun panes(): Map<String, PaneView> = buildMap {
         for (p in serverPanes) put("t:" + p.id, PaneView.ofPane(p))
+        for (c in widgetCells) put(c.key, PaneView.ofCell(c))
         for (c in cells) put(c.key, PaneView.ofCell(c))
         for (p in pending) put(p.key, PaneView.ofPending(p))
     }
@@ -78,12 +113,13 @@ class WorkbenchController(
 
     /** Follow the live state: the project's panes in their order, then launchers, then panels. */
     fun sync(state: ServerState?) {
-        if (state != null) loaded = true
+        if (state != null) { loaded = true; lastState = state }
         if (project == null || state == null) return
         serverPanes = state.terminals.filter { it.project.equals(project, true) }.sortedBy { it.order }
         val now = System.currentTimeMillis()
         grace.entries.removeAll { now - it.value > 20_000 || serverPanes.any { p -> "t:" + p.id == it.key } }
-        val keys = serverPanes.map { "t:" + it.id } + grace.keys + pending.map { it.key } + cells.map { it.key }
+        grace.entries.removeAll { e -> widgetCells.any { it.key == e.key } && e.key.startsWith("w:widget-") }
+        val keys = serverPanes.map { "t:" + it.id } + grace.keys + pending.map { it.key } + cells.map { it.key } + widgetCells.map { it.key }
         val next = tree.sync(keys)
         if (next != tree) { tree = next; save() }
         if (fontScales.isEmpty()) for (k in keys) store.fontScale(k).takeIf { it != 1f }?.let { fontScales[k] = it }
@@ -190,7 +226,14 @@ class WorkbenchController(
             PaneKind.Terminal -> act("Could not close the terminal") { api?.terminals?.close(v.paneId!!) }
             PaneKind.Parked -> act("Could not close it") { api?.terminals?.discard(v.paneId!!) }
             PaneKind.Pending -> { pending = pending.filter { it.key != v.key }; tree = tree.removeKey(v.key); save() }
-            else -> { cells = cells.filter { it.key != v.key }; tree = tree.removeKey(v.key); save() }
+            else -> {
+                // A server panel's pane: closing it closes the panel (it stays in the Panels tab).
+                v.cell?.data?.get("widgetId")?.takeIf { v.key.startsWith("w:widget-") }?.let { wid ->
+                    widgetCells = widgetCells.filter { it.key != v.key }
+                    act("Could not close the panel") { api?.widgets?.update(project ?: "", wid, closed = true) }
+                }
+                cells = cells.filter { it.key != v.key }; tree = tree.removeKey(v.key); save()
+            }
         }
         if (full == v.key) full = null
     }
@@ -251,5 +294,12 @@ fun rememberWorkbench(api: CrundiClient?, project: String?, store: WorkbenchStor
     val scope = rememberCoroutineScope()
     val wb = remember(api, project, store) { WorkbenchController(project, store, api, scope, host) }
     if (api != null) LaunchedEffect(wb) { api.events.state.collect { wb.sync(it) } }
+    // The project's panels, for the ones placed in the workbench; again on every panel change.
+    if (api != null && project != null) LaunchedEffect(wb) {
+        val p = project
+        suspend fun load() { runCatching { api.widgets.list(p) }.onSuccess { wb.setWidgets(it) } }
+        load()
+        api.events.changes("widget").collect { ev -> if (ev.data.str("kind") !in setOf("data", "store", "render")) load() }
+    }
     return wb
 }
