@@ -1129,6 +1129,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     },
     terminalState: (id) => agentStates.get(id) || 'idle',
     onChange: () => broadcastState(),
+    // Declared further down; only called from the tick, long after.
+    keepAwake: (id) => { try { return !!chatSchedule.hasPendingFor(id); } catch { return false; } },
   });
   panes.start();
 
@@ -1537,7 +1539,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // working -> idle is a turn ending. Edge-triggered off `prev` so a repeated
     // 'idle' report (hooks fire from independent processes) cannot fire twice.
     if (cur === 'idle' && pv === 'working' && term.project) {
-      chatSchedule.onTurnEnd(term.project);
+      chatSchedule.onTurnEnd(term.project, term.id);
     }
     // A scheduled job reports through its own runner (scheduled-chat.js), which
     // already sends Claude's last reply when the run ends. Pinging here too sent
@@ -1607,6 +1609,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // Deferred chat messages ("send this when the turn ends / the window resets").
   const chatSchedule = createChatSchedule({
     claudeUi,
+    panes,
     getLatestUsage: () => usage.getLatestStored(),
     // Declared above, so this is only ever called long after both exist.
     // While the warmer is on it owns the limit-reset trigger and pushes through
@@ -4119,8 +4122,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!alias) return json(res, { ok: false, error: 'A project is required' }, 400);
       return json(res, {
         ok: true,
-        items: chatSchedule.list(alias),
-        recent: chatSchedule.recent(alias),
+        items: chatSchedule.list(alias, String(url.searchParams.get('chat') || '')),
+        recent: chatSchedule.recent(alias, 10, String(url.searchParams.get('chat') || '')),
         // The limit-reset trigger is only offered alongside the limit warmer,
         // which is what reliably notices a rollover and opens the next window.
         limitWarmup: !!(limitWarmer.status && limitWarmer.status().enabled),
@@ -4139,7 +4142,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (wantsReset && !(limitWarmer.status && limitWarmer.status().enabled)) {
         return json(res, { ok: false, error: 'Turn on the limit warmer in Settings to schedule a message for the limit reset.' }, 400);
       }
-      const r = chatSchedule.add({ project: alias, text: body.text, trigger: body.trigger });
+      const r = chatSchedule.add({ project: alias, text: body.text, trigger: body.trigger, chatId: typeof body.chat === 'string' ? body.chat : '' });
       return json(res, r, r.ok ? 200 : 400);
     }
 

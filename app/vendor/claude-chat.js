@@ -3303,7 +3303,7 @@
     function loadSched() {
       if (!schedPanel || !project) return;
       var listEl = schedPanel.querySelector('.cc-sched-list');
-      apiFetch('/api/chat-schedule?project=' + encodeURIComponent(project))
+      apiFetch('/api/chat-schedule?project=' + encodeURIComponent(project) + (sessionId ? '&chat=' + encodeURIComponent(sessionId) : ''))
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (!schedPanel || !listEl) return;
@@ -3415,7 +3415,9 @@
       schedPanel.querySelector('.cc-sched-save').addEventListener('click', function () {
         var text = msg.value.trim();
         if (!text) { note.textContent = 'Write a message first.'; return; }
-        var payload = { project: project, text: text, trigger: { type: trig } };
+        // Bound to THIS chat: a project can have several, and the message must
+        // not land in whichever happens to be idle.
+        var payload = { project: project, text: text, trigger: { type: trig }, chat: sessionId || '' };
         if (trig === 'time') {
           if (!atEl.value) { note.textContent = 'Pick a time.'; return; }
           payload.trigger.at = new Date(atEl.value).toISOString();

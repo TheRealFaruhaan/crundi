@@ -10,7 +10,13 @@
  *   turn-end    — when the running turn finishes (or the next one, if idle)
  *   limit-reset — when the rolling 5-hour usage window rolls over
  *
- * Keyed by PROJECT, never by session id. Session ids are minted per process and
+ * Bound to the CHAT it was written in (since several chats can share a
+ * project): its chat id, and its Claude conversation id, which survives a
+ * restart and a relaunch. Delivered only into that chat; if it is closed or
+ * busy the message waits. Items from before carry no chat and keep the old
+ * rule below (any idle chat of the project).
+ *
+ * Keyed by PROJECT, never by session id alone. Session ids are minted per process and
  * do not survive a restart, so anything pinned to one is orphaned the moment
  * Crundi reopens — the same trap that stranded chat drafts. The project is the
  * identity that lasts, matching the stored transcript and the draft.
@@ -38,7 +44,11 @@ const MAX_ITEMS = 200;
 const MAX_TEXT = 20_000;
 export const TRIGGERS = ['time', 'turn-end', 'limit-reset'];
 
-export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = () => false } = {}) {
+/**
+ * @param {object} [o.panes]  parked panes ({ has(id), resume(id) }): a chat with a
+ *   message due is woken rather than left asleep with the message stuck.
+ */
+export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = () => false, panes = null } = {}) {
   const FILE = () => join(config.dataDir, 'chat-schedule.json');
   let items = [];
   let timer = null;
@@ -151,24 +161,32 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
     return { ...it, nextFireAt: nextFireAt(it) };
   }
 
-  function list(project) {
+  /** Is this item for that chat? (Unbound items show in every chat of the project.) */
+  function forChat(it, chatId) {
+    if (!chatId || !it.chat) return true;
+    if (it.chat.id === chatId) return true;
+    const conv = claudeUi && claudeUi.meta ? (claudeUi.meta(chatId) || {}).sessionId : '';
+    return !!(conv && it.chat.conversation && conv === it.chat.conversation);
+  }
+
+  function list(project, chatId = '') {
     const k = String(project || '').toLowerCase();
     return items
-      .filter(it => it.status === 'pending' && (!k || it.project === k))
+      .filter(it => it.status === 'pending' && (!k || it.project === k) && forChat(it, chatId))
       .map(decorate)
       .sort((a, b) => a.nextFireAt - b.nextFireAt);
   }
 
   /** Recently fired/failed items, newest first — so a send is not silent. */
-  function recent(project, limit = 10) {
+  function recent(project, limit = 10, chatId = '') {
     const k = String(project || '').toLowerCase();
     return items
-      .filter(it => it.status !== 'pending' && (!k || it.project === k))
+      .filter(it => it.status !== 'pending' && (!k || it.project === k) && forChat(it, chatId))
       .sort((a, b) => (b.firedAt || 0) - (a.firedAt || 0))
       .slice(0, limit);
   }
 
-  function add({ project, text, trigger } = {}) {
+  function add({ project, text, trigger, chatId = '' } = {}) {
     const k = String(project || '').toLowerCase();
     if (!k) return { ok: false, error: 'A project is required' };
     const body = String(text || '').trim();
@@ -184,8 +202,16 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
       at = new Date(at).toISOString();
     }
 
+    // The chat it belongs to: its id, and the conversation it holds (which
+    // outlives the id across restarts and relaunches).
+    let chat = null;
+    if (chatId && claudeUi && claudeUi.meta) {
+      const m = claudeUi.meta(chatId);
+      if (!m) return { ok: false, error: 'That chat is not open' };
+      chat = { id: String(chatId), conversation: m.sessionId || '', title: m.title || '' };
+    }
     const it = {
-      id: genId(), project: k, text: body.slice(0, MAX_TEXT),
+      id: genId(), project: k, text: body.slice(0, MAX_TEXT), ...(chat ? { chat } : {}),
       trigger: type === 'time' ? { type, at } : { type },
       status: 'pending', createdAt: Date.now(), firedAt: 0, error: '',
     };
@@ -212,16 +238,64 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
     return { ok: true };
   }
 
-  /** A live session for this project that can take a turn right now. */
-  function idleSessionFor(project) {
+  /**
+   * The live session this item may go to, if it can take a turn right now:
+   * its own chat (by id, else by conversation), never another one. Items with
+   * no chat (from before) go to any idle chat of the project.
+   */
+  function idleSessionFor(it) {
     if (!claudeUi) return null;
-    const mine = claudeUi.list().filter(s => s.project === project && s.status === 'running');
-    return mine.find(s => s.agentState === 'idle') || null;
+    const mine = claudeUi.list().filter(s => s.project === it.project && s.status === 'running');
+    if (!it.chat) return mine.find(s => s.agentState === 'idle') || null;
+    const own = mine.find(s => s.id === it.chat.id) || (it.chat.conversation ? mine.find(s => s.sessionId === it.chat.conversation) : null);
+    return own && own.agentState === 'idle' ? own : null;
+  }
+
+  // Chats being woken for a due message: id -> started at. Resuming takes a
+  // few seconds; this keeps one wake per chat while it does.
+  const waking = new Map();
+  const WAKE_RETRY_MS = 2 * 60_000;
+
+  /**
+   * The item's chat was put to sleep (parked for idleness or by a restart):
+   * resume it in place, and deliver once it is up. Its id may change on
+   * resume; the conversation does not, which is what the item follows.
+   */
+  function wake(it) {
+    if (!panes || !it.chat || !panes.has(it.chat.id)) return false;
+    const id = it.chat.id;
+    const at = waking.get(id);
+    if (at && Date.now() - at < WAKE_RETRY_MS) return true;
+    waking.set(id, Date.now());
+    // Saved at once: every tick re-reads the file (see refresh), and the
+    // woken mark is what lets a turn-end message go once the chat is back.
+    for (const x of items) if (x.status === 'pending' && x.chat && x.chat.id === id) x.woken = true;
+    save();
+    console.log(`[chat-schedule] waking a parked chat in "${it.project}" for a scheduled message`);
+    Promise.resolve(panes.resume(id)).then((r) => {
+      refresh();
+      for (const x of items) {
+        if (!x.chat || x.chat.id !== id) continue;
+        if (x.status === 'pending') x.woken = true;
+        if (r && r.ok && r.id && r.id !== id) x.chat.id = r.id;
+      }
+      if (!r || !r.ok) console.warn(`[chat-schedule] could not wake the chat: ${(r && r.error) || 'unknown'}`);
+      save();
+      // Give the resumed chat a moment to come up idle, then try.
+      setTimeout(() => { waking.delete(id); tick(); }, 5000);
+    }).catch((err) => { waking.delete(id); console.warn('[chat-schedule] wake failed:', err.message); });
+    return true;
+  }
+
+  /** Does this chat have a message still to come? Then it should not be put to sleep. */
+  function hasPendingFor(chatId) {
+    if (!chatId) return false;
+    return items.some(it => it.status === 'pending' && !!it.chat && forChat(it, chatId));
   }
 
   function deliver(it) {
-    const s = idleSessionFor(it.project);
-    if (!s) return false;   // nothing live and free — try again next tick
+    const s = idleSessionFor(it);
+    if (!s) { wake(it); return false; }   // asleep: wake it; busy: try again next tick
     const r = claudeUi.sendMessage(s.id, it.text);
     it.firedAt = Date.now();
     if (r && r.ok) {
@@ -303,6 +377,9 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
       let due = false;
       if (t === 'time') due = Date.parse(it.trigger.at) <= now;
       else if (t === 'limit-reset') due = rolled;
+      // A chat that is asleep has ended its turn: wake it and send. A chat
+      // woken for it comes back idle, so there is no turn end left to wait for.
+      else if (t === 'turn-end') due = !!it.woken || !!(it.chat && panes && panes.has(it.chat.id));
       if (!due) continue;
       if (deliver(it)) { changed = true; if (t === 'limit-reset') pendingReset = null; }
     }
@@ -369,13 +446,15 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
    * A session finished a turn. Anything waiting on turn-end for that project
    * goes now — this is the moment it was waiting for.
    */
-  function onTurnEnd(project) {
+  function onTurnEnd(project, chatId = '') {
     refresh();
     const k = String(project || '').toLowerCase();
     let changed = false;
     for (const it of items) {
       if (it.status !== 'pending' || it.project !== k) continue;
       if (it.trigger.type !== 'turn-end') continue;
+      // A chat's message waits for THAT chat's turn to end.
+      if (it.chat && chatId && !forChat(it, chatId)) continue;
       if (deliver(it)) changed = true;
       // One per turn end: a burst of queued turns would otherwise all land at
       // once, and the second could not be delivered anyway (the session is busy
@@ -396,5 +475,5 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
 
   start();
 
-  return { list, recent, add, remove, onTurnEnd, onLimitReset, hasPendingLimitReset, countPendingLimitReset, clearLimitReset, onChange, tick, stop, TRIGGERS };
+  return { list, recent, add, remove, onTurnEnd, hasPendingFor, onLimitReset, hasPendingLimitReset, countPendingLimitReset, clearLimitReset, onChange, tick, stop, TRIGGERS };
 }
