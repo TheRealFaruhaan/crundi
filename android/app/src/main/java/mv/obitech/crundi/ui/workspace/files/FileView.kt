@@ -1,5 +1,6 @@
 package mv.obitech.crundi.ui.workspace.files
 
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -208,7 +209,7 @@ fun fileImagePath(project: String, file: String) =
 
 /** One file, live. */
 @Composable
-fun FileViewRoute(path: String) {
+fun FileViewRoute(path: String, onClose: (() -> Unit)? = null) {
     val services = LocalAppServices.current
     val api = services.api
     val nav = LocalNavigator.current
@@ -237,7 +238,7 @@ fun FileViewRoute(path: String) {
     BackHandler(enabled = state.dirty) { leaving = true }
     FileViewScreen(
         state,
-        onBack = { if (state.dirty) leaving = true else nav.back() },
+        onBack = { if (state.dirty) leaving = true else (onClose ?: { nav.back() })() },
         onEdit = { (state.body as? FileBody.Text)?.let { state = state.copy(editing = true, draft = it.original) } },
         onDraft = { state = state.copy(draft = it) },
         onCancelEdit = { if (state.dirty) leaving = true else state = state.copy(editing = false) },
@@ -269,4 +270,18 @@ fun FileViewRoute(path: String) {
         confirm = "Discard changes", danger = true,
         onConfirm = { leaving = false; state = state.copy(editing = false, draft = "") },
     )
+}
+
+/**
+ * A file over the current screen, full screen, rather than a route of its
+ * own: opening a file from a chat or a workbench pane left the workbench
+ * behind (the chat closed and loaded again on the way back).
+ */
+@androidx.compose.runtime.Composable
+fun FileViewDialog(path: String, onClose: () -> Unit) {
+    androidx.compose.ui.window.Dialog(onClose, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().background(mv.obitech.crundi.ui.theme.CrundiColors.BgPrimary).safeDrawingPadding()) {
+            FileViewRoute(path, onClose)
+        }
+    }
 }

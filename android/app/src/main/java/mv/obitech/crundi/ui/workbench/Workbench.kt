@@ -118,20 +118,32 @@ fun WorkbenchScreen(
     // Full screen grows the pane from where it sits to the whole workbench,
     // and shrinks it back (no fade, no backdrop: that flashed black). Its
     // place in the layout stays empty while it is out.
+    // The pane covers the whole app frame (bars included) while it is out,
+    // so the bars are swapped out of sight underneath and the pane's grow is
+    // one smooth move; it is laid out once, only scale and position animate.
     var shownFull by remember { mutableStateOf<String?>(null) }
+    var fromRect by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }   // the slot, in window coordinates
     val fullProg = remember { androidx.compose.animation.core.Animatable(0f) }
     val leafRects = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
     var rootRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     LaunchedEffect(ui.full) {
         val want = ui.full?.takeIf { ui.panes[it] != null }
         if (want != null) {
-            if (shownFull != want) { shownFull = want; fullProg.snapTo(0f) }
+            if (shownFull != want) { fromRect = leafRects[want]; shownFull = want; fullProg.snapTo(0f) }
+            mv.obitech.crundi.ui.shell.FullScreen.pane = want
             fullProg.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 520f))
         } else if (shownFull != null) {
-            fullProg.animateTo(0f, androidx.compose.animation.core.tween(220))
+            // The bars come back underneath first; once the layout has settled,
+            // shrink into the slot where it now is.
+            val key = shownFull
+            mv.obitech.crundi.ui.shell.FullScreen.pane = null
+            androidx.compose.runtime.withFrameNanos { }; androidx.compose.runtime.withFrameNanos { }
+            fromRect = leafRects[key] ?: fromRect
+            fullProg.animateTo(0f, androidx.compose.animation.core.spring(dampingRatio = 0.95f, stiffness = 600f))
             shownFull = null
         }
     }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { mv.obitech.crundi.ui.shell.FullScreen.pane = null } }
     CompositionLocalProvider(LocalPaneSlot provides slot, LocalWorkbenchBorn provides bornAt, LocalShownFull provides shownFull, LocalLeafRects provides leafRects) {
     Box(modifier.fillMaxSize().background(CrundiColors.BgPrimary).onGloballyPositioned { rootRect = it.boundsInWindow() }) {
         when {
@@ -188,28 +200,26 @@ fun WorkbenchScreen(
         // Full screen: the pane moves (alive) into this layer, growing from
         // its own place; the shell slides its bars away meanwhile (FullScreen).
         val fullView = ui.full?.let { ui.panes[it] }
-        // The bars stay away until the pane has shrunk back: bringing them
-        // back meanwhile resized everything on every frame (it stuttered).
-        androidx.compose.runtime.DisposableEffect(shownFull) {
-            mv.obitech.crundi.ui.shell.FullScreen.pane = shownFull
-            onDispose { mv.obitech.crundi.ui.shell.FullScreen.pane = null }
-        }
         if (fullView != null) androidx.activity.compose.BackHandler { actions.full(fullView, false) }
         val shownView = shownFull?.let { ui.panes[it] }
         if (shownView != null) {
-            val from = leafRects[shownView.key]?.let { r -> r.translate(-rootRect.left, -rootRect.top) }
-            // Laid out once at full size; only scale and position move, so a
-            // chat is not laid out again on every frame (which stuttered).
+            val area = mv.obitech.crundi.ui.shell.FullScreen.area.takeIf { it.width > 0f } ?: rootRect
+            val from = fromRect ?: area
+            // Placed over the whole app frame (it may reach above this layer,
+            // over the bars), at the frame's size; drawn from the slot to it.
             Box(
-                Modifier.fillMaxSize().graphicsLayer {
+                Modifier.layout { m, c ->
+                    val w = area.width.toInt().coerceAtLeast(1); val h = area.height.toInt().coerceAtLeast(1)
+                    val p = m.measure(androidx.compose.ui.unit.Constraints.fixed(w, h))
+                    layout(c.maxWidth, c.maxHeight) { p.place((area.left - rootRect.left).toInt(), (area.top - rootRect.top).toInt()) }
+                }.graphicsLayer {
                     val t = fullProg.value
-                    val fw = size.width.coerceAtLeast(1f); val fh = size.height.coerceAtLeast(1f)
-                    val r = from ?: androidx.compose.ui.geometry.Rect(0f, 0f, fw, fh)
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
-                    scaleX = (r.width / fw) + (1f - r.width / fw) * t
-                    scaleY = (r.height / fh) + (1f - r.height / fh) * t
-                    translationX = r.left * (1f - t)
-                    translationY = r.top * (1f - t)
+                    val sx = from.width / area.width.coerceAtLeast(1f); val sy = from.height / area.height.coerceAtLeast(1f)
+                    scaleX = sx + (1f - sx) * t
+                    scaleY = sy + (1f - sy) * t
+                    translationX = (from.left - area.left) * (1f - t)
+                    translationY = (from.top - area.top) * (1f - t)
                     clip = true
                 },
             ) { LocalPaneSlot.current(shownView, if (fullView != null) 3 else 1) }

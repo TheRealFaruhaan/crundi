@@ -351,6 +351,9 @@ fun FilesRoute() {
     var dir by rememberSaveable(project) { mutableStateOf<String?>(null) }
     var state by remember(project) { mutableStateOf(FilesState(project = project, loading = true)) }
     var reload by remember { mutableIntStateOf(0) }
+    val inPane = mv.obitech.crundi.ui.workbench.LocalPane.current != null
+    var viewing by remember { mutableStateOf<String?>(null) }
+    viewing?.let { p -> FileViewDialog(p) { viewing = null } }
 
     LaunchedEffect(project, dir, reload) {
         if (project == null) return@LaunchedEffect
@@ -394,7 +397,10 @@ fun FilesRoute() {
         onAction = { a ->
             val p = project ?: return@FilesScreen
             when (a) {
-                is FileAction.Open -> if (a.item.isDir) { state = state.copy(query = ""); dir = a.item.path } else nav.to(WorkspaceRoutes.file(a.item.path))
+                // In a workbench pane a file opens over the workbench, which
+                // stays as it is (as a route it left the workbench, and the
+                // chats beside the pane loaded again on the way back).
+                is FileAction.Open -> if (a.item.isDir) { state = state.copy(query = ""); dir = a.item.path } else if (inPane) viewing = a.item.path else nav.to(WorkspaceRoutes.file(a.item.path))
                 is FileAction.Cut -> { state = state.copy(clip = FileClip(listOf(a.item.path), copy = false)); toast("Cut ${a.item.name}. Open a folder and paste.") }
                 is FileAction.Copy -> { state = state.copy(clip = FileClip(listOf(a.item.path), copy = true)); toast("Copied ${a.item.name}. Open a folder and paste.") }
                 is FileAction.CopyPath -> { clipboard.setText(AnnotatedString(a.item.path)); toast("Path copied") }
