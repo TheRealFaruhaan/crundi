@@ -122,11 +122,26 @@ fun ShellScaffold(
     content: @Composable () -> Unit,
 ) {
     BackHandler(enabled = drawerOpen) { onDrawer(false) }
+    // A pane full screen: the top bar and tabs slide away and the status bar
+    // goes, and the pane grows into the room (the workbench keeps it alive,
+    // so a chat does not load again).
+    val paneFull = FullScreen.pane != null
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.LaunchedEffect(paneFull) {
+        val window = (view.context as? android.app.Activity)?.window ?: return@LaunchedEffect
+        val ctl = androidx.core.view.WindowCompat.getInsetsController(window, view)
+        ctl.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (paneFull) ctl.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars()) else ctl.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+    }
     Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
-        if (showChrome) ShellTopBar(data, onMenu = { onDrawer(!drawerOpen) }, callbacks = callbacks)
+        androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.expandVertically() + fadeIn(), exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
+            ShellTopBar(data, onMenu = { onDrawer(!drawerOpen) }, callbacks = callbacks)
+        }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.fillMaxSize()) {
-                if (showChrome) AreaTabs(current, data, callbacks, addMenuOpen)
+                androidx.compose.animation.AnimatedVisibility(showChrome && !paneFull, enter = androidx.compose.animation.expandVertically() + fadeIn(), exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
+                    AreaTabs(current, data, callbacks, addMenuOpen)
+                }
                 Box(Modifier.fillMaxWidth().weight(1f)) { content() }
             }
             // The drawer and its dim overlay start under the top bar, as on the web.
@@ -538,4 +553,9 @@ private fun DashedButton(icon: String, label: String, onClick: () -> Unit) {
         CrundiIcon(icon, size = 15.dp, tint = CrundiColors.TextMuted)
         Text(label, style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
     }
+}
+
+/** Which workbench pane is full screen, if any: the shell hides its chrome for it. */
+object FullScreen {
+    var pane by androidx.compose.runtime.mutableStateOf<String?>(null)
 }

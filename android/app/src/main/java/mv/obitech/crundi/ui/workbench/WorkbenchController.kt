@@ -58,7 +58,10 @@ class WorkbenchController(
     /** Bumped to reload a panel (the header's Refresh). */
     val refreshes = mutableStateMapOf<String, Int>()
 
-    private var serverPanes: List<mv.obitech.crundi.api.model.Pane> = emptyList()
+    // State, so a pane changing on the server (put to sleep, resumed) redraws the
+    // workbench by itself; as a plain field it showed only after something else
+    // changed, e.g. pressing Resume a second time.
+    private var serverPanes by mutableStateOf<List<mv.obitech.crundi.api.model.Pane>>(emptyList())
     /** Panes just made here, kept in the layout until the server lists them. */
     private val grace = HashMap<String, Long>()
 

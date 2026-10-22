@@ -1,5 +1,7 @@
 package mv.obitech.crundi.ui.browser
 
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.runtime.LaunchedEffect
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
@@ -393,6 +395,8 @@ fun LiveBrowser(id: String, modifier: Modifier = Modifier, startUrl: String? = n
     DisposableEffect(id) { onDispose { holder.removeAllViews(); web.stopLoading(); web.destroy() } }
     var lastUa by remember { mutableStateOf<String?>(null) }
     val pane = LocalPane.current
+    // The pane's text size (its menu's A- / A+), as text zoom.
+    LaunchedEffect(pane?.fontScale) { web.settings.textZoom = ((pane?.fontScale ?: 1f) * 100).toInt().coerceIn(50, 300) }
     BackHandler(enabled = ui.canBack && (pane == null || pane.full)) { web.goBack() }
     BrowserScreen(
         ui,
@@ -406,7 +410,14 @@ fun LiveBrowser(id: String, modifier: Modifier = Modifier, startUrl: String? = n
     ) { dev ->
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val density = LocalDensity.current
-            val (scale, left, top) = brzFit(dev, maxWidth.value, maxHeight.value)
+            // The keyboard does not shrink an emulated device: it covers the
+            // bottom of it, as on a real phone. Fitting the device to the
+            // smaller stage left the page at its old zoom, cut off.
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            val imeOpen = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+            var stageH by remember { mutableStateOf(maxHeight.value) }
+            if (!imeOpen) stageH = maxHeight.value
+            val (scale, left, top) = brzFit(dev, maxWidth.value, if (imeOpen && !dev.responsive) maxOf(stageH, maxHeight.value) else maxHeight.value)
             // A device's own user agent; the phone's own for Responsive and the desktops without one.
             val ua = dev.ua.ifEmpty { null }
             if (ua != lastUa) {

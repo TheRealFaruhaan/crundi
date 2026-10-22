@@ -216,6 +216,8 @@ fun LogsScreen(state: LogsState, onCopy: () -> Unit = {}, onCloseNote: () -> Uni
             is Load.Ready -> if (l.value.isEmpty()) EmptyState("file-text", "No log lines yet", body = "Lines appear here as the server writes them.") else {
                 val list = rememberLazyListState()
                 LaunchedEffect(l.value.size) { list.scrollToItem(maxOf(0, l.value.size - 1)) }
+                // Selectable, to copy a few lines (Copy in the bar takes them all).
+                androidx.compose.foundation.text.selection.SelectionContainer {
                 LazyColumn(Modifier.fillMaxSize().background(CrundiColors.BgPrimary), state = list, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
                     items(l.value) { line ->
                         Text(
@@ -227,6 +229,7 @@ fun LogsScreen(state: LogsState, onCopy: () -> Unit = {}, onCloseNote: () -> Uni
                             }),
                         )
                     }
+                }
                 }
             }
         }

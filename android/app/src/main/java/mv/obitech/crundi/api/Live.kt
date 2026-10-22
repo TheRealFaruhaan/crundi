@@ -100,7 +100,7 @@ class LiveEvents internal constructor(private val transport: Transport, scope: C
                 coroutineScope {
                     val stream = launch {
                         transport.events().collect { f ->
-                            if (_status.value != LiveStatus.Connected) { _status.value = LiveStatus.Connected; failures = 0; _failure.value = null }
+                            if (_status.value != LiveStatus.Connected) { _status.value = LiveStatus.Connected; failures = 0; _failure.value = null; if (_usage.value == null) storedUsage() }
                             dispatch(f)
                         }
                     }
@@ -136,10 +136,27 @@ class LiveEvents internal constructor(private val transport: Transport, scope: C
         val obj = data as? JsonObject ?: JsonObject(emptyMap())
         when (f.event) {
             "state" -> runCatching { CrundiJson.decodeFromJsonElement<ServerState>(obj) }.getOrNull()?.let { _state.value = it }
-            "usage" -> runCatching { CrundiJson.decodeFromJsonElement<Usage>(obj) }.getOrNull()?.takeIf { it.ok }?.let { _usage.value = it }
+            "usage" -> {
+                val u = runCatching { CrundiJson.decodeFromJsonElement<Usage>(obj) }.getOrNull()
+                if (u != null && u.ok) _usage.value = u
+                // A live fetch the server could not make (the account's usage
+                // is rate limited, often when two servers share it): the last
+                // stored reading, as the web page shows, rather than nothing.
+                else if (_usage.value == null) storedUsage()
+            }
             "approvals" -> runCatching { CrundiJson.decodeFromJsonElement<Approvals>(obj) }.getOrNull()?.let { _approvals.value = it }
             "secret-requests" -> _secretRequests.value = runCatching { CrundiJson.decodeFromJsonElement<List<SecretRequest>>(obj["requests"] ?: JsonArray(emptyList())) }.getOrDefault(emptyList())
             else -> _changes.tryEmit(ServerEvent(f.event, obj))
+        }
+    }
+
+    private val usageScope = scope
+    private fun storedUsage() {
+        usageScope.launch {
+            runCatching {
+                val r = transport.exchange(ApiRequest("GET", "/api/usage/latest"))
+                if (r.status in 200..299) CrundiJson.decodeFromString<Usage>(r.text).takeIf { it.ok && (it.week != null || it.fiveHour != null) }?.let { if (_usage.value == null) _usage.value = it }
+            }
         }
     }
 

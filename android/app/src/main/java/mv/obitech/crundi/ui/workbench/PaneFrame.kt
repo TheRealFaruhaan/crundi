@@ -222,7 +222,8 @@ fun PaneMenu(v: PaneView, actions: PaneActions, open: Boolean, onDismiss: () -> 
 fun PaneMenuBody(v: PaneView, actions: PaneActions, onDismiss: () -> Unit = {}) {
     Column(Modifier.widthIn(min = 220.dp).padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         val live = v.kind == PaneKind.Chat || v.kind == PaneKind.Terminal
-        if (live || v.kind == PaneKind.Notes) {
+        // The browser too: its text grows and shrinks as the chat's does.
+        if (live || v.kind == PaneKind.Notes || v.kind == PaneKind.Browser) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
                 Text("Text size", style = CrundiType.Small, modifier = Modifier.weight(1f))
                 HeadButton(null, "Smaller text", text = "A-") { actions.font(v, -1) }
