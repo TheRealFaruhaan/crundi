@@ -132,7 +132,7 @@ fun FileViewScreen(
             is FileBody.Failed -> ErrorState(b.message, onRetry = onRetry)
             is FileBody.TooBig -> EmptyState("file", "This file cannot be shown here", body = b.reason, action = "Download", onAction = onDownload)
             is FileBody.Image -> ZoomImage(b.serverPath, state.name)
-            is FileBody.Text -> if (state.editing) Editor(state.draft, onDraft) else CodeView(b.original, FileIcons.language(state.name))
+            is FileBody.Text -> if (state.editing) Editor(state.draft, onDraft, FileIcons.language(state.name)) else CodeView(b.original, FileIcons.language(state.name))
         }
     }
 }
@@ -156,15 +156,37 @@ private fun CodeView(text: String, language: String?) {
     }
 }
 
+/**
+ * Editing looks like reading: the same colours and line numbers as the
+ * viewer, kept up as you type (the desktop's editor is coloured too). Very
+ * large files are left plain, since colouring them on every key would lag.
+ */
 @Composable
-private fun Editor(draft: String, onDraft: (String) -> Unit) {
-    BasicTextField(
-        draft, onDraft,
-        textStyle = CrundiType.Code,
-        cursorBrush = SolidColor(CrundiColors.AccentHover),
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(12.dp),
-    )
+private fun Editor(draft: String, onDraft: (String) -> Unit, language: String?) {
+    val colour = draft.length < 200_000
+    val transform = remember(language, colour) {
+        androidx.compose.ui.text.input.VisualTransformation { t ->
+            androidx.compose.ui.text.input.TransformedText(
+                if (colour) Highlighter.highlight(t.text, language) else t,
+                androidx.compose.ui.text.input.OffsetMapping.Identity,
+            )
+        }
+    }
+    val lines = remember(draft) { draft.count { it == '\n' } + 1 }
+    val digits = lines.toString().length
+    val numberStyle = CrundiType.Code.copy(color = CrundiColors.TextMuted, textAlign = TextAlign.End)
+    Row(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
+        // One line number per line of the text; lines do not wrap, so they stay level.
+        Text((1..lines).joinToString("\n"), style = numberStyle, modifier = Modifier.width((digits * 8 + 14).dp).padding(end = 10.dp))
+        BasicTextField(
+            draft, onDraft,
+            textStyle = CrundiType.Code.copy(color = CrundiColors.TextPrimary),
+            cursorBrush = SolidColor(CrundiColors.AccentHover),
+            visualTransformation = transform,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
+            modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(end = 16.dp),
+        )
+    }
 }
 
 @Composable

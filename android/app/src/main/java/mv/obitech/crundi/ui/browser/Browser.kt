@@ -300,6 +300,35 @@ private class BrowserMemory(ctx: Context, private val id: String) {
         set(v) { prefs.edit().putInt("device.$id", v).apply() }
 }
 
+/**
+ * The CSS width an emulated device gives its page (0 = the view's own, for
+ * Responsive), kept on the WebView so its client can re-apply it on every
+ * page. See [applyViewport].
+ */
+private val emulatedWidth = java.util.WeakHashMap<WebView, Int>()
+
+/**
+ * Give the page the device's width. The WebView is laid out at the size it
+ * is shown at (scaled to the stage), and the page is told the device's
+ * width through its viewport tag, so the browser zooms it to fit: the page
+ * lays out at e.g. 393 wide and its screen is exactly the device frame.
+ * (Shrinking a device-sized WebView with a view scale instead left part of it
+ * outside the window, and Android then took only the visible part as the
+ * screen: fixed bars sat mid-page over an empty, scrollable band.)
+ */
+private fun applyViewport(web: WebView) {
+    val w = emulatedWidth[web] ?: 0
+    val content = if (w > 0) "width=$w" else ""
+    web.evaluateJavascript(
+        "(function(c){var m=document.querySelector('meta[name=viewport]');" +
+            "if(!c){if(m&&m.dataset.crundiWas!==undefined){m.setAttribute('content',m.dataset.crundiWas);delete m.dataset.crundiWas;}return;}" +
+            "if(!m){m=document.createElement('meta');m.name='viewport';(document.head||document.documentElement).appendChild(m);m.dataset.crundiWas='';}" +
+            "else if(m.dataset.crundiWas===undefined){m.dataset.crundiWas=m.getAttribute('content')||'';}" +
+            "m.setAttribute('content',c);})('" + content + "')",
+        null,
+    )
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 private fun newWebView(ctx: Context, onState: (WebView, String?, Boolean, String?) -> Unit): WebView = WebView(ctx).apply {
     settings.apply {
@@ -322,7 +351,8 @@ private fun newWebView(ctx: Context, onState: (WebView, String?, Boolean, String
             return s != "http" && s != "https" && s != "about"   // intent:, file:, mailto: ... stay out
         }
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) = onState(view, url, true, null)
-        override fun onPageFinished(view: WebView, url: String?) = onState(view, url, false, null)
+        override fun onPageCommitVisible(view: WebView, url: String?) { applyViewport(view) }
+        override fun onPageFinished(view: WebView, url: String?) { applyViewport(view); onState(view, url, false, null) }
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) = onState(view, url, view.progress < 100, null)
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
             if (request.isForMainFrame) onState(view, request.url.toString(), false, "Could not open this page: " + error.description)
@@ -385,12 +415,15 @@ fun LiveBrowser(id: String, modifier: Modifier = Modifier, startUrl: String? = n
                 modifier = Modifier.fillMaxSize(),
                 update = {
                     val px = density.density
+                    // Laid out at the size it is shown at; the page gets the
+                    // device's width from applyViewport, not from a view scale.
                     val lp = if (dev.responsive) FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    else FrameLayout.LayoutParams((dev.w * px).toInt(), (dev.h * px).toInt())
+                    else FrameLayout.LayoutParams((dev.w * scale * px).toInt(), (dev.h * scale * px).toInt())
                     web.layoutParams = lp
-                    web.pivotX = 0f; web.pivotY = 0f
-                    web.scaleX = scale; web.scaleY = scale
+                    web.scaleX = 1f; web.scaleY = 1f
                     web.translationX = left * px; web.translationY = top * px
+                    val want = if (dev.responsive) 0 else dev.w.toInt()
+                    if (emulatedWidth[web] != want) { emulatedWidth[web] = want; applyViewport(web) }
                 },
             )
         }

@@ -1,5 +1,13 @@
 package mv.obitech.crundi.ui.workspace.files
 
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -99,6 +107,8 @@ sealed interface FileAction {
     data class CopyPath(val item: FileItem) : FileAction
     data class Download(val item: FileItem) : FileAction
     data class Delete(val item: FileItem) : FileAction
+    /** Dragged onto a folder and chosen there (the web's filesDropMenu). */
+    data class Drop(val item: FileItem, val dir: String, val copy: Boolean) : FileAction
 }
 
 /** The Files tab: search, the path, the folder, and a menu on each row. */
@@ -116,6 +126,28 @@ fun FilesScreen(
 ) {
     var menu by remember { mutableStateOf(menuFor) }
     var deleting by remember { mutableStateOf<FileItem?>(null) }
+    // Hold a row and drag it onto a folder, as on the desktop. Folder rows
+    // say where they are; the held row follows the finger as a ghost.
+    val folders = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
+    var dragging by remember { mutableStateOf<FileItem?>(null) }
+    var finger by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var listTopLeft by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var dropOn by remember { mutableStateOf<Pair<FileItem, FileItem>?>(null) }   // item, folder
+    fun folderAt(at: androidx.compose.ui.geometry.Offset): String? = folders.entries.firstOrNull { it.value.contains(at) }?.key
+    val drag = FileDrag(
+        onStart = { item, at -> dragging = item; finger = at },
+        onMove = { at -> finger = at },
+        onEnd = { item, drop ->
+            val target = folderAt(finger)
+            dragging = null
+            if (drop && target != null && target != item.path) {
+                val f = state.items.firstOrNull { it.path == target } ?: state.folder?.parent?.takeIf { it == target }?.let { FileItem("..", it, true) }
+                if (f != null) dropOn = item to f
+            }
+        },
+        onHold = { item -> menu = item },
+        folders = folders,
+    )
     Column(modifier.fillMaxSize().background(CrundiColors.BgPrimary)) {
         if (state.project == null) {
             EmptyState("folder", "Pick a project", body = "Files belong to a project. Choose one from the menu to browse its folder.")
@@ -146,13 +178,30 @@ fun FilesScreen(
             state.loading && state.folder == null -> LoadingState(text = "Loading files")
             state.query.isNotBlank() && state.search != null && state.items.isEmpty() -> EmptyState("search", "No matches", body = "Gitignored files are not searched. Try part of the name.")
             state.query.isBlank() && state.items.isEmpty() && state.folder != null -> EmptyState("folder", "This folder is empty", body = "Upload a file to put it here.", action = "Upload", onAction = onUpload)
-            else -> LazyColumn(Modifier.fillMaxSize()) {
+            else -> Box(Modifier.fillMaxSize().androidx_onPlaced { listTopLeft = it }) {
+              LazyColumn(Modifier.fillMaxSize()) {
                 if (state.query.isBlank() && state.folder?.parent != null && state.folder.path != state.folder.root) item(key = "..") {
-                    FileRow(FileItem("..", state.folder.parent, true), cut = false, onOpen = onUp, onMore = null)
+                    FileRow(FileItem("..", state.folder.parent, true), cut = false, onOpen = onUp, onMore = null, drag = drag, target = dragging != null && folderAt(finger) == state.folder.parent, draggable = false)
                 }
                 items(state.items, key = { it.path }) { item ->
-                    FileRow(item, cut = state.clip?.copy == false && item.path in state.clip.paths, onOpen = { onAction(FileAction.Open(item)) }, onMore = { menu = item })
+                    FileRow(
+                        item, cut = state.clip?.copy == false && item.path in state.clip.paths, onOpen = { onAction(FileAction.Open(item)) }, onMore = { menu = item },
+                        drag = drag, target = dragging != null && item.isDir && item.path != dragging?.path && folderAt(finger) == item.path, lifted = dragging?.path == item.path,
+                    )
                 }
+              }
+              // The held row, under the finger.
+              dragging?.let { d ->
+                  Row(
+                      Modifier.offset { androidx.compose.ui.unit.IntOffset((finger.x - listTopLeft.x - 40.dp.toPx()).toInt(), (finger.y - listTopLeft.y - 28.dp.toPx()).toInt()) }
+                          .shadow(8.dp, Dimens.ShapeSm).background(CrundiColors.BgTertiary, Dimens.ShapeSm).border(Dimens.Hairline, CrundiColors.Accent, Dimens.ShapeSm)
+                          .padding(horizontal = 12.dp, vertical = 8.dp),
+                      verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                  ) {
+                      FileMark(d.name, d.isDir)
+                      Text(d.name, style = CrundiType.Code, maxLines = 1)
+                  }
+              }
             }
         }
     }
@@ -160,6 +209,15 @@ fun FilesScreen(
         FileMenu(item, state.clip, onDismiss = { menu = null }) { a ->
             menu = null
             if (a is FileAction.Delete) deleting = a.item else onAction(a)
+        }
+    }
+    dropOn?.let { (item, folder) ->
+        val name = if (folder.name == "..") "the folder above" else "\u201c${folder.name}\u201d"
+        CrundiDialog(item.name, onDismiss = { dropOn = null }, dismiss = "Cancel") {
+            Column {
+                ListRow("Move to $name", icon = "scissors", onClick = { dropOn = null; onAction(FileAction.Drop(item, folder.path, copy = false)) })
+                ListRow("Copy to $name", icon = "copy", onClick = { dropOn = null; onAction(FileAction.Drop(item, folder.path, copy = true)) })
+            }
         }
     }
     deleting?.let { item ->
@@ -196,10 +254,41 @@ private fun Breadcrumb(state: FilesState, onFolder: (String?) -> Unit, onUp: () 
     }
 }
 
+/** What a row needs to be held and dragged, and to take a drop if it is a folder. */
+class FileDrag(
+    val onStart: (FileItem, androidx.compose.ui.geometry.Offset) -> Unit,
+    val onMove: (androidx.compose.ui.geometry.Offset) -> Unit,
+    /** Let go: [drop] false when it was a hold without a drag, or was cancelled. */
+    val onEnd: (FileItem, Boolean) -> Unit,
+    /** Held and let go without moving: the row's menu, as a long press elsewhere. */
+    val onHold: (FileItem) -> Unit,
+    val folders: MutableMap<String, androidx.compose.ui.geometry.Rect>,
+)
+
+private fun Modifier.androidx_onPlaced(at: (androidx.compose.ui.geometry.Offset) -> Unit) =
+    this.then(Modifier.onGloballyPositioned { at(it.positionInWindow()) })
+
 @Composable
-private fun FileRow(item: FileItem, cut: Boolean, onOpen: () -> Unit, onMore: (() -> Unit)?) {
+private fun FileRow(item: FileItem, cut: Boolean, onOpen: () -> Unit, onMore: (() -> Unit)?, drag: FileDrag? = null, target: Boolean = false, lifted: Boolean = false, draggable: Boolean = true) {
+    var origin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var moved by remember { mutableStateOf(false) }
+    val dragMod = if (drag == null) Modifier else Modifier
+        .onGloballyPositioned { c ->
+            origin = c.positionInWindow()
+            if (item.isDir) drag.folders[item.path] = c.boundsInWindow() else drag.folders.remove(item.path)
+        }
+        .then(if (!draggable) Modifier else Modifier.pointerInput(item.path) {
+            detectDragGesturesAfterLongPress(
+                onDragStart = { at -> moved = false; drag.onStart(item, origin + at) },
+                onDrag = { c, d -> c.consume(); if (d.getDistance() > 0f) moved = true; drag.onMove(origin + c.position) },
+                onDragEnd = { if (moved) drag.onEnd(item, true) else { drag.onEnd(item, false); drag.onHold(item) } },
+                onDragCancel = { drag.onEnd(item, false) },
+            )
+        })
     Row(
-        Modifier.fillMaxWidth().alpha(if (cut) 0.45f else 1f).clickable(onClick = onOpen).padding(start = 12.dp, end = 0.dp).height(Dimens.Touch),
+        Modifier.fillMaxWidth().then(dragMod).alpha(if (cut || lifted) 0.45f else 1f)
+            .background(if (target) CrundiColors.AccentDim else androidx.compose.ui.graphics.Color.Transparent)
+            .clickable(onClick = onOpen).padding(start = 12.dp, end = 0.dp).height(Dimens.Touch),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -318,6 +407,20 @@ fun FilesRoute() {
                             }
                             .onFailure { toast((if (clip.copy) "Copy" else "Move") + " failed: " + errorText(it)) }
                     }
+                }
+                is FileAction.Drop -> scope.launch {
+                    runCatching { api.files.transfer(p, listOf(a.item.path), a.dir, copy = a.copy) }
+                        .onSuccess { r ->
+                            toast(
+                                when {
+                                    r.failed.isNotEmpty() -> "${a.item.name} could not be ${if (a.copy) "copied" else "moved"}: ${r.failed.first().error}"
+                                    r.done.any { it.renamed } -> "${if (a.copy) "Copied" else "Moved"} ${a.item.name} (renamed: that name was taken)"
+                                    else -> "${if (a.copy) "Copied" else "Moved"} ${a.item.name}"
+                                },
+                            )
+                            reload++
+                        }
+                        .onFailure { toast((if (a.copy) "Copy" else "Move") + " failed: " + errorText(it)) }
                 }
                 is FileAction.Download -> scope.launch {
                     state = state.copy(transfer = Transfer("Downloading ${a.item.name}", 0, a.item.size))
