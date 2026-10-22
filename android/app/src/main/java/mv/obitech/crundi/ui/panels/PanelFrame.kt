@@ -100,6 +100,9 @@ internal class CallLimiter(private val max: Int = 40, private val windowMs: Long
 /** http(s) only: a panel must not open javascript:, data: or intent: links. */
 internal fun safeLink(url: String): Boolean = Regex("^https?://", RegexOption.IGNORE_CASE).containsMatchIn(url.trim())
 
+/** Where the host page says it is from: a name that can never resolve (RFC 2606 .invalid). */
+internal const val HOST_ORIGIN = "https://panel.crundi.invalid"
+
 /** The host page: a sandboxed frame and a relay between it and the app's port. */
 internal const val HOST_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden}iframe{border:0;width:100%;height:100%;display:block;background:transparent}</style></head>
@@ -151,7 +154,11 @@ internal class FrameHost(context: Context, private val onMessage: (JsonObject) -
             }
             override fun onPageFinished(view: WebView, url: String?) { connect() }
         }
-        web.loadDataWithBaseURL(null, HOST_PAGE, "text/html", "utf-8", null)
+        // A real https origin (never fetched: the page is given here, and every
+        // request is refused above). With a null base the page's origin is
+        // opaque, and Android's message port did not reach it: the panel's
+        // document never arrived and the pane stayed blank.
+        web.loadDataWithBaseURL(HOST_ORIGIN, HOST_PAGE, "text/html", "utf-8", null)
     }
 
     private fun connect() {
@@ -163,7 +170,7 @@ internal class FrameHost(context: Context, private val onMessage: (JsonObject) -
                 onMessage(obj)
             }
         }, Handler(Looper.getMainLooper()))
-        web.postWebMessage(WebMessage("crundi-port", arrayOf(theirs)), Uri.parse("*"))
+        web.postWebMessage(WebMessage("crundi-port", arrayOf(theirs)), Uri.parse(HOST_ORIGIN))
         port = mine
         pending.forEach { mine.postMessage(WebMessage(it)) }
         pending.clear()
@@ -224,8 +231,10 @@ fun PanelFrame(
     var heightPx by remember(project, id) { mutableIntStateOf(0) }
     var size by remember { mutableStateOf(0 to 0) }
 
-    val state = remember(project, id) { FrameState() }
-    val fh = remember(project, id) {
+    // Retry builds the frame again from nothing (a new page and port).
+    var retries by remember(project, id) { mutableIntStateOf(0) }
+    val state = remember(project, id, retries) { FrameState() }
+    val fh = remember(project, id, retries) {
         lateinit var h: FrameHost
         h = FrameHost(ctx) { m -> state.onMessage(m, h, api, project, id, frame, chip, autoHeight, scope, host::openExternal, ctx, { size }) { heightPx = it } }
         h
@@ -268,8 +277,21 @@ fun PanelFrame(
         fh.send(buildJsonObject { put("t", "context"); put("context", frameContext(frame, size.first, size.second)) })
     }
 
+    // A panel that has not said it is ready after a while: say so, with Retry,
+    // rather than leave an empty pane.
+    var stalled by remember(project, id) { mutableStateOf(false) }
+    LaunchedEffect(fh, reloads, doc) {
+        stalled = false
+        if (doc == null) return@LaunchedEffect
+        delay(8000)
+        if (!state.started && !state.destroyed) stalled = true
+    }
     Column(modifier) {
         error?.let { Banner(it, Modifier.fillMaxWidth().padding(8.dp), kind = BadgeKind.Bad, icon = "alert-triangle") }
+        if (stalled && error == null) Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Banner("This panel did not start.", Modifier.weight(1f), kind = BadgeKind.Warn, icon = "alert-triangle")
+            mv.obitech.crundi.ui.components.CrundiButton("Retry", { stalled = false; retries++ }, modifier = Modifier.padding(start = 8.dp))
+        }
         val g = doc?.grant
         if (g != null && g.needed && !g.granted && !grantHidden) {
             GrantBanner(g, onApprove = {
@@ -282,10 +304,10 @@ fun PanelFrame(
         val hDp = with(density) { heightPx.toDp() }
         val frameMod = if (autoHeight) Modifier.fillMaxWidth().height(if (heightPx > 0) hDp.coerceIn(36.dp, maxHeight) else 80.dp.coerceAtMost(maxHeight))
         else Modifier.fillMaxSize()
-        if (error == null) AndroidView(
+        if (error == null) androidx.compose.runtime.key(fh) { AndroidView(
             factory = { fh.web },
             modifier = frameMod.onSizeChanged { with(density) { size = it.width.toDp().value.toInt() to it.height.toDp().value.toInt() } },
-        )
+        ) }
     }
 }
 

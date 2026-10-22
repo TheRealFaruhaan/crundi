@@ -1,5 +1,6 @@
 package mv.obitech.crundi.ui.shell
 
+import androidx.compose.ui.graphics.Brush
 import mv.obitech.crundi.ui.mini.miniLogo
 import mv.obitech.crundi.ui.mini.miniTarget
 
@@ -327,12 +328,23 @@ private fun UsageBar(used: Float, elapsed: Float, modifier: Modifier) {
     val usedC = used.coerceIn(0f, 1f); val timeC = elapsed.coerceIn(0f, 1f)
     Box(modifier.fillMaxWidth().drawBehind {
         drawRect(Color(0x297DAAFF), size = Size(size.width * timeC, size.height))
-        val fill = when {
-            usedC >= 0.9f -> CrundiColors.Red.copy(alpha = 0.30f)
-            usedC > timeC + 0.1f -> CrundiColors.Yellow.copy(alpha = 0.26f)
-            else -> CrundiColors.Accent.copy(alpha = 0.22f)
+        // Usage keeps one colour throughout, as on the web: nothing is wrong
+        // at 95% used with 96% of the window gone. Only the slice where usage
+        // runs ahead of the clock is marked, a gradient from faint to strong,
+        // amber when just ahead turning red by 25 points ahead (overPaceFill).
+        drawRect(Color(0x386366F1), size = Size(size.width * usedC, size.height))
+        val gap = usedC - timeC
+        if (gap > 0f) {
+            val t = (gap * 100f / 25f).coerceIn(0f, 1f)
+            val c = Color(
+                red = (245 + (239 - 245) * t) / 255f, green = (158 + (68 - 158) * t) / 255f, blue = (11 + (68 - 11) * t) / 255f,
+            )
+            val x0 = size.width * timeC; val x1 = size.width * usedC
+            drawRect(
+                Brush.horizontalGradient(0f to c.copy(alpha = 0.10f), 0.45f to c.copy(alpha = 0.30f), 1f to c.copy(alpha = 0.58f), startX = x0, endX = x1),
+                topLeft = Offset(x0, 0f), size = Size(x1 - x0, size.height),
+            )
         }
-        drawRect(fill, size = Size(size.width * usedC, size.height))
     })
 }
 
