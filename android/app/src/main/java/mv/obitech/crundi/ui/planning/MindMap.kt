@@ -1,5 +1,6 @@
 package mv.obitech.crundi.ui.planning
 
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.layout.positionInWindow
@@ -260,7 +261,7 @@ fun MindMapScreen(
                 onOpen = { drafting = false; editing = null; selected = it; popup = MindPopup.Details(it) },
                 onAdd = { startDraft(it) },
                 onEdited = { n, text -> if (editing == n.id) editing = null; if (text != null && text.isNotBlank() && text.trim() != n.text) cb.onSave(n, text.trim(), n.notes) },
-                onMoveTo = { n, parent -> cb.onMove(n, parent, null) },
+                onMoveTo = { n, parent, index -> cb.onMove(n, parent, index) },
                 onDrafted = { text -> drafting = false; if (text != null && text.isNotBlank()) cb.onAdd(text.trim(), draftParent) },
             )
         }
@@ -334,8 +335,8 @@ private fun MindCanvas(
     onAdd: (String) -> Unit,
     onEdited: (MindNode, String?) -> Unit,
     onDrafted: (String?) -> Unit,
-    /** Dragged onto another idea (its new parent) and let go. */
-    onMoveTo: (MindNode, String) -> Unit = { _, _ -> },
+    /** Dragged and let go: its new parent (null = top level) and place among the parent's ideas (null = last). */
+    onMoveTo: (MindNode, String?, Int?) -> Unit = { _, _, _ -> },
 ) {
     // Hold an idea to drag it; let go over another idea to move it under that
     // one (the desktop's drag to move). Ideas say where they are on screen.
@@ -348,20 +349,45 @@ private fun MindCanvas(
     val inPane = mv.obitech.crundi.ui.workbench.LocalPane.current != null
     val paneDrop = mv.obitech.crundi.ui.workbench.PaneDrop
     var canvas by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
-    fun under(at: Offset): String? {
+    // Where the held idea would land, shown as a "drop here" slot that the
+    // others move aside for (the desktop's mmDropAt): before or after an idea
+    // (the top or bottom of it), or under it as its last idea (its middle).
+    var dropAt by remember { mutableStateOf<MindDrop?>(null) }
+    var dropRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    fun visibleKids(parent: String?): List<String> =
+        (if (parent == null) m.nodes.filter { it.parentId == null || byIdOf(m, it.parentId) == null } else m.children(parent))
+            .filter { (it.effectiveProject ?: "") !in hidden }.map { it.id }
+    fun dropFor(at: Offset): MindDrop? {
         val d = dragId ?: return null
         if (paneDrop.target() != null || !canvas.contains(at)) return null
+        if (dropAt != null && dropRect.contains(at)) return dropAt   // over the slot itself: stay
         val banned = setOf(d) + descendants(m, d).map { it.id }
-        return boxes.entries.firstOrNull { it.key !in banned && it.value.contains(at) }?.key
+        val (id, r) = boxes.entries.firstOrNull { it.key !in banned && it.value.contains(at) }?.toPair() ?: return dropAt.takeIf { dropRect.inflate(24f).contains(at) }
+        val node = m.nodes.firstOrNull { it.id == id } ?: return null
+        val rel = (at.y - r.top) / r.height.coerceAtLeast(1f)
+        val sibs = visibleKids(node.parentId)
+        return when {
+            rel < 0.28f -> MindDrop(node.parentId, sibs.indexOf(id).coerceAtLeast(0))
+            rel > 0.72f -> MindDrop(node.parentId, sibs.indexOf(id) + 1)
+            else -> MindDrop(id, null)
+        }
     }
+    fun under(at: Offset): String? = dropFor(at)?.takeIf { it.index == null }?.parent
     val q = filter.lowercase()
     fun matches(n: MindNode) = q.isNotEmpty() && (n.text.lowercase().contains(q) || n.notes.any { it.lowercase().contains(q) } ||
         n.linkedTaskInfo?.let { it.title.lowercase().contains(q) || it.text.lowercase().contains(q) } == true)
     val byId = remember(m) { m.nodes.associateBy { it.id } }
-    val roots = m.nodes.filter { it.parentId == null || byId[it.parentId] == null }.filter { (it.effectiveProject ?: "") !in hidden }.map { it.id } +
+    fun withSlot(list: List<String>, parent: String?): List<String> {
+        val t = dropAt ?: return list
+        if (dragId == null || t.parent != parent) return list
+        val i = (t.index ?: list.count { !it.startsWith("add:") && !it.startsWith("draft:") }).coerceIn(0, list.size)
+        return list.toMutableList().apply { add(i, "drop:") }
+    }
+    val roots = withSlot(m.nodes.filter { it.parentId == null || byId[it.parentId] == null }.filter { (it.effectiveProject ?: "") !in hidden }.map { it.id }, null) +
         (if (draft == "") listOf("draft:") else emptyList())
     fun kids(id: String): List<String> {
-        if (id.startsWith("add:") || id.startsWith("draft:")) return emptyList()
+        if (id.startsWith("add:") || id.startsWith("draft:") || id.startsWith("drop:")) return emptyList()
+        if (dragId != null && dropAt?.parent == id) return withSlot(m.children(id).filter { (it.effectiveProject ?: "") !in hidden }.map { it.id }, id)
         // The box being typed into stands where the idea will be, in place of "add idea".
         if (draft == id) return m.children(id).filter { (it.effectiveProject ?: "") !in hidden }.map { it.id } + "draft:$id"
         if (q.isEmpty() && id in collapsed) return emptyList()
@@ -369,7 +395,15 @@ private fun MindCanvas(
         return if (q.isEmpty() && id == selected) c + "add:$id" else c
     }
     val heights = remember { androidx.compose.runtime.mutableStateMapOf<String, Float>() }
-    val (places, total) = MindLayout.layout(roots, ::kids) { id -> heights[id] ?: if (id.startsWith("add:")) MindLayout.ADD_H else 48f }
+    val (places, total) = MindLayout.layout(roots, ::kids) { id -> heights[id] ?: if (id.startsWith("add:") || id.startsWith("drop:")) MindLayout.ADD_H else 48f }
+    // Every idea glides to its new place (making room, a slot opening or
+    // closing, a move landing), and the lines follow, as on the desktop.
+    val glide = remember { HashMap<String, androidx.compose.animation.core.Animatable<Offset, androidx.compose.animation.core.AnimationVector2D>>() }
+    for (pl in places.values) androidx.compose.runtime.key(pl.id) {
+        val a = glide.getOrPut(pl.id) { androidx.compose.animation.core.Animatable(Offset(pl.x, pl.y), Offset.VectorConverter) }
+        LaunchedEffect(pl.x, pl.y) { a.animateTo(Offset(pl.x, pl.y), androidx.compose.animation.core.spring(dampingRatio = 0.85f, stiffness = 420f)) }
+    }
+    fun at(id: String): Offset = glide[id]?.value ?: places[id]?.let { Offset(it.x, it.y) } ?: Offset.Zero
     val width = (places.values.maxOfOrNull { it.x } ?: 0f) + MindLayout.WIDTH + MindLayout.PAD
 
     var scale by remember { mutableFloatStateOf(1f) }
@@ -414,6 +448,17 @@ private fun MindCanvas(
                         Box(Modifier.layoutId(pl.id).width(MindLayout.WIDTH.dp).onSizeChanged { heights[pl.id] = it.height / density }) {
                             InlineIdea("", placeholder = "New idea", onDone = onDrafted)
                         }
+                    } else if (pl.id.startsWith("drop:")) {
+                        // Where the held idea will land.
+                        Row(
+                            Modifier.layoutId(pl.id).width(MindLayout.WIDTH.dp).height(MindLayout.ADD_H.dp)
+                                .onGloballyPositioned { dropRect = it.boundsInWindow() }
+                                .clip(RoundedCornerShape(14.dp)).background(CrundiColors.AccentDim).dashedBorder(CrundiColors.Accent, 14.dp, 1.5.dp, 5f).padding(horizontal = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            CrundiIcon("chevron-down", size = 13.dp, tint = CrundiColors.AccentHover)
+                            Text("Drop here", style = CrundiType.Small.copy(color = CrundiColors.AccentHover))
+                        }
                     } else if (pl.id.startsWith("add:")) {
                         val parent = pl.id.removePrefix("add:")
                         Row(
@@ -438,14 +483,21 @@ private fun MindCanvas(
                                             dragId = n.id; finger = coords?.localToWindow(at) ?: at
                                             if (inPane) { paneDrop.start("mindmap", n.id, n.text, finger); paneDrop.ownGhost = canvas }
                                         },
-                                        onDrag = { c, _ -> c.consume(); finger = coords?.localToWindow(c.position) ?: finger; if (inPane) paneDrop.finger = finger },
+                                        onDrag = { c, _ -> c.consume(); finger = coords?.localToWindow(c.position) ?: finger; if (inPane) paneDrop.finger = finger; dropAt = dropFor(finger) },
                                         onDragEnd = {
                                             // Over a chat, terminal or notes page its id goes there; otherwise onto the idea under it.
-                                            if (inPane && paneDrop.target() != null) { dragId = null; paneDrop.drop(); return@detectDragGesturesAfterLongPress }
+                                            if (inPane && paneDrop.target() != null) { dragId = null; dropAt = null; paneDrop.drop(); return@detectDragGesturesAfterLongPress }
                                             if (inPane) paneDrop.cancel()
-                                            val t = under(finger); dragId = null; if (t != null && t != n.parentId) onMoveTo(n, t)
+                                            val t = dropAt; dragId = null; dropAt = null
+                                            if (t != null) {
+                                                // An index counts the ideas as they are, with this one still in place.
+                                                val from = visibleKids(n.parentId).indexOf(n.id)
+                                                val idx = t.index?.let { if (t.parent == n.parentId && from in 0 until it) it - 1 else it }
+                                                val same = t.parent == n.parentId && (idx == from || (idx == null && from == visibleKids(n.parentId).lastIndex))
+                                                if (!same) onMoveTo(n, t.parent, idx)
+                                            }
                                         },
-                                        onDragCancel = { dragId = null; if (inPane) paneDrop.cancel() },
+                                        onDragCancel = { dragId = null; dropAt = null; if (inPane) paneDrop.cancel() },
                                     )
                                 }),
                         ) {
@@ -454,7 +506,7 @@ private fun MindCanvas(
                                 n, root = n.parentId == null, hit = matches(n), selected = n.id == selected,
                                 hasKids = m.children(n.id).isNotEmpty(), collapsed = n.id in collapsed && q.isEmpty(),
                                 onTap = { onTap(n.id) }, onOpen = { onOpen(n.id) }, onToggle = { if (n.id in collapsed) collapsed.remove(n.id) else collapsed.add(n.id) },
-                                dropTarget = dragId != null && under(finger) == n.id,
+                                dropTarget = dragId != null && dropAt?.parent == n.id && dropAt?.index == null,
                             )
                         }
                     }
@@ -466,12 +518,14 @@ private fun MindCanvas(
                 .drawBehind {
                     val d = density
                     for (pl in places.values) {
-                        val parent = pl.parent?.let { places[it] } ?: continue
-                        val sx = (parent.x + MindLayout.WIDTH) * d; val sy = parent.y * d
-                        val ex = pl.x * d; val ey = pl.y * d
+                        val pid = pl.parent ?: continue
+                        if (places[pid] == null) continue
+                        val pp = at(pid); val me = at(pl.id)
+                        val sx = (pp.x + MindLayout.WIDTH) * d; val sy = pp.y * d
+                        val ex = me.x * d; val ey = me.y * d
                         val mx = (sx + ex) / 2
                         val path = Path().apply { moveTo(sx, sy); cubicTo(mx, sy, mx, ey, ex, ey) }
-                        val add = pl.id.startsWith("add:")
+                        val add = pl.id.startsWith("add:") || pl.id.startsWith("drop:")
                         drawPath(path, if (add) CrundiColors.Border.copy(alpha = 0.45f) else CrundiColors.Border, style = Stroke(2.dp.toPx(), pathEffect = if (add) PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 5.dp.toPx())) else null))
                     }
                 },
@@ -479,8 +533,9 @@ private fun MindCanvas(
             val placeables = measurables.map { it.layoutId as String to it.measure(Constraints()) }
             layout((width * density).toInt(), (total * density).toInt()) {
                 for ((id, p) in placeables) {
-                    val pl = places[id] ?: continue
-                    p.place((pl.x * density).toInt(), ((pl.y * density) - p.height / 2f).toInt())
+                    if (places[id] == null) continue
+                    val o = at(id)
+                    p.place((o.x * density).toInt(), ((o.y * density) - p.height / 2f).toInt())
                 }
             }
         }
@@ -488,7 +543,9 @@ private fun MindCanvas(
         // the workbench draws the held label).
         if (canvas.contains(finger)) dragId?.let { id -> byId[id] }?.let { d ->
             Box(
-                Modifier.offset { androidx.compose.ui.unit.IntOffset((finger.x - rootAt.x - 60.dp.toPx()).toInt(), (finger.y - rootAt.y - 30.dp.toPx()).toInt()) }
+                Modifier.offset { androidx.compose.ui.unit.IntOffset((finger.x - rootAt.x - 60.dp.toPx() * scale).toInt(), (finger.y - rootAt.y - 24.dp.toPx() * scale).toInt()) }
+                    // The size the ideas are drawn at on the map, not full size.
+                    .graphicsLayer { scaleX = scale; scaleY = scale; transformOrigin = TransformOrigin(0f, 0f) }
                     .width(MindLayout.WIDTH.dp).shadow(10.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp))
                     .background(CrundiColors.BgCard).border(2.dp, CrundiColors.Accent, RoundedCornerShape(14.dp)).padding(horizontal = 11.dp, vertical = 8.dp),
             ) { Text(d.text, style = CrundiType.Body.copy(fontSize = 13.3.sp, fontWeight = FontWeight.SemiBold), maxLines = 2, overflow = TextOverflow.Ellipsis) }
@@ -725,3 +782,7 @@ private fun MovePicker(m: MindMap, n: MindNode, cb: MindMapCallbacks, close: () 
     }
 }
 
+/** Where a dragged idea would land: under [parent] (null = top level), at [index] among its ideas (null = last). */
+internal data class MindDrop(val parent: String?, val index: Int?)
+
+private fun byIdOf(m: MindMap, id: String?) = id?.let { x -> m.nodes.firstOrNull { it.id == x } }

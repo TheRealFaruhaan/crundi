@@ -316,13 +316,16 @@ private fun SuggestionBubble(text: String, onSend: () -> Unit, onDismiss: () -> 
         Text("Suggested, tap to send", style = ChatType.Small.copy(fontSize = 10.5.sp, color = CrundiColors.TextMuted),
             modifier = Modifier.padding(end = 4.dp).clip(RoundedCornerShape(4.dp)).background(CrundiColors.BgPrimary).padding(horizontal = 4.dp))
         val shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomEnd = 3.dp, bottomStart = 12.dp)
-        Box(
+        // The text and its x side by side, centred: the x sat in a box taller
+        // than a line, so the bubble had an empty band under the words.
+        Row(
             mini.shadow(6.dp, shape).clip(shape).background(CrundiColors.BgSecondary)
                 .dashedBorder(CrundiColors.Accent.copy(alpha = 0.55f), 12.dp, 1.dp, 4f)
-                .clickable(onClickLabel = "Send it", onClick = onSend).padding(start = 11.dp, top = 7.dp, bottom = 7.dp, end = 30.dp),
+                .clickable(onClickLabel = "Send it", onClick = onSend).padding(start = 11.dp, top = 5.dp, bottom = 5.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text, style = ChatType.Small.copy(color = CrundiColors.TextSecondary))
-            Box(Modifier.align(Alignment.TopEnd).offset(x = 26.dp, y = (-3).dp).size(24.dp).clip(RoundedCornerShape(6.dp)).clickable(onClickLabel = "Dismiss suggestion", onClick = onDismiss), contentAlignment = Alignment.Center) {
+            Text(text, style = ChatType.Small.copy(color = CrundiColors.TextSecondary), modifier = Modifier.weight(1f, fill = false))
+            Box(Modifier.padding(start = 4.dp).size(22.dp).clip(RoundedCornerShape(6.dp)).clickable(onClickLabel = "Dismiss suggestion", onClick = onDismiss), contentAlignment = Alignment.Center) {
                 CrundiIcon("x", size = 12.dp, tint = CrundiColors.TextMuted)
             }
         }
