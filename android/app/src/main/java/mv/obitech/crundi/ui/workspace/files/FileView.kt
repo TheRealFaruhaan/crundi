@@ -138,21 +138,23 @@ fun FileViewScreen(
     }
 }
 
+/**
+ * Reading: the whole file as one coloured, selectable text beside its line
+ * numbers, in one scrolling view, the way the editor draws it. A list of a
+ * row per line inside a selection area scrolled badly.
+ */
 @Composable
 private fun CodeView(text: String, language: String?) {
-    val lines = remember(text, language) { highlightedLines(text, language) }
-    val digits = lines.size.toString().length
+    val colour = text.length < 400_000
+    val styled = remember(text, language, colour) { if (colour) Highlighter.highlight(text, language) else androidx.compose.ui.text.AnnotatedString(text) }
+    val lines = remember(text) { text.count { it == '\n' } + 1 }
+    val digits = lines.toString().length
+    val numbers = remember(lines) { (1..lines).joinToString("\n") }
     val numberStyle = CrundiType.Code.copy(color = CrundiColors.TextMuted, textAlign = TextAlign.End)
-    SelectionContainer {
-        Box(Modifier.fillMaxSize().horizontalScroll(rememberScrollState())) {
-            LazyColumn(Modifier.fillMaxSize().padding(vertical = 6.dp)) {
-                items(lines.size) { i ->
-                    Row {
-                        Text((i + 1).toString(), style = numberStyle, modifier = Modifier.width((digits * 8 + 14).dp).padding(end = 10.dp))
-                        Text(lines[i], style = CrundiType.Code, softWrap = false, modifier = Modifier.padding(end = 16.dp))
-                    }
-                }
-            }
+    Row(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
+        Text(numbers, style = numberStyle, modifier = Modifier.width((digits * 8 + 14).dp).padding(end = 10.dp))
+        Box(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+            SelectionContainer { Text(styled, style = CrundiType.Code, softWrap = false, modifier = Modifier.padding(end = 16.dp)) }
         }
     }
 }
