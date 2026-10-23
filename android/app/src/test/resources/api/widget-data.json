@@ -1,0 +1,36 @@
+{
+ "ok": true,
+ "data": {
+  "build": {
+   "value": {
+    "status": "passing",
+    "tasks": 4,
+    "minutes": 7.5
+   },
+   "rev": 12,
+   "at": 1792322000000,
+   "kind": "command"
+  },
+  "tests": {
+   "value": {
+    "passed": 318,
+    "failed": 0
+   },
+   "rev": 4,
+   "at": 1792321900000,
+   "kind": "push"
+  },
+  "log": {
+   "value": null,
+   "rev": 0,
+   "at": 0,
+   "kind": "file",
+   "error": "No such file: build.log"
+  }
+ },
+ "store": {
+  "collapsed": [
+   "warnings"
+  ]
+ }
+}

@@ -1,0 +1,48 @@
+{
+ "ok": true,
+ "commits": [
+  {
+   "hash": "5e07295034473159c19e2a28d15abc4a3f422863",
+   "short": "5e07295",
+   "parents": [
+    "353d6a7f21148ea8cc715028100844c1dc55dbc8"
+   ],
+   "author": "Crundi Factory",
+   "email": "factory@crundi.invalid",
+   "date": "2026-10-22T01:19:10+05:00",
+   "refs": [
+    "HEAD -> factory/android-team-9b668d"
+   ],
+   "subject": "factory: Foundation — Fixed F1 to F11, nits included",
+   "body": ""
+  },
+  {
+   "hash": "353d6a7f21148ea8cc715028100844c1dc55dbc8",
+   "short": "353d6a7",
+   "parents": [
+    "387363fc3d373a660a19099e629583d895f38abd"
+   ],
+   "author": "Crundi Factory",
+   "email": "factory@crundi.invalid",
+   "date": "2026-10-22T00:29:05+05:00",
+   "refs": [],
+   "subject": "factory: Test and render — I built and tested the whole app through the lock",
+   "body": ""
+  },
+  {
+   "hash": "387363fc3d373a660a19099e629583d895f38abd",
+   "short": "387363f",
+   "parents": [
+    "515283ef6e4b92c3bb19be1128cbdccbb83ff028",
+    "696e78b00059dba7ba8b62285cafaec37c96b15b"
+   ],
+   "author": "Crundi Factory",
+   "email": "factory@crundi.invalid",
+   "date": "2026-10-21T23:55:27+05:00",
+   "refs": [],
+   "subject": "factory: join factory/android-team-9b668d--w12",
+   "body": ""
+  }
+ ],
+ "more": true
+}

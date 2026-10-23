@@ -1,0 +1,15 @@
+{
+ "ok": true,
+ "pages": [
+  {
+   "id": "n1a2b3c4d5e6f708",
+   "title": "Release checklist",
+   "createdAt": "2026-10-01T08:00:00.000Z",
+   "updatedAt": "2026-10-20T19:00:00.000Z",
+   "deleted": false,
+   "deletedAt": null,
+   "preview": "Tag main, wait for the build, check the Play listing",
+   "version": 14
+  }
+ ]
+}

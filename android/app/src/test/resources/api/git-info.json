@@ -1,0 +1,38 @@
+{
+ "ok": true,
+ "branch": "factory/run_mvhwe7gr9b668d",
+ "files": [
+  {
+   "file": "android/app/build.gradle.kts",
+   "xy": "M ",
+   "staged": true,
+   "status": "modified",
+   "add": 6,
+   "del": 0
+  },
+  {
+   "file": "android/app/src/main/java/mv/obitech/crundi/api/CrundiClient.kt",
+   "xy": "??",
+   "staged": false,
+   "status": "untracked"
+  },
+  {
+   "file": "android/app/src/main/java/mv/obitech/crundi/AppGraph.kt",
+   "xy": " M",
+   "staged": false,
+   "status": "modified",
+   "add": 14,
+   "del": 9
+  },
+  {
+   "file": "android/app/src/main/assets/scan.js",
+   "xy": " D",
+   "staged": false,
+   "status": "deleted",
+   "add": 0,
+   "del": 120
+  }
+ ],
+ "ahead": 2,
+ "behind": 0
+}

@@ -1,0 +1,29 @@
+{
+ "ok": true,
+ "images": [
+  {
+   "id": "ab12cd34ef56",
+   "fullId": "sha256:ab12cd34ef56",
+   "tags": [
+    "postgres:16"
+   ],
+   "name": "postgres:16",
+   "size": 453000000,
+   "created": 1790000000,
+   "dangling": false,
+   "usedBy": [
+    "ledger-db-1"
+   ]
+  },
+  {
+   "id": "77aa88bb99cc",
+   "fullId": "sha256:77aa88bb99cc",
+   "tags": [],
+   "name": "<none>",
+   "size": 120000000,
+   "created": 1780000000,
+   "dangling": true,
+   "usedBy": []
+  }
+ ]
+}

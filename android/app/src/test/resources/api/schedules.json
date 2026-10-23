@@ -1,0 +1,77 @@
+{
+ "ok": true,
+ "schedules": [
+  {
+   "id": "s1a2b3c4d5e6f708",
+   "name": "Morning review",
+   "project": "crundi",
+   "enabled": true,
+   "tz": "Indian/Maldives",
+   "action": {
+    "kind": "chat",
+    "prompt": "Review yesterday's commits",
+    "session": "new",
+    "sessionId": "",
+    "cwd": "",
+    "mode": "default",
+    "model": "",
+    "effort": ""
+   },
+   "when": {
+    "mode": "recurring",
+    "time": "08:30",
+    "date": "",
+    "days": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ]
+   },
+   "conditions": [
+    {
+     "type": "usage",
+     "metric": "5h",
+     "op": "below",
+     "value": 50
+    }
+   ],
+   "createdAt": "2026-09-01T08:00:00.000Z",
+   "updatedAt": "2026-09-01T08:00:00.000Z",
+   "lastRun": "2026-10-21T03:30:00.000Z",
+   "lastMet": true
+  },
+  {
+   "id": "s2b3c4d5e6f70819",
+   "name": "Restart docs",
+   "project": "crundi",
+   "enabled": false,
+   "tz": "Indian/Maldives",
+   "action": {
+    "kind": "service",
+    "serviceKey": "crundi:docs",
+    "op": "toggle"
+   },
+   "when": {
+    "mode": "once",
+    "time": "23:00",
+    "date": "2026-10-25",
+    "days": []
+   },
+   "conditions": [],
+   "createdAt": "2026-10-20T08:00:00.000Z",
+   "updatedAt": "2026-10-20T08:00:00.000Z",
+   "lastRun": null,
+   "lastMet": false
+  }
+ ],
+ "services": [
+  {
+   "key": "crundi:docs",
+   "name": "docs",
+   "alias": "crundi",
+   "status": "running"
+  }
+ ]
+}

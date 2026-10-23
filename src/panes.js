@@ -40,6 +40,7 @@ export const DEFAULT_TIMEOUT_MIN = 60;
  * @param {(ms:number, project:string) => boolean} o.awayFor  true if nobody has been at THAT PROJECT for ms
  * @param {(id:string) => string} o.terminalState  hook-reported state of a terminal
  * @param {() => void} o.onChange             broadcast state after a park / resume
+ * @param {(id:string) => boolean} [o.keepAwake]  true if the pane must not be parked for idleness (a scheduled message is waiting for it)
  */
 export function createPanes(o) {
   const FILE = join(o.dataDir, 'panes.json');
@@ -75,7 +76,9 @@ export function createPanes(o) {
 
   /** Is this live pane something we restore at all? */
   function restorableTerminal(m) { return !!(m && m.restorable); }
-  function restorableChat(m) { return !!(m && !m.background && !m.collaborator); }
+  // A factory run's chats (its Manager and employees) belong to the runner: it
+  // keeps them awake while the run lasts and brings them back after a restart.
+  function restorableChat(m) { return !!(m && !m.background && !m.collaborator && !m.factory); }
 
   /** Write down every live pane as it is now (status 'live'). */
   function snapshot() {
@@ -276,6 +279,8 @@ export function createPanes(o) {
       // pane open: an hour spent in one project kept the idle chats of five
       // others running. A pane now sleeps when ITS project has gone unvisited
       // for the timeout, whatever is happening elsewhere.
+      // A chat with a scheduled message still to come stays up for it.
+      if (o.keepAwake && o.keepAwake(c.id)) continue;
       if (now - idleSince.get(c.id) >= ms && o.awayFor(ms, c.project)) park(c.id, 'idle');
     }
   }

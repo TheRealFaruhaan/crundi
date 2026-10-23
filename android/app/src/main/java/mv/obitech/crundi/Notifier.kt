@@ -271,7 +271,13 @@ object Notifier {
         val windowOpen = ChatActivity.isOpen(serverId, chatId)
         if (windowOpen && !evenBubble) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val showing = nm.activeNotifications.firstOrNull { it.id == id }?.notification ?: return
+        val showing = nm.activeNotifications.firstOrNull { it.id == id }?.notification
+        if (showing == null) {
+            // Said once per chat, not every three seconds: "the bubble stayed"
+            // needs to show whether Android still had a notification for it.
+            if (evenBubble) traceOnce(ctx, id, "Nothing to take down for $chatId: Android lists no notification for it (its own window ${if (windowOpen) "is" else "is not"} open)")
+            return
+        }
         // `evenBubble` is for the main window: a chat open there does not
         // also need its own head floating over it.
         val bubble = (showing.flags and android.app.Notification.FLAG_BUBBLE) != 0
@@ -280,6 +286,17 @@ object Notifier {
         // A bubble going away is worth a line: "it closed by itself" needs a
         // reason somebody can find.
         if (bubble || windowOpen) PushLog.add(ctx, "Took a chat's bubble down: $why")
+        if (evenBubble && nm.activeNotifications.any { it.id == id }) traceOnce(ctx, id, "Asked Android to take $chatId down, and it is still listed")
+        else traced.remove(id)
+    }
+
+    // The last trace line written per notification, so a line repeated every
+    // few seconds is written once.
+    private val traced = HashMap<Int, String>()
+    fun traceOnce(ctx: Context, id: Int, line: String) = synchronized(traced) {
+        if (traced[id] == line) return
+        traced[id] = line
+        PushLog.add(ctx, line)
     }
 
     /** Is this chat floating as a bubble, or open in its own window? */

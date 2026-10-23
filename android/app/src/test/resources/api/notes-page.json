@@ -1,0 +1,65 @@
+{
+ "ok": true,
+ "page": {
+  "id": "n1a2b3c4d5e6f708",
+  "title": "Release checklist",
+  "version": 14,
+  "createdAt": "2026-10-01T08:00:00.000Z",
+  "updatedAt": "2026-10-20T19:00:00.000Z",
+  "deleted": false,
+  "deletedAt": null,
+  "blocks": [
+   {
+    "id": "b1",
+    "type": "h1",
+    "text": "Release checklist"
+   },
+   {
+    "id": "b2",
+    "type": "p",
+    "text": "Production is <b>main</b>'s top commit."
+   },
+   {
+    "id": "b3",
+    "type": "todo",
+    "text": "Tag main",
+    "checked": true
+   },
+   {
+    "id": "b4",
+    "type": "todo",
+    "text": "Check the <code>-dev.N</code> tag",
+    "checked": false
+   },
+   {
+    "id": "b5",
+    "type": "code",
+    "text": "git tag v1.21.0 && git push --tags",
+    "lang": "bash"
+   },
+   {
+    "id": "b6",
+    "type": "divider"
+   },
+   {
+    "id": "b7",
+    "type": "table",
+    "rows": [
+     [
+      "Build",
+      "Status"
+     ],
+     [
+      "play",
+      "ok"
+     ],
+     [
+      "github",
+      "ok"
+     ]
+    ],
+    "header": true
+   }
+  ]
+ }
+}

@@ -114,6 +114,8 @@ function clockIn(tz, date = new Date()) {
 // update the time to re-arm it. Matched against the SERVER's local clock (same
 // machine for the desktop app).
 export function isDue(sch) {
+  // Called, not timed: src/schedule-hooks.js fires these.
+  if (sch.when && sch.when.mode === 'webhook') return false;
   const when = effectiveWhen(sch);
   if (!when || !when.time) return false;
   // The zone the schedule was written in, not the host's.
@@ -140,7 +142,7 @@ function conditionsMet(sch, deps) {
   return (sch.conditions || []).filter(c => c.type !== 'time').every(c => evalCondition(c, sch.project, deps));
 }
 
-async function runAction(sch, deps) {
+export async function runAction(sch, deps) {
   const a = sch.action || {};
   const label = sch.name || 'Scheduled task';
   if (a.kind === 'agent') {

@@ -1,0 +1,7 @@
+{
+ "ok": true,
+ "diff": "diff --git a/AppGraph.kt b/AppGraph.kt\n--- a/AppGraph.kt\n+++ b/AppGraph.kt\n@@ -1,3 +1,4 @@\n package mv.obitech.crundi\n \n+import mv.obitech.crundi.api.CrundiClient\n import android.content.Context\n",
+ "old": "package mv.obitech.crundi\n\nimport android.content.Context\n",
+ "new": "package mv.obitech.crundi\n\nimport mv.obitech.crundi.api.CrundiClient\nimport android.content.Context\n",
+ "file": "android/app/src/main/java/mv/obitech/crundi/AppGraph.kt"
+}

@@ -1,0 +1,30 @@
+<div class="wna a-fxw">
+  <div class="tr t1"><i class="clk"></i><span>Every weekday 07:30</span></div>
+  <div class="tr t2"><i class="card"></i><span>A card enters To do</span></div>
+  <div class="tr t3"><i class="hook"></i><span>A webhook is called</span></div>
+  <div class="run"><b>Run started</b><span>from the card "Dark mode"</span></div>
+  <div class="wait"><div class="wh"><i class="clk"></i>Wait: CI green</div><div class="cmd">gh run watch --exit-status</div><div class="bar"><s></s></div><div class="res"><em class="red">failing, trying again</em><em class="grn">Done: checks passed</em></div></div>
+  <style>
+    .a-fxw{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-fxw .tr{position:absolute;left:36px;display:flex;align-items:center;gap:10px;width:220px;padding:11px 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);font-size:12.5px;box-sizing:border-box}
+    .a-fxw .t1{top:60px} .a-fxw .t2{top:130px;animation:afxw-fire 11s ease infinite} .a-fxw .t3{top:200px}
+    .a-fxw i{width:16px;height:16px;flex:none;border:2px solid var(--text-secondary);box-sizing:border-box}
+    .a-fxw i.clk{border-radius:50%} .a-fxw i.card{border-radius:3px} .a-fxw i.hook{border-radius:50% 50% 50% 0}
+    .a-fxw .run{position:absolute;left:300px;top:118px;padding:12px 16px;border-radius:12px;border:1px solid var(--accent);background:var(--accent-dim);opacity:0;animation:afxw-run 11s ease infinite}
+    .a-fxw .run b{display:block;font-size:13px} .a-fxw .run span{font-size:11px;color:var(--text-secondary)}
+    .a-fxw .wait{position:absolute;left:300px;top:206px;width:290px;padding:14px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);box-sizing:border-box;opacity:0;animation:afxw-wait 11s ease infinite}
+    .a-fxw .wh{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+    .a-fxw .cmd{font:11px var(--mono,monospace);color:var(--text-secondary);margin:8px 0}
+    .a-fxw .bar{height:5px;border-radius:3px;background:var(--bg-primary);overflow:hidden}
+    .a-fxw .bar s{display:block;height:100%;width:0;background:var(--accent);animation:afxw-bar 11s linear infinite}
+    .a-fxw .res{display:grid;margin-top:8px;font-size:11.5px}
+    .a-fxw .res em{grid-area:1/1;font-style:normal}
+    .a-fxw .red{color:#f87171;animation:afxw-red 11s ease infinite} .a-fxw .grn{color:var(--green);opacity:0;animation:afxw-grn 11s ease infinite}
+    @keyframes afxw-fire{0%,12%{border-color:var(--border)}15%,30%{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}36%,100%{border-color:var(--border);box-shadow:none}}
+    @keyframes afxw-run{0%,18%{opacity:0;transform:translateX(-16px)}26%,94%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afxw-wait{0%,34%{opacity:0}40%,94%{opacity:1}100%{opacity:0}}
+    @keyframes afxw-bar{0%,40%{width:0}62%{width:55%}64%{width:0}84%{width:100%}100%{width:100%}}
+    @keyframes afxw-red{0%,42%{opacity:0}46%,80%{opacity:1}84%,100%{opacity:0}}
+    @keyframes afxw-grn{0%,82%{opacity:0}86%,94%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

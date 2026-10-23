@@ -1,0 +1,47 @@
+{
+ "ok": true,
+ "items": [
+  {
+   "id": "c1d2e3f4",
+   "project": "crundi",
+   "text": "Carry on with the operations screens",
+   "trigger": {
+    "type": "limit-reset"
+   },
+   "status": "pending",
+   "createdAt": 1792320000000,
+   "firedAt": 0,
+   "error": "",
+   "nextFireAt": null
+  },
+  {
+   "id": "c2d3e4f5",
+   "project": "crundi",
+   "text": "Run the tests again",
+   "trigger": {
+    "type": "time",
+    "at": "2026-10-21T18:00:00.000Z"
+   },
+   "status": "pending",
+   "createdAt": 1792321000000,
+   "firedAt": 0,
+   "error": "",
+   "nextFireAt": 1792346400000
+  }
+ ],
+ "recent": [
+  {
+   "id": "c0d1e2f3",
+   "project": "crundi",
+   "text": "Good morning, continue",
+   "trigger": {
+    "type": "turn-end"
+   },
+   "status": "sent",
+   "createdAt": 1792300000000,
+   "firedAt": 1792301000000,
+   "error": ""
+  }
+ ],
+ "limitWarmup": true
+}

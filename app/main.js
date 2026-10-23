@@ -661,6 +661,7 @@ async function gracefulShutdownAndExit() {
 // settings-save can never clobber it.
 const updateConfigPath = join(userDataDir, 'update-config.json');
 let updateInstalling = false;
+let updateFile = '';   // the downloaded installer (update-downloaded's downloadedFile)
 const updateState = {
   enabled: true, available: false, downloading: false, downloaded: false, percent: 0, version: '', current: app.getVersion(),
   channel: 'production',   // 'production' | 'dev' — which releases this app follows
@@ -796,7 +797,10 @@ function setupAutoUpdate() {
   updateState.enabled = readAutoUpdate();
   updateState.channel = readChannel();
   autoUpdater.autoDownload = false;             // ask first (modal on detection)
-  autoUpdater.autoInstallOnAppQuit = true;
+  // On Linux the library installs a .deb through pkexec synchronously, which
+  // freezes the app (and, at quit, springs a password prompt). We install it
+  // ourselves there, asynchronously; see installUpdateNow().
+  autoUpdater.autoInstallOnAppQuit = process.platform !== 'linux';
   // Full downloads only. Differential (blockmap) reconstruction of a code-signed
   // NSIS installer yields a different hash → "sha512 checksum mismatch". A full
   // download verifies cleanly.
@@ -832,6 +836,7 @@ function setupAutoUpdate() {
   });
   autoUpdater.on('update-downloaded', (info) => {
     appendLog('[update] Downloaded ' + info.version);
+    updateFile = (info && info.downloadedFile) || '';
     updateState.available = true; updateState.downloaded = true; updateState.downloading = false; updateState.percent = 100; updateState.version = info.version;
     sendUpdateStatus();
     confirmAndInstall(); // restart-to-install prompt (save your work)
@@ -942,15 +947,200 @@ async function confirmAndInstall() {
       detail: 'Crundi will close and restart to apply the update. Before continuing:\n\n'
         + '•  Save any unsaved work in your terminals and editors.\n'
         + '•  Make sure any running services are safe to stop — they will be shut down.\n\n'
-        + 'It will also install automatically the next time you quit Crundi.',
+        + (process.platform === 'linux'
+          ? 'Your system will ask for your password to install it.'
+          : 'It will also install automatically the next time you quit Crundi.'),
     });
     if (response === 0) installUpdateNow();
   } catch { /* ignore */ }
 }
 
+/**
+ * Linux, .deb: install with pkexec in the background, so the window keeps
+ * responding while the password prompt waits and dpkg runs. electron-updater
+ * does this with spawnSync, which froze the app ("Not Responding"), and Force
+ * Quit then killed the install half way. Resolves { ok, code, output }.
+ */
+/** Can sudo run without asking (NOPASSWD)? Then no prompt is needed at all. */
+function sudoWithoutPassword() {
+  return new Promise((resolve) => {
+    try {
+      const c = spawn('sudo', ['-n', 'true'], { stdio: 'ignore' });
+      const t = setTimeout(() => { try { c.kill('SIGKILL'); } catch { /* gone */ } resolve(false); }, 5000);
+      c.on('error', () => { clearTimeout(t); resolve(false); });
+      c.on('close', (code) => { clearTimeout(t); resolve(code === 0); });
+    } catch { resolve(false); }
+  });
+}
+
+function installDebAsync(file, hold = {}, { viaSudo = false } = {}) {
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try {
+      // dpkg first; if dependencies are missing, let apt pull them in.
+      const install = ['/bin/sh', '-c', 'dpkg -i "$1" || apt-get install -f -y', 'crundi-update', file];
+      child = viaSudo ? spawn('sudo', ['-n', ...install], { stdio: ['ignore', 'pipe', 'pipe'] })
+        : spawn('pkexec', install, { stdio: ['ignore', 'pipe', 'pipe'] });
+      hold.child = child;
+    } catch (err) { resolve({ ok: false, code: -1, output: err.message }); return; }
+    const add = (b) => { out = (out + b.toString()).slice(-4000); };
+    child.stdout.on('data', add); child.stderr.on('data', add);
+    child.on('error', (err) => resolve({ ok: false, code: -1, output: err.message }));
+    child.on('close', (code) => resolve({ ok: code === 0, code, output: out.trim() }));
+  });
+}
+
+/** The first terminal emulator this desktop has, with how to run a command in it. */
+function findTerminal() {
+  const dirs = (process.env.PATH || '/usr/bin:/bin').split(':');
+  const has = (b) => dirs.some(d => d && existsSync(join(d, b)));
+  const list = [
+    ['x-terminal-emulator', (c) => ['-e', 'bash', '-c', c]],
+    ['gnome-terminal', (c) => ['--', 'bash', '-c', c]],
+    ['konsole', (c) => ['-e', 'bash', '-c', c]],
+    ['xfce4-terminal', (c) => ['-x', 'bash', '-c', c]],
+    ['kitty', (c) => ['bash', '-c', c]],
+    ['alacritty', (c) => ['-e', 'bash', '-c', c]],
+    ['foot', (c) => ['bash', '-c', c]],
+    ['wezterm', (c) => ['start', '--', 'bash', '-c', c]],
+    ['xterm', (c) => ['-e', 'bash', '-c', c]],
+  ];
+  const hit = list.find(([b]) => has(b));
+  return hit ? { bin: hit[0], args: hit[1] } : null;
+}
+
+const shq = (v) => "'" + String(v).replace(/'/g, "'\\''") + "'";
+
+/**
+ * The fallback when no password prompt appears: install in a terminal (sudo
+ * asks there), then start the new version. Returns false when there is no
+ * terminal to open.
+ */
+function installInTerminal(file) {
+  const term = findTerminal();
+  if (!term) return false;
+  const exe = process.env.APPIMAGE || app.getPath('exe');
+  const script = `echo "Installing the Crundi Client update. sudo asks for your password."; sudo apt install -y ${shq(file)} && echo "Installed. Starting Crundi Client…" || echo "The install did not finish."; (nohup ${shq(exe)} >/dev/null 2>&1 &); sleep 3`;
+  try {
+    const child = spawn(term.bin, term.args(script), { detached: true, stdio: 'ignore' });
+    child.unref();
+    appendLog(`[update] Installing in a terminal (${term.bin})`);
+    return true;
+  } catch (err) {
+    appendLog('[update] Could not open a terminal: ' + err.message);
+    return false;
+  }
+}
+
 async function installUpdateNow() {
   if (updateInstalling) return;
   updateInstalling = true;
+  const linuxDeb = process.platform === 'linux' && /\.deb$/i.test(updateFile) && existsSync(updateFile);
+  // Passwordless sudo: install in the background, no prompt at all.
+  if (linuxDeb && await sudoWithoutPassword()) {
+    appendLog('[update] Installing ' + updateFile + ' with sudo (no password needed)…');
+    updateState.installing = true; sendUpdateStatus();
+    const r = await installDebAsync(updateFile, {}, { viaSudo: true });
+    updateState.installing = false; sendUpdateStatus();
+    if (r.ok) {
+      appendLog('[update] Installed; restarting…');
+      app.isQuitting = true;
+      quitting = true;
+      try { await stopServerProcess(); } catch { /* ignore */ }
+      app.relaunch();
+      app.exit(0);
+      return;
+    }
+    appendLog(`[update] sudo install did not finish (exit ${r.code}): ${r.output}; trying pkexec`);
+  }
+  if (linuxDeb && existsSync('/usr/bin/pkexec')) {
+    // Install while everything still runs: cancelling the password prompt
+    // leaves Crundi exactly as it was. Only a successful install restarts it.
+    appendLog('[update] Installing ' + updateFile + ' with pkexec…');
+    updateState.installing = true; sendUpdateStatus();
+    // pkexec needs the desktop's password agent. Where there is none (some
+    // window managers), or its prompt opens out of sight, pkexec just waits.
+    // After 20 s, offer a terminal instead; after 10 min, give up.
+    const hold = {};
+    let viaTerminal = false;
+    const offer = setTimeout(async () => {
+      if (!hold.child || hold.child.exitCode != null || !mainWindow || mainWindow.isDestroyed()) return;
+      const term = findTerminal();
+      const buttons = [...(term ? ['Install in a terminal'] : []), 'Copy the install command', 'Keep waiting'];
+      try {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: 'question', buttons, defaultId: 0, cancelId: buttons.length - 1,
+          title: 'No password prompt?',
+          message: 'Your system has not shown a password prompt for the update.',
+          detail: 'Some desktops have no password agent, or open its prompt out of sight. You can install it in a terminal instead (sudo asks for your password there), then Crundi Client starts again by itself.',
+        });
+        const pick = buttons[response];
+        if (pick === 'Install in a terminal' && hold.child && hold.child.exitCode == null) {
+          viaTerminal = true;
+          try { hold.child.kill('SIGTERM'); } catch { /* gone */ }
+        } else if (pick === 'Copy the install command') {
+          clipboard.writeText('sudo apt install ' + shq(updateFile));
+          appendLog('[update] Install command copied');
+        }
+      } catch { /* the window went away */ }
+    }, 20_000);
+    const giveUp = setTimeout(() => { if (hold.child && hold.child.exitCode == null) { appendLog('[update] No answer from pkexec after 10 minutes; giving up'); try { hold.child.kill('SIGTERM'); } catch { /* gone */ } } }, 10 * 60_000);
+    const r = await installDebAsync(updateFile, hold);
+    clearTimeout(offer); clearTimeout(giveUp);
+    updateState.installing = false; sendUpdateStatus();
+    if (viaTerminal) {
+      if (installInTerminal(updateFile)) {
+        // The terminal installs and starts the new version: get out of its way.
+        app.isQuitting = true;
+        quitting = true;
+        try { await stopServerProcess(); } catch { /* ignore */ }
+        app.exit(0);
+        return;
+      }
+      updateInstalling = false;
+      dialog.showMessageBox(mainWindow, { type: 'info', message: 'No terminal found.', detail: 'Install it yourself with:\n\nsudo apt install ' + updateFile }).catch(() => {});
+      return;
+    }
+    if (!r.ok) {
+      updateInstalling = false;
+      appendLog(`[update] Install did not finish (exit ${r.code}): ${r.output}`);
+      // 126: the password prompt was dismissed; 127: not authorised.
+      const cancelled = r.code === 126 || r.code === 127;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        dialog.showMessageBox(mainWindow, {
+          type: cancelled ? 'info' : 'error',
+          message: cancelled ? 'The update was not installed.' : 'The update could not be installed.',
+          detail: cancelled
+            ? 'The password prompt was closed. Crundi carries on as it was; choose Restart & Install again whenever you like.'
+            : 'Crundi carries on as it was. What the installer said:\n\n' + (r.output || 'exit code ' + r.code).slice(-1200),
+        }).catch(() => {});
+      }
+      return;
+    }
+    appendLog('[update] Installed; restarting…');
+    app.isQuitting = true;
+    quitting = true;
+    try { await stopServerProcess(); } catch { /* ignore */ }
+    app.relaunch();
+    app.exit(0);
+    return;
+  }
+  // No pkexec either: never fall back to the library's blocking install,
+  // which freezes the app. Offer the terminal.
+  if (linuxDeb) {
+    if (installInTerminal(updateFile)) {
+      app.isQuitting = true;
+      quitting = true;
+      try { await stopServerProcess(); } catch { /* ignore */ }
+      app.exit(0);
+      return;
+    }
+    updateInstalling = false;
+    if (mainWindow && !mainWindow.isDestroyed()) dialog.showMessageBox(mainWindow, { type: 'info', message: 'Install the update in a terminal.', detail: 'sudo apt install ' + updateFile }).catch(() => {});
+    clipboard.writeText('sudo apt install ' + shq(updateFile));
+    return;
+  }
   appendLog('[update] Installing — stopping server first…');
   app.isQuitting = true;
   quitting = true; // bypass the graceful before-quit handler; we stop the server here

@@ -37,6 +37,22 @@
     // is inherited by everything under it that says "auto", the log included.
     'html.cc-selecting *:not(.cc-sel-path):not(.cc-sel-host):not(.cc-sel-host *){-webkit-user-select:none!important;user-select:none!important}',
     '.cc-entry{margin-bottom:10px;animation:cc-in .18s ease}',
+    // A factory's result card.
+    '.cc-fr-sum{margin:6px 0 8px}',
+    '.cc-fr-fu{font-size:.92em;line-height:1.45}',
+    '.cc-fr-use{font-size:.85em;color:var(--text-secondary);margin:2px 0 6px}',
+    '.cc-fr-files{margin:4px 0 8px;font-size:.92em}',
+    '.cc-fr-files>summary{cursor:pointer;color:var(--text-secondary)}',
+    '.cc-fr-br{color:var(--text-muted)}',
+    '.cc-fr-add{color:var(--green)}',
+    '.cc-fr-del{color:var(--red)}',
+    '.cc-fr-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}',
+    '.cc-fr-file{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono,monospace);font-size:.9em}',
+    '.cc-fr-file>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}',
+    '.cc-fr-diff{max-height:50vh;overflow:auto;white-space:pre;font-size:.85em;margin:6px 0 0}',
+    '.cc-fr-diff:empty{display:none}',
+    '.cc-fr-form{display:flex;flex-direction:column;gap:6px;margin-top:8px}',
+    '.cc-fr-note{width:100%;box-sizing:border-box;resize:vertical;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font:inherit}',
     '@keyframes cc-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}',
 
     '.cc-user{display:flex;justify-content:flex-end}',
@@ -1422,6 +1438,7 @@
         case 'thinking':   node.appendChild(thinkingNode(e)); break;
         case 'tool':       node.appendChild(toolNode(e)); break;
         case 'permission': node.appendChild(permissionNode(e)); break;
+        case 'factory-result': node.appendChild(factoryResultNode(e)); break;
         case 'question':   node.appendChild(questionNode(e)); break;
         case 'result': {
           if (e.subtype && e.subtype !== 'success') {
@@ -1592,6 +1609,11 @@
       // a machine with passwordless sudo, one approval is the whole machine.
       // The card still appears here so they can SEE what was asked and why
       // they are stuck, but the only button is the one that unsticks them.
+      // A factory employee's request goes to the run's Manager, who answers it.
+      if (e.escalated && e.routedTo === 'manager') {
+        box.appendChild(el('div', 'cc-ask-reason', 'Sent to the Manager of this factory, who decides. You will see the answer here.'));
+        return box;
+      }
       if (e.escalated) {
         box.appendChild(el('div', 'cc-ask-reason',
           'Sent to the project owner. You will see the answer here.'));
@@ -1626,6 +1648,141 @@
       deny.addEventListener('click', function () { respond(e, { behavior: 'deny' }); });
       btns.appendChild(deny);
       box.appendChild(btns);
+      return box;
+    }
+
+    // ─── A factory's result ───
+    //
+    // Posted by Crundi into the Manager's chat when the run finishes, and
+    // updated in place as the person decides. The buttons call the run's API;
+    // the server patches this entry with the outcome, so every open copy of
+    // the chat (desktop, phone) shows the same state.
+    function factoryResultNode(e) {
+      var box = el('div', 'cc-ask cc-fr');
+      var d = e.diff || {};
+      var parent = esc(e.parentBranch || 'the parent branch');
+      var branch = esc(e.branch || '');
+      box.appendChild(el('div', 'cc-ask-title', 'Factory result' + (e.factory ? ' \u00b7 ' + esc(e.factory) : '')));
+      if (e.summary) box.appendChild(el('div', 'cc-fr-sum', md(e.summary)));
+      var counts = '<span class="cc-fr-add">+' + (d.added || 0) + '</span> <span class="cc-fr-del">\u2212' + (d.removed || 0) + '</span> in ' + (d.count || 0) + ' file' + (d.count === 1 ? '' : 's');
+      var files = el('details', 'cc-fr-files');
+      files.appendChild(el('summary', '', counts + (branch ? ' <span class="cc-fr-br">on ' + branch + '</span>' : '')));
+      var list = el('div', 'cc-fr-list');
+      (d.files || []).forEach(function (f) {
+        list.appendChild(el('div', 'cc-fr-file', '<span>' + esc(f.file) + '</span><span><span class="cc-fr-add">+' + (f.added == null ? '?' : f.added) + '</span> <span class="cc-fr-del">\u2212' + (f.removed == null ? '?' : f.removed) + '</span></span>'));
+      });
+      if ((d.count || 0) > (d.files || []).length) list.appendChild(el('div', 'cc-ask-sub', 'and ' + (d.count - d.files.length) + ' more'));
+      var full = el('button', 'cc-btn', 'Show the full diff');
+      var pre = el('pre', 'cc-fr-diff');
+      full.addEventListener('click', function () {
+        full.disabled = true;
+        apiFetch('/api/factory-runs/diff?id=' + encodeURIComponent(e.runId)).then(function (r) { return r.json(); }).then(function (j) {
+          pre.textContent = j.ok ? (j.diff || '(no changes)') + (j.truncated ? '\n\u2026 (cut short)' : '') : (j.error || 'Could not load the diff');
+          full.remove();
+        }).catch(function () { full.disabled = false; });
+      });
+      if (e.state === 'ask' || e.state === 'conflict' || e.state === 'changes') { list.appendChild(full); list.appendChild(pre); }
+      files.appendChild(list);
+      box.appendChild(files);
+
+      var msg = {
+        merged: (e.auto ? 'Merged automatically' : 'Merged') + ' into <b>' + parent + '</b> as one commit' + (e.commit ? ' <code>' + esc(String(e.commit).slice(0, 7)) + '</code>' : '') + '.',
+        undone: 'Undone. ' + parent + ' is back where it was; the work is kept on <b>' + branch + '</b>.',
+        kept: 'Kept on the branch <b>' + branch + '</b>. Nothing was merged.',
+        discarded: 'Discarded. The worktree and branch are gone.',
+        conflict: 'Merging into ' + parent + ' conflicts. The Manager is bringing ' + parent + ' in and resolving it, then it will finish again.',
+        changes: 'Changes requested. The team is working on them; this card updates when the Manager finishes again.',
+        ask: (d.count || 0) === 0 ? 'The team made no changes, so there is nothing to merge. Ask for changes, or close the run.' : 'Look it over, then choose what happens to it.',
+      }[e.state] || '';
+      if (msg) box.appendChild(el('div', 'cc-ask-sub', msg));
+      // What the run took, measured.
+      if (e.usage && (e.usage.turns || e.usage.costUsd)) {
+        var mins = Math.round((e.usage.activeMs || 0) / 60000);
+        box.appendChild(el('div', 'cc-fr-use', esc((e.usage.costUsd ? '$' + e.usage.costUsd.toFixed(2) + ' · ' : '') + e.usage.turns + ' turns · ' + e.usage.handoffs + ' handoffs · ' + e.usage.chats + ' chats' + (mins ? ' · ' + (mins >= 60 ? Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min' : mins + ' min') : ''))));
+      }
+      // Review findings nobody dealt with: kept so they are not lost.
+      if ((e.followUps || []).length) {
+        var fu = el('details', 'cc-fr-files');
+        fu.appendChild(el('summary', '', esc(e.followUps.length + ' follow-up' + (e.followUps.length === 1 ? '' : 's') + ' from review')));
+        var fl = el('div', 'cc-fr-list');
+        e.followUps.forEach(function (x) { fl.appendChild(el('div', 'cc-fr-fu', '<b>' + esc(x.id) + '</b> ' + (x.blocking ? '<span class="cc-fr-del">blocking</span> ' : '') + esc(x.text) + (x.where ? ' <span class="cc-fr-br">(' + esc(x.where) + ')</span>' : ''))); });
+        fu.appendChild(fl);
+        box.appendChild(fu);
+      }
+      if (e.error) box.appendChild(el('div', 'cc-ask-reason', esc(e.error)));
+      var errLine = el('div', 'cc-ask-reason');
+      errLine.style.display = 'none';
+
+      function act(choice, extra, btn) {
+        var all = box.querySelectorAll('button');
+        for (var i = 0; i < all.length; i++) all[i].disabled = true;
+        errLine.style.display = 'none';
+        apiFetch('/api/factory-runs', {
+          method: 'POST',
+          body: JSON.stringify(Object.assign({ action: 'finish', id: e.runId, choice: choice }, extra || {})),
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          if (j && j.ok === false) {
+            errLine.innerHTML = esc(j.error || 'That did not work.');
+            errLine.style.display = '';
+            for (var k = 0; k < all.length; k++) all[k].disabled = false;
+          }
+        }).catch(function () { for (var k = 0; k < all.length; k++) all[k].disabled = false; });
+      }
+
+      var btns = el('div', 'cc-btns');
+      if (e.state === 'ask') {
+        // Nothing changed: nothing to merge or keep.
+        var empty = (d.count || 0) === 0;
+        if (!empty) {
+          var merge = el('button', 'cc-btn primary', 'Merge into ' + parent);
+          merge.addEventListener('click', function () { act('merge', null, merge); });
+          btns.appendChild(merge);
+        }
+        var changes = el('button', 'cc-btn' + (empty ? ' primary' : ''), 'Request changes');
+        btns.appendChild(changes);
+        if (!empty) {
+          var keep = el('button', 'cc-btn', 'Keep branch');
+          keep.addEventListener('click', function () { act('keep', null, keep); });
+          btns.appendChild(keep);
+        }
+        var discard = el('button', 'cc-btn danger', empty ? 'Close the run' : 'Discard');
+        var armed = null;
+        discard.addEventListener('click', function () {
+          if (empty) { act('discard', null, discard); return; }
+          if (!armed) {
+            discard.textContent = 'Sure? Discard';
+            armed = setTimeout(function () { armed = null; discard.textContent = 'Discard'; }, 3000);
+            return;
+          }
+          clearTimeout(armed); armed = null;
+          act('discard', null, discard);
+        });
+        btns.appendChild(discard);
+        var form = el('div', 'cc-fr-form');
+        form.style.display = 'none';
+        var ta = el('textarea', 'cc-fr-note');
+        ta.placeholder = 'What should change?';
+        ta.rows = 3;
+        var send = el('button', 'cc-btn primary', 'Send to the Manager');
+        send.addEventListener('click', function () {
+          if (!ta.value.trim()) { ta.focus(); return; }
+          act('changes', { note: ta.value }, send);
+        });
+        form.appendChild(ta);
+        form.appendChild(send);
+        changes.addEventListener('click', function () {
+          form.style.display = form.style.display === 'none' ? '' : 'none';
+          if (form.style.display === '') ta.focus();
+        });
+        box.appendChild(btns);
+        box.appendChild(form);
+      } else if (e.state === 'merged') {
+        var undo = el('button', 'cc-btn', 'Undo');
+        undo.addEventListener('click', function () { act('undo', null, undo); });
+        btns.appendChild(undo);
+        box.appendChild(btns);
+      }
+      box.appendChild(errLine);
       return box;
     }
 
@@ -3146,7 +3303,7 @@
     function loadSched() {
       if (!schedPanel || !project) return;
       var listEl = schedPanel.querySelector('.cc-sched-list');
-      apiFetch('/api/chat-schedule?project=' + encodeURIComponent(project))
+      apiFetch('/api/chat-schedule?project=' + encodeURIComponent(project) + (sessionId ? '&chat=' + encodeURIComponent(sessionId) : ''))
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (!schedPanel || !listEl) return;
@@ -3258,7 +3415,9 @@
       schedPanel.querySelector('.cc-sched-save').addEventListener('click', function () {
         var text = msg.value.trim();
         if (!text) { note.textContent = 'Write a message first.'; return; }
-        var payload = { project: project, text: text, trigger: { type: trig } };
+        // Bound to THIS chat: a project can have several, and the message must
+        // not land in whichever happens to be idle.
+        var payload = { project: project, text: text, trigger: { type: trig }, chat: sessionId || '' };
         if (trig === 'time') {
           if (!atEl.value) { note.textContent = 'Pick a time.'; return; }
           payload.trigger.at = new Date(atEl.value).toISOString();

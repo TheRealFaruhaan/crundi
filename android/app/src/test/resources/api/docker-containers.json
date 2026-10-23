@@ -1,0 +1,72 @@
+{
+ "ok": true,
+ "containers": [
+  {
+   "id": "8f7e6d5c4b3a",
+   "fullId": "8f7e6d5c4b3a29180716253443526170",
+   "name": "ledger-db-1",
+   "image": "postgres:16",
+   "imageId": "sha256:ab12",
+   "command": "docker-entrypoint.sh postgres",
+   "created": 1791800000,
+   "state": "running",
+   "status": "Up 6 days (healthy)",
+   "health": "healthy",
+   "running": true,
+   "project": "ledger",
+   "service": "db",
+   "ports": [
+    {
+     "ip": "0.0.0.0",
+     "public": 5432,
+     "private": 5432,
+     "type": "tcp"
+    }
+   ],
+   "networks": [
+    {
+     "name": "ledger_default",
+     "ip": "172.18.0.2"
+    }
+   ],
+   "mounts": [
+    {
+     "type": "volume",
+     "name": "ledger_pg",
+     "source": "/var/lib/docker/volumes/ledger_pg/_data",
+     "destination": "/var/lib/postgresql/data"
+    }
+   ],
+   "stats": {
+    "at": 1792322000000,
+    "cpuPct": 1.2,
+    "cpus": 4,
+    "memory": 301989888,
+    "memoryLimit": 8589934592,
+    "pids": 14,
+    "netRx": 182733,
+    "netTx": 99812,
+    "blkRead": 1048576,
+    "blkWrite": 4194304
+   }
+  },
+  {
+   "id": "1a2b3c4d5e6f",
+   "fullId": "1a2b3c4d5e6f",
+   "name": "redis-cache",
+   "image": "redis:7-alpine",
+   "imageId": "sha256:cd34",
+   "command": "redis-server",
+   "created": 1791000000,
+   "state": "exited",
+   "status": "Exited (0) 2 days ago",
+   "health": "",
+   "running": false,
+   "project": "",
+   "service": "",
+   "ports": [],
+   "networks": [],
+   "mounts": []
+  }
+ ]
+}

@@ -1,0 +1,123 @@
+{
+ "ok": true,
+ "container": {
+  "id": "8f7e6d5c4b3a",
+  "fullId": "8f7e6d5c4b3a29180716253443526170",
+  "name": "ledger-db-1",
+  "image": "postgres:16",
+  "imageId": "sha256:ab12",
+  "command": "docker-entrypoint.sh postgres",
+  "created": 1791800000,
+  "state": "running",
+  "status": "Up 6 days (healthy)",
+  "health": "healthy",
+  "running": true,
+  "project": "ledger",
+  "service": "db",
+  "ports": [
+   {
+    "ip": "0.0.0.0",
+    "public": 5432,
+    "private": 5432,
+    "type": "tcp"
+   }
+  ],
+  "networks": [
+   {
+    "name": "ledger_default",
+    "ip": "172.18.0.2"
+   }
+  ],
+  "mounts": [
+   {
+    "type": "volume",
+    "name": "ledger_pg",
+    "source": "/var/lib/docker/volumes/ledger_pg/_data",
+    "destination": "/var/lib/postgresql/data"
+   }
+  ],
+  "stats": {
+   "at": 1792322000000,
+   "cpuPct": 1.2,
+   "cpus": 4,
+   "memory": 301989888,
+   "memoryLimit": 8589934592,
+   "pids": 14,
+   "netRx": 182733,
+   "netTx": 99812,
+   "blkRead": 1048576,
+   "blkWrite": 4194304
+  }
+ },
+ "overview": {
+  "id": "8f7e6d5c4b3a",
+  "name": "ledger-db-1",
+  "image": "postgres:16",
+  "imageId": "sha256:ab12",
+  "created": "2026-10-15T08:00:00Z",
+  "startedAt": "2026-10-15T08:00:02Z",
+  "finishedAt": "0001-01-01T00:00:00Z",
+  "state": "running",
+  "exitCode": 0,
+  "error": "",
+  "oomKilled": false,
+  "health": "healthy",
+  "restartCount": 0,
+  "restartPolicy": "unless-stopped",
+  "tty": false,
+  "entrypoint": [
+   "docker-entrypoint.sh"
+  ],
+  "cmd": [
+   "postgres"
+  ],
+  "workingDir": "",
+  "user": "",
+  "hostname": "8f7e6d5c4b3a",
+  "ports": [
+   {
+    "ip": "0.0.0.0",
+    "public": 5432,
+    "private": 5432,
+    "type": "tcp"
+   }
+  ],
+  "networks": [
+   {
+    "name": "ledger_default",
+    "ip": "172.18.0.2",
+    "gateway": "172.18.0.1",
+    "mac": "02:42:ac:12:00:02"
+   }
+  ],
+  "mounts": [
+   {
+    "type": "volume",
+    "name": "ledger_pg",
+    "source": "/var/lib/docker/volumes/ledger_pg/_data",
+    "destination": "/var/lib/postgresql/data",
+    "rw": true
+   }
+  ],
+  "env": [
+   {
+    "key": "POSTGRES_DB",
+    "value": "ledger",
+    "hidden": false
+   },
+   {
+    "key": "POSTGRES_PASSWORD",
+    "value": "",
+    "hidden": true
+   }
+  ],
+  "labels": {
+   "com.docker.compose.project": "ledger"
+  },
+  "project": "ledger",
+  "service": "db"
+ },
+ "inspect": {
+  "Id": "8f7e6d5c4b3a29180716253443526170"
+ }
+}

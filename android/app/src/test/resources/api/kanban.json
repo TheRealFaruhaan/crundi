@@ -1,0 +1,91 @@
+{
+ "ok": true,
+ "board": {
+  "statuses": [
+   "backlog",
+   "todo",
+   "in_progress",
+   "done"
+  ],
+  "tasks": [
+   {
+    "id": "t1a2b3c4d5e6f708",
+    "title": "Fix login redirect",
+    "description": "After a password login the page loops back to /login.",
+    "status": "in_progress",
+    "todos": [
+     {
+      "id": "d1",
+      "text": "Reproduce on the phone",
+      "done": true,
+      "deleted": false,
+      "createdAt": "2026-10-19T08:00:00.000Z",
+      "updatedAt": "2026-10-20T08:00:00.000Z"
+     },
+     {
+      "id": "d2",
+      "text": "Check the cookie path",
+      "done": false,
+      "deleted": false,
+      "createdAt": "2026-10-19T08:00:00.000Z",
+      "updatedAt": "2026-10-20T08:00:00.000Z"
+     }
+    ],
+    "deleted": false,
+    "deletedAt": null,
+    "createdAt": "2026-10-19T08:00:00.000Z",
+    "updatedAt": "2026-10-20T10:00:00.000Z",
+    "mindmapNodes": [
+     {
+      "id": "mm1",
+      "text": "Login flow",
+      "parentId": null
+     }
+    ]
+   },
+   {
+    "id": "t2b3c4d5e6f70819",
+    "title": "Native Android app",
+    "description": "Replace the web pages with Compose screens.",
+    "status": "todo",
+    "todos": [],
+    "deleted": false,
+    "deletedAt": null,
+    "createdAt": "2026-10-18T08:00:00.000Z",
+    "updatedAt": "2026-10-18T08:00:00.000Z",
+    "mindmapNodes": []
+   },
+   {
+    "id": "t3c4d5e6f7081920",
+    "title": "Release 1.21",
+    "description": "",
+    "status": "done",
+    "todos": [
+     {
+      "id": "d3",
+      "text": "Tag main",
+      "done": true,
+      "deleted": false,
+      "createdAt": "2026-10-19T08:00:00.000Z",
+      "updatedAt": "2026-10-20T08:00:00.000Z"
+     }
+    ],
+    "deleted": false,
+    "deletedAt": null,
+    "createdAt": "2026-10-10T08:00:00.000Z",
+    "updatedAt": "2026-10-12T08:00:00.000Z",
+    "mindmapNodes": []
+   }
+  ],
+  "deletedTasks": [],
+  "history": [
+   {
+    "id": "h1",
+    "ts": "2026-10-20T10:00:00.000Z",
+    "action": "task.move",
+    "message": "Moved \"Fix login redirect\" to In progress",
+    "taskId": "t1a2b3c4d5e6f708"
+   }
+  ]
+ }
+}

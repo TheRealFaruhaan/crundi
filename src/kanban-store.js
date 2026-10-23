@@ -132,6 +132,14 @@ export function getHistory(alias) {
 
 // ─── Task mutations ───
 
+// Told when a card lands in a column (added there, or moved there from
+// another): factory triggers start runs from this.
+const statusListeners = new Set();
+export function onStatusChange(fn) { statusListeners.add(fn); return () => statusListeners.delete(fn); }
+function entered(alias, task) {
+  for (const fn of statusListeners) { try { fn(String(alias || '').toLowerCase(), JSON.parse(JSON.stringify(task)), task.status); } catch { /* a listener's problem */ } }
+}
+
 export function addTask(alias, { title, description = '', status = DEFAULT_STATUS, todos = [] } = {}) {
   const t = String(title || '').trim();
   if (!t) return { ok: false, error: 'Task title is required' };
@@ -156,6 +164,7 @@ export function addTask(alias, { title, description = '', status = DEFAULT_STATU
   board.tasks.push(task);
   record(board, 'task.add', `Added task "${task.title}"`, { taskId: task.id });
   saveAll(map);
+  entered(alias, task);
   return { ok: true, task };
 }
 
@@ -172,15 +181,17 @@ export function updateTask(alias, taskId, updates = {}) {
   if (updates.description !== undefined && updates.description !== task.description) {
     task.description = String(updates.description); changes.push('description');
   }
+  let moved = false;
   if (updates.status !== undefined) {
     const s = normalizeStatus(updates.status);
-    if (s !== task.status) { task.status = s; changes.push(`status→${s}`); }
+    if (s !== task.status) { task.status = s; changes.push(`status→${s}`); moved = true; }
   }
   if (!changes.length) return { ok: true, task, unchanged: true };
 
   task.updatedAt = new Date().toISOString();
   record(board, 'task.update', `Updated task "${task.title}" (${changes.join(', ')})`, { taskId });
   saveAll(map);
+  if (moved) entered(alias, task);
   return { ok: true, task };
 }
 
@@ -192,6 +203,7 @@ export function moveTask(alias, taskId, status, index) {
   if (!task) return { ok: false, error: 'Task not found' };
 
   const s = normalizeStatus(status);
+  const moved = task.status !== s;
   task.status = s;
   task.updatedAt = new Date().toISOString();
 
@@ -210,6 +222,7 @@ export function moveTask(alias, taskId, status, index) {
   }
   record(board, 'task.move', `Moved task "${task.title}" to ${s}`, { taskId });
   saveAll(map);
+  if (moved) entered(alias, task);
   return { ok: true, task };
 }
 

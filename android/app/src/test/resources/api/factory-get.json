@@ -1,0 +1,181 @@
+{
+ "ok": true,
+ "factory": {
+  "id": "fac_android",
+  "name": "Android team",
+  "description": "",
+  "version": 7,
+  "createdAt": "2026-10-15T08:00:00.000Z",
+  "updatedAt": "2026-10-20T08:00:00.000Z",
+  "settings": {
+   "managerMode": "normal",
+   "mergeMode": "ask",
+   "setupCommand": "",
+   "autoRecover": true,
+   "teamMode": "ask",
+   "presets": [
+    "git-read",
+    "tests"
+   ],
+   "rules": [],
+   "managerRules": true,
+   "crTemplate": [],
+   "gatekeeper": {
+    "enabled": false,
+    "model": ""
+   },
+   "caps": {
+    "maxHandoffs": 200,
+    "maxMinutes": 0,
+    "tokenBudget": 0
+   }
+  },
+  "roster": [
+   {
+    "id": "manager",
+    "name": "Manager",
+    "persona": "",
+    "model": "",
+    "effort": "",
+    "memory": "keep",
+    "tools": {
+     "allow": [],
+     "deny": []
+    },
+    "skills": [],
+    "presets": []
+   },
+   {
+    "id": "emp_api",
+    "name": "API engineer",
+    "persona": "You write the app's client.",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "memory": "keep",
+    "tools": {
+     "allow": [],
+     "deny": []
+    },
+    "skills": [],
+    "presets": []
+   }
+  ],
+  "nodes": [
+   {
+    "id": "n_start",
+    "type": "start",
+    "label": "Start",
+    "position": {
+     "x": 0,
+     "y": 0
+    }
+   },
+   {
+    "id": "n_api",
+    "type": "employee",
+    "label": "API client",
+    "position": {
+     "x": 0,
+     "y": 120
+    },
+    "employeeId": "emp_api"
+   },
+   {
+    "id": "n_areas",
+    "type": "decision",
+    "label": "Areas",
+    "position": {
+     "x": 0,
+     "y": 240
+    },
+    "decision": {
+     "kind": "many",
+     "question": "Which areas need work in this round?",
+     "options": [
+      {
+       "id": "chats",
+       "label": "Chats"
+      },
+      {
+       "id": "work",
+       "label": "Workspace"
+      }
+     ],
+     "answeredBy": "emp_api",
+     "review": false
+    }
+   },
+   {
+    "id": "n_wait",
+    "type": "wait",
+    "label": "Wait for CI",
+    "position": {
+     "x": 240,
+     "y": 240
+    },
+    "wait": {
+     "kind": "command",
+     "minutes": 0,
+     "at": "",
+     "command": "gh run list --limit 1",
+     "every": 60,
+     "timeout": 30,
+     "what": "CI"
+    }
+   },
+   {
+    "id": "n_end",
+    "type": "end",
+    "label": "End",
+    "position": {
+     "x": 0,
+     "y": 360
+    }
+   }
+  ],
+  "edges": [
+   {
+    "id": "e1",
+    "kind": "flow",
+    "source": "n_start",
+    "sourceHandle": "out",
+    "target": "n_api",
+    "requireNote": false,
+    "noteLabel": "",
+    "maxRounds": 0
+   },
+   {
+    "id": "e2",
+    "kind": "flow",
+    "source": "n_api",
+    "sourceHandle": "out",
+    "target": "n_areas",
+    "requireNote": false,
+    "noteLabel": "",
+    "maxRounds": 0
+   },
+   {
+    "id": "e3",
+    "kind": "flow",
+    "source": "n_areas",
+    "sourceHandle": "none",
+    "target": "n_end",
+    "requireNote": false,
+    "noteLabel": "",
+    "maxRounds": 3
+   }
+  ]
+ },
+ "validation": {
+  "ok": true,
+  "errors": [],
+  "warnings": [
+   {
+    "code": "no-tests",
+    "message": "No step runs the tests.",
+    "fix": "Give an employee the tests preset.",
+    "nodeId": "n_api"
+   }
+  ]
+ }
+}

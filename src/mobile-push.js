@@ -49,6 +49,15 @@ const KEY_RE = /^[A-Za-z0-9._~-]{20,200}$/;
 // Google and Apple both stop at 4096 bytes for the whole message. The
 // ciphertext travels as base64 inside it, so the text is cut well short.
 const MAX_BODY_BYTES = 1800;
+// The relay refuses a sealed payload over 3000 characters (MAX_PAYLOAD in
+// relay/src/index.js, android/RELAY.md), and refuses the whole batch with it:
+// the phone then gets nothing at all. Sealing adds a fixed 103 bytes and
+// base64url adds a third, so what goes in must be at most 2147 bytes. A long
+// reply with a suggestion and a chat attached runs past that, so the body is
+// cut further until it fits.
+const MAX_SEALED_CHARS = 3000;
+const SEAL_OVERHEAD = 103;
+export const MAX_PAYLOAD_BYTES = Math.floor(MAX_SEALED_CHARS * 3 / 4) - SEAL_OVERHEAD;
 const TTL_S = 4 * 60 * 60;
 const TIMEOUT_MS = 10_000;
 const BATCH = 20;
@@ -249,11 +258,29 @@ function clip(text, maxBytes) {
 
 /** What the phone decrypts. `v` is this shape's version; add fields, keep these. */
 export function buildPayload(text, meta = {}) {
+  const fits = (o) => Buffer.byteLength(o) <= MAX_PAYLOAD_BYTES;
+  let out = payloadWith(text, meta, MAX_BODY_BYTES);
+  if (fits(out)) return out;
+  // Too big to be let through: the longest body that fits, found by halving
+  // (JSON escapes make the overrun a poor guide to how much to cut).
+  let lo = 0, hi = MAX_BODY_BYTES;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (fits(payloadWith(text, meta, mid))) lo = mid; else hi = mid - 1;
+  }
+  out = payloadWith(text, meta, lo);
+  // Still too big with no body left (a long suggestion and a long request
+  // together): the suggestion is the part that can go.
+  if (Buffer.byteLength(out) > MAX_PAYLOAD_BYTES && meta.suggestion) out = payloadWith('', { ...meta, suggestion: undefined }, 0);
+  return out;
+}
+
+function payloadWith(text, meta, bodyMax) {
   const c = meta.chat;
   return JSON.stringify({
     v: 1,
     title: clip(meta.title || 'Crundi', 120),
-    body: clip(text, MAX_BODY_BYTES),
+    body: bodyMax > 8 ? clip(text, bodyMax) : '',
     kind: String(meta.tag || 'crundi').slice(0, 40),
     url: String(meta.url || '/').slice(0, 300),
     at: Date.now(),

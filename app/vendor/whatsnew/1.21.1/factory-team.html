@@ -1,0 +1,31 @@
+<div class="wna a-fxt">
+  <div class="n cr"><i>CR</i><b>Change request</b></div>
+  <div class="n mg"><i class="crown"></i><b>Manager</b></div>
+  <div class="n fe"><i></i><b>Frontend</b></div>
+  <div class="n be"><i></i><b>Backend</b></div>
+  <div class="n rv"><i></i><b>Reviewer</b></div>
+  <div class="n ok"><i class="chk"></i><b>Merged</b></div>
+  <svg viewBox="0 0 640 400" class="ln"><path d="M150 72 L270 72"/><path d="M320 96 L210 170"/><path d="M320 96 L430 170"/><path d="M210 214 L320 280"/><path d="M430 214 L320 280"/><path d="M370 300 L470 340"/><path class="back" d="M280 290 C 120 300, 100 200, 160 196"/></svg>
+  <span class="tok t1"></span><span class="tok t2"></span><span class="tok t3"></span>
+  <style>
+    .a-fxt{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-fxt .ln{position:absolute;inset:0;width:640px;height:400px}
+    .a-fxt .ln path{fill:none;stroke:var(--border);stroke-width:2}
+    .a-fxt .ln path.back{stroke-dasharray:5 5;stroke:var(--yellow);opacity:.5}
+    .a-fxt .n{position:absolute;display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:13px;z-index:1;animation:afxt-glow 10s ease infinite}
+    .a-fxt .n i{width:18px;height:18px;border-radius:50%;background:var(--accent-dim);flex:none;font:700 8px/18px var(--mono,monospace);font-style:normal;text-align:center;color:var(--accent-hover)}
+    .a-fxt .n b{font-weight:600}
+    .a-fxt .cr{left:30px;top:50px} .a-fxt .mg{left:270px;top:50px} .a-fxt .fe{left:150px;top:170px} .a-fxt .be{left:380px;top:170px} .a-fxt .rv{left:270px;top:276px} .a-fxt .ok{left:450px;top:330px}
+    .a-fxt .mg i{background:var(--yellow-dim)}
+    .a-fxt .ok i{background:var(--green);opacity:.85}
+    .a-fxt .cr{animation-delay:0s} .a-fxt .mg{animation-delay:.9s} .a-fxt .fe,.a-fxt .be{animation-delay:2.2s} .a-fxt .rv{animation-delay:4.4s} .a-fxt .ok{animation-delay:6.6s}
+    .a-fxt .tok{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 14px var(--accent);z-index:2;opacity:0}
+    .a-fxt .t1{animation:afxt-t1 10s ease-in-out infinite}
+    .a-fxt .t2{animation:afxt-t2 10s ease-in-out infinite}
+    .a-fxt .t3{animation:afxt-t3 10s ease-in-out infinite}
+    @keyframes afxt-glow{0%,100%{border-color:var(--border);box-shadow:none}6%{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}18%{border-color:var(--border);box-shadow:none}}
+    @keyframes afxt-t1{0%{opacity:0;left:150px;top:66px}4%{opacity:1}10%{left:270px;top:66px}22%{left:204px;top:176px}38%{left:204px;top:176px}46%{left:314px;top:282px}64%{left:314px;top:282px}72%{left:470px;top:336px;opacity:1}78%,100%{opacity:0;left:470px;top:336px}}
+    @keyframes afxt-t2{0%,10%{opacity:0;left:320px;top:90px}12%{opacity:1}22%{left:430px;top:176px}38%{left:430px;top:176px}46%{left:320px;top:282px;opacity:1}50%,100%{opacity:0;left:320px;top:282px}}
+    @keyframes afxt-t3{0%,50%{opacity:0;left:290px;top:290px}52%{opacity:1}60%{left:160px;top:196px}63%,100%{opacity:0;left:160px;top:196px}}
+  </style>
+</div>

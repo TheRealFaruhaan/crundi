@@ -1,0 +1,324 @@
+/**
+ * factory-git.js — the worktrees a factory run works in.
+ *
+ * A run never touches the project's own checkout. It gets:
+ *
+ *   <root>/<project>/<runId>/main        the run worktree, on factory/<slug>-<id>
+ *   <root>/<project>/<runId>/<name>      one per parallel branch, cut from main
+ *
+ * <root> is FACTORY_WORKTREES_DIR or ~/crundi-factory-worktrees: outside
+ * PROJECTS_DIR (or each worktree would be discovered as a project of its own)
+ * and beside, not inside, the collaborators' worktrees.
+ *
+ * The runner commits at every handoff, so each step is a commit: that is how
+ * progress is detected (the tree hash changes or it does not), and branches
+ * can be merged at a Join. Files Crundi places in a worktree for its own use
+ * are never committed: git only honours info/exclude from the shared git dir
+ * (verified: a linked worktree's own info/exclude is ignored), and writing to
+ * the shared one would change the project's checkout too, so the exclusions
+ * are pathspecs on every `git add` instead.
+ *
+ * Commits are made as "Crundi Factory" so they work on a machine with no git
+ * identity; the final squash onto the parent branch (card 5) is the user's.
+ */
+
+import { execFile } from 'child_process';
+import { existsSync, mkdirSync, readdirSync, symlinkSync, lstatSync } from 'fs';
+import { join, resolve, sep } from 'path';
+import { homedir } from 'os';
+
+export const worktreesRoot = () => process.env.FACTORY_WORKTREES_DIR || join(homedir(), 'crundi-factory-worktrees');
+
+/** Paths Crundi may place in a worktree that must never be committed. */
+export const NEVER_COMMIT = ['.mcp.json', '.factory'];
+
+/**
+ * Make the project's skills visible in a worktree. Claude finds project skills
+ * in <cwd>/.claude/skills, and a worktree only has the ones committed. If the
+ * worktree has no skills folder, the project's whole folder is linked; if it
+ * has one (committed skills), each project skill it lacks is linked in. The
+ * links are returned so every commit can leave them out.
+ * @returns {string[]} paths, relative to the worktree, never to commit
+ */
+export function linkProjectSkills(repo, worktree) {
+  const src = join(repo, '.claude', 'skills');
+  if (!existsSync(src)) return [];
+  const dst = join(worktree, '.claude', 'skills');
+  try {
+    if (!existsSync(dst)) {
+      mkdirSync(join(worktree, '.claude'), { recursive: true });
+      symlinkSync(src, dst, 'dir');
+      return ['.claude/skills'];
+    }
+    if (lstatSync(dst).isSymbolicLink()) return ['.claude/skills'];
+    const out = [];
+    for (const name of readdirSync(src)) {
+      if (name.startsWith('.') || existsSync(join(dst, name))) continue;
+      symlinkSync(join(src, name), join(dst, name), 'dir');
+      out.push(`.claude/skills/${name}`);
+    }
+    return out;
+  } catch { return []; }
+}
+
+const IDENTITY = ['-c', 'user.name=Crundi Factory', '-c', 'user.email=factory@crundi.invalid', '-c', 'commit.gpgsign=false'];
+
+export function git(args, cwd, { timeout = 120000 } = {}) {
+  return new Promise((done) => {
+    execFile('git', args, { cwd, timeout, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => done({
+      ok: !err,
+      code: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
+      stdout: String(stdout || ''),
+      stderr: String(stderr || ''),
+      error: err ? String(stderr || err.message || err).trim() : '',
+    }));
+  });
+}
+
+export function slug(s, max = 32) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max) || 'run';
+}
+
+function isWithin(parent, child) {
+  const p = resolve(parent), c = resolve(child);
+  return c === p || c.startsWith(p + sep);
+}
+
+/** Folder a run's worktrees live in. */
+export function runRoot(project, runId) {
+  return join(worktreesRoot(), slug(project, 64), String(runId).replace(/[^A-Za-z0-9_-]/g, ''));
+}
+
+/**
+ * What the run would start from: the project's current branch and commit, and
+ * whether there is uncommitted work that the run will NOT see.
+ */
+export async function inspectRepo(repo) {
+  if (!repo || !existsSync(repo)) return { ok: false, error: 'The project folder does not exist.' };
+  const top = await git(['rev-parse', '--show-toplevel'], repo);
+  if (!top.ok) return { ok: false, error: 'This project is not a git repository. A factory works in a git worktree, so the project needs git.' };
+  const head = await git(['rev-parse', 'HEAD'], repo);
+  if (!head.ok) return { ok: false, error: 'This repository has no commits yet. Make a first commit, then start the factory.' };
+  const br = await git(['symbolic-ref', '--quiet', '--short', 'HEAD'], repo);
+  if (!br.ok) return { ok: false, error: 'The project is on a detached HEAD. Check out a branch first, so the result has somewhere to merge back to.' };
+  const st = await git(['status', '--porcelain'], repo);
+  return {
+    ok: true,
+    top: top.stdout.trim(),
+    branch: br.stdout.trim(),
+    commit: head.stdout.trim(),
+    dirty: st.ok && st.stdout.trim().length > 0,
+  };
+}
+
+/**
+ * Create the run worktree on a new branch cut from the project's HEAD.
+ * @returns {{ok, path, branch, parentBranch, baseCommit, dirty, error?}}
+ */
+export async function createRunWorktree({ repo, project, runId, name }) {
+  const info = await inspectRepo(repo);
+  if (!info.ok) return info;
+  const root = runRoot(project, runId);
+  const path = join(root, 'main');
+  if (existsSync(path)) return { ok: false, error: `A worktree already exists at ${path}` };
+  mkdirSync(root, { recursive: true });
+  const branch = `factory/${slug(name, 40)}-${String(runId).slice(-6)}`;
+  const add = await git(['worktree', 'add', '-b', branch, path, info.commit], info.top);
+  if (!add.ok) return { ok: false, error: `Could not create the worktree: ${add.error}` };
+  return { ok: true, path, root, branch, parentBranch: info.branch, baseCommit: info.commit, dirty: info.dirty, repo: info.top };
+}
+
+/**
+ * A worktree for one parallel branch, cut from the current commit of
+ * `parentPath`. Safe to repeat: the folder and branch are fixed by `key` (the
+ * engine's workspace id), so if a crash came after the worktree was made but
+ * before that was recorded, doing it again finds and reuses it instead of
+ * making a second one.
+ */
+export async function createBranchWorktree({ repo, parentPath, root, name, branchPrefix, key, exclude = [] }) {
+  const id = String(key || '').replace(/[^A-Za-z0-9_-]/g, '') || slug(name, 12);
+  const path = join(root, `${slug(name, 32)}-${id}`);
+  const branch = `${branchPrefix}--${id}`;
+  if (existsSync(path)) {
+    const head = await git(['rev-parse', '--abbrev-ref', 'HEAD'], path);
+    if (head.ok && head.stdout.trim() === branch) return { ok: true, path, branch, reused: true };
+    return { ok: false, error: `${path} exists but is not the worktree for ${branch}.` };
+  }
+  const known = await git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], repo);
+  if (known.ok) {
+    const add = await git(['worktree', 'add', path, branch], repo);
+    if (!add.ok) return { ok: false, error: `Could not restore the branch worktree: ${add.error}` };
+    return { ok: true, path, branch, reused: true };
+  }
+  const base = await commitAll(parentPath, 'factory: before fan-out', { exclude });
+  if (!base.ok) return base;
+  const add = await git(['worktree', 'add', '-b', branch, path, base.head], repo);
+  if (!add.ok) return { ok: false, error: `Could not create the branch worktree: ${add.error}` };
+  return { ok: true, path, branch, baseCommit: base.head };
+}
+
+/**
+ * Stage everything except Crundi's own files and commit it, if anything
+ * changed. Returns the resulting HEAD and its tree hash either way.
+ */
+export async function commitAll(path, message, { exclude = [] } = {}) {
+  const add = await git(['add', '-A', '--', '.', ...[...NEVER_COMMIT, ...exclude].map(p => `:(exclude)${p}`)], path);
+  if (!add.ok) return { ok: false, error: `git add failed: ${add.error}` };
+  const staged = await git(['diff', '--cached', '--quiet'], path);
+  let committed = false;
+  if (staged.code === 1) {
+    const c = await git([...IDENTITY, 'commit', '--no-verify', '-q', '-m', String(message || 'factory: step').slice(0, 2000)], path);
+    if (!c.ok) return { ok: false, error: `git commit failed: ${c.error}` };
+    committed = true;
+  } else if (!staged.ok && staged.code !== 0) {
+    return { ok: false, error: `git diff failed: ${staged.error}` };
+  }
+  const head = await git(['rev-parse', 'HEAD'], path);
+  const tree = await git(['rev-parse', 'HEAD^{tree}'], path);
+  return { ok: true, committed, head: head.stdout.trim(), tree: tree.stdout.trim() };
+}
+
+/**
+ * Merge a branch into the worktree at `parentPath` (both committed first).
+ * On conflict the merge is aborted and the conflicted files are returned, so
+ * the parent is left exactly as it was.
+ */
+export async function mergeBranch({ parentPath, childPath, childBranch, message, exclude = [] }) {
+  if (childPath) {
+    const c = await commitAll(childPath, 'factory: branch done', { exclude });
+    if (!c.ok) return c;
+  }
+  const p = await commitAll(parentPath, 'factory: before join', { exclude });
+  if (!p.ok) return p;
+  const m = await git([...IDENTITY, 'merge', '--no-ff', '--no-edit', '-m', message || `factory: join ${childBranch}`, childBranch], parentPath);
+  if (m.ok) {
+    const head = await git(['rev-parse', 'HEAD'], parentPath);
+    return { ok: true, head: head.stdout.trim() };
+  }
+  const conflicted = await git(['diff', '--name-only', '--diff-filter=U'], parentPath);
+  await git(['merge', '--abort'], parentPath);
+  const files = conflicted.stdout.split('\n').map(s => s.trim()).filter(Boolean);
+  return { ok: false, conflict: files.length > 0, files, error: files.length ? `Merge conflict in ${files.join(', ')}` : `Merge failed: ${m.error}` };
+}
+
+/** Remove a worktree folder and, optionally, its branch. Only inside the factory root. */
+export async function removeWorktree({ repo, path, branch, deleteBranch = true }) {
+  if (path && !isWithin(worktreesRoot(), path)) return { ok: false, error: 'Refusing to remove a folder outside the factory worktrees.' };
+  if (path && existsSync(path)) {
+    const r = await git(['worktree', 'remove', '--force', path], repo);
+    if (!r.ok) return { ok: false, error: `Could not remove the worktree: ${r.error}` };
+  }
+  if (deleteBranch && branch && branch.startsWith('factory/')) await git(['branch', '-D', branch], repo);
+  await git(['worktree', 'prune'], repo);
+  return { ok: true };
+}
+
+/** Short status and diff stat of a worktree against a base commit, for prompts. */
+export async function workSummary(path, baseCommit) {
+  const st = await git(['status', '--short'], path);
+  const stat = baseCommit ? await git(['diff', '--stat', baseCommit], path) : { stdout: '' };
+  const keep = s => s.split('\n').filter(l => l.trim() && ![...NEVER_COMMIT, '.claude/skills'].some(p => l.includes(p))).slice(0, 60).join('\n');
+  return { status: keep(st.stdout), diffStat: keep(stat.stdout) };
+}
+
+// ─── The result: diff, squash merge, undo ───
+
+/** What a run changed against where it started: diff stat and per-file counts. */
+export async function diffSummary(path, base) {
+  const stat = await git(['diff', '--stat=120', `${base}..HEAD`], path);
+  const num = await git(['diff', '--numstat', `${base}..HEAD`], path);
+  const files = num.stdout.split('\n').filter(Boolean).map(l => {
+    const [a, d, ...f] = l.split('\t');
+    return { file: f.join('\t'), added: a === '-' ? null : +a, removed: d === '-' ? null : +d };
+  }).filter(x => !NEVER_COMMIT.some(p => x.file.startsWith(p)));
+  return {
+    stat: stat.stdout.trim().split('\n').slice(-40).join('\n'),
+    files,
+    added: files.reduce((n, f) => n + (f.added || 0), 0),
+    removed: files.reduce((n, f) => n + (f.removed || 0), 0),
+  };
+}
+
+/** The full diff, capped. */
+export async function fullDiff(path, base, { maxBytes = 2_000_000 } = {}) {
+  const d = await git(['diff', `${base}..HEAD`], path);
+  const text = d.stdout;
+  return { diff: text.length > maxBytes ? text.slice(0, maxBytes) : text, truncated: text.length > maxBytes };
+}
+
+/** Where a branch is checked out, if anywhere. */
+async function checkedOutAt(repo, branch) {
+  const r = await git(['worktree', 'list', '--porcelain'], repo);
+  let path = '';
+  for (const line of r.stdout.split('\n')) {
+    if (line.startsWith('worktree ')) path = line.slice(9);
+    else if (line === `branch refs/heads/${branch}`) return path;
+  }
+  return '';
+}
+
+async function identityArgs(repo) {
+  const name = await git(['config', 'user.name'], repo);
+  const email = await git(['config', 'user.email'], repo);
+  return name.stdout.trim() && email.stdout.trim() ? [] : IDENTITY;
+}
+
+/**
+ * Squash the run's branch onto the parent branch as ONE commit, without
+ * touching anyone's working files:
+ *   1. git merge-tree computes the merged tree in the object store (conflicts
+ *      are reported, nothing is written to a checkout);
+ *   2. git commit-tree makes the single commit, with the parent's tip as its
+ *      only parent and the given message, as the repository's own identity;
+ *   3. the parent branch moves to it: `merge --ff-only` where it is checked
+ *      out (which refuses rather than overwrite local changes), `update-ref`
+ *      (compare-and-swap on the old tip) where it is not.
+ * @returns {{ok, commit?, before?, after?, conflict?, files?, blocked?, empty?, error?}}
+ */
+export async function squashMerge({ repo, parentBranch, branch, message }) {
+  const before = (await git(['rev-parse', `refs/heads/${parentBranch}`], repo)).stdout.trim();
+  const tip = (await git(['rev-parse', `refs/heads/${branch}`], repo)).stdout.trim();
+  if (!before || !tip) return { ok: false, error: `Could not find ${!before ? parentBranch : branch}.` };
+  const mt = await git(['merge-tree', '--write-tree', '--name-only', '--no-messages', before, tip], repo);
+  const lines = mt.stdout.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!mt.ok) {
+    if (mt.code === 1 && lines.length) return { ok: false, conflict: true, files: lines.slice(1), error: `Merging into ${parentBranch} conflicts in ${lines.slice(1).join(', ') || 'some files'}.` };
+    return { ok: false, error: `git merge-tree failed: ${mt.error}` };
+  }
+  const tree = lines[0];
+  const baseTree = (await git(['rev-parse', `${before}^{tree}`], repo)).stdout.trim();
+  if (tree === baseTree) return { ok: false, empty: true, error: `There is nothing to merge: ${parentBranch} already has all of it.` };
+  const c = await git([...(await identityArgs(repo)), 'commit-tree', tree, '-p', before, '-m', String(message || 'Factory result').slice(0, 20000)], repo);
+  if (!c.ok) return { ok: false, error: `git commit-tree failed: ${c.error}` };
+  const after = c.stdout.trim();
+  const at = await checkedOutAt(repo, parentBranch);
+  if (at) {
+    const ff = await git(['merge', '--ff-only', '-q', after], at);
+    if (!ff.ok) return { ok: false, blocked: true, error: `${parentBranch} is checked out in ${at} and its uncommitted changes would be overwritten. Commit or stash them, then merge again.` };
+  } else {
+    const u = await git(['update-ref', `refs/heads/${parentBranch}`, after, before], repo);
+    if (!u.ok) return { ok: false, error: `${parentBranch} moved while merging. Try again.` };
+  }
+  return { ok: true, commit: after, before, after };
+}
+
+/**
+ * Take a squash merge back, while nothing has been committed on top of it.
+ * The parent goes back to where it was (reset --keep where checked out, which
+ * keeps local changes and refuses if they are in the way), and the run's work
+ * is put on `restoreBranch` so nothing is lost.
+ */
+export async function undoMerge({ repo, parentBranch, before, after, restoreBranch }) {
+  const now = (await git(['rev-parse', `refs/heads/${parentBranch}`], repo)).stdout.trim();
+  if (now !== after) return { ok: false, moved: true, error: `${parentBranch} has moved on since the merge, so it cannot simply be taken back. Revert it instead: git revert ${after.slice(0, 12)}` };
+  if (restoreBranch) await git(['branch', '-f', restoreBranch, after], repo);
+  const at = await checkedOutAt(repo, parentBranch);
+  if (at) {
+    const r = await git(['reset', '--keep', '-q', before], at);
+    if (!r.ok) return { ok: false, blocked: true, error: `${parentBranch} is checked out in ${at} and its local changes are in the way of undoing. Commit or stash them, then undo again.` };
+  } else {
+    const u = await git(['update-ref', `refs/heads/${parentBranch}`, before, after], repo);
+    if (!u.ok) return { ok: false, error: `Could not move ${parentBranch} back: ${u.error}` };
+  }
+  return { ok: true };
+}

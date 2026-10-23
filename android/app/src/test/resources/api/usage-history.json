@@ -1,0 +1,24 @@
+{
+ "ok": true,
+ "range": "week",
+ "records": [
+  {
+   "at": 1792300000000,
+   "five": 20,
+   "week": 40,
+   "fiveOpt": null,
+   "weekOpt": 10,
+   "fiveReset": "2026-10-21T09:00:00.000Z",
+   "weekReset": "2026-10-24T08:00:00.000Z"
+  },
+  {
+   "at": 1792320000000,
+   "five": 31,
+   "week": 46,
+   "fiveOpt": null,
+   "weekOpt": 12,
+   "fiveReset": "2026-10-21T14:00:00.000Z",
+   "weekReset": "2026-10-24T08:00:00.000Z"
+  }
+ ]
+}

@@ -1,0 +1,51 @@
+{
+ "ok": true,
+ "html": "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:\"><script>/* crundi widget runtime: talks to window.parent by postMessage {crundi:1,t:...} */</script></head><body><h3>Android build</h3><div id=\"s\" data-source=\"build\"></div></body></html>",
+ "rev": 3,
+ "widget": {
+  "id": "build-board",
+  "project": "crundi",
+  "title": "Android build",
+  "icon": "",
+  "slot": "cell",
+  "requestedSlot": "cell",
+  "chat": "a1b2c3d4e5f60718",
+  "beside": "",
+  "state": "open",
+  "lifecycle": "task",
+  "rev": 3,
+  "version": 2,
+  "global": false,
+  "home": "",
+  "chipLive": false,
+  "size": null,
+  "chip": null,
+  "collapsed": false,
+  "chatLive": true,
+  "needsGrant": false,
+  "faults": 0,
+  "createdAt": 1792320000000,
+  "updatedAt": 1792322000000
+ },
+ "problems": [],
+ "grant": {
+  "needed": true,
+  "granted": false,
+  "hash": "b41f9c",
+  "items": [
+   {
+    "what": "command",
+    "name": "build",
+    "detail": "./gradlew --no-daemon assemblePlayDebug"
+   },
+   {
+    "what": "action: message to the chat",
+    "name": "retry",
+    "detail": "Run the build again"
+   }
+  ]
+ },
+ "actions": [
+  "retry"
+ ]
+}

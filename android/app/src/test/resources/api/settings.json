@@ -1,0 +1,32 @@
+{
+ "ok": true,
+ "settings": {
+  "TELEGRAM_BOT_TOKEN": "",
+  "ALLOWED_USERNAME": "faruhaan",
+  "PROJECTS_DIR": "/home/crundi/projects",
+  "WEB_PORT": "8888",
+  "CLOUDFLARE_TUNNEL_TOKEN": "",
+  "CLOUDFLARE_TUNNEL_URL": "",
+  "DATA_DIR": ""
+ },
+ "envPath": "/home/crundi/.config/crundi/.env",
+ "chatId": "",
+ "notifyPrefs": {
+  "finished": "away",
+  "needsInput": "always",
+  "serviceDown": "always",
+  "factory": "away"
+ },
+ "limitWarmup": {
+  "enabled": true,
+  "lastKnownReset": "2026-10-21T14:00:00.000Z",
+  "lastWarmAt": null,
+  "lastWarmResult": "",
+  "suspended": false
+ },
+ "queuedLimitReset": 1,
+ "systemPrompt": "Reply in British English.",
+ "systemPromptMax": 8000,
+ "autoParkMinutes": 120,
+ "autoParkMin": 10
+}

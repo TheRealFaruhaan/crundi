@@ -1,0 +1,24 @@
+<div class="wna a-fxl">
+  <div class="meter"><span>5-hour window</span><div class="track"><s></s><i class="line"></i></div><em>pause at 85%</em></div>
+  <div class="row"><span class="p p1"><i></i>Frontend</span><span class="p p2"><i></i>Backend</span><span class="p p3 q"><i></i>Database · waiting its turn</span></div>
+  <div class="paused">Paused: usage reached the limit you set. It carries on by itself after the reset.</div>
+  <div class="lab">At most 2 people at once</div>
+  <style>
+    .a-fxl{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-fxl .meter{position:absolute;left:40px;right:40px;top:60px}
+    .a-fxl .meter span{font-size:12px;color:var(--text-secondary)}
+    .a-fxl .track{position:relative;height:12px;border-radius:6px;background:var(--bg-card);border:1px solid var(--border);margin:8px 0 6px;overflow:hidden}
+    .a-fxl .track s{display:block;height:100%;width:30%;background:var(--accent);animation:afxl-fill 10s linear infinite}
+    .a-fxl .line{position:absolute;left:85%;top:-2px;bottom:-2px;width:2px;background:var(--yellow)}
+    .a-fxl .meter em{font-size:11px;font-style:normal;color:var(--yellow);margin-left:76%}
+    .a-fxl .row{position:absolute;left:40px;right:40px;top:170px;display:flex;gap:10px;flex-wrap:wrap}
+    .a-fxl .p{display:flex;align-items:center;gap:7px;font-size:12.5px;padding:7px 13px;border-radius:999px;border:1px solid var(--border);background:var(--bg-card)}
+    .a-fxl .p i{width:8px;height:8px;border-radius:50%;background:var(--green)}
+    .a-fxl .q{opacity:.55;border-style:dashed}
+    .a-fxl .q i{background:var(--text-muted)}
+    .a-fxl .lab{position:absolute;left:40px;top:142px;font-size:11px;color:var(--text-muted)}
+    .a-fxl .paused{position:absolute;left:40px;right:40px;top:250px;padding:12px 14px;border-radius:10px;background:var(--bg-card);border:1px solid var(--border);font-size:12.5px;color:var(--text-secondary);opacity:0;animation:afxl-p 10s ease infinite}
+    @keyframes afxl-fill{0%{width:30%}70%{width:86%}100%{width:86%}}
+    @keyframes afxl-p{0%,70%{opacity:0;transform:translateY(8px)}76%,94%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

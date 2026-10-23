@@ -235,11 +235,12 @@ const TOOLS = [
   { name: 'schedule_add', description: 'Create a scheduled task in THIS project (project is fixed — not settable). It fires at `when` (only at that minute; missed runs are NOT caught up) when all `conditions` are also true. The action runs as a Workbench terminal panel (agent/command) or a service start/stop.', inputSchema: { type: 'object', properties: {
     name: { type: 'string', description: 'Schedule name' },
     enabled: { type: 'boolean', description: 'Default true' },
-    when: { type: 'object', description: 'Time gate (mandatory). One-time: {mode:"once", date:"YYYY-MM-DD", time:"HH:MM"}. Recurring: {mode:"recurring", days:[0..6] (0=Sun), time:"HH:MM"}. Time is the server local clock, 24h.', properties: { mode: { type: 'string', description: 'once | recurring' }, time: { type: 'string', description: 'HH:MM (24h)' }, date: { type: 'string', description: 'YYYY-MM-DD (one-time only)' }, days: { type: 'array', items: { type: 'number' }, description: '0=Sun..6=Sat (recurring only)' } }, required: ['mode', 'time'] },
+    when: { type: 'object', description: 'Time gate (mandatory). One-time: {mode:"once", date:"YYYY-MM-DD", time:"HH:MM"}. Recurring: {mode:"recurring", days:[0..6] (0=Sun), time:"HH:MM"}. Webhook: {mode:"webhook"} \u2014 fired by a POST to its URL (alerts such as Grafana, CI), for kind "chat" or "service" only; the prompt can read the call with {{payload.some.path}} (arrays by index), {{headers.name}}, {{date}}; missing ones come out empty and the chat always gets the full request; calls arriving while the chat is still working go into it marked Mid-run. Time is the server local clock, 24h.', properties: { mode: { type: 'string', description: 'once | recurring | webhook' }, time: { type: 'string', description: 'HH:MM (24h)' }, date: { type: 'string', description: 'YYYY-MM-DD (one-time only)' }, days: { type: 'array', items: { type: 'number' }, description: '0=Sun..6=Sat (recurring only)' } }, required: ['mode', 'time'] },
     action: { type: 'object', description: 'What to run. Agent: {kind:"agent", agent:"claude", mode:"normal"|"skip", model?:"opus|sonnet|haiku|fable|mythos", effort?:"low|medium|high|xhigh|max", session:"new"|"continue"|"resume", sessionId?, prompt}. Slash commands like /frontend-design or /loop are allowed in the prompt. Background chat: {kind:"chat", prompt, session:"new"|"resume", sessionId?, cwd?, mode?, model?, effort?} \u2014 opens a chat, runs the prompt and CLOSES itself when the work finishes, unlike "agent" which leaves a terminal panel open. cwd defaults to the project root. session:"resume" reuses one ongoing conversation so the job remembers previous runs, but needs a sessionId, which is created from the Schedule form (it cannot be invented). A running job can rewrite its own action.prompt via schedule_update to leave notes for its next run. Command: {kind:"command", command}. Service: {kind:"service", serviceKey, op:"start"|"stop"|"toggle"}.', properties: { kind: { type: 'string', description: 'agent | chat | command | service' }, agent: { type: 'string', description: 'claude (only option for now)' }, mode: { type: 'string', description: 'normal | skip (agent)' }, model: { type: 'string' }, effort: { type: 'string' }, session: { type: 'string', description: 'new | continue | resume (agent)' }, sessionId: { type: 'string', description: 'for session=resume' }, prompt: { type: 'string', description: 'prompt for kind=agent or kind=chat' }, cwd: { type: 'string', description: 'working folder for kind=chat (default: project root)' }, command: { type: 'string', description: 'for kind=command' }, serviceKey: { type: 'string', description: 'for kind=service' }, op: { type: 'string', description: 'start | stop | toggle (service)' } }, required: ['kind'] },
+    webhook: { type: 'object', description: 'For when.mode "webhook": { auth: "key" (URL key, X-Crundi-Key or Bearer) | "signature" (HMAC-SHA256 of the body with the secret; Grafana: signatureHeader "X-Grafana-Alerting-Signature", timestampHeader "X-Grafana-Alerting-Signature-Timestamp"), signatureHeader?, timestampHeader?, idempotency? e.g. "{{payload.groupKey}}" (repeats with a seen key are ignored) }. The key and secret are generated; the URL is /api/schedule-hook/<id>.', additionalProperties: true },
     conditions: { type: 'array', description: 'Optional extra gates (ALL must be true at the scheduled minute). Items: {type:"usage", metric:"5h"|"week", op:"below"|"above"|"equal", value} | {type:"terminals", op, value} (open Claude terminals in this project) | {type:"kanban", taskId, todoId?, status} (task column status, or subtask status "done"|"pending" when todoId given).', items: { type: 'object' } },
   }, required: ['name', 'when', 'action'] } },
-  { name: 'schedule_update', description: 'Update a scheduled task (must belong to this project). Pass only the fields to change (name/enabled/when/action/conditions). when/action/conditions REPLACE the existing value when provided.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, enabled: { type: 'boolean' }, when: { type: 'object' }, action: { type: 'object' }, conditions: { type: 'array', items: { type: 'object' } } }, required: ['id'] } },
+  { name: 'schedule_update', description: 'Update a scheduled task (must belong to this project). Pass only the fields to change (name/enabled/when/action/conditions/webhook). when/action/conditions REPLACE the existing value when provided.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, enabled: { type: 'boolean' }, when: { type: 'object' }, webhook: { type: 'object', additionalProperties: true }, action: { type: 'object' }, conditions: { type: 'array', items: { type: 'object' } } }, required: ['id'] } },
   { name: 'schedule_set_enabled', description: 'Enable or disable a scheduled task (must belong to this project).', inputSchema: { type: 'object', properties: { id: { type: 'string' }, enabled: { type: 'boolean' } }, required: ['id', 'enabled'] } },
   { name: 'schedule_delete', description: 'Delete a scheduled task (must belong to this project).', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
 
@@ -335,6 +336,139 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'Short title, at most 20 characters' }, long: { type: 'string', description: 'Longer title saying a little more, at most 50 characters' } }, required: ['title'] },
   },
 
+  // ─── Building factories (any chat or terminal) ───
+  {
+    name: 'factory_guide',
+    description: 'How to write a Crundi factory (a reusable AI team for large pieces of work: a Manager, employees with personas, a flow of steps, decisions, joins, waits): the JSON format, the rules the validator enforces, and shapes that work. Read it before writing or changing a factory.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'factory_list',
+    description: 'List the Crundi factories (id, name, description, team size, whether it can run, problems to fix) and their CR templates.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'factory_get',
+    description: 'One Crundi factory\'s full definition (roster, nodes, edges, settings) with its validation, to read or change it.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'factory_validate',
+    description: 'Check a factory definition without saving it: errors (must fix before it can run) and warnings, each with a fix. Use it until there are no errors.',
+    inputSchema: { type: 'object', properties: { definition: { type: 'object', description: 'The factory, as in factory_guide', additionalProperties: true } }, required: ['definition'] },
+  },
+  {
+    name: 'factory_save',
+    description: 'Save a factory: a new one (no id), or over an existing one (id, and baseVersion from factory_get to avoid overwriting someone else\'s edits). Saved even with errors, as a draft. Node positions are laid out automatically when left out. Returns the id and validation.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, definition: { type: 'object', additionalProperties: true }, baseVersion: { type: 'number' } }, required: ['definition'] },
+  },
+  {
+    name: 'factory_start',
+    description: 'Start a factory run in a project (only when the person asks). Give a change request: title, and sections keyed by the factory\'s CR template ids (default: goal, current, expected, done (one check per line), scope, notes). One run per project at a time.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        factoryId: { type: 'string' },
+        project: { type: 'string', description: 'Project alias; defaults to this chat\'s project' },
+        title: { type: 'string' },
+        sections: { type: 'object', additionalProperties: { type: 'string' } },
+        mergeMode: { type: 'string', enum: ['ask', 'auto'] },
+      },
+      required: ['factoryId', 'title'],
+    },
+  },
+  {
+    name: 'factory_triggers',
+    description: 'List, save or delete triggers that start a factory by themselves: schedule (at HH:MM on weekdays 0-6), kanban (a card enters a column: backlog, todo, in_progress, done), webhook (a public URL, e.g. for Grafana alerts or CI). The CR may use placeholders: {{date}}, {{time}}, {{card.title}}, {{card.description}}, {{card.todos}}; for webhooks {{payload.some.path}} (arrays by index: alerts.0.labels.alertname), {{payload}}, {{headers.name}}, {{query.name}}. Missing placeholders come out empty and never stop it; the Manager always gets the full request too. Webhook security: auth "key" (key in the URL, X-Crundi-Key or Bearer) or "signature" (HMAC-SHA256 of the body with the trigger\'s secret in signatureHeader; with timestampHeader, of "<ts>:<body>", which is Grafana\'s form). webhook.idempotency names the key that makes repeats ignored, e.g. "{{payload.groupKey}}". ifBusy: "manager" (default for webhooks: a call arriving during a run of the same factory goes to its Manager as a mid-run message), "queue" or "skip". Saving a webhook returns its URL and secret.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'save', 'delete'] },
+        id: { type: 'string', description: 'For delete' },
+        project: { type: 'string', description: 'For list; defaults to this chat\'s project' },
+        trigger: { type: 'object', description: 'For save: { id?, name, enabled, project, factoryId, kind, schedule: { at, days }, kanban: { status }, cr: { title, sections }, mergeMode, ifBusy: "queue"|"skip"|"manager", webhook: { auth: "key"|"signature", signatureHeader, timestampHeader, idempotency } }', additionalProperties: true },
+      },
+      required: ['action'],
+    },
+  },
+
+  {
+    name: 'factory_handoff',
+    description: 'End your step in a Crundi factory run and hand the work on. Call it exactly once when your step is done, then stop. Give a summary, your answers to the decisions your step message lists (answers keyed by decision id), any notes it lists (notes keyed by the id it gives), finish: true if you are the Manager and the whole task is done, or escalate with a reason instead of everything else if you cannot do the step. If something is missing or wrong the call fails and says what; fix it and call again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'What you did or decided, in a few sentences' },
+        answers: { type: 'object', description: 'Decision id -> answer: "yes"/"no", an option id, or a list of option ids for a pick-many ([] for none)', additionalProperties: true },
+        notes: { type: 'object', description: 'Note id (as listed in your step) -> text', additionalProperties: { type: 'string' } },
+        finish: { type: 'boolean', description: 'Manager only: the whole task is done' },
+        escalate: { type: 'string', description: 'Instead of everything else: why you cannot do this step. The Manager picks it up.' },
+        findings: { type: 'array', description: 'Review findings: problems to fix. blocking: must change before approval; otherwise a nit, kept as a follow-up. After your first review a new blocking finding needs a reason.', items: { type: 'object', properties: { text: { type: 'string' }, where: { type: 'string' }, blocking: { type: 'boolean' }, reason: { type: 'string' } }, required: ['text'] } },
+        done: { type: 'array', items: { type: 'string' }, description: 'Ids of findings you fixed, e.g. ["F1"]' },
+        verified: { type: 'array', items: { type: 'string' }, description: 'Ids of findings whose fix you checked' },
+        reopen: { type: 'array', items: { type: 'string' }, description: 'Ids of findings that are not really fixed' },
+        dismiss: { type: 'array', items: { type: 'string' }, description: 'Manager only: findings to drop' },
+      },
+    },
+  },
+  {
+    name: 'factory_status',
+    description: 'Where your Crundi factory run stands, in one block: the change request, who is doing what, loops used, open review findings, waiting permission requests, what changed since the run started, recent handoffs and what has been spent. Use it to re-orient after a long conversation instead of scrolling back.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'factory_control',
+    description: 'Manager of a Crundi factory run only: pause or resume the run (pause: nobody new starts a step, whoever is mid-turn finishes), or change its usage limits: pauseAt5h and pauseAtWeek (pause when the 5-hour or weekly usage window reaches this %), maxParallel (at most this many people working at once, 0 for no limit), oneAtATimeAbove (one at a time above this % of the 5-hour window, 0 for off). Do it when the person asks; give a reason, it is shown to them.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['pause', 'resume', 'limits'] }, reason: { type: 'string' }, limits: { type: 'object', properties: { pauseAt5h: { type: 'number' }, pauseAtWeek: { type: 'number' }, maxParallel: { type: 'number' }, oneAtATimeAbove: { type: 'number' } } } }, required: ['action'] },
+  },
+  {
+    name: 'factory_message',
+    description: 'Manager of a Crundi factory run only: send a message into the chat of someone on your team who is working on a step right now (a correction, a heads-up, "stop and wait"), delivered as if typed into their chat. It does not end their step. interrupt: stop their current turn first so they read it now; hold: tell them to stop and wait until your next message. Only works while they hold a step; otherwise hand them a job with factory_delegate when it is your turn.',
+    inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, text: { type: 'string' }, interrupt: { type: 'boolean', description: 'Stop their current turn first (like the Stop button), so they read it now' }, hold: { type: 'boolean', description: 'Tell them to stop and wait until your next message; their idle step is not treated as stalled' } }, required: ['employee', 'text'] },
+  },
+  {
+    name: 'factory_tick',
+    description: 'Manager of a Crundi factory run only: how often, in minutes (5 to 1440), you want a wake-up message while you are idle, so you can check on the run. Ticks are skipped when you are busy or the run is paused: a wake-up, not a guaranteed timer. Set it once at the start (longer for long, steady work); the person may have fixed it in the factory.',
+    inputSchema: { type: 'object', properties: { minutes: { type: 'number' } }, required: ['minutes'] },
+  },
+  {
+    name: 'factory_delegate',
+    description: 'Manager of a Crundi factory run only: hand someone on your team a one-off job outside the drawn flow (resolve a merge conflict, check something, make a small fix). Your own step waits; their result comes back to you as a message and then it is your turn again. Stop after calling it.',
+    inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, task: { type: 'string', description: 'The job: what to do and what done looks like' } }, required: ['employee', 'task'] },
+  },
+  {
+    name: 'factory_result',
+    description: 'Manager of a Crundi factory run only: when the run is finished and the person tells you in the chat what to do with the result, do it: merge (one squash commit onto the parent branch), keep (keep the branch, merge nothing), discard, changes (reopen the run with their note), or undo (take back a merge). Only on the person\'s word.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['merge', 'keep', 'discard', 'changes', 'undo'] }, note: { type: 'string', description: 'For changes: what they asked to change' } }, required: ['action'] },
+  },
+
+  {
+    name: 'factory_permission',
+    description: 'For the Manager (or the Gatekeeper) of a Crundi factory run: answer the team\'s permission requests (they arrive as "[Factory] Permission request" messages with ids like p3). One decision per request. With an allow, rule (e.g. "Bash(npm test:*)") lets that person do the same again without asking; ruleFor: "everyone" grants it to the whole team. The Manager may also grant rules up front (rules) and set the policy the Gatekeeper follows (policy). The Gatekeeper may pass a request to the Manager with escalate: true. This is not a handoff: carry on afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        decisions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'The request id, e.g. p3' },
+              allow: { type: 'boolean' },
+              reason: { type: 'string', description: 'Why; the employee is told when you deny' },
+              rule: { type: 'string', description: 'Optional, with allow: a standing rule such as Bash(npm test:*), for this person' },
+              ruleFor: { type: 'string', description: 'Optional: "everyone", or a name, for whom the rule is (default: the person who asked)' },
+              escalate: { type: 'boolean', description: 'Gatekeeper only: pass this request to the Manager' },
+            },
+            required: ['id'],
+          },
+        },
+        rules: { type: 'array', description: 'Manager only: rules granted up front, before anyone asks', items: { type: 'object', properties: { rule: { type: 'string' }, employee: { type: 'string', description: 'A name, or leave out for everyone' } }, required: ['rule'] } },
+        policy: { type: 'string', description: 'Manager only: what the Gatekeeper should allow, refuse and pass to you' },
+      },
+    },
+  },
+
   // ─── Widgets: UI you author and place inside Crundi ───
   {
     name: 'widget_guide',
@@ -417,7 +551,7 @@ const TOOLS = [
 
 // ─── Tool handler ───
 
-const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command',
+const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command', 'factory_start', 'factory_triggers',
   'kanban_list', 'kanban_get_task', 'kanban_list_column', 'kanban_add_task', 'kanban_update_task', 'kanban_move_task', 'kanban_delete_task', 'kanban_restore_task',
   'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo', 'kanban_restore_todo', 'kanban_history',
   'mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors', 'mindmap_add_node', 'mindmap_link_node',
@@ -453,6 +587,11 @@ async function handleToolCall(name, args) {
   // cannot name a chat it is not in.
   // Which chat something is shown in is this process's own, never an argument.
   if (CHAT_ONLY_TOOLS.has(name)) {
+    delete args.sessionId;
+    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+  }
+  // Which chat is handing off is this process's own, never an argument.
+  if (FACTORY_RUN_TOOLS.has(name)) {
     delete args.sessionId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
@@ -527,10 +666,17 @@ const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);
 // session has no transcript for Crundi to draw into, so it is not told about them.
 const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed']);
 const IN_CHAT = !!process.env.CRUNDI_CHAT_ID;
+// Only a factory run's chats are offered factory_handoff.
+const IN_FACTORY = !!process.env.CRUNDI_FACTORY_RUN;
+const FACTORY_RUN_TOOLS = new Set(['factory_handoff', 'factory_permission', 'factory_delegate', 'factory_result', 'factory_status', 'factory_control', 'factory_message', 'factory_tick']);
+const FACTORY_LIBRARY_TOOLS = new Set(['factory_guide', 'factory_list', 'factory_get', 'factory_validate', 'factory_save', 'factory_start', 'factory_triggers']);
 const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
   : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name))
-).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name));
+).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name))
+  // A factory run's chats get the run tools; every other chat gets the tools
+  // that build factories.
+  .filter(t => IN_FACTORY ? !FACTORY_LIBRARY_TOOLS.has(t.name) : !FACTORY_RUN_TOOLS.has(t.name));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools: LISTED_TOOLS };

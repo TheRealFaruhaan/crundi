@@ -1,6 +1,7 @@
 package mv.obitech.crundi
 
 import android.app.Activity
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 
@@ -21,6 +22,15 @@ class BubbleActivity : Activity() {
         // Only a chat the card itself knows about: what to call it and how
         // to draw its head are kept there, and nothing else is trusted.
         val chat = LiveCards.active(this, serverId).firstOrNull { it.id == chatId }
+        // Bubbles off: this screen cannot hold a dialog (it has no display),
+        // so go straight to where they are turned on, with the first step said.
+        if (chat != null && BubbleHelp.blocked(this)) {
+            val samsung = Build.MANUFACTURER.equals("samsung", true)
+            Toast.makeText(this, if (samsung) "Bubbles are off. Set Floating notifications to Bubbles, then allow them for this app." else "Bubbles are off for this app. Set Bubbles to All conversations.", Toast.LENGTH_LONG).show()
+            if (samsung) BubbleHelp.openPhoneSettings(this) else BubbleHelp.openAppSettings(this)
+            finish()
+            return
+        }
         val problem = if (chat == null) "That chat has finished." else Notifier.bubble(this, chat, expand = true)
         if (problem != null) Toast.makeText(this, problem, Toast.LENGTH_LONG).show()
         finish()

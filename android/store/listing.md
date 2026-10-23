@@ -61,6 +61,49 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.0 (en-US)
+
+Version code 18, the first native release. Same notes as 1.1.0-dev.2 (code 17),
+which it replaces; it adds a note on each choice of a question from Claude.
+
+Version code 17. Needs server 1.21.1-dev.12 or newer (the app's MIN_SERVER):
+Docker, Factory and git history use routes older servers do not have. Code 16
+(1.1.0-dev.1) was built with a 1.20 minimum and should not be released. The app is now native: every screen is drawn by the app
+itself instead of the server's web page.
+
+```
+<en-US>
+Crundi is now a native app.
+
+- Every screen rebuilt for the phone: chats, workbench panes, files, git, board, mind map, schedules.
+- Smoother scrolling, faster opening, full screen for any pane.
+- Pictures and videos open with pinch to zoom; audio plays in the chat.
+- Embeds, tables and code in replies, each with copy.
+- Downloads show progress and where they were saved.
+- Tap a path or link to open or copy it.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
+## Release notes, 1.0.2-dev.3 (en-US)
+
+Version code 15. The app's code is the same as 1.0.2-dev.2 (code 14); the
+notes describe what is new since 1.0.1, the last release with notes.
+
+```
+<en-US>
+Steadier connection and quieter notifications.
+
+- The app stays connected while a bubble or live card is up, so a tap shows the chat at once instead of "Reconnecting".
+- A renamed chat's live card follows the new name.
+- No more being signed out when two windows renewed their login at the same moment.
+- No bubble or buzz for the chat you already have open.
+
+Needs a Crundi server, version 1.20 or newer.
+</en-US>
+```
+
 ## Release notes, 1.0.1 (en-US)
 
 ```

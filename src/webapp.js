@@ -33,13 +33,21 @@ import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
 import * as claudeUpdate from './claude-update.js';
 import { decodeImage } from './image-input.js';
-import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration } from './service-registry.js';
+import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration, listAllRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
 import { listProjects, getProject as getProjectUnscoped, registerProject, removeProject, getProjectMode, importFromOldData, importServicesFromOldData, setProjectOrder, setProjectSystemPrompt, getProjectIconFile, setProjectIconFile } from './project-store.js';
 import { globalPrompt, clampLayer, MAX_LAYER } from './system-prompt.js';
 import { claimedSessionIds } from './claude-sessions.js';
 import * as kanban from './kanban-store.js';
+import * as factoryStore from './factory-store.js';
+import { validateFactory } from './factory-model.js';
+import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-runner.js';
+import * as factoryCleanup from './factory-cleanup.js';
+import { createTriggerStore, createTriggerDispatcher, publicTrigger } from './factory-triggers.js';
+import { FACTORY_GUIDE } from './factory-guide.js';
+import { factoryTemplates } from './factory-templates.js';
+import { inspectRepo as inspectFactoryRepo } from './factory-git.js';
 import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
 import * as mindmap from './mindmap-store.js';
@@ -64,6 +72,7 @@ import * as serverUpdate from './server-update.js';
 import * as whatsNew from './whatsnew.js';
 import * as clientVersion from './client-version.js';
 import { createPairing, pairingLink, cleanDevice } from './pairing.js';
+import { gitLog, gitShow } from './git-log.js';
 import { toSvg as qrSvg } from './qr.js';
 import { toSvg as crundiCodeSvg, doneClass as crundiCodeDoneClass, DONE_MS as CRUNDI_CODE_DONE_MS } from './crundi-code.js';
 import * as forwards from './forwards.js';
@@ -943,6 +952,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // by default: if the owner is looking at Crundi the inbox badge already
     // says so; if not, the collaborator is sitting blocked.
     collabPermission: 'away',
+    // A factory run started, needs you (a question, a cap), finished or crashed.
+    factory: 'always',
   };
   const notifyPrefs = { ...NOTIFY_DEFAULTS };
   try {
@@ -972,6 +983,90 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       writeFileSync(sf, JSON.stringify(st));
     } catch { /* non-fatal */ }
   }
+
+  // ─── Factories: runs of a workflow template (factory-runner.js) ───
+  const lastFactoryStatus = new Map();
+  // Created here because it needs the chat manager, notifications and the
+  // event stream. Runs still going when Crundi stopped come back 'crashed'.
+  const factoryRunner = claudeUi ? createFactoryRunner({
+    dataDir: config.dataDir,
+    agents: claudeUiAgents(claudeUi, { dataDir: config.dataDir }),
+    getProject: (alias) => getProjectUnscoped(alias),
+    getFactory: (id) => factoryStore.getFactory(id),
+    // What a project can see: global, synced, and that project's own skills.
+    listSkills: (project) => {
+      const key = 'project:' + String(project || '').toLowerCase();
+      try { return (skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced' || x.scope === key).map(x => ({ name: x.name, description: x.description || '' })); }
+      catch { return []; }
+    },
+    // Preview services the Manager started from the run's worktree go with it.
+    services: {
+      under: (root) => {
+        const r = resolve(root) + sep;
+        return (listAllRegistered() || []).filter(x => x && x.cwd && (resolve(x.cwd) + sep).startsWith(r)).map(x => x.key);
+      },
+      remove: async (key) => { try { await deleteService(key); } catch { /* gone */ } setTimeout(broadcastState, 200); },
+    },
+    // Filed under the Manager's chat on the phone (its bubble), and opening it.
+    notify: (kind, run, text) => {
+      try {
+        const id = run && run.managerChatId;
+        const meta = id ? { url: `/chat/${id}`, title: `Factory: ${run.factoryName}`, chat: { id, title: `Factory: ${run.factoryName}`, project: run.project || '', mark: markOf(run.project || '', run.factoryName) } } : {};
+        notifyEvent('factory', text, meta);
+      } catch { /* best effort */ }
+      // A run started from a kanban card: the card follows the work.
+      try {
+        const card = run && run.trigger && run.trigger.cardId;
+        if (card && kind === 'started') kanban.moveTask(run.project, card, 'in_progress');
+        if (card && kind === 'merged') kanban.moveTask(run.project, card, 'done');
+      } catch { /* the card may be gone */ }
+    },
+    onChange: (run) => {
+      try { broadcastSSE('factoryRun', { id: run.id, project: run.project, status: run.status }); } catch { /* not up yet */ }
+      try { tellPhonesFactory(run); } catch { /* the phone is a nicety */ }
+      // Status changes reach the project badges through the state push.
+      if (run && lastFactoryStatus.get(run.id) !== run.status + '|' + run.waitingOn) {
+        lastFactoryStatus.set(run.id, run.status + '|' + run.waitingOn);
+        try { setTimeout(broadcastState, 50); } catch { /* not up yet */ }
+      }
+    },
+  }) : null;
+  try { factoryRunner && factoryRunner.load(); } catch (err) { console.error('[factory] could not load runs:', err.message); }
+  // A full usage window pauses running factories; they carry on after it resets.
+  try { factoryRunner && factoryRunner.watchUsage(() => usage.getUsage()); } catch { /* usage is optional */ }
+  // Leftovers: forget worktrees whose folders are gone; delete old leftovers
+  // if the person turned that on. At boot and every six hours.
+  const factoryHousekeeping = async () => {
+    if (!factoryRunner) return;
+    try { const runs = factoryRunner.listRuns(); await factoryCleanup.prune(runs); await factoryCleanup.autoDelete({ runs, dataDir: config.dataDir }); }
+    catch (err) { console.error('[factory] housekeeping:', err.message); }
+  };
+  setTimeout(factoryHousekeeping, 30_000).unref?.();
+  // The provided factory templates, keeping only the skills this machine has.
+  const providedTemplates = () => {
+    let available = null;
+    try { available = new Set((skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced').map(x => x.name)); } catch { available = null; }
+    return factoryTemplates({ available });
+  };
+  // Triggers: schedules, kanban cards, webhooks start runs by themselves.
+  const factoryTriggers = createTriggerStore(config.dataDir);
+  // Scheduled chats started by a webhook; set by index.js (setScheduleHooks).
+  let scheduleHooks = null;
+  const triggerDispatch = factoryRunner ? createTriggerDispatcher({
+    store: factoryTriggers,
+    startRun: (a) => factoryRunner.startRun(a),
+    activeRunFor: (p) => factoryRunner.activeRunFor(p),
+    tellRun: (runId, x) => factoryRunner.tellFromTrigger(runId, x),
+    notify: (text) => { try { notifyEvent('factory', text, {}); } catch { /* best effort */ } },
+  }) : null;
+  if (triggerDispatch) {
+    setInterval(() => { triggerDispatch.tick().catch(err => console.error('[factory] triggers:', err.message)); }, 20_000).unref?.();
+    kanban.onStatusChange((project, card, status) => {
+      // Not from inside the kanban call: the move finishes first.
+      setTimeout(() => triggerDispatch.onKanban(project, card, status).catch(err => console.error('[factory] kanban trigger:', err.message)), 0);
+    });
+  }
+  setInterval(factoryHousekeeping, 6 * 3600_000).unref?.();
 
   // WebSocket connections that have reported the user is actively at the window
   // (window focused AND page visible). Used to skip the agent-status Telegram
@@ -1038,6 +1133,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     },
     terminalState: (id) => agentStates.get(id) || 'idle',
     onChange: () => broadcastState(),
+    // Declared further down; only called from the tick, long after.
+    keepAwake: (id) => { try { return !!chatSchedule.hasPendingFor(id); } catch { return false; } },
   });
   panes.start();
 
@@ -1377,6 +1474,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
   function tellPhonesState(term, state, prev) {
     if (term.kind !== 'ui' || term.collaborator || term.background) return;
+    // A factory's Manager: its live card speaks for the whole run, so the
+    // Manager going idle while its team works does not take the card down.
+    if (term.factory && term.factory.role === 'manager' && factoryRunner) {
+      const run = factoryRunner.guardsChat(term.id);
+      if (run) { tellPhonesFactory(run); return; }
+    }
     if (state === prev) return;
     const active = state === 'working' || state === 'needs-input' || state === 'waiting';
     if (active && !workingSince.has(term.id)) workingSince.set(term.id, Date.now());
@@ -1440,7 +1543,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // working -> idle is a turn ending. Edge-triggered off `prev` so a repeated
     // 'idle' report (hooks fire from independent processes) cannot fire twice.
     if (cur === 'idle' && pv === 'working' && term.project) {
-      chatSchedule.onTurnEnd(term.project);
+      chatSchedule.onTurnEnd(term.project, term.id);
     }
     // A scheduled job reports through its own runner (scheduled-chat.js), which
     // already sends Claude's last reply when the run ends. Pinging here too sent
@@ -1510,6 +1613,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // Deferred chat messages ("send this when the turn ends / the window resets").
   const chatSchedule = createChatSchedule({
     claudeUi,
+    panes,
     getLatestUsage: () => usage.getLatestStored(),
     // Declared above, so this is only ever called long after both exist.
     // While the warmer is on it owns the limit-reset trigger and pushes through
@@ -1553,6 +1657,28 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       console.log(`[crundi] Stopping ${s.key}: the collaborator who created it no longer has access`);
       try { stopService(s.key); } catch { /* next minute */ }
     }
+  }
+
+  // ─── A factory run on the phone's live card ───
+  // The Manager's chat carries the card: working while anyone on the team is,
+  // "needs you" for a question, a limit, a crash, the result or the Manager
+  // talking to you, waiting while paused, gone when the run ends. Titled with
+  // who is on it, so a glance says what the factory is doing.
+  const factoryLiveSent = new Map();   // run id -> last state|title told to phones
+  function tellPhonesFactory(run) {
+    if (!run || !run.managerChatId || !channels.isEnabled('mobile')) return;
+    const mgrState = (claudeUi && claudeUi.meta(run.managerChatId)?.state) || 'idle';
+    const { state, title } = factoryLiveCard(run, mgrState);
+    const key = state + '|' + title;
+    if (factoryLiveSent.get(run.id) === key) return;
+    factoryLiveSent.set(run.id, key);
+    if (state === 'idle') factoryLiveSent.delete(run.id);
+    const id = run.managerChatId;
+    if (state !== 'idle' && !workingSince.has(id)) workingSince.set(id, Date.parse(run.createdAt) || Date.now());
+    const since = workingSince.get(id) || Date.now();
+    const chat = { id, title, project: run.project || '', mark: markOf(run.project || '', run.factoryName) };
+    if (state !== 'idle') onLiveCard.set(id, chat); else { workingSince.delete(id); onLiveCard.delete(id); }
+    sendState(chat, state, since);
   }
 
   const collabChatSweep = setInterval(() => {
@@ -1739,6 +1865,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         t.kind === 'ui' && mine.has(String(t.project || '').toLowerCase())
         && !!t.collaborator && t.collaborator.key === principal.collabKey),
       scheduled: [],
+      // Factories are the owner's.
+      factoryRuns: [],
     };
   }
 
@@ -1793,7 +1921,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const liveTerms = claudeTerminals ? claudeTerminals.list() : [];
     // Chat sessions carry their own kind/agentState (derived from the message
     // stream), so they need no hook-state bookkeeping — only inclusion.
-    const uiSessions = claudeUi ? claudeUi.list() : [];
+    // A factory's employees are not workbench panes: they are reached from the
+    // run's live graph. Its Manager is an ordinary chat and stays.
+    const uiSessions = (claudeUi ? claudeUi.list() : []).filter(s => !s.factory || s.factory.role === 'manager');
     // Reconcile agent states against the live cells: drop states for cells that
     // are gone or no longer running (crash/force-close safety).
     const liveIds = new Set([...liveTerms.map(t => t.id), ...uiSessions.map(s => s.id)]);
@@ -1812,12 +1942,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Project aliases that have at least one enabled schedule (for the sidebar
     // "upcoming schedule" clock indicator).
     const scheduled = [...new Set(schedule.listSchedules().filter(s => s.enabled).map(s => String(s.project || '').toLowerCase()))];
+    // Unfinished factory runs, for the badges on projects and the Factories tab.
+    let factoryRuns = [];
+    try {
+      factoryRuns = factoryRunner ? factoryRunner.listRuns().filter(r => ['starting', 'running', 'waiting', 'paused', 'finishing', 'crashed'].includes(r.status))
+        .map(r => ({ id: r.id, project: r.project, status: r.status, waitingOn: r.waitingOn, factoryName: r.factoryName, managerChatId: r.managerChatId })) : [];
+    } catch { factoryRuns = []; }
     return {
       uptime: formatUptime(Date.now() - startedAt),
       projects,
       services,
       terminals,
       scheduled,
+      factoryRuns,
     };
   }
 
@@ -2596,6 +2733,65 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       });
     }
 
+    // A factory run's Wait node, ended by its signal URL (CI, a deploy hook).
+    // Outside the auth gate: the per-wait key in the URL is the credential.
+    {
+      const m = /^\/api\/factory-hook\/wait\/(run_[\w]+)\/(t\d+)$/.exec(path);
+      if (m && req.method === 'POST') {
+        let body = {};
+        try { body = JSON.parse((await readBody(req)) || '{}') || {}; } catch { body = {}; }
+        const r = factoryRunner ? await factoryRunner.endWait(m[1], m[2], { key: url.searchParams.get('key') || '', outcome: body.outcome === 'timeout' || body.outcome === 'failed' ? 'timeout' : 'done', note: typeof body.note === 'string' ? body.note : '' }) : { ok: false, error: 'Factories are not available.' };
+        return json(res, r.ok ? { ok: true } : { ok: false, error: r.error }, r.ok ? 200 : r.forbidden ? 403 : 409);
+      }
+    }
+
+    // A scheduled chat's webhook (src/schedule-hooks.js). Outside the auth
+    // gate: the key or the signature is the credential.
+    {
+      const m = /^\/api\/schedule-hook\/([0-9a-f]{16})$/.exec(path);
+      if (m && req.method === 'POST') {
+        if (!scheduleHooks) return json(res, { ok: false, error: 'Not available yet.' }, 503);
+        const raw = await new Promise((resolve) => {
+          let b = ''; let over = false;
+          req.on('data', (c) => { if (over) return; b += c; if (b.length > 1_000_000) { over = true; resolve(null); } });
+          req.on('end', () => { if (!over) resolve(b); });
+          req.on('error', () => resolve(null));
+        });
+        if (raw === null) return json(res, { ok: false, error: 'Too large (1 MB at most).' }, 413);
+        let body;
+        try { body = raw ? JSON.parse(raw) : {}; } catch { body = { text: raw.slice(0, 200000) }; }
+        let r;
+        try {
+          r = await scheduleHooks.onWebhook(m[1], { raw, body, headers: req.headers, query: Object.fromEntries(url.searchParams), key: url.searchParams.get('key') || '', method: req.method });
+        } catch (err) { console.error('[schedule] webhook:', err.message); r = { ok: false, status: 500, error: 'It could not be handled.' }; }
+        if (r.ok) return json(res, { ok: true, ...(r.duplicate ? { duplicate: true } : {}), ...(r.skipped ? { skipped: true, reason: r.reason } : {}), ...(r.midRun ? { midRun: true } : {}), ...(r.started ? { started: true } : {}) });
+        return json(res, { ok: false, error: r.error }, r.status || 400);
+      }
+    }
+
+    // A factory trigger's webhook. Outside the auth gate: the key is the credential.
+    {
+      const m = /^\/api\/factory-hook\/trigger\/(trg_[0-9a-f]{12})$/.exec(path);
+      if (m && req.method === 'POST') {
+        if (!triggerDispatch) return json(res, { ok: false, error: 'Factories are not available.' }, 503);
+        // Public: read at most 1 MB, and never let a bad call throw.
+        const raw = await new Promise((resolve) => {
+          let b = ''; let over = false;
+          req.on('data', (c) => { if (over) return; b += c; if (b.length > 1_000_000) { over = true; resolve(null); } });
+          req.on('end', () => { if (!over) resolve(b); });
+          req.on('error', () => resolve(null));
+        });
+        if (raw === null) return json(res, { ok: false, error: 'Too large (1 MB at most).' }, 413);
+        let body;
+        try { body = raw ? JSON.parse(raw) : {}; } catch { body = { text: raw.slice(0, 200000) }; }
+        let r;
+        try {
+          r = await triggerDispatch.onWebhook(m[1], { raw, body, headers: req.headers, query: Object.fromEntries(url.searchParams), key: url.searchParams.get('key') || '', method: req.method });
+        } catch (err) { console.error('[factory] webhook:', err.message); r = { ok: false, status: 500, error: 'It could not be handled.' }; }
+        return json(res, r.ok ? { ok: true, ...(r.duplicate ? { duplicate: true } : {}), queued: !!r.queued, toldManager: !!r.told, runId: r.runId || '' } : { ok: false, error: r.error }, r.ok ? 200 : r.status || 400);
+      }
+    }
+
     // Which sign-in methods this server offers. Read before login, so it is
     // deliberately outside the auth gate and says nothing a stranger could use.
     if (path === '/api/auth/methods' && req.method === 'GET') {
@@ -3262,6 +3458,136 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result);
     }
 
+    // ─── Factories (global library) and factory runs (per project) ───
+    // Owner only: none of these are in COLLABORATOR_ROUTES.
+    if (path === '/api/factories' && req.method === 'GET') {
+      return json(res, { ok: true, factories: factoryStore.listFactories() });
+    }
+    // The provided templates, with the skills this machine has.
+    if (path === '/api/factory-templates' && req.method === 'GET') {
+      return json(res, { ok: true, templates: providedTemplates().map(t => ({ id: t.id, name: t.name, description: t.description, goodFor: t.goodFor, team: t.roster.filter(r => r.id !== 'manager').map(r => r.name), steps: t.nodes.length })) });
+    }
+    if (path === '/api/factories/get' && req.method === 'GET') {
+      const r = factoryStore.getFactory(url.searchParams.get('id'));
+      if (!r) return json(res, { ok: false, error: 'Factory not found' }, 404);
+      // With the skills every project can see, so the editor can flag the rest.
+      let known = null;
+      try { known = new Set((skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced').map(x => x.name)); } catch { known = null; }
+      return json(res, { ok: true, factory: r.factory, validation: validateFactory(r.factory, { skills: known }) });
+    }
+    if (path === '/api/factories/export' && req.method === 'GET') {
+      return json(res, factoryStore.exportFactory(url.searchParams.get('id')));
+    }
+    if (path === '/api/factories' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      let result;
+      switch (body.action) {
+        case 'create': result = factoryStore.createFactory({ name: body.name, definition: body.definition }); break;
+        case 'save': result = factoryStore.saveFactory(body.id, body.definition, { baseVersion: body.baseVersion }); break;
+        case 'duplicate': result = factoryStore.duplicateFactory(body.id, { name: body.name }); break;
+        case 'delete': result = factoryStore.deleteFactory(body.id); break;
+        case 'import': result = factoryStore.importFactory(body.data); break;
+        case 'fromTemplate': {
+          const t = providedTemplates().find(x => x.id === body.templateId);
+          if (!t) { result = { ok: false, error: 'No such template.' }; break; }
+          const { id: _i, template: _t, goodFor: _g, ...def } = t;
+          result = factoryStore.createFactory({ definition: def, name: body.name || t.name });
+          break;
+        }
+        default: return json(res, { ok: false, error: `Unknown factory action: ${body.action}` }, 400);
+      }
+      if (result.ok) broadcastSSE('factories', { id: body.id || (result.factory && result.factory.id), action: body.action });
+      return json(res, result);
+    }
+    if (path === '/api/factory-runs' && req.method === 'GET') {
+      if (!factoryRunner) return json(res, { ok: true, runs: [] });
+      return json(res, { ok: true, runs: factoryRunner.listRuns({ project: url.searchParams.get('project') || '' }) });
+    }
+    // Before starting: which branch it will start from, and whether there is
+    // uncommitted work that the run will not see.
+    if (path === '/api/factory-runs/precheck' && req.method === 'GET') {
+      const project = url.searchParams.get('project') || '';
+      if (!project || aliasDenied(project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
+      const p = getProjectUnscoped(project);
+      if (!p) return json(res, { ok: false, error: 'Unknown project' }, 404);
+      const info = await inspectFactoryRepo(p.path);
+      const active = factoryRunner ? factoryRunner.activeRunFor(project) : null;
+      return json(res, { ...info, active: active ? { id: active.id, status: active.status, factoryName: active.factoryName } : null });
+    }
+    // Leftovers of finished and stopped runs, and auto-delete.
+    // ─── Factory triggers ───
+    if (path === '/api/factory-triggers' && req.method === 'GET') {
+      const project = url.searchParams.get('project') || '';
+      return json(res, { ok: true, triggers: factoryTriggers.list(project ? { project } : {}).map(publicTrigger) });
+    }
+    if (path === '/api/factory-triggers' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      let result;
+      switch (body.action) {
+        case 'save': result = factoryTriggers.upsert(body.trigger); break;
+        case 'delete': result = factoryTriggers.remove(body.id); break;
+        case 'rotate': result = factoryTriggers.rotateKey(body.id, body.which === 'secret' ? 'secret' : 'key'); break;
+        case 'run': result = triggerDispatch ? await triggerDispatch.runNow(body.id) : { ok: false, error: 'Factories are not available.' }; break;
+        case 'preview': result = triggerDispatch ? { ok: true, cr: triggerDispatch.preview(body.trigger || {}, body.sample || {}) } : { ok: false }; break;
+        default: result = { ok: false, error: 'Unknown action.' };
+      }
+      if (result && result.trigger) result = { ...result, trigger: publicTrigger(result.trigger) };
+      return json(res, result);
+    }
+
+    if (path === '/api/factory-cleanup' && req.method === 'GET') {
+      if (!factoryRunner) return json(res, { ok: true, items: [], settings: { autoDeleteDays: 0 } });
+      const items = await factoryCleanup.scan({ runs: factoryRunner.listRuns() });
+      return json(res, { ok: true, items, settings: factoryCleanup.readSettings(config.dataDir) });
+    }
+    if (path === '/api/factory-cleanup' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      if (body.action === 'settings') return json(res, { ok: true, settings: factoryCleanup.writeSettings(config.dataDir, body) });
+      if (body.action !== 'remove') return json(res, { ok: false, error: 'Unknown action' }, 400);
+      const items = await factoryCleanup.scan({ runs: factoryRunner ? factoryRunner.listRuns() : [] });
+      const want = new Set(Array.isArray(body.ids) ? body.ids : []);
+      const results = [];
+      for (const it of items.filter(x => want.has(x.id))) results.push({ id: it.id, ...(await factoryCleanup.remove(it)) });
+      return json(res, { ok: results.every(r => r.ok), results, error: results.filter(r => !r.ok).map(r => r.error).join('; ') });
+    }
+    if (path === '/api/factory-runs/events' && req.method === 'GET') {
+      if (!factoryRunner) return json(res, { ok: false, error: 'Run not found' }, 404);
+      return json(res, factoryRunner.runEvents(url.searchParams.get('id'), url.searchParams.get('from') || 0));
+    }
+    if (path === '/api/factory-runs/diff' && req.method === 'GET') {
+      if (!factoryRunner) return json(res, { ok: false, error: 'Run not found' }, 404);
+      return json(res, await factoryRunner.runDiff(url.searchParams.get('id')));
+    }
+    if (path === '/api/factory-runs/get' && req.method === 'GET') {
+      const r = factoryRunner && factoryRunner.getRun(url.searchParams.get('id'));
+      return r ? json(res, { ok: true, run: r }) : json(res, { ok: false, error: 'Run not found' }, 404);
+    }
+    if (path === '/api/factory-runs' && req.method === 'POST') {
+      if (!factoryRunner) return json(res, { ok: false, error: 'Chats are not available on this server.' }, 503);
+      const body = JSON.parse(await readBody(req));
+      let result;
+      switch (body.action) {
+        case 'start':
+          if (!body.project || aliasDenied(body.project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
+          result = await factoryRunner.startRun({ project: body.project, factoryId: body.factoryId, task: body.task, cr: body.cr, mergeMode: body.mergeMode, ignoreMissingSkills: !!body.ignoreMissingSkills });
+          break;
+        case 'stop': result = await factoryRunner.stopRun(body.id); break;
+        case 'resume': result = await factoryRunner.resume(body.id); break;
+        case 'pause': result = await factoryRunner.pause(body.id); break;
+        case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
+        case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
+        case 'limits': result = await factoryRunner.setLimits(body.id, body.limits || {}); break;
+        case 'endWait': result = await factoryRunner.endWait(body.id, body.tokenId, { outcome: body.outcome, note: body.note || '' }); break;
+        case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
+        case 'teamMode': result = await factoryRunner.setTeamMode(body.id, body.mode); break;
+        // The person's choice on the result card: merge | changes | keep | discard | undo.
+        case 'finish': result = await factoryRunner.finishAction(body.id, String(body.choice || ''), { note: body.note || '' }); break;
+        default: return json(res, { ok: false, error: `Unknown factory run action: ${body.action}` }, 400);
+      }
+      if (result.ok) setTimeout(broadcastState, 200);
+      return json(res, result);
+    }
+
     // ─── Notes (per project) ───
     if (path === '/api/notes' && req.method === 'GET') {
       const project = url.searchParams.get('project');
@@ -3393,6 +3719,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'provisionChat': result = await provisionChatSession(body.id); break;
         case 'enable': result = schedule.setEnabled(body.id, body.enabled); break;
         case 'delete': result = schedule.deleteSchedule(body.id); break;
+        case 'rotateHook': result = schedule.rotateHookKey(body.id, body.which === 'secret' ? 'secret' : 'key'); break;
         default: return json(res, { ok: false, error: `Unknown schedule action: ${action}` }, 400);
       }
       if (result.ok) broadcastSSE('schedule', {});
@@ -3835,8 +4162,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!alias) return json(res, { ok: false, error: 'A project is required' }, 400);
       return json(res, {
         ok: true,
-        items: chatSchedule.list(alias),
-        recent: chatSchedule.recent(alias),
+        items: chatSchedule.list(alias, String(url.searchParams.get('chat') || '')),
+        recent: chatSchedule.recent(alias, 10, String(url.searchParams.get('chat') || '')),
         // The limit-reset trigger is only offered alongside the limit warmer,
         // which is what reliably notices a rollover and opens the next window.
         limitWarmup: !!(limitWarmer.status && limitWarmer.status().enabled),
@@ -3855,7 +4182,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (wantsReset && !(limitWarmer.status && limitWarmer.status().enabled)) {
         return json(res, { ok: false, error: 'Turn on the limit warmer in Settings to schedule a message for the limit reset.' }, 400);
       }
-      const r = chatSchedule.add({ project: alias, text: body.text, trigger: body.trigger });
+      const r = chatSchedule.add({ project: alias, text: body.text, trigger: body.trigger, chatId: typeof body.chat === 'string' ? body.chat : '' });
       return json(res, r, r.ok ? 200 : 400);
     }
 
@@ -3972,6 +4299,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       if (action === 'interrupt') return json(res, claudeUi.interrupt(sid));
       if (action === 'close') {
+        // A factory's chats live as long as its run: closing the Manager (or an
+        // employee) would end the run's work behind its back. Stop it first.
+        const guard = factoryRunner && factoryRunner.guardsChat(sid);
+        if (guard) return json(res, { ok: false, factoryGuard: true, runId: guard.id, error: `This chat belongs to the factory "${guard.factoryName}", which is still ${guard.status}. Stop the factory first.` }, 409);
         const result = claudeUi.close(sid);
         panes.forget(sid);
         broadcastState();
@@ -5517,6 +5848,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
+    // History (read-only): the phone's Git tab lists commits and opens one.
+    if (path === '/api/git/log' && req.method === 'GET') {
+      const project = getProject(url.searchParams.get('project'));
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      try { return json(res, { ok: true, ...gitLog(project.path, { limit: url.searchParams.get('limit'), skip: url.searchParams.get('skip') }) }); }
+      catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
+    if (path === '/api/git/show' && req.method === 'GET') {
+      const project = getProject(url.searchParams.get('project'));
+      if (!project) return json(res, { ok: false, error: 'Project not found' }, 404);
+      try { return json(res, { ok: true, commit: gitShow(project.path, url.searchParams.get('hash')) }); }
+      catch (err) { return json(res, { ok: false, error: err.message }); }
+    }
+
     // ─── Internal MCP dispatch (from stdio MCP servers) ───
     if (path === '/api/mcp/call' && req.method === 'POST') {
       // Auth via internal API key (not user token) — or a collaborator's own.
@@ -5708,6 +6054,103 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, r);
       }
 
+      // ─── factory_handoff: a factory employee finishing its step ───
+      // Owner only (not in COLLABORATOR_MCP_TOOLS). Which chat is handing off
+      // comes from the bridge's own environment, never from Claude.
+      if (body.tool === 'factory_handoff') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        const { sessionId, ...payload } = a;
+        try { return json(res, await factoryRunner.handoff(String(sessionId || ''), payload)); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      // The Manager answering its team's permission requests.
+      if (body.tool === 'factory_permission') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.answerPermissions(String(a.sessionId || ''), a.decisions, { rules: a.rules, policy: a.policy })); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      if (body.tool === 'factory_tick') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.tickFromManager(String(a.sessionId || ''), a.minutes)); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      if (body.tool === 'factory_message') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.messageFromManager(String(a.sessionId || ''), a.employee, a.text, { interrupt: !!a.interrupt, hold: !!a.hold })); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      if (body.tool === 'factory_control') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null })); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      if (body.tool === 'factory_status') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try { return json(res, await factoryRunner.statusFor(String(a.sessionId || ''))); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+      // The Manager handing someone a one-off job, or acting on the person's word about the result.
+      if (body.tool === 'factory_delegate' || body.tool === 'factory_result') {
+        if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+        try {
+          return json(res, body.tool === 'factory_delegate'
+            ? await factoryRunner.delegateJob(String(a.sessionId || ''), a.employee, a.task)
+            : await factoryRunner.resultFromManager(String(a.sessionId || ''), a.action, a.note || ''));
+        } catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
+      // ─── Building factories from a chat or terminal (owner only) ───
+      if (['factory_guide', 'factory_list', 'factory_get', 'factory_validate', 'factory_save', 'factory_start', 'factory_triggers'].includes(body.tool)) {
+        try {
+          switch (body.tool) {
+            case 'factory_guide': return json(res, { ok: true, content: [{ type: 'text', text: FACTORY_GUIDE }] });
+            case 'factory_list': return json(res, { ok: true, factories: factoryStore.listFactories(), templates: providedTemplates().map(t => ({ id: t.id, name: t.name, goodFor: t.goodFor, team: t.roster.map(r => r.name) })), note: 'Templates (tpl_…) are read-only starting points: factory_get one, change it, and factory_save it as a new factory.' });
+            case 'factory_get': {
+              const tpl = String(a.id || '').startsWith('tpl_') ? providedTemplates().find(x => x.id === a.id) : null;
+              if (tpl) { const { id: _i, template: _t, ...def } = tpl; return json(res, { ok: true, template: true, factory: def, note: 'A provided template: save a changed copy with factory_save (no id).' }); }
+              const r = factoryStore.getFactory(String(a.id || ''));
+              return json(res, r ? { ok: true, factory: r.factory, validation: r.validation } : { ok: false, error: 'Factory not found. factory_list shows the ids.' });
+            }
+            case 'factory_validate': {
+              if (!a.definition || typeof a.definition !== 'object') return json(res, { ok: false, error: 'Give the definition (see factory_guide).' });
+              const v = validateFactory(a.definition);
+              return json(res, { ok: true, runnable: v.ok, errors: v.errors, warnings: v.warnings });
+            }
+            case 'factory_save': {
+              if (!a.definition || typeof a.definition !== 'object') return json(res, { ok: false, error: 'Give the definition (see factory_guide).' });
+              const r = a.id ? factoryStore.saveFactory(String(a.id), a.definition, { baseVersion: a.baseVersion }) : factoryStore.createFactory({ definition: a.definition });
+              if (r.ok) { try { broadcastSSE('factories', { id: r.factory.id }); } catch { /* not up */ } }
+              return json(res, r.ok ? { ok: true, id: r.factory.id, version: r.factory.version, runnable: r.validation.ok, errors: r.validation.errors, warnings: r.validation.warnings, note: 'Open it in the Factories tab to see and adjust the flow.' } : r);
+            }
+            case 'factory_start': {
+              if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
+              const project = String(a.project || a.alias || '');
+              if (!project) return json(res, { ok: false, error: 'Which project? Give project (its alias).' });
+              const r = await factoryRunner.startRun({ project, factoryId: a.factoryId, cr: { title: a.title, sections: a.sections || {} }, mergeMode: a.mergeMode });
+              return json(res, r.ok ? { ok: true, runId: r.run.id, managerChatId: r.run.managerChatId, note: 'Started. The person follows it in the project\'s Factory panel and the Manager\'s chat.' } : { ok: false, error: r.error, ...(r.field ? { field: r.field } : {}), ...(r.missingSkills ? { missingSkills: r.missingSkills } : {}) });
+            }
+            case 'factory_triggers': {
+              if (a.action === 'list') return json(res, { ok: true, triggers: factoryTriggers.list(a.project || a.alias ? { project: a.project || a.alias } : {}).map(publicTrigger) });
+              if (a.action === 'delete') return json(res, factoryTriggers.remove(String(a.id || '')));
+              if (a.action === 'save') {
+                const t = { ...(a.trigger || {}) };
+                if (!t.project) t.project = a.project || a.alias || '';
+                const r = factoryTriggers.upsert(t);
+                if (!r.ok) return json(res, r);
+                const tr = publicTrigger(r.trigger);
+                if (tr.kind !== 'webhook') return json(res, { ok: true, trigger: tr });
+                const base = config.tlsDomain ? `https://${config.tlsDomain}` : '';
+                const p2 = `/api/factory-hook/trigger/${tr.id}`;
+                return json(res, { ok: true, trigger: tr, webhook: tr.webhook.auth === 'signature'
+                  ? { url: base + p2, auth: 'signature', secret: tr.webhook.secret, header: tr.webhook.signatureHeader, timestampHeader: tr.webhook.timestampHeader || '', note: 'Sign the raw body with HMAC-SHA256 and this secret (hex, optionally "sha256=..."). With a timestamp header, sign "<timestamp>:<body>" (Grafana\'s form).' }
+                  : { url: `${base}${p2}?key=${tr.webhook.key}`, auth: 'key', note: 'Or send the key as X-Crundi-Key or Authorization: Bearer <key>.' } });
+              }
+              return json(res, { ok: false, error: 'action is list, save or delete.' });
+            }
+          }
+        } catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
       // ─── Widget tools (owner only: not in COLLABORATOR_MCP_TOOLS) ───
       if (body.tool.startsWith('widget_')) {
         try { return json(res, await widgetApi.handleMcp(body.tool, a) || { ok: false, error: `Unknown tool: ${body.tool}` }); }
@@ -5798,11 +6241,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           case 'schedule_get': r = ownsId(a.id) ? { ok: true, schedule: ownsId(a.id) } : { ok: false, error: 'Schedule not found in this project' }; break;
           case 'schedule_add':
             // project is forced to this project — agents can't target another.
-            r = schedule.addSchedule({ name: a.name, when: a.when, action: a.action, conditions: a.conditions, enabled: a.enabled, project: alias });
+            r = schedule.addSchedule({ name: a.name, when: a.when, action: a.action, conditions: a.conditions, enabled: a.enabled, webhook: a.webhook, project: alias });
             break;
           case 'schedule_update':
             if (!ownsId(a.id)) { r = { ok: false, error: 'Schedule not found in this project' }; break; }
-            r = schedule.updateSchedule(a.id, { name: a.name, when: a.when, action: a.action, conditions: a.conditions, enabled: a.enabled });
+            r = schedule.updateSchedule(a.id, { name: a.name, when: a.when, action: a.action, conditions: a.conditions, enabled: a.enabled, webhook: a.webhook });
             break;
           case 'schedule_set_enabled':
             r = ownsId(a.id) ? schedule.setEnabled(a.id, a.enabled !== false) : { ok: false, error: 'Schedule not found in this project' };
@@ -6648,6 +7091,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     /** Internal API key for MCP stdio servers. */
     getInternalApiKey() { return internalApiKey; },
+    /** index.js hands over the scheduled chats' webhooks once the scheduler is up. */
+    setScheduleHooks(h) { scheduleHooks = h; },
 
     /** Regenerate the HTML cache with an updated bot username (call after bot.init). */
     refreshHtml(botUsername) { htmlCache = getWebappHtml(botUsername, APP_VERSION); chatPageCache = ''; },

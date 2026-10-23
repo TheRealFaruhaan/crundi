@@ -1,0 +1,23 @@
+{
+ "ok": true,
+ "engine": {
+  "version": "27.3.1",
+  "apiVersion": "1.47",
+  "compose": "2.29.7",
+  "os": "Ubuntu 24.04.1 LTS",
+  "kernel": "6.8.0-147-generic",
+  "arch": "x86_64",
+  "cpus": 4,
+  "memory": 16777216000,
+  "storageDriver": "overlay2",
+  "cgroup": "2",
+  "rootDir": "/var/lib/docker",
+  "name": "dev",
+  "containers": 2,
+  "running": 1,
+  "paused": 0,
+  "stopped": 1,
+  "images": 2,
+  "warnings": []
+ }
+}

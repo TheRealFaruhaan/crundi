@@ -17,6 +17,12 @@
  *       conditions: [ { type:'time', at:'HH:MM' }
  *                   | { type:'usage', op:'below'|'above'|'equal', value }
  *                   | { type:'kanban', taskId, todoId?, status } ],
+ *       when: { mode:'once'|'recurring', time, date, days }
+ *           | { mode:'webhook' }   — fired by a POST to /api/schedule-hook/<id>
+ *             (src/schedule-hooks.js); chat and service actions only
+ *       webhook: { key, secret, auth:'key'|'signature', signatureHeader,
+ *                  timestampHeader, idempotency }   — key and secret are made
+ *                  here and never taken from input (only replaced by rotateHookKey)
  *       createdAt, updatedAt, lastRun, lastMet
  *   } ] }
  */
@@ -24,6 +30,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { randomBytes } from 'crypto';
+import { normalizeTrigger } from './factory-triggers.js';
 import { config } from './config.js';
 
 const FILE = () => join(config.dataDir, 'schedules.json');
@@ -57,7 +64,13 @@ export function getSchedule(id) {
   return load().schedules.find(s => s.id === id) || null;
 }
 
-function sanitize(data = {}) {
+/** Webhook settings, keeping the key and secret already made (callers cannot set them). */
+function sanitizeHook(input, prev) {
+  const n = normalizeTrigger({ kind: 'webhook', webhook: input || {} }, prev ? { webhook: prev } : null);
+  return n.webhook;
+}
+
+function sanitize(data = {}, prevHook = null) {
   const action = { ...(data.action || {}) };
   // A chat job runs in a folder of its own choosing, defaulting to the project
   // root. Kept as a plain string here and checked for existence at launch: a
@@ -76,7 +89,7 @@ function sanitize(data = {}) {
   const conditions = (Array.isArray(data.conditions) ? data.conditions : []).filter(c => c && c.type !== 'time');
   const w = data.when && typeof data.when === 'object' ? data.when : {};
   const when = {
-    mode: w.mode === 'once' ? 'once' : 'recurring',
+    mode: w.mode === 'once' ? 'once' : w.mode === 'webhook' ? 'webhook' : 'recurring',
     time: w.time || '09:00',
     date: w.date || '',                                   // for one-time
     days: Array.isArray(w.days) ? w.days.filter(d => d >= 0 && d <= 6) : [], // 0=Sun .. 6=Sat
@@ -95,6 +108,7 @@ function sanitize(data = {}) {
     action,
     when,
     conditions,
+    webhook: sanitizeHook(data.webhook, prevHook),
   };
 }
 
@@ -115,17 +129,32 @@ export function addSchedule(data = {}) {
   return { ok: true, schedule: s };
 }
 
-export function updateSchedule(id, updates = {}) {
+export function updateSchedule(id, updatesIn = {}) {
+  // A field left out (or undefined, as the tools pass it) keeps its value.
+  const updates = Object.fromEntries(Object.entries(updatesIn || {}).filter(([, v]) => v !== undefined));
   const store = load();
   const s = store.schedules.find(x => x.id === id);
   if (!s) return { ok: false, error: 'Schedule not found' };
-  const clean = sanitize({ ...s, ...updates });
+  const clean = sanitize({ ...s, ...updates, webhook: { ...(s.webhook || {}), ...(updates.webhook || {}) } }, s.webhook || null);
   s.name = clean.name;
   s.enabled = clean.enabled;
   if (updates.action) s.action = clean.action;
   if (updates.conditions) s.conditions = clean.conditions;
   if (updates.when) s.when = clean.when;
   if (updates.project) s.project = clean.project;
+  s.webhook = clean.webhook;
+  s.updatedAt = new Date().toISOString();
+  save(store);
+  return { ok: true, schedule: s };
+}
+
+/** Replace a webhook schedule's key or secret: calls made with the old one stop working. */
+export function rotateHookKey(id, which = 'key') {
+  const store = load();
+  const s = store.schedules.find(x => x.id === id);
+  if (!s) return { ok: false, error: 'Schedule not found' };
+  s.webhook = sanitizeHook(s.webhook || {}, s.webhook || null);
+  s.webhook[which === 'secret' ? 'secret' : 'key'] = randomBytes(24).toString('base64url');
   s.updatedAt = new Date().toISOString();
   save(store);
   return { ok: true, schedule: s };

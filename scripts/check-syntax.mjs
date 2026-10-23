@@ -50,6 +50,7 @@ const files = [
   join(root, 'app', 'vendor', 'crundi-chat-page.js'),
   join(root, 'app', 'vendor', 'crundi-phone.js'),
   join(root, 'app', 'vendor', 'crundi-docker.js'),
+  join(root, 'app', 'vendor', 'crundi-factories.js'),
 ];
 
 for (const f of files) {

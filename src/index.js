@@ -313,16 +313,18 @@ console.log(`[crundi] API_KEY=${apiKey}`);
 
 // Start the task scheduler (fires scheduled agents / commands / service actions).
 try {
-  const { startScheduler } = await import('./scheduler.js');
+  const { startScheduler, runAction, evalCondition } = await import('./scheduler.js');
   const { runScheduledChat } = await import('./scheduled-chat.js');
-  startScheduler({
-    claudeTerminals,
-    // A chat job opens a chat, does the work and closes itself. It reports
-    // separately from the generic "a schedule ran" ping, because what you want
-    // to know is what it DID, not that it started.
-    runScheduledChat: (sch) => runScheduledChat({
+  const { createScheduleHooks } = await import('./schedule-hooks.js');
+  const scheduleStore = await import('./schedule-store.js');
+  // A chat job opens a chat, does the work and closes itself. It reports
+  // separately from the generic "a schedule ran" ping, because what you want
+  // to know is what it DID, not that it started. `extra` is a webhook run's
+  // filled-in prompt and its onStarted hook.
+  const runChatJob = (sch, extra = {}) => runScheduledChat({
       schedule: sch,
       claudeUi,
+      ...extra,
       notify: (outcome, label, text) => {
         try {
           const proj = sch.project ? ` (${sch.project})` : '';
@@ -336,7 +338,20 @@ try {
           webapp.notifyEvent('scheduledChat', body ? `${head}\n\n${body}` : head);
         } catch { /* non-fatal */ }
       },
-    }),
+    });
+  // Scheduled chats whose "when" is a call to their webhook.
+  webapp.setScheduleHooks(createScheduleHooks({
+    dataDir: config.dataDir,
+    getSchedule: (id) => scheduleStore.getSchedule(id),
+    setRuntime: (id, patch) => scheduleStore.setRuntime(id, patch),
+    runChat: (sch, extra) => runChatJob(sch, extra),
+    runService: (sch) => runAction(sch, { claudeTerminals }),
+    conditionMet: (c, project) => evalCondition(c, project, { claudeTerminals }),
+    claudeUi,
+  }));
+  startScheduler({
+    claudeTerminals,
+    runScheduledChat: (sch) => runChatJob(sch),
     onFire: (sch) => {
       // A chat schedule sends its own report when the run ends (or when it
       // could not start), so "Schedule ran" was a second message about the
@@ -440,14 +455,26 @@ console.log(`[crundi] Local:  http://localhost:${port}`);
     console.log(`[crundi] Bot: @${config.botUsername}`);
     webapp.refreshHtml(config.botUsername);
 
-    bot.start({
+    // Polling stops for good if getUpdates fails (a second process polling
+    // the same bot gets a 409 Conflict, and grammy's start() rejects). That
+    // used to surface only as an "Unhandled rejection" and left the bot deaf
+    // until a restart. Start again after a pause, backing off.
+    let botRetry = 0;
+    const startBot = () => bot.start({
       onStart: () => {
+        botRetry = 0;
         console.log(`[crundi] Telegram bot connected. Notifications enabled for @${config.allowedUsername}`);
         if (getChatId() && getChatId() !== savedState.chatId) {
           saveState({ ...loadState(), chatId: getChatId() });
         }
       },
+    }).catch((err) => {
+      if (shuttingDown) return;
+      const wait = Math.min(5 * 60_000, 15_000 * 2 ** Math.min(botRetry++, 4));
+      console.warn(`[crundi] Telegram polling stopped (${err?.error_code || ''} ${err?.description || err?.message || err}); starting again in ${Math.round(wait / 1000)}s`);
+      setTimeout(() => { if (!shuttingDown) startBot(); }, wait).unref?.();
     });
+    startBot();
   } catch (err) {
     console.warn(`[crundi] Telegram bot failed to start: ${err.message}`);
     console.warn('[crundi] Notifications will not be sent. Webapp still available.');

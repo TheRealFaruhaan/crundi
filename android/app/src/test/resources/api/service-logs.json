@@ -1,0 +1,7 @@
+{
+ "logs": [
+  "Serving docs on http://localhost:4811",
+  "[err] (node:48121) ExperimentalWarning: fetch",
+  "--- process exited with code 0 ---"
+ ]
+}

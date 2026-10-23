@@ -1,93 +1,118 @@
 package mv.obitech.crundi
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Bundle
-import android.webkit.JavascriptInterface
-import android.webkit.PermissionRequest
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.webkit.WebViewAssetLoader
+import android.util.Size
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.viewinterop.AndroidView
+import mv.obitech.crundi.pair.ScanDecoder
+import mv.obitech.crundi.ui.pair.ScanScreen
+import mv.obitech.crundi.ui.pair.ScanState
+import mv.obitech.crundi.ui.theme.CrundiTheme
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Scanning the pairing picture.
- *
- * The picture is Crundi's own format, and the thing that reads it is the same
- * file the server draws it with (src/crundi-code.js, copied into this app's
- * assets when it is built). So this screen is a small page of our own, shown
- * in a web view, holding the camera and that reader. It loads nothing from
- * the network: every address it is asked for is answered from the app's own
- * files or refused.
+ * Scanning the pairing picture, natively: CameraX shows the camera and hands
+ * frames to ScanDecoder, which reads the Crundi code (a Kotlin port of the
+ * server's own reader, src/crundi-code.js) or the fallback QR code (ZXing).
+ * Nothing leaves the phone; the result is a pairing link for PairActivity.
  */
-class ScanActivity : Activity() {
-    private var web: WebView? = null
+class ScanActivity : ComponentActivity() {
+    private var state by mutableStateOf(ScanState.Looking)
+    private val done = AtomicBoolean(false)
+    private var analysis: ExecutorService? = null
+    private var preview: PreviewView? = null
+
+    private val askCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startCamera() else state = ScanState.Denied
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) start()
-        else requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) start()
-        else { setResult(RESULT_CANCELED); finish() }
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun start() {
-        val loader = WebViewAssetLoader.Builder().addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this)).build()
-        val view = WebView(this)
-        web = view
-        view.setBackgroundColor(getColor(R.color.bg))
-        view.settings.javaScriptEnabled = true
-        view.settings.mediaPlaybackRequiresUserGesture = false
-        view.settings.allowFileAccess = false
-        view.settings.allowContentAccess = false
-        view.webViewClient = object : WebViewClient() {
-            // Our own files, or nothing.
-            override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse? =
-                loader.shouldInterceptRequest(request.url) ?: WebResourceResponse("text/plain", "utf-8", 404, "Not found", emptyMap(), null)
-            override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest) = true
-        }
-        view.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(request: PermissionRequest) {
-                val ours = request.origin == Uri.parse(ORIGIN) || request.origin.toString().trimEnd('/') == ORIGIN
-                if (ours && PermissionRequest.RESOURCE_VIDEO_CAPTURE in request.resources) request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
-                else request.deny()
-            }
-        }
-        view.addJavascriptInterface(object {
-            @JavascriptInterface fun found(link: String) {
-                // The page says it read something. Believe it only if it is
-                // the shape of a pairing link.
-                if (PairingLink.parse(link) == null) return
-                runOnUiThread {
-                    setResult(RESULT_OK, Intent().putExtra(EXTRA_LINK, link))
-                    finish()
+        enableEdgeToEdge()
+        setContent {
+            CrundiTheme {
+                Box(Modifier.fillMaxSize()) {
+                    ScanScreen(state, onCancel = { setResult(RESULT_CANCELED); finish() }) {
+                        AndroidView(factory = { ctx -> PreviewView(ctx).also { preview = it; it.scaleType = PreviewView.ScaleType.FILL_CENTER } }, modifier = Modifier.fillMaxSize())
+                    }
                 }
             }
-            @JavascriptInterface fun cancel() { runOnUiThread { setResult(RESULT_CANCELED); finish() } }
-        }, "CrundiScan")
-        setContentView(view)
-        view.loadUrl("$ORIGIN/assets/scan.html")
+        }
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) startCamera()
+        else askCamera.launch(Manifest.permission.CAMERA)
+    }
+
+    private fun startCamera() {
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            val provider = runCatching { future.get() }.getOrNull()
+            val view = preview
+            if (provider == null || view == null || isFinishing) { state = ScanState.NoCamera; return@addListener }
+            val pool = Executors.newSingleThreadExecutor().also { analysis = it }
+            val show = Preview.Builder().build().also { it.surfaceProvider = view.surfaceProvider }
+            val look = ImageAnalysis.Builder()
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .setResolutionSelector(
+                    ResolutionSelector.Builder()
+                        .setResolutionStrategy(ResolutionStrategy(Size(1280, 720), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+                        .build(),
+                )
+                .build()
+            look.setAnalyzer(pool) { frame ->
+                frame.use {
+                    if (done.get()) return@use
+                    val plane = it.planes[0]
+                    val buf = plane.buffer.apply { rewind() }
+                    val bytes = ByteArray(buf.remaining()).also { b -> buf.get(b) }
+                    val link = runCatching { ScanDecoder.decode(bytes, it.width, it.height, plane.rowStride) }.getOrNull()
+                    // Believe it only if it is the shape of a pairing link.
+                    if (link != null && PairingLink.parse(link) != null && done.compareAndSet(false, true)) runOnUiThread { found(link) }
+                }
+            }
+            try {
+                provider.unbindAll()
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, show, look)
+            } catch (e: Exception) {
+                state = ScanState.NoCamera
+            }
+        }, mainExecutor)
+    }
+
+    private fun found(link: String) {
+        state = ScanState.Found
+        setResult(RESULT_OK, Intent().putExtra(EXTRA_LINK, link))
+        // A moment of green, so the person sees it worked.
+        window.decorView.postDelayed({ finish() }, 350)
     }
 
     override fun onDestroy() {
-        web?.apply { loadUrl("about:blank"); destroy() }
-        web = null
+        analysis?.shutdown()
         super.onDestroy()
     }
 
     companion object {
         const val EXTRA_LINK = "link"
-        private const val ORIGIN = "https://appassets.androidplatform.net"
     }
 }

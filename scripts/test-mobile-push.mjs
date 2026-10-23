@@ -266,5 +266,27 @@ rmSync(dataDir, { recursive: true, force: true });
   ok(/only && !only\.includes\(ch\.id\)/.test(String(channels.deliver)), 'a delivery can be for named channels only');
 }
 
+// Size: the relay refuses a sealed payload over its MAX_PAYLOAD, and the whole
+// batch with it, so a long reply must be cut until it fits rather than lost.
+{
+  const { readFileSync } = await import('node:fs');
+  const relayMax = Number(/const MAX_PAYLOAD = (\d+)/.exec(readFileSync(new URL('../relay/src/index.js', import.meta.url), 'utf8'))[1]);
+  const { encryptFor } = await import('../src/web-push.js');
+  const e = createECDH('prime256v1'); e.generateKeys();
+  const seal = (pl) => encryptFor(pl, e.getPublicKey().toString('base64url'), randomBytes(16).toString('base64url')).toString('base64url');
+  const chat = { id: 'c'.repeat(16), title: 't'.repeat(120), project: 'p'.repeat(80), mark: { initials: 'AB', color: '#123456', colorDeep: '#123456' } };
+  const big = { title: 'Crundi', tag: 'finished', url: '/chat/x', chat, suggestion: '"'.repeat(300), prompt: { requestId: 'r'.repeat(120), tool: 'Bash', summary: 'ދ'.repeat(200) } };
+  let allFit = true;
+  for (const body of ['x'.repeat(5000), '"\n'.repeat(2000), 'ދިވެހި '.repeat(600)]) {
+    for (const meta of [{ tag: 'finished' }, { ...big, prompt: undefined }, big]) {
+      if (seal(mp.buildPayload(body, meta)).length > relayMax) allFit = false;
+    }
+  }
+  ok(allFit, `every payload, however long its parts, seals to at most the relay's ${relayMax} characters`);
+  const long = JSON.parse(mp.buildPayload('x'.repeat(5000), { ...big, prompt: undefined }));
+  ok(long.body.length > 1000 && long.body.endsWith('…') && long.suggestion === big.suggestion, 'a long reply is cut, not dropped, and its suggestion is kept');
+  ok(JSON.parse(mp.buildPayload('Done.', big)).body === 'Done.', 'a short one is left as it is');
+}
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

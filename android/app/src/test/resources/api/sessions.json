@@ -1,0 +1,29 @@
+{
+ "ok": true,
+ "sessions": [
+  {
+   "id": "fam_1",
+   "current": true,
+   "device": {
+    "id": "dev_pixel",
+    "name": "Pixel 7",
+    "platform": "android"
+   },
+   "username": "faruhaan",
+   "createdAt": 1791000000000,
+   "lastSeenAt": 1792322000000,
+   "userAgent": "Crundi CrundiAndroid/1.1.0-dev.1 (play)",
+   "ip": "10.0.0.4"
+  },
+  {
+   "id": "fam_2",
+   "current": false,
+   "device": null,
+   "username": "faruhaan",
+   "createdAt": 1790000000000,
+   "lastSeenAt": 1792200000000,
+   "userAgent": "Mozilla/5.0 (Windows NT 10.0)",
+   "ip": "203.0.113.9"
+  }
+ ]
+}

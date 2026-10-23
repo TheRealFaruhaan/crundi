@@ -1,0 +1,30 @@
+<div class="wna a-fxp">
+  <div class="lab l1">Templates</div>
+  <div class="c t1"><b>Pair and review</b><span>Developer, Reviewer</span></div>
+  <div class="c t2"><b>Product squad</b><span>Planner, Frontend, Backend, Database, Tester, Reviewer</span><em>Use this</em></div>
+  <div class="c t3"><b>Design studio</b><span>Designer, Frontend, UI reviewer</span></div>
+  <div class="lab l2">Your factories</div>
+  <div class="c mine"><b>Product squad</b><span>Planner, Frontend, Backend, <u>Mobile dev</u>, Tester, Reviewer</span></div>
+  <div class="chat"><p>Build me a factory: a planner, two devs in parallel, a reviewer.</p></div>
+  <div class="c made"><b>Web team</b><span>Saved, ready to run</span></div>
+  <style>
+    .a-fxp{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-fxp .lab{position:absolute;left:36px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted)}
+    .a-fxp .l1{top:30px} .a-fxp .l2{top:214px}
+    .a-fxp .c{position:absolute;width:176px;padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);box-sizing:border-box}
+    .a-fxp .c b{display:block;font-size:13px;margin-bottom:4px}
+    .a-fxp .c span{display:block;font-size:11px;color:var(--text-secondary);line-height:1.4}
+    .a-fxp .t1{left:36px;top:52px} .a-fxp .t2{left:228px;top:52px} .a-fxp .t3{left:420px;top:52px}
+    .a-fxp .t2 em{display:inline-block;margin-top:8px;font-style:normal;font-size:11px;padding:4px 10px;border-radius:6px;background:var(--accent);color:#fff;animation:afxp-press 11s ease infinite}
+    .a-fxp .mine{left:36px;top:236px;opacity:0;animation:afxp-in 11s ease infinite}
+    .a-fxp .mine u{text-decoration:none;color:var(--accent-hover);animation:afxp-edit 11s ease infinite}
+    .a-fxp .chat{position:absolute;left:250px;top:236px;width:220px;padding:10px 12px;border-radius:12px 12px 4px 12px;background:var(--accent-dim);border:1px solid var(--border);font-size:12px;line-height:1.4;opacity:0;animation:afxp-chat 11s ease infinite}
+    .a-fxp .chat p{margin:0}
+    .a-fxp .made{left:420px;top:316px;opacity:0;animation:afxp-made 11s ease infinite}
+    @keyframes afxp-press{0%,14%{transform:scale(1)}17%{transform:scale(.9)}20%,100%{transform:scale(1)}}
+    @keyframes afxp-in{0%,20%{opacity:0;transform:translate(192px,-184px) scale(.9)}30%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afxp-edit{0%,38%{opacity:0}44%,92%{opacity:1}100%{opacity:0}}
+    @keyframes afxp-chat{0%,50%{opacity:0;transform:translateY(8px)}56%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afxp-made{0%,66%{opacity:0;transform:translateY(8px)}72%,92%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

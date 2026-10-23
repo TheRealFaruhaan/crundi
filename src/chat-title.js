@@ -10,6 +10,12 @@
 export const MAX_AUTO_TITLE = 20;
 /** The longer form, shown where a pane's header has the room for it. */
 export const MAX_LONG_TITLE = 50;
+// What is accepted is a little more than what Claude is told. A model counts
+// in tokens, not letters, and lands a character or three over about as often
+// as not; refusing that only costs a second call. The limits above are the
+// ones every prompt and tool description states; these are the ones enforced.
+const ACCEPT_AUTO_TITLE = MAX_AUTO_TITLE + 5;
+const ACCEPT_LONG_TITLE = MAX_LONG_TITLE + 5;
 
 function tidy(raw) {
   return String(raw == null ? '' : raw)
@@ -29,7 +35,7 @@ export function cleanAutoTitle(raw) {
   const t = tidy(raw);
   if (!t) return { ok: false, error: 'Give a title: a few words naming the job.' };
   const length = [...t].length;
-  if (length > MAX_AUTO_TITLE) {
+  if (length > ACCEPT_AUTO_TITLE) {
     // Refused rather than cut: a title chopped mid-word reads worse than "Chat".
     return { ok: false, error: `"${t}" is ${length} characters; the limit is ${MAX_AUTO_TITLE}. Shorten it and call again.` };
   }
@@ -44,6 +50,6 @@ export function cleanLongTitle(raw) {
   const t = tidy(raw);
   if (!t) return { ok: true, title: '' };
   const length = [...t].length;
-  if (length > MAX_LONG_TITLE) return { ok: false, error: `The long title is ${length} characters; the limit is ${MAX_LONG_TITLE}. Shorten it and call again.` };
+  if (length > ACCEPT_LONG_TITLE) return { ok: false, error: `The long title is ${length} characters; the limit is ${MAX_LONG_TITLE}. Shorten it and call again.` };
   return { ok: true, title: t };
 }
