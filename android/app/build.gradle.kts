@@ -42,6 +42,10 @@ android {
         // refuses the other below its own number. Raise it only for a real
         // break: the Play Store updates the app by itself and nobody updates
         // a server by itself, so "app newer than server" is the normal case.
+        // THE RULE (src/client-version.js): a new feature checks the server's
+        // capabilities, and a missing endpoint says "not supported by this
+        // server" instead of breaking, so this stays where it is for minor
+        // releases. 1.21.1-dev.12 was the last raise of that kind.
         buildConfigField("String", "MIN_SERVER", "\"1.21.1-dev.12\"")
         for (k in listOf("PROJECT_ID", "SENDER_ID", "APP_ID", "API_KEY")) {
             buildConfigField("String", "FIREBASE_$k", "\"${firebase[k] ?: ""}\"")

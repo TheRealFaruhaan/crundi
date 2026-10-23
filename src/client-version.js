@@ -16,6 +16,20 @@
 //
 // This is a compatibility check and not a security one. A client states its
 // own version, so anything that matters still depends on the login.
+//
+// THE RULE (the owner's, from 1.21.1, for every client and server: the web
+// page, the desktop apps, the Android app, the phone's chat page, the relay):
+// minor changes stay backwards compatible both ways, so that the minimums
+// here and in each client can be pinned broadly. Only a major upgrade raises
+// them, and the release says so.
+//   - A new feature is a NEW endpoint or an optional field, never a changed
+//     meaning of an existing one: an older client on a newer server goes on
+//     working as it did.
+//   - It also adds its name to CAPABILITIES below, so a newer client on an
+//     older server can hide or disable it before anyone taps it.
+//   - A client that still meets a missing endpoint (404, unknown route) fails
+//     that one action gracefully: "This server does not support this yet.
+//     Update the server to use it." The rest of the screen keeps working.
 
 import { compareVersions, parseVersion } from './whatsnew.js';
 
@@ -24,8 +38,8 @@ export const HANDSHAKE_PATH = '/api/handshake';
 /**
  * The oldest client of each kind this server accepts. '' means any.
  *
- * Raise one ONLY for a real incompatibility: every raise interrupts whoever is
- * below it. Where a newer client can simply do without something, list it in
+ * Raise one ONLY for a real incompatibility (a major upgrade, see THE RULE
+ * above): every raise interrupts whoever is below it. Where a newer client can simply do without something, list it in
  * CAPABILITIES instead and let the client hide what is missing.
  */
 export const MIN_CLIENT = Object.freeze({
