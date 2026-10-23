@@ -61,7 +61,10 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
-## Release notes, 1.1.0-dev.2 (en-US)
+## Release notes, 1.1.0 (en-US)
+
+Version code 18, the first native release. Same notes as 1.1.0-dev.2 (code 17),
+which it replaces; it adds a note on each choice of a question from Claude.
 
 Version code 17. Needs server 1.21.1-dev.12 or newer (the app's MIN_SERVER):
 Docker, Factory and git history use routes older servers do not have. Code 16

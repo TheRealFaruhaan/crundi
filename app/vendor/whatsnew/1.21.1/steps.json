@@ -1,0 +1,92 @@
+{
+  "steps": [
+    {
+      "id": "factory-team",
+      "tag": "Factories",
+      "title": "A whole team for the big work",
+      "body": "A factory is a team of Claude chats you design once and run in any project: a Manager you talk to, and employees with personas wired into steps, decisions and parallel branches. It takes big work from a change request to a reviewed result in its own worktree, and asks before merging. Made for new projects and features across interface, server and data; for a fix or a small change, a chat is still better.",
+      "art": "factory-team.html",
+      "artTitle": "Product squad"
+    },
+    {
+      "id": "factory-templates",
+      "tag": "Factories",
+      "title": "Start from a template, or your own",
+      "body": "Five templates come with Crundi, modelled on real teams: Pair and review, Product squad, New project kickoff, Design studio and Platform team, with personas like a database engineer and a designer that use the skills fitting their job. Use one, copy and change it to how your team works, or build your own, or ask any chat to build one.",
+      "art": "factory-templates.html",
+      "artTitle": "Factories"
+    },
+    {
+      "id": "factory-cr",
+      "tag": "Factories",
+      "title": "Every run starts from a change request",
+      "body": "A run starts from a change request: the goal, how things are, the expected result and the checks for done, with attachments. The Manager asks you first if anything is unclear, reviewers hold the work to the done checks, and their findings stay listed until verified. Each factory can have its own form.",
+      "art": "factory-cr.html",
+      "artTitle": "Start a factory"
+    },
+    {
+      "id": "factory-godseye",
+      "tag": "Factories",
+      "title": "The whole run, live, in the panel",
+      "body": "While a factory runs, the project's Factory panel is its live graph. You see who is working and what each is doing this second, the view follows the work, and anything that needs you shows at the top with the button that answers it. Tap someone to read their transcript right there, and come back to the graph.",
+      "art": "factory-godseye.html",
+      "artTitle": "Factory"
+    },
+    {
+      "id": "factory-waits",
+      "tag": "Factories",
+      "title": "Waits, and runs that start themselves",
+      "body": "A Wait step holds the flow for a time, until a command passes (CI, a health check) or until a signal arrives, and always gives up in the end. Triggers start a factory by themselves: at a time of day, when a kanban card enters a column, or when a webhook is called.",
+      "art": "factory-waits.html",
+      "artTitle": "Triggers"
+    },
+    {
+      "id": "factory-webhook",
+      "tag": "Factories",
+      "title": "Start a factory from an alert",
+      "body": "A webhook trigger gives a factory a public URL for things like Grafana alerts. Calls must carry its key or be signed with its secret. You write the change request with parts of the call, like {{payload.message}}, and anything a call leaves out just comes out empty. An idempotency key you choose, such as {{payload.groupKey}}, means a repeat is never handled twice. A new call that arrives while the run is going goes to its Manager, marked as mid-run, so it can decide if it is the same issue. The Manager always gets the full request.",
+      "art": "factory-webhook.html",
+      "artTitle": "Webhook"
+    },
+    {
+      "id": "factory-limits",
+      "tag": "Factories",
+      "title": "Keep a run inside your usage",
+      "body": "Each factory can pause at a share of your 5-hour or weekly usage that you choose, carrying on by itself after the reset, so your own chats keep some room. You can also limit how many people work at once, or go one at a time above a share you set. All of it can be changed on a running run, and the Manager can pause and resume it when you ask.",
+      "art": "factory-limits.html",
+      "artTitle": "Usage"
+    },
+    {
+      "id": "factory-checkins",
+      "tag": "Factories",
+      "title": "A Manager that checks in and steps in",
+      "body": "The Manager now looks over the run on a check-in ticker, every 5 minutes up to every few hours. You set how often in the factory, or leave it to the Manager. It can message someone in the middle of their step, or stop their turn to say it first, or tell them to wait. A job it hands out shows on the graph as a line to that person until the job is done.",
+      "art": "factory-checkins.html",
+      "artTitle": "Manager"
+    },
+    {
+      "id": "factory-measured",
+      "tag": "Factories",
+      "title": "One chat or a factory, measured",
+      "body": "Same change request (a small notes app), both on Haiku, and both apps met every done check. The chat was quicker and cheaper: 3.4 min and $0.04, against 7.7 min and $0.18. The factory's app was better made: 40 tests to 26, a phone editor, plain error messages, and blind design reviews of 7 and 7.5 out of 10, against 4. Factories are intended for large work, start to finish: new projects, and features across interface, server and data.",
+      "art": "factory-measure.html",
+      "artTitle": "Chat or factory"
+    },
+    {
+      "id": "schedule-webhook",
+      "tag": "Schedules",
+      "title": "Background chats that start when called",
+      "body": "A background chat can now start when its URL is called instead of at a time: an alert from Grafana, a CI job. It is secured the same way as factory webhooks, the prompt reads the call with {{payload.message}}, and an idempotency key drops repeats. Calls that come in while it is still working go into the same chat, marked Mid-run. With One ongoing chat, every alert comes back to the same conversation, so it remembers the earlier ones.",
+      "art": "schedule-webhook.html",
+      "artTitle": "Schedule"
+    },
+    {
+      "id": "native-phone",
+      "tag": "Phone app",
+      "title": "The phone app is now native",
+      "body": "The Android app is rebuilt natively: every area of Crundi in proper phone screens instead of a web page inside an app. It has the workbench with swipe columns, splits and full screen, chats with live embeds, players and pictures you can zoom, files with drag and drop, the kanban, notes and mind map, and Mini walking about. Notifications, bubbles and replying from them work as before. Update it from the Play Store or the latest release.",
+      "art": "native-phone.html",
+      "artTitle": "Crundi"
+    }
+  ]
+}
