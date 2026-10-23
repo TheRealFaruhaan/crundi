@@ -249,7 +249,9 @@ private fun DottedStage() {
 /** A .brz-nav square: dimmed when it cannot be used; the reload icon spins while a page loads. */
 @Composable
 private fun BrzNav(icon: String, label: String, enabled: Boolean, onClick: () -> Unit, spinning: Boolean = false) {
-    val turn = if (spinning) {
+    // Still in screenshots (inspection mode), like Spinner: an endless spin
+    // never lets the screenshot test go idle, and the test never finishes.
+    val turn = if (spinning && !androidx.compose.ui.platform.LocalInspectionMode.current) {
         val t = rememberInfiniteTransition(label = "brz-spin")
         t.animateFloat(0f, 360f, infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Restart), label = "brz-spin").value
     } else 0f

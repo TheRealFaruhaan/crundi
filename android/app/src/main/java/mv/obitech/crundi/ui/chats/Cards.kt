@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -21,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +31,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +50,7 @@ import kotlinx.serialization.json.longOrNull
 import mv.obitech.crundi.api.model.ChatEntry
 import mv.obitech.crundi.ui.components.ButtonKind
 import mv.obitech.crundi.ui.components.CrundiButton
+import mv.obitech.crundi.ui.components.CrundiIconButton
 import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.components.MarkdownText
 import mv.obitech.crundi.ui.icons.CrundiIcon
@@ -121,7 +126,19 @@ fun PermissionCard(e: ChatEntry, actions: EntryActions, busy: Boolean = false) {
 class QuestionPicks {
     val chosen = mutableStateMapOf<Int, List<String>>()
     val other = mutableStateMapOf<Int, String>()
+    // A note for Claude, one per question (the tool's annotations[question].notes),
+    // and the choice it is shown under, as on the web.
+    val note = mutableStateMapOf<Int, String>()
+    val noteOpt = mutableStateMapOf<Int, String>()
     fun answer(q: Int): String = other[q]?.takeIf { it.isNotBlank() }?.trim() ?: chosen[q].orEmpty().joinToString(", ")
+    fun noteFor(q: Int): String = note[q].orEmpty().trim()
+
+    /** A note follows the selection: it moves to the newly picked choice, or goes out of sight. */
+    fun followSelection(q: Int) {
+        val at = noteOpt[q] ?: return
+        val cur = chosen[q].orEmpty()
+        if (at !in cur) { val to = cur.lastOrNull(); if (to == null) noteOpt.remove(q) else noteOpt[q] = to }
+    }
 }
 
 /** AskUserQuestion: up to four questions, each with options, multi-select, and "Other". */
@@ -155,6 +172,7 @@ fun QuestionCard(e: ChatEntry, actions: EntryActions, busy: Boolean = false, pic
                 Text(q.question, style = ChatType.Body.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(bottom = 7.dp))
                 for (o in q.options) {
                     val sel = picks.chosen[qi].orEmpty().contains(o.label)
+                    val noteHere = picks.noteOpt[qi] == o.label
                     Row(
                         Modifier.fillMaxWidth().padding(bottom = 5.dp).clip(Dimens.ShapeSm)
                             .background(if (sel) CrundiColors.AccentDim else CrundiColors.BgPrimary)
@@ -163,15 +181,34 @@ fun QuestionCard(e: ChatEntry, actions: EntryActions, busy: Boolean = false, pic
                                 val cur = picks.chosen[qi].orEmpty()
                                 picks.chosen[qi] = if (q.multiSelect) (if (sel) cur - o.label else cur + o.label) else listOf(o.label)
                                 picks.other.remove(qi)
+                                picks.followSelection(qi)
                             }
-                            .padding(horizontal = 10.dp, vertical = 9.dp),
+                            .padding(start = 10.dp, top = 9.dp, bottom = 9.dp, end = 2.dp),
                         horizontalArrangement = Arrangement.spacedBy(9.dp),
                     ) {
                         Choice(sel, q.multiSelect)
                         Column(Modifier.weight(1f)) {
                             Text(o.label, style = ChatType.Body.copy(fontWeight = FontWeight.SemiBold))
                             if (o.description.isNotEmpty()) Text(o.description, style = ChatType.Small)
+                            if (noteHere) OptionNote(
+                                picks.note[qi].orEmpty(), { picks.note[qi] = it },
+                                onRemove = { picks.note.remove(qi); picks.noteOpt.remove(qi) }, enabled = !busy,
+                            )
                         }
+                        // The web's note button, in the choice's corner: picks
+                        // the choice if it is not picked, and opens the note under it.
+                        CrundiIconButton(
+                            "note", {
+                                if (!sel) {
+                                    picks.chosen[qi] = if (q.multiSelect) picks.chosen[qi].orEmpty() + o.label else listOf(o.label)
+                                    picks.other.remove(qi)
+                                }
+                                picks.noteOpt[qi] = o.label
+                            },
+                            modifier = Modifier.padding(top = 0.dp).offset(y = (-6).dp),
+                            contentDescription = "Add a note to this choice", size = 15.dp, touch = 32.dp, enabled = !busy,
+                            tint = if (noteHere) CrundiColors.AccentHover else CrundiColors.TextMuted,
+                        )
                     }
                 }
                 CrundiTextField(
@@ -183,9 +220,29 @@ fun QuestionCard(e: ChatEntry, actions: EntryActions, busy: Boolean = false, pic
         }
         val ready = questions.indices.all { picks.answer(it).isNotEmpty() }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            CrundiButton("Submit", { actions.answer(e, questions.mapIndexed { i, q -> q.question to picks.answer(i) }.toMap()) }, kind = ButtonKind.Primary, enabled = ready && !busy)
+            CrundiButton("Submit", {
+                actions.answer(
+                    e, questions.mapIndexed { i, q -> q.question to picks.answer(i) }.toMap(),
+                    questions.mapIndexedNotNull { i, q -> picks.noteFor(i).takeIf { it.isNotEmpty() }?.let { q.question to it } }.toMap(),
+                )
+            }, kind = ButtonKind.Primary, enabled = ready && !busy)
             if (!orphaned) CrundiButton("Dismiss", { actions.dismissQuestion(e) }, kind = ButtonKind.Danger, enabled = !busy)
         }
+    }
+}
+
+/** The note under a choice: free text for Claude, and a cross that removes it. */
+@Composable
+private fun OptionNote(value: String, onChange: (String) -> Unit, onRemove: () -> Unit, enabled: Boolean) {
+    val focus = remember { FocusRequester() }
+    // Opened by the note button: the cursor goes straight into it.
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Row(Modifier.fillMaxWidth().padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+        CrundiTextField(
+            value, onChange, placeholder = "Note for Claude about this choice", enabled = enabled,
+            modifier = Modifier.weight(1f).focusRequester(focus),
+        )
+        CrundiIconButton("x", onRemove, contentDescription = "Remove the note", size = 13.dp, touch = 32.dp, enabled = enabled, tint = CrundiColors.TextMuted)
     }
 }
 

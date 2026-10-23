@@ -157,7 +157,7 @@ interface EntryActions {
     fun toggle(id: String) {}
     fun allow(e: ChatEntry, always: Boolean) {}
     fun deny(e: ChatEntry) {}
-    fun answer(e: ChatEntry, answers: Map<String, String>) {}
+    fun answer(e: ChatEntry, answers: Map<String, String>, notes: Map<String, String> = emptyMap()) {}
     fun dismissQuestion(e: ChatEntry) {}
     fun factory(e: ChatEntry, choice: String, note: String? = null) {}
     fun factoryDiff(e: ChatEntry) {}

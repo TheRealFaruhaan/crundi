@@ -687,10 +687,14 @@ fun ChatRoute(chatId: String) {
         override fun openInMain() { host.openInMain("/chat/$chatId") }
         override fun allow(e: ChatEntry, always: Boolean) { act(e.id) { api.chats.allow(chatId, e.requestId, if (always) true else null) } }
         override fun deny(e: ChatEntry) { act(e.id) { api.chats.deny(chatId, e.requestId) } }
-        override fun answer(e: ChatEntry, answers: Map<String, String>) {
+        override fun answer(e: ChatEntry, answers: Map<String, String>, notes: Map<String, String>) {
             act(e.id) {
-                if (e.status == "unanswered" || e.status == "cancelled") api.chats.answerClosed(chatId, e.id, answers)
-                else api.chats.answer(chatId, e, answers)
+                if (e.status == "unanswered" || e.status == "cancelled") {
+                    // As the web words it: the notes go into the message itself.
+                    val text = if (notes.isEmpty()) null else "Answering the question from before the session restarted:\n" +
+                        answers.entries.joinToString("\n") { (q, a) -> "$q -> $a" + (notes[q]?.let { " (note: $it)" } ?: "") }
+                    api.chats.answerClosed(chatId, e.id, answers, text)
+                } else api.chats.answer(chatId, e, answers, notes)
             }
         }
         override fun dismissQuestion(e: ChatEntry) { act(e.id) { api.chats.dismissQuestion(chatId, e.requestId) } }
