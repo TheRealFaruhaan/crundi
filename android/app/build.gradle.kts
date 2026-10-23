@@ -34,15 +34,15 @@ android {
         applicationId = "mv.obitech.crundi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.1.0-dev.1"
+        versionCode = 17
+        versionName = "1.1.0-dev.2"
 
         // The oldest server this app can work with. The server holds the
         // mirror of this (MIN_CLIENT in src/client-version.js) and each side
         // refuses the other below its own number. Raise it only for a real
         // break: the Play Store updates the app by itself and nobody updates
         // a server by itself, so "app newer than server" is the normal case.
-        buildConfigField("String", "MIN_SERVER", "\"1.20.0-dev.1\"")
+        buildConfigField("String", "MIN_SERVER", "\"1.21.1-dev.12\"")
         for (k in listOf("PROJECT_ID", "SENDER_ID", "APP_ID", "API_KEY")) {
             buildConfigField("String", "FIREBASE_$k", "\"${firebase[k] ?: ""}\"")
         }

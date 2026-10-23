@@ -207,7 +207,7 @@ class MainActivity : ComponentActivity() {
             if (System.currentTimeMillis() < bubbleAskedUntil) return
             // With a bubble open over it this window is still drawn but nobody
             // is reading it: the bubble has the focus.
-            if (!hasWindowFocus()) return
+            if (!hasWindowFocus()) { Notifier.traceOnce(this@MainActivity, "chat:${s.id}:$chatId".hashCode(), "$chatId is on screen, but the app window does not have the focus"); return }
             OnScreen.seenInMain("chat:${s.id}:$chatId")
             Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true, why = "the same chat is open in the main window")
         }

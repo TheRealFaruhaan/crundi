@@ -61,9 +61,11 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
-## Release notes, 1.1.0-dev.1 (en-US)
+## Release notes, 1.1.0-dev.2 (en-US)
 
-Version code 16. The app is now native: every screen is drawn by the app
+Version code 17. Needs server 1.21.1-dev.12 or newer (the app's MIN_SERVER):
+Docker, Factory and git history use routes older servers do not have. Code 16
+(1.1.0-dev.1) was built with a 1.20 minimum and should not be released. The app is now native: every screen is drawn by the app
 itself instead of the server's web page.
 
 ```
@@ -77,7 +79,7 @@ Crundi is now a native app.
 - Downloads show progress and where they were saved.
 - Tap a path or link to open or copy it.
 
-Needs a Crundi server, version 1.20 or newer.
+Needs a Crundi server, version 1.21.1 or newer.
 </en-US>
 ```
 
