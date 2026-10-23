@@ -38,11 +38,10 @@ import mv.obitech.crundi.api.model.UpdateStatus
 import mv.obitech.crundi.api.model.Usage
 import mv.obitech.crundi.api.model.UsagePoint
 import mv.obitech.crundi.api.model.WhatsNew
-import java.net.URLEncoder
 
 /** Services. The list is live in [CrundiClient.state] (services); this adds cpu, containers and the actions. */
 class ServicesApi internal constructor(private val rpc: Rpc) {
-    private fun at(key: String, action: String) = "/api/services/${URLEncoder.encode(key, "UTF-8")}/$action"
+    private fun at(key: String, action: String) = "/api/services/${seg(key)}/$action"
 
     suspend fun list(): List<Service> = rpc.read(rpc.get("/api/services"), "services", emptyList())
     /** Register a service. A collaborator's waits for the owner: [Registered.pendingApproval]. */
@@ -69,11 +68,11 @@ class ForwardsApi internal constructor(private val rpc: Rpc) {
     suspend fun list(): Forwards = rpc.read(rpc.get("/api/forwards"), null)
     suspend fun options(): ForwardOptions = rpc.read(rpc.get("/api/forwards/options"), null)
     suspend fun add(f: NewForward): Forward = rpc.read(rpc.post("/api/forwards", mapOf("name" to f.name, "port" to f.port, "mode" to f.mode, "public" to f.public, "description" to f.description, "project" to f.project)), "forward")
-    suspend fun remove(host: String) { rpc.delete("/api/forwards/${URLEncoder.encode(host, "UTF-8")}") }
+    suspend fun remove(host: String) { rpc.delete("/api/forwards/${seg(host)}") }
     /** Watch it (tell the person when it goes down or comes back). */
-    suspend fun setWatch(host: String, watch: Boolean): Forward = rpc.read(rpc.patch("/api/forwards/${URLEncoder.encode(host, "UTF-8")}", mapOf("watch" to watch)), "forward")
+    suspend fun setWatch(host: String, watch: Boolean): Forward = rpc.read(rpc.patch("/api/forwards/${seg(host)}", mapOf("watch" to watch)), "forward")
     /** Give it to a project ("" for none). */
-    suspend fun setProject(host: String, project: String): Forward = rpc.read(rpc.patch("/api/forwards/${URLEncoder.encode(host, "UTF-8")}", mapOf("project" to project)), "forward")
+    suspend fun setProject(host: String, project: String): Forward = rpc.read(rpc.patch("/api/forwards/${seg(host)}", mapOf("project" to project)), "forward")
 }
 
 /** Docker. Live logs and shells go over the socket ([CrundiClient.dockerLogs], [CrundiClient.dockerShell]). Owner only. */

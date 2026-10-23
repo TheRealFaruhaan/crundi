@@ -14,7 +14,6 @@ import mv.obitech.crundi.api.model.ResolvedFile
 import mv.obitech.crundi.api.model.TransferResult
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.URLEncoder
 
 /** Projects: the switcher's list comes live from [CrundiClient.state]; these change it. */
 class ProjectsApi internal constructor(private val rpc: Rpc) {
@@ -27,7 +26,7 @@ class ProjectsApi internal constructor(private val rpc: Rpc) {
         rpc.post("/api/projects", mapOf("alias" to alias, "name" to name, "path" to path, "create" to create))
     }
     /** Remove a registered project (files stay; its chats, terminals and services go). Answers how many services were removed. */
-    suspend fun remove(alias: String): Int = rpc.delete("/api/projects/${URLEncoder.encode(alias, "UTF-8")}").long("servicesRemoved")?.toInt() ?: 0
+    suspend fun remove(alias: String): Int = rpc.delete("/api/projects/${seg(alias)}").long("servicesRemoved")?.toInt() ?: 0
     suspend fun reorder(order: List<String>) { rpc.post("/api/projects/reorder", mapOf("order" to order)) }
     /** The project's own layer of Claude's system prompt (max 8000 chars; "" clears it). */
     suspend fun setSystemPrompt(project: String, text: String) { rpc.post("/api/projects/system-prompt", mapOf("project" to project, "text" to text)) }
