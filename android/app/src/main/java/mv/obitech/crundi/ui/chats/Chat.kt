@@ -48,7 +48,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -58,6 +60,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import kotlin.reflect.KProperty
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -538,6 +541,15 @@ fun ChatRoute(chatId: String) {
     }
 }
 
+/** The route's state, with every change of the box's text kept in [ChatDrafts] the moment it is made. */
+private class DraftKept(private val state: MutableState<ChatUi>, private val composer: ChatDrafts.Composer) {
+    operator fun getValue(thisRef: Any?, property: KProperty<*>): ChatUi = state.value
+    operator fun setValue(thisRef: Any?, property: KProperty<*>, value: ChatUi) {
+        if (value.draft != state.value.draft) composer.save(value.draft)
+        state.value = value
+    }
+}
+
 /** What goes with a chat to its new id after waking: the box, and why the message did not go. */
 internal data class ChatCarry(val draft: String = "", val error: String? = null)
 
@@ -556,13 +568,27 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
     val shellData by services.shell.state.collectAsState()
     val prefs = remember { ctx.getSharedPreferences("crundi_chat", Context.MODE_PRIVATE) }
     val inPane = LocalPane.current != null
-    var ui by remember(chatId) { mutableStateOf(ChatUi(ChatState(chatId), isBubble = host.isBubble, enterSends = prefs.getString("enter", "send") != "newline", draft = carry.draft, error = carry.error)) }
+    // The box's text is kept as it changes (ChatDrafts), so it survives the
+    // chat being closed, the bubble folded or the app killed. Every change of
+    // ui.draft goes through [DraftKept], wherever it comes from.
+    val drafts = remember(api) { ChatDrafts.of(ctx, runCatching { java.net.URI(api.transport.baseUrl).host }.getOrNull().orEmpty()) }
+    val composer = remember(chatId) { drafts.Composer(chatId) }
+    val uiState = remember(chatId) {
+        val start = carry.draft.ifEmpty { composer.load() }
+        if (carry.draft.isNotEmpty()) composer.save(carry.draft)
+        mutableStateOf(ChatUi(ChatState(chatId), isBubble = host.isBubble, enterSends = prefs.getString("enter", "send") != "newline", draft = start, error = carry.error))
+    }
+    val kept = remember(chatId) { DraftKept(uiState, composer) }
+    var ui by kept
+    DisposableEffect(chatId) { onDispose { composer.release() } }
     val scope = rememberCoroutineScope()
     val paneRow = server?.terminals?.firstOrNull { it.id == chatId }
     // The row as the state has it at this moment, for code that runs later than this composition.
     fun paneRowNow() = api.events.lastState?.terminals?.firstOrNull { it.id == chatId }
     val project = chat.project.ifEmpty { paneRow?.project.orEmpty() }
     val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true)
+    // A new chat (or one back under a new id) with nothing of its own takes the project's draft, unless another open chat has it.
+    LaunchedEffect(project) { composer.attach(project, ui.draft)?.let { ui = ui.copy(draft = it) } }
 
     // The clock's list: loaded with the chat, again when a turn ends (turn-end
     // items go then), and every minute while the chat is on screen.
@@ -645,7 +671,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
                 retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion,
             )
             if (r is ChatSleep.Outcome.Failed) ui = ui.copy(error = r.message)
-            if (r.id != chatId) onMoved(r.id, ChatCarry(ui.draft, ui.error))
+            if (r.id != chatId) { composer.forget(); onMoved(r.id, ChatCarry(ui.draft, ui.error)) }
         }
     }
 
@@ -814,6 +840,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         override fun allow(e: ChatEntry, always: Boolean) { act(e.id) { api.chats.allow(chatId, e.requestId, if (always) true else null) } }
         override fun deny(e: ChatEntry) { act(e.id) { api.chats.deny(chatId, e.requestId) } }
         override fun answer(e: ChatEntry, answers: Map<String, String>, notes: Map<String, String>) {
+            drafts.clearAnswer(chatId, e.id)
             act(e.id) {
                 if (e.status == "unanswered" || e.status == "cancelled") {
                     // As the web words it: the notes go into the message itself.
@@ -823,7 +850,9 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
                 } else api.chats.answer(chatId, e, answers, notes)
             }
         }
-        override fun dismissQuestion(e: ChatEntry) { act(e.id) { api.chats.dismissQuestion(chatId, e.requestId) } }
+        override fun dismissQuestion(e: ChatEntry) { drafts.clearAnswer(chatId, e.id); act(e.id) { api.chats.dismissQuestion(chatId, e.requestId) } }
+        override fun savedAnswer(e: ChatEntry) = drafts.loadAnswer(chatId, e.id)
+        override fun keepAnswer(e: ChatEntry, picks: List<ChatDrafts.Pick>) = drafts.saveAnswer(chatId, e.id, picks)
         override fun factory(e: ChatEntry, choice: String, note: String?) {
             val run = (e.raw["runId"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return
             act(e.id) { api.factories.finish(run, choice, note) }

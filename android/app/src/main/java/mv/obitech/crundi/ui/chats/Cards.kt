@@ -27,7 +27,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.drop
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -133,6 +136,22 @@ class QuestionPicks {
     fun answer(q: Int): String = other[q]?.takeIf { it.isNotBlank() }?.trim() ?: chosen[q].orEmpty().joinToString(", ")
     fun noteFor(q: Int): String = note[q].orEmpty().trim()
 
+    /** As kept in ChatDrafts, one per question. */
+    fun saved(count: Int): List<ChatDrafts.Pick> = (0 until count).map { q ->
+        ChatDrafts.Pick(chosen[q].orEmpty(), other[q].orEmpty(), note[q].orEmpty(), noteOpt[q].orEmpty())
+    }
+
+    /** Back to what was kept, as the web's restoreAnswer does. */
+    fun restore(saved: List<ChatDrafts.Pick>?, count: Int) {
+        saved?.forEachIndexed { q, p ->
+            if (q >= count) return@forEachIndexed
+            if (p.chosen.isNotEmpty()) chosen[q] = p.chosen else chosen.remove(q)
+            if (p.other.isNotEmpty()) other[q] = p.other else other.remove(q)
+            if (p.note.isNotEmpty()) note[q] = p.note else note.remove(q)
+            if (p.noteOpt.isNotEmpty()) noteOpt[q] = p.noteOpt else noteOpt.remove(q)
+        }
+    }
+
     /** A note follows the selection: it moves to the newly picked choice, or goes out of sight. */
     fun followSelection(q: Int) {
         val at = noteOpt[q] ?: return
@@ -144,10 +163,19 @@ class QuestionPicks {
 /** AskUserQuestion: up to four questions, each with options, multi-select, and "Other". */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun QuestionCard(e: ChatEntry, actions: EntryActions, busy: Boolean = false, picks: QuestionPicks = remember(e.id) { QuestionPicks() }) {
+fun QuestionCard(
+    e: ChatEntry, actions: EntryActions, busy: Boolean = false,
+    picks: QuestionPicks = remember(e.id) { QuestionPicks().apply { restore(actions.savedAnswer(e), e.questions.size) } },
+) {
     val questions = e.questions
+    val orphaned = e.status == "unanswered" || e.status == "cancelled"
+    // Half-made answers survive leaving the chat, as the draft does (the web's
+    // ANS_KEY): kept on every change after the card is drawn, until it is submitted.
+    val keep by rememberUpdatedState(actions)
+    if (e.status == "pending" || orphaned) LaunchedEffect(e.id) {
+        snapshotFlow { picks.saved(questions.size) }.drop(1).collect { keep.keepAnswer(e, it) }
+    }
     AskBox(permission = false) {
-        val orphaned = e.status == "unanswered" || e.status == "cancelled"
         if (e.status != "pending" && !orphaned) {
             val answered = (e.answeredInput?.get("answers") as? JsonObject).orEmpty()
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
