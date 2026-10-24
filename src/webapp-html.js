@@ -3270,6 +3270,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .sk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
     .sk-bar label { font-size: 0.76rem; color: var(--text-secondary); }
     .sk-bar select.bk-in { width: auto; flex: 1 1 150px; min-width: 0; max-width: 260px; }
+    .sk-link { margin-top: 10px; }
+    .sk-link .bk-in { flex: 3 1 240px; font-family: var(--mono); font-size: 0.74rem; }
+    .sk-pick { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .sk-pick-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); }
+    .sk-pick-row > span { flex: 1; min-width: 0; font-size: 0.76rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+    .sk-pick-row b { color: var(--text-primary); }
+    .sk-src a { color: var(--accent); overflow-wrap: anywhere; }
+    .sk-src code { font-family: var(--mono); font-size: 0.7rem; }
     .sk-group { margin-top: 16px; }
     .sk-group > h5 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
     .sk-group > h5 code { font-family: var(--mono); font-size: 0.68rem; font-weight: 400; color: var(--text-muted); overflow-wrap: anywhere; }
@@ -12617,6 +12625,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
     let skTarget = 'global';    // where Upload and New put a skill
     let skShowSynced = false;
     let skError = '';
+    let skLinkOk = null;        // does the server install from a link? null until known
+    let skLinkText = '';        // what is in the link field
+    let skLinkBusy = false;
 
     function skQuery(o) {
       const q = new URLSearchParams();
@@ -12661,6 +12672,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if (!d.ok) throw new Error(d.error || 'Could not load the skills');
         skData = d; skError = '';
       } catch (e) { skError = e.message; }
+      if (skLinkOk === null) {
+        // Install from a link is newer than the rest of this section: ask the
+        // server whether it has it, so an older one says so instead of failing.
+        try {
+          const hs = await (await apiFetch('/api/handshake')).json();
+          const caps = (hs && hs.server && hs.server.capabilities) || [];
+          skLinkOk = caps.indexOf('skills-install-link') >= 0;
+        } catch (e) { /* unknown: try, and a 404 will say */ }
+      }
       if (skData && !skData.scopes.some(x => x.id === skTarget)) skTarget = 'global';
       if (skOpen && skData && !skData.skills.some(x => skIs(x, skOpen))) { skOpen = null; skDetail = null; skFile = null; skForm = ''; }
       if (skOpen) await skLoadDetail();
@@ -12680,6 +12700,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (sk.origin === 'bundled') t += '<span class="sk-tag">Included with Crundi</span>';
       if (sk.origin === 'synced') t += '<span class="sk-tag">Synced</span>';
       if (sk.origin === 'linked') t += '<span class="sk-tag">Link</span>';
+      if (sk.source) t += '<span class="sk-tag">GitHub</span>';
       if (sk.problem) t += '<span class="sk-tag warn">Needs attention</span>';
       return t;
     }
@@ -12702,7 +12723,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
       let h = '<div class="sk-detail">';
       if (skDetail.readOnlyReason) h += '<div class="sk-note">' + ic('lock') + '<span>' + escHtml(skDetail.readOnlyReason) + '</span></div>';
       if (sk.problem) h += '<div class="sk-note warn">' + ic('info') + '<span>' + escHtml(sk.problem) + '.</span></div>';
+      if (sk.source) h += skSourceHtml(sk.source);
       h += '<div class="bk-actions">'
+        + (!ro && sk.source && skLinkOk !== false ? '<button type="button" class="svc-btn" data-sk="update">' + ic('refresh') + ' Update</button>' : '')
         + (ro ? '' : '<button type="button" class="svc-btn" data-sk="rename">' + ic('pencil') + ' Rename</button>')
         + '<button type="button" class="svc-btn" data-sk="transfer">' + ic('copy') + (ro ? ' Copy to…' : ' Copy or move…') + '</button>'
         + '<button type="button" class="svc-btn" data-sk="download">' + ic('download') + ' Download</button>'
@@ -12760,9 +12783,33 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       return h + '</div>';
     }
+    function skSourceHtml(src) {
+      const when = src.installedAt ? new Date(src.installedAt) : null;
+      return '<div class="sk-note sk-src">' + ic('git-branch') + '<span>From <a href="' + escHtml(src.url || ('https://github.com/' + src.repo)) + '" target="_blank" rel="noopener noreferrer">' + escHtml(src.repo) + '</a>'
+        + (src.ref ? ', ' + escHtml(src.ref) : '')
+        + (src.path ? ', <code>' + escHtml(src.path) + '</code>' : '')
+        + (src.commit ? ' at <code>' + escHtml(src.commit.slice(0, 7)) + '</code>' : '')
+        + (when && !isNaN(when) ? '. Installed ' + escHtml(when.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })) : '')
+        + '. Update installs it again from there.</span></div>';
+    }
+    function skLinkHtml() {
+      const off = skLinkOk === false;
+      return '<div class="sk-form sk-link"><label class="sk-form-label" for="sk-link">Or install from a GitHub link, or paste an npx skills add line. Only the skill’s files are copied; nothing from the repository is run.</label>'
+        + '<input class="bk-in" id="sk-link" placeholder="https://github.com/owner/repo --skill name" autocomplete="off" spellcheck="false" autocapitalize="off" value="' + escHtml(skLinkText) + '"' + (off || skLinkBusy ? ' disabled' : '') + '>'
+        + '<button type="button" class="svc-btn primary" data-sk="link-go" data-sk-default' + (off || skLinkBusy ? ' disabled' : '') + '>' + ic('git-branch') + (skLinkBusy ? ' Fetching…' : ' Install from link') + '</button>'
+        + (off ? '<div class="bk-hint" style="flex:1 1 100%;">This server does not support this yet. Update the server to use it. Upload still works.</div>' : '')
+        + '</div>';
+    }
     function skPendingHtml() {
       const p = skPending;
       if (!p) return '';
+      if (p.kind === 'link-choose') {
+        return '<div class="sk-note warn" style="margin-top:10px;">' + ic('info') + '<div style="flex:1;min-width:0;"><span>' + escHtml(p.message) + '</span>'
+          + '<div class="sk-pick">' + p.skills.map(x => '<div class="sk-pick-row"><span><b>' + escHtml(x.name) + '</b>' + (x.description ? ' ' + escHtml(x.description) : '') + '</span>'
+            + '<button type="button" class="svc-btn" data-sk="link-pick" data-name="' + escHtml(x.name) + '">Install</button></div>').join('') + '</div>'
+          + '<div class="bk-actions"><button type="button" class="svc-btn primary" data-sk="link-all">Install all ' + p.skills.length + '</button>'
+          + '<button type="button" class="svc-btn" data-sk="pending-cancel">Cancel</button></div></div></div>';
+      }
       if (p.needsName) {
         return '<div class="sk-form" style="margin-top:10px;"><label class="sk-form-label" for="sk-pname">' + escHtml(p.message) + '</label>'
           + '<input class="bk-in" id="sk-pname" placeholder="skill-name" maxlength="64" autocomplete="off" spellcheck="false">'
@@ -12789,7 +12836,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         + '<button type="button" class="svc-btn primary" data-sk="upload">' + ic('upload') + ' Upload</button>'
         + '<button type="button" class="svc-btn" data-sk="new">' + ic('plus') + ' New</button>'
         + '<input type="file" id="sk-upload" accept=".zip,.skill,.md,application/zip" hidden></div>'
-        + '<div class="bk-hint">Upload a .zip or .skill archive holding one or more skills, or a single SKILL.md. Up to ' + Math.round((d.limits ? d.limits.upload : 52428800) / 1048576) + ' MB.</div>';
+        + '<div class="bk-hint">Upload a .zip or .skill archive holding one or more skills, or a single SKILL.md. Up to ' + Math.round((d.limits ? d.limits.upload : 52428800) / 1048576) + ' MB.</div>'
+        + skLinkHtml();
       if (skError) h += '<p class="bk-err" style="margin-top:8px;">' + escHtml(skError) + '</p>';
       h += skPendingHtml();
       if (skForm === 'new') {
@@ -12850,6 +12898,42 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (d.needsName) { skPending = { kind: 'upload', file: p.file, scope: p.scope, needsName: true, message: 'This upload does not say what the skill is called. Give it a name: lowercase letters, digits and hyphens.' }; skError = ''; drawSkills(); return; }
       skPending = null; skError = d.error || 'Could not install that'; drawSkills();
     }
+    // From a GitHub link, possibly asked again: which skill, or to replace.
+    async function skLinkInstall(p) {
+      let d;
+      skLinkBusy = true; drawSkills();
+      try {
+        const res = await apiFetch('/api/skills/install-from-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: p.url, scope: p.scope, skill: p.skill || '', all: !!p.all, overwrite: !!p.overwrite }) });
+        if (res.status === 404) { skLinkOk = false; d = { ok: false, error: 'This server does not support this yet. Update the server to use it.' }; }
+        else d = await res.json();
+      } catch (e) { d = { ok: false, error: e.message }; }
+      skLinkBusy = false;
+      if (d.ok) {
+        skPending = null; skLinkText = '';
+        const n = d.installed.map(x => x.name);
+        toast('Installed ' + (n.length === 1 ? n[0] : n.length + ' skills') + '. New chats will have ' + (n.length === 1 ? 'it' : 'them') + '.');
+        skError = '';
+        if (n.length === 1) { skOpen = { scope: d.installed[0].scope, name: n[0] }; skFile = null; skForm = ''; }
+        await skLoad();
+        return;
+      }
+      if (d.choose) { skPending = { kind: 'link-choose', url: p.url, scope: p.scope, skills: d.skills || [], message: d.error }; skError = ''; drawSkills(); return; }
+      if (d.conflict) { skPending = { kind: 'link', url: p.url, scope: p.scope, skill: p.skill, all: p.all, existing: d.existing }; skError = ''; drawSkills(); return; }
+      skPending = null; skError = d.error || 'Could not install that'; drawSkills();
+    }
+    async function skUpdate(sk) {
+      let d;
+      try {
+        const res = await apiFetch('/api/skills/update-from-source', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: sk.scope, name: sk.name }) });
+        if (res.status === 404) { skLinkOk = false; d = { ok: false, error: 'This server does not support this yet. Update the server to use it.' }; }
+        else d = await res.json();
+      } catch (e) { d = { ok: false, error: e.message }; }
+      if (!d.ok) { toast(d.error || 'Could not update it', 'error'); drawSkills(); return; }
+      if (d.upToDate) { toast(sk.name + ' is up to date'); return; }
+      toast('Updated ' + sk.name + (d.source && d.source.commit ? ' to ' + d.source.commit.slice(0, 7) : '') + '. New chats will have it.');
+      skFile = null;
+      await skLoad();
+    }
     async function skTransfer(p) {
       const d = await skPost('/api/skills/transfer', { scope: p.from.scope, name: p.from.name, to: p.scope, as: p.as, move: p.move, overwrite: !!p.overwrite });
       if (d.ok) {
@@ -12865,6 +12949,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     async function onSkillsChange(e) {
       const t = e.target;
       if (t.id === 'sk-target') { skTarget = t.value; if (skForm === 'new') drawSkills(); return; }
+      if (t.id === 'sk-link') { skLinkText = t.value; return; }
       if (t.id === 'sk-upload') {
         const file = t.files && t.files[0]; t.value = '';
         if (!file) return;
@@ -12920,11 +13005,29 @@ export function getWebappHtml(botUsername, appVersion = '') {
         }
         if (act === 'pending-replace' && skPending) {
           const p = Object.assign({}, skPending, { overwrite: true });
-          if (p.kind === 'upload') await skUpload(p); else await skTransfer(p);
+          if (p.kind === 'upload') await skUpload(p); else if (p.kind === 'link') await skLinkInstall(p); else await skTransfer(p);
           return;
         }
         if (act === 'pending-name' && skPending) { await skUpload({ file: skPending.file, scope: skPending.scope, name: val('#sk-pname') }); return; }
+        if (act === 'link-go') {
+          skLinkText = val('#sk-link');
+          if (!skLinkText) { $('#sk-link').focus(); return; }
+          skForm = ''; skError = ''; skPending = null;
+          await skLinkInstall({ url: skLinkText, scope: skTarget });
+          return;
+        }
+        if ((act === 'link-pick' || act === 'link-all') && skPending && skPending.kind === 'link-choose') {
+          const p = skPending;
+          await skLinkInstall({ url: p.url, scope: p.scope, skill: act === 'link-pick' ? b.dataset.name : '', all: act === 'link-all' });
+          return;
+        }
         if (!skOpen) return;
+        if (act === 'update') {
+          if (!skLeaveFile()) return;
+          if (!confirm('Install "' + skOpen.name + '" again from where it came from? This replaces its files, including any changes made here.')) return;
+          await skUpdate(skOpen);
+          return;
+        }
         if (act === 'download') { await skDownload('/api/skills/download?' + skQuery(skOpen), skOpen.name + '.zip'); return; }
         if (act === 'delete') {
           if (!confirm('Delete the skill "' + skOpen.name + '" and all its files? This cannot be undone.')) return;

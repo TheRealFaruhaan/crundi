@@ -65,6 +65,7 @@ import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
 import { createBackups } from './backup.js';
 import * as skills from './skills-store.js';
+import * as skillsGithub from './skills-github.js';
 import { sandboxStatus, setupSandbox } from './collab-sandbox.js';
 import { COLLAB_FORWARD_COOKIE, mintCollabForwardToken, readCollabForwardToken, collabMayReachForward } from './forward-access.js';
 import { spawn as spawnOwnerCommand } from 'node:child_process';
@@ -4893,6 +4894,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (path === '/api/skills/transfer') return reply(skills.transfer(body.scope, body.name, body.to, { move: !!body.move, overwrite: !!body.overwrite, as: body.as || '' }));
       if (path === '/api/skills/file') return reply(skills.writeFile(body.scope, body.name, body.path, { content: body.content }));
       if (path === '/api/skills/file-delete') return reply(skills.deleteFile(body.scope, body.name, body.path));
+      // From a GitHub link (capability 'skills-install-link'). Only files are
+      // copied: nothing from the repository is run. preview:true lists the
+      // skills there and installs nothing; without it, a link to several
+      // skills and no skill / all answers choose:true with the list.
+      if (path === '/api/skills/install-from-link') {
+        const link = String(body.url || '');
+        if (body.preview) return reply(await skillsGithub.preview(link));
+        return reply(await skillsGithub.installFromLink(body.scope, link, { skill: body.skill || '', all: !!body.all, name: body.name || '', overwrite: !!body.overwrite }));
+      }
+      if (path === '/api/skills/update-from-source') return reply(await skillsGithub.update(body.scope, body.name, { force: !!body.force }));
       return json(res, { ok: false, error: 'Not found' }, 404);
     }
 
@@ -6553,7 +6564,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           const only = a.scope ? all.skills.filter(s => s.scope === scope) : all.skills;
           return json(res, {
             ok: true,
-            skills: only.map(s => ({ name: s.name, scope: s.scope, description: s.description, files: s.files, kind: s.origin, readOnly: s.readOnly, problem: s.problem || undefined })),
+            skills: only.map(s => ({ name: s.name, scope: s.scope, description: s.description, files: s.files, kind: s.origin, readOnly: s.readOnly, problem: s.problem || undefined, source: s.source || undefined })),
             scopes: all.scopes.map(x => ({ scope: x.id, path: x.path })),
           });
         }
@@ -6568,11 +6579,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (body.tool === 'skill_delete') return json(res, skills.remove(scope, a.name));
         // skill_install
         const opts = { name: a.name || '', overwrite: !!a.overwrite };
+        if (a.url) {
+          const r = await skillsGithub.installFromLink(scope, String(a.url), { ...opts, skill: a.skill || '', all: !!a.all });
+          if (r.choose) r.error += ' Call skill_install again with skill set to one of the names in skills, or all:true.';
+          return json(res, r);
+        }
+        if (a.update) return json(res, await skillsGithub.update(scope, String(a.update), { force: !!a.overwrite }));
         if (a.path) return json(res, skills.installFromPath(scope, String(a.path), opts));
         if (typeof a.content === 'string' && a.content) {
           return json(res, skills.install(scope, { ...opts, filename: (a.name || 'SKILL') + '.md', data: Buffer.from(a.content, 'utf8') }));
         }
-        return json(res, { ok: false, error: 'Give either path (a skill folder, .zip, .skill or SKILL.md on this machine) or content (the text of a SKILL.md)' });
+        return json(res, { ok: false, error: 'Give url (a GitHub link or an npx skills add line), path (a skill folder, .zip, .skill or SKILL.md on this machine) or content (the text of a SKILL.md)' });
       }
 
       // Delegate to external dispatch handler (for browser, screenshots, etc.)

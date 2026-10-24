@@ -42,8 +42,11 @@ import mv.obitech.crundi.api.ApiException
 import mv.obitech.crundi.api.SkillsApi
 import mv.obitech.crundi.api.model.Skill
 import mv.obitech.crundi.api.model.SkillDetail
+import mv.obitech.crundi.api.model.SkillLinkFound
 import mv.obitech.crundi.api.model.SkillList
 import mv.obitech.crundi.api.model.SkillScope
+import mv.obitech.crundi.api.model.SkillSource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import mv.obitech.crundi.api.str
 import mv.obitech.crundi.ui.components.BadgeKind
 import mv.obitech.crundi.ui.components.Banner
@@ -72,6 +75,7 @@ import mv.obitech.crundi.ui.workspace.pickedFile
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 
 // ─── Skills ───
 //
@@ -105,7 +109,8 @@ data class SkillEdit(
 /**
  * Something waiting on an answer (the web's skPending): the upload needs a
  * name, or what it would put somewhere is already there and replacing it
- * removes every file in it first.
+ * removes every file in it first. From a link ([link] set): which of its
+ * [choices] to install, or whether to replace.
  */
 data class SkillPending(
     val upload: Boolean,
@@ -117,6 +122,11 @@ data class SkillPending(
     val from: SkillRef? = null,
     val asName: String = "",
     val move: Boolean = false,
+    val link: String = "",
+    val skill: String = "",
+    val all: Boolean = false,
+    val choices: List<SkillLinkFound> = emptyList(),
+    val message: String = "",
 )
 
 data class SkillsUi(
@@ -138,6 +148,10 @@ data class SkillsUi(
     val replaceAsset: PickedFile? = null,
     val busy: String? = null,
     val note: Actions.Note? = null,
+    /** The server installs from a link (SkillLinks.supported, and no 404 since). */
+    val linkSupported: Boolean = true,
+    /** What is in the Install from link field. */
+    val link: String = "",
 ) {
     val list: SkillList? get() = data.valueOrNull
     val openSkill: Skill? get() = open?.let { o -> list?.skills?.firstOrNull { it.scope == o.scope && it.name == o.name } }
@@ -164,6 +178,7 @@ object Skills {
             "synced" -> add("Synced" to BadgeKind.Info)
             "linked" -> add("Link" to BadgeKind.Neutral)
         }
+        if (s.source != null) add("GitHub" to BadgeKind.Neutral)
         if (s.problem.isNotEmpty()) add("Needs attention" to BadgeKind.Warn)
     }
 
@@ -174,12 +189,84 @@ object Skills {
 }
 
 /**
+ * Install from a GitHub link (the web's skLinkHtml and skLinkInstall; the
+ * server's src/skills-github.js). The server does the fetching and reads the
+ * link itself; [parse] is only here to say early that a link is not GitHub's,
+ * and to show which repository is being fetched.
+ */
+object SkillLinks {
+    /** The handshake's name for it (src/client-version.js CAPABILITIES). */
+    const val CAPABILITY = "skills-install-link"
+    const val HINT = "Or install from a GitHub link, or paste an npx skills add line. Only the skill’s files are copied; nothing from the repository is run."
+    const val PLACEHOLDER = "https://github.com/owner/repo --skill name"
+    const val NOT_GITHUB = "Only GitHub links are supported (github.com/owner/repo)"
+
+    /**
+     * Whether to offer it. A handshake that lists capabilities and not this
+     * one means an older server; no capabilities at all means not known yet,
+     * so it is offered and a 404 turns it off.
+     */
+    fun supported(capabilities: Set<String>): Boolean = capabilities.isEmpty() || CAPABILITY in capabilities
+
+    data class Parsed(val owner: String, val repo: String, val skill: String = "") {
+        val full: String get() = "$owner/$repo"
+    }
+
+    private val seg = Regex("^[A-Za-z0-9_.-]+$")
+    private val runner = Regex("^(npx|pnpx|bunx|npm|pnpm|yarn|exec|dlx|skills(@\\S*)?|add|install|i)$", RegexOption.IGNORE_CASE)
+
+    /** The repository and skill a pasted link or npx line names (as parseSource in skills-github.js), or null. */
+    fun parse(text: String): Parsed? {
+        val tokens = text.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        var skill = ""
+        var target = ""
+        var i = 0
+        while (i < tokens.size) {
+            val t = tokens[i]
+            when {
+                t == "--skill" || t == "-s" -> { skill = tokens.getOrElse(i + 1) { "" }; i++ }
+                t.startsWith("--skill=") -> skill = t.removePrefix("--skill=")
+                t.startsWith("-s=") -> skill = t.removePrefix("-s=")
+                t.startsWith("-") -> {}
+                target.isEmpty() && runner.matches(t) -> {}
+                target.isEmpty() -> target = t
+            }
+            i++
+        }
+        if (target.isEmpty()) return null
+        val rest = when {
+            Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$").matches(target) && !Regex("\\.(com|org|net|io)/", RegexOption.IGNORE_CASE).containsMatchIn("$target/") -> target
+            target.startsWith("git@github.com:", ignoreCase = true) -> target.substring("git@github.com:".length)
+            else -> {
+                val m = Regex("^(?:https?://)?(?:www\\.)?([^/\\s]+)(/.*)?$", RegexOption.IGNORE_CASE).find(target) ?: return null
+                if (!m.groupValues[1].equals("github.com", ignoreCase = true)) return null
+                m.groupValues[2].trimStart('/')
+            }
+        }
+        val parts = rest.substringBefore('?').substringBefore('#').split('/').filter { it.isNotEmpty() }
+        val owner = parts.getOrElse(0) { "" }
+        val repo = parts.getOrElse(1) { "" }.removeSuffix(".git")
+        if (!seg.matches(owner) || !seg.matches(repo) || owner == ".." || repo == "..") return null
+        return Parsed(owner, repo, skill.trim('"', '\''))
+    }
+
+    /** What the detail says about where a skill came from (the web's skSourceHtml). */
+    fun sourceLine(s: SkillSource): String = buildString {
+        append("From ").append(s.repo)
+        if (s.ref.isNotEmpty()) append(", ").append(s.ref)
+        if (s.path.isNotEmpty()) append(", ").append(s.path)
+        if (s.commit.isNotEmpty()) append(" at ").append(s.commit.take(7))
+        append(". Update installs it again from there.")
+    }
+}
+
+/**
  * The section's state and what it does, as the web's sk* functions. Every
  * action is a suspend function so a test can run it against a fake server;
  * the screen launches them.
  */
-class SkillsController(private val api: SkillsApi) {
-    var ui by mutableStateOf(SkillsUi())
+class SkillsController(private val api: SkillsApi, linkSupported: Boolean = true) {
+    var ui by mutableStateOf(SkillsUi(linkSupported = linkSupported))
 
     private fun said(text: String, error: Boolean = false) { ui = ui.copy(note = Actions.Note(text, error)) }
     private fun failed(e: Throwable) = said(errorOrUnsupported(e), true)
@@ -198,6 +285,8 @@ class SkillsController(private val api: SkillsApi) {
     fun setDraft(text: String) { ui.file?.let { ui = ui.copy(file = it.copy(draft = text)) } }
     fun closeFile() { ui = ui.copy(file = null) }
     fun closeSkill() { ui = ui.copy(open = null, detail = null, file = null, form = SkillForm.None) }
+    fun setLink(text: String) { ui = ui.copy(link = text) }
+    fun setLinkSupported(yes: Boolean) { ui = ui.copy(linkSupported = yes) }
 
     /** The web's skLoad: the list, and the open skill's files again. */
     suspend fun load() {
@@ -273,10 +362,64 @@ class SkillsController(private val api: SkillsApi) {
         } finally { if (ui.busy == "transfer") ui = ui.copy(busy = null) }
     }
 
-    /** Replace: the waiting upload or copy again, with overwrite. */
+    /**
+     * The web's skLinkInstall: from a GitHub link, possibly asked again (which
+     * skill, or to replace). The server fetches the repository and only copies
+     * files.
+     */
+    suspend fun installFromLink(link: String = ui.link, scope: String = ui.target, skill: String = "", all: Boolean = false, overwrite: Boolean = false) {
+        val text = link.trim()
+        if (text.isEmpty()) return
+        if (!ui.linkSupported) { ui = ui.copy(error = ErrorWords.NOT_SUPPORTED); return }
+        if (SkillLinks.parse(text) == null) { ui = ui.copy(error = SkillLinks.NOT_GITHUB, pending = null); return }
+        ui = ui.copy(form = SkillForm.None, error = "", busy = "link")
+        try {
+            val r = api.installFromLink(scope, text, skill, all, overwrite)
+            val n = r.installed.map { it.name }
+            said("Installed " + (if (n.size == 1) n[0] else "${n.size} skills") + ". New chats will have " + (if (n.size == 1) "it." else "them."))
+            ui = ui.copy(pending = null, link = "")
+            if (n.size == 1) ui = ui.copy(open = SkillRef(r.installed[0].scope, n[0]), detail = null, file = null)
+            load()
+        } catch (e: ApiException) {
+            val body = e.body
+            val flag = { k: String -> (body?.get(k) as? JsonPrimitive)?.booleanOrNull == true }
+            ui = when {
+                routeMissing(e) -> ui.copy(linkSupported = false, pending = null, error = ErrorWords.NOT_SUPPORTED)
+                flag("choose") -> ui.copy(error = "", pending = SkillPending(upload = false, scope = scope, link = text, message = e.message,
+                    choices = body?.get("skills")?.let { runCatching { mv.obitech.crundi.api.CrundiJson.decodeFromJsonElement<List<SkillLinkFound>>(it) }.getOrNull() }.orEmpty()))
+                flag("conflict") -> ui.copy(error = "", pending = SkillPending(upload = false, scope = scope, existing = existing(body), link = text, skill = skill, all = all))
+                else -> ui.copy(pending = null, error = errorOrUnsupported(e).ifEmpty { "Could not install that" })
+            }
+        } finally { if (ui.busy == "link") ui = ui.copy(busy = null) }
+    }
+
+    /** One of the skills a link holds, or all of them. */
+    suspend fun pickFromLink(name: String?) {
+        val p = ui.pending?.takeIf { it.link.isNotEmpty() } ?: return
+        installFromLink(p.link, p.scope, skill = name.orEmpty(), all = name == null)
+    }
+
+    /** The web's skUpdate: install the open skill again from its source, replacing it. */
+    suspend fun update() {
+        val o = ui.open ?: return
+        ui = ui.copy(busy = "update")
+        try {
+            val r = api.updateFromSource(o.scope, o.name)
+            if (r.upToDate) { said("${o.name} is up to date"); return }
+            said("Updated ${o.name}" + (r.source?.commit?.takeIf { it.isNotEmpty() }?.let { " to ${it.take(7)}" } ?: "") + ". New chats will have it.")
+            ui = ui.copy(file = null)
+            load()
+        } catch (e: ApiException) {
+            if (routeMissing(e)) ui = ui.copy(linkSupported = false)
+            failed(e)
+        } finally { if (ui.busy == "update") ui = ui.copy(busy = null) }
+    }
+
+    /** Replace: the waiting upload, link install or copy again, with overwrite. */
     suspend fun replacePending() {
         val p = ui.pending ?: return
-        if (p.upload) p.file?.let { upload(it, p.scope, p.name, overwrite = true) }
+        if (p.link.isNotEmpty()) installFromLink(p.link, p.scope, p.skill, p.all, overwrite = true)
+        else if (p.upload) p.file?.let { upload(it, p.scope, p.name, overwrite = true) }
         else p.from?.let { transfer(it, p.scope, p.asName, p.move, overwrite = true) }
     }
 
@@ -398,8 +541,10 @@ fun SkillsRoute() {
     val nav = LocalNavigator.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val c = remember { SkillsController(app.api.skills) }
+    val shell by app.shell.state.collectAsStateWithLifecycle()
+    val c = remember { SkillsController(app.api.skills, SkillLinks.supported(shell.capabilities)) }
     LaunchedEffect(Unit) { c.load() }
+    LaunchedEffect(shell.capabilities) { if (!SkillLinks.supported(shell.capabilities)) c.setLinkSupported(false) }
     val ui = c.ui
     var pickFor by remember { mutableStateOf("") }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -450,6 +595,10 @@ fun SkillsRoute() {
             onSave = { scope.launch { c.save() } },
             onDownloadFile = { val o = ui.open; val f = ui.file; if (o != null && f != null) save(f.path.substringAfterLast('/')) { sink -> app.api.skills.downloadFile(o.scope, o.name, f.path, sink) } },
             onCloseFile = c::closeFile,
+            onLink = c::setLink,
+            onInstallLink = { scope.launch { c.installFromLink() } },
+            onPickLink = { n -> scope.launch { c.pickFromLink(n) } },
+            onUpdate = { scope.launch { c.update() } },
         ),
     )
 }
@@ -482,6 +631,11 @@ class SkillsEvents(
     val onSave: () -> Unit = {},
     val onDownloadFile: () -> Unit = {},
     val onCloseFile: () -> Unit = {},
+    val onLink: (String) -> Unit = {},
+    val onInstallLink: () -> Unit = {},
+    /** One skill of a link by name, or null for all of them. */
+    val onPickLink: (String?) -> Unit = {},
+    val onUpdate: () -> Unit = {},
 )
 
 /** The list, one skill, or one file, by what is open. */
@@ -521,6 +675,7 @@ private fun SkillList(ui: SkillsUi, d: SkillList, events: SkillsEvents) {
             CrundiButton("New", { events.onForm(SkillForm.New) }, icon = "plus")
         }
         Text(Skills.uploadHint(d.limits.upload), style = CrundiType.Small)
+        LinkField(ui, events)
         if (ui.error.isNotEmpty()) Text(ui.error, style = CrundiType.Small.copy(color = CrundiColors.Red))
         ui.pending?.let { PendingBox(ui, it, events) }
         if (ui.form == SkillForm.New) NewSkillForm(ui, events)
@@ -628,9 +783,48 @@ private fun NewSkillForm(ui: SkillsUi, events: SkillsEvents) {
     FormButtons("Create", { events.onCreate(name, desc) }, events.onCloseForm, enabled = ui.busy != "create")
 }
 
+/** Install from a link, beside Upload (the web's skLinkHtml). */
+@Composable
+private fun LinkField(ui: SkillsUi, events: SkillsEvents) {
+    val busy = ui.busy == "link"
+    CrundiDivider()
+    Text(SkillLinks.HINT, style = CrundiType.Small)
+    CrundiTextField(ui.link, events.onLink, placeholder = SkillLinks.PLACEHOLDER, mono = true, enabled = ui.linkSupported && !busy,
+        keyboardOptions = NoCaps.copy(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri))
+    CrundiButton(if (busy) "Fetching…" else "Install from link", events.onInstallLink, kind = ButtonKind.Primary, icon = "git-branch",
+        enabled = ui.linkSupported && !busy && ui.link.isNotBlank())
+    if (!ui.linkSupported) Text(ErrorWords.NOT_SUPPORTED + " Upload still works.", style = CrundiType.Small)
+}
+
+/** A link holds several skills: which one, or all (the web's link-choose). */
+@Composable
+private fun LinkChoices(ui: SkillsUi, p: SkillPending, events: SkillsEvents) {
+    Column(Modifier.fillMaxWidth().background(BadgeKind.Warn.bg, Dimens.ShapeSm).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CrundiIcon("info", size = Dimens.IconSm, tint = BadgeKind.Warn.fg)
+            Text(p.message.ifEmpty { "That repository holds several skills. Choose one, or install all of them." }, style = CrundiType.Small.copy(color = CrundiColors.TextPrimary))
+        }
+        for (x in p.choices) Row(
+            Modifier.fillMaxWidth().background(CrundiColors.BgPrimary, Dimens.ShapeSm).border(Dimens.Hairline, CrundiColors.Border, Dimens.ShapeSm).padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(x.name, style = CrundiType.Body.copy(fontFamily = CrundiType.Mono))
+                if (x.description.isNotEmpty()) Text(x.description, style = CrundiType.Small, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            CrundiButton("Install", { events.onPickLink(x.name) }, enabled = ui.busy == null)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CrundiButton("Install all ${p.choices.size}", { events.onPickLink(null) }, kind = ButtonKind.Primary, enabled = ui.busy == null)
+            CrundiButton("Cancel", events.onCancelPending)
+        }
+    }
+}
+
 /** The upload needs a name, or would replace what is there (the web's skPendingHtml). */
 @Composable
 private fun PendingBox(ui: SkillsUi, p: SkillPending, events: SkillsEvents) {
+    if (p.choices.isNotEmpty()) { LinkChoices(ui, p, events); return }
     if (p.needsName) {
         var name by remember { mutableStateOf("") }
         CrundiDivider()
@@ -680,6 +874,7 @@ private fun SkillDetailView(ui: SkillsUi, events: SkillsEvents) {
     // The list's entry, or the detail's own when the list has not caught up (or failed to load).
     val sk = ui.openSkill ?: ui.detail?.valueOrNull?.skill
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmUpdate by remember { mutableStateOf(false) }
     var confirmFile by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize()) {
         TopBar(o.name, subtitle = ui.scopeLabel(o.scope), onBack = events.onBack)
@@ -689,12 +884,15 @@ private fun SkillDetailView(ui: SkillsUi, events: SkillsEvents) {
             d == null -> LoadingState()
             d is Load.Failed -> ErrorState(d.message, onRetry = events.onRetry)
             sk == null -> ErrorState("Could not open this skill", onRetry = events.onRetry)
-            d is Load.Ready -> ScrollBody { SkillDetailBody(ui, sk, d.value, events, onDelete = { confirmDelete = true }, onDeleteFile = { confirmFile = it }) }
+            d is Load.Ready -> ScrollBody { SkillDetailBody(ui, sk, d.value, events, onDelete = { confirmDelete = true }, onDeleteFile = { confirmFile = it }, onUpdate = { confirmUpdate = true }) }
         }
     }
     if (confirmDelete) CrundiDialog("Delete this skill?", { confirmDelete = false },
         message = "Delete the skill \"${o.name}\" and all its files? This cannot be undone.",
         confirm = "Delete skill", danger = true, onConfirm = { confirmDelete = false; events.onDelete() })
+    if (confirmUpdate) CrundiDialog("Update this skill?", { confirmUpdate = false },
+        message = "Install \"${o.name}\" again from where it came from? This replaces its files, including any changes made here.",
+        confirm = "Update", onConfirm = { confirmUpdate = false; events.onUpdate() })
     confirmFile?.let { p ->
         CrundiDialog("Delete this file?", { confirmFile = null },
             message = "Delete $p from this skill?",
@@ -708,7 +906,7 @@ private fun SkillDetailView(ui: SkillsUi, events: SkillsEvents) {
 }
 
 @Composable
-fun SkillDetailBody(ui: SkillsUi, sk: Skill, d: SkillDetail, events: SkillsEvents, onDelete: () -> Unit = events.onDelete, onDeleteFile: (String) -> Unit = events.onDeleteFile) {
+fun SkillDetailBody(ui: SkillsUi, sk: Skill, d: SkillDetail, events: SkillsEvents, onDelete: () -> Unit = events.onDelete, onDeleteFile: (String) -> Unit = events.onDeleteFile, onUpdate: () -> Unit = events.onUpdate) {
     val ro = sk.readOnly
     Column(Modifier.fillMaxWidth().padding(horizontal = Dimens.ScreenPad, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         @OptIn(ExperimentalLayoutApi::class)
@@ -719,8 +917,10 @@ fun SkillDetailBody(ui: SkillsUi, sk: Skill, d: SkillDetail, events: SkillsEvent
         Text(sk.description.ifEmpty { "No description" }, style = CrundiType.Body.copy(color = if (sk.description.isEmpty()) CrundiColors.TextMuted else CrundiColors.TextPrimary))
         if (d.readOnlyReason.isNotEmpty()) Banner(d.readOnlyReason, Modifier.fillMaxWidth(), BadgeKind.Neutral, "lock")
         if (sk.problem.isNotEmpty()) Banner(sk.problem + ".", Modifier.fillMaxWidth(), BadgeKind.Warn, "info")
+        sk.source?.let { Banner(SkillLinks.sourceLine(it), Modifier.fillMaxWidth(), BadgeKind.Neutral, "git-branch") }
         @OptIn(ExperimentalLayoutApi::class)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!ro && sk.source != null && ui.linkSupported) CrundiButton(if (ui.busy == "update") "Updating…" else "Update", onUpdate, icon = "refresh", enabled = ui.busy != "update")
             if (!ro) CrundiButton("Rename", { events.onForm(SkillForm.Rename) }, icon = "pencil")
             CrundiButton(if (ro) "Copy to…" else "Copy or move…", { events.onForm(SkillForm.Transfer) }, icon = "copy")
             CrundiButton("Download", events.onDownload, icon = "download")
@@ -743,7 +943,7 @@ fun SkillDetailBody(ui: SkillsUi, sk: Skill, d: SkillDetail, events: SkillsEvent
             if (!ro) CrundiButton("Move", { events.onTransfer(to, asName, true) }, enabled = ui.busy != "transfer")
         }
     }
-    ui.pending?.takeIf { !it.upload }?.let { p -> Column(Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 6.dp)) { PendingReplace(ui, p, events) } }
+    ui.pending?.takeIf { !it.upload && it.link.isEmpty() }?.let { p -> Column(Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 6.dp)) { PendingReplace(ui, p, events) } }
     Group("Files") {
         Column {
             for ((i, f) in d.files.withIndex()) {

@@ -80,6 +80,10 @@ export const CAPABILITIES = Object.freeze([
   // 1.21.1 has them but does not list this, so a client also accepts that
   // version (1.21.1-dev.12 and later) or the webhook fields in the data.
   'webhooks',
+  // Skills installed from a GitHub link or a pasted "npx skills add" line
+  // (POST /api/skills/install-from-link), remembering their source, and
+  // updated from it (POST /api/skills/update-from-source).
+  'skills-install-link',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

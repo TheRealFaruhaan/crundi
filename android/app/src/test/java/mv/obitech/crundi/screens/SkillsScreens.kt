@@ -11,7 +11,9 @@ import androidx.compose.ui.unit.dp
 import mv.obitech.crundi.api.model.SkillDetail
 import mv.obitech.crundi.api.model.SkillFile
 import mv.obitech.crundi.api.model.SkillFileEntry
+import mv.obitech.crundi.api.model.SkillLinkFound
 import mv.obitech.crundi.api.model.SkillList
+import mv.obitech.crundi.api.model.SkillSource
 import mv.obitech.crundi.ui.components.DialogCard
 import mv.obitech.crundi.ui.operations.Actions
 import mv.obitech.crundi.ui.operations.Load
@@ -102,6 +104,24 @@ class SkillsScreens : ScreenshotTest() {
     /** The list could not catch up (the reload failed): the skill still shows from its own detail. */
     @Test fun skillsDetailWithoutList() = shoot("settings-skills-detail-nolist") {
         SkillsScreen(SkillsUi(data = Load.Failed("The server cannot be reached."), open = SkillRef("global", "frontend-design"), detail = Load.Ready(detail)))
+    }
+
+    /** A link to a repository with several skills: which one, or all. */
+    @Test fun skillsLinkChoose() = shoot("settings-skills-link-choose") {
+        SkillsScreen(ready.copy(link = "npx skills add https://github.com/latent-spaces/brag", pending = SkillPending(
+            upload = false, scope = "global", link = "https://github.com/latent-spaces/brag",
+            message = "latent-spaces/brag holds 2 skills. Choose one, or install all of them.",
+            choices = listOf(SkillLinkFound("brag", description = "Make a launch video from the project's code."), SkillLinkFound("brag-slim", description = "A shorter launch video.")),
+        )))
+    }
+
+    /** An older server: the link field says so, and upload still works. */
+    @Test fun skillsLinkUnsupported() = shoot("settings-skills-link-unsupported") { SkillsScreen(ready.copy(linkSupported = false)) }
+
+    /** A skill installed from GitHub: where from, and Update. */
+    @Test fun skillsFromGithub() = shoot("settings-skills-github") {
+        val src = SkillSource("latent-spaces/brag", "main", "skills/brag-slim", "3f2a9c1d0b8e7f6a5c4d3e2f1a0b9c8d7e6f5a4b", "2026-10-24T10:00:00.000Z")
+        SkillsScreen(own.copy(data = Load.Ready(list.copy(skills = list.skills.map { if (it.name == "frontend-design") it.copy(source = src) else it }))))
     }
 
     @Test fun skillsScopePicker() = shoot("settings-skills-where") {
