@@ -36,6 +36,34 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Matrix
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.tan
+import mv.obitech.crundi.ui.components.motionStill
 import mv.obitech.crundi.ui.components.ButtonKind
 import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.icons.CrundiIcon
@@ -146,19 +174,106 @@ private fun LaunchButton(text: String?, icon: String?, modifier: Modifier, style
     val shape = Dimens.ShapeSm
     val (bg, border, fg) = when (style) {
         LaunchStyle.Shell -> Triple(Brush.linearGradient(listOf(Color.Transparent, Color.Transparent)), CrundiColors.Border, CrundiColors.TextSecondary)
-        LaunchStyle.Hero -> Triple(Brush.linearGradient(listOf(Color(0xFF4338CA), CrundiColors.Accent, Color(0xFFA5B4FC), CrundiColors.Accent)), CrundiColors.AccentHover, Color.White)
+        LaunchStyle.Hero -> Triple(null, CrundiColors.AccentHover, Color.White)
         LaunchStyle.Normal -> Triple(Brush.linearGradient(listOf(CrundiColors.Accent.copy(alpha = 0.10f), CrundiColors.Accent.copy(alpha = 0.10f))), CrundiColors.Accent.copy(alpha = 0.55f), CrundiColors.TextPrimary)
         LaunchStyle.Skip -> Triple(Brush.linearGradient(listOf(CrundiColors.BgTertiary, CrundiColors.BgTertiary)), CrundiColors.Border, CrundiColors.Yellow)
     }
+    val hero = style == LaunchStyle.Hero
+    val interaction = remember { MutableInteractionSource() }
+    val motion = if (hero) rememberHeroMotion(interaction) else null
     Row(
-        modifier.height(44.dp).clip(shape).background(bg).border(Dimens.Hairline, border, shape)
-            .clickable(enabled = enabled, onClickLabel = description ?: text, onClick = onClick).padding(horizontal = 12.dp),
+        modifier.height(44.dp).clip(shape)
+            .then(if (motion != null) Modifier.heroSurface(motion) else Modifier.background(bg!!))
+            .border(Dimens.Hairline, border, shape)
+            .clickable(interactionSource = interaction, indication = LocalIndication.current, enabled = enabled, onClickLabel = description ?: text, onClick = onClick).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
         if (icon != null) CrundiIcon(icon, size = 16.dp, tint = fg, contentDescription = description)
-        if (style == LaunchStyle.Hero) Box(Modifier.width(7.dp).height(15.dp).background(Color.White.copy(alpha = 0.85f)))
-        if (text != null) Text(text, style = CrundiType.Button.copy(color = fg, fontWeight = if (style == LaunchStyle.Hero) FontWeight.Bold else FontWeight.Medium))
+        if (motion != null) Box(Modifier.width(7.dp).height(15.dp).graphicsLayer { alpha = motion.caretAlpha() }.background(Color.White))
+        if (text != null) Text(text, style = CrundiType.Button.copy(color = fg, fontWeight = if (hero) FontWeight.Bold else FontWeight.Medium))
+    }
+}
+
+/*
+ * UI Mode, the hero action, moves as on the web (.term-launch .btn-chat):
+ * - chatDrift: the indigo gradient (110deg, #4338ca #6366f1 #a5b4fc #6366f1
+ *   #4338ca over 260% of the width) drifts to the right without end. The web
+ *   moves it 4.16 widths in 9 s and jumps back; here it moves the same speed
+ *   over a whole number of repeats, so the loop has no seam.
+ * - chatSheen: a white band (45% of the width, skewed -22deg) sweeps across
+ *   from -70% to 125% in 0.75 s, ease-out; on press, the touch hover.
+ * - chatBlink: the block caret is 0.95 for 55% of 1.15 s, then 0.15.
+ * With animations off (motionStill: the phone's reduced motion, or a
+ * screenshot) nothing moves: the gradient rests at 35%, the caret lit, as the
+ * web's prefers-reduced-motion.
+ */
+private val HeroStops = listOf(Color(0xFF4338CA), Color(0xFF6366F1), Color(0xFFA5B4FC), Color(0xFF6366F1), Color(0xFF4338CA))
+private val HeroAt = listOf(0f, 0.26f, 0.5f, 0.74f, 1f)
+private const val DriftMs = 9000
+private const val BlinkMs = 1150
+
+/** The hero's moving parts, read while drawing so they never recompose the button. */
+private class HeroMotion(val still: Boolean, val drift: () -> Float, val blink: () -> Float, val sheen: () -> Float?) {
+    fun caretAlpha(): Float = if (still) 0.95f else if (blink() < 0.555f) 0.95f else 0.15f
+}
+
+@Composable
+private fun rememberHeroMotion(interaction: MutableInteractionSource): HeroMotion {
+    val still = motionStill()
+    if (still) return remember { HeroMotion(true, { 0f }, { 0f }, { null }) }
+    val t = rememberInfiniteTransition(label = "hero")
+    // The web: 9 s for 1.6 repeats of the gradient. Two repeats here, at the same speed.
+    val drift = t.animateFloat(0f, 1f, infiniteRepeatable(tween((DriftMs * 2 / 1.6f).toInt(), easing = LinearEasing)), label = "drift")
+    val blink = t.animateFloat(0f, 1f, infiniteRepeatable(tween(BlinkMs, easing = LinearEasing)), label = "blink")
+    val sheen = remember { Animatable(0f) }
+    var sweeping by remember { mutableStateOf(false) }
+    LaunchedEffect(interaction) {
+        interaction.interactions.collect { i ->
+            if (i is PressInteraction.Press) launch {
+                sweeping = true
+                sheen.snapTo(0f)
+                sheen.animateTo(1f, tween(750, easing = CubicBezierEasing(0f, 0f, 0.58f, 1f))) // CSS ease-out
+                sweeping = false
+            }
+        }
+    }
+    return remember(drift, blink, sheen) { HeroMotion(false, { drift.value }, { blink.value }, { if (sweeping) sheen.value else null }) }
+}
+
+private fun Modifier.heroSurface(m: HeroMotion): Modifier = drawWithContent {
+    val w = size.width
+    val h = size.height
+    // The CSS gradient line at 110deg over an image 2.6 widths wide.
+    val rad = Math.toRadians(110.0)
+    val dx = sin(rad).toFloat()
+    val dy = (-cos(rad)).toFloat()
+    val imgW = 2.6f * w
+    val len = imgW * abs(dx) + h * abs(dy)
+    val period = len / dx // one repeat of the gradient, measured along x
+    // At rest: background-position 35%, i.e. the image 0.56 widths to the left.
+    val shift = if (m.still) -0.56f * w else -0.56f * w + m.drift() * 2f * period
+    val cx = imgW / 2f + shift
+    val cy = h / 2f
+    drawRect(Brush.linearGradient(
+        colorStops = HeroAt.zip(HeroStops).toTypedArray(),
+        start = Offset(cx - dx * len / 2f, cy - dy * len / 2f),
+        end = Offset(cx + dx * len / 2f, cy + dy * len / 2f),
+        tileMode = TileMode.Repeated,
+    ))
+    drawContent()
+    val p = m.sheen() ?: return@drawWithContent
+    val left = w * (-0.70f + p * (1.25f + 0.70f))
+    val bw = 0.45f * w
+    withTransform({
+        translate(0f, cy)
+        transform(Matrix().apply { values[Matrix.SkewX] = tan(Math.toRadians(-22.0)).toFloat() })
+        translate(0f, -cy)
+    }) {
+        drawRect(
+            Brush.horizontalGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.42f), Color.Transparent), startX = left, endX = left + bw),
+            topLeft = Offset(left, -0.6f * h), size = Size(bw, 2.2f * h),
+        )
     }
 }
 

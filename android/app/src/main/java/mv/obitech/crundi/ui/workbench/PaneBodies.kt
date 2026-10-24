@@ -41,7 +41,7 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
                     else -> mv.obitech.crundi.ui.workspace.terminal.TerminalPreview(id)                          // ui.workspace
                 }
             }) // Lead
-            PaneKind.Pending -> TerminalLauncher({ wb.launch(v.key, it) }, busy = wb.launching[v.key] == true, error = wb.launchErrors[v.key]) // Lead
+            PaneKind.Pending -> TerminalLauncher({ wb.pick(v.key, it) }, busy = wb.launching[v.key] == true, error = wb.launchErrors[v.key]) // Lead
             PaneKind.Files -> FilesRoute()                                                  // ui.workspace
             PaneKind.Git -> GitRoute()                                                      // ui.workspace
             PaneKind.Media -> MediaRoute()                                                  // ui.workspace

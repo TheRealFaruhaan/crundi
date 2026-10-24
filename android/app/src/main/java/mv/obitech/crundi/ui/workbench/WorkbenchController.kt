@@ -13,7 +13,6 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import mv.obitech.crundi.api.CrundiClient
-import mv.obitech.crundi.api.model.NewChat
 import mv.obitech.crundi.api.model.ServerState
 import mv.obitech.crundi.ui.components.errorText
 import mv.obitech.crundi.ui.shell.Host
@@ -157,8 +156,64 @@ class WorkbenchController(
         store.layout = layout
     }
 
-    /** Start what a launcher was asked for, and put the new pane where the launcher was. */
-    fun launch(pendingKey: String, mode: LaunchMode) {
+    /** A Claude launch asking which conversation (the route shows the dialog). */
+    var chooser by mutableStateOf<SessionChooser?>(null); private set
+
+    /**
+     * A launcher's button. An empty shell starts at once; every Claude mode
+     * asks which conversation first (the web's openSessionChooser): the list
+     * loads while the launcher shows busy; with nothing earlier to pick it
+     * starts a new one without asking; if the list fails, the dialog still
+     * offers New session and says why.
+     */
+    fun pick(pendingKey: String, mode: LaunchMode) {
+        if (mode == LaunchMode.Shell) { launch(pendingKey, mode); return }
+        val p = project ?: return
+        val a = api ?: return
+        // A second tap while the list loads or the dialog is up (the web's crOpening / launchInFlight).
+        if (launching[pendingKey] == true || chooser != null) return
+        launching[pendingKey] = true
+        launchErrors.remove(pendingKey)
+        scope.launch {
+            var list = emptyList<mv.obitech.crundi.api.model.ResumableSession>()
+            var failed: String? = null
+            try { list = a.chats.resumable(p) } catch (e: Exception) { failed = errorText(e) }
+            launching.remove(pendingKey)
+            if (failed == null && list.isEmpty()) launch(pendingKey, mode, "new", null)
+            else chooser = SessionChooser(pendingKey, mode, list, failed)
+        }
+    }
+
+    /** The chooser's New session. */
+    fun chooseNew() { val c = chooser ?: return; chooser = null; launch(c.pendingKey, c.mode, "new", null) }
+
+    /** A conversation picked: a heavy one in UI Mode asks how first; a terminal resumes it directly (its CLI asks its own question). */
+    fun choosePick(s: mv.obitech.crundi.api.model.ResumableSession) {
+        val c = chooser ?: return
+        if (c.mode.isChat && s.heavy) { chooser = c.copy(heavy = s); return }
+        chooser = null
+        launch(c.pendingKey, c.mode, "resume", s.id)
+    }
+
+    /** The heavy choice: [how] compact or resume, of the conversation that was picked. */
+    fun chooseResume(s: mv.obitech.crundi.api.model.ResumableSession, how: String) {
+        val c = chooser ?: return
+        chooser = null
+        launch(c.pendingKey, c.mode, if (how == "compact") "compact" else "resume", s.id)
+    }
+
+    /** Back to the list from the heavy choice. */
+    fun chooserBack() { chooser = chooser?.copy(heavy = null, failed = null) }
+
+    /** Cancel: nothing launches. */
+    fun cancelChooser() { chooser = null }
+
+    /**
+     * Start what a launcher was asked for, and put the new pane where the
+     * launcher was. [sessionMode] new, resume or compact, with [resumeId] the
+     * conversation, as the web's launchTerminal.
+     */
+    fun launch(pendingKey: String, mode: LaunchMode, sessionMode: String? = null, resumeId: String? = null) {
         val p = project ?: return
         val a = api ?: return
         launching[pendingKey] = true
@@ -166,9 +221,13 @@ class WorkbenchController(
         scope.launch {
             try {
                 val created = when (mode) {
-                    LaunchMode.Chat, LaunchMode.ChatSkip -> a.chats.create(NewChat(project = p, skipPermissions = (mode == LaunchMode.ChatSkip).takeIf { it }))
+                    LaunchMode.Chat, LaunchMode.ChatSkip -> a.chats.create(chatLaunch(p, mode, sessionMode, resumeId))
                     LaunchMode.Shell -> a.terminals.create(p, shell = true)
-                    LaunchMode.Terminal, LaunchMode.TerminalSkip -> a.terminals.create(p, skipPermissions = (mode == LaunchMode.TerminalSkip).takeIf { it })
+                    // A shell runs no Claude, so only Claude terminals carry a conversation.
+                    LaunchMode.Terminal, LaunchMode.TerminalSkip -> a.terminals.create(
+                        p, skipPermissions = (mode == LaunchMode.TerminalSkip).takeIf { it },
+                        sessionMode = sessionMode, resumeId = if (sessionMode != null) resumeId.orEmpty() else null,
+                    )
                 }
                 val newKey = "t:" + created.id
                 grace[newKey] = System.currentTimeMillis()

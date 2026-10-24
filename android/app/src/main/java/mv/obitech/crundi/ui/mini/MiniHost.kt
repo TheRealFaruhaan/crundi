@@ -1,6 +1,5 @@
 package mv.obitech.crundi.ui.mini
 
-import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -32,9 +31,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -201,11 +198,7 @@ class MiniHost {
 
 /** Is motion turned off on this phone (or is this a preview)? Then Mini never appears. */
 @Composable
-private fun miniStill(): Boolean {
-    val ctx = LocalContext.current
-    return LocalInspectionMode.current ||
-        runCatching { Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
-}
+private fun miniStill(): Boolean = mv.obitech.crundi.ui.components.motionStill()
 
 /** A window's content with Mini's layer over it. */
 @Composable
