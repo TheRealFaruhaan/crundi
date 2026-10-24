@@ -33,8 +33,10 @@ import mv.obitech.crundi.ui.workbench.PaneView
  * - a Notes pane is a page picker until a page is chosen, then that one page
  *   (cell data pageId, its title shown in the pane header); "Pages" goes back
  *   to the picker, and a page open in another pane cannot be opened twice;
- * - a Factory pane is the Factories area until a run is opened, then that run
- *   (cell data runId); "All runs" goes back.
+ * - a Factory pane is the project's Factory panel (FactoryPane.kt): while a
+ *   run is going, its live graph fills the pane; with none, Start, earlier
+ *   runs and triggers. A run opened in the pane by an older version (cell
+ *   data runId) is let go: the pane follows the project's run by itself.
  * The pane's text size (A-/A+) scales every text in it.
  */
 @Composable
@@ -60,9 +62,8 @@ fun PlanningPane(v: PaneView) = PaneScaled {
             )
         }
         PaneKind.Factory -> {
-            val runId = data["runId"]
-            if (runId != null) FactoryRunRoute(runId, onAllRuns = { wb?.setCellData(v.key, "runId" to null, "title" to null) })
-            else FactoriesRoute(onOpenRunInPane = { r -> wb?.setCellData(v.key, "runId" to r.id, "title" to r.factoryName.ifBlank { "Factory" }) })
+            androidx.compose.runtime.LaunchedEffect(data["runId"]) { if (data["runId"] != null) wb?.setCellData(v.key, "runId" to null, "title" to null) }
+            FactoryPaneRoute()
         }
         else -> Unit
     }

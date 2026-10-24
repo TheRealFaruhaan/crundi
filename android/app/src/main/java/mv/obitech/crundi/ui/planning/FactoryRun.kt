@@ -183,8 +183,9 @@ private fun duration(ms: Long): String {
     return when { m < 1 -> "under a minute"; m < 60 -> "$m min"; else -> "${m / 60}h ${m % 60}m" }
 }
 
+/** The run's own pane (what needs you, the CR, facts, findings, permissions); also the workbench pane's Details drawer, with its own [hint]. */
 @Composable
-private fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long) {
+internal fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long, hint: String = "Tap a step to see what happened there and open that person's chat.") {
     // What needs the person first.
     if (r.status == "crashed") CrashCard(r, cb)
     if (r.capHit != null) Panel("It reached its limit", CrundiColors.Yellow) {
@@ -219,7 +220,7 @@ private fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long) {
         Text("The team's actions", style = CrundiType.Small)
         ChipRow(listOf("ask" to "Ask the Manager", "bypass" to "Bypass too"), r.teamMode.ifEmpty { "ask" }, onPick = cb.onTeamMode)
     }
-    Text("Tap a step to see what happened there and open that person's chat.", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans))
+    Text(hint, style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans))
 }
 
 @Composable
@@ -359,8 +360,9 @@ private fun Findings(r: FactoryRun) {
     }
 }
 
+/** One step: who, now, visits and what was said there. [transcript]: the chat opens as a live transcript in the pane, as the web's panel words it. */
 @Composable
-private fun ColumnScope.StepPane(r: FactoryRun, id: String, cb: RunCallbacks, onClose: () -> Unit) {
+internal fun ColumnScope.StepPane(r: FactoryRun, id: String, cb: RunCallbacks, transcript: Boolean = false, onClose: () -> Unit) {
     val snap = r.snapshot ?: return
     val n = snap.nodes.firstOrNull { it.id == id } ?: return
     val view = RunView(r)
@@ -387,7 +389,8 @@ private fun ColumnScope.StepPane(r: FactoryRun, id: String, cb: RunCallbacks, on
     KV("Now", now)
     KV("Visits", visits.size.toString())
     val chat = if (n.type == "manager") r.managerChatId else emp?.chatId.orEmpty()
-    if (chat.isNotEmpty()) CrundiButton(if (n.type == "manager") "Open the Manager's chat" else "Open their chat", { cb.onOpenChat(chat) }, icon = if (n.type == "manager") "crown" else "message-square")
+    val what = if (transcript) "transcript" else "chat"
+    if (chat.isNotEmpty()) CrundiButton(if (n.type == "manager") "Open the Manager's $what" else "Open their $what", { cb.onOpenChat(chat) }, icon = if (n.type == "manager") "crown" else "message-square")
     for (t in tokens.filter { it.wait != null }) WaitCard(t, cb, System.currentTimeMillis())
     for (a in r.asks.filter { it.nodeId == id }) AskCard(a, cb)
     for (v in visits.reversed()) CrundiCard(Modifier.fillMaxWidth()) {
@@ -404,7 +407,7 @@ private fun ColumnScope.StepPane(r: FactoryRun, id: String, cb: RunCallbacks, on
 }
 
 @Composable
-private fun Timeline(r: FactoryRun) {
+internal fun Timeline(r: FactoryRun) {
     if (r.history.isEmpty()) { Text("Nothing has happened yet.", style = CrundiType.Small); return }
     for (h in r.history.reversed()) {
         val (line, color) = when (h.type) {

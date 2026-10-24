@@ -1,5 +1,6 @@
 package mv.obitech.crundi.ui.planning
 
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -80,18 +82,63 @@ internal fun lookOf(type: String) = when (type) {
 /** A step's state in a run. */
 internal enum class NodeState { Idle, Visited, Active, Retired }
 
-/** What the run says about each step: tokens on it, visited, blocked, retired. */
-internal class RunView(val run: FactoryRun?) {
+/** Who is at a step this second and what they are doing (the live graph, as the web's node.data.doing). */
+internal data class Doing(val who: String, val text: String, val state: String, val chatId: String, val job: String? = null)
+
+/**
+ * What the run says about each step: tokens on it, visited, blocked, retired.
+ * [live] (the workbench pane's live graph) adds who is at work there and
+ * what they are doing, and draws a job the Manager handed out on that
+ * person's own step, as the web's viewer does.
+ */
+internal class RunView(val run: FactoryRun?, val live: Boolean = false) {
     private val visited: Set<String> = run?.history?.mapNotNull { it.nodeId.ifEmpty { null } }?.toSet().orEmpty() +
         run?.tokens?.map { it.nodeId }.orEmpty() + (run?.snapshot?.nodes?.filter { it.type == "start" }?.map { it.id }.takeIf { run != null }.orEmpty())
 
     fun tokens(id: String) = run?.tokens?.filter { it.nodeId == id }.orEmpty()
 
+    /** The run is moving (not crashed, paused, stopped or finished): there is live activity to show. */
+    private val moving = live && run != null && run.status !in setOf("crashed", "paused", "stopped", "finished")
+
+    /** Jobs the Manager handed out, each drawn on the first step of its person (nodeId of that step to the token). */
+    private val jobs: Map<String, mv.obitech.crundi.api.model.RunToken> = if (!moving) emptyMap() else buildMap {
+        for (t in run!!.tokens.filter { it.job != null && it.status == "work" }) {
+            val at = run.snapshot?.nodes?.firstOrNull { it.type == "employee" && it.employeeId == t.employeeId && tokens(it.id).none { k -> k.status == "work" || k.status == "answer" } } ?: continue
+            if (!containsKey(at.id)) put(at.id, t)
+        }
+    }
+
+    /** Who is here now and what they are doing, from their chat; null when nobody is at work here. */
+    fun doing(n: FactoryNode): Doing? {
+        if (!moving) return null
+        val r = run!!
+        val tok = tokens(n.id).firstOrNull { it.status == "work" || it.status == "answer" }
+        if (tok != null) {
+            val e = r.employees[tok.employeeId]
+            val chat = e?.chatId?.ifEmpty { null } ?: if (n.type == "manager") r.managerChatId else ""
+            val who = tok.employee.ifEmpty { e?.name ?: r.snapshot?.roster?.firstOrNull { it.id == tok.employeeId }?.name ?: if (n.type == "manager") "Manager" else "" }
+            return Doing(who, e?.activity?.text?.ifEmpty { null } ?: if (tok.status == "answer") "Deciding" else "Starting", e?.activity?.state.orEmpty(), chat)
+        }
+        val job = jobs[n.id] ?: return null
+        val e = r.employees[job.employeeId]
+        return Doing(job.employee.ifEmpty { e?.name.orEmpty() }, "Job: " + (e?.activity?.text?.ifEmpty { null } ?: job.job.orEmpty().lineSequence().firstOrNull().orEmpty().take(60)), e?.activity?.state.orEmpty(), e?.chatId.orEmpty(), job.id)
+    }
+
+    /**
+     * Where the work is, for the camera to follow: steps with someone working,
+     * deciding, asking, waiting or joining there, and the steps a job is drawn on.
+     */
+    fun activeIds(): List<String> {
+        if (run == null || !live) return emptyList()
+        val at = run.tokens.filter { it.nodeId.isNotEmpty() && it.job == null && it.status in setOf("work", "answer", "ask", "wait", "join") }.map { it.nodeId }
+        return (at + jobs.keys).distinct().sorted()
+    }
+
     fun state(n: FactoryNode): NodeState {
         if (run == null) return NodeState.Idle
         val emp = n.employeeId?.let { e -> run.employees[e] }
         return when {
-            tokens(n.id).isNotEmpty() -> NodeState.Active
+            tokens(n.id).isNotEmpty() || n.id in jobs -> NodeState.Active
             emp?.retired == true -> NodeState.Retired
             n.id in visited -> NodeState.Visited
             else -> NodeState.Idle
@@ -102,7 +149,7 @@ internal class RunView(val run: FactoryRun?) {
 
     /** The pill over a step with tokens: words and colour, as the desktop's. */
     fun pill(n: FactoryNode): Pair<String, Color>? {
-        val t = tokens(n.id)
+        val t = tokens(n.id).ifEmpty { listOfNotNull(jobs[n.id]) }
         if (t.isEmpty()) return null
         val first = t.first()
         val blocked = t.any { it.blocked } || run?.permissions?.any { p -> !p.sent && p.employee.isNotEmpty() && p.employee == first.employee } == true
@@ -171,8 +218,16 @@ internal fun nodeBody(n: FactoryNode, f: Factory): String = when (n.type) {
  * Pinch or the buttons to zoom; drag to pan; tap a step to select it.
  */
 @Composable
-fun FactoryGraph(factory: Factory, run: FactoryRun?, selected: String?, onSelect: (String?) -> Unit, modifier: Modifier = Modifier) {
-    val view = remember(run) { RunView(run) }
+fun FactoryGraph(
+    factory: Factory, run: FactoryRun?, selected: String?, onSelect: (String?) -> Unit, modifier: Modifier = Modifier,
+    /** The live graph (the workbench pane): each active step shows who is there and what they are doing. */
+    live: Boolean = false,
+    /** Keep the camera on the steps where people are working, moving with them (the pane's Follow). */
+    follow: Boolean = false,
+    /** Panned, zoomed or moved by hand: the pane stops following. */
+    onManualMove: () -> Unit = {},
+) {
+    val view = remember(run, live) { RunView(run, live) }
     val nodes = factory.nodes
     if (nodes.isEmpty()) { Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("This factory has no steps yet.", style = CrundiType.Small) }; return }
     val heights = remember(factory) { mutableStateMapOf<String, Float>() }
@@ -212,7 +267,36 @@ fun FactoryGraph(factory: Factory, run: FactoryRun?, selected: String?, onSelect
         scale = s
         offset = Offset(box.width / 2f - cx, box.height * 0.4f - cy)
     }
-    LaunchedEffect(box, heights.size == nodes.size) { if (!fitted && box.width > 0 && heights.size == nodes.size) { focus(); fitted = true } }
+    LaunchedEffect(box, heights.size == nodes.size) { if (!follow && !fitted && box.width > 0 && heights.size == nodes.size) { focus(); fitted = true } }
+
+    /**
+     * Follow the work, as the web's fitView on the active steps (padding 0.45,
+     * at most 0.95): zoom to where people are working and move with it. On a
+     * phone a wide spread of parallel steps would be fitted into unreadably
+     * small cards, so it never goes below [FOLLOW_MIN_SCALE]; it centres on
+     * them then, and the working-now strip names everyone. With nobody at a
+     * step, it goes to the step last reached, as opening the graph does.
+     */
+    val activeKey = view.activeIds().joinToString(",")
+    val still = androidx.compose.ui.platform.LocalInspectionMode.current
+    LaunchedEffect(follow, activeKey, box, heights.size == nodes.size) {
+        if (!follow || box.width == 0 || heights.size != nodes.size) return@LaunchedEffect
+        val ids = activeKey.split(',').filter { it.isNotEmpty() }.mapNotNull { byId[it] }
+        val (s1, o1) = if (ids.isEmpty()) {
+            focus(); scale to offset
+        } else {
+            val l = ids.minOf { x(it) }; val t = ids.minOf { y(it) }
+            val r = ids.maxOf { x(it) + w(it) }; val b = ids.maxOf { y(it) + (heights[it.id] ?: 80f) }
+            val s = min(box.width / ((r - l) * density * 1.45f), box.height / ((b - t) * density * 1.45f)).coerceIn(FOLLOW_MIN_SCALE, 0.95f)
+            s to Offset(box.width / 2f - (l + r) / 2f * density * s, box.height / 2f - (t + b) / 2f * density * s)
+        }
+        if (still || !fitted) { scale = s1; offset = o1; fitted = true; return@LaunchedEffect }
+        val s0 = scale; val o0 = offset
+        androidx.compose.animation.core.animate(0f, 1f, animationSpec = androidx.compose.animation.core.tween(450)) { f, _ ->
+            scale = s0 + (s1 - s0) * f
+            offset = o0 + (o1 - o0) * f
+        }
+    }
 
     Box(
         modifier.fillMaxSize().clipToBounds().background(CrundiColors.BgPrimary).onSizeChanged { box = it }
@@ -225,6 +309,7 @@ fun FactoryGraph(factory: Factory, run: FactoryRun?, selected: String?, onSelect
             }
             .pointerInput(Unit) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
+                    onManualMove()
                     val ns = (scale * zoom).coerceIn(0.15f, 3f)
                     offset = (offset - centroid) * (ns / scale) + centroid + pan
                     scale = ns
@@ -296,10 +381,10 @@ fun FactoryGraph(factory: Factory, run: FactoryRun?, selected: String?, onSelect
         }
         // Round-limit labels, over the edges (text cannot be drawn in drawBehind without a measurer).
         Column(Modifier.align(Alignment.BottomEnd).padding(10.dp).background(CrundiColors.BgSecondary, Dimens.Shape).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape)) {
-            CrundiIconButton("plus", { scale = (scale * 1.25f).coerceAtMost(3f) }, contentDescription = "Zoom in", touch = 40.dp)
-            CrundiIconButton("minus", { scale = (scale / 1.25f).coerceAtLeast(0.15f) }, contentDescription = "Zoom out", touch = 40.dp)
-            CrundiIconButton("maximize", { fit() }, contentDescription = "Fit to screen", touch = 40.dp)
-            CrundiIconButton("pin", { focus() }, contentDescription = if (run != null) "Go to the current step" else "Go to the start", touch = 40.dp)
+            CrundiIconButton("plus", { onManualMove(); scale = (scale * 1.25f).coerceAtMost(3f) }, contentDescription = "Zoom in", touch = 40.dp)
+            CrundiIconButton("minus", { onManualMove(); scale = (scale / 1.25f).coerceAtLeast(0.15f) }, contentDescription = "Zoom out", touch = 40.dp)
+            CrundiIconButton("maximize", { onManualMove(); fit() }, contentDescription = "Fit to screen", touch = 40.dp)
+            CrundiIconButton("pin", { onManualMove(); focus() }, contentDescription = if (run != null) "Go to the current step" else "Go to the start", touch = 40.dp)
         }
     }
 }
@@ -337,8 +422,20 @@ private fun StepCard(n: FactoryNode, f: Factory, view: RunView, selected: Boolea
                     Text(look.kind.uppercase(), style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = look.head, letterSpacing = 0.5.sp))
                 }
                 Text(n.label.ifEmpty { look.kind }, style = CrundiType.Body.copy(fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, lineHeight = 17.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                val body = (if (state == NodeState.Active) view.lastSummary(n.id)?.take(110) else null) ?: nodeBody(n, f)
-                if (body.isNotEmpty()) Text(body, style = CrundiType.Small.copy(fontSize = 11.5.sp, lineHeight = 15.sp, color = CrundiColors.TextMuted), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val doing = view.doing(n)
+                if (doing != null) Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Pulse(doing.state == "working", Modifier.padding(top = 4.dp))
+                    Text(
+                        androidx.compose.ui.text.buildAnnotatedString {
+                            if (doing.who.isNotEmpty()) { pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.SemiBold)); append(doing.who); pop(); append(" ") }
+                            append(doing.text)
+                        },
+                        style = CrundiType.Small.copy(fontSize = 11.5.sp, lineHeight = 15.sp, color = CrundiColors.TextPrimary), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    val body = (if (state == NodeState.Active) view.lastSummary(n.id)?.take(110) else null) ?: nodeBody(n, f)
+                    if (body.isNotEmpty()) Text(body, style = CrundiType.Small.copy(fontSize = 11.5.sp, lineHeight = 15.sp, color = CrundiColors.TextMuted), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
                 val skills = f.roster.firstOrNull { it.id == n.employeeId }?.skills.orEmpty()
                 if (skills.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     for (s in skills.take(3)) Text("/$s", style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.Green), modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(CrundiColors.GreenDim).padding(horizontal = 5.dp, vertical = 1.dp))
@@ -360,6 +457,33 @@ private fun StepCard(n: FactoryNode, f: Factory, view: RunView, selected: Boolea
             modifier = Modifier.offset(x = (-6).dp, y = (-10).dp).clip(RoundedCornerShape(10.dp)).background(pill.second).padding(horizontal = 7.dp, vertical = 2.dp),
         )
     }
+}
+
+/** Below this the follow camera makes step cards too small to read on a phone. */
+private const val FOLLOW_MIN_SCALE = 0.65f
+
+/**
+ * The live dot beside someone at work: green and breathing while their turn
+ * runs, amber when they wait on a permission, grey otherwise. Still under
+ * LocalInspectionMode (screenshots never go idle with an endless animation).
+ */
+@Composable
+internal fun Pulse(busy: Boolean, modifier: Modifier = Modifier, blocked: Boolean = false) {
+    val color = when { blocked -> CrundiColors.Yellow; busy -> CrundiColors.Green; else -> CrundiColors.TextSecondary }
+    val still = androidx.compose.ui.platform.LocalInspectionMode.current
+    val ring = if (busy && !blocked && !still) {
+        val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "pulse")
+        t.animateFloat(0f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1400)), label = "ring").value
+    } else 0f
+    Box(
+        modifier.size(8.dp).drawBehind {
+            if (ring > 0f) {
+                val k = if (ring < 0.5f) ring * 2 else (1 - ring) * 2
+                drawCircle(CrundiColors.Green.copy(alpha = 0.55f * (1 - k)), radius = size.minDimension / 2 + 5.dp.toPx() * k)
+            }
+            drawCircle(color)
+        },
+    )
 }
 
 /** The desktop's run-status chip: label and colour, with waitingOn taking over while running. */

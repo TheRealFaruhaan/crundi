@@ -203,6 +203,31 @@ object PlanningFakes {
         history = run.history + RunHistoryItem(5, "finish", "n_end", "Manager", "Ready for you."),
     )
 
+    /**
+     * The live graph's run (the workbench pane): four people at work with what
+     * each is doing from their chat, one on a job the Manager handed out, one
+     * waiting on a permission, one waiting for a seat; and the Manager talking
+     * to the person in its chat.
+     */
+    val runLive = run.copy(
+        waitingOn = "manager",
+        tokens = listOf(
+            RunToken("tok1", "n_chats", "Chats", "work", "e_chats", "Android dev: chats"),
+            RunToken("tok2", "n_plan", "Planning", "work", "e_plan", "Android dev: planning"),
+            RunToken("tok3", "n_ops", "Operations", "work", "e_ops", "Android dev: operations", blocked = true),
+            RunToken("tok5", "", "Job from the Manager", "work", "e_work", "Android dev: workspace", job = "Move Downloads.kt onto the API client and drop webkit's CookieManager"),
+        ),
+        employees = run.employees + mapOf(
+            "e_chats" to RunEmployee("c3", "tok1", name = "Android dev: chats", activity = RunActivity("working", "Editing Composer.kt")),
+            "e_plan" to RunEmployee("c4", "tok2", name = "Android dev: planning", activity = RunActivity("working", "Running ./gradlew testPlayDebugUnitTest")),
+            "e_ops" to RunEmployee("c5", "tok3", name = "Android dev: operations", activity = RunActivity("waiting", "Running adb install -r app-play-debug.apk")),
+            "e_work" to RunEmployee("c6", "tok5", name = "Android dev: workspace", activity = RunActivity("working", "Reading Downloads.kt")),
+        ),
+        waitingForSeat = listOf(RunSeat("tok6", "e_test", "Tester")),
+    )
+
+    val runCrashed = runLive.copy(status = "crashed", waitingOn = "", crash = kotlinx.serialization.json.JsonObject(mapOf("reason" to JsonPrimitive("the server restarted mid-turn"))))
+
     val summaries = listOf(
         FactorySummary("fac_android", "Android team", factory.description, 7, updatedAt = ago(60 * 20), nodeCount = 12, employeeCount = 7, runnable = true, warningCount = 1,
             crTemplate = listOf(CrField("goal", "Goal", "What should be true when this is done?", true), CrField("done", "Done when", "Checks a reviewer can tick", true, true))),

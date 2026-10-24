@@ -49,7 +49,7 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
             PaneKind.Kanban -> PlanningPane(v)                                              // ui.planning
             PaneKind.Notes -> PlanningPane(v)                                               // ui.planning (picker, then one page: data pageId)
             PaneKind.MindMap -> PlanningPane(v)                                             // ui.planning
-            PaneKind.Factory -> PlanningPane(v)                                             // ui.planning (factories, then one run: data runId)
+            PaneKind.Factory -> PlanningPane(v)                                             // ui.planning (the project's factory: its live graph during a run)
             PaneKind.Panel -> mv.obitech.crundi.ui.panels.PanelPane(v.cell)                  // ui.operations (WebView exception)
         }
       }

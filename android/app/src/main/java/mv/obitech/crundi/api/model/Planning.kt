@@ -305,9 +305,25 @@ data class FactoryDetail(val factory: Factory, val validation: FactoryValidation
 @Serializable data class RunWait(val kind: String = "", val what: String = "", val startedAt: JsonElement? = null, val deadline: JsonElement? = null, val timeoutAt: JsonElement? = null, val tries: Int = 0, val last: String = "")
 
 /** Where the run is: one token per active branch of the flow. status: moving, work, answer, ask, wait, join, delegated, finished. */
-@Serializable data class RunToken(val id: String, val nodeId: String = "", val label: String = "", val status: String = "", val employeeId: String = "", val employee: String = "", val blocked: Boolean = false, val wait: RunWait? = null)
+@Serializable data class RunToken(
+    val id: String, val nodeId: String = "", val label: String = "", val status: String = "", val employeeId: String = "", val employee: String = "", val blocked: Boolean = false, val wait: RunWait? = null,
+    /** A job the Manager handed out (factory_delegate): the task, on a token that belongs to no step. */
+    val job: String? = null,
+)
 
-@Serializable data class RunEmployee(val chatId: String = "", val busy: String? = null, val queued: Int = 0, val retired: Boolean = false, val name: String = "")
+/** What a person is doing this second, from their chat (servers from 1.21: the tool in flight, thinking, writing). state: working, idle, ... */
+@Serializable data class RunActivity(val state: String = "", val text: String = "", val at: JsonElement? = null)
+
+@Serializable data class RunEmployee(
+    val chatId: String = "", val busy: String? = null, val queued: Int = 0, val retired: Boolean = false, val name: String = "",
+    /** Held by the Manager (not handed new work for now). */
+    val held: Boolean = false,
+    /** Missing from older servers: the live view then says "Starting" or "Deciding". */
+    val activity: RunActivity? = null,
+)
+
+/** Someone with work waiting for a free seat (the run's limit on people at once). */
+@Serializable data class RunSeat(val tokenId: String = "", val employeeId: String = "", val employee: String = "")
 
 /** A review finding. status: open, claimed, closed, dismissed. */
 @Serializable data class RunFinding(val id: String, val text: String = "", val where: String = "", val blocking: Boolean = false, val status: String = "open", val by: String = "", val reopened: Int = 0)
@@ -362,6 +378,7 @@ data class FactoryRun(
     val paused: JsonObject? = null,
     val error: String = "",
     val timeLeftMs: Long? = null,
+    val waitingForSeat: List<RunSeat> = emptyList(),
     // Only from /get:
     val history: List<RunHistoryItem> = emptyList(),
     /** The factory as it was when the run started: the graph to draw. */

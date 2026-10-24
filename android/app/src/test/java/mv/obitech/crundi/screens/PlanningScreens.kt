@@ -159,6 +159,5 @@ class PlanningScreens : ScreenshotTest() {
     @Test fun notesPanePicker() = pane("notes-pane-picker", PaneKind.Notes) { NotesListScreen(Load.Ready(notes), false, {}, "", {}) }
     @Test fun notesPanePage() = pane("notes-pane-page", PaneKind.Notes, PlanningFakes.page.title) { NotePageScreen(Load.Ready(NoteEditor(PlanningFakes.page))) }
     @Test fun mindmapPane() = pane("mindmap-pane", PaneKind.MindMap) { MindMapScreen(Load.Ready(mm), projects, "crundi") }
-    @Test fun factoriesPane() = pane("factories-pane", PaneKind.Factory) { FactoriesScreen(fdata, FactoriesTab.Runs, {}, "crundi") }
-    @Test fun factoriesPaneRun() = pane("factories-pane-run", PaneKind.Factory, PlanningFakes.run.factoryName) { FactoryRunScreen(Load.Ready(PlanningFakes.run)) }
+    // The Factory pane (the live graph during a run, the start page without one): FactoryPaneScreens.
 }
