@@ -61,8 +61,6 @@ import mv.obitech.crundi.api.model.ServerBrowser
 import mv.obitech.crundi.api.model.ServerBrowsers
 import mv.obitech.crundi.ui.browser.BrowserScreen
 import mv.obitech.crundi.ui.browser.BrowserUi
-import mv.obitech.crundi.ui.browser.BrowsersSection
-import mv.obitech.crundi.ui.browser.BrowsersSections
 import mv.obitech.crundi.ui.browser.BrzDevice
 import mv.obitech.crundi.ui.browser.ServerBrowsersScreen
 import mv.obitech.crundi.ui.browser.ServerBrowsersState
@@ -190,18 +188,13 @@ class WorkspaceScreens : ScreenshotTest() {
 
     private val page = BrowserUi(url = "https://dhivo.mv/", hint = null, canBack = true)
 
-    @Test fun browserFill() = shoot("browsers-phone") {
-        Column(Modifier.fillMaxSize()) {
-            BrowsersSections(BrowsersSection.Phone) {}
-            BrowserScreen(page, {}, {}, {}, {}, {}, {}) { FakePage(it) }
-        }
+    // The phone's own browser now lives only in the workbench Browser pane (the Browsers tab lists Claude's).
+    @Test fun browserFill() = shoot("browser-live") {
+        BrowserScreen(page, {}, {}, {}, {}, {}, {}) { FakePage(it) }
     }
 
-    @Test fun browserDevice() = shoot("browsers-phone-device") {
-        Column(Modifier.fillMaxSize()) {
-            BrowsersSections(BrowsersSection.Phone) {}
-            BrowserScreen(page.copy(device = 18, loading = true), {}, {}, {}, {}, {}, {}) { FakePage(it) }
-        }
+    @Test fun browserDevice() = shoot("browser-live-device") {
+        BrowserScreen(page.copy(device = 18, loading = true), {}, {}, {}, {}, {}, {}) { FakePage(it) }
     }
 
     @Test fun browserPicker() = shoot("browsers-device-picker") {
@@ -220,24 +213,15 @@ class WorkspaceScreens : ScreenshotTest() {
 
     @Test fun browsersServer() = shoot("browsers-server") {
         val list = serverBrowsers.browsers + ServerBrowser("crundi:login-check", "crundi", "login-check", "https://dev.faruhaan.com/login", 393, 852, "ready", on = "desktop")
-        Column(Modifier.fillMaxSize()) {
-            BrowsersSections(BrowsersSection.Server) {}
-            ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, browsers = list, places = BrowserPlaces(server = true, desktop = true), shots = mapOf("crundi:default" to Shot(loading = true))))
-        }
+        ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, browsers = list, places = BrowserPlaces(server = true, desktop = true), shots = mapOf("crundi:default" to Shot(loading = true))))
     }
 
     @Test fun browsersServerEmpty() = shoot("browsers-server-empty") {
-        Column(Modifier.fillMaxSize()) {
-            BrowsersSections(BrowsersSection.Server) {}
-            ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, places = BrowserPlaces(server = true)))
-        }
+        ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, places = BrowserPlaces(server = true)))
     }
 
     @Test fun browsersServerError() = shoot("browsers-server-error") {
-        Column(Modifier.fillMaxSize()) {
-            BrowsersSections(BrowsersSection.Server) {}
-            ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, error = "The server cannot be reached. Check the connection and try again."))
-        }
+        ServerBrowsersScreen(ServerBrowsersState("crundi", loading = false, error = "The server cannot be reached. Check the connection and try again."))
     }
 
     @Test fun browsersServerDevices() = shoot("browsers-server-devices") {

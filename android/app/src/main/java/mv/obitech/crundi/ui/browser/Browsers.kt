@@ -5,7 +5,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -28,7 +26,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,9 +44,7 @@ import mv.obitech.crundi.ui.components.BadgeKind
 import mv.obitech.crundi.ui.components.ButtonKind
 import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.components.CrundiCard
-import mv.obitech.crundi.ui.components.CrundiChip
 import mv.obitech.crundi.ui.components.CrundiDialog
-import mv.obitech.crundi.ui.components.CrundiDivider
 import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.components.EmptyState
 import mv.obitech.crundi.ui.components.ErrorState
@@ -66,11 +61,9 @@ import mv.obitech.crundi.ui.theme.Dimens
 import mv.obitech.crundi.ui.workspace.rememberToast
 
 /**
- * The Browsers tab, in two parts:
- * - **On this phone**: the interactive browser ([LiveBrowser]), the same as a Browser pane.
- * - **On the server**: the desktop's Browsers panel. These are the browsers Claude drives with
- *   browser_open, on this server or on a desktop app. Open one at a device size, send it to a URL,
- *   take a screenshot, or close it.
+ * The Browsers tab, the same as the web's: the browsers Claude drives with browser_open, on this
+ * server or on a desktop app. Open one at a device size, send it to a URL, take a screenshot, or
+ * close it. (The phone's own interactive browser, [LiveBrowser], lives in the workbench Browser pane.)
  */
 
 /** The desktop's DEVICE_PROFILES (the server browsers' sizes), grouped as its picker groups them. */
@@ -99,8 +92,6 @@ val DEFAULT_PROFILE = DEVICE_PROFILES.indexOfFirst { it.name == "iPhone 16 Pro" 
 /** A server browser's screenshot: being taken, taken, or failed. */
 data class Shot(val image: ImageBitmap? = null, val loading: Boolean = false, val error: String? = null)
 
-enum class BrowsersSection { Phone, Server }
-
 data class ServerBrowsersState(
     val project: String?,
     val loading: Boolean = true,
@@ -127,18 +118,6 @@ fun serverTarget(typed: String): String? {
 
 /** Where a server browser runs, in the web's words. */
 fun whereWords(b: ServerBrowser) = when (b.on) { "server" -> "on the server"; "desktop" -> "on the desktop app"; else -> "open" }
-
-/** The section switch at the top of the Browsers tab. */
-@Composable
-fun BrowsersSections(section: BrowsersSection, onSection: (BrowsersSection) -> Unit) {
-    Column(Modifier.fillMaxWidth().background(CrundiColors.BgPrimary)) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CrundiChip("On this phone", section == BrowsersSection.Phone, { onSection(BrowsersSection.Phone) }, icon = "smartphone")
-            CrundiChip("On the server", section == BrowsersSection.Server, { onSection(BrowsersSection.Server) }, icon = "server")
-        }
-        CrundiDivider()
-    }
-}
 
 /** The server's browsers: the toolbar to open one, then a card each. */
 @Composable
@@ -270,20 +249,6 @@ fun ServerBrowserCard(b: ServerBrowser, url: String, shot: Shot?, onUrl: (String
 /** The Browsers tab, live. */
 @Composable
 fun BrowsersRoute() {
-    var section by rememberSaveable { mutableStateOf(BrowsersSection.Phone) }
-    Column(Modifier.fillMaxSize()) {
-        BrowsersSections(section) { section = it }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            when (section) {
-                BrowsersSection.Phone -> LiveBrowser("tab")
-                BrowsersSection.Server -> ServerBrowsersRoute()
-            }
-        }
-    }
-}
-
-@Composable
-private fun ServerBrowsersRoute() {
     val services = LocalAppServices.current
     val api = services.api
     val toast = rememberToast()

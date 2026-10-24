@@ -293,7 +293,7 @@ private fun UrlField(value: String, onChange: (String) -> Unit, onGo: () -> Unit
 
 // ─── Live: the WebView ───
 
-/** Where a browser keeps its page and device on this phone, by [id] (the pane's cell id, or "tab"). */
+/** Where a browser keeps its page and device on this phone, by [id] (the pane's cell id). */
 private class BrowserMemory(ctx: Context, private val id: String) {
     private val prefs = ctx.getSharedPreferences("crundi.browser", Context.MODE_PRIVATE)
     var url: String
