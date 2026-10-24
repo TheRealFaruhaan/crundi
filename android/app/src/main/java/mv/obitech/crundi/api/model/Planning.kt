@@ -232,6 +232,9 @@ data class ChatScheduleItem(
 
 @Serializable data class FactorySummary(val id: String, val name: String = "", val description: String = "", val version: Int = 0, val createdAt: String = "", val updatedAt: String = "", val nodeCount: Int = 0, val employeeCount: Int = 0, val runnable: Boolean = false, val errorCount: Int = 0, val warningCount: Int = 0, val crTemplate: List<CrField> = emptyList())
 
+/** A skill this machine has (GET /api/skills): offered for pinning in the factory editor. */
+@Serializable data class SkillBrief(val name: String, val description: String = "", val scope: String = "")
+
 /** One section of a change request form. */
 @Serializable data class CrField(val id: String, val label: String = "", val hint: String = "", val required: Boolean = false, val list: Boolean = false)
 
@@ -244,6 +247,8 @@ data class ChatScheduleItem(
 @Serializable data class FactoryDecision(val kind: String = "yesno", val question: String = "", val options: List<Option> = emptyList(), val answeredBy: String? = null, val review: Boolean = false)
 @Serializable data class FactoryAsk(val prompt: String = "", val replies: List<Option> = emptyList())
 @Serializable data class FactoryWait(val kind: String = "time", val minutes: Double = 0.0, val at: String = "", val command: String = "", val every: Double = 0.0, val timeout: Double = 0.0, val what: String = "")
+/** A Join's pick-any decision ([forkId]): whose parallel branches meet here. */
+@Serializable data class FactoryJoin(val forkId: String = "")
 
 /**
  * A step of a factory's flow. [type]: start, manager, employee, decision,
@@ -261,6 +266,7 @@ data class FactoryNode(
     val decision: FactoryDecision? = null,
     val ask: FactoryAsk? = null,
     val wait: FactoryWait? = null,
+    val join: FactoryJoin? = null,
 )
 
 /** [kind] flow or note (a note edge feeds a node's "notein"). [maxRounds] 0 = no limit. */
@@ -274,12 +280,44 @@ data class FactoryMember(
     val model: String = "",
     val effort: String = "",
     val memory: String = "keep",
-    val tools: JsonObject? = null,
+    val tools: FactoryTools = FactoryTools(),
     val skills: List<String> = emptyList(),
+    /** Permission presets for this person only (the factory's apply to everyone). */
     val presets: List<String> = emptyList(),
 )
 
-/** A factory's definition (GET /api/factories/get). [settings] kept loose: the editor passes it back as it came. */
+/** Claude Code tool rules for one person: always allowed, never allowed. */
+@Serializable data class FactoryTools(val allow: List<String> = emptyList(), val deny: List<String> = emptyList())
+
+/**
+ * A factory's settings, every field src/factory-model.js keeps (normalizeFactory).
+ * Fields a newer server adds survive a save all the same: the editor saves
+ * over the server's own JSON (FactoryJson.forSave).
+ */
+@Serializable
+data class FactorySettings(
+    val managerMode: String = "normal",
+    val mergeMode: String = "ask",
+    val setupCommand: String = "",
+    val autoRecover: Boolean = false,
+    val teamMode: String = "ask",
+    val presets: List<String> = listOf("git-read", "tests"),
+    val rules: List<String> = emptyList(),
+    val managerRules: Boolean = true,
+    val crTemplate: List<CrField> = emptyList(),
+    val limits: FactoryLimits = FactoryLimits(),
+    /** The Manager's check-in, minutes (5 to 1440); 0: the Manager chooses. */
+    val tickMinutes: Int = 0,
+    val gatekeeper: FactoryGatekeeper = FactoryGatekeeper(),
+    val caps: FactoryCaps = FactoryCaps(),
+)
+
+/** How hard a run may use the person's Claude usage (normalizeLimits). */
+@Serializable data class FactoryLimits(val pauseAt5h: Int = 100, val pauseAtWeek: Int = 100, val maxParallel: Int = 0, val oneAtATimeAbove: Int = 0)
+@Serializable data class FactoryGatekeeper(val enabled: Boolean = false, val model: String = "haiku")
+@Serializable data class FactoryCaps(val maxHandoffs: Int = 200, val maxMinutes: Int = 480, val tokenBudget: Long = 0)
+
+/** A factory's definition (GET /api/factories/get). */
 @Serializable
 data class Factory(
     val id: String = "",
@@ -288,17 +326,21 @@ data class Factory(
     val version: Int = 0,
     val createdAt: String = "",
     val updatedAt: String = "",
-    val settings: JsonObject = JsonObject(emptyMap()),
+    val settings: FactorySettings = FactorySettings(),
     val roster: List<FactoryMember> = emptyList(),
     val nodes: List<FactoryNode> = emptyList(),
     val edges: List<FactoryEdge> = emptyList(),
 )
 
-@Serializable data class FactoryIssue(val code: String = "", val message: String = "", val fix: String = "", val nodeId: String? = null, val edgeId: String? = null, val employeeId: String? = null)
+/** A problem validateFactory found, and where: a step ([nodeId], or several: [nodeIds]), a connection, a person. */
+@Serializable data class FactoryIssue(val code: String = "", val message: String = "", val fix: String = "", val nodeId: String? = null, val edgeId: String? = null, val employeeId: String? = null, val nodeIds: List<String> = emptyList(), val handle: String? = null, val skill: String? = null)
 @Serializable data class FactoryValidation(val ok: Boolean = true, val errors: List<FactoryIssue> = emptyList(), val warnings: List<FactoryIssue> = emptyList())
 
-/** A factory and whether it can run. */
-data class FactoryDetail(val factory: Factory, val validation: FactoryValidation)
+/**
+ * A factory and whether it can run. [raw] is the definition exactly as the
+ * server sent it: saving goes over it, so nothing the app does not know is lost.
+ */
+data class FactoryDetail(val factory: Factory, val validation: FactoryValidation, val raw: JsonObject? = null)
 
 // ─── Factory runs ───
 

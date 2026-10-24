@@ -41,6 +41,14 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.composed
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onSizeChanged
@@ -56,6 +64,8 @@ import mv.obitech.crundi.api.model.Factory
 import mv.obitech.crundi.api.model.FactoryEdge
 import mv.obitech.crundi.api.model.FactoryNode
 import mv.obitech.crundi.api.model.FactoryRun
+import mv.obitech.crundi.api.model.Position
+import androidx.compose.foundation.gestures.detectTapGestures
 import mv.obitech.crundi.ui.components.CrundiIconButton
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.theme.CrundiColors
@@ -211,6 +221,29 @@ internal fun nodeBody(n: FactoryNode, f: Factory): String = when (n.type) {
 }
 
 /**
+ * The editor's hold on the graph ([FactoryGraph] edit). A tap on a step
+ * selects it (or, while connecting, connects to it); a long press and drag
+ * moves it; a long press without moving starts connecting from it. Each
+ * connection has a dot halfway along to tap it. Every callback is the
+ * editor's; the graph only reports.
+ */
+class GraphEdit(
+    val selectedEdge: String? = null,
+    /** Connecting from this step's output (step id to output): steps it may not lead to are dimmed. */
+    val connectFrom: Pair<String, String>? = null,
+    val canConnectTo: (String) -> Boolean = { true },
+    val onMove: (String, Position) -> Unit = { _, _ -> },
+    val onLongPress: (String) -> Unit = {},
+    val onEdge: (String) -> Unit = {},
+    val onBackground: () -> Unit = {},
+    /** The middle of what is on screen, in factory coordinates: where Add puts a step. */
+    val onViewCentre: (Position) -> Unit = {},
+    /** Centre the camera on this step whenever [focusKey] changes (going to an issue). */
+    val focusNode: String? = null,
+    val focusKey: Int = 0,
+)
+
+/**
  * A factory's flow, drawn as the desktop's viewer: steps as cards where the
  * editor put them, flow edges from out handles at the bottom to the next
  * step's top, note edges dashed amber from side to side. With a [run] the
@@ -226,19 +259,32 @@ fun FactoryGraph(
     follow: Boolean = false,
     /** Panned, zoomed or moved by hand: the pane stops following. */
     onManualMove: () -> Unit = {},
+    /** The factory editor: move, connect, select connections ([GraphEdit]). */
+    edit: GraphEdit? = null,
 ) {
     val view = remember(run, live) { RunView(run, live) }
     val nodes = factory.nodes
     if (nodes.isEmpty()) { Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("This factory has no steps yet.", style = CrundiType.Small) }; return }
-    val heights = remember(factory) { mutableStateMapOf<String, Float>() }
-    val minX = nodes.minOf { it.position.x }.toFloat(); val minY = nodes.minOf { it.position.y }.toFloat()
+    // Kept by factory, not by version: an edit must not forget how tall the steps are.
+    val heights = remember(factory.id) { mutableStateMapOf<String, Float>() }
+    val curMinX = nodes.minOf { it.position.x }.toFloat(); val curMinY = nodes.minOf { it.position.y }.toFloat()
+    // While editing the origin stays where it was when the factory opened, so
+    // moving or adding a step never shifts everything else on screen.
+    val origin = remember(factory.id, edit != null) { Offset(curMinX, curMinY) }
+    val minX = if (edit != null) origin.x else curMinX
+    val minY = if (edit != null) origin.y else curMinY
     val pad = 28f
+    /** The step being dragged, and how far (dp). */
+    var drag by remember { mutableStateOf<Pair<String, Offset>?>(null) }
     fun w(n: FactoryNode) = if (n.type == "start" || n.type == "end") 170f else 220f
-    fun x(n: FactoryNode) = n.position.x.toFloat() - minX + pad
-    fun y(n: FactoryNode) = n.position.y.toFloat() - minY + pad
+    fun x(n: FactoryNode) = n.position.x.toFloat() - minX + pad + (drag?.takeIf { it.first == n.id }?.second?.x ?: 0f)
+    fun y(n: FactoryNode) = n.position.y.toFloat() - minY + pad + (drag?.takeIf { it.first == n.id }?.second?.y ?: 0f)
     val byId = nodes.associateBy { it.id }
     val width = nodes.maxOf { x(it) + w(it) } + pad + 40f
     val height = nodes.maxOf { y(it) + (heights[it.id] ?: 80f) } + pad + 20f
+    // Left of and above the origin (only while editing): 0 in the viewer.
+    val left0 = min(0f, nodes.minOf { x(it) } - pad)
+    val top0 = min(0f, nodes.minOf { y(it) } - pad)
 
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -247,9 +293,10 @@ fun FactoryGraph(
     val density = LocalDensity.current.density
     fun fit() {
         if (box.width == 0) return
-        val s = min(box.width / (width * density), box.height / (height * density)).coerceIn(0.2f, 1.2f)
+        val cw = width - left0; val ch = height - top0
+        val s = min(box.width / (cw * density), box.height / (ch * density)).coerceIn(0.2f, 1.2f)
         scale = s
-        offset = Offset((box.width - width * density * s) / 2f, max(0f, (box.height - height * density * s) / 2f))
+        offset = Offset((box.width - cw * density * s) / 2f - left0 * density * s, max(0f, (box.height - ch * density * s) / 2f) - top0 * density * s)
     }
     /**
      * Readable, not everything: fitting a whole factory onto a phone made step
@@ -267,7 +314,27 @@ fun FactoryGraph(
         scale = s
         offset = Offset(box.width / 2f - cx, box.height * 0.4f - cy)
     }
-    LaunchedEffect(box, heights.size == nodes.size) { if (!follow && !fitted && box.width > 0 && heights.size == nodes.size) { focus(); fitted = true } }
+    val measured = nodes.all { it.id in heights }
+    LaunchedEffect(box, measured) { if (!follow && !fitted && box.width > 0 && measured) { focus(); fitted = true } }
+
+    // The editor: where the middle of the screen is, and going to a step.
+    if (edit != null) {
+        val report by androidx.compose.runtime.rememberUpdatedState(edit.onViewCentre)
+        LaunchedEffect(scale, offset, box) {
+            if (box.width == 0) return@LaunchedEffect
+            val cx = (box.width / 2f - offset.x) / (scale * density) - pad + minX
+            val cy = (box.height / 2f - offset.y) / (scale * density) - pad + minY
+            report(Position(cx.toDouble(), cy.toDouble()))
+        }
+        // Again when the canvas changes size (the sheet opening): the step stays in view.
+        LaunchedEffect(edit.focusKey, box) {
+            val at = edit.focusNode?.let { byId[it] } ?: return@LaunchedEffect
+            if (box.width == 0 || edit.focusKey == 0) return@LaunchedEffect
+            val s = max(scale, 0.9f)
+            scale = s
+            offset = Offset(box.width / 2f - (x(at) + w(at) / 2) * density * s, box.height * 0.35f - (y(at) + (heights[at.id] ?: 80f) / 2) * density * s)
+        }
+    }
 
     /**
      * Follow the work, as the web's fitView on the active steps (padding 0.45,
@@ -279,8 +346,8 @@ fun FactoryGraph(
      */
     val activeKey = view.activeIds().joinToString(",")
     val still = androidx.compose.ui.platform.LocalInspectionMode.current
-    LaunchedEffect(follow, activeKey, box, heights.size == nodes.size) {
-        if (!follow || box.width == 0 || heights.size != nodes.size) return@LaunchedEffect
+    LaunchedEffect(follow, activeKey, box, measured) {
+        if (!follow || box.width == 0 || !measured) return@LaunchedEffect
         val ids = activeKey.split(',').filter { it.isNotEmpty() }.mapNotNull { byId[it] }
         val (s1, o1) = if (ids.isEmpty()) {
             focus(); scale to offset
@@ -298,6 +365,8 @@ fun FactoryGraph(
         }
     }
 
+    val editBackground = androidx.compose.runtime.rememberUpdatedState(edit?.onBackground ?: {})
+    val editMove = androidx.compose.runtime.rememberUpdatedState<(String, Position) -> Unit>(edit?.onMove ?: { _, _ -> })
     Box(
         modifier.fillMaxSize().clipToBounds().background(CrundiColors.BgPrimary).onSizeChanged { box = it }
             .drawBehind {
@@ -307,6 +376,7 @@ fun FactoryGraph(
                     while (gx < size.width) { var gy = offset.y % step; while (gy < size.height) { drawCircle(CrundiColors.BorderSubtle, 1.dp.toPx(), Offset(gx, gy)); gy += step }; gx += step }
                 }
             }
+            .then(if (edit != null) Modifier.pointerInput(Unit) { detectTapGestures(onTap = { editBackground.value() }) } else Modifier)
             .pointerInput(Unit) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     onManualMove()
@@ -320,8 +390,28 @@ fun FactoryGraph(
             content = {
                 for (n in nodes) {
                     Box(Modifier.layoutId(n.id).width(w(n).dp).onSizeChanged { heights[n.id] = it.height / density }) {
-                        StepCard(n, factory, view, n.id == selected) { onSelect(if (selected == n.id) null else n.id) }
+                        if (edit == null) StepCard(n, factory, view, n.id == selected) { onSelect(if (selected == n.id) null else n.id) }
+                        else {
+                            val c = edit.connectFrom
+                            StepCard(
+                                n, factory, view, n.id == selected || c?.first == n.id, onClick = { onSelect(n.id) },
+                                dim = c != null && c.first != n.id && !edit.canConnectTo(n.id),
+                                gestures = Modifier.editGestures(
+                                    n.id, onTap = { onSelect(n.id) }, onLongPress = { edit.onLongPress(n.id) },
+                                    onDrag = { d -> drag = n.id to d },
+                                    onDragEnd = { d ->
+                                        drag = null
+                                        editMove.value(n.id, Position(n.position.x + d.x, n.position.y + d.y))
+                                    },
+                                ),
+                            )
+                        }
                     }
+                }
+                // A dot halfway along each connection, to tap it (the editor only).
+                if (edit != null) for (e in factory.edges) {
+                    if (byId[e.source] == null || byId[e.target] == null) continue
+                    Box(Modifier.layoutId("e:" + e.id)) { EdgeDot(e, e.id == edit.selectedEdge) { edit.onEdge(e.id) } }
                 }
             },
             modifier = Modifier
@@ -337,7 +427,7 @@ fun FactoryGraph(
                             val sx = (x(s) + w(s)) * d; val sy = (y(s) + (heights[s.id] ?: 80f) / 2) * d
                             val ex = x(t) * d; val ey = (y(t) + (heights[t.id] ?: 80f) / 2) * d
                             val path = Path().apply { moveTo(sx, sy); cubicTo(sx + 60 * d, sy, ex - 60 * d, ey, ex, ey) }
-                            drawPath(path, CrundiColors.Yellow, style = Stroke(1.6f * d, pathEffect = PathEffect.dashPathEffect(floatArrayOf(5 * d, 4 * d))))
+                            drawPath(path, if (edit?.selectedEdge == e.id) CrundiColors.Accent else CrundiColors.Yellow, style = Stroke((if (edit?.selectedEdge == e.id) 2.2f else 1.6f) * d, pathEffect = PathEffect.dashPathEffect(floatArrayOf(5 * d, 4 * d))))
                             continue
                         }
                         val hs = handlesOf(s, factory.edges)
@@ -348,7 +438,8 @@ fun FactoryGraph(
                         val ex = (x(t) + w(t) / 2) * d
                         val ey = y(t) * d
                         val loop = e.maxRounds > 0 || ey <= sy
-                        val color = when { taken -> CrundiColors.Green; loop -> CrundiColors.Sky; else -> CrundiColors.TextSecondary }
+                        val picked = edit?.selectedEdge == e.id
+                        val color = when { picked -> CrundiColors.Accent; taken -> CrundiColors.Green; loop -> CrundiColors.Sky; else -> CrundiColors.TextSecondary }
                         val path = Path()
                         if (ey > sy + 10 * d) {
                             val dy = (ey - sy) * 0.45f
@@ -359,12 +450,12 @@ fun FactoryGraph(
                             path.moveTo(sx, sy); path.cubicTo(sx, sy + 40 * d, lane, sy + 40 * d, lane, (sy + ey) / 2)
                             path.cubicTo(lane, ey - 40 * d, ex, ey - 40 * d, ex, ey)
                         }
-                        drawPath(path, color, style = Stroke((if (taken) 2.2f else 1.6f) * d))
+                        drawPath(path, color, style = Stroke((if (taken || picked) 2.2f else 1.6f) * d))
                         // Arrowhead into the target's top.
                         val a = 6 * d
                         val head = Path().apply { moveTo(ex, ey); lineTo(ex - a, ey - a * 1.4f); lineTo(ex + a, ey - a * 1.4f); close() }
                         drawPath(head, color)
-                        if (e.maxRounds > 0) {
+                        if (e.maxRounds > 0 && edit == null) {
                             // A small "max N" badge halfway.
                             drawRoundRect(CrundiColors.BgSecondary, Offset((sx + ex) / 2 - 22 * d, (sy + ey) / 2 - 8 * d), androidx.compose.ui.geometry.Size(44 * d, 16 * d), CornerRadius(8 * d))
                         }
@@ -372,8 +463,15 @@ fun FactoryGraph(
                 },
         ) { measurables, _ ->
             val placeables = measurables.map { it.layoutId as String to it.measure(Constraints()) }
+            val hts = placeables.filter { byId.containsKey(it.first) }.associate { it.first to it.second.height / density }
             layout((width * density).toInt(), (height * density).toInt()) {
                 for ((id, p) in placeables) {
+                    if (id.startsWith("e:")) {
+                        val e = factory.edges.firstOrNull { it.id == id.substring(2) } ?: continue
+                        val mid = edgeMid(e, byId, hts, factory.edges, ::x, ::y, ::w) ?: continue
+                        p.place((mid.x * density).toInt() - p.width / 2, (mid.y * density).toInt() - p.height / 2)
+                        continue
+                    }
                     val n = byId[id] ?: continue
                     p.place((x(n) * density).toInt(), (y(n) * density).toInt())
                 }
@@ -389,8 +487,80 @@ fun FactoryGraph(
     }
 }
 
+/** Halfway along a connection, in graph dp: where its dot goes (the curves' midpoints, as drawn). */
+private fun edgeMid(
+    e: FactoryEdge, byId: Map<String, FactoryNode>, hts: Map<String, Float>, edges: List<FactoryEdge>,
+    x: (FactoryNode) -> Float, y: (FactoryNode) -> Float, w: (FactoryNode) -> Float,
+): Offset? {
+    val s = byId[e.source] ?: return null
+    val t = byId[e.target] ?: return null
+    val hs = hts[s.id] ?: 80f; val ht = hts[t.id] ?: 80f
+    if (e.kind == "note") return Offset((x(s) + w(s) + x(t)) / 2, (y(s) + hs / 2 + y(t) + ht / 2) / 2)
+    val handles = handlesOf(s, edges)
+    val hi = handles.indexOfFirst { it.first == e.sourceHandle }.coerceAtLeast(0)
+    val sx = x(s) + w(s) * (hi + 0.5f) / max(1, handles.size)
+    val sy = y(s) + hs
+    val ex = x(t) + w(t) / 2; val ey = y(t)
+    return if (ey > sy + 10) Offset((sx + ex) / 2, (sy + ey) / 2) else Offset(max(x(s) + w(s), x(t) + w(t)) + 30, (sy + ey) / 2)
+}
+
+/** A connection's dot: its round limit when it has one, accent when selected. */
 @Composable
-private fun StepCard(n: FactoryNode, f: Factory, view: RunView, selected: Boolean, onClick: () -> Unit) {
+private fun EdgeDot(e: FactoryEdge, selected: Boolean, onClick: () -> Unit) {
+    val c = when { selected -> CrundiColors.Accent; e.kind == "note" -> CrundiColors.Yellow; e.maxRounds > 0 -> CrundiColors.Sky; else -> CrundiColors.TextSecondary }
+    Box(
+        Modifier.size(width = if (e.maxRounds > 0) 52.dp else 30.dp, height = 30.dp).clip(RoundedCornerShape(15.dp)).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (e.maxRounds > 0) Text(
+            "max ${e.maxRounds}", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = c),
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(CrundiColors.BgSecondary).border(Dimens.Hairline, c, RoundedCornerShape(8.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
+        )
+        else Box(Modifier.size(if (selected) 12.dp else 10.dp).clip(RoundedCornerShape(6.dp)).background(CrundiColors.BgSecondary).border(1.5.dp, c, RoundedCornerShape(6.dp)))
+    }
+}
+
+/**
+ * A step's touches in the editor: tap; long press and drag to move (the
+ * distance in dp, as it goes and at the end); long press and let go to
+ * connect from it. Panning the canvas takes a touch that moves before the
+ * long press.
+ */
+private fun Modifier.editGestures(key: String, onTap: () -> Unit, onLongPress: () -> Unit, onDrag: (Offset) -> Unit, onDragEnd: (Offset) -> Unit): Modifier = composed {
+    val tap by androidx.compose.runtime.rememberUpdatedState(onTap)
+    val long by androidx.compose.runtime.rememberUpdatedState(onLongPress)
+    val dragTo by androidx.compose.runtime.rememberUpdatedState(onDrag)
+    val dragEnd by androidx.compose.runtime.rememberUpdatedState(onDragEnd)
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    pointerInput(key) {
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            var up: androidx.compose.ui.input.pointer.PointerInputChange? = null
+            val r = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { up = waitForUpOrCancellation(); if (up != null) 1 else 2 } ?: 0
+            if (r == 1) { up?.consume(); tap(); return@awaitEachGesture }
+            if (r == 2) return@awaitEachGesture
+            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            var moved = Offset.Zero
+            var dragging = false
+            while (true) {
+                val ev = awaitPointerEvent()
+                val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                if (!c.pressed) { c.consume(); break }
+                val d = c.positionChange()
+                if (d != Offset.Zero) {
+                    moved += d
+                    if (!dragging && moved.getDistance() > viewConfiguration.touchSlop) dragging = true
+                    if (dragging) dragTo(moved / density)
+                    c.consume()
+                }
+            }
+            if (dragging) dragEnd(moved / density) else long()
+        }
+    }.semantics { onClick { tap(); true }; onLongClick { long(); true } }
+}
+
+@Composable
+private fun StepCard(n: FactoryNode, f: Factory, view: RunView, selected: Boolean, dim: Boolean = false, gestures: Modifier? = null, onClick: () -> Unit) {
     val look = lookOf(n.type)
     val state = view.state(n)
     val shape = RoundedCornerShape(10.dp)
@@ -404,7 +574,7 @@ private fun StepCard(n: FactoryNode, f: Factory, view: RunView, selected: Boolea
     Box(Modifier.padding(top = if (pill != null) 0.dp else 0.dp)) {
         Column(
             Modifier.fillMaxWidth()
-                .alpha(if (state == NodeState.Retired) 0.6f else 1f)
+                .alpha(if (dim) 0.35f else if (state == NodeState.Retired) 0.6f else 1f)
                 .drawBehind {
                     val ring = when { selected -> CrundiColors.AccentDim; state == NodeState.Active -> CrundiColors.GreenDim; else -> null }
                     if (ring != null) {
@@ -414,7 +584,7 @@ private fun StepCard(n: FactoryNode, f: Factory, view: RunView, selected: Boolea
                 }
                 .clip(shape).background(CrundiColors.BgCard)
                 .then(if (state == NodeState.Retired) Modifier.dashedBorder(border, 10.dp) else Modifier.border(if (selected || state == NodeState.Active) 1.5.dp else Dimens.Hairline, border, shape))
-                .clickable(onClick = onClick),
+                .then(gestures ?: Modifier.clickable(onClick = onClick)),
         ) {
             Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -91,12 +91,15 @@ object FactoryRoutes {
     const val RUN = "factories/run/{id}"
     const val DIFF = "factories/diff/{id}"
     const val FACTORY = "factories/factory/{id}"
+    const val EDIT = "factories/edit/{id}?focus={focus}"
     const val START = "factories/start?factory={factory}"
     const val TRIGGER = "factories/trigger?id={id}"
     private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
     fun run(id: String) = "factories/run/" + enc(id)
     fun diff(id: String) = "factories/diff/" + enc(id)
     fun factory(id: String) = "factories/factory/" + enc(id)
+    /** The editor; [focus] opens it at an issue's place (issueFocus). */
+    fun edit(id: String, focus: String? = null) = "factories/edit/" + enc(id) + "?focus=" + enc(focus.orEmpty())
     fun start(factoryId: String?) = "factories/start?factory=" + enc(factoryId.orEmpty())
     fun trigger(id: String?) = "factories/trigger?id=" + enc(id.orEmpty())
 }
@@ -119,6 +122,11 @@ class FactoriesCallbacks(
     val onCopy: (FactorySummary) -> Unit = {},
     val onDelete: (FactorySummary) -> Unit = {},
     val onUseTemplate: (FactoryTemplate) -> Unit = {},
+    val onEdit: (FactorySummary) -> Unit = {},
+    /** New factory: blank, from a template or a copy ([NewFactory]). */
+    val onCreate: (NewFactory) -> Unit = {},
+    val onExport: (FactorySummary) -> Unit = {},
+    val onImport: () -> Unit = {},
     val onOpenRun: (FactoryRun) -> Unit = {},
     val onOpenTrigger: (FactoryTrigger?) -> Unit = {},
     val onToggleTrigger: (FactoryTrigger) -> Unit = {},
@@ -127,6 +135,9 @@ class FactoriesCallbacks(
     val onRetry: () -> Unit = {},
 )
 
+/** What New factory makes: [from] is "blank", "template" ([id] a template) or "copy" ([id] a factory). */
+data class NewFactory(val name: String, val from: String = "blank", val id: String = "")
+
 // ═══ Front page ═══
 
 @Composable
@@ -134,19 +145,53 @@ fun FactoriesRoute(onOpenRunInPane: ((FactoryRun) -> Unit)? = null) {
     val api = LocalAppServices.current.api
     val nav = LocalNavigator.current
     val project = currentProject()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var tab by remember { mutableStateOf(FactoriesTab.Library) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var exporting by remember { mutableStateOf<Pair<String, String>?>(null) }
     val lib = rememberLoader(Unit, events = arrayOf("factories")) { api.factories.list() to runCatching { api.factories.templates() }.getOrDefault(emptyList()) }
     val runs = rememberLoader(Unit, events = arrayOf("factoryRun", "factories")) { api.factories.runs() }
     val triggers = rememberLoader(project, events = arrayOf("factories", "factoryRun")) { api.factories.triggers(project) }
     val cleanup = rememberLoader(tab == FactoriesTab.Cleanup) { if (tab == FactoriesTab.Cleanup) api.factories.cleanup() else Cleanup() }
     val actions = rememberActions { lib.refresh(); triggers.refresh(); cleanup.refresh() }
+    // Import, as the web's: a factory file (.factory.json) from the phone, saved as a draft if it needs fixing.
+    val importer = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) actions.run {
+            val text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } }
+                ?: throw ApiException(0, "That file could not be read.")
+            val d = api.factories.import(text)
+            notice = "Imported “${d.factory.name}”." + if (d.validation.ok) "" else " It is a draft: open it to fix ${d.validation.errors.size} problem${if (d.validation.errors.size == 1) "" else "s"}."
+        }
+    }
+    val saver = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val text = exporting?.second
+        exporting = null
+        if (uri != null && text != null) actions.run(refresh = false) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ctx.contentResolver.openOutputStream(uri)?.use { it.write(text.encodeToByteArray()) } }
+            notice = "Saved."
+        }
+    }
     val cb = remember {
         FactoriesCallbacks(
             onStart = { nav.to(FactoryRoutes.start(it)) },
             onOpenFactory = { nav.to(FactoryRoutes.factory(it.id)) },
             onCopy = { f -> actions.run { api.factories.duplicate(f.id) } },
             onDelete = { f -> actions.run { api.factories.delete(f.id) } },
-            onUseTemplate = { t -> actions.run { val d = api.factories.fromTemplate(t.id); nav.to(FactoryRoutes.factory(d.factory.id)) } },
+            onUseTemplate = { t -> actions.run { val d = api.factories.fromTemplate(t.id); notice = "“${t.name}” is in your factories now. Change it however you like."; nav.to(FactoryRoutes.edit(d.factory.id)) } },
+            onEdit = { nav.to(FactoryRoutes.edit(it.id)) },
+            onCreate = { n ->
+                actions.run {
+                    val name = n.name.trim().ifEmpty { null }
+                    val d = when (n.from) {
+                        "template" -> api.factories.fromTemplate(n.id, name)
+                        "copy" -> api.factories.duplicate(n.id, name)
+                        else -> api.factories.create(name ?: "New factory")
+                    }
+                    nav.to(FactoryRoutes.edit(d.factory.id))
+                }
+            },
+            onExport = { f -> actions.run(refresh = false) { exporting = FactoryFiles.fileName(f.name) to FactoryFiles.text(api.factories.export(f.id)) } },
+            onImport = { importer.launch(arrayOf("application/json", "text/plain", "application/octet-stream", "*/*")) },
             onOpenRun = { r -> onOpenRunInPane?.invoke(r) ?: nav.to(FactoryRoutes.run(r.id)) },
             onOpenTrigger = { nav.to(FactoryRoutes.trigger(it?.id)) },
             onToggleTrigger = { t -> actions.run { api.factories.saveTrigger(t.copy(enabled = !t.enabled)) } },
@@ -161,14 +206,38 @@ fun FactoriesRoute(onOpenRunInPane: ((FactoryRun) -> Unit)? = null) {
         runs = runs.load, triggers = triggers.load, cleanup = cleanup.load,
     )
     Box(Modifier.fillMaxSize()) {
-        FactoriesScreen(data, tab, { tab = it }, project, cb)
+        FactoriesScreen(data, tab, { tab = it }, project, cb, notice = notice, onNotice = { notice = null })
         ActionError(actions)
+    }
+    exporting?.let { (name, text) ->
+        CrundiDialog("Export factory", { exporting = null }, message = "A file with the team and the flow, to import on another Crundi. Its runs and triggers stay here.", dismiss = "Cancel") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                CrundiButton("Share", { exporting = null; FactoryFiles.share(ctx, name, text) }, icon = "share")
+                CrundiButton("Save as a file", { saver.launch(name) }, kind = ButtonKind.Primary, icon = "download")
+            }
+        }
+    }
+}
+
+/** A factory as a file, as the web's Export: pretty JSON, named after it. */
+object FactoryFiles {
+    private val pretty = kotlinx.serialization.json.Json { prettyPrint = true }
+    fun text(data: kotlinx.serialization.json.JsonObject): String = pretty.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), data)
+    fun fileName(name: String) = name.ifBlank { "factory" }.replace(Regex("[^a-zA-Z0-9-]+"), "-").lowercase() + ".factory.json"
+    fun share(ctx: android.content.Context, name: String, text: String) {
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("application/json")
+            .putExtra(android.content.Intent.EXTRA_SUBJECT, name).putExtra(android.content.Intent.EXTRA_TEXT, text)
+        runCatching { ctx.startActivity(android.content.Intent.createChooser(send, "Export $name").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
 }
 
 @Composable
-fun FactoriesScreen(data: FactoriesData, tab: FactoriesTab, onTab: (FactoriesTab) -> Unit, project: String?, cb: FactoriesCallbacks = FactoriesCallbacks(), now: Long = System.currentTimeMillis()) {
+fun FactoriesScreen(
+    data: FactoriesData, tab: FactoriesTab, onTab: (FactoriesTab) -> Unit, project: String?, cb: FactoriesCallbacks = FactoriesCallbacks(), now: Long = System.currentTimeMillis(),
+    notice: String? = null, onNotice: () -> Unit = {},
+) {
     var deleting by remember { mutableStateOf<FactorySummary?>(null) }
+    var creating by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             for (t in FactoriesTab.entries) {
@@ -177,8 +246,12 @@ fun FactoriesScreen(data: FactoriesData, tab: FactoriesTab, onTab: (FactoriesTab
             }
         }
         CrundiDivider()
+        if (notice != null) Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Banner(notice, Modifier.weight(1f), kind = BadgeKind.Good, icon = "check")
+            mv.obitech.crundi.ui.components.CrundiIconButton("x", onNotice, contentDescription = "Close")
+        }
         when (tab) {
-            FactoriesTab.Library -> LibraryTab(data, cb, now) { deleting = it }
+            FactoriesTab.Library -> LibraryTab(data, cb, now, onNew = { creating = true }) { deleting = it }
             FactoriesTab.Runs -> RunsTab(data.runs, cb, now)
             FactoriesTab.Triggers -> TriggersTab(data.triggers, data.factories.valueOrNull.orEmpty(), project, cb, now)
             FactoriesTab.Cleanup -> CleanupTab(data.cleanup, cb)
@@ -187,6 +260,45 @@ fun FactoriesScreen(data: FactoriesData, tab: FactoriesTab, onTab: (FactoriesTab
     deleting?.let { f ->
         CrundiDialog("Delete factory", { deleting = null }, message = "Delete “${f.name}”? Runs that already started keep their own copy.", confirm = "Delete factory", danger = true, onConfirm = { deleting = null; cb.onDelete(f) })
     }
+    if (creating) {
+        val form = remember { NewFactoryForm() }
+        PlanningSheet("New factory", { creating = false }) { NewFactoryFields(form, data.templates, data.factories.valueOrNull.orEmpty()) { creating = false; cb.onCreate(it) } }
+    }
+}
+
+/** What the New factory sheet is filling in. */
+@Stable
+class NewFactoryForm(name: String = "New factory", from: String = "blank", id: String = "") {
+    var name by mutableStateOf(name)
+    var from by mutableStateOf(from)
+    var id by mutableStateOf(id)
+}
+
+/** New factory: a name, and where it starts from: blank, a template, or a copy of one of yours. */
+@Composable
+fun ColumnScope.NewFactoryFields(form: NewFactoryForm, templates: List<FactoryTemplate>, factories: List<FactorySummary>, onCreate: (NewFactory) -> Unit) {
+    FieldLabel("Name")
+    CrundiTextField(form.name, { form.name = it.take(80) }, Modifier.fillMaxWidth(), placeholder = "New factory")
+    FieldLabel("Start from")
+    @Composable fun choice(from: String, id: String, title: String, detail: String?) {
+        val on = form.from == from && form.id == id
+        Row(
+            Modifier.fillMaxWidth().clip(Dimens.ShapeSm).background(CrundiColors.BgCard).border(if (on) 1.5.dp else Dimens.Hairline, if (on) CrundiColors.Accent else CrundiColors.Border, Dimens.ShapeSm)
+                .clickable { form.from = from; form.id = id; if (from != "blank" && (form.name.isBlank() || form.name == "New factory" || templates.any { it.name == form.name } || factories.any { "Copy of " + it.name == form.name })) form.name = if (from == "copy") "Copy of $title" else title }
+                .padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(Modifier.padding(top = 2.dp)) { PlanningCheckbox(on, { form.from = from; form.id = id }, 16.dp) }
+            Column(Modifier.weight(1f)) {
+                Text(title, style = CrundiType.Body.copy(fontWeight = FontWeight.Medium))
+                if (!detail.isNullOrEmpty()) Text(detail, style = CrundiType.Small, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+    choice("blank", "", "Blank", "Start, the Manager and End. Build the team and the flow yourself.")
+    if (templates.isNotEmpty()) { Text("Templates", style = CrundiType.Small.copy(color = CrundiColors.TextSecondary)); for (t in templates) choice("template", t.id, t.name, t.goodFor) }
+    if (factories.isNotEmpty()) { Text("A copy of", style = CrundiType.Small.copy(color = CrundiColors.TextSecondary)); for (f in factories) choice("copy", f.id, f.name, f.description) }
+    CrundiButton("Create and edit", { onCreate(NewFactory(form.name, form.from, form.id)) }, kind = ButtonKind.Primary, icon = "plus", modifier = Modifier.fillMaxWidth())
 }
 
 /** The desktop's "needs you": crashed, finishing, waiting, or waiting on something. */
@@ -197,24 +309,26 @@ private fun TabBody(content: @Composable ColumnScope.() -> Unit) =
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
 
 @Composable
-private fun LibraryTab(data: FactoriesData, cb: FactoriesCallbacks, now: Long, onDelete: (FactorySummary) -> Unit) {
+private fun LibraryTab(data: FactoriesData, cb: FactoriesCallbacks, now: Long, onNew: () -> Unit, onDelete: (FactorySummary) -> Unit) {
     when (val l = data.factories) {
         is Load.Loading -> LoadingState(text = "Loading factories")
         is Load.Failed -> ErrorState(l.message, onRetry = cb.onRetry)
         is Load.Ready -> TabBody {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Your factories", style = CrundiType.Heading, modifier = Modifier.weight(1f))
-                CrundiButton("Start one", { cb.onStart(null) }, kind = ButtonKind.Primary, icon = "play", enabled = l.value.any { it.runnable })
+            Text("Your factories", style = CrundiType.Heading)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                CrundiButton("New factory", onNew, kind = ButtonKind.Primary, icon = "plus")
+                CrundiButton("Import", cb.onImport, kind = ButtonKind.Ghost, icon = "upload")
+                CrundiButton("Start one", { cb.onStart(null) }, icon = "play", enabled = l.value.any { it.runnable })
             }
             if (l.value.isEmpty()) Text(
-                "No factories of your own yet. A factory is a team: a Manager who owns the change request and employees with personas, wired as a flow. Start from a template below.",
+                "No factories of your own yet. A factory is a team: a Manager who owns the change request and employees with personas, wired together as a flow of steps and decisions. Start from one of the templates below, build your own with New factory, or ask any Claude chat to build one for you.",
                 style = CrundiType.Small,
             )
             for (f in l.value) FactoryCard(f, cb, now, onDelete)
             if (data.templates.isNotEmpty()) {
                 Spacer(Modifier.height(6.dp))
                 Text("Templates", style = CrundiType.Heading)
-                Text("Modelled on how real teams work. Use one as it is, or copy it and change it on the desktop.", style = CrundiType.Small)
+                Text("Modelled on how real teams work. Use one as it is, copy it and change it to fit how your team works, or build your own from scratch.", style = CrundiType.Small)
                 for (t in data.templates) CrundiCard(Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(t.name, style = CrundiType.Body.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
@@ -242,9 +356,11 @@ private fun FactoryCard(f: FactorySummary, cb: FactoriesCallbacks, now: Long, on
             "${f.employeeCount} people · ${f.nodeCount} steps · edited ${ago(f.updatedAt, now)}",
             style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans), modifier = Modifier.padding(top = 4.dp),
         )
-        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            CrundiButton("Start", { cb.onStart(f.id) }, kind = ButtonKind.Primary, icon = "play", enabled = f.runnable)
+        FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            CrundiButton("Edit", { cb.onEdit(f) }, kind = ButtonKind.Primary, icon = "pencil")
+            CrundiButton("Start", { cb.onStart(f.id) }, icon = "play", enabled = f.runnable)
             CrundiButton("Copy", { cb.onCopy(f) }, kind = ButtonKind.Ghost, icon = "copy")
+            CrundiButton("Export", { cb.onExport(f) }, kind = ButtonKind.Ghost, icon = "download")
             CrundiButton("Delete", { onDelete(f) }, kind = ButtonKind.Danger, icon = "trash")
         }
         if (!f.runnable) Text("Fix it in the editor first.", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans), modifier = Modifier.padding(top = 4.dp))
@@ -415,6 +531,7 @@ fun FactoryDetailRoute(id: String) {
     Box(Modifier.fillMaxSize()) {
         FactoryDetailScreen(
             loader.load, onBack = { nav.back() }, onStart = { nav.to(FactoryRoutes.start(id)) },
+            onEdit = { focus -> nav.to(FactoryRoutes.edit(id, focus)) },
             onCopy = { actions.run { val d = api.factories.duplicate(id); nav.to(FactoryRoutes.factory(d.factory.id)) } },
             onDelete = { deleting = true }, onRetry = { loader.refresh() },
         )
@@ -427,12 +544,19 @@ fun FactoryDetailRoute(id: String) {
 }
 
 @Composable
-fun FactoryDetailScreen(d: Load<FactoryDetail>, onBack: () -> Unit = {}, onStart: () -> Unit = {}, onCopy: () -> Unit = {}, onDelete: () -> Unit = {}, onRetry: () -> Unit = {}) {
+fun FactoryDetailScreen(
+    d: Load<FactoryDetail>, onBack: () -> Unit = {}, onStart: () -> Unit = {}, onCopy: () -> Unit = {}, onDelete: () -> Unit = {}, onRetry: () -> Unit = {},
+    /** Open the editor, at an issue's place when one was tapped (issueFocus; "" for none). */
+    onEdit: (String) -> Unit = {},
+) {
     var selected by remember { mutableStateOf<String?>(null) }
     val f = d.valueOrNull
     Column(Modifier.fillMaxSize()) {
         TopBar(f?.factory?.name ?: "Factory", subtitle = f?.let { "${it.factory.roster.size} people · ${it.factory.nodes.size} steps · version ${it.factory.version}" }, onBack = onBack) {
-            if (f != null) CrundiButton("Start", onStart, kind = ButtonKind.Primary, icon = "play", enabled = f.validation.ok, modifier = Modifier.padding(end = 8.dp))
+            if (f != null) {
+                CrundiButton("Edit", { onEdit("") }, kind = ButtonKind.Ghost, icon = "pencil")
+                CrundiButton("Start", onStart, kind = ButtonKind.Primary, icon = "play", enabled = f.validation.ok, modifier = Modifier.padding(end = 8.dp))
+            }
         }
         when (d) {
             is Load.Loading -> LoadingState()
@@ -457,8 +581,8 @@ fun FactoryDetailScreen(d: Load<FactoryDetail>, onBack: () -> Unit = {}, onStart
                     val issues = d.value.validation.errors.map { it to true } + d.value.validation.warnings.map { it to false }
                     if (issues.isNotEmpty()) {
                         SectionHeader("Issues", Modifier.padding(horizontal = 0.dp))
-                        for ((i, err) in issues) Banner(i.message + if (i.fix.isNotEmpty()) " ${i.fix}" else "", Modifier.fillMaxWidth(), kind = if (err) BadgeKind.Bad else BadgeKind.Warn, icon = "alert-triangle")
-                        Text("Fix these in the factory editor on the desktop.", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans))
+                        for ((i, err) in issues) Banner(i.message + if (i.fix.isNotEmpty()) " ${i.fix}" else "", Modifier.fillMaxWidth().clip(Dimens.ShapeSm).clickable { onEdit(issueFocus(i)) }, kind = if (err) BadgeKind.Bad else BadgeKind.Warn, icon = "alert-triangle")
+                        Text("Tap one to fix it in the editor.", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans))
                     }
                     SectionHeader("Team", Modifier.padding(horizontal = 0.dp))
                     for (m in d.value.factory.roster) Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(vertical = 4.dp)) {

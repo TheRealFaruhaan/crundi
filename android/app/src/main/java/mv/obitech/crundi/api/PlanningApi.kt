@@ -125,21 +125,27 @@ class SchedulesApi internal constructor(private val rpc: Rpc) {
 class FactoriesApi internal constructor(private val rpc: Rpc) {
     suspend fun list(): List<FactorySummary> = rpc.read(rpc.get("/api/factories"), "factories", emptyList())
     suspend fun templates(): List<FactoryTemplate> = rpc.read(rpc.get("/api/factory-templates"), "templates", emptyList())
-    suspend fun get(id: String): FactoryDetail { val o = rpc.get("/api/factories/get", mapOf("id" to id)); return FactoryDetail(rpc.read(o, "factory"), rpc.read(o, "validation", FactoryValidation())) }
+    suspend fun get(id: String): FactoryDetail = detail(rpc.get("/api/factories/get", mapOf("id" to id)))
 
-    private suspend fun lib(action: String, vararg f: Pair<String, Any?>): FactoryDetail {
-        val o = rpc.post("/api/factories", mapOf("action" to action, *f))
-        return FactoryDetail(rpc.read(o, "factory"), rpc.read(o, "validation", FactoryValidation()))
-    }
+    private suspend fun lib(action: String, vararg f: Pair<String, Any?>): FactoryDetail = detail(rpc.post("/api/factories", mapOf("action" to action, *f)))
+
+    private fun detail(o: JsonObject) = FactoryDetail(rpc.read(o, "factory"), rpc.read(o, "validation", FactoryValidation()), o["factory"] as? JsonObject)
     suspend fun create(name: String): FactoryDetail = lib("create", "name" to name)
     suspend fun fromTemplate(templateId: String, name: String? = null): FactoryDetail = lib("fromTemplate", "templateId" to templateId, "name" to name)
     suspend fun duplicate(id: String, name: String? = null): FactoryDetail = lib("duplicate", "id" to id, "name" to name)
-    /** Save an edited definition. A newer version on the server: ApiException whose body has conflict=true. */
-    suspend fun save(factory: Factory): FactoryDetail = lib("save", "id" to factory.id, "definition" to CrundiJson.encodeToJsonElement(factory), "baseVersion" to factory.version)
+    /**
+     * Save an edited definition over [raw] (the server's last copy, so fields
+     * this app does not know survive: [FactoryJson]), as of [baseVersion].
+     * A newer version on the server: ApiException whose body has conflict=true.
+     */
+    suspend fun save(factory: Factory, raw: JsonObject? = null, baseVersion: Int = factory.version): FactoryDetail =
+        lib("save", "id" to factory.id, "definition" to FactoryJson.forSave(factory, raw), "baseVersion" to baseVersion)
     suspend fun delete(id: String) { rpc.post("/api/factories", mapOf("action" to "delete", "id" to id)) }
     /** The factory as a file to share: {format, formatVersion, factory}. */
     suspend fun export(id: String): JsonObject = rpc.read(rpc.get("/api/factories/export", mapOf("id" to id)), "data")
     suspend fun import(data: String): FactoryDetail = lib("import", "data" to data)
+    /** The skills this machine has (GET /api/skills), for the editor's skill fields. */
+    suspend fun skills(): List<mv.obitech.crundi.api.model.SkillBrief> = rpc.read(rpc.get("/api/skills"), "skills", emptyList())
 
     // ─── Runs ───
     suspend fun runs(project: String? = null): List<FactoryRun> = rpc.read(rpc.get("/api/factory-runs", mapOf("project" to project)), "runs", emptyList())
