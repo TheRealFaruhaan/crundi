@@ -90,6 +90,16 @@ object PlanningFakes {
     )
 
     // ─── Schedules ───
+    /** "When called" (server 1.21.1): a Grafana alert looked into by one ongoing chat, by key; and a signed one. */
+    val hookKey = Schedule("a1b2c3d4e5f60718", "Grafana alerts", "crundi", true, "Indian/Maldives",
+        ScheduleAction("chat", prompt = "Look into this alert: {{payload.commonLabels.alertname}} on {{payload.commonLabels.instance}}", mode = "normal", model = "sonnet", session = "resume", sessionId = "8441d374-fd1a-4a7e-9c55-0d2a7b1e6f3c"),
+        ScheduleWhen("webhook", "09:00"), webhook = HookSettings("Zk3pQ9vX2mT7wL5nR8yB1cD4fG6hJ0kA", "s3cr3tS1gn1ngK3yF0rGr4f4n4", "key", "x-crundi-signature", "", "{{payload.groupKey}}"),
+        lastRun = ago(42))
+    val hookSigned = hookKey.copy(id = "b2c3d4e5f6071829", name = "Deploy hook",
+        action = ScheduleAction("service", serviceKey = "crundi:web", op = "start"),
+        webhook = HookSettings("Zk3pQ9vX2mT7wL5nR8yB1cD4fG6hJ0kA", "Qm9yZ2hlcnRzLXNpZ25pbmctc2VjcmV0", "signature", "x-grafana-alerting-signature", "x-grafana-alerting-signature-timestamp", "{{headers.x-request-id}}"),
+        lastRun = null)
+
     val schedules = Schedules(
         listOf(
             Schedule("s1", "Morning review", "crundi", true, "Indian/Maldives", ScheduleAction("chat", prompt = "Review yesterday's commits and list anything risky", mode = "normal", model = "opus"),
@@ -99,6 +109,7 @@ object PlanningFakes {
             Schedule("s3", "Restart docs", "crundi", false, "Indian/Maldives", ScheduleAction("service", serviceKey = "crundi:docs", op = "toggle"), ScheduleWhen("once", "23:00", "2026-10-25")),
             Schedule("s4", "Weekly tidy", "dhivo-socials", true, "Indian/Maldives", ScheduleAction("agent", mode = "skip", model = "sonnet", effort = "high", session = "continue", prompt = "/loop tidy the content calendar"),
                 ScheduleWhen("recurring", "18:00", days = listOf(5)), listOf(ScheduleCondition("terminals", op = "below", value = 1.0), ScheduleCondition("kanban", taskId = "t4", status = "todo"))),
+            hookKey, hookSigned,
         ),
         listOf(ScheduleServiceChoice("crundi:docs", "docs", "crundi", "running"), ScheduleServiceChoice("crundi:web", "web", "crundi", "stopped")),
     )
@@ -212,7 +223,12 @@ object PlanningFakes {
             cr = TriggerCr("Polish pass {{date}}", mapOf("goal" to "Fix the open nits")), mergeMode = "ask", ifBusy = "skip",
             history = listOf(TriggerHistory(ts(60 * 20), "started", "schedule", "run_prev"))),
         FactoryTrigger("trg_1b2c3d4e5f60", "Cards to the team", false, "crundi", "fac_fix", "kanban", kanban = TriggerKanban("todo"), cr = TriggerCr("{{card.title}}")),
-        FactoryTrigger("trg_2c3d4e5f6071", "From GitHub issues", true, "crundi", "fac_fix", "webhook", webhook = TriggerWebhook("k7Hq2pX9"), cr = TriggerCr("{{body.title}}")),
+        // As a server before 1.21.1 sends it: the key and nothing else.
+        FactoryTrigger("trg_2c3d4e5f6071", "From GitHub issues", true, "crundi", "fac_fix", "webhook", webhook = HookSettings("k7Hq2pX9"), cr = TriggerCr("{{body.title}}")),
+        // And as 1.21.1 does: signed, with an idempotency key, telling the Manager.
+        FactoryTrigger("trg_3d4e5f607182", "Grafana to the team", true, "crundi", "fac_fix", "webhook",
+            webhook = HookSettings("k7Hq2pX9rT4u", "Z3JhZmFuYS1zaWduaW5nLXNlY3JldA", "signature", "x-grafana-alerting-signature", "x-grafana-alerting-signature-timestamp", "{{payload.groupKey}}"),
+            cr = TriggerCr("Alert: {{payload.commonLabels.alertname}}", mapOf("goal" to "{{payload.message}}")), ifBusy = "manager", seenCount = 3),
     )
 
     val cleanup = Cleanup(listOf(

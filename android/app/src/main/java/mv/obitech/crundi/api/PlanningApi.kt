@@ -108,9 +108,16 @@ class SchedulesApi internal constructor(private val rpc: Rpc) {
     /** A chat job set to "resume": make its chat now, so there is a session to resume. Save with [update] first. */
     suspend fun provisionChat(id: String): Schedule = rpc.read(rpc.post("/api/schedules", mapOf("action" to "provisionChat", "id" to id)), "schedule")
 
+    /**
+     * A webhook schedule's new key or secret ([which]: key or secret): calls
+     * made with the old one stop working. Server 1.21.1.
+     */
+    suspend fun rotateHook(id: String, which: String): Schedule = rpc.read(rpc.post("/api/schedules", mapOf("action" to "rotateHook", "id" to id, "which" to which)), "schedule")
+
+    /** What a save sends: webhook only when there is one (the server merges it with what it has, and makes the key and secret itself). */
     private fun body(s: Schedule): JsonObject {
-        val o = CrundiJson.encodeToJsonElement(s) as JsonObject
-        return JsonObject(o.filterKeys { it in setOf("name", "project", "enabled", "tz", "action", "when", "conditions") })
+        val o = CrundiJson.encodeToJsonElement(s.copy(webhook = s.webhook?.forSave())) as JsonObject
+        return JsonObject(o.filterKeys { it in setOf("name", "project", "enabled", "tz", "action", "when", "conditions", "webhook") })
     }
 }
 
@@ -169,10 +176,10 @@ class FactoriesApi internal constructor(private val rpc: Rpc) {
 
     // ─── Triggers ───
     suspend fun triggers(project: String? = null): List<FactoryTrigger> = rpc.read(rpc.get("/api/factory-triggers", mapOf("project" to project)), "triggers", emptyList())
-    suspend fun saveTrigger(t: FactoryTrigger): FactoryTrigger = rpc.read(rpc.post("/api/factory-triggers", mapOf("action" to "save", "trigger" to CrundiJson.encodeToJsonElement(t))), "trigger")
+    suspend fun saveTrigger(t: FactoryTrigger): FactoryTrigger = rpc.read(rpc.post("/api/factory-triggers", mapOf("action" to "save", "trigger" to CrundiJson.encodeToJsonElement(t.copy(webhook = t.webhook?.forSave())))), "trigger")
     suspend fun deleteTrigger(id: String) { rpc.post("/api/factory-triggers", mapOf("action" to "delete", "id" to id)) }
-    /** A webhook trigger's new key. */
-    suspend fun rotateTrigger(id: String): FactoryTrigger = rpc.read(rpc.post("/api/factory-triggers", mapOf("action" to "rotate", "id" to id)), "trigger")
+    /** A webhook trigger's new key, or ([which] secret, server 1.21.1) its new secret. */
+    suspend fun rotateTrigger(id: String, which: String = "key"): FactoryTrigger = rpc.read(rpc.post("/api/factory-triggers", mapOf("action" to "rotate", "id" to id, "which" to which.takeIf { it != "key" })), "trigger")
     /** Fire it now. Answers the server's word: run, queued or skipped. */
     suspend fun runTrigger(id: String): JsonObject = rpc.post("/api/factory-triggers", mapOf("action" to "run", "id" to id))
 

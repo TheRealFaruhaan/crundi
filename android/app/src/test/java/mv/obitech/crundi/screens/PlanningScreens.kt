@@ -91,6 +91,18 @@ class PlanningScreens : ScreenshotTest() {
     @Test fun schedulesEditService() = shoot("schedules-edit-service") {
         ScheduleEditScreen(Load.Ready(ScheduleForm(sched.schedules[2])), projects, sched.services, PlanningFakes.board, message = "Pick at least one day")
     }
+    // "When called" (server 1.21.1): a key in the URL, then a signed one; and as an older server leaves it.
+    @Test fun schedulesWebhookKey() = shoot("schedules-webhook-key") {
+        ScheduleEditScreen(Load.Ready(ScheduleForm(PlanningFakes.hookKey)), projects, sched.services, PlanningFakes.board, hooks = true, serverHost = "dev.faruhaan.com")
+    }
+    @Test fun schedulesWebhookSigned() = shoot("schedules-webhook-signed") {
+        ScheduleEditScreen(Load.Ready(ScheduleForm(PlanningFakes.hookSigned)), projects, sched.services, PlanningFakes.board, hooks = true, serverHost = "dev.faruhaan.com")
+    }
+    @Test fun schedulesWebhookNew() = shoot("schedules-webhook-new") {
+        val f = ScheduleForm(ScheduleForm.blank("crundi")).apply { name = "Grafana alerts"; pickWhen("webhook") }
+        ScheduleEditScreen(Load.Ready(f), projects, sched.services, PlanningFakes.board, hooks = true, serverHost = "dev.faruhaan.com")
+    }
+    @Test fun schedulesListWebhookRow() = shoot("schedules-list-webhook") { SchedulesScreen(Load.Ready(sched.copy(schedules = listOf(PlanningFakes.hookKey, PlanningFakes.hookSigned))), "crundi", true, {}) }
     @Test fun schedulesNew() = shoot("schedules-new") { ScheduleEditScreen(Load.Ready(ScheduleForm(ScheduleForm.blank("crundi"))), projects, sched.services, PlanningFakes.board) }
 
     // ─── Factories ───
@@ -113,6 +125,11 @@ class PlanningScreens : ScreenshotTest() {
     }
     @Test fun factoryTrigger() = shoot("factories-trigger") { TriggerEditScreen(Load.Ready(PlanningFakes.triggers[0] to PlanningFakes.summaries), "dev.faruhaan.com") }
     @Test fun factoryTriggerWebhook() = shoot("factories-trigger-webhook") { TriggerEditScreen(Load.Ready(PlanningFakes.triggers[2] to PlanningFakes.summaries), "dev.faruhaan.com") }
+    @Test fun factoryTriggerWebhookKey() = shoot("factories-trigger-webhook-key") {
+        val t = PlanningFakes.triggers[3].let { it.copy(webhook = it.webhook!!.copy(auth = "key"), ifBusy = "manager") }
+        TriggerEditScreen(Load.Ready(t to PlanningFakes.summaries), "dev.faruhaan.com", hooks = true)
+    }
+    @Test fun factoryTriggerWebhookSigned() = shoot("factories-trigger-webhook-signed") { TriggerEditScreen(Load.Ready(PlanningFakes.triggers[3] to PlanningFakes.summaries), "dev.faruhaan.com", hooks = true) }
 
     // ─── Sheets (drawn without their window) ───
     private fun sheet(name: String, title: String, subtitle: String? = null, under: @androidx.compose.runtime.Composable () -> Unit, body: @androidx.compose.runtime.Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) = shoot(name) {

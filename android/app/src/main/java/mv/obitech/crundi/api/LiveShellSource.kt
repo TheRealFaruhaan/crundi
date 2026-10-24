@@ -52,6 +52,8 @@ class LiveShellSource(
     private val username: String,
     private val prefs: SharedPreferences?,
     private val key: String,
+    /** The server's version and capabilities from its handshake (ShellData.serverVersion, capabilities). */
+    private val about: () -> Pair<String, Set<String>> = { "" to emptySet() },
     scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : ShellSource {
     private val chosen = MutableStateFlow(prefs?.getString(key, null))
@@ -110,6 +112,7 @@ class LiveShellSource(
                 },
             )
         }
+        val server = runCatching(about).getOrDefault("" to emptySet())
         val waiting = st?.factoryRuns.orEmpty().count { needsYou(it.status, it.waitingOn) }
         val current = pick?.takeIf { a -> projects.isEmpty() || projects.any { it.alias == a } } ?: projects.firstOrNull()?.alias
         return ShellData(
@@ -117,6 +120,7 @@ class LiveShellSource(
             projects = projects, currentProject = current, approvals = ap.count, usage = glance(us),
             tabBadges = if (waiting > 0) mapOf("factories" to waiting) else emptyMap(),
             working = st?.terminals.orEmpty().any { !it.isParked && it.state == mv.obitech.crundi.api.model.AgentState.Working },
+            serverVersion = server.first, capabilities = server.second,
         )
     }
 

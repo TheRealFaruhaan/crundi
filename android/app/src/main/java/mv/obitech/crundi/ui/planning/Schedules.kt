@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import mv.obitech.crundi.api.ApiException
+import mv.obitech.crundi.api.model.HookSettings
 import mv.obitech.crundi.api.model.KanbanBoard
 import mv.obitech.crundi.api.model.Schedule
 import mv.obitech.crundi.api.model.ScheduleAction
@@ -83,8 +84,9 @@ private val DAY_SHORT = listOf("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa")
 val SCHED_MODELS = listOf("", "opus", "sonnet", "haiku", "fable", "mythos")
 val SCHED_EFFORTS = listOf("", "low", "medium", "high", "xhigh", "max")
 
-/** The desktop's terse "when": "Daily 09:00", "Mo,We,Fr 09:00", "2026-10-25 23:00". */
+/** The desktop's terse "when": "Daily 09:00", "Mo,We,Fr 09:00", "2026-10-25 23:00", "When called". */
 fun whenSummary(w: ScheduleWhen?): String {
+    if (w?.mode == "webhook") return "When called"
     if (w == null || w.time.isBlank()) return "no time set"
     if (w.mode == "once") return "${w.date.ifBlank { "(no date)" }} ${w.time}"
     if (w.days.isEmpty()) return "no days · ${w.time}"
@@ -204,7 +206,7 @@ private fun ScheduleRow(s: Schedule, services: List<ScheduleServiceChoice>, show
             if (sum.isNotEmpty()) Text(sum, style = CrundiType.Small, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (s.action.kind in setOf("agent", "chat") && s.action.prompt.isNotBlank()) Text(s.action.prompt, style = CrundiType.Small.copy(color = CrundiColors.TextMuted, fontFamily = CrundiType.Mono, fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SmallChip(whenSummary(s.`when`), "clock")
+                SmallChip(whenSummary(s.`when`), if (s.calledNotTimed) "link" else "clock")
                 for (c in s.conditions) SmallChip(conditionSummary(c))
             }
             parseInstant(s.lastRun)?.let { Text("last run ${shortDateTime(it.toEpochMilli())}", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 10.5.sp)) }
@@ -249,15 +251,31 @@ class ScheduleForm(s: Schedule) {
     var serviceKey by mutableStateOf(s.action.serviceKey)
     var op by mutableStateOf(s.action.op.ifEmpty { "start" })
     val conditions = mutableStateListOf(*s.conditions.toTypedArray())
+    /** "When called": how calls prove who they are from, the key and secret as the server last said. */
+    var hook by mutableStateOf(Webhooks.filled(s.webhook))
     private val base = s
+
+    val calledNotTimed get() = whenMode == "webhook"
+
+    /** Pick One-time, Recurring or When called. A webhook runs a background chat or a service only, so it moves an agent or command job to a chat. */
+    fun pickWhen(mode: String) {
+        whenMode = mode
+        if (mode == "webhook" && kind !in Webhooks.ACTIONS) kind = "chat"
+    }
 
     /** The first thing missing, in the desktop's words, or null. */
     fun problem(services: List<ScheduleServiceChoice>): String? = when {
         name.isBlank() -> "Give the schedule a name"
         project.isBlank() -> "Pick a project"
+        calledNotTimed && kind !in Webhooks.ACTIONS -> "A webhook can run a background chat or a service action"
+        calledNotTimed -> actionProblem()
         !Regex("^\\d{1,2}:\\d{2}$").matches(time) -> "Set a time"
         whenMode == "once" && !Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(date) -> "Pick a date for the one-time run"
         whenMode == "recurring" && days.isEmpty() -> "Pick at least one day"
+        else -> actionProblem()
+    }
+
+    private fun actionProblem(): String? = when {
         kind == "agent" && prompt.isBlank() -> "Agent needs a prompt"
         kind == "chat" && prompt.isBlank() -> "The chat needs a prompt"
         kind == "command" && command.isBlank() -> "Enter a command"
@@ -265,14 +283,32 @@ class ScheduleForm(s: Schedule) {
         else -> null
     }
 
+    /**
+     * What a save sends. A timed WHEN only when One-time or Recurring is
+     * picked; When called keeps the stored time, date and days; a mode this
+     * app does not know goes back as it came. The webhook settings go back
+     * whenever the schedule had them or is called, edited where the editor
+     * edits them (the server merges them with what it has); an older server
+     * that sent none gets none.
+     */
     fun toSchedule(tz: String) = base.copy(
         name = name.trim(), project = project, enabled = enabled, tz = tz,
-        `when` = ScheduleWhen(whenMode, time, if (whenMode == "once") date else "", if (whenMode == "recurring") days.sorted() else emptyList()),
+        `when` = when (whenMode) {
+            "once", "recurring" -> ScheduleWhen(whenMode, time, if (whenMode == "once") date else "", if (whenMode == "recurring") days.sorted() else emptyList())
+            "webhook" -> ScheduleWhen("webhook", time, date, days.sorted())
+            else -> base.`when`
+        },
+        webhook = if (calledNotTimed || base.webhook != null) mergeHook(base.webhook, hook) else null,
         action = ScheduleAction(kind, "claude", mode, model, effort, prompt, if (kind == "chat" && session == "continue") "new" else session, sessionId, cwd, command, serviceKey, op),
         conditions = conditions.toList(),
     )
 
     companion object {
+        /** [edited]'s editable fields over what the server sent, keeping anything else it sent. */
+        fun mergeHook(sent: HookSettings?, edited: HookSettings) = (sent ?: HookSettings()).copy(
+            auth = edited.auth, signatureHeader = edited.signatureHeader, timestampHeader = edited.timestampHeader, idempotency = edited.idempotency,
+        )
+
         fun blank(project: String?) = Schedule(
             project = project.orEmpty(),
             action = ScheduleAction(kind = "agent", mode = "normal"),
@@ -292,11 +328,14 @@ fun ScheduleEditRoute(id: String) {
     var board by remember { mutableStateOf<KanbanBoard?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var hooksInData by remember { mutableStateOf(false) }
+    var rotating by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(id) {
         var next: Load<ScheduleForm>
         try {
             val all = api.schedules.list(null)
             services = all.services
+            hooksInData = Webhooks.inSchedules(all.schedules)
             val s = if (id.isEmpty()) ScheduleForm(ScheduleForm.blank(shell.currentProject)) else all.schedules.firstOrNull { it.id == id }?.let { ScheduleForm(it) }
             next = if (s == null) Load.Failed("This schedule is gone. It may have been deleted elsewhere.") else Load.Ready(s)
         } catch (e: ApiException) { next = Load.Failed(errorText(e)) }
@@ -318,8 +357,21 @@ fun ScheduleEditRoute(id: String) {
     }
     ScheduleEditScreen(
         form, shell.projects.map { it.alias }, services, board, message, busy,
+        hooks = hooksInData || Webhooks.supported(shell), serverHost = shell.serverHost,
         onBack = { nav.back() },
-        onSave = { ff -> scope.launch { busy = true; if (save(ff) != null) nav.back(); busy = false } },
+        onSave = { ff ->
+            scope.launch {
+                busy = true
+                val isNew = ff.id.isEmpty()
+                val saved = save(ff)
+                // A new webhook schedule stays open, as on the web: its URL only exists now.
+                if (saved != null && isNew && saved.calledNotTimed) { form = Load.Ready(ScheduleForm(saved)); message = SAVED_URL_BELOW }
+                else if (saved != null) nav.back()
+                busy = false
+            }
+        },
+        onRotate = { rotating = it },
+        onCopied = { message = it },
         onCreateChat = { ff ->
             scope.launch {
                 busy = true
@@ -332,7 +384,23 @@ fun ScheduleEditRoute(id: String) {
         },
         onDismissMessage = { message = null },
     )
+    val which = rotating
+    if (which != null && f != null) CrundiDialog(
+        if (which == "secret") "New secret" else "New key", { rotating = null }, message = rotateQuestion(which),
+        confirm = if (which == "secret") "Make a new secret" else "Make a new key", danger = true,
+        onConfirm = {
+            rotating = null
+            scope.launch {
+                try { val s = api.schedules.rotateHook(f.id, which); f.hook = f.hook.copy(key = s.webhook?.key, secret = s.webhook?.secret) }
+                catch (e: ApiException) { message = errorText(e) }
+            }
+        },
+    )
 }
+
+private const val SAVED_URL_BELOW = "Saved. Its URL is below."
+/** The editor's notes that are good news, shown green. */
+private val GOOD_NEWS = setOf("Conversation created", SAVED_URL_BELOW, "URL copied", "Secret copied")
 
 @Composable
 fun ScheduleEditScreen(
@@ -342,9 +410,15 @@ fun ScheduleEditScreen(
     board: KanbanBoard?,
     message: String? = null,
     busy: Boolean = false,
+    /** The server has "When called" (Webhooks.supported, or the data shows it). */
+    hooks: Boolean = false,
+    serverHost: String = "",
     onBack: () -> Unit = {},
     onSave: (ScheduleForm) -> Unit = {},
     onCreateChat: (ScheduleForm) -> Unit = {},
+    /** Replace the webhook's key or secret ("key", "secret"); the caller confirms. */
+    onRotate: (String) -> Unit = {},
+    onCopied: (String) -> Unit = {},
     onDismissMessage: () -> Unit = {},
 ) {
     val f = form.valueOrNull
@@ -360,9 +434,9 @@ fun ScheduleEditScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (message != null) Box(Modifier.clickable(onClick = onDismissMessage)) {
-                    Banner(message, Modifier.fillMaxWidth(), kind = if (message == "Conversation created") BadgeKind.Good else BadgeKind.Bad, icon = if (message == "Conversation created") "check" else "alert-triangle")
+                    Banner(message, Modifier.fillMaxWidth(), kind = if (message in GOOD_NEWS) BadgeKind.Good else BadgeKind.Bad, icon = if (message in GOOD_NEWS) "check" else "alert-triangle")
                 }
-                ScheduleFields(form.value, projects, services.filter { it.alias.equals(form.value.project, true) }, board, busy, onCreateChat)
+                ScheduleFields(form.value, projects, services.filter { it.alias.equals(form.value.project, true) }, board, busy, onCreateChat, hooks, serverHost, onRotate, onCopied)
                 Spacer(Modifier.height(40.dp))
             }
         }
@@ -383,14 +457,23 @@ private fun Seg(options: List<Pair<String, String>>, value: String, onPick: (Str
 private fun Note(t: String) = Text(t, style = CrundiType.Small.copy(fontSize = 12.5.sp, color = CrundiColors.TextMuted))
 
 @Composable
-private fun ScheduleFields(f: ScheduleForm, projects: List<String>, services: List<ScheduleServiceChoice>, board: KanbanBoard?, busy: Boolean, onCreateChat: (ScheduleForm) -> Unit) {
+private fun ScheduleFields(
+    f: ScheduleForm, projects: List<String>, services: List<ScheduleServiceChoice>, board: KanbanBoard?, busy: Boolean, onCreateChat: (ScheduleForm) -> Unit,
+    hooks: Boolean = false, serverHost: String = "", onRotate: (String) -> Unit = {}, onCopied: (String) -> Unit = {},
+) {
     Label("Name")
     CrundiTextField(f.name, { f.name = it }, Modifier.fillMaxWidth(), placeholder = "My scheduled task")
     Label("Project")
     if (projects.isEmpty()) Note("No projects") else Seg(projects.map { it to it }, f.project) { f.project = it; f.serviceKey = "" }
     Label("When")
-    Seg(listOf("once" to "One-time", "recurring" to "Recurring"), f.whenMode) { f.whenMode = it }
-    if (f.whenMode == "once") CrundiTextField(f.date, { f.date = it }, Modifier.fillMaxWidth(), placeholder = "YYYY-MM-DD", mono = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+    Seg(listOf("once" to "One-time", "recurring" to "Recurring") + (if (hooks || f.calledNotTimed) listOf("webhook" to "When called") else emptyList()), f.whenMode) { f.pickWhen(it) }
+    if (f.calledNotTimed) {
+        // Called, not timed: a public URL for alerts (Grafana), CI and the like.
+        Note("Runs a background chat (or a service action) when its URL is called. Calls that arrive while it is still working go into the same chat, marked Mid-run, so it can tell whether it is the same issue. With One ongoing chat, every run comes back to the same conversation.")
+        HookAuthFields(f.hook, { f.hook = it }) { Label(it) }
+        if (f.id.isNotEmpty() && !f.hook.key.isNullOrEmpty()) HookAddress(Webhooks.scheduleUrl(serverHost, f.id, f.hook), f.hook, { Label(it) }, onRotate, onCopied)
+        else Note("Save the schedule to get its URL.")
+    } else if (f.whenMode == "once") CrundiTextField(f.date, { f.date = it }, Modifier.fillMaxWidth(), placeholder = "YYYY-MM-DD", mono = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
     else Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         for (d in 0..6) {
             val on = d in f.days
@@ -402,10 +485,11 @@ private fun ScheduleFields(f: ScheduleForm, projects: List<String>, services: Li
             ) { Text(DAY_SHORT[d], style = CrundiType.Small.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (on) CrundiColors.AccentHover else CrundiColors.TextSecondary)) }
         }
     }
-    CrundiTextField(f.time, { f.time = it }, Modifier.width(120.dp), placeholder = "09:00", mono = true, icon = "clock", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+    if (!f.calledNotTimed) CrundiTextField(f.time, { f.time = it }, Modifier.width(120.dp), placeholder = "09:00", mono = true, icon = "clock", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
 
     Label("Action")
-    Seg(listOf("agent" to "Agent", "chat" to "Background chat", "command" to "CLI command", "service" to "Service"), f.kind) { f.kind = it }
+    // A webhook runs a background chat or a service only (src/schedule-hooks.js).
+    Seg(listOf("agent" to "Agent", "chat" to "Background chat", "command" to "CLI command", "service" to "Service").filter { !f.calledNotTimed || it.first in Webhooks.ACTIONS }, f.kind) { f.kind = it }
     when (f.kind) {
         "agent", "chat" -> {
             if (f.kind == "chat") Note("Opens a chat, runs the prompt, and closes itself when the work finishes. It stays open if it needs you or hits an error, and it will not close while it is waiting on a background command.")
@@ -432,7 +516,8 @@ private fun ScheduleFields(f: ScheduleForm, projects: List<String>, services: Li
                 }
             }
             Label("Prompt")
-            CrundiTextField(f.prompt, { f.prompt = it }, Modifier.fillMaxWidth(), placeholder = if (f.kind == "agent") "What should the agent do?" else "What should it do each time?", mono = true, singleLine = false, minLines = 3)
+            CrundiTextField(f.prompt, { f.prompt = it }, Modifier.fillMaxWidth(), placeholder = when { f.kind == "agent" -> "What should the agent do?"; f.calledNotTimed -> "Look into this alert: {{payload.message}}"; else -> "What should it do each time?" }, mono = true, singleLine = false, minLines = 3)
+            if (f.kind == "chat" && f.calledNotTimed) Note("Read the call with ${Webhooks.PLACEHOLDERS}. Anything a call does not have comes out empty and never stops it, and the chat always gets the full request as well.")
             Note(
                 if (f.kind == "agent") "Tip: you can include slash commands like /frontend-design or /loop right in the prompt. They run just like typing them in the terminal."
                 else "The job can rewrite this prompt for its next run with the schedule_update tool, so it can leave notes for itself.",

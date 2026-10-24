@@ -164,6 +164,7 @@ class MainActivity : ComponentActivity() {
                 else -> {
                     // What this server can do, for the API client to read.
                     ServerCaps.set(applicationContext, s.id, verdict.capabilities)
+                    ServerCaps.setVersion(applicationContext, s.id, verdict.serverVersion)
                     // The login a pairing has just handed over for the UI is
                     // taken into the app's keeping (PageLogin), where the API
                     // client renews it, one renewal at a time.
@@ -322,4 +323,12 @@ object ServerCaps {
 
     fun get(ctx: Context, serverId: String): Set<String> =
         ctx.getSharedPreferences("crundi", Context.MODE_PRIVATE).getStringSet("caps.$serverId", emptySet()) ?: emptySet()
+
+    /** The server's version from the same handshake ("" until one has been made). */
+    fun setVersion(ctx: Context, serverId: String, version: String) {
+        ctx.getSharedPreferences("crundi", Context.MODE_PRIVATE).edit().putString("version.$serverId", version).apply()
+    }
+
+    fun version(ctx: Context, serverId: String): String =
+        ctx.getSharedPreferences("crundi", Context.MODE_PRIVATE).getString("version.$serverId", "") ?: ""
 }

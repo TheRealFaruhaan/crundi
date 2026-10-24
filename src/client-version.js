@@ -74,6 +74,12 @@ export const CAPABILITIES = Object.freeze([
   // page it shows (POST /api/pair/page-login gives it one), instead of
   // handing the page a refresh token of its own. See src/webapp.js.
   'app-page-login',
+  // Webhooks for schedules ("When called": POST /api/schedule-hook/<id>,
+  // rotateHook) and signed factory webhook triggers (auth, signatureHeader,
+  // timestampHeader, idempotency, ifBusy 'manager', rotate which=secret).
+  // 1.21.1 has them but does not list this, so a client also accepts that
+  // version (1.21.1-dev.12 and later) or the webhook fields in the data.
+  'webhooks',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

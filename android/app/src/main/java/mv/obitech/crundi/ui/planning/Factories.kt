@@ -57,6 +57,7 @@ import mv.obitech.crundi.api.model.FactoryRun
 import mv.obitech.crundi.api.model.FactorySummary
 import mv.obitech.crundi.api.model.FactoryTemplate
 import mv.obitech.crundi.api.model.FactoryTrigger
+import mv.obitech.crundi.api.model.HookSettings
 import mv.obitech.crundi.api.model.RunPrecheck
 import mv.obitech.crundi.api.model.TriggerCr
 import mv.obitech.crundi.api.model.TriggerKanban
@@ -607,33 +608,46 @@ fun TriggerEditRoute(id: String) {
     var load by remember { mutableStateOf<Load<Pair<FactoryTrigger, List<FactorySummary>>>>(Load.Loading) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf<String?>(null) }
+    var hooksInData by remember { mutableStateOf(false) }
     LaunchedEffect(id) {
         load = try {
             val fs = api.factories.list()
+            val all = if (id.isEmpty()) runCatching { api.factories.triggers(null) }.getOrDefault(emptyList()) else api.factories.triggers(null)
+            hooksInData = Webhooks.inTriggers(all)
             val t = if (id.isEmpty()) FactoryTrigger(project = project, factoryId = fs.firstOrNull { it.runnable }?.id.orEmpty(), kind = "kanban", kanban = TriggerKanban("todo"),
                 cr = TriggerCr("{{card.title}}", mapOf("goal" to "{{card.description}}", "done" to "{{card.todos}}")))
-            else api.factories.triggers(null).firstOrNull { it.id == id } ?: throw ApiException(404, "This trigger is gone. It may have been deleted elsewhere.")
+            else all.firstOrNull { it.id == id } ?: throw ApiException(404, "This trigger is gone. It may have been deleted elsewhere.")
             Load.Ready(t to fs)
         } catch (e: ApiException) { Load.Failed(errorText(e)) }
     }
     fun act(block: suspend () -> Unit) = scope.launch { try { block() } catch (e: ApiException) { message = errorText(e) } }
     TriggerEditScreen(
         load, shell.serverHost, message,
+        hooks = hooksInData || Webhooks.supported(shell),
         onBack = { nav.back() },
-        onSave = { t -> act { api.factories.saveTrigger(t); nav.back() } },
+        onSave = { t ->
+            act {
+                val saved = api.factories.saveTrigger(t)
+                // A new webhook trigger stays open, as on the web: its URL only exists now.
+                if (t.id.isEmpty() && saved.kind == "webhook") { load = Load.Ready(saved to load.valueOrNull!!.second); message = "Saved. Its URL is below." }
+                else nav.back()
+            }
+        },
         onDelete = { confirm = "delete" },
         onRun = { t -> act { val r = api.factories.runTrigger(t.id); message = if (r.str("outcome") == "queued" || r.str("queued") != null) "Queued: a run is going in this project." else "Started." } },
-        onRotate = { confirm = "rotate" },
+        onRotate = { which -> confirm = which },
+        onCopied = { message = it },
     )
     val t = load.valueOrNull?.first
-    if (confirm != null && t != null) CrundiDialog(
-        if (confirm == "delete") "Delete trigger" else "New key", { confirm = null },
-        message = if (confirm == "delete") "Delete this trigger?" else "The old URL stops working. Make a new key?",
-        confirm = if (confirm == "delete") "Delete trigger" else "Make a new key", danger = confirm == "delete",
+    val c = confirm
+    if (c != null && t != null) CrundiDialog(
+        when (c) { "delete" -> "Delete trigger"; "secret" -> "New secret"; else -> "New key" }, { confirm = null },
+        message = if (c == "delete") "Delete this trigger?" else rotateQuestion(c),
+        confirm = when (c) { "delete" -> "Delete trigger"; "secret" -> "Make a new secret"; else -> "Make a new key" }, danger = c == "delete",
         onConfirm = {
-            val c = confirm; confirm = null
+            confirm = null
             if (c == "delete") act { api.factories.deleteTrigger(t.id); nav.back() }
-            else act { val nt = api.factories.rotateTrigger(t.id); load = Load.Ready(nt to load.valueOrNull!!.second) }
+            else act { val nt = api.factories.rotateTrigger(t.id, c); load = Load.Ready(nt to load.valueOrNull!!.second) }
         },
     )
 }
@@ -643,14 +657,19 @@ fun TriggerEditScreen(
     load: Load<Pair<FactoryTrigger, List<FactorySummary>>>,
     serverHost: String = "",
     message: String? = null,
+    /** The server has signed webhooks (Webhooks.supported, or the data shows it): Key or Signature, idempotency, Tell its Manager. */
+    hooks: Boolean = false,
     onBack: () -> Unit = {},
     onSave: (FactoryTrigger) -> Unit = {},
     onDelete: () -> Unit = {},
     onRun: (FactoryTrigger) -> Unit = {},
-    onRotate: () -> Unit = {},
+    /** Replace the key or ("secret") the secret; the caller confirms. */
+    onRotate: (String) -> Unit = {},
+    onCopied: (String) -> Unit = {},
 ) {
     val ready = load.valueOrNull
-    var t by remember(ready?.first?.id, ready?.first?.webhook?.key) { mutableStateOf(ready?.first ?: FactoryTrigger()) }
+    // Kept across a new key or secret: the address below reads the saved trigger, the fields keep what is typed.
+    var t by remember(ready?.first?.id) { mutableStateOf(ready?.first ?: FactoryTrigger()) }
     Column(Modifier.fillMaxSize().imePadding()) {
         TopBar(if (ready == null || t.id.isEmpty()) "New trigger" else "Trigger", onBack = onBack) {
             if (ready != null) CrundiButton("Save", { onSave(t) }, kind = ButtonKind.Primary, icon = "check", enabled = t.factoryId.isNotEmpty(), modifier = Modifier.padding(end = 8.dp))
@@ -667,6 +686,8 @@ fun TriggerEditScreen(
                 FieldLabel("Start when")
                 ChipRow(listOf("kanban" to "A kanban card enters a column", "schedule" to "A time of day", "webhook" to "A webhook is called"), t.kind) { k ->
                     t = t.copy(kind = k, schedule = t.schedule ?: TriggerSchedule().takeIf { k == "schedule" }, kanban = t.kanban ?: TriggerKanban("todo").takeIf { k == "kanban" })
+                    // New webhook triggers default to telling the running Manager, as on the web.
+                    if (hooks && k == "webhook" && t.id.isEmpty() && t.ifBusy == "queue") t = t.copy(ifBusy = "manager")
                 }
                 when (t.kind) {
                     "schedule" -> {
@@ -684,12 +705,22 @@ fun TriggerEditScreen(
                         FieldLabel("Column")
                         ChipRow(listOf("backlog", "todo", "in_progress", "done").map { it to kanbanTitle(it) }, t.kanban?.status.orEmpty()) { t = t.copy(kanban = TriggerKanban(it)) }
                     }
-                    "webhook" -> {
+                    "webhook" -> if (hooks) {
+                        Text("Public URL, so every call must prove it is from you: the key, or a signature made with the secret. Calls are answered at once; the change request below is filled from the call's JSON.", style = CrundiType.Small)
+                        HookAuthFields(Webhooks.filled(t.webhook), { h -> t = t.copy(webhook = TriggerHooks.edited(t.webhook, h)) }) { FieldLabel(it) }
+                        val saved = load.value.first
+                        if (saved.id.isEmpty() || saved.kind != "webhook" || saved.webhook?.key.isNullOrEmpty()) Text("Save the trigger to get its webhook address.", style = CrundiType.Small)
+                        else {
+                            val sh = Webhooks.filled(saved.webhook)
+                            HookAddress(Webhooks.triggerUrl(serverHost, saved.id, sh), sh, { FieldLabel(it) }, onRotate, onCopied)
+                            if (saved.seenCount > 0) Text("${saved.seenCount} idempotency key${if (saved.seenCount == 1) "" else "s"} remembered (30 days).", style = CrundiType.Meta)
+                        }
+                    } else {
                         if (t.id.isEmpty()) Text("Save the trigger to get its webhook address.", style = CrundiType.Small)
                         else {
                             FieldLabel("Webhook URL (POST, JSON body)")
                             CodeBlock("https://$serverHost/api/factory-hook/trigger/${t.id}?key=${t.webhook?.key.orEmpty()}", highlight = false)
-                            CrundiButton("New key", onRotate, icon = "refresh")
+                            CrundiButton("New key", { onRotate("key") }, icon = "refresh")
                         }
                     }
                 }
@@ -698,9 +729,10 @@ fun TriggerEditScreen(
                 Text(
                     "Filled in when it fires. Placeholders: " + when (t.kind) {
                         "kanban" -> "{{card.title}}, {{card.description}}, {{card.todos}}, {{date}}"
-                        "webhook" -> "{{body.x}}, {{body}}, {{date}}"
+                        // {{body.x}} is the old name; servers before 1.21.1 know only it.
+                        "webhook" -> if (hooks) "{{payload.some.field}}, {{payload.alerts.0.labels.alertname}} (arrays by index), {{payload}} (all of it), {{headers.name}}, {{query.name}}, {{date}}" else "{{body.x}}, {{body}}, {{date}}"
                         else -> "{{date}}, {{time}}"
-                    } + ". Only the title has to come out filled.",
+                    } + if (hooks && t.kind == "webhook") ". Anything a call does not have comes out empty and never stops it; the Manager gets the full request as well." else ". Only the title has to come out filled.",
                     style = CrundiType.Small,
                 )
                 FieldLabel("Title")
@@ -713,7 +745,11 @@ fun TriggerEditScreen(
                 FieldLabel("When the work is done")
                 ChipRow(listOf("" to "As the factory says", "ask" to "Show me first, I decide", "auto" to "Merge automatically (with Undo)"), t.mergeMode) { t = t.copy(mergeMode = it) }
                 FieldLabel("If a run is already going")
-                ChipRow(listOf("queue" to "Wait its turn, then start", "skip" to "Skip it"), t.ifBusy) { t = t.copy(ifBusy = it) }
+                ChipRow(
+                    (if (hooks || t.ifBusy == "manager") listOf("manager" to "Tell its Manager (a run of the same factory)") else emptyList()) + listOf("queue" to "Wait its turn, then start", "skip" to "Skip it"),
+                    t.ifBusy,
+                ) { t = t.copy(ifBusy = it) }
+                if (t.ifBusy == "manager") Text("A call that arrives while a run of this factory is going goes to its Manager as a message, marked mid-run, with the whole request; it decides whether it needs acting on. A run of another factory: it waits its turn.", style = CrundiType.Small)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("On", style = CrundiType.Body, modifier = Modifier.weight(1f))
                     MiniToggle(t.enabled, { t = t.copy(enabled = !t.enabled) })
@@ -755,3 +791,11 @@ fun RunDiffRoute(id: String) {
     }
 }
 
+
+/** A trigger's webhook settings as the editor changes them. */
+object TriggerHooks {
+    /** [edited]'s fields over what the server sent, keeping the key and secret it sent. */
+    fun edited(sent: HookSettings?, edited: HookSettings) = (sent ?: HookSettings()).copy(
+        auth = edited.auth, signatureHeader = edited.signatureHeader, timestampHeader = edited.timestampHeader, idempotency = edited.idempotency,
+    )
+}

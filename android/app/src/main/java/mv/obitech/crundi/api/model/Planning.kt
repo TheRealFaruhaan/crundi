@@ -120,7 +120,7 @@ data class MindNode(
 
 // ─── Schedules ───
 
-/** When a schedule fires. days: 0 = Sunday .. 6 = Saturday. */
+/** When a schedule fires. [mode]: once, recurring, or webhook (called, not timed: no days or time). days: 0 = Sunday .. 6 = Saturday. */
 @Serializable data class ScheduleWhen(val mode: String = "recurring", val time: String = "09:00", val date: String = "", val days: List<Int> = emptyList())
 
 /**
@@ -159,6 +159,31 @@ data class ScheduleCondition(
     val status: String = "",
 )
 
+/**
+ * How a webhook (a schedule's "When called", a factory trigger's) is called
+ * (server 1.21.1). [auth]: key (in the URL, X-Crundi-Key or Bearer) or
+ * signature (HMAC-SHA256 of the raw body with [secret], in
+ * [signatureHeader]; with [timestampHeader], of "time:body", as Grafana
+ * does). [idempotency]: a template such as {{payload.groupKey}}; a call
+ * whose key was already seen is not processed again. The server makes the
+ * key and secret and never takes them from input, so they are null here
+ * unless read from it. Every field is nullable so that what an older server
+ * did not send is not sent back.
+ */
+@Serializable
+data class HookSettings(
+    val key: String? = null,
+    val secret: String? = null,
+    val auth: String? = null,
+    val signatureHeader: String? = null,
+    val timestampHeader: String? = null,
+    val idempotency: String? = null,
+) {
+    val signed get() = auth == "signature"
+    /** For a save: what may be set, without the credentials. */
+    fun forSave() = copy(key = null, secret = null)
+}
+
 @Serializable
 data class Schedule(
     val id: String = "",
@@ -169,11 +194,15 @@ data class Schedule(
     val action: ScheduleAction = ScheduleAction(),
     val `when`: ScheduleWhen = ScheduleWhen(),
     val conditions: List<ScheduleCondition> = emptyList(),
+    /** For when.mode webhook (server 1.21.1; absent before, and on schedules not saved since). */
+    val webhook: HookSettings? = null,
     val createdAt: String = "",
     val updatedAt: String = "",
     val lastRun: String? = null,
     val lastMet: Boolean = false,
-)
+) {
+    val calledNotTimed get() = `when`.mode == "webhook"
+}
 
 @Serializable data class ScheduleServiceChoice(val key: String, val name: String = "", val alias: String = "", val status: String = "")
 
@@ -355,7 +384,6 @@ data class FactoryRun(
 
 @Serializable data class TriggerSchedule(val at: String = "09:00", val days: List<Int> = emptyList())
 @Serializable data class TriggerKanban(val status: String = "")
-@Serializable data class TriggerWebhook(val key: String = "")
 @Serializable data class TriggerCr(val title: String = "", val sections: Map<String, String> = emptyMap())
 @Serializable data class TriggerHistory(val at: JsonElement? = null, val outcome: String = "", val source: String = "", val runId: String? = null, val title: String? = null, val note: String? = null)
 
@@ -370,14 +398,17 @@ data class FactoryTrigger(
     val kind: String = "schedule",
     val schedule: TriggerSchedule? = null,
     val kanban: TriggerKanban? = null,
-    val webhook: TriggerWebhook? = null,
+    /** Servers before 1.21.1 send only the key. */
+    val webhook: HookSettings? = null,
     val cr: TriggerCr = TriggerCr(),
     val mergeMode: String = "",
-    /** queue or skip */
+    /** queue, skip, or manager (1.21.1: tell the running Manager, marked mid-run) */
     val ifBusy: String = "queue",
     val createdAt: JsonElement? = null,
     val lastFired: JsonElement? = null,
     val history: List<TriggerHistory> = emptyList(),
+    /** Idempotency keys it remembers (30 days). */
+    val seenCount: Int = 0,
 )
 
 @Serializable data class CleanupItem(val id: String, val kind: String = "", val path: String = "", val project: String = "", val runId: String = "", val factoryName: String = "", val status: String = "", val branch: String = "", val repo: String = "", val bytes: Long = 0, val ageMs: Long = 0, val uncommitted: JsonElement? = null, val why: String = "")
