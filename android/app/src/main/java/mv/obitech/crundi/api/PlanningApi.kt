@@ -161,9 +161,11 @@ class FactoriesApi internal constructor(private val rpc: Rpc) {
      * Start a run with a change request: [sections] by the factory's
      * crTemplate field id; [attachments] are uploaded paths ([ChatsApi.attach]).
      */
-    suspend fun start(project: String, factoryId: String, title: String, sections: Map<String, String>, attachments: List<Pair<String, String>> = emptyList(), mergeMode: String? = null, ignoreMissingSkills: Boolean = false): FactoryRun =
+    suspend fun start(project: String, factoryId: String, title: String, sections: Map<String, String>, attachments: List<Pair<String, String>> = emptyList(), mergeMode: String? = null, ignoreMissingSkills: Boolean = false, secretPins: Map<String, String>? = null): FactoryRun =
         rpc.read(rpc.post("/api/factory-runs", mapOf("action" to "start", "project" to project, "factoryId" to factoryId, "mergeMode" to mergeMode,
             "ignoreMissingSkills" to ignoreMissingSkills.takeIf { it },
+            // The factory's secrets: { id: PIN }, kept in the server's memory for this run ('factory-secrets').
+            "secretPins" to secretPins?.takeIf { it.isNotEmpty() },
             "cr" to mapOf("title" to title, "sections" to sections, "attachments" to attachments.map { mapOf("path" to it.first, "name" to it.second) }))), "run")
 
     private suspend fun runAct(action: String, id: String, vararg f: Pair<String, Any?>): FactoryRun = rpc.read(rpc.post("/api/factory-runs", mapOf("action" to action, "id" to id, *f)), "run")

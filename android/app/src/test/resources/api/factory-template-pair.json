@@ -70,6 +70,7 @@
         "oneAtATimeAbove": 0
       },
       "tickMinutes": 0,
+      "secrets": [],
       "gatekeeper": {
         "enabled": false,
         "model": "haiku"

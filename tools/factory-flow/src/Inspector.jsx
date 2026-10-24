@@ -175,7 +175,34 @@ export function EdgeInspector({ f, edge, issues, mutate, remove }) {
   );
 }
 
-export function FactorySettings({ f, mutate, skills }) {
+/**
+ * The secrets a run may use without a PIN at every use: chosen by name, kept
+ * as ids. Their values are never fetched; the PINs are asked when a run starts.
+ */
+function SecretsPicker({ s, list, set }) {
+  const chosen = s.secrets || [];
+  const known = new Set(list.map(x => x.id));
+  const gone = chosen.filter(id => !known.has(id));
+  const toggle = (id, on) => set(d => { const cur = d.settings.secrets || []; d.settings.secrets = on ? [...new Set([...cur, id])] : cur.filter(x => x !== id); });
+  return (
+    <Field label="Secrets the run may use" hint="Their PINs are asked when you start a run and kept in memory for that run only, so it does not stop at every use. Values are never shown. The Manager and the Gatekeeper use them directly; anyone else asks them first. Any other secret asks you each time.">
+      <div className="ff-checks">
+        {!list.length && <span className="ff-hint">No secrets on this machine yet. Add them under Secrets.</span>}
+        {list.map(x => (
+          <Toggle key={x.id} checked={chosen.includes(x.id)} label={<span className="ff-secret"><Icon name="key" size={13} /> {x.name}{x.description ? <span className="ff-hint"> · {x.description}</span> : null}</span>} onChange={v => toggle(x.id, v)} />
+        ))}
+        {gone.map(id => (
+          <div key={id} className="ff-issue warning"><Icon name="alert" size={13} /><div>
+            <div>A secret this factory lists no longer exists.</div>
+            <button className="ff-btn" style={{ marginTop: 6 }} onClick={() => toggle(id, false)}>Remove it</button>
+          </div></div>
+        ))}
+      </div>
+    </Field>
+  );
+}
+
+export function FactorySettings({ f, mutate, skills, secretList = null }) {
   const s = f.settings;
   const set = (fn, key) => mutate(d => fn(d), key);
   return (
@@ -220,6 +247,7 @@ export function FactorySettings({ f, mutate, skills }) {
           )}
         </>
       )}
+      {secretList && <SecretsPicker s={s} list={secretList} set={set} />}
       <Field label="When the work is done" hint="Either way it is a single squash commit, and nothing is ever pushed.">
         <Select value={s.mergeMode} onChange={v => set(d => { d.settings.mergeMode = v; })} options={[{ value: 'ask', label: 'Show me first, I decide' }, { value: 'auto', label: 'Merge automatically (with Undo)' }]} />
       </Field>

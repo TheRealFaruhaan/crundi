@@ -627,6 +627,16 @@ fun StartRunRoute(factoryId: String) {
         if (form.factoryId.isEmpty() || l.none { it.id == form.factoryId && it.runnable }) form.factoryId = l.firstOrNull { it.runnable }?.id.orEmpty()
     }
     LaunchedEffect(form.project) { precheck = null; if (form.project.isNotEmpty()) precheck = runCatching { api.factories.precheck(form.project) }.getOrNull() }
+    // The factory's secrets, one PIN at a time, before it starts ([FactorySecrets]).
+    var unlocking by remember { mutableStateOf<List<mv.obitech.crundi.api.model.Secret>?>(null) }
+    suspend fun startWith(f: FactorySummary, pins: Map<String, String>?) {
+        busy = true
+        try {
+            val run = api.factories.start(form.project, f.id, form.title.trim(), form.sections.filterValues { it.isNotBlank() }, mergeMode = form.mergeMode.ifEmpty { null }, secretPins = pins)
+            nav.back(); nav.to(FactoryRoutes.run(run.id))
+        } catch (e: ApiException) { form.error = errorText(e) }
+        busy = false
+    }
     StartRunScreen(
         form, factories.load, shell.projects.map { it.alias }, precheck, busy, onBack = { nav.back() },
         onOpenRun = { nav.to(FactoryRoutes.run(it)) },
@@ -639,15 +649,19 @@ fun StartRunRoute(factoryId: String) {
                 else -> f.crTemplate.firstOrNull { it.required && form.sections[it.id].isNullOrBlank() }?.let { "Fill in “${it.label}”." }
             }
             if (form.error == null && f != null) scope.launch {
-                busy = true
-                try {
-                    val run = api.factories.start(form.project, f.id, form.title.trim(), form.sections.filterValues { it.isNotBlank() }, mergeMode = form.mergeMode.ifEmpty { null })
-                    nav.back(); nav.to(FactoryRoutes.run(run.id))
-                } catch (e: ApiException) { form.error = errorText(e) }
-                busy = false
+                val toUnlock = if (FactorySecrets.supported(shell.capabilities) && f.secrets.isNotEmpty())
+                    runCatching { FactorySecrets.toUnlock(f.secrets, api.secrets.list().secrets) }.getOrDefault(emptyList()) else emptyList()
+                if (toUnlock.isNotEmpty()) unlocking = toUnlock else startWith(f, null)
             }
         },
     )
+    unlocking?.let { list ->
+        SecretPinsDialog(list, check = { id, pin -> api.secrets.check(id, pin) }) { pins ->
+            unlocking = null
+            val f = factories.load.valueOrNull?.firstOrNull { it.id == form.factoryId }
+            if (pins != null && f != null) scope.launch { startWith(f, pins) }
+        }
+    }
 }
 
 @Composable

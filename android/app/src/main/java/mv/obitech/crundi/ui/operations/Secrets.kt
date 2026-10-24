@@ -251,7 +251,7 @@ fun AddSecretForm(onCancel: () -> Unit, onSave: (String, String, String, String)
 
 /** The PIN dialog body: six digits, the action, and the server's words when it says no. */
 @Composable
-fun PinCard(ask: PinAsk, pin: String, onPin: (String) -> Unit, error: String?, working: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
+fun PinCard(ask: PinAsk, pin: String, onPin: (String) -> Unit, error: String?, working: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier, extra: (@Composable () -> Unit)? = null) {
     DialogCard(
         ask.title, modifier, message = ask.subtitle,
         confirm = if (working) "Unlocking…" else ask.submit, onConfirm = { if (!working) onSubmit() }, onDismiss = onCancel,
@@ -273,6 +273,7 @@ fun PinCard(ask: PinAsk, pin: String, onPin: (String) -> Unit, error: String?, w
             }
         }
         if (error != null) Text(error, style = CrundiType.Small.copy(color = CrundiColors.Red))
+        extra?.invoke()
     }
 }
 

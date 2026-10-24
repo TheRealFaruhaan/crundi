@@ -230,7 +230,7 @@ data class ChatScheduleItem(
 
 // ─── Factories ───
 
-@Serializable data class FactorySummary(val id: String, val name: String = "", val description: String = "", val version: Int = 0, val createdAt: String = "", val updatedAt: String = "", val nodeCount: Int = 0, val employeeCount: Int = 0, val runnable: Boolean = false, val errorCount: Int = 0, val warningCount: Int = 0, val crTemplate: List<CrField> = emptyList())
+@Serializable data class FactorySummary(val id: String, val name: String = "", val description: String = "", val version: Int = 0, val createdAt: String = "", val updatedAt: String = "", val nodeCount: Int = 0, val employeeCount: Int = 0, val runnable: Boolean = false, val errorCount: Int = 0, val warningCount: Int = 0, val crTemplate: List<CrField> = emptyList(), val secrets: List<String> = emptyList())
 
 /** A skill this machine has (GET /api/skills): offered for pinning in the factory editor. */
 @Serializable data class SkillBrief(val name: String, val description: String = "", val scope: String = "")
@@ -310,6 +310,8 @@ data class FactorySettings(
     val tickMinutes: Int = 0,
     val gatekeeper: FactoryGatekeeper = FactoryGatekeeper(),
     val caps: FactoryCaps = FactoryCaps(),
+    /** Secrets a run may use without a PIN at each use (ids only; 'factory-secrets'). Their PINs are asked at the start. */
+    val secrets: List<String> = emptyList(),
 )
 
 /** How hard a run may use the person's Claude usage (normalizeLimits). */

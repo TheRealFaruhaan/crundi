@@ -12,7 +12,7 @@
  * ─── Shape ───
  *
  *   { id, name, description, version, createdAt, updatedAt,
- *     settings: { managerMode, mergeMode, setupCommand, caps:{ maxHandoffs, maxMinutes, tokenBudget } },
+ *     settings: { managerMode, mergeMode, setupCommand, secrets:[secretId], caps:{ maxHandoffs, maxMinutes, tokenBudget } },
  *     roster:   [ { id, name, persona, model, effort, memory, tools:{ allow, deny }, skills } ],
  *     nodes:    [ { id, type, label, position:{x,y}, employeeId?, decision?, ask?, join? } ],
  *     edges:    [ { id, kind, source, sourceHandle, target, requireNote, noteLabel, maxRounds } ] }
@@ -127,6 +127,24 @@ const strList = (v, max, each) => (Array.isArray(v) ? v : []).filter(x => typeof
 
 // ─── Normalize ───
 
+export const MAX_SECRETS = 20;
+const SECRET_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * settings.secrets, shaped: a list of secret ids, nothing else. Entries may
+ * come as ids or as { id, name } (a client that sent what it showed); only
+ * the id is kept, and anything that looks like a value or a PIN is dropped.
+ */
+export function normalizeSecretIds(v) {
+  const out = [];
+  for (const x of Array.isArray(v) ? v : []) {
+    const id = typeof x === 'string' ? x : (x && typeof x === 'object' && typeof x.id === 'string' ? x.id : '');
+    if (SECRET_ID_RE.test(id) && !out.includes(id)) out.push(id);
+    if (out.length >= MAX_SECRETS) break;
+  }
+  return out;
+}
+
 /**
  * Shape an untrusted definition into the known form. It never throws and never
  * "fixes" the graph: wrong wiring is kept as it is so validate() can say what
@@ -172,6 +190,10 @@ export function normalizeFactory(input) {
       // The Manager's check-in ticker, in minutes (5 to 1440). 0: the Manager
       // chooses it at the start of each run (factory_tick).
       tickMinutes: (() => { const n = Math.round(Number(s.tickMinutes)); return Number.isFinite(n) && n > 0 ? Math.min(1440, Math.max(5, n)) : 0; })(),
+      // Secrets the run may use without the person typing a PIN at each use
+      // (factory-secrets.js): ids only, never a value or a PIN. The PINs are
+      // asked when a run starts and kept in memory for that run.
+      secrets: normalizeSecretIds(s.secrets),
       gatekeeper: {
         enabled: !!(s.gatekeeper && s.gatekeeper.enabled),
         model: str(s.gatekeeper && s.gatekeeper.model, 60) || 'haiku',

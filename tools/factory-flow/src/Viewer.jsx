@@ -38,6 +38,12 @@ function describe(ev, names, nodes) {
     case 'ask-reply': return { k: 'info', main: 'You replied', sub: ev.note || '' };
     case 'wait-done': return { k: ev.outcome === 'timeout' ? 'escalate' : 'info', main: `${nodes.get(ev.nodeId)?.label || 'Wait'}: ${ev.outcome === 'timeout' ? 'gave up waiting' : 'over'}`, sub: first(ev.detail) };
     case 'perm-decided': return ev.by === 'manager' || ev.by === 'deny-list' || ev.by === 'gatekeeper' ? { k: ev.decision === 'allowed' ? 'info' : 'escalate', main: `${ev.employee}: ${ev.toolName} ${ev.decision === 'escalated' ? 'passed to the Manager' : ev.decision}${ev.by === 'deny-list' ? ' (never allowed)' : ev.decision === 'escalated' ? ' by the Gatekeeper' : ev.by === 'gatekeeper' ? ' by the Gatekeeper' : ' by the Manager'}`, sub: first(ev.reason || ev.input?.command || ev.input?.url || '') } : null;
+    case 'secrets-unlocked': return { k: 'info', main: `Secrets unlocked for this run: ${(ev.secrets || []).map(x => x.name).join(', ')}`, sub: 'Kept in memory only, until the run ends' };
+    case 'secret-used': {
+      const names = { manager: 'the Manager', gatekeeper: 'the Gatekeeper', person: 'you', crundi: 'Crundi' };
+      const by = (ev.approvedBy || []).map(x => names[x] || x).join(', then ');
+      return { k: ev.ok === false ? 'escalate' : 'info', main: `${ev.employee || who(ev.employeeId)} ${ev.ok === false ? 'was refused' : 'used'} the secret "${ev.secret}"`, sub: [ev.preauthorised ? 'Pre-authorised' : '', by ? (ev.ok === false ? 'Decided by ' : 'Approved by ') + by : ''].filter(Boolean).join(' · ') };
+    }
     case 'delegate': return { k: 'handoff', main: `The Manager handed ${who(ev.employeeId)} a job`, sub: first(ev.task) };
     case 'manager-message': return { k: 'info', main: `The Manager ${ev.hold ? 'held' : ev.interrupt ? 'stopped and told' : 'told'} ${who(ev.employeeId)}`, sub: first(ev.text) };
     case 'trigger-message': return { k: 'info', main: `Mid-run: trigger "${ev.name}" fired again; passed to the Manager`, sub: (ev.key ? '[' + ev.key + '] ' : '') + (ev.title || '') };

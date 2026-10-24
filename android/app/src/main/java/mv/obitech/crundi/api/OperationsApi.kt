@@ -120,6 +120,8 @@ class SecretsApi internal constructor(private val rpc: Rpc) {
     suspend fun delete(id: String) { rpc.post("/api/secrets", mapOf("action" to "delete", "id" to id)) }
     /** The value. Wrong PIN: ApiException "Incorrect PIN". Show it briefly; never store it. */
     suspend fun reveal(id: String, pin: String): String = rpc.post("/api/secrets", mapOf("action" to "reveal", "id" to id, "pin" to pin)).str("value") ?: ""
+    /** Is this the PIN? (Starting a factory run: 'factory-secrets'.) Never returns the value. Wrong: ApiException "Incorrect PIN". */
+    suspend fun check(id: String, pin: String) { rpc.post("/api/secrets", mapOf("action" to "check", "id" to id, "pin" to pin)) }
     /** Let Claude have it (the value goes to Claude, not to this phone). */
     suspend fun approve(requestId: String, pin: String) { rpc.post("/api/secrets", mapOf("action" to "approve", "reqId" to requestId, "pin" to pin)) }
     suspend fun deny(requestId: String) { rpc.post("/api/secrets", mapOf("action" to "deny", "reqId" to requestId)) }

@@ -269,3 +269,4 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 .ff-compact .ff-top { gap: 4px; padding-left: 8px; padding-right: 8px; }
 .ff-compact .ff-top .ff-btn { padding: 6px 8px; flex: none; }
 .ff-compact .ff-runstate { flex: none; }
+.ff-secret { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }

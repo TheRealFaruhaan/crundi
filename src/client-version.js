@@ -90,6 +90,14 @@ export const CAPABILITIES = Object.freeze([
   // server ignores both and does a plain pause, so clients offer the choices
   // only when this is listed.
   'factory-pause-options',
+  // Factory secrets: a factory lists secrets it may use (settings.secrets,
+  // ids only); POST /api/factory-runs action 'start' takes secretPins
+  // ({ secretId: PIN }, kept in memory for that run), and POST /api/secrets
+  // action 'check' says whether a PIN is right without the value. An older
+  // server drops the list and the PINs, and every use asks for the PIN as
+  // before, so clients show the picker and the start prompts only when this
+  // is listed.
+  'factory-secrets',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

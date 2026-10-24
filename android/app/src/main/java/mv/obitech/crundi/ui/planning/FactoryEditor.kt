@@ -103,7 +103,11 @@ sealed interface EditSel {
 
 /** The editor's state: the factory as edited, the server's last copy, and what the screen shows. */
 @Stable
-class FactoryEditorState(detail: FactoryDetail, val skills: List<SkillBrief> = emptyList(), val data: FactoryEditorData = FactoryEditorData.bundled) {
+class FactoryEditorState(
+    detail: FactoryDetail, val skills: List<SkillBrief> = emptyList(), val data: FactoryEditorData = FactoryEditorData.bundled,
+    /** The machine's secrets by name (never values), when the server can pre-authorise them ([FactorySecrets]); null: the picker is hidden. */
+    val secretList: List<mv.obitech.crundi.api.model.Secret>? = null,
+) {
     var factory by mutableStateOf(detail.factory)
         private set
     /** The server's last copy of the definition: saves go over it ([mv.obitech.crundi.api.FactoryJson]). */
@@ -239,7 +243,8 @@ class FactoryEditorState(detail: FactoryDetail, val skills: List<SkillBrief> = e
 
 @Composable
 fun FactoryEditRoute(id: String, focus: String = "") {
-    val api = LocalAppServices.current.api
+    val services = LocalAppServices.current
+    val api = services.api
     val nav = LocalNavigator.current
     val scope = rememberCoroutineScope()
     var load by remember { mutableStateOf<Load<FactoryEditorState>>(Load.Loading) }
@@ -249,7 +254,8 @@ fun FactoryEditRoute(id: String, focus: String = "") {
         load = try {
             val d = api.factories.get(id)
             val skills = runCatching { api.factories.skills() }.getOrDefault(emptyList())
-            Load.Ready(FactoryEditorState(d, skills).apply { focusOn(focus) })
+            val secretList = if (FactorySecrets.supported(services.shell.state.value.capabilities)) runCatching { api.secrets.list().secrets }.getOrNull() else null
+            Load.Ready(FactoryEditorState(d, skills, secretList = secretList).apply { focusOn(focus) })
         } catch (e: ApiException) { Load.Failed(errorText(e)) }
     }
     val st = load.valueOrNull
@@ -726,6 +732,15 @@ private fun ColumnScope.SettingsPanel(st: FactoryEditorState) {
             if (s.gatekeeper.enabled) Field("Gatekeeper model", "A small, cheap model is enough: it follows the Manager's policy and passes the unclear requests on, so the Manager's own conversation stays on the work.") {
                 ChipRow(listOf("haiku" to "Haiku", "sonnet" to "Sonnet", "opus" to "Opus"), s.gatekeeper.model) { v -> set { it.copy(gatekeeper = it.gatekeeper.copy(model = v)) } }
             }
+        }
+    }
+    val secretList = st.secretList
+    if (secretList != null && st.has("secrets")) Field("Secrets the run may use", FactorySecrets.HINT) {
+        if (secretList.isEmpty()) Hint("No secrets on this machine yet. Add them under Secrets.")
+        for (x in secretList) Toggle(x.id in s.secrets, x.name + if (x.description.isNotBlank()) " · ${x.description}" else "") { v -> set { it.copy(secrets = FactorySecrets.toggle(it.secrets, x.id, v)) } }
+        for (gone in FactorySecrets.missing(s.secrets, secretList)) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("A secret this factory lists no longer exists.", style = CrundiType.Small.copy(color = CrundiColors.Yellow), modifier = Modifier.weight(1f))
+            CrundiButton("Remove it", { set { it.copy(secrets = it.secrets - gone) } })
         }
     }
     Field("When the work is done", "Either way it is a single squash commit, and nothing is ever pushed.") {

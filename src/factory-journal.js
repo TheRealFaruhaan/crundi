@@ -233,13 +233,26 @@ export function reduce(prev, ev) {
       break;
     case 'perm-asked':
       r.perms.seq = Math.max(r.perms.seq, Number(String(ev.id).slice(1)) || 0);
-      r.perms.outstanding.push({ id: ev.id, employeeId: ev.employeeId, employee: ev.employee, toolName: ev.toolName, input: ev.input, at });
+      r.perms.outstanding.push({ id: ev.id, employeeId: ev.employeeId, employee: ev.employee, toolName: ev.toolName, input: ev.input, at, ...(ev.kind ? { kind: ev.kind } : {}) });
       break;
     case 'perm-decided':
       // Passed on by the Gatekeeper: still waiting, now on the Manager.
       if (ev.decision !== 'escalated') r.perms.outstanding = r.perms.outstanding.filter(p => p.id !== ev.id);
-      r.perms.log.push({ at, id: ev.id, employee: ev.employee, toolName: ev.toolName, input: ev.input, decision: ev.decision, by: ev.by, reason: ev.reason || '', rule: ev.rule || undefined });
+      r.perms.log.push({ at, id: ev.id, employee: ev.employee, toolName: ev.toolName, input: ev.input, decision: ev.decision, by: ev.by, reason: ev.reason || '', rule: ev.rule || undefined, ...(ev.kind ? { kind: ev.kind } : {}) });
       if (r.perms.log.length > LOG_MAX) r.perms.log.splice(0, r.perms.log.length - LOG_MAX);
+      break;
+    case 'secrets-unlocked':
+      // The factory's secrets the person unlocked when the run started, by
+      // name. The PINs are never here: they live in the runner's memory.
+      r.secrets = { ...(r.secrets || { log: [] }), unlockedAtStart: (ev.secrets || []).map(x => ({ id: x.id, name: x.name })) };
+      break;
+    case 'secret-used':
+      // One use of a secret by the team: its name, who, who approved it and
+      // whether it was pre-authorised. Never a value or a PIN.
+      r.secrets = r.secrets || { unlockedAtStart: [], log: [] };
+      r.secrets.log = [...(r.secrets.log || []), { at, secretId: ev.secretId || '', secret: ev.secret || '', employeeId: ev.employeeId || '', employee: ev.employee || '', approvedBy: Array.isArray(ev.approvedBy) ? ev.approvedBy.slice() : [], preauthorised: !!ev.preauthorised, ok: ev.ok !== false }];
+      if (r.secrets.log.length > LOG_MAX) r.secrets.log.splice(0, r.secrets.log.length - LOG_MAX);
+      history(rec, { type: 'secret-used', secret: ev.secret || '', employee: ev.employee || '', approvedBy: Array.isArray(ev.approvedBy) ? ev.approvedBy.slice() : [], preauthorised: !!ev.preauthorised });
       break;
     case 'cap':
       r.capHit = { which: ev.which, limit: ev.limit, at };

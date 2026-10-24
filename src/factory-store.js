@@ -24,7 +24,7 @@ import { normalizeTemplate } from './factory-cr.js';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { config } from './config.js';
-import { normalizeFactory, validateFactory, skeletonFactory, genId, needsLayout, layoutFactory } from './factory-model.js';
+import { normalizeFactory, validateFactory, skeletonFactory, genId, needsLayout, layoutFactory, normalizeSecretIds } from './factory-model.js';
 
 export const EXPORT_FORMAT = 'crundi-factory';
 export const EXPORT_FORMAT_VERSION = 1;
@@ -65,6 +65,8 @@ function summary(f) {
     errorCount: v.errors.length,
     warningCount: v.warnings.length,
     crTemplate: normalizeTemplate(f.settings && f.settings.crTemplate),
+    // The secrets a run may use (ids): the start form asks their PINs.
+    secrets: normalizeSecretIds(f.settings && f.settings.secrets),
   };
 }
 

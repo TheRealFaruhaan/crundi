@@ -54,6 +54,7 @@ import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES
 import { missingSkills } from './factory-skills.js';
 import { checkCr, crMarkdown, crBrief, crText, normalizeTemplate } from './factory-cr.js';
 import { requestContext } from './factory-triggers.js';
+import { createSecretVault, decide as decideSecret } from './factory-secrets.js';
 
 /** Runs in these states hold their project: no second run can start. */
 export const UNFINISHED = UNFINISHED_SET;
@@ -64,6 +65,7 @@ const SETUP_OUTPUT_MAX = 4000;
 const PERMISSION_BATCH_MS = 1500;   // parallel branches asking at once arrive as one message
 const AUTO_RECOVER_DELAYS = [30_000, 2 * 60_000, 10 * 60_000];
 const WOKE_GRACE_MS = 3000;   // a turn starting this soon after a send was started by it
+const SECRET_ASK_MS = 10 * 60 * 1000;
 
 /**
  * @param {object} o
@@ -76,10 +78,16 @@ const WOKE_GRACE_MS = 3000;   // a turn starting this soon after a send was star
  * @param {{ under:(root:string)=>string[], remove:(key:string)=>any }} [o.services]  preview services a run started, by folder
  * @param {(kind:string, run:object, text:string) => void} [o.notify]
  * @param {(run:object) => void} [o.onChange]
+ * @param {(id:string, pin:string) => {ok:boolean, name?:string, error?:string}} [o.unlockSecret]
+ *        checks a secret's PIN (secrets-store.decryptSecret); the value it
+ *        returns is dropped at once
+ * @param {(id:string) => {id:string, name:string}|null} [o.secretMeta]  a secret's name
  */
 export function createFactoryRunner({
   dataDir, agents, getProject, getFactory, git = Git, listSkills = () => [], services = null,
   notify = () => {}, onChange = () => {},
+  unlockSecret = null, secretMeta = () => null,
+  secretAskMs = SECRET_ASK_MS,   // how long a secret request waits on the Manager or the Gatekeeper
   settleMs = SETTLE_MS, setupTimeoutMs = SETUP_TIMEOUT_MS, permissionBatchMs = PERMISSION_BATCH_MS,
   autoRecoverDelays = AUTO_RECOVER_DELAYS,
   tickScale = 1,   // tests shrink the ticker's minutes
@@ -93,6 +101,11 @@ export function createFactoryRunner({
   const chats = new Map();
   /** Projects claimed by a run that is still being set up (before its first event). */
   const claiming = new Set();
+  /**
+   * The secrets each run's person unlocked (factory-secrets.js): in memory
+   * only, never in the journal or the cache, so a restart starts it empty.
+   */
+  const vault = createSecretVault();
 
   if (typeof agents.onPermission === 'function') agents.onPermission((req) => onPermissionRequest(req));
 
@@ -132,6 +145,10 @@ export function createFactoryRunner({
     const fd = openSync(journalFile(id), 'a');
     try { writeSync(fd, JSON.stringify(e) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
     entry.rec = reduce(entry.rec, e);
+    // Stopped, finished, discarded or crashed: its unlocked secrets go.
+    // (Paused is still running and keeps them.)
+    const status = entry.rec?.state?.status;
+    if (status && (!UNFINISHED.has(status) || status === 'crashed')) vault.forgetRun(id);
     writeCache(entry);
     return entry.rec;
   }
@@ -252,7 +269,10 @@ export function createFactoryRunner({
       managerMode: r.managerMode,
       teamMode: r.teamMode || 'ask',
       gatekeeper: !!s.snapshot.settings.gatekeeper?.enabled,
-      permissions: L.permissions.map(p => ({ id: p.id, employee: p.employee, toolName: p.toolName, input: p.input, at: p.at, sent: p.sent })),
+      // The factory's secrets: names, and whether each is unlocked for this
+      // run right now (the PINs stay in memory and are never shown).
+      secrets: (s.snapshot.settings.secrets || []).map(id => ({ id, name: secretMeta(id)?.name || '', unlocked: vault.has(s.id, id) })),
+      permissions: L.permissions.map(p => ({ id: p.id, employee: p.employee, toolName: p.toolName, input: p.input, at: p.at, sent: p.sent, ...(p.kind ? { kind: p.kind } : {}) })),
       rules: scopedRules(r.rules),
       outcome: s.outcome,
       setup: r.setup,
@@ -302,7 +322,7 @@ export function createFactoryRunner({
    * files: [{ name, content }] written into the change request's folder and
    * listed with its attachments (a trigger's copy of the call that started it).
    */
-  async function startRun({ project, factoryId, task, cr, files = [], mergeMode, ignoreMissingSkills = false, trigger = null } = {}) {
+  async function startRun({ project, factoryId, task, cr, files = [], mergeMode, ignoreMissingSkills = false, trigger = null, secretPins = null } = {}) {
     const key = String(project || '').toLowerCase();
     const proj = getProject(key);
     if (!proj) return { ok: false, error: `Project "${project}" not found.` };
@@ -338,6 +358,22 @@ export function createFactoryRunner({
     const missing = missingSkills(factory, crIn ? crText(crIn) : taskText, new Set(known.map(x => x.name)));
     if (missing.length && !ignoreMissingSkills) {
       return { ok: false, missingSkills: missing, error: `This factory names skill${missing.length === 1 ? '' : 's'} this project does not have: ${missing.map(n => '/' + n).join(', ')}. Install ${missing.length === 1 ? 'it' : 'them'}, or start anyway.` };
+    }
+
+    // The PINs the person typed for the factory's secrets, checked before
+    // anything is made: a wrong one is said now, while they are there.
+    const unlocked = [];
+    if (secretPins && typeof secretPins === 'object' && unlockSecret) {
+      for (const sid of factory.settings.secrets || []) {
+        const pin = secretPins[sid];
+        if (pin == null || pin === '') continue;
+        const r = unlockSecret(sid, String(pin));
+        if (!r || !r.ok) {
+          const name = r?.name || secretMeta(sid)?.name || sid;
+          return { ok: false, field: 'secrets', secretId: sid, error: r?.error === 'Secret not found' ? `The secret "${name}" no longer exists; remove it from the factory.` : `The PIN for "${name}" is not right.` };
+        }
+        unlocked.push({ id: sid, name: r.name || secretMeta(sid)?.name || sid, pin: String(pin) });
+      }
     }
 
     claiming.add(key);
@@ -378,6 +414,11 @@ export function createFactoryRunner({
       });
       runs.set(id, entry);
       claiming.delete(key);
+      if (unlocked.length) {
+        for (const u of unlocked) vault.remember(id, u.id, u.pin);
+        // Which were unlocked, by name: never the PINs.
+        commit(entry, { type: 'secrets-unlocked', secrets: unlocked.map(u => ({ id: u.id, name: u.name })) });
+      }
 
       const setupCmd = factory.settings.setupCommand.trim();
       if (setupCmd) {
@@ -1072,6 +1113,8 @@ export function createFactoryRunner({
   // ─── Permissions: employees ask, the Manager decides ───
 
   function answer(item, allow, message) {
+    // A secret request (askSecret) is waited on by its secret_run call, not by a CLI.
+    if (item.resolve) { item.resolve({ allow, message: message || '', by: item.decidedBy || 'crundi' }); return true; }
     let r;
     try { r = agents.respond(item.chatId, { requestId: item.requestId, behavior: allow ? 'allow' : 'deny', message }); }
     catch (err) { r = { ok: false, error: err.message }; }
@@ -1079,7 +1122,7 @@ export function createFactoryRunner({
   }
 
   function decided(entry, item, decision, by, extra = {}) {
-    commit(entry, { type: 'perm-decided', id: item.id, employee: item.employee, toolName: item.toolName, input: item.input, decision, by, ...extra });
+    commit(entry, { type: 'perm-decided', id: item.id, employee: item.employee, toolName: item.toolName, input: item.input, decision, by, ...(item.kind ? { kind: item.kind } : {}), ...extra });
   }
 
   /** Remove requests in flight; if a reason is given, the employees are told no. */
@@ -1087,7 +1130,8 @@ export function createFactoryRunner({
     const keep = [];
     for (const p of entry.live.permissions) {
       if (!pred(p)) { keep.push(p); continue; }
-      if (reason) answer(p, false, denyMessage(reason, 'Crundi'));
+      // A secret request has a caller waiting on it, so it is always answered.
+      if (reason || p.resolve) answer(p, false, denyMessage(reason || 'the chat that asked has ended', 'Crundi'));
       decided(entry, p, 'dropped', 'crundi', { reason });
     }
     entry.live.permissions = keep;
@@ -1238,15 +1282,18 @@ export function createFactoryRunner({
           continue;
         }
         const allow = d.allow === true || d.allow === 'true';
-        if (allow && d.rule && !grant(String(d.rule), id, d.ruleFor ? whoOf(d.ruleFor) : item.employeeId)) continue;
+        item.decidedBy = isGate ? 'gatekeeper' : 'manager';
+        // A rule never covers a secret: each use is answered on its own.
+        if (allow && d.rule && item.kind !== 'secret' && !grant(String(d.rule), id, d.ruleFor ? whoOf(d.ruleFor) : item.employeeId)) continue;
         const delivered = answer(item, allow, allow ? undefined : denyMessage(reason, isGate ? 'The Gatekeeper' : 'The Manager'));
         entry.live.permissions = entry.live.permissions.filter(p => p !== item);
-        decided(entry, item, allow ? 'allowed' : 'denied', isGate ? 'gatekeeper' : 'manager', { reason, ...(allow && d.rule ? { rule: d.rule } : {}) });
+        decided(entry, item, allow ? 'allowed' : 'denied', isGate ? 'gatekeeper' : 'manager', { reason, ...(allow && d.rule && item.kind !== 'secret' ? { rule: d.rule } : {}) });
         results.push(`${id}: ${allow ? 'allowed' : 'denied'}${delivered ? '' : ' (that request was no longer waiting)'}`);
       }
       // A rule just granted answers anything else waiting that it covers.
       if (newRules.length) {
         for (const item of [...entry.live.permissions]) {
+          if (item.kind === 'secret') continue;
           const hit = newRules.find(r => (r.who === '*' || r.who === item.employeeId) && ruleMatches(r.rule, item));
           if (!hit) continue;
           const rule = hit.rule;
@@ -2248,7 +2295,108 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  // ─── Secrets the factory may use (factory-secrets.js) ───
+
+  /** Is the run one whose chats can still be using a secret? Paused counts. */
+  const secretsLive = (entry) => UNFINISHED.has(st(entry).status) && st(entry).status !== 'crashed';
+
+  /**
+   * What a secret_run from this chat means. null when the chat is not part of
+   * a factory run. Otherwise: who asks, whether the secret is on the
+   * factory's list, how it is decided (factory-secrets.js decide()), the PIN
+   * if the person unlocked it for this run, and a refusal if the command is
+   * one a factory may never run (sudo, restarting Crundi, pushing…).
+   */
+  function secretContext(chatId, secretId, command = '') {
+    const info = chatInfo(chatId);
+    const entry = info && runs.get(info.runId);
+    if (!entry) return null;
+    const live = secretsLive(entry);
+    const listed = live && (st(entry).snapshot.settings.secrets || []).includes(secretId);
+    const emp = st(entry).snapshot.roster.find(r => r.id === info.employeeId);
+    const employee = info.employeeId === GATEKEEPER_ID ? 'Gatekeeper' : emp?.name || info.employeeId;
+    const deny = command ? hardDeny({ toolName: 'Bash', input: { command } }) : '';
+    return {
+      runId: st(entry).id, employeeId: info.employeeId, employee, listed,
+      route: decideSecret({ employeeId: info.employeeId, listed }),
+      pin: listed ? vault.pin(st(entry).id, secretId) : '',
+      deny,
+    };
+  }
+
+  /**
+   * An employee wants to use a listed secret: put it to the Gatekeeper (or
+   * the Manager) as a "[Factory] Secret request", batched and answered like a
+   * permission request. Resolves { allow, message, by }.
+   */
+  function askSecret(chatId, { secretId, secretName, command, envName = 'SECRET', reason = '' } = {}) {
+    const info = chatInfo(chatId);
+    const entry = info && runs.get(info.runId);
+    if (!entry) return Promise.resolve({ allow: false, message: 'This chat is not part of a running factory.', by: 'crundi' });
+    return new Promise((resolveOuter) => {
+      let done = false, item = null;
+      const finish = (r) => { if (done) return; done = true; clearTimeout(timer); resolveOuter(r); };
+      const timer = setTimeout(() => {
+        locked(entry, async () => {
+          if (done || !item) return finish({ allow: false, message: 'Nobody answered the secret request in time.', by: 'crundi' });
+          entry.live.permissions = entry.live.permissions.filter(p => p !== item);
+          decided(entry, item, 'dropped', 'crundi', { reason: 'not answered in time' });
+          finish({ allow: false, message: denyMessage('nobody answered the secret request in time', 'Crundi'), by: 'crundi' });
+        });
+      }, secretAskMs);
+      timer.unref?.();
+      locked(entry, async () => {
+        if (!secretsLive(entry)) return finish({ allow: false, message: denyMessage(`the run is ${st(entry).status}`, 'Crundi'), by: 'crundi' });
+        const emp = st(entry).snapshot.roster.find(r => r.id === info.employeeId);
+        const clipped = (v, n) => { const t = String(v ?? ''); return t.length > n ? t.slice(0, n) + '…' : t; };
+        item = {
+          id: 'p' + (rr(entry).perms.seq + 1), kind: 'secret',
+          chatId, employeeId: info.employeeId, employee: emp?.name || info.employeeId,
+          toolName: 'secret_run', displayName: 'secret_run', description: '',
+          // The secret's name and the command, never its value.
+          input: { secret: String(secretName || ''), secretId: String(secretId || ''), command: clipped(command, 4000), envName: String(envName || 'SECRET'), reason: clipped(reason, 1000) },
+          at: now(), sent: false,
+          resolve: (r) => finish(r),
+        };
+        commit(entry, { type: 'perm-asked', id: item.id, kind: 'secret', employeeId: item.employeeId, employee: item.employee, toolName: item.toolName, input: item.input });
+        entry.live.permissions.push(item);
+        writeCache(entry);
+        scheduleDelivery(entry);
+      });
+    });
+  }
+
+  /**
+   * The person typed a listed secret's PIN (after a restart, or a run started
+   * by a trigger): keep it for the rest of the run.
+   */
+  function rememberSecret(runId, secretId, pin) {
+    const entry = runs.get(runId);
+    if (!entry || !secretsLive(entry) || !pin) return false;
+    if (!(st(entry).snapshot.settings.secrets || []).includes(secretId)) return false;
+    vault.remember(runId, secretId, pin);
+    return true;
+  }
+
+  /** A PIN that no longer opens its secret (it was recreated): drop it. */
+  function forgetSecret(runId, secretId) { vault.forget(runId, secretId); }
+
+  /**
+   * One use of a secret by the team, for the journal: its name, who used it,
+   * who approved it and whether it was pre-authorised. Never a value or a PIN.
+   */
+  function secretUsed(runId, { secretId = '', secretName = '', employeeId = '', employee = '', approvedBy = [], preauthorised = false, ok = true } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return Promise.resolve();
+    return locked(entry, async () => {
+      commit(entry, { type: 'secret-used', secretId: String(secretId), secret: String(secretName), employeeId: String(employeeId), employee: String(employee), approvedBy: (Array.isArray(approvedBy) ? approvedBy : []).map(String), preauthorised: !!preauthorised, ok: !!ok });
+    });
+  }
+
+  /** Which of a run's listed secrets are unlocked now (ids, never PINs). */
+  function unlockedSecrets(runId) { return vault.unlocked(runId); }
+
+  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose, secretContext, askSecret, rememberSecret, forgetSecret, secretUsed, unlockedSecrets };
 }
 
 /**

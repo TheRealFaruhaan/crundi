@@ -65,6 +65,18 @@
     '.fx-modal h3{margin:0;font-size:15px}',
     '.fx-modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}',
     '.fx-modal.fx-modal-wide{width:min(680px,100%)}',
+    // The PIN prompt at the start of a run, like the page's own PIN dialog, above the start form.
+    '.fx-pin-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:950;display:flex;align-items:center;justify-content:center;padding:20px}',
+    '.fx-pin{background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:22px;width:100%;max-width:340px;text-align:center;display:flex;flex-direction:column;gap:10px;box-shadow:0 24px 60px rgba(0,0,0,.6)}',
+    '.fx-pin h3{margin:0;font-size:15px;display:flex;align-items:center;justify-content:center;gap:6px}',
+    '.fx-pin h3 .ic{width:16px;height:16px}',
+    '.fx-pin p{margin:0;font-size:12.5px;color:var(--text-secondary);line-height:1.45;word-break:break-word}',
+    '.fx-pin input{width:100%;box-sizing:border-box;text-align:center;letter-spacing:.4em;font-size:18px;padding:9px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px}',
+    '.fx-pin input:focus{outline:none;border-color:var(--accent)}',
+    '.fx-pin-err{color:var(--red);font-size:12px;min-height:16px}',
+    '.fx-pin-step{font-size:11.5px;color:var(--text-muted)}',
+    '.fx-pin-btns{display:flex;gap:8px}',
+    '.fx-pin-btns .fx-btn{flex:1;justify-content:center}',
     '.fx-panel-live{position:absolute;inset:0;display:flex;flex-direction:column;min-height:0}',
     '.fx-section{display:flex;flex-direction:column;gap:2px;margin:18px 2px 10px;font-size:14px}',
     '.fx-section span{font-size:12.5px;color:var(--text-secondary)}',
@@ -203,6 +215,68 @@
     document.addEventListener('keydown', key);
     document.body.appendChild(bg);
     return { box: m, close: close };
+  }
+
+  // ─── The factory's secrets: their PINs, asked at the start of a run ───
+  //
+  // One secret at a time. Each PIN is checked by the server (action 'check',
+  // which never returns the value) before the next is asked; Skip leaves that
+  // secret locked, and the person is asked when the team first uses it.
+  // Resolves { pins: { id: PIN } }, or null when the person cancels.
+  function askSecretPins(ctx, list) {
+    return new Promise(function (resolve) {
+      var pins = {}, i = 0;
+      var bg = el('div', 'fx-pin-bg');
+      var box = el('div', 'fx-pin'); bg.appendChild(box);
+      var h = el('h3'), stepEl = el('div', 'fx-pin-step'), sub = el('p');
+      var inp = el('input'); inp.type = 'password'; inp.inputMode = 'numeric'; inp.maxLength = 6; inp.autocomplete = 'off'; inp.placeholder = '••••••';
+      var err = el('div', 'fx-pin-err');
+      var row = el('div', 'fx-pin-btns');
+      var cancel = btn('Cancel', 'ghost', '', ctx), skip = btn('Skip', '', '', ctx), unlock = btn('Unlock', 'primary', 'lock', ctx);
+      row.appendChild(cancel); row.appendChild(skip); row.appendChild(unlock);
+      [h, stepEl, sub, inp, err, row].forEach(function (x) { box.appendChild(x); });
+      function done(v) { bg.remove(); window.removeEventListener('keydown', key, true); resolve(v); }
+      function show() {
+        if (i >= list.length) return done({ pins: pins });
+        var x = list[i];
+        h.innerHTML = ctx.icon('lock') + '<span>' + esc(x.name) + '</span>';
+        stepEl.textContent = list.length > 1 ? 'Secret ' + (i + 1) + ' of ' + list.length : '';
+        sub.textContent = 'This factory may use this secret. Its PIN is kept in memory for this run only, so the team does not stop to ask; the value is never shown. Skip to be asked when it is first used.';
+        inp.value = ''; err.textContent = '';
+        setTimeout(function () { inp.focus(); }, 30);
+      }
+      async function submit() {
+        var pin = inp.value.trim();
+        if (!/^[0-9]{6}$/.test(pin)) { err.textContent = 'Enter a 6-digit PIN'; return; }
+        unlock.disabled = true;
+        var r = await post(ctx, '/api/secrets', { action: 'check', id: list[i].id, pin: pin }).catch(function (e) { return { ok: false, error: e.message }; });
+        unlock.disabled = false;
+        if (!r || !r.ok) { err.textContent = (r && r.error) || 'Failed'; inp.select(); inp.focus(); return; }
+        pins[list[i].id] = pin; i++; show();
+      }
+      // Captured before the start form's own Escape, which would close it too.
+      function key(e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
+        else if (e.key === 'Enter' && document.activeElement === inp) { e.preventDefault(); e.stopPropagation(); submit(); }
+      }
+      cancel.onclick = function () { done(null); };
+      skip.onclick = function () { i++; show(); };
+      unlock.onclick = submit;
+      window.addEventListener('keydown', key, true);
+      document.body.appendChild(bg);
+      show();
+    });
+  }
+
+  /** The factory's secrets by name, when the server can pre-authorise them; [] otherwise. */
+  async function secretsToUnlock(ctx, f) {
+    var ids = (f && f.secrets) || [];
+    if (!ids.length) return [];
+    var caps = await serverCaps(ctx);
+    if (caps.indexOf('factory-secrets') < 0) return [];
+    var d = await getJson(ctx, '/api/secrets').catch(function () { return null; });
+    var known = (d && d.secrets) || [];
+    return ids.map(function (id) { return known.find(function (x) { return x.id === id; }); }).filter(Boolean).map(function (x) { return { id: x.id, name: x.name }; });
   }
 
   // ─── Start a factory: a change request ───
@@ -382,11 +456,21 @@
       ctx.toast(msg, 'error');
       if (t) { t.classList.add('fx-bad'); t.focus(); setTimeout(function () { t.classList.remove('fx-bad'); }, 2500); }
     }
+    var heldPins = null;
     async function start(ignoreMissingSkills) {
       if (!title.value.trim()) return fieldError('title', 'Give the change request a title.');
       for (var i = 0; i < template.length; i++) {
         var sec = template[i];
         if (sec.required && !inputs[sec.id].value.trim()) return fieldError(sec.id, 'Fill in "' + sec.label + '".');
+      }
+      // The factory's secrets: their PINs now, while the person is here.
+      // "Start anyway" right after keeps the PINs just typed.
+      var secretPins = ignoreMissingSkills && heldPins ? heldPins : null;
+      var toUnlock = secretPins ? [] : await secretsToUnlock(ctx, current());
+      if (toUnlock.length) {
+        var got = await askSecretPins(ctx, toUnlock);
+        if (!got) return;
+        secretPins = heldPins = got.pins;
       }
       go.disabled = true; var lbl = go.querySelector('span');
       var attachments = [];
@@ -398,9 +482,11 @@
       }
       lbl.textContent = 'Starting…';
       var v = values();
-      var r = await post(ctx, '/api/factory-runs', { action: 'start', project: projSel.value, factoryId: fSel.value, cr: { title: v.title, sections: v.sections, attachments: attachments }, mergeMode: mm.value || undefined, ignoreMissingSkills: !!ignoreMissingSkills }).catch(function (e) { return { ok: false, error: e.message }; });
+      var r = await post(ctx, '/api/factory-runs', { action: 'start', project: projSel.value, factoryId: fSel.value, cr: { title: v.title, sections: v.sections, attachments: attachments }, mergeMode: mm.value || undefined, ignoreMissingSkills: !!ignoreMissingSkills, secretPins: secretPins || undefined }).catch(function (e) { return { ok: false, error: e.message }; });
       lbl.textContent = 'Start'; go.disabled = false;
+      if (r.ok || r.field === 'secrets') heldPins = null;
       if (r.ok) { dropDraft(fSel.value); md.close(); ctx.toast('Factory started.', 'success'); if (opts.onStarted) opts.onStarted(r.run); return; }
+      if (r.field === 'secrets') { info.innerHTML = ''; info.appendChild(el('div', 'fx-err', esc(r.error || 'A secret could not be unlocked.') + ' Press Start to type it again.')); return; }
       if (r.field && r.field !== 'attachments') return fieldError(r.field, r.error);
       if (r.missingSkills) {
         info.innerHTML = '';

@@ -43,6 +43,7 @@ import * as kanban from './kanban-store.js';
 import * as factoryStore from './factory-store.js';
 import { validateFactory } from './factory-model.js';
 import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-runner.js';
+import { authoriseSecretUse } from './factory-secrets.js';
 import * as factoryCleanup from './factory-cleanup.js';
 import { createTriggerStore, createTriggerDispatcher, publicTrigger } from './factory-triggers.js';
 import { FACTORY_GUIDE } from './factory-guide.js';
@@ -994,6 +995,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     agents: claudeUiAgents(claudeUi, { dataDir: config.dataDir }),
     getProject: (alias) => getProjectUnscoped(alias),
     getFactory: (id) => factoryStore.getFactory(id),
+    // The factory's secrets: a PIN typed at the start is checked here and its
+    // value dropped at once; only the PIN is kept, in the runner's memory.
+    unlockSecret: (id, pin) => { const r = secrets.decryptSecret(id, pin); return r.ok ? { ok: true, name: r.name } : { ok: false, error: r.error }; },
+    secretMeta: (id) => secrets.getSecretMeta(id),
     // What a project can see: global, synced, and that project's own skills.
     listSkills: (project) => {
       const key = 'project:' + String(project || '').toLowerCase();
@@ -2261,7 +2266,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * The value is never cached — every request is independent and needs its own
    * PIN entry.
    */
-  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '', sessionId = '' }) {
+  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '', sessionId = '', keepPin = false }) {
     return new Promise((resolve) => {
       const id = randomBytes(8).toString('hex');
       const timer = setTimeout(() => {
@@ -2274,11 +2279,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         id, secretId, secretName, projectAlias, reason, kind, command, envName, sessionId,
         createdAt: new Date().toISOString(),
         timer,
-        fulfill: (value) => {
+        fulfill: (value, pin) => {
           clearTimeout(timer);
           pendingSecretRequests.delete(id);
           broadcastSecretRequests();
-          resolve({ ok: true, name: secretName, value });
+          // keepPin: a factory run keeps the PIN of a secret on its list for
+          // the rest of the run. Never part of a response.
+          resolve({ ok: true, name: secretName, value, ...(keepPin && pin ? { pin: String(pin) } : {}) });
         },
         reject: (error) => {
           clearTimeout(timer);
@@ -3570,7 +3577,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       switch (body.action) {
         case 'start':
           if (!body.project || aliasDenied(body.project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
-          result = await factoryRunner.startRun({ project: body.project, factoryId: body.factoryId, task: body.task, cr: body.cr, mergeMode: body.mergeMode, ignoreMissingSkills: !!body.ignoreMissingSkills });
+          result = await factoryRunner.startRun({
+            project: body.project, factoryId: body.factoryId, task: body.task, cr: body.cr, mergeMode: body.mergeMode, ignoreMissingSkills: !!body.ignoreMissingSkills,
+            // Optional (capability 'factory-secrets'): { secretId: PIN } for the
+            // factory's secrets, kept in memory for this run. Secrets are the
+            // owner's alone, so a collaborator's are ignored (and the start
+            // form cannot be used to try PINs).
+            secretPins: !isConfined(principal) && body.secretPins && typeof body.secretPins === 'object' ? body.secretPins : null,
+          });
           break;
         case 'stop': result = await factoryRunner.stopRun(body.id); break;
         case 'resume': result = await factoryRunner.resume(body.id); break;
@@ -3641,6 +3655,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           const r = secrets.deleteSecret(body.id);
           return json(res, r);
         }
+        case 'check': {
+          // Is this the secret's PIN? For the prompts at the start of a factory
+          // run: says yes or no, never the value.
+          const r = secrets.decryptSecret(body.id, body.pin);
+          return json(res, r.ok ? { ok: true, name: r.name } : { ok: false, error: r.error });
+        }
         case 'reveal': {
           // The authenticated web user views a secret's value themselves.
           const r = secrets.decryptSecret(body.id, body.pin);
@@ -3653,7 +3673,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (!reqEntry) return json(res, { ok: false, error: 'Request no longer pending (it may have timed out)' });
           const dec = secrets.decryptSecret(reqEntry.secretId, body.pin);
           if (!dec.ok) return json(res, dec); // wrong PIN — keep request pending for retry
-          reqEntry.fulfill(dec.value);
+          reqEntry.fulfill(dec.value, body.pin);
           return json(res, { ok: true });
         }
         case 'deny': {
@@ -6381,23 +6401,35 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const command = String(a.command || '').trim();
         if (!command) return json(res, { ok: false, error: 'No command given.' });
 
-        const approval = await waitForSecretApproval({
-          secretId: meta.meta.id,
-          secretName: meta.meta.name,
-          projectAlias: a.alias || '',
-          reason: a.reason || '',
-          sessionId: String(a.sessionId || ''),
-          kind: 'run',
-          command,
-          envName,
+        // From a factory run's chat, a secret on the factory's list that the
+        // person unlocked at the start runs without a PIN: for the Manager and
+        // the Gatekeeper at once, for anyone else once the Gatekeeper or the
+        // Manager approves. Anything else asks the person, as always.
+        const sid = String(a.sessionId || '');
+        const auth = await authoriseSecretUse({
+          runner: factoryRunner, chatId: sid, secret: { id: meta.meta.id, name: meta.meta.name },
+          command, envName, reason: a.reason || '',
+          decrypt: (id, pin) => secrets.decryptSecret(id, pin),
+          askPerson: ({ keepPin }) => waitForSecretApproval({
+            secretId: meta.meta.id,
+            secretName: meta.meta.name,
+            projectAlias: a.alias || '',
+            reason: a.reason || '',
+            sessionId: sid,
+            kind: 'run',
+            command,
+            envName,
+            keepPin,
+          }),
         });
-        if (!approval.ok) return json(res, approval);
+        if (!auth.ok) return json(res, { ok: false, error: auth.error });
+        const value = auth.value;
 
         // From here the plaintext exists only in this call frame and the child's
         // environment. It is never returned, logged, or put in the response.
         const cwd = a.cwd || (a.alias ? (getProject(a.alias)?.path || undefined) : undefined);
         const run = await runWithSecret({
-          command, value: approval.value, envName, cwd,
+          command, value, envName, cwd,
           timeoutMs: Math.min(Math.max(Number(a.timeoutMs) || 120000, 1000), 600000),
         });
         return json(res, {
