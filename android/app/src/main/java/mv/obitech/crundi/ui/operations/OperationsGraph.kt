@@ -22,6 +22,7 @@ fun NavGraphBuilder.operationsGraph() {
     composable(SettingsPage.Server.route) { ServerPageRoute() }
     composable(SettingsPage.Notifications.route) { NotificationsRoute() }
     composable(SettingsPage.Prompt.route) { PromptRoute() }
+    composable(SettingsPage.Skills.route) { SkillsRoute() }
     composable(SettingsPage.General.route) { GeneralRoute() }
     composable(SettingsPage.Config.route) { ConfigRoute() }
     composable(SettingsPage.Machine.route) { MachineRoute() }

@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "skills": [
+    { "scope": "global", "name": "crundi", "title": "crundi", "description": "How to build, run, test and ship a project on a machine running Crundi, through the crundi MCP tools.", "files": 4, "more": false, "size": 48213, "origin": "bundled", "readOnly": true, "problem": "" },
+    { "scope": "global", "name": "frontend-design", "title": "frontend-design", "description": "Distinctive, intentional visual design when building new UI or reshaping an existing one.", "files": 3, "more": false, "size": 12840, "origin": "user", "readOnly": false, "problem": "" },
+    { "scope": "global", "name": "notes-drafts", "title": "notes-drafts", "description": "", "files": 1, "more": false, "size": 212, "origin": "user", "readOnly": false, "problem": "SKILL.md has no description, so Claude cannot tell when to use it" },
+    { "scope": "global", "name": "team-style", "title": "team-style", "description": "The team's code style, kept in the shared design repo.", "files": 2, "more": false, "size": 5120, "origin": "linked", "readOnly": true, "problem": "" },
+    { "scope": "synced", "name": "pdf", "title": "pdf", "description": "Read, merge, split and fill PDF files.", "files": 9, "more": false, "size": 204800, "origin": "synced", "readOnly": true, "problem": "" },
+    { "scope": "synced", "name": "xlsx", "title": "xlsx", "description": "Open, edit and create spreadsheets.", "files": 7, "more": false, "size": 153600, "origin": "synced", "readOnly": true, "problem": "" },
+    { "scope": "project:crundi", "name": "android-release", "title": "android-release", "description": "Cut an Android build: bump the version, run the unit and screenshot tests, write the notes.", "files": 2, "more": false, "size": 3610, "origin": "user", "readOnly": false, "problem": "" }
+  ],
+  "scopes": [
+    { "id": "global", "label": "All projects", "path": "/home/crundi/.claude/skills" },
+    { "id": "project:crundi", "label": "crundi", "path": "/home/crundi/projects/crundi/.claude/skills" },
+    { "id": "project:ledger", "label": "ledger", "path": "/home/crundi/projects/ledger/.claude/skills" }
+  ],
+  "limits": { "upload": 52428800, "unpacked": 104857600, "files": 2000, "editable": 1048576, "file": 26214400 }
+}
