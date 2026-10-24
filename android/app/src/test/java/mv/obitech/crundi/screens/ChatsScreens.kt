@@ -97,6 +97,23 @@ class ChatsScreens : ScreenshotTest() {
         ChatScreen(ChatUi(chat(14), isBubble = true), noChat)
     }
 
+    // Put to sleep while open: the workbench's sleeping view over what it showed, "asleep" in the header and the footer.
+    private fun parked(c: ChatState) = mv.obitech.crundi.api.model.Pane(c.id, project = "crundi", title = c.title, kind = "parked", paneKind = "ui", status = "parked", reason = "idle", hasSession = true)
+    @Test fun chatAsleep() = snap("chats-chat-asleep") {
+        val c = chat(0)
+        ChatScreen(ChatUi(c, pane = parked(c), draft = "and the 401 renewal"), noChat)
+    }
+
+    @Test fun chatAsleepBubbleWaking() = snap("chats-chat-asleep-bubble-waking", host = bubbleHost) {
+        val c = chat(0)
+        ChatScreen(ChatUi(c, pane = parked(c), draft = "and the 401 renewal", isBubble = true, waking = "resume"), noChat)
+    }
+
+    @Test fun chatAsleepWakeFailed() = snap("chats-chat-asleep-failed", host = bubbleHost) {
+        val c = chat(0)
+        ChatScreen(ChatUi(c, pane = parked(c), draft = "and the 401 renewal", isBubble = true, error = mv.obitech.crundi.ui.chats.ChatSleep.WAKE_FAILED + "project \"crundi\" no longer exists."), noChat)
+    }
+
     @Test fun chatLoading() = snap("chats-chat-loading") {
         ChatScreen(ChatUi(ChatState("a1b2c3d4e5f60718")), noChat)
     }

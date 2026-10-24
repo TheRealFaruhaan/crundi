@@ -24,10 +24,12 @@ fun RenameCard(what: String, value: String, onValue: (String) -> Unit, onSave: (
 
 /** The actions a chat offers from its header menu (the bubble's, or full screen). */
 fun chatMenu(c: Pane?, inBubble: Boolean, rename: () -> Unit, bubble: () -> Unit, park: () -> Unit, close: () -> Unit, openInMain: (() -> Unit)? = null, stop: (() -> Unit)? = null): List<SheetAction> = buildList {
-    add(SheetAction("Rename", "pencil", onClick = rename))
+    // Asleep there is no Claude to rename or put away; it can still be closed for good.
+    val asleep = ChatSleep.asleep(c)
+    if (!asleep) add(SheetAction("Rename", "pencil", onClick = rename))
     if (inBubble) openInMain?.let { add(SheetAction("Open in Crundi", "maximize", onClick = it)) }
     else add(SheetAction("Open as bubble", "layers", detail = "Keep it floating over other apps", onClick = bubble))
     stop?.let { add(SheetAction("Stop Claude", "stop", detail = "Interrupt the turn it is on", onClick = it)) }
-    add(SheetAction("Put away", "archive", detail = "End its Claude now and keep it to resume later", onClick = park))
+    if (!asleep) add(SheetAction("Put away", "archive", detail = "End its Claude now and keep it to resume later", onClick = park))
     if (c?.factory == null || c.factory.role.isEmpty()) add(SheetAction("Close chat", "x", danger = true, onClick = close))
 }

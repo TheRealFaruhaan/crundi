@@ -90,7 +90,9 @@ interface ComposerActions {
 }
 
 /** The status line's first words (the web's stateLbl). */
-fun stateLine(state: AgentState, exited: Boolean): String = when {
+fun stateLine(state: AgentState, exited: Boolean, asleep: Boolean = false, waking: Boolean = false): String = when {
+    waking -> "waking…"
+    asleep -> "asleep"
     exited -> "exited"
     state == AgentState.Working -> "working…"
     state == AgentState.NeedsInput -> "needs your input"
@@ -112,6 +114,8 @@ fun Composer(
     modifier: Modifier = Modifier,
     busy: Boolean = false,
     ended: Boolean = false,
+    /** False while something must finish before Send can go again (a sleeping chat being woken). */
+    canSend: Boolean = true,
     stopArmed: Boolean = false,
     mode: String = "default",
     model: String = "",
@@ -190,12 +194,12 @@ fun Composer(
                 }
                 CrundiButton(
                     if (busy) "Queue" else "Send", actions::send, kind = ButtonKind.Primary, icon = if (busy) "layers" else "send",
-                    enabled = !ended && draft.isNotBlank(), modifier = Modifier.weight(1f).height(40.dp).miniTarget(miniId, "send"),
+                    enabled = !ended && canSend && draft.isNotBlank(), modifier = Modifier.weight(1f).height(40.dp).miniTarget(miniId, "send"),
                 )
             }
             Row(Modifier.fillMaxWidth().padding(top = 7.dp, start = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                val lively = busy || stateWords == "needs your input"
-                if (busy) Spinner(8.dp)
+                val lively = busy || !canSend || stateWords == "needs your input"
+                if (busy || !canSend) Spinner(8.dp)
                 Text(stateWords, style = CrundiType.Meta.copy(color = if (lively) CrundiColors.AccentHover else CrundiColors.TextMuted, fontFamily = CrundiType.Sans, fontSize = 10.5.sp), maxLines = 1)
                 val m = permMode(mode)
                 Box(

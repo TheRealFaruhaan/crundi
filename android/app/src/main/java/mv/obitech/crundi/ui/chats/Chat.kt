@@ -27,6 +27,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import mv.obitech.crundi.ui.workbench.LocalPane
+import mv.obitech.crundi.ui.workbench.PaneView
+import mv.obitech.crundi.ui.workbench.ParkedBody
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -49,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -67,7 +70,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mv.obitech.crundi.Pickers
@@ -152,7 +157,11 @@ data class ChatUi(
     val projectIcon: String? = null,
     /** Show the panels docked to this chat (the live route turns it on). */
     val panelDock: Boolean = false,
+    /** Waking it from sleep: how ("resume", "compact", "new"), null when not. */
+    val waking: String? = null,
 ) {
+    /** Put to sleep (parked): the live state's row for it says so (ChatSleep). */
+    val asleep get() = ChatSleep.asleep(pane)
     val title get() = pane?.label?.takeIf { it.isNotEmpty() } ?: chat.title.ifEmpty { "Chat" }
     val pending get() = chat.pendingInjections + localPending.filter { l -> chat.pendingInjections.none { it.uuid == l.uuid && l.uuid.isNotEmpty() } }
     val busy get() = chat.state == AgentState.Working || pending.isNotEmpty()
@@ -170,6 +179,8 @@ interface ChatActions : EntryActions, ComposerActions, ScheduleActions {
     fun bubble() {}
     fun openInMain() {}
     fun dismissAgents() {}
+    /** Wake a sleeping chat: "resume", "compact" or "new" (ParkedBody's buttons). */
+    fun wake(mode: String) {}
 }
 
 private fun activity(c: ChatState): String? {
@@ -218,10 +229,13 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
         val tall = maxHeight
         // Mini (ui.mini) watches this chat: its state, the box, what is queued, the suggestion.
         val sugOn = c.suggestion?.let { sug -> !ui.busy && !c.exited && sug.text.isNotBlank() && sug.uuid.ifEmpty { sug.text } != ui.retiredSuggestion } == true
-        MiniChat(c.id, if (c.exited) "exited" else c.state.wire, ui.draft, ui.pending.map { it.text }, sugOn)
+        val asleep = ui.asleep
+        // Asleep, Mini watches the sleeping view instead (ParkedBody's MiniParked).
+        if (!asleep) MiniChat(c.id, if (c.exited) "exited" else c.state.wire, ui.draft, ui.pending.map { it.text }, sugOn)
         Column(Modifier.fillMaxSize().imePadding()) {
             if (!ui.inPane) ChatHeader(ui, actions)
-            if (!c.loaded) { LoadingState(Modifier.weight(1f), text = "Opening the chat"); return@Column }
+            if (!asleep && !c.loaded) { LoadingState(Modifier.weight(1f), text = "Opening the chat"); return@Column }
+            if (asleep) Box(Modifier.weight(1f).fillMaxWidth()) { SleepingChat(ui, actions) } else {
             val entries = c.visible
             val act = activity(c)
             val list = rememberLazyListState(initialFirstVisibleItemIndex = (entries.size + 1).coerceAtLeast(0))
@@ -273,13 +287,14 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
               }
               }
             }
+            }
             if (ui.error != null) Banner(ui.error, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), kind = BadgeKind.Bad, icon = "alert-triangle")
             if (ui.notice != null) Banner(ui.notice, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), kind = BadgeKind.Good, icon = "check")
             Composer(
                 ui.draft, actions,
-                busy = ui.busy, ended = c.exited, stopArmed = ui.stopArmed,
+                busy = ui.busy && !asleep, ended = c.exited && !asleep, canSend = ui.waking == null, stopArmed = ui.stopArmed,
                 mode = c.permissionMode.ifEmpty { if (c.skipPermissions) "bypassPermissions" else "default" },
-                model = c.model, stateWords = stateLine(c.state, c.exited), cost = c.totalCostUsd,
+                model = c.model, stateWords = stateLine(c.state, c.exited, asleep, ui.waking != null), cost = c.totalCostUsd,
                 commands = c.slashCommands, pending = ui.pending, suggestion = c.suggestion, uploads = ui.uploads,
                 scheduled = ui.schedule.items.size, scheduleOpen = ui.schedule.open, onSchedule = actions::schedule,
                 enterSends = ui.enterSends, miniId = c.id,
@@ -299,6 +314,22 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier) 
         }
     }
     }
+}
+
+/**
+ * A sleeping chat: the workbench's own sleeping view (ParkedBody: a still copy
+ * of the conversation, Resume, and New session when there is one to leave),
+ * built from the same live-state row. The copy is what this screen already
+ * holds when it was open as the chat went to sleep, or else the server's
+ * preview of the parked chat.
+ */
+@Composable
+private fun SleepingChat(ui: ChatUi, actions: ChatActions) {
+    val row = ui.pane ?: return
+    val shown = ui.chat.visible
+    ParkedBody(PaneView.ofPane(row), actions::wake, busy = ui.waking != null, busyMode = ui.waking ?: "resume", preview = {
+        if (ui.chat.loaded && shown.isNotEmpty()) ParkedChatCopy(shown) else ParkedChatPreview(row.id)
+    })
 }
 
 /** The chat's docked panels (ui.panels.WithPanelDock) when [on]; just the content otherwise (screenshots of the chat alone). */
@@ -322,11 +353,11 @@ private fun ChatHeader(ui: ChatUi, actions: ChatActions) {
             Column(Modifier.weight(1f)) {
                 Text(ui.title, style = CrundiType.Body.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Dot(if (c.exited) CrundiColors.TextMuted else c.state.dot().color, 7.dp)
+                    Dot(if (c.exited || ui.asleep) CrundiColors.TextMuted else c.state.dot().color, 7.dp)
                     Text(
                         listOfNotNull(
                             project.ifEmpty { null },
-                            if (c.exited) "ended" else stateLine(c.state, false).takeIf { it != "idle" },
+                            if (ui.waking != null) "waking…" else if (ui.asleep) "asleep" else if (c.exited) "ended" else stateLine(c.state, false).takeIf { it != "idle" },
                             c.factory?.role?.takeIf { it.isNotEmpty() }?.let { "factory " + it.lowercase() },
                         ).joinToString(" · ").ifEmpty { "idle" },
                         style = CrundiType.Small.copy(fontSize = 12.sp, color = CrundiColors.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -496,6 +527,23 @@ private fun OptionRow(icon: String, name: String, desc: String, tint: androidx.c
 @Composable
 fun ChatRoute(chatId: String) {
     val host = LocalHost.current
+    // The chat it is now. Woken from sleep, a chat can come back under another
+    // id (the server reuses the id only while it is free): the screen then
+    // follows it there, with what was in the box and any error carried over.
+    var now by remember(chatId) { mutableStateOf(chatId to ChatCarry()) }
+    key(now.first) {
+        ChatRouteAt(now.first, now.second) { to, carry ->
+            if (to != now.first) { host.chatMoved(now.first, to); now = to to carry }
+        }
+    }
+}
+
+/** What goes with a chat to its new id after waking: the box, and why the message did not go. */
+internal data class ChatCarry(val draft: String = "", val error: String? = null)
+
+@Composable
+private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, ChatCarry) -> Unit) {
+    val host = LocalHost.current
     val nav = LocalNavigator.current
     val api = LocalAppServices.current.api
     val ctx = LocalContext.current
@@ -508,9 +556,11 @@ fun ChatRoute(chatId: String) {
     val shellData by services.shell.state.collectAsState()
     val prefs = remember { ctx.getSharedPreferences("crundi_chat", Context.MODE_PRIVATE) }
     val inPane = LocalPane.current != null
-    var ui by remember(chatId) { mutableStateOf(ChatUi(ChatState(chatId), isBubble = host.isBubble, enterSends = prefs.getString("enter", "send") != "newline")) }
+    var ui by remember(chatId) { mutableStateOf(ChatUi(ChatState(chatId), isBubble = host.isBubble, enterSends = prefs.getString("enter", "send") != "newline", draft = carry.draft, error = carry.error)) }
     val scope = rememberCoroutineScope()
     val paneRow = server?.terminals?.firstOrNull { it.id == chatId }
+    // The row as the state has it at this moment, for code that runs later than this composition.
+    fun paneRowNow() = api.events.lastState?.terminals?.firstOrNull { it.id == chatId }
     val project = chat.project.ifEmpty { paneRow?.project.orEmpty() }
     val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true)
 
@@ -569,9 +619,39 @@ fun ChatRoute(chatId: String) {
         }
     }
 
+    // Waking a sleeping chat (ChatSleep): resume it, wait until the live
+    // state lists it as running again and its stream is caught up (its
+    // Claude was closed, and the server dropped this screen's listener with
+    // it), and only then send. The text stays in the box until it has gone.
+    val wakeServer = remember(chatId) {
+        object : ChatSleep.Server {
+            override suspend fun resume(id: String, mode: String) = api.terminals.resume(id, mode)
+            override suspend fun awaitUp(id: String, timeoutMs: Long): Boolean {
+                val up = withTimeoutOrNull(timeoutMs) { api.events.state.first { ChatSleep.up(it?.terminals, id) } } != null
+                if (up) api.resyncChat(id)
+                return up
+            }
+            override suspend fun send(id: String, text: String) = api.chats.send(id, text)
+        }
+    }
+    fun wakeChat(mode: String, text: String?, known: Boolean) {
+        if (ui.waking != null) return
+        ui = ui.copy(waking = mode, error = null, stopArmed = false)
+        scope.launch {
+            val r = try { ChatSleep.wake(wakeServer, chatId, text, mode, known) } finally { ui = ui.copy(waking = null) }
+            // The box is cleared only once the message is really sent, and only of that message.
+            if (r is ChatSleep.Outcome.Sent) ui = ui.copy(
+                draft = if (ui.draft.trim() == text) "" else ui.draft, sentSeq = ui.sentSeq + 1,
+                retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion,
+            )
+            if (r is ChatSleep.Outcome.Failed) ui = ui.copy(error = r.message)
+            if (r.id != chatId) onMoved(r.id, ChatCarry(ui.draft, ui.error))
+        }
+    }
+
     fun act(entry: String? = null, block: suspend () -> Unit) = scope.launch {
         ui = ui.copy(error = null, busyEntries = if (entry != null) ui.busyEntries + entry else ui.busyEntries)
-        try { block() } catch (e: Exception) { ui = ui.copy(error = errorText(e)) }
+        try { block() } catch (e: Exception) { ui = ui.copy(error = if (ChatSleep.noSession(e)) ChatSleep.idleError(paneRowNow()) else errorText(e)) }
         if (entry != null) ui = ui.copy(busyEntries = ui.busyEntries - entry)
     }
 
@@ -608,7 +688,9 @@ fun ChatRoute(chatId: String) {
         override fun draft(text: String) { ui = ui.copy(draft = text) }
         override fun send() {
             val text = ui.draft.trim()
-            if (text.isEmpty()) return
+            if (text.isEmpty() || ui.waking != null) return
+            // Asleep: wake it, then send. The text stays in the box meanwhile.
+            if (view.asleep) { wakeChat("resume", text, known = true); return }
             val wasBusy = view.busy
             ui = ui.copy(draft = "", stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion)
             scope.launch {
@@ -619,10 +701,15 @@ fun ChatRoute(chatId: String) {
                         localSentAt = ui.localSentAt + (text to ui.chat.messages.size),
                     )
                 } catch (e: Exception) {
-                    ui = ui.copy(draft = text, error = "The message did not go: " + errorText(e))
+                    ui = ui.copy(draft = text)
+                    // Put to sleep a moment ago (the state has not said so yet), or
+                    // gone: never the server's raw "No session". Wake it and try again.
+                    if (ChatSleep.noSession(e)) wakeChat("resume", text, known = ChatSleep.asleep(paneRowNow()))
+                    else ui = ui.copy(error = "The message did not go: " + errorText(e))
                 }
             }
         }
+        override fun wake(mode: String) = wakeChat(mode, null, known = true)
         override fun stop() {
             if (!ui.stopArmed) {
                 ui = ui.copy(stopArmed = true)
@@ -707,7 +794,11 @@ fun ChatRoute(chatId: String) {
             if (text.isEmpty() || view.busy) return
             ui = ui.copy(retiredSuggestion = s.uuid.ifEmpty { s.text }, sentSeq = ui.sentSeq + 1)
             scope.launch {
-                try { api.chats.send(chatId, text) } catch (e: Exception) { ui = ui.copy(draft = text, error = "The message did not go: " + errorText(e)) }
+                try { api.chats.send(chatId, text) } catch (e: Exception) {
+                    ui = ui.copy(draft = text)
+                    if (ChatSleep.noSession(e)) wakeChat("resume", text, known = ChatSleep.asleep(paneRowNow()))
+                    else ui = ui.copy(error = "The message did not go: " + errorText(e))
+                }
             }
         }
         override fun dismissSuggestion() { act { api.chats.dismissSuggestion(chatId) } }
@@ -715,7 +806,8 @@ fun ChatRoute(chatId: String) {
         override fun setMode(mode: String) { act { api.chats.setPermissionMode(chatId, mode) } }
         override fun setModel(model: String) { act { api.chats.setModel(chatId, model) } }
         override fun rename(title: String) { if (title.isNotBlank()) act { api.chats.rename(chatId, title.trim()) } }
-        override fun close() { act { api.chats.close(chatId); back() } }
+        // A sleeping chat has no Claude to end: closing it forgets the parked pane, as the workbench does.
+        override fun close() { act { if (view.asleep) api.terminals.discard(chatId) else api.chats.close(chatId); back() } }
         override fun park() { act { api.terminals.park(chatId); back() } }
         override fun bubble() { host.openBubble(chatId) }
         override fun openInMain() { host.openInMain("/chat/$chatId") }

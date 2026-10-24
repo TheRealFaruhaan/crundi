@@ -19,6 +19,13 @@ interface Host {
      */
     fun chatOnScreen(chatId: String, onScreen: Boolean) {}
 
+    /**
+     * A chat woken from sleep came back under another id ([from] to [to]):
+     * whatever this window keys on the chat's id follows it (the bubble's
+     * open count, what is on screen, the id it reopens with).
+     */
+    fun chatMoved(from: String, to: String) {}
+
     /** "Open as bubble" from a chat's menu. Returns a reason if it could not. */
     fun openBubble(chatId: String) {}
 

@@ -30,6 +30,7 @@ class ChatActivity : ComponentActivity() {
     private var serverId = ""
     private var chatId = ""
     private var openKey = ""
+    private var resumed = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +69,21 @@ class ChatActivity : ComponentActivity() {
         override fun chatOnScreen(chatId: String, onScreen: Boolean) {
             if (onScreen && chatId == this@ChatActivity.chatId) Notifier.clearChat(this@ChatActivity, serverId, chatId, why = "its own window reported it seen")
         }
+        // A chat woken from sleep under another id: this window is that chat now.
+        // Its notification and the system's bubble stay under the old id; a new
+        // one for the chat comes under the new id, and a window opened again
+        // from this one's intent opens the chat it now shows.
+        override fun chatMoved(from: String, to: String) {
+            if (from != this@ChatActivity.chatId || !Regex("^[A-Za-z0-9_-]{1,80}$").matches(to)) return
+            val shown = resumed
+            if (shown) OnScreen.bubbleOpen("chat:$openKey", false)
+            closed(openKey)
+            this@ChatActivity.chatId = to
+            openKey = "$serverId:$to"
+            opened(openKey)
+            if (shown) OnScreen.bubbleOpen("chat:$openKey", true)
+            intent.putExtra(Notifier.EXTRA_CHAT, to)
+        }
         override fun openInMain(path: String) = this@ChatActivity.openMain(path)
         override fun close() = finish()
         override fun pairAgain(reason: String) {
@@ -97,10 +113,12 @@ class ChatActivity : ComponentActivity() {
     // notification for it is left out (OnScreen).
     override fun onResume() {
         super.onResume()
+        resumed = true
         if (openKey.isNotEmpty()) OnScreen.bubbleOpen("chat:$openKey", true)
     }
 
     override fun onPause() {
+        resumed = false
         if (openKey.isNotEmpty()) OnScreen.bubbleOpen("chat:$openKey", false)
         super.onPause()
     }
