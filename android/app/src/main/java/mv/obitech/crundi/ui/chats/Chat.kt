@@ -51,21 +51,28 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mv.obitech.crundi.Pickers
 import mv.obitech.crundi.api.ApiRequest
+import mv.obitech.crundi.api.ChatWatchdog
 import mv.obitech.crundi.api.model.AgentState
 import mv.obitech.crundi.api.model.ChatEntry
 import mv.obitech.crundi.api.model.ChatMedia
@@ -493,7 +500,9 @@ fun ChatRoute(chatId: String) {
     val api = LocalAppServices.current.api
     val ctx = LocalContext.current
     ChatOnScreenEffect(chatId, host)
-    val chat by remember(chatId) { api.chat(chatId) }.collectAsState(ChatState(chatId))
+    // When the socket last said anything for this chat (the watchdog below).
+    val heardAt = remember(chatId) { longArrayOf(System.currentTimeMillis()) }
+    val chat by remember(chatId) { api.chat(chatId).onEach { heardAt[0] = System.currentTimeMillis() } }.collectAsState(ChatState(chatId))
     val server by api.events.state.collectAsState(initial = api.events.lastState)
     val services = LocalAppServices.current
     val shellData by services.shell.state.collectAsState()
@@ -534,6 +543,31 @@ fun ChatRoute(chatId: String) {
         if (left.size != ui.localPending.size) ui = ui.copy(localPending = left, localSentAt = ui.localSentAt.filterKeys { k -> left.any { it.text == k } })
     }
     LaunchedEffect(ui.notice) { if (ui.notice != null) { delay(3500); ui = ui.copy(notice = null) } }
+
+    // Catching up with the server. A bubble folded away, or the app behind
+    // another, is not running, and a reply can end meanwhile: each time the
+    // chat is back in front it asks for its history again (as a reconnect
+    // does), which replaces what it has. And while it is in front, a turn
+    // the screen still shows working when the server's list says it is not,
+    // or one with nothing at all for a long while, is caught up the same way
+    // (ChatWatchdog). The header, the status line and Send then follow.
+    val shownState by rememberUpdatedState(chat.state)
+    val serverState by rememberUpdatedState(paneRow?.state)
+    val inspecting = LocalInspectionMode.current
+    val lifecycle = LocalLifecycleOwner.current
+    LaunchedEffect(chatId, lifecycle) {
+        if (inspecting) return@LaunchedEffect
+        var first = true
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            if (!first) api.resyncChat(chatId)
+            first = false
+            val dog = ChatWatchdog()
+            while (true) {
+                delay(2_000)
+                if (dog.check(shownState, serverState, System.currentTimeMillis(), heardAt[0])) api.resyncChat(chatId)
+            }
+        }
+    }
 
     fun act(entry: String? = null, block: suspend () -> Unit) = scope.launch {
         ui = ui.copy(error = null, busyEntries = if (entry != null) ui.busyEntries + entry else ui.busyEntries)

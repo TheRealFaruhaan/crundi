@@ -351,6 +351,16 @@
     });
     // A secret request the moment it is raised, not at the next look.
     es.addEventListener('secret-requests', function () { loadAsks(); });
+    // The whole workbench, every few seconds: what the server says this
+    // chat is doing (Catching up). Read only while a turn shows at work.
+    es.addEventListener('state', function (e) {
+      if (meta.state !== 'working') { serverState = null; return; }
+      try {
+        var d = JSON.parse(e.data), t = null, list = (d && d.terminals) || [];
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === sid) { t = list[i]; break; }
+        serverState = t ? (t.status === 'exited' ? 'exited' : (t.agentState || '')) : null;
+      } catch (x) { /* a malformed frame must not stop the stream */ }
+    });
     es.onerror = function () {
       // The stream is checked at connect, with a token that lasts fifteen
       // minutes. A browser retries with the same address for ever, so it is
@@ -515,6 +525,7 @@
     ws.onmessage = function (e) {
       var msg; try { msg = JSON.parse(e.data); } catch (err) { return; }
       if (!view || msg.id !== sid) return;
+      heardAt = Date.now();
       if (msg.type === 'ui-history') {
         view.applyHistory(msg.session);
         // The Manager of a factory run: a way to its live graph.
@@ -550,9 +561,35 @@
   }
   document.addEventListener('visibilitychange', function () {
     present();
-    if (document.visibilityState === 'visible' && (!ws || ws.readyState > 1)) { retry = 0; connect(); }
+    if (document.visibilityState !== 'visible') return;
+    if (!ws || ws.readyState > 1) { retry = 0; connect(); }
+    // Open, but the page was away (a bubble folded, the phone asleep) and a
+    // reply may have ended meanwhile: ask for the conversation again, as a
+    // reconnect does. It replaces what is drawn.
+    else if (ws.readyState === 1 && view) { heardAt = Date.now(); view.resubscribe(); }
   });
   setInterval(present, 60000);
+
+  // ─── Catching up ───
+  // A bubble that stopped mid-sentence and said "working" for ever: the
+  // socket had gone quiet without closing, which a browser cannot see (it
+  // has no way to ping). So while the chat shows a turn at work, two signs
+  // that it has fallen behind, and a new socket for either (it replays the
+  // conversation on open): the server's own list, on the event stream, has
+  // said for a while that the chat is not working; or nothing at all has come
+  // for it in two minutes (a long tool run is quiet too, so not sooner).
+  var heardAt = Date.now(), serverState = null, disagreeSince = 0, caughtUpAt = 0;
+  function catchUp() { caughtUpAt = Date.now(); disagreeSince = 0; heardAt = caughtUpAt; retry = 0; connect(); }
+  setInterval(function () {
+    if (stopped || !view || document.visibilityState !== 'visible') return;
+    if (meta.state !== 'working') { disagreeSince = 0; return; }
+    var now = Date.now();
+    if (serverState !== null && serverState !== 'working') {
+      if (!disagreeSince) disagreeSince = now;
+      if (now - disagreeSince >= 8000 && (!caughtUpAt || now - caughtUpAt >= 30000)) { catchUp(); return; }
+    } else disagreeSince = 0;
+    if (now - Math.max(heardAt, caughtUpAt) >= 120000) catchUp();
+  }, 2000);
 
   // ─── Buttons ───
   $('cp-back').onclick = function () {

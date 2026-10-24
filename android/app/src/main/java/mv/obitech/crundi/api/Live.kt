@@ -4,6 +4,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
@@ -12,6 +13,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.channelFlow
@@ -298,11 +300,33 @@ class LiveSocket internal constructor(private val transport: Transport, private 
 
     fun reconnect() { kick.value++ }
 
-    /** Messages of one type (and id), while collected. */
+    /**
+     * Ask again for what [key] subscribes to, as a reconnect does: for a chat
+     * the server sends its whole history again, which replaces what the
+     * screen has (a bubble opened again, the app back in front, a stream that
+     * went quiet). Not connected: try now rather than after the backoff, and
+     * the connect replays it. False when nothing holds [key].
+     */
+    fun resync(key: String): Boolean {
+        val sent = synchronized(lock) {
+            val sub = subs[key] ?: return false
+            connected && conn?.send(sub.second) == true
+        }
+        if (!sent) reconnect()
+        return true
+    }
+
+    /**
+     * Messages of one type (and id), while collected. Every one of them,
+     * however slowly they are read: the channel has no limit. It kept 64
+     * and dropped the rest without a word, so a bubble opened again after
+     * being folded away, which gets all it missed in one burst, lost the end
+     * of a reply and the turn's end, and showed "working…" for ever.
+     */
     fun messages(key: String?, subscribe: JsonObject?, unsubscribe: JsonObject?, accept: (JsonObject) -> Boolean): Flow<JsonObject> = callbackFlow {
         val release = hold(key, subscribe, unsubscribe) { if (accept(it)) trySend(it) }
         awaitClose { release() }
-    }
+    }.buffer(Channel.UNLIMITED)
 }
 
 internal fun msg(vararg f: Pair<String, Any?>): JsonObject = Uploads.toJson(mapOf(*f).filterValues { it != null }) as JsonObject

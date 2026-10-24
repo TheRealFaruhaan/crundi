@@ -126,6 +126,13 @@ ok(main.includes('window.crundiOpenChat = (sid) =>') && /if \(!done && \+\+tries
 ok(main.includes('data-action="chat-bubble"') && main.includes("case 'chat-bubble':"), 'a chat\'s menu can offer Bubble, and it is wired');
 ok(/NATIVE_CAN\.indexOf\('bubble'\) >= 0\) h \+=/.test(main) && main.includes('window.CrundiNative.can'), 'but only where the app round the page says it can: in a browser it is not drawn');
 ok(!/chat-pip|openPip|cp-pip|crundiSetPip/.test(main + html + js), 'the floating window is gone: bubbles are the one way a chat floats');
+// A reply that ended while the page was away (card 0983dd82: stopped mid-sentence, "working" for ever).
+ok(/else if \(ws\.readyState === 1 && view\) \{ heardAt = Date\.now\(\); view\.resubscribe\(\); \}/.test(js), 'back in front with the socket open, it asks for the conversation again, which replaces what is drawn');
+ok(js.includes("es.addEventListener('state'") && js.includes("serverState = t ? (t.status === 'exited' ? 'exited' : (t.agentState || '')) : null;"), 'it reads what the server says the chat is doing from the event stream');
+ok(/if \(now - disagreeSince >= 8000 && \(!caughtUpAt \|\| now - caughtUpAt >= 30000\)\) \{ catchUp\(\); return; \}/.test(js) && /if \(now - Math\.max\(heardAt, caughtUpAt\) >= 120000\) catchUp\(\);/.test(js), 'a turn the server says has ended, or one gone quiet, gets a new socket, which replays the conversation');
+ok(/if \(meta\.state !== 'working'\) \{ disagreeSince = 0; return; \}/.test(js) && /function catchUp\(\) \{[^}]*connect\(\); \}/.test(js), 'only while the turn shows at work');
+ok(/if \(!view \|\| msg\.id !== sid\) return;\s*heardAt = Date\.now\(\);/.test(js), 'anything for the chat counts as hearing from it');
+
 const check = readFileSync(join(root, 'scripts', 'check-syntax.mjs'), 'utf8');
 ok(check.includes("'crundi-chat-page.js'"), 'the page\'s script is in the syntax check');
 
