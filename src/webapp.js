@@ -3574,7 +3574,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           break;
         case 'stop': result = await factoryRunner.stopRun(body.id); break;
         case 'resume': result = await factoryRunner.resume(body.id); break;
-        case 'pause': result = await factoryRunner.pause(body.id); break;
+        // Optional (capability 'factory-pause-options'): mode 'now' stops the
+        // turns in progress; resumeOnReset carries on after the usage reset.
+        case 'pause': result = await factoryRunner.pause(body.id, { mode: body.mode === 'now' ? 'now' : 'finish', resumeOnReset: !!body.resumeOnReset }); break;
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
         case 'limits': result = await factoryRunner.setLimits(body.id, body.limits || {}); break;
@@ -6092,7 +6094,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       if (body.tool === 'factory_control') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
-        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null })); }
+        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null, mode: a.mode === 'now' ? 'now' : '', resumeOnReset: !!a.resumeOnReset })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
       if (body.tool === 'factory_status') {

@@ -168,7 +168,13 @@ class FactoriesApi internal constructor(private val rpc: Rpc) {
 
     private suspend fun runAct(action: String, id: String, vararg f: Pair<String, Any?>): FactoryRun = rpc.read(rpc.post("/api/factory-runs", mapOf("action" to action, "id" to id, *f)), "run")
     suspend fun stop(id: String) = runAct("stop", id)
-    suspend fun pause(id: String) = runAct("pause", id)
+    /**
+     * Pause. [now]: stop the turns in progress too (they carry on at resume);
+     * [resumeOnReset]: carry on by itself once the usage window resets. Both
+     * need the server's 'factory-pause-options'; an older one ignores them.
+     */
+    suspend fun pause(id: String, now: Boolean = false, resumeOnReset: Boolean = false) =
+        runAct("pause", id, "mode" to (if (now) "now" else null), "resumeOnReset" to resumeOnReset.takeIf { it })
     suspend fun resume(id: String) = runAct("resume", id)
     suspend fun recover(id: String, note: String? = null) = runAct("recover", id, "note" to note)
     /** Answer an Ask step. */

@@ -260,6 +260,8 @@ textarea.ff-input { resize: vertical; line-height: 1.45; }
 .ff-needs.bad { background: rgba(239,68,68,.12); color: #fca5a5; }
 .ff-needs.you { background: rgba(245,158,11,.12); color: #fcd34d; }
 .ff-needs.info { background: var(--ff-card); color: var(--ff-sub); }
+.ff-pause-choice { flex-wrap: wrap; }
+.ff-pause-choice > span { flex: 1 1 100%; }
 .ff-worker.queued { opacity: .6; cursor: default; border-style: dashed; }
 /* Narrow panel: the name gets the room, buttons go icon-only. */
 .ff-viewer .ff-top { min-width: 0; }

@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import mv.obitech.crundi.api.model.FactoryRun
 import mv.obitech.crundi.api.model.RunAsk
@@ -48,6 +49,7 @@ import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.components.CrundiCard
 import mv.obitech.crundi.ui.components.CrundiChip
 import mv.obitech.crundi.ui.components.CrundiDialog
+import mv.obitech.crundi.ui.operations.CheckRow
 import mv.obitech.crundi.ui.components.CrundiDivider
 import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.components.ErrorState
@@ -65,6 +67,10 @@ import mv.obitech.crundi.ui.theme.Dimens
 class RunCallbacks(
     val onBack: () -> Unit = {},
     val onPause: () -> Unit = {},
+    /** Pause with its choices (the server lists 'factory-pause-options'): stop the turns now, carry on after the usage reset. */
+    val onPauseWith: (now: Boolean, resumeOnReset: Boolean) -> Unit = { _, _ -> },
+    /** Offer Pause's choices rather than a plain Pause. */
+    val pauseOptions: Boolean = false,
     val onResume: () -> Unit = {},
     val onStop: () -> Unit = {},
     val onRecover: (String) -> Unit = {},
@@ -86,12 +92,16 @@ fun FactoryRunRoute(id: String, onAllRuns: (() -> Unit)? = null) {
     val nav = LocalNavigator.current
     val loader = rememberLoader(id, events = arrayOf("factoryRun"), accept = { it.id == null || it.id == id }) { api.factories.run(id) }
     val actions = rememberActions { loader.refresh() }
+    val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
+    val pauseOptions = PauseOptions.supported(shell.capabilities)
     // The desktop polls every 4 s while a run is open; events do most of it here, this is the safety net.
     LaunchedEffect(loader) { while (true) { delay(10_000); if (loader.load.valueOrNull?.active != false) loader.refresh() } }
-    val cb = remember(id) {
+    val cb = remember(id, pauseOptions) {
         RunCallbacks(
             onBack = { onAllRuns?.invoke() ?: nav.back() },
             onPause = { actions.run { api.factories.pause(id) } },
+            onPauseWith = { now, reset -> actions.run { api.factories.pause(id, now, reset) } },
+            pauseOptions = pauseOptions,
             onResume = { actions.run { api.factories.resume(id) } },
             onStop = { actions.run { api.factories.stop(id) } },
             onRecover = { n -> actions.run { api.factories.recover(id, n.ifBlank { null }) } },
@@ -163,9 +173,38 @@ fun FactoryRunScreen(run: Load<FactoryRun>, cb: RunCallbacks = RunCallbacks(), i
 @Composable
 private fun RunControls(r: FactoryRun, cb: RunCallbacks, onStop: () -> Unit) {
     val live = r.status in setOf("starting", "running", "waiting", "paused", "finishing")
+    var choosing by remember { mutableStateOf(false) }
     if (r.status == "paused" || r.waitingOn == "paused") CrundiButton("Resume", cb.onResume, icon = "play")
-    else if (r.status in setOf("running", "waiting")) CrundiButton("Pause", cb.onPause, icon = "pause")
+    else if (r.status in setOf("running", "waiting")) CrundiButton("Pause", { if (cb.pauseOptions) choosing = true else cb.onPause() }, icon = "pause")
     if (live) CrundiButton("Stop", onStop, kind = ButtonKind.Ghost, icon = "stop")
+    if (choosing) PauseChoiceDialog({ choosing = false }) { now, reset -> choosing = false; cb.onPauseWith(now, reset) }
+}
+
+/** Pause's choices are offered only when the server lists them; an older one does a plain pause. */
+internal object PauseOptions {
+    const val CAPABILITY = "factory-pause-options"
+    fun supported(capabilities: Set<String>): Boolean = CAPABILITY in capabilities
+}
+
+/**
+ * Pause, with its choices, as the web's: let the steps in progress finish
+ * their turn, or stop them now (they carry on at Resume); and optionally
+ * carry on by itself when the usage window resets.
+ */
+@Composable
+internal fun PauseChoiceDialog(onDismiss: () -> Unit, onPick: (now: Boolean, resumeOnReset: Boolean) -> Unit) {
+    var reset by remember { mutableStateOf(false) }
+    CrundiDialog("Pause this factory?", onDismiss, message = "Nobody new starts a step. Steps in progress can finish their turn, or stop now and carry on at Resume.") {
+        PauseChoiceBody(reset, { reset = it }, onPick)
+    }
+}
+
+/** The dialog's choices, apart from its window (for screenshot tests). */
+@Composable
+internal fun PauseChoiceBody(reset: Boolean, onReset: (Boolean) -> Unit, onPick: (now: Boolean, resumeOnReset: Boolean) -> Unit) {
+    CheckRow("Carry on by itself when usage resets", reset, onChange = onReset)
+    CrundiButton("Let current steps finish", { onPick(false, reset) }, Modifier.fillMaxWidth(), kind = ButtonKind.Primary)
+    CrundiButton("Stop them now", { onPick(true, reset) }, Modifier.fillMaxWidth(), kind = ButtonKind.Danger)
 }
 
 @Composable

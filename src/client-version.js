@@ -84,6 +84,12 @@ export const CAPABILITIES = Object.freeze([
   // (POST /api/skills/install-from-link), remembering their source, and
   // updated from it (POST /api/skills/update-from-source).
   'skills-install-link',
+  // Factory pause options: POST /api/factory-runs action 'pause' takes mode
+  // 'now' (stop the turns in progress; they carry on at resume) and
+  // resumeOnReset (carry on by itself once the usage window resets). An older
+  // server ignores both and does a plain pause, so clients offer the choices
+  // only when this is listed.
+  'factory-pause-options',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

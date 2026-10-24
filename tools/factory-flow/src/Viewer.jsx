@@ -45,7 +45,8 @@ function describe(ev, names, nodes) {
     case 'policy': return { k: 'info', main: 'The Manager set its permission policy', sub: first(ev.text) };
     case 'rule': return { k: 'info', main: 'Rule granted', sub: ev.rule };
     case 'retire': return { k: 'info', main: `${who(ev.employeeId)} stopped for now`, sub: 'Not needed by the current work; resumed with their memory if needed again.' };
-    case 'pause': return { k: 'escalate', main: ev.by === 'usage' ? 'Paused: usage limit' : 'Paused' };
+    case 'pause': return { k: 'escalate', main: (ev.by === 'usage' ? 'Paused: usage limit' : ev.by === 'manager' ? 'Paused by the Manager' : 'Paused') + (ev.mode === 'now' ? ', turns in progress stopped' : ''), sub: [ev.reason || '', ev.resumeOnReset ? 'Carries on by itself when the usage window resets' : ''].filter(Boolean).join(' · ') };
+    case 'hold': return { k: 'info', main: `${who(ev.employeeId)} woke by itself and was told to hold`, sub: ev.why === 'held' ? 'The Manager had told them to wait' : 'The run is paused' };
     case 'resume': return { k: 'info', main: 'Resumed' };
     case 'cap': return { k: 'escalate', main: `Limit reached (${ev.which === 'maxMinutes' ? ev.limit + ' minutes' : ev.limit + ' handoffs'})` };
     case 'crash': return { k: 'crash', main: 'Crashed', sub: ev.reason };
@@ -63,6 +64,13 @@ function describe(ev, names, nodes) {
     }
     default: return null;
   }
+}
+
+/** What a paused run says about itself: who paused it, and whether it carries on by itself. */
+function pausedText(p) {
+  if (p.by === 'usage') return 'Paused: usage reached the limit set for this run; it carries on by itself after the window resets.';
+  const head = p.by === 'manager' ? 'Paused by the Manager' + (p.reason ? ': ' + p.reason : '') : 'Paused';
+  return p.resumeOnReset ? head + '; it carries on by itself when the usage window resets.' : p.by === 'manager' && p.reason ? head : head + '.';
 }
 
 /** A running run's usage limits, changed in place. */
@@ -250,8 +258,18 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
 
   const timeline = useMemo(() => events.map((ev, i) => ({ i: i + 1, at: ev.at, ...(describe(ev, names, nodesById) || {}) })).filter(x => x.main), [events, names, nodesById]);
 
+  // Pause's choices (finish or stop now, carry on after the usage reset), only
+  // when the server lists them in its handshake; otherwise a plain Pause.
+  const [pauseOpts, setPauseOpts] = useState(false);
+  const [pauseMenu, setPauseMenu] = useState(false);
+  const [pauseReset, setPauseReset] = useState(false);
+  useEffect(() => {
+    let gone = false;
+    apiFetch('/api/handshake').then(r => r.json()).then(hs => { if (!gone) setPauseOpts(((hs && hs.server && hs.server.capabilities) || []).includes('factory-pause-options')); }).catch(() => {});
+    return () => { gone = true; };
+  }, [apiFetch]);
   const act = async (body, label) => {
-    setBusy(label); setErr('');
+    setBusy(label); setErr(''); setPauseMenu(false);
     try {
       const j = await apiFetch('/api/factory-runs', { method: 'POST', body: JSON.stringify({ id: runId, ...body }) }).then(r => r.json());
       if (!j.ok) setErr(j.error || 'That did not work.');
@@ -318,7 +336,7 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
     : run.capHit ? { k: 'you', text: 'It reached its limit (' + (run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs') + ').', act: ['Let it carry on', () => act({ action: 'resume' }, 'resume')] }
     : (run.asks || []).length ? { k: 'you', text: 'A question for you: ' + run.asks[0].prompt, act: ['Answer', () => { setSel(null); setTab('run'); setDrawer(true); }] }
     : run.waitingOn === 'manager' ? { k: 'you', text: 'The Manager is talking to you in its chat.', act: run.managerChatId ? ['Open its chat', () => openPerson(run.managerChatId, 'Manager')] : null }
-    : run.paused ? { k: 'info', text: run.paused.by === 'usage' ? 'Paused: usage reached the limit set for this run; it carries on by itself after the window resets.' : run.paused.by === 'manager' ? 'Paused by the Manager' + (run.paused.reason ? ': ' + run.paused.reason : '.') : 'Paused.', act: ['Resume', () => act({ action: 'resume' }, 'resume')] }
+    : run.paused ? { k: 'info', text: pausedText(run.paused), act: ['Resume', () => act({ action: 'resume' }, 'resume')] }
     : null) : null;
   const needsBar = needs && (
     <div className={'ff-needs ' + needs.k}>
@@ -442,11 +460,20 @@ function Inner({ apiFetch, runId, subscribe, openChat, onClose, mode = 'full' })
         {panel && <button className={'ff-btn' + (drawer ? ' primary' : '')} title="Details: the run and its timeline" aria-label="Details" onClick={() => setDrawer(v => !v)}><Icon name="sliders" size={14} />{!compact && 'Details'}</button>}
         {controls.map(([a, label]) => (
           <button key={a} className={'ff-btn' + (a === 'stop' ? ' ghost' : '')} disabled={!!busy} title={label} aria-label={label}
-            onClick={() => { if (a === 'stop' && !window.confirm('Stop this factory? Its team stops; the worktree is kept.')) return; act({ action: a }, a); }}>
+            onClick={() => { if (a === 'stop' && !window.confirm('Stop this factory? Its team stops; the worktree is kept.')) return; if (a === 'pause' && pauseOpts) { setPauseMenu(v => !v); return; } act({ action: a }, a); }}>
             {compact ? <Icon name={a === 'resume' ? 'play' : a} size={14} /> : label}
           </button>
         ))}
       </div>
+      {pauseMenu && run && !run.paused && (
+        <div className="ff-needs info ff-pause-choice">
+          <span>Pause: nobody new starts a step.</span>
+          <label className="ff-toggle small"><input type="checkbox" checked={pauseReset} onChange={e => setPauseReset(e.target.checked)} /><span>Carry on by itself when usage resets</span></label>
+          <button className="ff-btn" disabled={!!busy} onClick={() => act({ action: 'pause', mode: 'finish', resumeOnReset: pauseReset }, 'pause')}>Let current steps finish</button>
+          <button className="ff-btn ghost" disabled={!!busy} onClick={() => act({ action: 'pause', mode: 'now', resumeOnReset: pauseReset }, 'pause')}>Stop them now</button>
+          <button className="ff-iconbtn" title="Cancel" aria-label="Cancel" onClick={() => setPauseMenu(false)}><Icon name="x" size={14} /></button>
+        </div>
+      )}
       {needsBar}
       {strip}
       <div className="ff-body">

@@ -8,6 +8,7 @@ import mv.obitech.crundi.api.model.RunAsk
 import mv.obitech.crundi.api.model.RunToken
 import mv.obitech.crundi.screens.PlanningFakes
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -63,6 +64,22 @@ class FactoryLiveTest {
         assertEquals(LiveRun.Act.Resume, LiveRun.needs(usage)?.act)
         assertEquals("Paused by the Manager: waiting for CI", LiveRun.needs(live.copy(waitingOn = "paused", paused = JsonObject(mapOf("by" to JsonPrimitive("manager"), "reason" to JsonPrimitive("waiting for CI")))))?.text)
         assertNull(LiveRun.needs(live.copy(waitingOn = "")))
+    }
+
+    @Test fun aPauseThatCarriesOnAfterTheResetSaysSo() {
+        fun p(vararg kv: Pair<String, Any>) = JsonObject(kv.associate { (k, v) -> k to (if (v is Boolean) JsonPrimitive(v) else JsonPrimitive(v.toString())) })
+        assertEquals("Paused.", LiveRun.pausedText(p("by" to "person")))
+        assertEquals("Paused; it carries on by itself when the usage window resets.", LiveRun.pausedText(p("by" to "person", "resumeOnReset" to true, "mode" to "now")))
+        assertEquals("Paused by the Manager.", LiveRun.pausedText(p("by" to "manager")))
+        assertEquals("Paused by the Manager: headroom; it carries on by itself when the usage window resets.", LiveRun.pausedText(p("by" to "manager", "reason" to "headroom", "resumeOnReset" to true)))
+        assertEquals("Paused: usage reached the limit set for this run; it carries on by itself after the window resets.", LiveRun.pausedText(p("by" to "usage")))
+        assertEquals(LiveRun.pausedText(p("by" to "person", "resumeOnReset" to true)), LiveRun.needs(live.copy(waitingOn = "paused", paused = p("by" to "person", "resumeOnReset" to true)))?.text)
+    }
+
+    @Test fun pauseChoicesOnlyWhenTheServerHasThem() {
+        assertTrue(PauseOptions.supported(setOf("handshake", "factory-pause-options")))
+        assertFalse(PauseOptions.supported(setOf("handshake", "webhooks")))
+        assertFalse(PauseOptions.supported(emptySet()))
     }
 
     @Test fun tappingSomeoneOpensTheirTranscript() {

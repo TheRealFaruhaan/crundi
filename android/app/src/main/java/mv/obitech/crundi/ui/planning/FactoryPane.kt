@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonPrimitive
@@ -145,20 +146,22 @@ internal object LiveRun {
         }
         r.asks.isNotEmpty() -> Needs(Tone.You, "A question for you: " + r.asks[0].prompt.replace("**", ""), Act.Answer, "Answer")
         r.waitingOn == "manager" -> Needs(Tone.You, "The Manager is talking to you in its chat.", if (r.managerChatId.isNotEmpty()) Act.OpenManager else null, "Open its chat")
-        r.paused != null -> {
-            val by = r.paused.str("by")
-            val reason = r.paused.str("reason").orEmpty()
-            Needs(
-                Tone.Info,
-                when (by) {
-                    "usage" -> "Paused: usage reached the limit set for this run; it carries on by itself after the window resets."
-                    "manager" -> "Paused by the Manager" + if (reason.isNotEmpty()) ": $reason" else "."
-                    else -> "Paused."
-                },
-                Act.Resume, "Resume",
-            )
-        }
+        r.paused != null -> Needs(Tone.Info, pausedText(r.paused), Act.Resume, "Resume")
         else -> null
+    }
+
+    /** What a paused run says about itself: who paused it, and whether it carries on by itself (the web's pausedText). */
+    fun pausedText(p: kotlinx.serialization.json.JsonObject): String {
+        val by = p.str("by")
+        val reason = p.str("reason").orEmpty()
+        if (by == "usage") return "Paused: usage reached the limit set for this run; it carries on by itself after the window resets."
+        val head = if (by == "manager") "Paused by the Manager" + if (reason.isNotEmpty()) ": $reason" else "" else "Paused"
+        val resets = (p["resumeOnReset"] as? JsonPrimitive)?.contentOrNull == "true"
+        return when {
+            resets -> "$head; it carries on by itself when the usage window resets."
+            by == "manager" && reason.isNotEmpty() -> head
+            else -> "$head."
+        }
     }
 
     /** The web's dur(): "12 min", "1 h 5 min". */
@@ -261,9 +264,13 @@ fun FactoryLiveRoute(id: String, onEnded: () -> Unit = {}) {
     val ended by rememberUpdatedState(onEnded)
     val status = loader.load.valueOrNull?.status
     LaunchedEffect(status) { if (status != null && status !in LIVE_STATUSES) ended() }
-    val cb = remember(id) {
+    val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
+    val pauseOptions = PauseOptions.supported(shell.capabilities)
+    val cb = remember(id, pauseOptions) {
         RunCallbacks(
             onPause = { actions.run { api.factories.pause(id) } },
+            onPauseWith = { now, reset -> actions.run { api.factories.pause(id, now, reset) } },
+            pauseOptions = pauseOptions,
             onResume = { actions.run { api.factories.resume(id) } },
             onStop = { actions.run { api.factories.stop(id) } },
             onRecover = { n -> actions.run { api.factories.recover(id, n.ifBlank { null }) } },
@@ -378,6 +385,7 @@ private fun Modifier.blockTouchesBelow() = this.then(Modifier.pointerInput(Unit)
 
 @Composable
 private fun LiveTopBar(r: FactoryRun, state: LivePaneState, compact: Boolean, busy: Boolean, now: Long, cb: RunCallbacks, onStop: () -> Unit) {
+    var choosing by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().height(44.dp).padding(horizontal = if (compact) 8.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
@@ -392,10 +400,11 @@ private fun LiveTopBar(r: FactoryRun, state: LivePaneState, compact: Boolean, bu
             val progress = LiveRun.progress(r, now)
             if (!compact && progress.isNotEmpty()) Text(progress, style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         }
+        if (choosing) PauseChoiceDialog({ choosing = false }) { now, reset -> choosing = false; cb.onPauseWith(now, reset) }
         if (state.chat == null) BarButton("Follow", "route", compact, primary = state.follow, description = "Follow: keep the view on where people are working") { state.follow = !state.follow }
         BarButton("Details", "sliders", compact, primary = state.drawer, description = "Details: the run and its timeline") { state.drawer = !state.drawer }
         for (a in LiveRun.controls(r)) when (a) {
-            "pause" -> BarButton("Pause", "pause", compact, enabled = !busy, onClick = cb.onPause)
+            "pause" -> BarButton("Pause", "pause", compact, enabled = !busy) { if (cb.pauseOptions) choosing = true else cb.onPause() }
             "resume" -> BarButton("Resume", "play", compact, enabled = !busy, onClick = cb.onResume)
             "stop" -> BarButton("Stop", "stop", compact, ghost = true, enabled = !busy, onClick = onStop)
         }

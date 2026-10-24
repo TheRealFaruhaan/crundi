@@ -4,7 +4,14 @@ import androidx.compose.runtime.Composable
 import mv.obitech.crundi.ui.chats.ChatActions
 import mv.obitech.crundi.ui.chats.ChatScreen
 import mv.obitech.crundi.ui.chats.ChatUi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
+import mv.obitech.crundi.ui.components.DialogCard
 import mv.obitech.crundi.ui.planning.FactoryLiveScreen
+import mv.obitech.crundi.ui.planning.PauseChoiceBody
+import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.planning.FactoryPanelScreen
 import mv.obitech.crundi.ui.planning.LivePaneState
 import mv.obitech.crundi.ui.planning.Load
@@ -80,6 +87,19 @@ class FactoryPaneScreens : ScreenshotTest() {
             PlanningFakes.runFinished.copy(id = "run_f", factoryName = "Android team", cr = mv.obitech.crundi.api.model.RunCr("Bubble page for chats")),
         )
         FactoryPanelScreen(past, Load.Ready(PlanningFakes.triggers), now = now, initialRunsOpen = true)
+    }
+
+    /** Pause's choices (the server lists them): let the steps finish, or stop them now; carry on after the usage reset. */
+    @Test fun pauseChoice() = pane("factory-pane-pause-choice") {
+        FactoryLiveScreen(Load.Ready(PlanningFakes.runLive), now = now)
+        androidx.compose.foundation.layout.Box(
+            androidx.compose.ui.Modifier.fillMaxSize().background(CrundiColors.Scrim).padding(16.dp),
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
+            DialogCard("Pause this factory?", message = "Nobody new starts a step. Steps in progress can finish their turn, or stop now and carry on at Resume.") {
+                PauseChoiceBody(true, {}) { _, _ -> }
+            }
+        }
     }
 
     @Test fun noRunEver() = pane("factory-pane-no-run-empty") { FactoryPanelScreen(emptyList(), Load.Ready(emptyList()), now = now) }

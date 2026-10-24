@@ -252,6 +252,14 @@ export function reduce(prev, ev) {
     case 'manager-message':
       // Told someone mid-step: shown on the timeline, changes no state.
       break;
+    case 'pause-until':
+      // A pause waiting for the usage reset that was made with no usage
+      // reading: the reset it waits for, from the first reading after.
+      if (r.paused) r.paused = { ...r.paused, resetsAt: ev.resetsAt || '', ...(Array.isArray(ev.windows) ? { windows: ev.windows } : {}) };
+      break;
+    case 'hold':
+      // Someone's chat woke by itself while paused or held, and was told to hold.
+      break;
     case 'tick':
       // The Manager set its check-in ticker (when the factory leaves it open).
       r.tickMinutes = ev.minutes || 0;
@@ -261,7 +269,14 @@ export function reduce(prev, ev) {
       r.limits = ev.limits || null;
       break;
     case 'pause':
-      r.paused = { by: ev.by || 'person', at, ...(ev.resetsAt ? { resetsAt: ev.resetsAt } : {}), ...(ev.reason ? { reason: ev.reason } : {}) };
+      // mode 'now': the turns in progress were stopped (stopped: who). With
+      // resumeOnReset it carries on by itself once the usage window that was
+      // full (windows, resetsAt) has reset, like a pause by the usage limit.
+      r.paused = {
+        by: ev.by || 'person', at, ...(ev.resetsAt ? { resetsAt: ev.resetsAt } : {}), ...(ev.reason ? { reason: ev.reason } : {}),
+        ...(ev.mode === 'now' ? { mode: 'now', stopped: Array.isArray(ev.stopped) ? ev.stopped : [] } : {}),
+        ...(ev.resumeOnReset ? { resumeOnReset: true, windows: Array.isArray(ev.windows) ? ev.windows : [] } : {}),
+      };
       closeClock(r, at);
       break;
     case 'resume':

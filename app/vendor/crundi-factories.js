@@ -428,6 +428,40 @@
     return d;
   }
 
+  // What the server can do (its handshake), asked once. A server that does not
+  // list 'factory-pause-options' gets a plain Pause, as before.
+  var capsAsked = null;
+  function serverCaps(ctx) {
+    if (!capsAsked) capsAsked = getJson(ctx, '/api/handshake').then(function (hs) { return (hs && hs.server && hs.server.capabilities) || []; }).catch(function () { capsAsked = null; return []; });
+    return capsAsked;
+  }
+
+  /** What a paused run says about itself: who paused it, and whether it carries on by itself. */
+  function pausedText(p) {
+    if (p.by === 'usage') return 'Paused: usage reached the limit set for this run; it carries on by itself after the window resets.';
+    var head = p.by === 'manager' ? 'Paused by the Manager' + (p.reason ? ': ' + p.reason : '') : 'Paused';
+    return p.resumeOnReset ? head + '; it carries on by itself when the usage window resets.' : p.by === 'manager' && p.reason ? head : head + '.';
+  }
+
+  /**
+   * Pause, with its choices when the server has them: let the steps in
+   * progress finish their turn or stop them now, and optionally carry on by
+   * itself when the usage window resets. A small card under the buttons.
+   */
+  function pauseChoice(wrap, act) {
+    var old = wrap.querySelector('.fx-pause-choice');
+    if (old) { old.remove(); return; }
+    var box = el('div', 'fx-card fx-pause-choice'); box.style.flexBasis = '100%';
+    box.appendChild(el('div', 'fx-note', 'Pause: nobody new starts a step. Steps in progress can finish their turn, or stop now and carry on at Resume.'));
+    var lab = el('label', 'fx-check'); var reset = el('input'); reset.type = 'checkbox'; lab.appendChild(reset); lab.appendChild(el('span', '', 'Carry on by itself when usage resets')); box.appendChild(lab);
+    var row = el('div', 'fx-row-btns');
+    var fin = btn('Let current steps finish', ''); fin.onclick = function () { act({ action: 'pause', mode: 'finish', resumeOnReset: reset.checked }); };
+    var now = btn('Stop them now', 'ghost danger'); now.onclick = function () { act({ action: 'pause', mode: 'now', resumeOnReset: reset.checked }); };
+    var no = btn('Cancel', 'ghost'); no.onclick = function () { box.remove(); };
+    row.appendChild(fin); row.appendChild(now); row.appendChild(no); box.appendChild(row);
+    wrap.appendChild(box);
+  }
+
   // ─── The run's controls, shared by the panel ───
   function runControls(ctx, run, refresh) {
     var wrap = el('div', 'fx-row-btns');
@@ -439,7 +473,14 @@
     };
     var graph = btn('Live graph', 'primary', 'git-branch', ctx); graph.onclick = function () { ctx.openTab(run.id); }; wrap.appendChild(graph);
     if (run.managerChatId) { var mc = btn('Manager\'s chat', '', 'message-square', ctx); mc.onclick = function () { openChat(ctx, run.managerChatId, 'Manager'); }; wrap.appendChild(mc); }
-    if ((run.status === 'running' || run.status === 'waiting') && !run.paused) { var p = btn('Pause', 'ghost'); p.onclick = function () { act({ action: 'pause' }); }; wrap.appendChild(p); }
+    if ((run.status === 'running' || run.status === 'waiting') && !run.paused) {
+      var p = btn('Pause', 'ghost');
+      p.onclick = async function () {
+        var caps = await serverCaps(ctx);
+        if (caps.indexOf('factory-pause-options') >= 0) pauseChoice(wrap, act); else act({ action: 'pause' });
+      };
+      wrap.appendChild(p);
+    }
     if (run.paused || run.capHit) { var rs = btn(run.capHit ? 'Let it carry on' : 'Resume', ''); rs.onclick = function () { act({ action: 'resume' }); }; wrap.appendChild(rs); }
     if (['starting', 'running', 'waiting', 'paused', 'crashed', 'finishing'].indexOf(run.status) >= 0) {
       var st = btn('Stop', 'ghost danger'); st.onclick = function () { act({ action: 'stop' }, 'Stop this factory? Its team stops and the Manager\'s chat stays as an ordinary chat. The worktree is kept (see Cleanup).'); }; wrap.appendChild(st);
@@ -551,6 +592,7 @@
         (run.tokens || []).filter(function (t) { return t.wait; }).forEach(function (t) { box.appendChild(waitCard(ctx, run, t, function () { load(project); })); });
         if (run.status === 'finishing') box.appendChild(el('div', 'fx-note', 'The team is done. The result is waiting for you in the Manager\'s chat: merge it, ask for changes, keep the branch, or discard it.'));
         if (run.waitingOn === 'manager') box.appendChild(el('div', 'fx-note', 'The Manager is talking to you in its chat.'));
+        if (run.paused) box.appendChild(el('div', 'fx-note', esc(pausedText(run.paused))));
         if (run.capHit) box.appendChild(el('div', 'fx-warn', 'It reached its limit (' + esc(run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs') + ') and is waiting for you.'));
         box.appendChild(runControls(ctx, run, function () { load(project); }));
       } else {

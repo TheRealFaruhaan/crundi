@@ -7,7 +7,10 @@
  * free; raising the limit on a running run starts whoever waits; the pause
  * threshold below 100% pausing early and resuming after the reset; one at a
  * time above a share of the 5-hour window; the Manager pausing and resuming
- * with a reason, and nobody else.
+ * with a reason, and nobody else; a pause that stops the turns in progress
+ * (mode 'now') and carries them on at resume; someone woken by a background
+ * build while paused or held by the Manager told to hold, never nudged; a
+ * pause that resumes by itself once the usage window resets (resumeOnReset).
  *
  * Run: node scripts/test-factory-limits.mjs
  */
@@ -41,14 +44,14 @@ function repo(name) {
   g(['init', '-q', '-b', 'dev']); writeFileSync(join(dir, 'a.txt'), 'a'); g(['add', '.']); g(['commit', '-qm', 'i']);
   return dir;
 }
-function setup(name, limits, usage = { value: null }) {
+function setup(name, limits, usage = { value: null }, extra = {}) {
   const f = standard(); f.settings = { presets: [], limits };
   const go = { fe: false, be: false };
   const team = fakeTeam({
     manager: async (msg) => msg.includes('answers.dPlan') ? { payload: { summary: 'go', answers: { dPlan: 'no', dWho: ['ui', 'backend'] } } } : null,
     fe: async () => null, be: async () => null,
   });
-  const r = createFactoryRunner({ dataDir: process.env.DATA_DIR, agents: team.agents, getProject: () => ({ path: repo(name) }), getFactory: () => ({ factory: f }), settleMs: 10_000, permissionBatchMs: 30 });
+  const r = createFactoryRunner({ dataDir: process.env.DATA_DIR, agents: team.agents, getProject: () => ({ path: repo(name) }), getFactory: () => ({ factory: f }), settleMs: 10_000, permissionBatchMs: 30, ...extra });
   team.setRunner(r);
   return { team, r, go };
 }
@@ -135,6 +138,145 @@ function setup(name, limits, usage = { value: null }) {
   const idle = await r.messageFromManager(mgr.id, 'Security dev', 'x');
   ok(!idle.ok && /not working on a step/.test(idle.error) && /Working now: .*Frontend dev/.test(idle.error), 'message: refused for someone not mid-step, naming who is');
   await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── Pause: let current steps finish, or stop them now ───
+{
+  const { team, r } = setup('p1', {});
+  const st = await r.startRun({ project: 'p1', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length && team.of('be')[0]?.msgs.length);
+  const fe = team.of('fe')[0], be = team.of('be')[0], mgr = team.of('manager')[0];
+  ok(!(await r.pause(st.run.id, { mode: 'sideways' })).ok, 'pause now: an unknown mode is refused');
+  const stoppedChats = [];
+  team.agents.interrupt = (id) => { stoppedChats.push(id); team.sessions.get(id).state = 'idle'; };
+  fe.state = 'working'; mgr.state = 'working';   // be is resting between turns
+  const p = await r.pause(st.run.id, { mode: 'now' });
+  const paused = r.getRun(st.run.id).paused;
+  ok(p.ok && paused.mode === 'now' && paused.stopped.includes('fe') && paused.stopped.includes('manager') && !paused.stopped.includes('be'), 'pause now: whoever is mid-turn (the Manager too) is recorded as stopped; someone resting is not');
+  ok(stoppedChats.includes(fe.id) && stoppedChats.includes(mgr.id) && !stoppedChats.includes(be.id), 'pause now: their turns are interrupted');
+  ok(!!r.getRun(st.run.id).employees.fe.busy, 'pause now: the step stays theirs');
+  const feN = fe.msgs.length, mgrN = mgr.msgs.length;
+  const res = await r.resume(st.run.id);
+  ok(res.ok && fe.msgs.length > feN && /You were interrupted: the person paused the run; it is resumed now\. Your turn was stopped by the pause; pick up where you were/.test(fe.msgs.at(-1)), 'resume: a stopped step is told its turn was stopped by the pause and carries on');
+  ok(mgr.msgs.length > mgrN && /The pause stopped your turn; carry on where you were/.test(mgr.msgs.at(-1)), 'resume: the stopped Manager is told to carry on');
+  ok(!/stopped by the pause/.test(be.msgs.at(-1)), 'resume: someone who was not stopped is not told they were');
+  // The Manager pausing "now" does not stop its own turn: that turn is the one asking.
+  stoppedChats.length = 0; fe.state = 'working'; mgr.state = 'working';
+  const c = await r.controlFromManager(mgr.id, { action: 'pause', mode: 'now', reason: 'Build lock' });
+  ok(c.ok && /turns in progress were stopped/.test(c.message) && stoppedChats.includes(fe.id) && !stoppedChats.includes(mgr.id) && r.getRun(st.run.id).paused.by === 'manager', 'factory_control pause now: stops the team, not the Manager itself');
+  await r.resume(st.run.id);
+  const plain = await r.pause(st.run.id);
+  ok(plain.ok && !r.getRun(st.run.id).paused.mode && !r.getRun(st.run.id).paused.resumeOnReset, 'plain pause: as before, nobody stopped');
+  await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── Woken by a background build while paused, or held by the Manager ───
+{
+  const { team, r } = setup('p2', {}, undefined, { settleMs: 60, wokeGraceMs: 40 });
+  const st = await r.startRun({ project: 'p2', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length && team.of('be')[0]?.msgs.length);
+  const fe = team.of('fe')[0], mgr = team.of('manager')[0];
+  let interrupts = 0; team.agents.interrupt = () => { interrupts++; };
+  await sleep(80);
+  await r.pause(st.run.id);
+  const n0 = fe.msgs.length;
+  team.emit(fe.id, { type: 'state', state: 'working' });   // a background command finished: nothing was sent
+  await until(() => fe.msgs.length > n0, 2000);
+  ok(fe.msgs.length === n0 + 1 && interrupts === 1 && /The run is paused, and your chat started a new turn on its own/.test(fe.msgs.at(-1)) && /Stop where you are and wait\. Do not hand off and do nothing else until the run is resumed/.test(fe.msgs.at(-1)), 'paused: a turn that starts by itself is stopped and told to hold, in the hold\'s words');
+  team.emit(fe.id, { type: 'state', state: 'idle' });
+  await sleep(250);
+  ok(fe.msgs.length === n0 + 1 && !r.getRun(st.run.id).tokens.some(t => t.status === 'answer' && /stopped twice/.test(JSON.stringify(t))), 'paused: no stall nudge and no escalation after it');
+  ok(r.runEvents(st.run.id).events.some(e => e.type === 'hold' && e.employeeId === 'fe' && e.why === 'paused'), 'paused: the hold is in the journal');
+  await r.resume(st.run.id);
+  ok(/You were interrupted: .*You were told to hold while it was paused; you may carry on now/.test(fe.msgs.at(-1)), 'resume: someone told to hold is told to carry on');
+  // A turn started by a message (the runner, the Manager or the person) is not a wake-up.
+  await sleep(80);
+  const m = await r.messageFromManager(mgr.id, 'Frontend dev', 'The build lock is jammed.', { hold: true });
+  const n1 = fe.msgs.length;
+  team.emit(fe.id, { type: 'state', state: 'working' });
+  await sleep(100);
+  ok(m.ok && fe.msgs.length === n1 && interrupts === 1, 'a turn right after a message is not taken for a wake-up');
+  team.emit(fe.id, { type: 'state', state: 'idle' });
+  await sleep(100);
+  team.emit(fe.id, { type: 'state', state: 'working' });   // the build again, while the Manager holds them
+  await until(() => fe.msgs.length > n1, 2000);
+  ok(fe.msgs.length === n1 + 1 && /The Manager told you to wait, and your chat started a new turn on its own/.test(fe.msgs.at(-1)) && /until the Manager tells you to carry on/.test(fe.msgs.at(-1)), 'Manager hold: a wake-up is told to keep holding');
+  team.emit(fe.id, { type: 'state', state: 'idle' });
+  await sleep(250);
+  ok(fe.msgs.length === n1 + 1 && r.getRun(st.run.id).employees.fe.held, 'Manager hold: not taken for a stall, still held');
+  // Not paused, not held: a wake-up is the employee's own business, as before.
+  await r.messageFromManager(mgr.id, 'Frontend dev', 'Go on.');
+  await sleep(100);
+  team.emit(fe.id, { type: 'state', state: 'idle' });
+  const n2 = fe.msgs.length;
+  team.emit(fe.id, { type: 'state', state: 'working' });
+  await sleep(100);
+  ok(fe.msgs.length === n2, 'running: a wake-up is left alone');
+  await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── Resume by itself when the usage window resets ───
+{
+  const notes = [];
+  const usage = { fiveHour: { utilization: 100, resetsAt: new Date(Date.now() + 400).toISOString() }, week: { utilization: 20, resetsAt: new Date(Date.now() + 5 * 86400e3).toISOString() } };
+  const { team, r } = setup('p3', {}, undefined, { notify: (kind, run, text) => notes.push({ kind, text }) });
+  const w = r.watchUsage(async () => usage, { tickMs: 3600e3 });
+  const st = await r.startRun({ project: 'p3', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length && team.of('be')[0]?.msgs.length);
+  const fe = team.of('fe')[0], mgr = team.of('manager')[0];
+  // Held by the Manager before the pause: let go when it resumes.
+  await r.messageFromManager(mgr.id, 'Frontend dev', 'Wait for the lock.', { hold: true });
+  usage.fiveHour.resetsAt = new Date(Date.now() + 1500).toISOString();   // from here, not from before the run started
+  const p = await r.pause(st.run.id, { resumeOnReset: true });
+  const paused = r.getRun(st.run.id).paused;
+  ok(p.ok && paused.by === 'person' && paused.resumeOnReset && paused.windows.join() === 'fiveHour' && paused.resetsAt === usage.fiveHour.resetsAt, 'resumeOnReset: the full window and its reset are recorded with the pause');
+  await w.tick();
+  ok(!!r.getRun(st.run.id).paused, 'resumeOnReset: still paused while the window is full');
+  usage.fiveHour = { utilization: 3, resetsAt: usage.fiveHour.resetsAt };
+  await w.tick();
+  ok(!!r.getRun(st.run.id).paused, 'resumeOnReset: still paused before the recorded reset, even under the line');
+  await until(() => Date.now() > Date.parse(paused.resetsAt) + 50, 3000);
+  usage.fiveHour = { utilization: 3, resetsAt: new Date(Date.now() + 5 * 3600e3).toISOString() };
+  await w.tick();
+  ok(!r.getRun(st.run.id).paused && notes.some(x => x.kind === 'resumed' && /carries on: the usage window has reset/.test(x.text)), 'resumeOnReset: after the reset it resumes by itself, and says so');
+  ok(!r.getRun(st.run.id).employees.fe.held && /the person paused the run until the usage window reset; it has reset now\. The Manager had told you to wait; you may carry on now/.test(fe.msgs.at(-1)), 'resumeOnReset: a held employee is let go and told to carry on');
+  // A plain pause stays paused whatever the usage does.
+  await r.pause(st.run.id);
+  await w.tick();
+  ok(!!r.getRun(st.run.id).paused, 'plain pause: usage resetting does not resume it');
+  await r.resume(st.run.id);
+  // Nothing full: it waits for the 5-hour window's next reset.
+  usage.fiveHour = { utilization: 40, resetsAt: new Date(Date.now() + 1500).toISOString() };
+  const c = await r.controlFromManager(mgr.id, { action: 'pause', resumeOnReset: true, reason: 'Headroom' });
+  ok(c.ok && /resumes by itself when the usage window resets/.test(c.message) && r.getRun(st.run.id).paused.by === 'manager' && r.getRun(st.run.id).paused.resumeOnReset && !r.getRun(st.run.id).paused.windows.length && r.getRun(st.run.id).paused.resetsAt === usage.fiveHour.resetsAt, 'factory_control resumeOnReset: nothing full, so it waits for the 5-hour reset');
+  ok(notes.some(x => x.kind === 'paused' && /carries on by itself when the usage window resets/.test(x.text)), 'resumeOnReset: the Manager\'s pause notice says it carries on by itself');
+  await w.tick();
+  ok(!!r.getRun(st.run.id).paused, 'resumeOnReset: not before that reset');
+  await until(() => Date.now() > Date.parse(usage.fiveHour.resetsAt) + 50, 3000);
+  await w.tick();
+  ok(!r.getRun(st.run.id).paused, 'resumeOnReset: resumed after it');
+  w.stop(); await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── Resume on reset, paused with no usage reading at the time ───
+{
+  const { team, r } = setup('p4', {});
+  const st = await r.startRun({ project: 'p4', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length);
+  const p = await r.pause(st.run.id, { resumeOnReset: true });   // nothing reads usage yet
+  ok(p.ok && r.getRun(st.run.id).paused.resumeOnReset && !r.getRun(st.run.id).paused.resetsAt, 'no reading: the pause waits for the reset without knowing when it is');
+  const usage = { fiveHour: { utilization: 30, resetsAt: new Date(Date.now() + 1500).toISOString() }, week: { utilization: 10, resetsAt: new Date(Date.now() + 5 * 86400e3).toISOString() } };
+  const w = r.watchUsage(async () => usage, { tickMs: 3600e3 });
+  await w.tick();
+  ok(!!r.getRun(st.run.id).paused && r.getRun(st.run.id).paused.resetsAt === usage.fiveHour.resetsAt, 'no reading: the first one, under the line, records the 5-hour reset and does not resume');
+  ok(r.runEvents(st.run.id).events.some(e => e.type === 'pause-until' && e.resetsAt === usage.fiveHour.resetsAt), 'no reading: the reset it waits for is in the journal');
+  await w.tick();
+  ok(!!r.getRun(st.run.id).paused, 'no reading: still paused before that reset');
+  await until(() => Date.now() > Date.parse(r.getRun(st.run.id).paused.resetsAt) + 50, 3000);
+  usage.fiveHour = { utilization: 2, resetsAt: new Date(Date.now() + 5 * 3600e3).toISOString() };
+  await w.tick();
+  ok(!r.getRun(st.run.id).paused, 'no reading: resumed after the 5-hour reset');
+  w.stop(); await r.stopRun(st.run.id); r.dispose();
 }
 
 // ─── The Manager's ticker ───

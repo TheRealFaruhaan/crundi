@@ -2361,6 +2361,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       message: { role: 'user', content: [{ type: 'text', text: wire }] },
     });
     if (!ok) return { ok: false, error: 'Failed to write to the session' };
+    // When anyone last sent into this chat: a turn that starts with nothing
+    // sent just before it woke by itself (a background command finishing).
+    s.lastSendAt = Date.now();
     setState(s, 'working');
     // Say which way it went. The browser decides to show its "Sending" drawer
     // from its own idea of the state, and that can be a moment out of date:
@@ -2676,6 +2679,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       factory: s.factory || null,
       running: !!s.proc, state: s.state, busyTasks,
       pendingInjections: (s.pendingInjections || []).length,
+      lastSendAt: s.lastSendAt || 0,
     };
   }
 
