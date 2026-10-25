@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "id": "trigger-needs-cards",
+      "tag": "Factories",
+      "title": "Triggers that wait for work",
+      "body": "A trigger can now start a run only when a column of the board has a card in it. Set a \"next card\" trigger to Only if To do has a card, and the team works down To do and stops when it is empty, instead of waking a Manager with nothing to do. A firing that finds the column empty is noted in the trigger's history as skipped.",
+      "art": "trigger-needs-cards.html",
+      "artTitle": "Trigger"
+    }
+  ]
+}
