@@ -178,7 +178,16 @@ object Notifier {
         // ones Do Not Disturb lets through by rule, and ringing through it
         // must stay the person's choice (the Do Not Disturb channel). The
         // channel's high importance is what makes it a heads-up.
-        if (d.rings) b.setPriority(NotificationCompat.PRIORITY_MAX)
+        if (d.rings) {
+            b.setPriority(NotificationCompat.PRIORITY_MAX)
+            // Stop it without opening the app; a swipe does the same.
+            val dismiss = PendingIntent.getBroadcast(
+                ctx, id,
+                Intent(ctx, AlertDismissReceiver::class.java).setAction("dismiss:$id").putExtra(EXTRA_NOTIFICATION, id),
+                flags(false),
+            )
+            b.addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat, "Dismiss", dismiss).setShowsUserInterface(false).build())
+        }
         val n = b.build()
         // The sound and vibration repeat until it is opened, dismissed, or the
         // shade is pulled down over it. Anything not ringing plays once.
@@ -331,7 +340,23 @@ object Notifier {
     // Markdown shown raw reads as noise in two lines of a notification.
     private fun plain(text: String): String = text.replace(Regex("""(\*\*|__|`{1,3})"""), "").replace(Regex("""(?m)^#{1,6}\s+"""), "").trim()
 
-    private fun post(ctx: Context, id: Int, b: NotificationCompat.Builder) = post(ctx, id, b.build())
+    private fun post(ctx: Context, id: Int, b: NotificationCompat.Builder) {
+        // An urgent alert is ringing: anything else that sounds or buzzes now
+        // would stop it (Android plays one sound at a time), so it is shown
+        // silently until the alert has been seen or dismissed.
+        val n = b.build()
+        if (!UrgentAlerts.isUrgentChannel(n.channelId) && urgentRinging(ctx)) {
+            PushLog.add(ctx, "Shown silently: an urgent alert is still ringing")
+            post(ctx, id, b.setSilent(true).build())
+        } else post(ctx, id, n)
+    }
+
+    /** Is one of this app's urgent alerts still up and ringing? */
+    private fun urgentRinging(ctx: Context): Boolean = runCatching {
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val now = System.currentTimeMillis()
+        UrgentAlerts.ringing(nm.activeNotifications.map { UrgentAlerts.Showing(it.notification.channelId, it.notification.flags, now - it.postTime) })
+    }.getOrDefault(false)
 
     private fun post(ctx: Context, id: Int, n: Notification) {
         // Refused permission is the person's answer, not an error, but it is

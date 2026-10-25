@@ -1330,7 +1330,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   function notifyEvent(key, message, meta = {}) {
     const mode = notifyPrefs[key];
     if (mode !== 'always' && mode !== 'away') return;   // 'never' / unknown
-    if (mode === 'away' && anyClientPresent()) {
+    // This chat just rang the phone with an urgent alert (alert_user). A
+    // notification that sounds now, on the phone or in Telegram on the same
+    // phone, would stop that ringing (Android plays one sound at a time), so
+    // it goes to the phone app only, quietly: still listed, never heard.
+    const hushed = meta.chat && meta.chat.id && alerter.hushing(meta.chat.id);
+    if (hushed || (mode === 'away' && anyClientPresent())) {
       // The owner is here, so nothing needs to ping them. The phone app is
       // told all the same, marked quiet: its bubbles, its live card and its
       // list of what happened are kept from these, and a phone that only

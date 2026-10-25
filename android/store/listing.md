@@ -61,6 +61,23 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.2 (en-US)
+
+Version code 20. Since 1.1.1-dev.1 (code 19): urgent alerts keep ringing.
+Server 1.21.2-dev.2 also stops sending a sounding "finished" right after a
+chat's urgent alert.
+
+```
+<en-US>
+Urgent alerts now keep ringing.
+
+- An urgent alert is no longer cut short by the next notification: others arrive silently while it rings.
+- A Dismiss button on the alert stops it without opening the app.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.1 (en-US)
 
 Version code 19. Everything new on the phone since 1.1.0 (code 18). Features

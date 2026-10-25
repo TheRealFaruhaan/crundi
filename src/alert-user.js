@@ -32,6 +32,10 @@ export const ALERTS_PER_HOUR = 20;
 export const WINDOW_MS = 60 * 60 * 1000;
 export const MAX_TITLE = 120;
 export const MAX_BODY = 1500;
+// After an urgent alert rings, how long that chat's own notifications (its
+// "finished" a second later) are sent quietly. Android plays one sound at a
+// time: a notification that sounds or buzzes stops the alert's ringing.
+export const HUSH_MS = 2 * 60 * 1000;
 
 const LEVELS = new Set(['normal', 'urgent']);
 
@@ -56,6 +60,7 @@ export function createAlerter({ phone, push, deliver, now = Date.now }) {
   // When each one went out, oldest first. Only alerts that were sent count.
   const sent = [];      // every alert, any level
   const rang = [];      // urgent alerts sent to ring
+  const rangFor = new Map();   // chat id -> when an urgent alert from it was sent to ring
 
   const prune = (list, t) => { while (list.length && t - list[0] >= WINDOW_MS) list.shift(); };
 
@@ -119,7 +124,10 @@ export function createAlerter({ phone, push, deliver, now = Date.now }) {
 
     if (pushed) {
       sent.push(t);
-      if (level === 'urgent') rang.push(t);
+      if (level === 'urgent') {
+        rang.push(t);
+        if (chat) rangFor.set(chat.id, t);
+      }
       return {
         ok: true,
         delivered: 'phone',
@@ -151,5 +159,15 @@ export function createAlerter({ phone, push, deliver, now = Date.now }) {
     };
   }
 
-  return { alert, usage };
+  /**
+   * Did this chat send an urgent alert that rang in the last HUSH_MS? Its own
+   * notifications should then not sound, or they would cut the ringing short.
+   */
+  function hushing(chatId) {
+    const t = now();
+    for (const [id, at] of rangFor) if (t - at >= HUSH_MS) rangFor.delete(id);
+    return !!chatId && rangFor.has(String(chatId));
+  }
+
+  return { alert, usage, hushing };
 }

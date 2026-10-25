@@ -67,6 +67,22 @@ object UrgentAlerts {
     fun decide(payload: JSONObject, serverOn: Boolean, dndOptIn: Boolean, dndGranted: Boolean, quietChannel: String): Decision =
         decide(payload.optBoolean("urgent"), payload.optBoolean("downgraded"), serverOn, dndOptIn, dndGranted, quietChannel)
 
+    fun isUrgentChannel(channel: String?): Boolean = channel == CHANNEL || channel == CHANNEL_DND
+
+    /** How long after it arrives an alert left in the shade keeps other notifications silent. */
+    const val HUSH_MS = 10 * 60 * 1000L
+
+    /** One of the app's showing notifications: its channel, flags, and how long ago it was posted. */
+    data class Showing(val channel: String?, val flags: Int, val ageMs: Long)
+
+    /**
+     * Is an urgent alert still ringing? On an urgent channel, insistent, and
+     * posted less than [HUSH_MS] ago: one left unread in the shade must not
+     * keep everything else silent for good.
+     */
+    fun ringing(showing: List<Showing>): Boolean =
+        showing.any { isUrgentChannel(it.channel) && it.flags and android.app.Notification.FLAG_INSISTENT != 0 && it.ageMs in 0 until HUSH_MS }
+
     /** "urgent" or "normal", as the log says it. Downgraded alerts were asked for as urgent. */
     fun levelOf(urgent: Boolean, downgraded: Boolean): String = if (urgent || downgraded) "urgent" else "normal"
 

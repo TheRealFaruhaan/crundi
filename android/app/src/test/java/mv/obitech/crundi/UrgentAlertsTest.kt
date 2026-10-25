@@ -93,4 +93,17 @@ class UrgentAlertsTest {
             assertFalse(c == UrgentAlerts.CHANNEL_DND)
         }
     }
+
+    @Test fun otherNotificationsStaySilentWhileAnAlertRings() {
+        val insistent = android.app.Notification.FLAG_INSISTENT
+        assertTrue(UrgentAlerts.isUrgentChannel(UrgentAlerts.CHANNEL) && UrgentAlerts.isUrgentChannel(UrgentAlerts.CHANNEL_DND))
+        assertFalse(UrgentAlerts.isUrgentChannel("server") || UrgentAlerts.isUrgentChannel(null))
+        assertTrue(UrgentAlerts.ringing(listOf(UrgentAlerts.Showing("chats", 0, 1000), UrgentAlerts.Showing(UrgentAlerts.CHANNEL, insistent, 5_000))))
+        assertTrue(UrgentAlerts.ringing(listOf(UrgentAlerts.Showing(UrgentAlerts.CHANNEL_DND, insistent, 0))))
+        // Not ringing: a quiet alert, nothing urgent showing, or one left in the shade too long.
+        assertFalse(UrgentAlerts.ringing(listOf(UrgentAlerts.Showing("server", insistent, 1000))))
+        assertFalse(UrgentAlerts.ringing(listOf(UrgentAlerts.Showing(UrgentAlerts.CHANNEL, 0, 1000))))
+        assertFalse(UrgentAlerts.ringing(emptyList()))
+        assertFalse(UrgentAlerts.ringing(listOf(UrgentAlerts.Showing(UrgentAlerts.CHANNEL, insistent, UrgentAlerts.HUSH_MS))))
+    }
 }

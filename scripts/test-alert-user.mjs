@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = mkdtempSync(join(tmpdir(), 'alert-test-'));
 process.env.DATA_DIR = dataDir;
-const { createAlerter, URGENT_PER_HOUR, ALERTS_PER_HOUR, WINDOW_MS } = await import('../src/alert-user.js');
+const { createAlerter, URGENT_PER_HOUR, ALERTS_PER_HOUR, WINDOW_MS, HUSH_MS } = await import('../src/alert-user.js');
 const mp = await import('../src/mobile-push.js');
 const { CAPABILITIES } = await import('../src/client-version.js');
 
@@ -163,6 +163,24 @@ function rig({ phoneOk = true, pushOk = true, channelsOn = ['telegram'] } = {}) 
   await channels.deliver('x', {});
   ok(got.join() === 'telegram,mobile', 'deliver() without it is unchanged');
   channels._reset();
+}
+
+// ─── Hush: the chat's own notifications do not cut the ringing short ───
+{
+  const { alerter, tick } = rig();
+  const chat = { id: 'c7', title: 'Deploy' };
+  ok(!alerter.hushing('c7'), 'hush: nothing rang yet');
+  await alerter.alert({ title: 'Down' }, { chat });
+  ok(alerter.hushing('c7') && !alerter.hushing('other') && !alerter.hushing(''), 'hush: the chat that rang, and only it');
+  tick(HUSH_MS - 1000);
+  ok(alerter.hushing('c7'), 'hush: still within the window');
+  tick(2000);
+  ok(!alerter.hushing('c7'), 'hush: over after HUSH_MS');
+  await alerter.alert({ title: 'FYI', level: 'normal' }, { chat: { id: 'c8', title: 'Notes' } });
+  ok(!alerter.hushing('c8'), 'hush: a normal alert does not ring, so nothing is hushed');
+  const web = readFileSync(join(root, 'src/webapp.js'), 'utf8');
+  const fn = web.slice(web.indexOf('function notifyEvent('), web.indexOf('function notifyEvent(') + 1500);
+  ok(/alerter\.hushing\(meta\.chat\.id\)/.test(fn) && /quiet: true[\s\S]{0,80}only: \['mobile'\]/.test(fn), 'hush: notifyEvent sends a hushed chat\'s notification to the phone only, quietly');
 }
 
 // ─── Wiring ───

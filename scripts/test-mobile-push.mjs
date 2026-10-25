@@ -261,7 +261,7 @@ rmSync(dataDir, { recursive: true, force: true });
   ok(quiet.quiet === true && !('quiet' in loud), 'a notification sent while the owner is present says so, and no other does');
   const { readFileSync } = await import('node:fs');
   const webapp = readFileSync(new URL('../src/webapp.js', import.meta.url), 'utf8');
-  ok(/if \(mode === 'away' && anyClientPresent\(\)\) \{[\s\S]{0,700}quiet: true \}, \{ only: \['mobile'\] \}/.test(webapp), 'while the owner is present, only the phone app is told, and quietly');
+  ok(/if \((?:hushed \|\| )?\(?mode === 'away' && anyClientPresent\(\)\)?\) \{[\s\S]{0,700}quiet: true \}, \{ only: \['mobile'\] \}/.test(webapp), 'while the owner is present, only the phone app is told, and quietly');
   const channels = await import('../src/notify-channels.js');
   ok(/only && !only\.includes\(ch\.id\)/.test(String(channels.deliver)), 'a delivery can be for named channels only');
 }
