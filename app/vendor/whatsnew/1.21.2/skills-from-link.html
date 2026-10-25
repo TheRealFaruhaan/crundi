@@ -1,0 +1,51 @@
+<div class="wna a-skl">
+  <div class="ttl">Skills</div>
+  <div class="fld"><span class="ph">Install from link</span><span class="url">github.com/acme/skills</span></div>
+  <div class="up">Upload</div>
+  <div class="pk">
+    <div class="h">acme/skills <span>3 skills</span></div>
+    <div class="r r1"><span class="cb"><i></i></span>deploy-check</div>
+    <div class="r r2"><span class="cb"><i></i></span>release-notes</div>
+    <div class="r r3"><span class="cb"><i></i></span>lint-fix</div>
+    <div class="go">Install 2</div>
+  </div>
+  <div class="ins i1"><div class="n">deploy-check</div><div class="s">from acme/skills <code>@ 3f9c2a1</code></div><div class="ub">Update</div></div>
+  <div class="ins i2"><div class="n">release-notes</div><div class="s">from acme/skills <code>@ 3f9c2a1</code></div><div class="ub">Update</div></div>
+  <style>
+    .a-skl{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-skl code{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--accent)}
+    .a-skl .ttl{position:absolute;left:36px;top:22px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted);font-weight:600}
+    .a-skl .fld{position:absolute;left:36px;top:46px;width:440px;height:36px;box-sizing:border-box;padding:0 12px;display:flex;align-items:center;border-radius:9px;border:1px solid var(--border);background:var(--bg-card);animation:askl-f 11s ease infinite}
+    .a-skl .ph{position:absolute;left:12px;color:var(--text-muted);animation:askl-ph 11s step-end infinite}
+    .a-skl .url{font-family:ui-monospace,monospace;font-size:12px;white-space:nowrap;overflow:hidden;width:0;border-right:2px solid var(--accent);padding-right:1px;animation:askl-t 11s steps(22,end) infinite}
+    .a-skl .up{position:absolute;left:488px;top:46px;width:116px;height:36px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border-radius:9px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-secondary)}
+    .a-skl .pk{position:absolute;left:36px;top:102px;width:300px;padding:6px 0 12px;border-radius:12px;border:1px solid var(--accent);background:var(--bg-secondary);opacity:0;animation:askl-pk 11s ease infinite}
+    .a-skl .pk .h{padding:6px 14px 8px;font-weight:600}
+    .a-skl .pk .h span{margin-left:6px;font-weight:400;color:var(--text-muted);font-size:11.5px}
+    .a-skl .r{display:flex;align-items:center;gap:10px;padding:7px 14px;color:var(--text-secondary)}
+    .a-skl .cb{position:relative;width:14px;height:14px;box-sizing:border-box;border-radius:4px;border:1.5px solid var(--text-muted)}
+    .a-skl .cb i{position:absolute;left:3.5px;top:0.5px;width:4px;height:8px;border:solid var(--bg-primary);border-width:0 2px 2px 0;transform:rotate(45deg);opacity:0}
+    .a-skl .r1 .cb{animation:askl-c1 11s step-end infinite}
+    .a-skl .r1 .cb i{animation:askl-k1 11s step-end infinite}
+    .a-skl .r2 .cb{animation:askl-c2 11s step-end infinite}
+    .a-skl .r2 .cb i{animation:askl-k2 11s step-end infinite}
+    .a-skl .go{margin:8px 14px 0;display:inline-block;padding:6px 14px;border-radius:8px;background:var(--accent);color:var(--bg-primary);font-weight:600;animation:askl-go 11s ease infinite}
+    .a-skl .ins{position:absolute;left:36px;right:36px;height:52px;box-sizing:border-box;padding:9px 13px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card);opacity:0}
+    .a-skl .ins .n{font-weight:600;margin-bottom:3px}
+    .a-skl .ins .s{color:var(--text-muted);font-size:11.5px}
+    .a-skl .ub{position:absolute;right:12px;top:13px;padding:5px 12px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-size:12px}
+    .a-skl .i1{top:102px;animation:askl-i1 11s ease infinite}
+    .a-skl .i2{top:164px;animation:askl-i2 11s ease infinite}
+    @keyframes askl-f{0%,2%,30%,100%{border-color:var(--border)}4%,28%{border-color:var(--accent)}}
+    @keyframes askl-ph{0%{opacity:1}5%{opacity:0}96%{opacity:1}}
+    @keyframes askl-t{0%,5%{width:0}24%,94%{width:22ch}100%{width:0}}
+    @keyframes askl-pk{0%,27%{opacity:0;transform:translateY(6px)}32%,58%{opacity:1;transform:none}63%,100%{opacity:0;transform:translateY(-4px)}}
+    @keyframes askl-c1{0%{background:transparent;border-color:var(--text-muted)}38%{background:var(--accent);border-color:var(--accent)}96%{background:transparent;border-color:var(--text-muted)}}
+    @keyframes askl-k1{0%{opacity:0}38%{opacity:1}96%{opacity:0}}
+    @keyframes askl-c2{0%{background:transparent;border-color:var(--text-muted)}44%{background:var(--accent);border-color:var(--accent)}96%{background:transparent;border-color:var(--text-muted)}}
+    @keyframes askl-k2{0%{opacity:0}44%{opacity:1}96%{opacity:0}}
+    @keyframes askl-go{0%,51%,56%,100%{transform:none;opacity:1}53%{transform:scale(.93);opacity:.8}}
+    @keyframes askl-i1{0%,62%{opacity:0;transform:translateY(6px)}67%,94%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes askl-i2{0%,68%{opacity:0;transform:translateY(6px)}73%,94%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

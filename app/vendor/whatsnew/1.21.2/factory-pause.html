@@ -1,0 +1,47 @@
+<div class="wna a-fxp">
+  <div class="dlg">
+    <div class="t">Pause factory</div>
+    <div class="op o1"><span class="rd"></span>Let current steps finish</div>
+    <div class="op o2"><span class="rd"><i></i></span>Stop them now <span class="n">carry on at Resume</span></div>
+    <div class="cb"><span class="bx"></span>Carry on by itself when the usage window resets</div>
+  </div>
+  <div class="pills">
+    <div class="pill"><span class="dot"></span>Engineer<span class="st"><em class="w">working</em><em class="h">held</em></span></div>
+    <div class="pill"><span class="dot"></span>Tester<span class="st"><em class="w">working</em><em class="h">held</em></span></div>
+  </div>
+  <div class="log"><span class="clk"></span><span>Usage window resets <b>14:00</b>: carries on by itself</span></div>
+  <style>
+    .a-fxp{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-fxp .dlg{position:absolute;left:36px;right:36px;top:22px;padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg-secondary);opacity:0;animation:afxp-d 12s ease infinite}
+    .a-fxp .dlg .t{font-weight:600;margin-bottom:4px}
+    .a-fxp .op{display:flex;align-items:center;gap:10px;padding:9px 12px;margin-top:8px;border-radius:9px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary)}
+    .a-fxp .o2{animation:afxp-o 12s ease infinite}
+    .a-fxp .op .n{margin-left:auto;font-size:11px;color:var(--text-muted)}
+    .a-fxp .rd{flex:none;width:14px;height:14px;border-radius:50%;border:1.5px solid var(--text-muted);box-sizing:border-box;display:flex;align-items:center;justify-content:center}
+    .a-fxp .rd i{display:block;width:6px;height:6px;border-radius:50%;background:var(--accent);opacity:0;animation:afxp-r 12s ease infinite}
+    .a-fxp .cb{display:flex;align-items:center;gap:10px;padding:10px 12px 2px;color:var(--text-secondary)}
+    .a-fxp .bx{flex:none;width:14px;height:14px;border-radius:4px;border:1.5px solid var(--text-muted);box-sizing:border-box;position:relative;animation:afxp-b 12s ease infinite}
+    .a-fxp .bx::after{content:"";position:absolute;left:3.5px;top:0.5px;width:3.5px;height:7px;border:solid var(--bg-primary);border-width:0 2px 2px 0;transform:rotate(45deg);opacity:0;animation:afxp-k 12s ease infinite}
+    .a-fxp .pills{position:absolute;left:36px;top:214px;display:flex;gap:12px;opacity:0;animation:afxp-p 12s ease infinite}
+    .a-fxp .pill{display:flex;align-items:center;gap:8px;padding:8px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg-card);font-weight:600}
+    .a-fxp .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--green);animation:afxp-c 12s ease infinite}
+    .a-fxp .st{position:relative;display:inline-block;width:58px;height:15px;font-weight:400;font-size:11.5px;color:var(--text-muted)}
+    .a-fxp .st em{position:absolute;left:0;top:0;font-style:normal}
+    .a-fxp .st .w{animation:afxp-w 12s ease infinite}
+    .a-fxp .st .h{color:var(--yellow);opacity:0;animation:afxp-h 12s ease infinite}
+    .a-fxp .log{position:absolute;left:36px;right:36px;top:270px;display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);opacity:0;animation:afxp-l 12s ease infinite}
+    .a-fxp .log b{color:var(--text-primary);font-weight:600}
+    .a-fxp .clk{flex:none;width:11px;height:11px;border-radius:50%;border:1.5px solid var(--accent);position:relative}
+    .a-fxp .clk::after{content:"";position:absolute;left:4.5px;top:1.5px;width:1.5px;height:4px;background:var(--accent)}
+    @keyframes afxp-d{0%{opacity:0;transform:translateY(6px)}5%,36%{opacity:1;transform:none}44%,92%{opacity:.45;transform:none}100%{opacity:0}}
+    @keyframes afxp-o{0%,12%{border-color:var(--border);color:var(--text-secondary)}16%,94%{border-color:var(--accent);color:var(--text-primary)}100%{border-color:var(--border)}}
+    @keyframes afxp-r{0%,12%{opacity:0;transform:scale(.3)}16%,94%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afxp-b{0%,22%{background:transparent;border-color:var(--text-muted)}25%,94%{background:var(--accent);border-color:var(--accent)}100%{background:transparent}}
+    @keyframes afxp-k{0%,22%{opacity:0}25%,94%{opacity:1}100%{opacity:0}}
+    @keyframes afxp-p{0%,4%{opacity:0;transform:translateY(6px)}9%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes afxp-c{0%,36%{background:var(--green)}40%,72%{background:var(--yellow)}76%,100%{background:var(--green)}}
+    @keyframes afxp-w{0%,36%{opacity:1}39%,73%{opacity:0}76%,100%{opacity:1}}
+    @keyframes afxp-h{0%,36%{opacity:0}39%,73%{opacity:1}76%,100%{opacity:0}}
+    @keyframes afxp-l{0%,50%{opacity:0;transform:translateY(6px)}55%,92%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

@@ -1,12 +1,36 @@
 {
   "steps": [
     {
+      "id": "factory-secrets",
+      "tag": "Factories",
+      "title": "Secrets a factory may use",
+      "body": "A factory can list the secrets its team may use, by name only. When you start a run you type each one's PIN once; it is kept in memory for that run and forgotten when it ends. The Manager uses them without asking you again, values stay hidden in every output, and the journal notes who used which.",
+      "art": "factory-secrets.html",
+      "artTitle": "Start run"
+    },
+    {
+      "id": "factory-pause-now",
+      "tag": "Factories",
+      "title": "Pause now, or until usage resets",
+      "body": "Pause now asks how: let the steps in progress finish their turn, or stop them now; stopped steps carry on where they were at Resume. You can also have the run carry on by itself once the usage window resets, so a run that hit the limit at night is going again by the morning.",
+      "art": "factory-pause.html",
+      "artTitle": "Pause"
+    },
+    {
       "id": "trigger-needs-cards",
       "tag": "Factories",
       "title": "Triggers that wait for work",
       "body": "A trigger can now start a run only when a column of the board has a card in it. Set a \"next card\" trigger to Only if To do has a card, and the team works down To do and stops when it is empty, instead of waking a Manager with nothing to do. A firing that finds the column empty is noted in the trigger's history as skipped.",
       "art": "trigger-needs-cards.html",
       "artTitle": "Trigger"
+    },
+    {
+      "id": "skills-from-link",
+      "tag": "Skills",
+      "title": "Install skills from a GitHub link",
+      "body": "In Settings, Skills, paste a GitHub link or an npx skills add line beside Upload. A repository with several skills lets you choose which; each one remembers where it came from and gets an Update button. It works on the web, the desktop and the phone, and chats can do it too.",
+      "art": "skills-from-link.html",
+      "artTitle": "Skills"
     }
   ]
 }
