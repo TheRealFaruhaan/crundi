@@ -61,6 +61,22 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.6 (en-US)
+
+Version code 24. Since 1.1.1-dev.5 (code 23): the slider runs Attend or
+Dismiss before it locks itself; each step of Attend goes in the
+notification log.
+
+```
+<en-US>
+Sliding a full-screen urgent alert to attend or dismiss now always acts.
+
+- The slider no longer stops at the end without opening the chat.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.5 (en-US)
 
 Version code 23. Since 1.1.1-dev.4 (code 22): Attend on the full-screen

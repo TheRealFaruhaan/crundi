@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -106,6 +107,7 @@ class AlertActivity : ComponentActivity() {
     }
 
     private fun open() {
+        PushLog.add(applicationContext, "Urgent alert: slid to attend")
         stopRinging()
         val serverId = intent.getStringExtra(Notifier.EXTRA_SERVER).orEmpty()
         val path = intent.getStringExtra(Notifier.EXTRA_PATH).orEmpty().ifEmpty { "/" }
@@ -129,6 +131,7 @@ class AlertActivity : ComponentActivity() {
         }
         val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         if (!km.isKeyguardLocked) { go("the phone was unlocked"); return }
+        PushLog.add(applicationContext, "Urgent alert: asking the lock screen to unlock (secure: ${km.isKeyguardSecure})")
         km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
             override fun onDismissSucceeded() { go("unlocked") }
             override fun onDismissCancelled() { go("unlock cancelled, the chat waits behind the lock screen") }
@@ -207,7 +210,7 @@ internal fun AttendSlider(onAttend: () -> Unit, onDismiss: () -> Unit) {
             Text("Attend", style = CrundiType.Body.copy(color = CrundiColors.TextSecondary), modifier = Modifier.alpha(1f + (fraction.coerceAtMost(0f))))
         }
         Box(
-            Modifier.offset { IntOffset(offset.value.roundToInt(), 0) }
+            Modifier.testTag("alert-thumb").offset { IntOffset(offset.value.roundToInt(), 0) }
                 .size(thumb).clip(CircleShape)
                 .background(if (fraction > 0.05f) CrundiColors.Accent else if (fraction < -0.05f) CrundiColors.Red else CrundiColors.TextPrimary)
                 .draggable(
@@ -215,10 +218,14 @@ internal fun AttendSlider(onAttend: () -> Unit, onDismiss: () -> Unit) {
                     enabled = !done,
                     state = rememberDraggableState { d -> scope.launch { offset.snapTo((offset.value + d).coerceIn(-reach, reach)) } },
                     onDragStopped = {
+                        // The action first, then the slider locks. Locking it
+                        // (done) turns dragging off, which cancels this very
+                        // block: with the action after a suspending animation,
+                        // it never ran and the screen sat at the end.
                         when (AlertSlide.outcome(offset.value / reach)) {
-                            1 -> { done = true; offset.animateTo(reach); onAttend() }
-                            -1 -> { done = true; offset.animateTo(-reach); onDismiss() }
-                            else -> offset.animateTo(0f, spring())
+                            1 -> { onAttend(); done = true; scope.launch { offset.animateTo(reach) } }
+                            -1 -> { onDismiss(); done = true; scope.launch { offset.animateTo(-reach) } }
+                            else -> scope.launch { offset.animateTo(0f, spring()) }
                         }
                     },
                 ),
