@@ -119,11 +119,45 @@ private fun SecretRequestCard(
     }
 }
 
-/** The dock, live: the server's secret requests, answered with the PIN. The shell shows it over every screen. */
+/** Which requests a screen shows. */
+object SecretPrompts {
+    /**
+     * A chat by itself (a bubble, ChatActivity) shows the requests that chat
+     * made, and ones no chat is named for from its project (or from none),
+     * as the compact chat page does (crundi-chat-page.js loadAsks).
+     */
+    fun forChat(requests: List<SecretRequest>, chatId: String, project: String): List<SecretRequest> =
+        requests.filter { r -> if (r.sessionId.isNotEmpty()) r.sessionId == chatId else (r.project.isEmpty() || project.isEmpty() || r.project == project) }
+
+    /**
+     * The live list, with what was fetched on opening: the live list is empty
+     * until the event stream has connected, and a request already waiting
+     * must show at once. The fetch is made again each time the live list
+     * changes, so an answered request does not linger.
+     */
+    fun merge(live: List<SecretRequest>, fetched: List<SecretRequest>?): List<SecretRequest> =
+        if (fetched == null) live else live + fetched.filter { f -> live.none { it.id == f.id } }
+}
+
+/**
+ * The dock, live: the server's secret requests, answered with the PIN. The
+ * shell shows it over every screen (all requests); a bubble's chat shows it
+ * too, for that chat ([chatId]): without it a request from a chat open in a
+ * bubble was never answerable there.
+ */
 @Composable
-fun SecretPromptRoute() {
+fun SecretPromptRoute(chatId: String? = null) {
     val api = LocalAppServices.current.api
-    val requests by api.events.secretRequests.collectAsStateWithLifecycle(initialValue = emptyList())
+    val live by api.events.secretRequests.collectAsStateWithLifecycle(initialValue = emptyList())
+    var fetched by remember { mutableStateOf<List<SecretRequest>?>(null) }
+    val inspecting = androidx.compose.ui.platform.LocalInspectionMode.current
+    androidx.compose.runtime.LaunchedEffect(live) {
+        if (inspecting) return@LaunchedEffect
+        runCatching { api.secrets.list().requests }.getOrNull()?.let { fetched = it }
+    }
+    val server by api.events.state.collectAsStateWithLifecycle(initialValue = api.events.lastState)
+    val all = SecretPrompts.merge(live, fetched)
+    val requests = if (chatId == null) all else SecretPrompts.forChat(all, chatId, server?.terminals?.firstOrNull { it.id == chatId }?.project.orEmpty())
     var st by remember { mutableStateOf(SecretPromptState()) }
     val scope = rememberCoroutineScope()
     SecretPromptDock(
@@ -135,14 +169,14 @@ fun SecretPromptRoute() {
             val pin = st.pin
             st = st.copy(busy = r.id, error = null)
             scope.launch {
-                st = try { api.secrets.approve(r.id, pin); SecretPromptState() }
+                st = try { api.secrets.approve(r.id, pin); fetched = fetched?.filter { it.id != r.id }; SecretPromptState() }
                 catch (e: Exception) { st.copy(busy = null, pin = "", error = errorText(e)) }
             }
         },
         onDeny = { r ->
             st = st.copy(busy = r.id)
             scope.launch {
-                st = try { api.secrets.deny(r.id); SecretPromptState() } catch (e: Exception) { st.copy(busy = null, error = errorText(e)) }
+                st = try { api.secrets.deny(r.id); fetched = fetched?.filter { it.id != r.id }; SecretPromptState() } catch (e: Exception) { st.copy(busy = null, error = errorText(e)) }
             }
         },
     )

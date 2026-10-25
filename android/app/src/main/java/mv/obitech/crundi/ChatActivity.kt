@@ -11,7 +11,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
-import mv.obitech.crundi.ui.chats.ChatRoute
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import mv.obitech.crundi.ui.chats.BubbleChat
 import mv.obitech.crundi.ui.shell.Host
 import mv.obitech.crundi.ui.shell.LocalAppServices
 import mv.obitech.crundi.ui.shell.LocalHost
@@ -31,6 +34,9 @@ class ChatActivity : ComponentActivity() {
     private var chatId = ""
     private var openKey = ""
     private var resumed = false
+    // The chat it opened with, and the one it shows now (a chat woken from sleep can move).
+    private var startChat = ""
+    private var shownChat by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +45,8 @@ class ChatActivity : ComponentActivity() {
         val server = Servers.byId(this, serverId)
         if (server == null || !Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) { finish(); return }
         openKey = "$serverId:$chatId"
+        startChat = chatId
+        shownChat = chatId
         opened(openKey)
         // While any bubble is up, the app stays running and online (Link).
         Link.hold(applicationContext, "bubbles", true)
@@ -57,7 +65,8 @@ class ChatActivity : ComponentActivity() {
                 CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host) {
                     // The bubble's chat has Mini too (ui.mini); there is no top bar, so it walks straight in.
                     mv.obitech.crundi.ui.mini.MiniStage(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
-                        ChatRoute(chatId)
+                        // The chat, and Claude asking for a secret from it (ui.chats.BubbleChat).
+                        BubbleChat(startChat, shownChat)
                     }
                 }
             }
@@ -79,6 +88,7 @@ class ChatActivity : ComponentActivity() {
             if (shown) OnScreen.bubbleOpen("chat:$openKey", false)
             closed(openKey)
             this@ChatActivity.chatId = to
+            shownChat = to
             openKey = "$serverId:$to"
             opened(openKey)
             if (shown) OnScreen.bubbleOpen("chat:$openKey", true)
