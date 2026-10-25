@@ -147,9 +147,10 @@ object Notifier {
         // settings, or access taken back, since Settings last looked.
         if (urgent && UrgentAlerts.dndOptIn(ctx)) urgentDndChannel(ctx)
         val dndReady = UrgentAlerts.dndGranted(ctx) && UrgentAlerts.dndChannelBypasses(ctx)
-        val d = UrgentAlerts.decide(payload, UrgentAlerts.serverOn(ctx, server.id), UrgentAlerts.dndOptIn(ctx), dndReady, SERVER)
+        val fullReady = UrgentAlerts.fullScreenOptIn(ctx) && UrgentAlerts.fullScreenGranted(ctx)
+        val d = UrgentAlerts.decide(payload, UrgentAlerts.serverOn(ctx, server.id), UrgentAlerts.dndOptIn(ctx), dndReady, SERVER, fullReady)
         // Never the text: server, level and outcome only (PushLog's rule).
-        PushLog.add(ctx, "From ${server.host}: an alert ($level), ${d.outcome.log}")
+        PushLog.add(ctx, "From ${server.host}: an alert ($level), ${d.outcome.log}${if (d.fullScreen) ", full screen" else ""}")
         val title = payload.optString("title", "Crundi").ifEmpty { "Crundi" }
         val body = plain(payload.optString("body")).ifEmpty { title }
         val at = payload.optLong("at", System.currentTimeMillis())
@@ -187,6 +188,15 @@ object Notifier {
                 flags(false),
             )
             b.addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat, "Dismiss", dismiss).setShowsUserInterface(false).build())
+            if (d.fullScreen) {
+                // Locked or asleep: the alert screen opens over the lock
+                // screen. In use: Android shows the heads-up instead.
+                val screen = Intent(ctx, AlertActivity::class.java).setAction("alert:$id")
+                    .putExtra(EXTRA_NOTIFICATION, id).putExtra(EXTRA_SERVER, server.id).putExtra(EXTRA_PATH, url)
+                    .putExtra(AlertActivity.EXTRA_TITLE, title).putExtra(AlertActivity.EXTRA_BODY, body).putExtra(AlertActivity.EXTRA_WHERE, where)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
+                b.setFullScreenIntent(PendingIntent.getActivity(ctx, id, screen, flags(false)), true)
+            }
         }
         val n = b.build()
         // The sound and vibration repeat until it is opened, dismissed, or the

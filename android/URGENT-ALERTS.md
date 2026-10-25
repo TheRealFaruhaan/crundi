@@ -13,7 +13,10 @@ Checked against the current Google Play and Apple pages before building.
 and up, Play grants it by default only to apps whose core function is calling
 or alarms, declared in Play Console; Play revokes it on install for the rest,
 which must ask the person and degrade gracefully if refused. Crundi is neither
-kind of app. **Not used.**
+kind of app. **Used, opt-in only** (since Android 1.1.1-dev.3): see "Full
+screen" below. The Play Console's full-screen intent declaration must say the
+app's core function is neither calling nor alarms, so Play leaves it off on
+install and the person turns it on.
 - https://support.google.com/googleplay/android-developer/answer/13392821
 - https://source.android.com/docs/core/permissions/fsi-limits
 
@@ -49,8 +52,8 @@ only, never Critical Alerts.**
 - https://developer.apple.com/documentation/usernotifications/unnotificationinterruptionlevel
 - https://developer.apple.com/videos/play/wwdc2021/10091/
 
-Decision, unchanged by the check: no full-screen intent, no fake call, no
-exact alarms. A high-importance channel with an alarm-like sound,
+Decision: no fake call, no exact alarms; full-screen intent only when the
+person turns it on (changed 25 October 2026, at the owner's request). A high-importance channel with an alarm-like sound,
 FLAG_INSISTENT, heads-up and a strong vibration. Do Not Disturb bypass only
 when the person turns it on. Look again before each store release that
 changes this.
@@ -97,3 +100,20 @@ alert with the server, the level and the outcome, and never the text.
 An app older than this shows an alert as it shows any notification of a kind
 it does not know: under its chat when one is attached, otherwise on the
 Server channel.
+
+## Full screen (opt-in)
+
+"Full-screen urgent alerts" in App settings, also offered once by the urgent
+alert setup that follows the notification permission (first install, or the
+update that brought it; `UrgentSetup`). On Android 14 and up it also needs
+Android's own switch for the app (`canUseFullScreenIntent`), which the row
+and the setup open (`ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT`); before 14 the
+permission comes with the install.
+
+When both hold, a ringing alert carries a full-screen intent to
+`AlertActivity`: over the lock screen (`showWhenLocked`, `turnScreenOn`), the
+title, the body and where it came from, and a slider: right to attend (asks
+for the phone to be unlocked, then opens the chat), left to dismiss. Both take
+the notification away, which stops the ringing; TalkBack gets both as actions.
+While the phone is in use Android shows the heads-up instead, as before. An
+alert that does not ring is never full screen (`UrgentAlerts.decide`).

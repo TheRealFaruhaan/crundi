@@ -106,4 +106,30 @@ class UrgentAlertsTest {
         assertFalse(UrgentAlerts.ringing(emptyList()))
         assertFalse(UrgentAlerts.ringing(listOf(UrgentAlerts.Showing(UrgentAlerts.CHANNEL, insistent, UrgentAlerts.HUSH_MS))))
     }
+
+    @Test fun fullScreenOnlyWhenItRingsAndIsAllowed() {
+        val ring = UrgentAlerts.decide(urgent = true, downgraded = false, serverOn = true, dndOptIn = false, dndGranted = false, quietChannel = "server", fullScreenReady = true)
+        assertTrue(ring.rings && ring.fullScreen)
+        assertFalse(UrgentAlerts.decide(true, false, true, false, false, "server").fullScreen)
+        // Never for an alert that does not ring.
+        assertFalse(UrgentAlerts.decide(urgent = false, downgraded = false, serverOn = true, dndOptIn = false, dndGranted = false, quietChannel = "server", fullScreenReady = true).fullScreen)
+        assertFalse(UrgentAlerts.decide(urgent = true, downgraded = true, serverOn = true, dndOptIn = false, dndGranted = false, quietChannel = "server", fullScreenReady = true).fullScreen)
+        assertFalse(UrgentAlerts.decide(urgent = true, downgraded = false, serverOn = false, dndOptIn = false, dndGranted = false, quietChannel = "server", fullScreenReady = true).fullScreen)
+        // With Do Not Disturb too: the bypassing channel, and full screen.
+        val both = UrgentAlerts.decide(urgent = true, downgraded = false, serverOn = true, dndOptIn = true, dndGranted = true, quietChannel = "server", fullScreenReady = true)
+        assertEquals(UrgentAlerts.CHANNEL_DND, both.channel); assertTrue(both.fullScreen)
+    }
+
+    @Test fun theSliderCountsOnlyNearTheEnd() {
+        assertEquals(1, AlertSlide.outcome(1f)); assertEquals(1, AlertSlide.outcome(AlertSlide.COMMIT))
+        assertEquals(-1, AlertSlide.outcome(-1f)); assertEquals(-1, AlertSlide.outcome(-AlertSlide.COMMIT))
+        assertEquals(0, AlertSlide.outcome(0f)); assertEquals(0, AlertSlide.outcome(0.5f)); assertEquals(0, AlertSlide.outcome(-0.69f))
+    }
+
+    @Test fun setupVisitsOnlyThePagesStillNeeded() {
+        assertEquals(listOf(UrgentSetup.FULL, UrgentSetup.DND), UrgentSetup.steps(full = true, fullGranted = false, dnd = true, dndGranted = false))
+        assertEquals(listOf(UrgentSetup.DND), UrgentSetup.steps(full = true, fullGranted = true, dnd = true, dndGranted = false))
+        assertEquals(emptyList<String>(), UrgentSetup.steps(full = false, fullGranted = false, dnd = false, dndGranted = false))
+        assertEquals(listOf(UrgentSetup.FULL), UrgentSetup.steps(full = true, fullGranted = false, dnd = false, dndGranted = false))
+    }
 }

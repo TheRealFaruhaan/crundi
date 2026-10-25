@@ -108,6 +108,8 @@ class MainActivity : ComponentActivity() {
      */
     override fun onResume() {
         super.onResume()
+        // Back from one of Android's pages the urgent alert setup opened: the next one, if any.
+        UrgentSetup.next(this)
         val s = server ?: return
         val now = System.currentTimeMillis()
         if (now - caughtUpAt < 10_000) return
@@ -175,6 +177,7 @@ class MainActivity : ComponentActivity() {
                     }
                     screen = Screen.Ready(s)
                     askToNotify()
+                    offerUrgentSetup()
                     Push.registerAll(this)
                 }
             }
@@ -193,6 +196,19 @@ class MainActivity : ComponentActivity() {
         if (prefs.getBoolean("asked.notify", false)) return
         prefs.edit().putBoolean("asked.notify", true).apply()
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+    }
+
+    /** Notifications allowed (or nothing to ask): the one-time urgent alert setup follows. */
+    private fun offerUrgentSetup() {
+        if (!Push.available) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        UrgentSetup.offer(this)
+    }
+
+    @Deprecated("The platform call is what requestPermissions answers to")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_NOTIFY) offerUrgentSetup()
     }
 
     // Until when "this chat is on screen" is ignored: a bubble was just asked for.

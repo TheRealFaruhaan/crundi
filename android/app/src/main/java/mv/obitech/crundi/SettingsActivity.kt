@@ -85,6 +85,14 @@ class SettingsActivity : ComponentActivity() {
     private fun dndAccessSettings() {
         runCatching { startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) }.onFailure { notificationSettings() }
     }
+    /** Android 14 and up: this app's "full-screen notifications" switch. */
+    private fun fullScreenSettings() {
+        if (Build.VERSION.SDK_INT >= 34) runCatching {
+            startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, android.net.Uri.parse("package:$packageName")))
+            return
+        }
+        notificationSettings()
+    }
     private fun notificationSettings() = startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
 
     /** Ask for a permission if Android will still show the question; otherwise send the person to where it can be changed. */
@@ -164,6 +172,21 @@ class SettingsActivity : ComponentActivity() {
                 }
             }
             if (dndOn && !granted) perms += SettingItem.Button("Turn off ringing through Do Not Disturb") { UrgentAlerts.setDndOptIn(this, false); draw() }
+            // Full screen, like an alarm clock: the person's choice, and on
+            // Android 14 and up also Android's switch for this app.
+            val fullOn = UrgentAlerts.fullScreenOptIn(this)
+            val fullOk = UrgentAlerts.fullScreenGranted(this)
+            perms += when {
+                !fullOn -> SettingItem.Line("Full-screen urgent alerts", "Off. Urgent alerts ring as a notification at the top of the screen.", null, "Turn on") {
+                    UrgentAlerts.setFullScreenOptIn(this, true)
+                    if (!UrgentAlerts.fullScreenGranted(this)) fullScreenSettings() else draw()
+                }
+                !fullOk -> SettingItem.Line("Full-screen urgent alerts", "On, but Android has not allowed Crundi to show full-screen notifications, so urgent alerts stay a notification. Allow it in Android's settings.", false, "Allow") { fullScreenSettings() }
+                else -> SettingItem.Line("Full-screen urgent alerts", "On. When the phone is locked or asleep, an urgent alert lights up the screen like an alarm: slide right to attend, left to dismiss.", true, "Turn off") {
+                    UrgentAlerts.setFullScreenOptIn(this, false); draw()
+                }
+            }
+            if (fullOn && !fullOk) perms += SettingItem.Button("Turn off full-screen urgent alerts") { UrgentAlerts.setFullScreenOptIn(this, false); draw() }
         }
         val cam = has(Manifest.permission.CAMERA)
         perms += SettingItem.Line("Camera", if (cam) "Allowed. Used to scan the pairing picture, and to take a photo for a chat." else "Not allowed. Needed to scan the pairing picture.", cam, if (cam) "Manage" else "Allow") {

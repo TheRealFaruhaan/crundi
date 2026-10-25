@@ -2,6 +2,7 @@ package mv.obitech.crundi
 
 import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
 import org.json.JSONObject
 
 /**
@@ -26,6 +27,7 @@ object UrgentAlerts {
 
     private const val PREFS = "crundi"
     private const val PREF_DND = "urgent.dnd"
+    private const val PREF_FULL = "urgent.fullscreen"
     private fun prefServer(serverId: String) = "urgent.server.$serverId"
 
     /** How an alert ends up, for the notification log. */
@@ -41,7 +43,8 @@ object UrgentAlerts {
      * @param channel Notifier's channel id to post on.
      * @param insistent whether the sound repeats until the notification is seen (FLAG_INSISTENT).
      */
-    data class Decision(val channel: String, val insistent: Boolean, val outcome: Outcome) {
+    /** @param fullScreen whether it also takes over the screen (lock screen, or a heads-up while the phone is in use). */
+    data class Decision(val channel: String, val insistent: Boolean, val outcome: Outcome, val fullScreen: Boolean = false) {
         val rings: Boolean get() = insistent
     }
 
@@ -52,8 +55,12 @@ object UrgentAlerts {
      * @param dndOptIn the person's "Ring through Do Not Disturb"
      * @param dndGranted whether Android has given the app Do Not Disturb access
      * @param quietChannel the channel for an alert that does not ring
+     * @param fullScreenReady the person turned on "Full-screen urgent alerts" and Android allows it
      */
-    fun decide(urgent: Boolean, downgraded: Boolean, serverOn: Boolean, dndOptIn: Boolean, dndGranted: Boolean, quietChannel: String): Decision = when {
+    fun decide(urgent: Boolean, downgraded: Boolean, serverOn: Boolean, dndOptIn: Boolean, dndGranted: Boolean, quietChannel: String, fullScreenReady: Boolean = false): Decision =
+        decideRing(urgent, downgraded, serverOn, dndOptIn, dndGranted, quietChannel).let { if (it.rings && fullScreenReady) it.copy(fullScreen = true) else it }
+
+    private fun decideRing(urgent: Boolean, downgraded: Boolean, serverOn: Boolean, dndOptIn: Boolean, dndGranted: Boolean, quietChannel: String): Decision = when {
         // The server already turned it into a normal alert; never ring it,
         // whatever the payload says besides.
         downgraded -> Decision(quietChannel, false, Outcome.DOWNGRADED)
@@ -64,8 +71,8 @@ object UrgentAlerts {
     }
 
     /** The same, from the payload as it arrived. */
-    fun decide(payload: JSONObject, serverOn: Boolean, dndOptIn: Boolean, dndGranted: Boolean, quietChannel: String): Decision =
-        decide(payload.optBoolean("urgent"), payload.optBoolean("downgraded"), serverOn, dndOptIn, dndGranted, quietChannel)
+    fun decide(payload: JSONObject, serverOn: Boolean, dndOptIn: Boolean, dndGranted: Boolean, quietChannel: String, fullScreenReady: Boolean = false): Decision =
+        decide(payload.optBoolean("urgent"), payload.optBoolean("downgraded"), serverOn, dndOptIn, dndGranted, quietChannel, fullScreenReady)
 
     fun isUrgentChannel(channel: String?): Boolean = channel == CHANNEL || channel == CHANNEL_DND
 
@@ -101,6 +108,18 @@ object UrgentAlerts {
     fun dndOptIn(ctx: Context): Boolean = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(PREF_DND, false)
 
     fun setDndOptIn(ctx: Context, on: Boolean) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(PREF_DND, on).apply()
+
+    // Full screen: like an alarm clock, the alert lights up the lock screen.
+    // Google Play grants this permission by itself only to calling and alarm
+    // apps; for Crundi the person turns it on in Android's settings, and
+    // without it the alert rings as a heads-up, as before.
+    fun fullScreenOptIn(ctx: Context): Boolean = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(PREF_FULL, false)
+
+    fun setFullScreenOptIn(ctx: Context, on: Boolean) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(PREF_FULL, on).apply()
+
+    /** Android 14 and up ask; before that the permission comes with the install. */
+    fun fullScreenGranted(ctx: Context): Boolean =
+        if (Build.VERSION.SDK_INT >= 34) (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent() else true
 
     fun dndGranted(ctx: Context): Boolean =
         (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).isNotificationPolicyAccessGranted
