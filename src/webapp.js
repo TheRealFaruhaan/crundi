@@ -80,6 +80,7 @@ import { toSvg as crundiCodeSvg, doneClass as crundiCodeDoneClass, DONE_MS as CR
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import * as mobilePush from './mobile-push.js';
+import { createAlerter } from './alert-user.js';
 import { getChatPageHtml } from './chat-page.js';
 import { chatMark } from './project-mark.js';
 import { findProjectIcon, storedIcon, projectIconUrl, readProjectIcon } from './project-icon.js';
@@ -1308,6 +1309,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return n ? `${n} phone${n === 1 ? '' : 's'} registered.` : 'Notifications in the Crundi app on your phone.';
     },
     send: (text, meta) => mobilePush.send(text, meta),
+  });
+
+  // The alert_user MCP tool: a push of its own kind that rings the phone, with
+  // the server's limits on how often (see alert-user.js).
+  const alerter = createAlerter({
+    phone: () => {
+      if (!mobilePush.hasKey()) return { ok: false, reason: `This server has no push key. ${mobilePush.keyHelp()}` };
+      if (!mobilePush.devices().length) return { ok: false, reason: 'No phone is paired with this server and registered for notifications.' };
+      if (!channels.isEnabled('mobile')) return { ok: false, reason: 'Phone notifications are turned off in Settings, Notifications.' };
+      return { ok: true };
+    },
+    push: (text, meta) => mobilePush.send(text, meta),
+    deliver: (text, meta, opts) => channels.deliver(text, meta, opts),
   });
 
   // Single entry point for every Telegram notification. Honors the per-event
@@ -6439,6 +6453,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
 
       // Built-in notification tools
+      // alert_user: owner only (not in COLLABORATOR_MCP_TOOLS). The chat it is
+      // about comes from the bridge's own environment, never from Claude.
+      if (body.tool === 'alert_user') {
+        const sid = String(a.sessionId || '');
+        const term = sid && claudeUi ? claudeUi.list().find((x) => x.id === sid) : null;
+        const chat = term && !term.collaborator
+          ? { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) }
+          : null;
+        try { return json(res, await alerter.alert({ title: a.title, body: a.body, level: a.level }, chat ? { chat } : {})); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
       if (body.tool === 'send_message_to_user' && bot) {
         try {
           const chatId = getChatId ? getChatId() : null;

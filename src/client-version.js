@@ -98,6 +98,11 @@ export const CAPABILITIES = Object.freeze([
   // before, so clients show the picker and the start prompts only when this
   // is listed.
   'factory-secrets',
+  // The alert_user MCP tool: pushes of kind "alert" that may carry
+  // urgent: true (ring until seen) or downgraded: true (the server's hourly
+  // limit turned an urgent one into a normal one). Both are optional fields;
+  // an app that does not know the kind shows it as an ordinary notification.
+  'alert-user',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

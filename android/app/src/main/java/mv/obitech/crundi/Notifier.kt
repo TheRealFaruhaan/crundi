@@ -1,5 +1,6 @@
 package mv.obitech.crundi
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -12,6 +13,8 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -86,7 +89,101 @@ object Notifier {
             enableVibration(true)
             vibrationPattern = longArrayOf(0, 180, 120, 180)
         }
-        nm.createNotificationChannels(listOf(chats, requests, server))
+        nm.createNotificationChannels(listOf(chats, requests, server, urgentChannel(ctx, throughDnd = false)))
+        urgentDndChannel(ctx)
+    }
+
+    // ─── Urgent alerts (alert_user) ───
+    // android/URGENT-ALERTS.md has the policy check behind all of this. In
+    // short: a loud, insistent, heads-up notification; no full-screen intent,
+    // no fake call, no exact alarm; Do Not Disturb only if the person asks.
+
+    private fun alarmTone() = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM) ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
+    private fun urgentChannel(ctx: Context, throughDnd: Boolean): NotificationChannel =
+        NotificationChannel(
+            if (throughDnd) UrgentAlerts.CHANNEL_DND else UrgentAlerts.CHANNEL,
+            if (throughDnd) "Urgent, through Do Not Disturb" else "Urgent",
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = if (throughDnd) "Claude needs you now. Rings at alarm volume, even in Do Not Disturb, until you look."
+            else "Claude needs you now. Rings until you look."
+            // The alarm tone, so it does not sound like everything else. On
+            // the plain channel it plays as a notification, not as an alarm:
+            // Android lets anything with alarm usage through Do Not Disturb
+            // (alarms are allowed there by default) and plays it at alarm
+            // volume in silent mode, which would be the bypass the person has
+            // not asked for. The opt-in channel is where it is an alarm.
+            setSound(
+                alarmTone(),
+                AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(if (throughDnd) AudioAttributes.USAGE_ALARM else AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                    .build(),
+            )
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 700, 300, 700, 300, 700)
+            enableLights(true)
+            lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            // Android keeps this only if the app holds Do Not Disturb access
+            // when the channel is made (or remade while the person has not
+            // touched it), which is why this channel is made only then.
+            if (throughDnd) setBypassDnd(true)
+        }
+
+    /** Make the Do Not Disturb channel if the person wants it and Android allows it; take it away if not. */
+    fun urgentDndChannel(ctx: Context) {
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (UrgentAlerts.dndOptIn(ctx) && nm.isNotificationPolicyAccessGranted) runCatching { nm.createNotificationChannel(urgentChannel(ctx, throughDnd = true)) }
+        else runCatching { nm.deleteNotificationChannel(UrgentAlerts.CHANNEL_DND) }
+    }
+
+    /** An alert from alert_user (kind "alert"): rings until seen, or shown quietly, as [UrgentAlerts.decide] says. */
+    fun alert(ctx: Context, server: Server, payload: JSONObject) {
+        val urgent = payload.optBoolean("urgent")
+        val downgraded = payload.optBoolean("downgraded")
+        val level = UrgentAlerts.levelOf(urgent, downgraded)
+        // The Do Not Disturb channel may have been removed in Android's
+        // settings, or access taken back, since Settings last looked.
+        if (urgent && UrgentAlerts.dndOptIn(ctx)) urgentDndChannel(ctx)
+        val dndReady = UrgentAlerts.dndGranted(ctx) && UrgentAlerts.dndChannelBypasses(ctx)
+        val d = UrgentAlerts.decide(payload, UrgentAlerts.serverOn(ctx, server.id), UrgentAlerts.dndOptIn(ctx), dndReady, SERVER)
+        // Never the text: server, level and outcome only (PushLog's rule).
+        PushLog.add(ctx, "From ${server.host}: an alert ($level), ${d.outcome.log}")
+        val title = payload.optString("title", "Crundi").ifEmpty { "Crundi" }
+        val body = plain(payload.optString("body")).ifEmpty { title }
+        val at = payload.optLong("at", System.currentTimeMillis())
+        val chatJson = payload.optJSONObject("chat")?.takeIf { it.optString("id").isNotEmpty() }
+        val chatId = chatJson?.optString("id").orEmpty()
+        val url = if (chatId.isNotEmpty()) "/chat/$chatId" else payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
+        val id = "alert:${server.id}:$chatId".hashCode()
+        val where = listOfNotNull(chatJson?.optString("title")?.takeIf { it.isNotEmpty() }, server.host).joinToString(" · ")
+        val b = NotificationCompat.Builder(ctx, d.channel)
+            .setSmallIcon(R.drawable.ic_stat).setColor(ctx.getColor(R.color.accent))
+            .setContentTitle(title).setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setSubText(where)
+            .setWhen(at).setShowWhen(true).setAutoCancel(true)
+            .setContentIntent(openMain(ctx, server.id, url, id))
+            // On the lock screen: that something urgent came, and from where.
+            // What it says waits for the phone to be unlocked, as the person's
+            // lock screen settings decide.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(ctx, d.channel)
+                    .setSmallIcon(R.drawable.ic_stat).setColor(ctx.getColor(R.color.accent))
+                    .setContentTitle(if (d.rings) "Urgent alert" else "Alert").setContentText(server.host)
+                    .build()
+            )
+        // No category: CATEGORY_ALARM (and reminder, event, message) are the
+        // ones Do Not Disturb lets through by rule, and ringing through it
+        // must stay the person's choice (the Do Not Disturb channel). The
+        // channel's high importance is what makes it a heads-up.
+        if (d.rings) b.setPriority(NotificationCompat.PRIORITY_MAX)
+        val n = b.build()
+        // The sound and vibration repeat until it is opened, dismissed, or the
+        // shade is pulled down over it. Anything not ringing plays once.
+        if (d.insistent) n.flags = n.flags or Notification.FLAG_INSISTENT
+        post(ctx, id, n)
     }
 
     /** The chat's mark as a picture: its initials on its project's colour. */
@@ -234,11 +331,13 @@ object Notifier {
     // Markdown shown raw reads as noise in two lines of a notification.
     private fun plain(text: String): String = text.replace(Regex("""(\*\*|__|`{1,3})"""), "").replace(Regex("""(?m)^#{1,6}\s+"""), "").trim()
 
-    private fun post(ctx: Context, id: Int, b: NotificationCompat.Builder) {
+    private fun post(ctx: Context, id: Int, b: NotificationCompat.Builder) = post(ctx, id, b.build())
+
+    private fun post(ctx: Context, id: Int, n: Notification) {
         // Refused permission is the person's answer, not an error, but it is
         // worth a line: "nothing appeared" needs a reason somebody can find.
         if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) { PushLog.add(ctx, "Not shown: notifications are turned off for Crundi"); return }
-        runCatching { NotificationManagerCompat.from(ctx).notify(id, b.build()) }
+        runCatching { NotificationManagerCompat.from(ctx).notify(id, n) }
             .onFailure { PushLog.add(ctx, "Android refused to show a notification: ${it.javaClass.simpleName}: ${it.message}") }
     }
 

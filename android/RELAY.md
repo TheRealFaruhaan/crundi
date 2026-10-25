@@ -118,6 +118,11 @@ All are JSON, `{ "ok": false, "error": "<code>" }`.
   notification does not replace another's.
 - `kind` is the event: `finished`, `needsInput`, `serviceDown`, `test` and so
   on. It doubles as the collapse tag.
+- `kind: "alert"` comes from the alert_user MCP tool. It may carry
+  `urgent: true` (ring until seen, see URGENT-ALERTS.md) or
+  `downgraded: true` (asked for as urgent, sent as normal because of the
+  server's hourly limit). Both are optional; an app that does not know them
+  shows the alert as an ordinary notification.
 - `body` is cut to 1800 bytes, and further where the rest of the message
   (a suggestion, a permission request, a long chat title) would take the
   sealed payload past the relay's 3000 characters. The relay refuses an

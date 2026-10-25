@@ -74,6 +74,19 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { message: { type: 'string', description: 'The message to send' } }, required: ['message'] },
   },
   {
+    name: 'alert_user',
+    description: 'Get the person\'s attention NOW on their paired phone. An urgent alert rings on the phone\'s Urgent channel until they see it. Use it only when the person must act or know right away: a production outage, a long job that needs their decision before it can go on, or when they asked to be woken when something is done. For ordinary updates, finished tasks and questions that can wait, use send_message_to_user instead. Limited per hour: past 3 urgent alerts in an hour they are sent without ringing, and past 20 alerts of any level the tool refuses. With no phone paired it goes out through the other notification channels and says it could not ring a phone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'One short line: what needs the person (max 120 characters)' },
+        body: { type: 'string', description: 'Optional detail: what happened and what they should do' },
+        level: { type: 'string', enum: ['normal', 'urgent'], description: 'urgent (default) rings until seen; normal is an ordinary notification that does not ring' },
+      },
+      required: ['title'],
+    },
+  },
+  {
     name: 'send_photo_to_user',
     description: 'Send a photo/image to the user via Telegram (in a chat where they are present, show_image puts it in the conversation and is the better choice). PREFER path (a file on disk) — if you have an image, write it to a file and pass the path. `data` takes base64 but you should not hand-copy a large base64 string into it: doing so corrupts it and Telegram rejects the result with IMAGE_PROCESS_FAILED. `data` is for callers that already hold the bytes programmatically. PNG, JPEG, GIF or WebP, up to 10 MB.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the image file' }, data: { type: 'string', description: 'Image bytes as base64, with or without a data: URL prefix. For programmatic callers that already hold the bytes; do not paste a long base64 string here by hand.' }, caption: { type: 'string', description: 'Optional caption (max 1024 chars)' } },  },
@@ -570,6 +583,13 @@ async function handleToolCall(name, args) {
   // Which chat is asking, so an owner-run command's output goes back to it.
   if ((name === 'request_owner_command' || name === 'register_service') && process.env.CRUNDI_CHAT_ID) {
     args.sessionId = process.env.CRUNDI_CHAT_ID;
+  }
+
+  // An alert is filed under the chat that sent it, which is this process's
+  // own, never an argument.
+  if (name === 'alert_user') {
+    delete args.sessionId;
+    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
 
   // Which chat is asking for a secret is this process's own, never an

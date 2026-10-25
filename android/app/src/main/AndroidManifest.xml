@@ -12,6 +12,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- The live card's chip in the status bar (Android 16 and later). -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <!-- Urgent alerts may ring through Do Not Disturb, only if the person
+         turns that on in App settings and then grants Do Not Disturb access
+         in Android's own settings (android/URGENT-ALERTS.md). -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Plain http is allowed because a server on a home network often has
