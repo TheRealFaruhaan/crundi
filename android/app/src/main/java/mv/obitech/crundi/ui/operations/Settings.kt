@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -76,11 +77,18 @@ fun SettingsRoute() {
     val host = LocalHost.current
     val shell by app.shell.state.collectAsStateWithLifecycle()
     val update = rememberLoad { app.api.system.update() }
-    SettingsScreen(SettingsHome(update.value.valueOrNull, shell.serverHost, mv.obitech.crundi.BuildConfig.VERSION_NAME), onPage = { nav.to(it.route) }, onAppSettings = host::openAppSettings)
+    val tour = LocalWhatsNew.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    SettingsScreen(
+        SettingsHome(update.value.valueOrNull, shell.serverHost, mv.obitech.crundi.BuildConfig.VERSION_NAME), onPage = { nav.to(it.route) }, onAppSettings = host::openAppSettings,
+        // As the web's "Show it again": the latest edition, and nothing marked seen.
+        onWhatsNew = tour?.let { t -> { scope.launch { if (!t.showAgain()) android.widget.Toast.makeText(ctx.applicationContext, "Nothing new to show for this version.", android.widget.Toast.LENGTH_SHORT).show() } } },
+    )
 }
 
 @Composable
-fun SettingsScreen(home: SettingsHome, onPage: (SettingsPage) -> Unit = {}, onAppSettings: () -> Unit = {}) {
+fun SettingsScreen(home: SettingsHome, onPage: (SettingsPage) -> Unit = {}, onAppSettings: () -> Unit = {}, onWhatsNew: (() -> Unit)? = null) {
     Column(Modifier.fillMaxSize()) {
         PanelHeader("Settings", meta = home.host.takeIf { it.isNotEmpty() }?.let { "Server $it" })
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
@@ -99,6 +107,13 @@ fun SettingsScreen(home: SettingsHome, onPage: (SettingsPage) -> Unit = {}, onAp
                 ListRow(
                     "App settings", subtitle = "Notifications, bubbles and paired servers on this phone" + (if (home.appVersion.isNotEmpty()) " · app ${home.appVersion}" else ""),
                     icon = "smartphone", onClick = onAppSettings,
+                    trailing = { CrundiIcon("chevron-right", size = Dimens.IconSm, tint = CrundiColors.TextMuted) },
+                )
+            }
+            if (onWhatsNew != null) Group("What's new") {
+                ListRow(
+                    "Show it again", subtitle = "A short tour of what the latest update added",
+                    icon = "info", onClick = onWhatsNew,
                     trailing = { CrundiIcon("chevron-right", size = Dimens.IconSm, tint = CrundiColors.TextMuted) },
                 )
             }
