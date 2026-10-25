@@ -731,6 +731,11 @@
   var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var COLUMNS = [['backlog', 'Backlog'], ['todo', 'To do'], ['in_progress', 'In progress'], ['done', 'Done']];
   function triggerWhen(t) {
+    var w = triggerWhen0(t);
+    var c = t.needsCards && COLUMNS.find(function (x) { return x[0] === t.needsCards; });
+    return c ? w + ', if ' + c[1] + ' has a card' : w;
+  }
+  function triggerWhen0(t) {
     if (t.kind === 'schedule') return 'At ' + t.schedule.at + (t.schedule.days.length && t.schedule.days.length < 7 ? ' on ' + t.schedule.days.map(function (d) { return DAYS[d]; }).join(', ') : ' every day');
     if (t.kind === 'kanban') return 'When a card enters ' + (COLUMNS.find(function (c) { return c[0] === t.kanban.status; }) || ['', t.kanban.status])[1];
     return 'When its webhook is called';
@@ -780,6 +785,9 @@
     var mm = sel([['', 'As the factory says'], ['ask', 'Show me first, I decide'], ['auto', 'Merge automatically (with Undo)']], cur.mergeMode);
     var busy = sel([['manager', 'Tell its Manager (a run of the same factory)'], ['queue', 'Wait its turn, then start'], ['skip', 'Skip it']], cur.ifBusy);
     var row2 = el('div', 'fx-cr-row'); row2.appendChild(field('When the work is done', mm)); row2.appendChild(field('If a run is already going', busy)); b.appendChild(row2);
+    // Only start when a column has a card: a "next card" chain stops when To do runs out.
+    var needs = sel([['', 'Always']].concat(COLUMNS.map(function (c) { return [c[0], 'Only if ' + c[1] + ' has a card']; })), cur.needsCards || '');
+    b.appendChild(field('Start a run', needs));
     var en = el('label', 'fx-check'); var enI = el('input'); enI.type = 'checkbox'; enI.checked = cur.enabled !== false; en.appendChild(enI); en.appendChild(el('span', '', 'On')); b.appendChild(en);
     // Webhook settings: how calls prove who they are from, and what makes a repeat.
     var wh = cur.webhook || {};
@@ -910,7 +918,7 @@
     b.appendChild(actions);
     function collect() {
       var sections = {}; Object.keys(inputs).forEach(function (k) { if (inputs[k].value.trim()) sections[k] = inputs[k].value; });
-      return { id: saved ? saved.id : undefined, name: name.value, enabled: enI.checked, project: project, factoryId: fSel.value, kind: kind.value, schedule: { at: at.value || '09:00', days: days }, kanban: { status: col.value }, cr: { title: title.value, sections: sections }, mergeMode: mm.value, ifBusy: busy.value,
+      return { id: saved ? saved.id : undefined, name: name.value, enabled: enI.checked, project: project, factoryId: fSel.value, kind: kind.value, schedule: { at: at.value || '09:00', days: days }, kanban: { status: col.value }, cr: { title: title.value, sections: sections }, mergeMode: mm.value, ifBusy: busy.value, needsCards: needs.value,
         webhook: { auth: auth.value, signatureHeader: sigH.value, timestampHeader: tsH.value, idempotency: idemI.value } };
     }
     save.onclick = async function () {

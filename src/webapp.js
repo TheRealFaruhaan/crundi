@@ -1064,6 +1064,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     startRun: (a) => factoryRunner.startRun(a),
     activeRunFor: (p) => factoryRunner.activeRunFor(p),
     tellRun: (runId, x) => factoryRunner.tellFromTrigger(runId, x),
+    cardsIn: (p, column) => kanban.getColumn(p, column).tasks.length,
     notify: (text) => { try { notifyEvent('factory', text, {}); } catch { /* best effort */ } },
   }) : null;
   if (triggerDispatch) {

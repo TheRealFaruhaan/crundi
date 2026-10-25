@@ -82,6 +82,19 @@ class FactoryLiveTest {
         assertFalse(PauseOptions.supported(emptySet()))
     }
 
+    @Test fun needsCardsOnlyWhenTheServerHasIt() {
+        assertTrue(NeedsCards.supported(setOf("handshake", "trigger-needs-cards")))
+        assertFalse(NeedsCards.supported(setOf("handshake", "webhooks")))
+        val t = CrundiJson.decodeFromString(mv.obitech.crundi.api.model.FactoryTrigger.serializer(), """{"id":"trg_1","kind":"kanban","kanban":{"status":"done"},"needsCards":"todo"}""")
+        assertEquals("todo", t.needsCards)
+        assertEquals("When a card enters Done, if To Do has a card", triggerWhen(t))
+        // An older server: no field, and saving sends none back (it is left as it is).
+        val old = CrundiJson.decodeFromString(mv.obitech.crundi.api.model.FactoryTrigger.serializer(), """{"id":"trg_2","kind":"kanban","kanban":{"status":"done"}}""")
+        assertNull(old.needsCards)
+        assertEquals("When a card enters Done", triggerWhen(old))
+        assertFalse(CrundiJson.encodeToString(mv.obitech.crundi.api.model.FactoryTrigger.serializer(), old).contains("needsCards"))
+    }
+
     @Test fun tappingSomeoneOpensTheirTranscript() {
         assertEquals(OpenChat("c3", "Android dev: chats"), LiveRun.chatAt(live, "n_chats"))
         // A finished step whose person still has a live session: theirs too.

@@ -410,6 +410,12 @@ fun triggerWhen(t: FactoryTrigger): String = when (t.kind) {
     "kanban" -> "When a card enters ${kanbanTitle(t.kanban?.status.orEmpty())}"
     "webhook" -> "When its webhook is called"
     else -> t.kind
+} + (t.needsCards?.takeIf { it.isNotEmpty() }?.let { ", if ${kanbanTitle(it)} has a card" } ?: "")
+
+/** "Only if To do has a card" is offered only when the server lists it; an older one drops the field. */
+internal object NeedsCards {
+    const val CAPABILITY = "trigger-needs-cards"
+    fun supported(capabilities: Set<String>): Boolean = CAPABILITY in capabilities
 }
 
 @Composable
@@ -762,6 +768,7 @@ fun TriggerEditRoute(id: String) {
     TriggerEditScreen(
         load, shell.serverHost, message,
         hooks = hooksInData || Webhooks.supported(shell),
+        needsCards = NeedsCards.supported(shell.capabilities),
         onBack = { nav.back() },
         onSave = { t ->
             act {
@@ -797,6 +804,8 @@ fun TriggerEditScreen(
     message: String? = null,
     /** The server has signed webhooks (Webhooks.supported, or the data shows it): Key or Signature, idempotency, Tell its Manager. */
     hooks: Boolean = false,
+    /** The server can hold a trigger back while a column is empty (NeedsCards.supported). */
+    needsCards: Boolean = false,
     onBack: () -> Unit = {},
     onSave: (FactoryTrigger) -> Unit = {},
     onDelete: () -> Unit = {},
@@ -887,6 +896,10 @@ fun TriggerEditScreen(
                     (if (hooks || t.ifBusy == "manager") listOf("manager" to "Tell its Manager (a run of the same factory)") else emptyList()) + listOf("queue" to "Wait its turn, then start", "skip" to "Skip it"),
                     t.ifBusy,
                 ) { t = t.copy(ifBusy = it) }
+                if (needsCards) {
+                    FieldLabel("Start a run")
+                    ChipRow(listOf("" to "Always") + listOf("backlog", "todo", "in_progress", "done").map { it to "Only if ${kanbanTitle(it)} has a card" }, t.needsCards.orEmpty()) { t = t.copy(needsCards = it) }
+                }
                 if (t.ifBusy == "manager") Text("A call that arrives while a run of this factory is going goes to its Manager as a message, marked mid-run, with the whole request; it decides whether it needs acting on. A run of another factory: it waits its turn.", style = CrundiType.Small)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("On", style = CrundiType.Body, modifier = Modifier.weight(1f))

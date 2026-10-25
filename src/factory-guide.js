@@ -131,6 +131,10 @@ signatureHeader "X-Grafana-Alerting-Signature", timestampHeader
 makes a repeat ("{{payload.groupKey}}"); the CR reads the call with
 {{payload.some.path}} (arrays by index). ifBusy "manager" passes calls that
 arrive during a run of the same factory to its Manager, marked mid-run.
+needsCards "todo" only starts a run when To do holds a card (an empty
+column skips it, queued firings too): set it on a "next card" chain (a
+kanban trigger on Done that works the top of To do) so it stops when the
+board runs out instead of waking a Manager with nothing to do.
 
 Factories suit large features and new projects carried from start to
 finish; everyday changes are better done in a normal chat.

@@ -460,6 +460,14 @@ chat header carries a Factory badge.
   Manager that cannot be reached, or a run of another factory, queues it.
   Every outcome (started, told the Manager, queued, duplicate, skipped,
   failed) goes in the trigger's history; Run now fires it by hand.
+- **needsCards** (a column, or none): the trigger starts a run only while that
+  column holds a card. Empty when it fires: recorded "skipped" with why, no
+  run. While a run is going it still queues; when a queued firing comes up and
+  the column is empty, it and the rest of the queue are dropped, recorded
+  "skipped". For "next card" chains (a kanban trigger on Done working the top
+  of To do), so the chain stops when To do runs out instead of waking a
+  Manager with nothing to do. A save that leaves the field out keeps it (older
+  clients); servers list it as the capability `trigger-needs-cards`.
 - A run started from a kanban card moves the card to In progress, and to Done
   when the result is merged.
 - UI: the project Factory panel, under "Triggers".

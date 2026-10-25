@@ -103,6 +103,11 @@ export const CAPABILITIES = Object.freeze([
   // limit turned an urgent one into a normal one). Both are optional fields;
   // an app that does not know the kind shows it as an ordinary notification.
   'alert-user',
+  // Factory triggers that need cards: needsCards names a board column
+  // ("todo") that must hold a card for the trigger to start a run; an empty
+  // one skips it (and drops queued firings). An older server drops the field,
+  // so clients offer it only when this is listed.
+  'trigger-needs-cards',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

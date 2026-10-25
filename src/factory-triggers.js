@@ -26,6 +26,11 @@
  * (webhooks' default) is handed to the running run's Manager as a message,
  * marked as having arrived mid-run, when that run is of the same factory.
  *
+ * A trigger may need cards: needsCards names a column of the project's board
+ * ("todo"). When that column is empty it does not start a run, neither when
+ * it fires nor when a queued firing comes up; it is noted as skipped. That is
+ * what keeps a "next card" chain from waking a Manager with nothing to do.
+ *
  * Stored in <dataDir>/factory-triggers.json. Pure apart from load/save.
  * Spec: specs/factory.md §4.9.
  */
@@ -36,6 +41,7 @@ import { randomBytes, createHmac, timingSafeEqual } from 'crypto';
 
 export const TRIGGER_KINDS = ['schedule', 'kanban', 'webhook'];
 export const KANBAN_COLUMNS = ['backlog', 'todo', 'in_progress', 'done'];
+const COLUMN_TITLES = { backlog: 'Backlog', todo: 'To do', in_progress: 'In progress', done: 'Done' };
 const QUEUE_MAX = 20;
 const HISTORY_MAX = 20;
 const SEEN_MAX = 1000;                       // idempotency keys remembered per trigger
@@ -68,6 +74,8 @@ export function normalizeTrigger(t, prev = null) {
     kind,
     schedule: { at, days },
     kanban: { status: KANBAN_COLUMNS.includes(x.kanban?.status) ? x.kanban.status : 'todo' },
+    // Left out (a client that does not know it): keep what it was.
+    needsCards: x.needsCards === undefined ? (prev?.needsCards || '') : KANBAN_COLUMNS.includes(x.needsCards) ? x.needsCards : '',
     webhook: {
       key: prev?.webhook?.key || newKey(),
       secret: prev?.webhook?.secret || newKey(),
@@ -328,7 +336,14 @@ export function createTriggerStore(dataDir) {
  * @param {(project:string) => object|null} o.activeRunFor
  * @param {(msg:string, trigger:object, result:object) => void} [o.notify]
  */
-export function createTriggerDispatcher({ store, startRun, activeRunFor, tellRun = null, notify = () => {} }) {
+export function createTriggerDispatcher({ store, startRun, activeRunFor, tellRun = null, cardsIn = null, notify = () => {} }) {
+  /** Why it should not start now (the column it needs is empty), or ''. */
+  function lacking(t) {
+    if (!t.needsCards || !cardsIn) return '';
+    let n = 1;
+    try { n = cardsIn(t.project, t.needsCards); } catch { n = 1; }
+    return n > 0 ? '' : `${COLUMN_TITLES[t.needsCards] || t.needsCards} is empty: nothing to do.`;
+  }
   /**
    * A trigger fired. Runs it, or, when its project is busy: hands it to the
    * running Manager (same factory, "manager"), queues it, or skips it.
@@ -336,6 +351,12 @@ export function createTriggerDispatcher({ store, startRun, activeRunFor, tellRun
   async function fire(t, vars, { source, cardId = '', request = null, idem = '' }) {
     const cr = crFor(t, vars);
     const active = activeRunFor(t.project);
+    // While a run is going, the column is judged when the firing comes up.
+    const why = active ? '' : lacking(t);
+    if (why) {
+      store.touch(t.id, x => { x.lastFired = new Date().toISOString(); record(x, { outcome: 'skipped', source, note: why }); });
+      return { ok: false, skipped: true, error: why };
+    }
     if (active) {
       if (t.ifBusy === 'manager' && tellRun && active.factoryId === t.factoryId) {
         const r = await tellRun(active.id, { trigger: t, cr, request, idem, source });
@@ -380,6 +401,12 @@ export function createTriggerDispatcher({ store, startRun, activeRunFor, tellRun
         if (!t.enabled || !(t.queue || []).length || activeRunFor(t.project)) continue;
         const next = t.queue[0];
         store.touch(t.id, x => { x.queue = x.queue.slice(1); });
+        const why = lacking(t);
+        if (why) {
+          // Nothing to do: drop the rest too, they would find the same.
+          store.touch(t.id, x => { x.queue = []; record(x, { outcome: 'skipped', source: next.source + ' (queued)', note: why }); });
+          continue;
+        }
         await start(t, next.cr, next.source + ' (queued)', next.cardId || '', next.request || null, next.idem || '');
       }
     },

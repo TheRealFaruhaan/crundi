@@ -465,6 +465,8 @@ data class FactoryTrigger(
     val mergeMode: String = "",
     /** queue, skip, or manager (1.21.1: tell the running Manager, marked mid-run) */
     val ifBusy: String = "queue",
+    /** A column that must hold a card for it to start a run ("" = always). Null: left as it is (servers before 'trigger-needs-cards' do not know it). */
+    val needsCards: String? = null,
     val createdAt: JsonElement? = null,
     val lastFired: JsonElement? = null,
     val history: List<TriggerHistory> = emptyList(),
