@@ -28,6 +28,14 @@ object UrgentAlerts {
     private const val PREFS = "crundi"
     private const val PREF_DND = "urgent.dnd"
     private const val PREF_FULL = "urgent.fullscreen"
+    private const val PREF_RING = "urgent.ringMinutes"
+    const val RING_DEFAULT_MIN = 5
+    val RING_RANGE = 1..15
+
+    /** How long an urgent alert rings before it counts as unanswered (App settings), in minutes. */
+    fun ringMinutes(ctx: Context): Int = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(PREF_RING, RING_DEFAULT_MIN).coerceIn(RING_RANGE)
+    fun setRingMinutes(ctx: Context, minutes: Int) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(PREF_RING, minutes.coerceIn(RING_RANGE)).apply()
+    fun ringMs(ctx: Context): Long = ringMinutes(ctx) * 60_000L
     private fun prefServer(serverId: String) = "urgent.server.$serverId"
 
     /** How an alert ends up, for the notification log. */
@@ -80,7 +88,7 @@ object UrgentAlerts {
     fun isUrgentChannel(channel: String?): Boolean = channel == CHANNEL || channel == CHANNEL_DND
 
     /** How long after it arrives an alert left in the shade keeps other notifications silent. */
-    const val HUSH_MS = 10 * 60 * 1000L
+    const val HUSH_MS = 15 * 60 * 1000L   // the longest an alert can ring
 
     /** One of the app's showing notifications: its channel, flags, and how long ago it was posted. */
     data class Showing(val channel: String?, val flags: Int, val ageMs: Long)

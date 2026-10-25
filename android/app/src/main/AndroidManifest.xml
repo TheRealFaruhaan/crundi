@@ -89,6 +89,7 @@
         <receiver android:name=".ReplyReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:exported="false" />
         <receiver android:name=".AlertDismissReceiver" android:exported="false" />
+        <receiver android:name=".SnoozeReceiver" android:exported="false" />
 
         <!-- Firebase is set up by hand in Push.init, from values read at build
              time, so its own automatic start is switched off: it would look

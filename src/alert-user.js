@@ -27,6 +27,8 @@
  * phone and why.
  */
 
+import { randomBytes } from 'node:crypto';
+
 export const URGENT_PER_HOUR = 3;
 export const ALERTS_PER_HOUR = 20;
 export const WINDOW_MS = 60 * 60 * 1000;
@@ -36,6 +38,18 @@ export const MAX_BODY = 1500;
 // "finished" a second later) are sent quietly. Android plays one sound at a
 // time: a notification that sounds or buzzes stops the alert's ringing.
 export const HUSH_MS = 2 * 60 * 1000;
+// Waiting for the answer to an urgent alert. The phone says it is ringing,
+// and for how long (its "Ring for" setting, 1 to 15 minutes); the call then
+// waits that long, plus a little for the answer to travel.
+export const ACK_MS = 60 * 1000;            // no "ringing" from the phone by then: it cannot report (an older app, or offline)
+export const ANSWER_GRACE_MS = 20 * 1000;
+export const RING_MIN_MS = 60 * 1000;
+export const RING_MAX_MS = 15 * 60 * 1000;
+// However the phone is set, a caller never waits longer than this from the
+// moment it starts waiting: 15 minutes is the longest an alert rings.
+export const WAIT_MAX_MS = RING_MAX_MS;
+const ANSWERS = new Set(['attended', 'dismissed', 'snoozed']);
+export const SNOOZE_MINUTES = [5, 15, 30, 60];
 
 const LEVELS = new Set(['normal', 'urgent']);
 
@@ -56,11 +70,12 @@ function inWords(ms) {
  * @param {(text: string, meta: object, opts?: object) => Promise<Array<{id: string, ok: boolean}>>} deps.deliver  notify-channels deliver().
  * @param {() => number} [deps.now]
  */
-export function createAlerter({ phone, push, deliver, now = Date.now }) {
+export function createAlerter({ phone, push, deliver, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
   // When each one went out, oldest first. Only alerts that were sent count.
   const sent = [];      // every alert, any level
   const rang = [];      // urgent alerts sent to ring
   const rangFor = new Map();   // chat id -> when an urgent alert from it was sent to ring
+  const waiting = new Map();   // alert id -> { finish, ringMs, timer, early } while a call waits for its answer
 
   const prune = (list, t) => { while (list.length && t - list[0] >= WINDOW_MS) list.shift(); };
 
@@ -102,10 +117,12 @@ export function createAlerter({ phone, push, deliver, now = Date.now }) {
 
     const chat = where.chat && where.chat.id ? where.chat : null;
     const url = where.url || (chat ? `/chat/${chat.id}` : '/');
+    const alertId = randomBytes(8).toString('hex');
     const meta = {
       title,
       tag: 'alert',
       url,
+      alertId,
       ...(chat ? { chat } : {}),
       ...(level === 'urgent' ? { urgent: true } : {}),
       ...(downgraded ? { downgraded: true } : {}),
@@ -132,6 +149,8 @@ export function createAlerter({ phone, push, deliver, now = Date.now }) {
         ok: true,
         delivered: 'phone',
         level,
+        // Only an alert that rings has an answer to wait for (waitForAnswer).
+        ...(level === 'urgent' ? { alertId } : {}),
         ...(downgraded ? { downgraded: true } : {}),
         note: note || (level === 'urgent'
           ? 'Sent to the paired phone, where it rings until the person sees it (unless they have turned urgent alerts off for this server).'
@@ -169,5 +188,68 @@ export function createAlerter({ phone, push, deliver, now = Date.now }) {
     return !!chatId && rangFor.has(String(chatId));
   }
 
-  return { alert, usage, hushing };
+  /**
+   * The phone says what happened to an alert: "ringing" (with ringMs, how
+   * long it will ring), then "attended", "dismissed" or "snoozed" (with
+   * minutes). False for an alert nobody is waiting on (already answered, or
+   * the call gave up).
+   */
+  function answer(alertId, a = {}) {
+    const w = waiting.get(String(alertId || ''));
+    const action = String(a.action || '');
+    if (!w) return false;
+    if (action === 'ringing') {
+      const ringMs = Math.min(RING_MAX_MS, Math.max(RING_MIN_MS, Number(a.ringMs) || 0));
+      w.ringMs = ringMs;
+      w.arm(Math.min(ringMs + ANSWER_GRACE_MS, Math.max(0, WAIT_MAX_MS - (now() - w.started))), 'no answer');
+      return true;
+    }
+    if (!ANSWERS.has(action)) return false;
+    const minutes = action === 'snoozed' && SNOOZE_MINUTES.includes(Number(a.minutes)) ? Number(a.minutes) : undefined;
+    w.finish({ answer: action, ...(minutes ? { snoozeMinutes: minutes } : {}) });
+    return true;
+  }
+
+  /**
+   * Wait for the answer to an urgent alert (its alertId from alert()). Ends
+   * with the person's answer, "no answer" once the phone's ring time is up,
+   * or "not confirmed" when the phone never said it was ringing.
+   */
+  function waitForAnswer(alertId) {
+    const id = String(alertId || '');
+    return new Promise((resolve) => {
+      const started = now();
+      let timer = null;
+      const w = {
+        ringMs: 0,
+        started,
+        finish(r) {
+          if (!waiting.has(id)) return;
+          waiting.delete(id);
+          if (timer) timers.clear(timer);
+          resolve({ ...r, ...(w.ringMs ? { ringMinutes: Math.round(w.ringMs / 60000) } : {}), waitedSeconds: Math.round((now() - started) / 1000) });
+        },
+        arm(ms, outcome) {
+          if (timer) timers.clear(timer);
+          timer = timers.set(() => w.finish({ answer: outcome }), ms);
+        },
+      };
+      waiting.set(id, w);
+      w.arm(ACK_MS, 'not confirmed');
+    });
+  }
+
+  return { alert, usage, hushing, answer, waitForAnswer };
+}
+
+/** The sentence a caller reads for an answer, from waitForAnswer's result. */
+export function describeAnswer(r = {}) {
+  switch (r.answer) {
+    case 'attended': return 'The person attended the alert (opened it).';
+    case 'dismissed': return 'The person dismissed the alert without opening it.';
+    case 'snoozed': return `The person snoozed the alert for ${r.snoozeMinutes || '?'} minutes; it will ring again then.`;
+    case 'no answer': return `Nobody answered: the alert rang for ${r.ringMinutes || '?'} minutes and stopped (the phone keeps a missed-alert notice).`;
+    case 'not confirmed': return 'The phone did not confirm it was ringing within a minute (an older app, or the phone is offline), so how it was answered is not known.';
+    default: return '';
+  }
 }

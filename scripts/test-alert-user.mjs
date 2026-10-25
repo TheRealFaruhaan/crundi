@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = mkdtempSync(join(tmpdir(), 'alert-test-'));
 process.env.DATA_DIR = dataDir;
-const { createAlerter, URGENT_PER_HOUR, ALERTS_PER_HOUR, WINDOW_MS, HUSH_MS } = await import('../src/alert-user.js');
+const { createAlerter, URGENT_PER_HOUR, ALERTS_PER_HOUR, WINDOW_MS, HUSH_MS, ACK_MS, ANSWER_GRACE_MS, RING_MAX_MS, describeAnswer } = await import('../src/alert-user.js');
 const mp = await import('../src/mobile-push.js');
 const { CAPABILITIES } = await import('../src/client-version.js');
 
@@ -183,6 +183,59 @@ function rig({ phoneOk = true, pushOk = true, channelsOn = ['telegram'] } = {}) 
   ok(/alerter\.hushing\(meta\.chat\.id\)/.test(fn) && /quiet: true[\s\S]{0,80}only: \['mobile'\]/.test(fn), 'hush: notifyEvent sends a hushed chat\'s notification to the phone only, quietly');
 }
 
+// ─── Waiting for the answer ───
+{
+  // A fake timer: fire() runs the pending one, as if its time had come.
+  let pending = null;
+  const timers = { set: (fn, ms) => { pending = { fn, ms }; return pending; }, clear: (t) => { if (pending === t) pending = null; } };
+  const mk = () => createAlerter({ phone: () => ({ ok: true }), push: async () => true, deliver: async () => [], timers });
+  {
+    const a = mk();
+    const r = await a.alert({ title: 'Down' });
+    ok(r.ok && /^[0-9a-f]{16}$/.test(r.alertId), 'answer: an urgent alert has an alertId to wait on');
+    const w = a.waitForAnswer(r.alertId);
+    ok(pending && pending.ms === ACK_MS, 'answer: first it waits for the phone to say it is ringing');
+    ok(a.answer(r.alertId, { action: 'ringing', ringMs: 5 * 60000 }) && pending.ms === 5 * 60000 + ANSWER_GRACE_MS, 'answer: then for the ring time the phone gives, plus a little');
+    ok(a.answer(r.alertId, { action: 'snoozed', minutes: 15 }), 'answer: the phone reports a snooze');
+    const got = await w;
+    ok(got.answer === 'snoozed' && got.snoozeMinutes === 15 && got.ringMinutes === 5, 'answer: the caller gets the snooze and its minutes');
+    ok(!a.answer(r.alertId, { action: 'dismissed' }), 'answer: a second answer is not waited on');
+    ok(/snoozed the alert for 15 minutes/.test(describeAnswer(got)), 'answer: said in a sentence');
+  }
+  {
+    const a = mk();
+    const r = await a.alert({ title: 'Down' });
+    const w = a.waitForAnswer(r.alertId);
+    a.answer(r.alertId, { action: 'ringing', ringMs: 99 * 60000 });
+    ok(pending.ms === RING_MAX_MS, 'answer: never more than 15 minutes in all, whatever the phone says');
+    pending.fn();
+    const got = await w;
+    ok(got.answer === 'no answer' && /rang for 15 minutes/.test(describeAnswer(got)), 'answer: nobody answered within the ring time');
+  }
+  {
+    const a = mk();
+    const r = await a.alert({ title: 'Down' });
+    const w = a.waitForAnswer(r.alertId);
+    pending.fn();
+    ok((await w).answer === 'not confirmed', 'answer: a phone that never says it is ringing (an older app) is "not confirmed"');
+  }
+  {
+    const a = mk();
+    const r = await a.alert({ title: 'Down' });
+    const w = a.waitForAnswer(r.alertId);
+    ok(!a.answer(r.alertId, { action: 'exploded' }) && !a.answer('nope', { action: 'dismissed' }), 'answer: unknown actions and unknown alerts are ignored');
+    a.answer(r.alertId, { action: 'dismissed' });
+    ok((await w).answer === 'dismissed', 'answer: dismissed before the phone even said it rang still counts');
+    const n = await a.alert({ title: 'FYI', level: 'normal' });
+    ok(n.ok && !n.alertId, 'answer: a normal alert has nothing to wait for');
+  }
+  const web = readFileSync(join(root, 'src/webapp.js'), 'utf8');
+  ok(/alerter\.waitForAnswer\(alertId\)/.test(web) && /path === '\/api\/alerts\/answer'/.test(web), 'answer: alert_user waits, and the phone has somewhere to report');
+  ok(CAPABILITIES.includes('alert-answers'), 'answer: CAPABILITIES lists alert-answers');
+  const payload = JSON.parse(mp.buildPayload('x', { tag: 'alert', urgent: true, alertId: 'abc123' }));
+  ok(payload.alertId === 'abc123', 'answer: the push carries the alertId');
+}
+
 // ─── Wiring ───
 {
   const stdio = readFileSync(join(root, 'src/mcp-stdio.js'), 'utf8');
@@ -190,7 +243,7 @@ function rig({ phoneOk = true, pushOk = true, channelsOn = ['telegram'] } = {}) 
   const prompt = readFileSync(join(root, 'src/system-prompt.js'), 'utf8');
   const policy = readFileSync(join(root, 'src/access-policy.js'), 'utf8');
   ok(/name: 'alert_user'/.test(stdio), 'the MCP server declares alert_user');
-  const def = stdio.slice(stdio.indexOf("name: 'alert_user'"), stdio.indexOf("name: 'alert_user'") + 2000);
+  const def = stdio.slice(stdio.indexOf("name: 'alert_user'"), stdio.indexOf("name: 'alert_user'") + 4000);
   ok(/send_message_to_user/.test(def) && /required: \['title'\]/.test(def) && /'normal', 'urgent'/.test(def), 'its description points ordinary updates at send_message_to_user; title required; two levels');
   ok(/name === 'alert_user'[\s\S]{0,200}CRUNDI_CHAT_ID/.test(stdio), 'the chat id comes from the bridge environment, not from Claude');
   ok(/body\.tool === 'alert_user'/.test(web) && /alerter\.alert\(/.test(web), 'the dispatcher handles alert_user');

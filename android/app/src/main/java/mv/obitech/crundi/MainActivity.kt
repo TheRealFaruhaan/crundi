@@ -131,6 +131,11 @@ class MainActivity : ComponentActivity() {
         val id = intent?.getStringExtra(Notifier.EXTRA_SERVER).orEmpty()
         val path = intent?.getStringExtra(Notifier.EXTRA_PATH).orEmpty()
         if (id.isNotEmpty() && Servers.byId(this, id) != null) Servers.setCurrent(this, id)
+        // Opened from an urgent alert: that is attending it (alert_user is waiting). Once.
+        intent?.getStringExtra(AlertAnswers.EXTRA_ALERT)?.takeIf { it.isNotEmpty() }?.let { alertId ->
+            intent.removeExtra(AlertAnswers.EXTRA_ALERT)
+            AlertAnswers.report(this, id, alertId, "attended")
+        }
         DeepLinks.route(path)?.let { pendingRoute = it }
     }
 

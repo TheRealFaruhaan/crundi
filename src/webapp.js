@@ -80,7 +80,7 @@ import { toSvg as crundiCodeSvg, doneClass as crundiCodeDoneClass, DONE_MS as CR
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import * as mobilePush from './mobile-push.js';
-import { createAlerter } from './alert-user.js';
+import { createAlerter, describeAnswer } from './alert-user.js';
 import { getChatPageHtml } from './chat-page.js';
 import { chatMark } from './project-mark.js';
 import { findProjectIcon, storedIcon, projectIconUrl, readProjectIcon } from './project-icon.js';
@@ -5634,6 +5634,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, { ok: true, version: APP_VERSION, steps: p.steps });
       } catch (err) { return json(res, { ok: false, error: err.message, steps: [] }); }
     }
+    // The phone says what happened to an urgent alert (alert-user.js answer):
+    // ringing (with its ring time), attended, dismissed, snoozed. The owner's
+    // phone only.
+    if (path === '/api/alerts/answer' && req.method === 'POST') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not allowed' }, 403);
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch { body = {}; }
+      return json(res, { ok: true, waiting: alerter.answer(body.alertId, { action: body.action, ringMs: body.ringMs, minutes: body.minutes }) });
+    }
     if (path === '/api/whatsnew/seen' && req.method === 'POST') {
       if (isConfined(principal)) return json(res, { ok: true });
       try {
@@ -6467,7 +6476,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const chat = term && !term.collaborator
           ? { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) }
           : null;
-        try { return json(res, await alerter.alert({ title: a.title, body: a.body, level: a.level }, chat ? { chat } : {})); }
+        try {
+          const r = await alerter.alert({ title: a.title, body: a.body, level: a.level }, chat ? { chat } : {});
+          // An alert that rings: wait for the person's answer (or the end of
+          // the ring time) and give it to the caller.
+          if (!r.ok || !r.alertId) return json(res, r);
+          const { alertId, note, ...rest } = r;
+          const w = await alerter.waitForAnswer(alertId);
+          return json(res, { ...rest, ...w, note: describeAnswer(w) });
+        }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 

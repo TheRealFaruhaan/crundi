@@ -117,3 +117,25 @@ for the phone to be unlocked, then opens the chat), left to dismiss. Both take
 the notification away, which stops the ringing; TalkBack gets both as actions.
 While the phone is in use Android shows the heads-up instead, as before. An
 alert that does not ring is never full screen (`UrgentAlerts.decide`).
+
+## Ring time, snooze and answers (1.1.1-dev.7)
+
+An urgent alert rings for the person's ring time ("Urgent alerts ring for"
+in App settings, 1 to 15 minutes, 5 by default): the notification has
+`setTimeoutAfter`, and the full-screen screen closes at the same moment.
+Then it counts as unanswered and leaves a quiet "Missed urgent alert" notice
+(posted from the delete intent, which tells a time-out from a swipe by when
+it comes).
+
+Snooze (the notification's Snooze button opens the alert screen; the screen
+has 5 min, 15 min, 30 min, 1 hour) takes the alert away and brings it back,
+ringing again, with an inexact `setAndAllowWhileIdle` alarm: exact alarms
+need a permission Play keeps for alarm clocks (see the policy check above).
+
+What happened is told to the server that sent it (POST /api/alerts/answer,
+capability `alert-answers`): `ringing` with `ringMs` when it is posted, then
+`attended` (slid, or opened from the notification), `dismissed` (slid, the
+Dismiss button, or swiped) or `snoozed` with `minutes`. alert_user waits for
+it, at most 15 minutes, and gives the caller the answer, or "no answer" once
+the ring time is up, or "not confirmed" when no "ringing" came within a
+minute (an older app, or the phone offline).

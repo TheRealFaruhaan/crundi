@@ -75,13 +75,13 @@ const TOOLS = [
   },
   {
     name: 'alert_user',
-    description: 'Get the person\'s attention NOW on their paired phone. An urgent alert rings on the phone\'s Urgent channel until they see it. Use it only when the person must act or know right away: a production outage, a long job that needs their decision before it can go on, or when they asked to be woken when something is done. For ordinary updates, finished tasks and questions that can wait, use send_message_to_user instead. Limited per hour: past 3 urgent alerts in an hour they are sent without ringing, and past 20 alerts of any level the tool refuses. With no phone paired it goes out through the other notification channels and says it could not ring a phone.',
+    description: 'Get the person\'s attention NOW on their paired phone. An urgent alert rings on the phone (full screen when it is locked, if they turned that on) for their ring time, 5 minutes unless they changed it (1 to 15). Use it only when the person must act or know right away: a production outage, a long job that needs their decision before it can go on, or when they asked to be woken when something is done. For ordinary updates, finished tasks and questions that can wait, use send_message_to_user instead.\n\nAN URGENT ALERT WAITS FOR THE ANSWER: the call returns only when the person attended it (opened it), dismissed it, snoozed it (for 5, 15, 30 or 60 minutes; it rings again then), or nobody answered within the ring time, so it can take up to about 15 minutes. `answer` is one of attended, dismissed, snoozed, "no answer", or "not confirmed" (the phone could not report back). Act on it: no answer may mean trying another way or waiting; dismissed means they saw it and chose not to act now. If you have time-sensitive work to carry on with meanwhile, call alert_user from a background agent (a subagent run in the background) so you are not blocked, and read its result when it finishes. A normal-level alert does not ring and returns at once.\n\nLimited per hour: past 3 urgent alerts in an hour they are sent without ringing (and return at once), and past 20 alerts of any level the tool refuses. With no phone paired it goes out through the other notification channels and says it could not ring a phone.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'One short line: what needs the person (max 120 characters)' },
         body: { type: 'string', description: 'Optional detail: what happened and what they should do' },
-        level: { type: 'string', enum: ['normal', 'urgent'], description: 'urgent (default) rings until seen; normal is an ordinary notification that does not ring' },
+        level: { type: 'string', enum: ['normal', 'urgent'], description: 'urgent (default) rings for the person\'s ring time and waits for their answer; normal is an ordinary notification that does not ring and returns at once' },
       },
       required: ['title'],
     },

@@ -298,6 +298,9 @@ function payloadWith(text, meta, bodyMax) {
     // hourly limit sent it as a normal one. An app that does not know either
     // shows the alert as an ordinary notification.
     ...(meta.urgent ? { urgent: true } : {}),
+    // Which alert this is, so the phone can say how it was answered
+    // (POST /api/alerts/answer). An app that does not know it ignores it.
+    ...(meta.alertId ? { alertId: String(meta.alertId).slice(0, 40) } : {}),
     ...(meta.downgraded ? { downgraded: true } : {}),
     ...(Array.isArray(meta.clear) ? { clear: meta.clear.map((k) => String(k).slice(0, 40)).slice(0, 10) } : {}),
     // Chats whose own request has been answered: their notifications go too.

@@ -187,6 +187,19 @@ class SettingsActivity : ComponentActivity() {
                 }
             }
             if (fullOn && !fullOk) perms += SettingItem.Button("Turn off full-screen urgent alerts") { UrgentAlerts.setFullScreenOptIn(this, false); draw() }
+            // How long an urgent alert rings before it counts as unanswered
+            // (and alert_user, waiting on it, hears "no answer").
+            val ring = UrgentAlerts.ringMinutes(this)
+            perms += SettingItem.Line("Urgent alerts ring for", "$ring minute${if (ring == 1) "" else "s"}, then stop and count as unanswered. Snooze brings one back after 5, 15, 30 or 60 minutes.", null, "Change") {
+                val choices = UrgentAlerts.RING_RANGE.toList()
+                android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("Ring for")
+                    .setSingleChoiceItems(choices.map { "$it minute${if (it == 1) "" else "s"}" }.toTypedArray(), choices.indexOf(ring)) { dlg, which ->
+                        UrgentAlerts.setRingMinutes(this, choices[which]); dlg.dismiss(); draw()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
         }
         val cam = has(Manifest.permission.CAMERA)
         perms += SettingItem.Line("Camera", if (cam) "Allowed. Used to scan the pairing picture, and to take a photo for a chat." else "Not allowed. Needed to scan the pairing picture.", cam, if (cam) "Manage" else "Allow") {

@@ -162,12 +162,30 @@ object Notifier {
         // (Android opens that only for a notification that is new).
         val id = UrgentAlerts.alertId(server.id, chatId, at)
         val where = listOfNotNull(chatJson?.optString("title")?.takeIf { it.isNotEmpty() }, server.host).joinToString(" · ")
+        // What the server is waiting to hear about (alert_user), and for how
+        // long it rings before it counts as unanswered.
+        val alertId = payload.optString("alertId")
+        val ringMs = UrgentAlerts.ringMs(ctx)
+        val postedAt = System.currentTimeMillis()
+        // Everything the alert's buttons and screen need to answer it.
+        fun Intent.alertExtras(): Intent = putExtra(EXTRA_NOTIFICATION, id).putExtra(EXTRA_SERVER, server.id).putExtra(EXTRA_PATH, url)
+            .putExtra(AlertActivity.EXTRA_TITLE, title).putExtra(AlertActivity.EXTRA_BODY, body).putExtra(AlertActivity.EXTRA_WHERE, where)
+            .putExtra(AlertAnswers.EXTRA_ALERT, alertId).putExtra(AlertAnswers.EXTRA_POSTED, postedAt).putExtra(AlertAnswers.EXTRA_RING_MS, ringMs)
+            .putExtra(AlertAnswers.EXTRA_PAYLOAD, payload.toString())
         val b = NotificationCompat.Builder(ctx, d.channel)
             .setSmallIcon(R.drawable.ic_stat).setColor(ctx.getColor(R.color.accent))
             .setContentTitle(title).setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setSubText(where)
             .setWhen(at).setShowWhen(true).setAutoCancel(true)
-            .setContentIntent(openMain(ctx, server.id, url, id))
+            .setContentIntent(
+                // Opening it is attending it: MainActivity tells the server.
+                PendingIntent.getActivity(
+                    ctx, id,
+                    Intent(ctx, MainActivity::class.java).setAction("alert-open:$id").putExtra(EXTRA_SERVER, server.id).putExtra(EXTRA_PATH, url).putExtra(AlertAnswers.EXTRA_ALERT, alertId)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                    flags(false),
+                )
+            )
             // On the lock screen: that something urgent came, and from where.
             // What it says waits for the phone to be unlocked, as the person's
             // lock screen settings decide.
@@ -184,19 +202,31 @@ object Notifier {
         // channel's high importance is what makes it a heads-up.
         if (d.rings) {
             b.setPriority(NotificationCompat.PRIORITY_MAX)
-            // Stop it without opening the app; a swipe does the same.
+            // It rings for the person's ring time (App settings), then goes,
+            // counted as unanswered, leaving a missed-alert notice.
+            b.setTimeoutAfter(ringMs)
+            // Stop it without opening the app.
             val dismiss = PendingIntent.getBroadcast(
                 ctx, id,
-                Intent(ctx, AlertDismissReceiver::class.java).setAction("dismiss:$id").putExtra(EXTRA_NOTIFICATION, id),
+                Intent(ctx, AlertDismissReceiver::class.java).setAction("dismiss:$id").alertExtras(),
                 flags(false),
             )
             b.addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat, "Dismiss", dismiss).setShowsUserInterface(false).build())
+            // Snooze: the alert screen, where the four times are.
+            val snooze = PendingIntent.getActivity(
+                ctx, id + 1,
+                Intent(ctx, AlertActivity::class.java).setAction("snooze:$id").alertExtras().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                flags(false),
+            )
+            b.addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat, "Snooze", snooze).build())
+            // Swiped away, or the ring time ran out (AlertDismissReceiver tells them apart).
+            b.setDeleteIntent(
+                PendingIntent.getBroadcast(ctx, id + 2, Intent(ctx, AlertDismissReceiver::class.java).setAction("deleted:$id").alertExtras(), flags(false))
+            )
             if (d.fullScreen) {
                 // Locked or asleep: the alert screen opens over the lock
                 // screen. In use: Android shows the heads-up instead.
-                val screen = Intent(ctx, AlertActivity::class.java).setAction("alert:$id")
-                    .putExtra(EXTRA_NOTIFICATION, id).putExtra(EXTRA_SERVER, server.id).putExtra(EXTRA_PATH, url)
-                    .putExtra(AlertActivity.EXTRA_TITLE, title).putExtra(AlertActivity.EXTRA_BODY, body).putExtra(AlertActivity.EXTRA_WHERE, where)
+                val screen = Intent(ctx, AlertActivity::class.java).setAction("alert:$id").alertExtras()
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
                 b.setFullScreenIntent(PendingIntent.getActivity(ctx, id, screen, flags(false)), true)
             }
@@ -206,6 +236,21 @@ object Notifier {
         // shade is pulled down over it. Anything not ringing plays once.
         if (d.insistent) n.flags = n.flags or Notification.FLAG_INSISTENT
         post(ctx, id, n)
+        // alert_user is waiting: say it is ringing, and for how long.
+        if (d.rings && alertId.isNotEmpty()) AlertAnswers.report(ctx, server.id, alertId, "ringing", ringMs = ringMs)
+    }
+
+    /** The ring time ran out with nobody answering: a quiet notice it was missed, which opens the chat. */
+    fun alertMissed(ctx: Context, serverId: String, id: Int, title: String, where: String, url: String) {
+        post(
+            ctx, id,
+            NotificationCompat.Builder(ctx, SERVER)
+                .setSmallIcon(R.drawable.ic_stat).setColor(ctx.getColor(R.color.accent))
+                .setContentTitle("Missed urgent alert").setContentText(title).setSubText(where)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(title))
+                .setAutoCancel(true).setSilent(true)
+                .setContentIntent(openMain(ctx, serverId, url, id)),
+        )
     }
 
     /** The chat's mark as a picture: its initials on its project's colour. */

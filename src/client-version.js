@@ -108,6 +108,11 @@ export const CAPABILITIES = Object.freeze([
   // one skips it (and drops queued firings). An older server drops the field,
   // so clients offer it only when this is listed.
   'trigger-needs-cards',
+  // Urgent alerts carry alertId; the phone reports what happened to one
+  // (POST /api/alerts/answer: ringing with ringMs, attended, dismissed,
+  // snoozed with minutes) and alert_user waits for it. An older server sends
+  // no alertId, and the phone then reports nothing.
+  'alert-answers',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));
