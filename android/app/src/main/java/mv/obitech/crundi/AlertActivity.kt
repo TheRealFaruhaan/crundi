@@ -70,6 +70,8 @@ class AlertActivity : ComponentActivity() {
         const val EXTRA_TITLE = "alert.title"
         const val EXTRA_BODY = "alert.body"
         const val EXTRA_WHERE = "alert.where"
+        /** How long Attend waits for the lock screen to say it was unlocked before opening the chat anyway. */
+        const val UNLOCK_WAIT_MS = 8_000L
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,19 +109,33 @@ class AlertActivity : ComponentActivity() {
         stopRinging()
         val serverId = intent.getStringExtra(Notifier.EXTRA_SERVER).orEmpty()
         val path = intent.getStringExtra(Notifier.EXTRA_PATH).orEmpty().ifEmpty { "/" }
-        val go = {
-            startActivity(
-                Intent(this, MainActivity::class.java).setAction("open:$serverId:$path")
-                    .putExtra(Notifier.EXTRA_SERVER, serverId).putExtra(Notifier.EXTRA_PATH, path)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-            )
-            finish()
+        // Once, whatever answers first. The chat opens either way: unlocked,
+        // it is in front; not (cancelled, refused, or Android never said),
+        // it waits behind the lock screen for the person to unlock as usual.
+        // This screen never stays: it once sat with the slider at the end
+        // when only "unlocked" was listened for.
+        var gone = false
+        val go = { why: String ->
+            if (!gone) {
+                gone = true
+                PushLog.add(applicationContext, "Urgent alert attended: $why")
+                startActivity(
+                    Intent(this, MainActivity::class.java).setAction("open:$serverId:$path")
+                        .putExtra(Notifier.EXTRA_SERVER, serverId).putExtra(Notifier.EXTRA_PATH, path)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+                )
+                finish()
+            }
         }
         val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-        if (!km.isKeyguardLocked) { go(); return }
+        if (!km.isKeyguardLocked) { go("the phone was unlocked"); return }
         km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
-            override fun onDismissSucceeded() { go() }
+            override fun onDismissSucceeded() { go("unlocked") }
+            override fun onDismissCancelled() { go("unlock cancelled, the chat waits behind the lock screen") }
+            override fun onDismissError() { go("Android could not show the unlock, the chat waits behind the lock screen") }
         })
+        // Some phones never answer at all.
+        window.decorView.postDelayed({ go("no answer from the lock screen, the chat waits behind it") }, UNLOCK_WAIT_MS)
     }
 }
 

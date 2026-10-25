@@ -61,6 +61,21 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.5 (en-US)
+
+Version code 23. Since 1.1.1-dev.4 (code 22): Attend on the full-screen
+alert no longer waits forever for the lock screen's answer.
+
+```
+<en-US>
+Attending a full-screen urgent alert no longer gets stuck.
+
+- After sliding to attend, the chat opens once you unlock, or waits behind the lock screen if you cancel the unlock.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.4 (en-US)
 
 Version code 22. Since 1.1.1-dev.3 (code 21): each urgent alert is a
