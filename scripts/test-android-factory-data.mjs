@@ -8,7 +8,8 @@ import { DATA_PATH, editorData, text } from '../android/tools/gen-factory-data.m
 
 let have;
 try { have = readFileSync(DATA_PATH, 'utf8'); } catch { assert.fail('missing ' + DATA_PATH + ': run node android/tools/gen-factory-data.mjs'); }
-assert.equal(have, text(editorData()), 'factory-editor-data.json is out of step with src/: run node android/tools/gen-factory-data.mjs');
+// A Windows checkout may turn the file's line endings into CRLF; the content is what matters.
+assert.equal(have.replace(/\r\n/g, '\n'), text(editorData()), 'factory-editor-data.json is out of step with src/: run node android/tools/gen-factory-data.mjs');
 const d = JSON.parse(have);
 assert.ok(d.personas.length >= 10, 'personas');
 assert.ok(d.presets.some(p => p.key === 'tests'), 'presets');
