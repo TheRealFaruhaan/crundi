@@ -132,4 +132,10 @@ class UrgentAlertsTest {
         assertEquals(emptyList<String>(), UrgentSetup.steps(full = false, fullGranted = false, dnd = false, dndGranted = false))
         assertEquals(listOf(UrgentSetup.FULL), UrgentSetup.steps(full = true, fullGranted = false, dnd = false, dndGranted = false))
     }
+
+    @Test fun eachAlertIsANewNotification() {
+        // An update of an alert still in the shade buzzes but never opens full screen.
+        assertTrue(UrgentAlerts.alertId("s1", "c1", 1000L) != UrgentAlerts.alertId("s1", "c1", 2000L))
+        assertEquals(UrgentAlerts.alertId("s1", "c1", 1000L), UrgentAlerts.alertId("s1", "c1", 1000L))
+    }
 }

@@ -61,6 +61,22 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.4 (en-US)
+
+Version code 22. Since 1.1.1-dev.3 (code 21): each urgent alert is a
+notification of its own, so the full-screen alert opens even when an
+earlier alert is still in the shade.
+
+```
+<en-US>
+Full-screen urgent alerts now open every time.
+
+- A new alert no longer just updates an earlier one still in the notification shade, which kept it from taking the screen.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.3 (en-US)
 
 Version code 21. Since 1.1.1-dev.2 (code 20): full-screen urgent alerts,

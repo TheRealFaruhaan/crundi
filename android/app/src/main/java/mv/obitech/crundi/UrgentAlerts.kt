@@ -74,6 +74,9 @@ object UrgentAlerts {
     fun decide(payload: JSONObject, serverOn: Boolean, dndOptIn: Boolean, dndGranted: Boolean, quietChannel: String, fullScreenReady: Boolean = false): Decision =
         decide(payload.optBoolean("urgent"), payload.optBoolean("downgraded"), serverOn, dndOptIn, dndGranted, quietChannel, fullScreenReady)
 
+    /** A notification id of its own for each alert (by when it was sent), never an earlier one's. */
+    fun alertId(serverId: String, chatId: String, at: Long): Int = "alert:$serverId:$chatId:$at".hashCode()
+
     fun isUrgentChannel(channel: String?): Boolean = channel == CHANNEL || channel == CHANNEL_DND
 
     /** How long after it arrives an alert left in the shade keeps other notifications silent. */

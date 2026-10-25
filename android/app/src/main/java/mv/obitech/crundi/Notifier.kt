@@ -157,7 +157,10 @@ object Notifier {
         val chatJson = payload.optJSONObject("chat")?.takeIf { it.optString("id").isNotEmpty() }
         val chatId = chatJson?.optString("id").orEmpty()
         val url = if (chatId.isNotEmpty()) "/chat/$chatId" else payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
-        val id = "alert:${server.id}:$chatId".hashCode()
+        // Its own notification each time: one that only updated an earlier
+        // alert still in the shade would buzz but never open full screen
+        // (Android opens that only for a notification that is new).
+        val id = UrgentAlerts.alertId(server.id, chatId, at)
         val where = listOfNotNull(chatJson?.optString("title")?.takeIf { it.isNotEmpty() }, server.host).joinToString(" · ")
         val b = NotificationCompat.Builder(ctx, d.channel)
             .setSmallIcon(R.drawable.ic_stat).setColor(ctx.getColor(R.color.accent))
