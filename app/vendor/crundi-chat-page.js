@@ -266,6 +266,9 @@
   // chat is named for) are shown over the top of it, with the same two
   // answers: approve with the PIN, or deny.
   var asks = [], askArmed = '', askError = '', askShown = '';
+  var askAllow = { on: false, duration: '1h' };   // "Allow for this chat" on the open card
+  var CS = window.CrundiChatSecrets || null;
+  function canAllow(r) { return !!(CS && CS.isSupported() && r && r.kind === 'run' && r.sessionId === sid); }
   function loadAsks() {
     if (stopped || !view || document.visibilityState !== 'visible') return;
     apiFetch('/api/secrets').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
@@ -306,11 +309,15 @@
         var unlock = function () {
           var v = String(pin.value || '').trim();
           if (!/^[0-9]{6}$/.test(v)) { askError = 'Enter a 6-digit PIN'; drawAsks(); return; }
-          askPost({ action: 'approve', reqId: r.id, pin: v }).then(function (d) {
+          var allow = canAllow(r) ? CS.allowForChat(askAllow) : null;
+          var body = { action: 'approve', reqId: r.id, pin: v };
+          if (allow) body.allowForChat = allow;
+          askPost(body).then(function (d) {
             // A wrong PIN leaves the request waiting on purpose, so the card
             // stays and says why.
             if (!d || !d.ok) { askError = (d && d.error) || 'Wrong PIN'; askShown = ''; drawAsks(); return; }
-            askArmed = ''; askError = ''; toast('Approved'); loadAsks();
+            askArmed = ''; askError = ''; askAllow = { on: false, duration: askAllow.duration };
+            toast(allow && d.preauthorised ? 'Approved, and allowed for this chat' : 'Approved'); loadAsks();
           });
         };
         pin.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); unlock(); } });
@@ -318,10 +325,11 @@
         btn('Cancel', '', function () { askArmed = ''; askError = ''; drawAsks(); });
         setTimeout(function () { try { pin.focus(); } catch (e) { /* not focusable yet */ } }, 30);
       } else {
-        btn('Approve', 'go', function () { askArmed = r.id; askError = ''; drawAsks(); });
+        btn('Approve', 'go', function () { askArmed = r.id; askError = ''; askAllow = { on: false, duration: askAllow.duration }; drawAsks(); });
         btn('Deny', '', function () { askPost({ action: 'deny', reqId: r.id }).then(loadAsks); });
       }
       card.appendChild(row);
+      if (askArmed === r.id && canAllow(r)) card.appendChild(CS.allowRow(askAllow));
       if (askArmed === r.id && askError) add('cp-ask-err', askError);
       host.appendChild(card);
     });
@@ -351,6 +359,8 @@
     });
     // A secret request the moment it is raised, not at the next look.
     es.addEventListener('secret-requests', function () { loadAsks(); });
+    // This chat's pre-authorised secrets, the moment they change.
+    es.addEventListener('chat-secrets', function (e) { try { if (CS) CS.handleEvent(JSON.parse(e.data)); } catch (x) { /* a malformed frame must not stop the stream */ } });
     // The whole workbench, every few seconds: what the server says this
     // chat is doing (Catching up). Read only while a turn shows at work.
     es.addEventListener('state', function (e) {
@@ -644,7 +654,31 @@
     if (act === 'open') openMain('/chat/' + encodeURIComponent(sid));
     if (act === 'plan' && view && view.togglePlan) view.togglePlan();
     if (act === 'rename') renameHere();
+    if (act === 'secrets' && CS) CS.open(sid);
   };
+  // ─── Secrets pre-authorised for this chat ───
+  // The lock in the header (wide) and the menu line (narrow) open the shared
+  // dialog. Shown only when the server offers it.
+  function paintLock() {
+    if (!CS) return;
+    var ok = CS.isSupported();
+    var n = ok ? CS.grants(sid).length : 0;
+    var lock = $('cp-lock');
+    lock.className = 'cp-btn' + (ok ? ' ok' : '') + (n ? ' on' : '');
+    lock.querySelector('b').textContent = n ? String(n) : '';
+    lock.title = n ? n + ' secret' + (n === 1 ? '' : 's') + ' pre-authorised for this chat' : 'Pre-authorise secrets for this chat';
+    var item = menu.querySelector('[data-do="secrets"]');
+    item.style.display = ok ? '' : 'none';
+    item.textContent = n ? 'Secrets for this chat (' + n + ')' : 'Secrets for this chat';
+  }
+  $('cp-lock').onclick = function (e) { e.stopPropagation(); if (CS) CS.open(sid); };
+  function startSecrets() {
+    if (!CS) return;
+    CS.configure({ apiFetch: apiFetch, toast: toast });
+    CS.onChange(function (which) { if (!which || which === sid) paintLock(); });
+    CS.supported().then(function (yes) { if (yes) CS.load(sid); paintLock(); drawAsksAgain(); });
+  }
+  function drawAsksAgain() { askShown = ''; drawAsks(); }
   // ─── Start ───
   function start() {
     if (!sid || !/^[A-Za-z0-9_-]{1,80}$/.test(sid)) { note('Not a chat', 'This address does not name a chat.', 'Open Crundi', function () { openMain('/'); }); return; }
@@ -685,6 +719,7 @@
       });
       connect();
       listen();
+      startSecrets();
     });
   }
   start();

@@ -44,6 +44,7 @@ import * as factoryStore from './factory-store.js';
 import { validateFactory } from './factory-model.js';
 import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-runner.js';
 import { authoriseSecretUse } from './factory-secrets.js';
+import { createChatSecretVault, grantChatSecrets, preauthorisedAsk, parseDuration, PREAUTH_PRESETS } from './chat-secrets.js';
 import * as factoryCleanup from './factory-cleanup.js';
 import { createTriggerStore, createTriggerDispatcher, publicTrigger } from './factory-triggers.js';
 import { FACTORY_GUIDE } from './factory-guide.js';
@@ -2130,6 +2131,40 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const pendingSecretRequests = new Map();
   const SECRET_REQUEST_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes per request
 
+  // ─── Secrets pre-authorised for one chat (src/chat-secrets.js) ───
+  // PINs in memory only, per chat id; secret_run from that chat uses them,
+  // secret_get never does. Gone when the time runs out, they are revoked, the
+  // chat ends or the server stops. Owners only: the routes sit under
+  // /api/secrets (refused to collaborators by access-policy.js), and the
+  // event goes to owners' streams only. It carries names and times, never a PIN.
+  const chatSecrets = createChatSecretVault({ onChange: (sid) => broadcastChatSecrets(sid) });
+  function broadcastChatSecrets(sessionId) {
+    const payload = `event: chat-secrets\ndata: ${JSON.stringify({ sessionId, grants: chatSecrets.list(sessionId) })}\n\n`;
+    for (const client of sseClients) {
+      if (isConfined(client.principal)) continue;
+      try { client.res.write(payload); } catch { sseClients.delete(client); }
+    }
+  }
+  if (claudeUi && claudeUi.onChatEnded) claudeUi.onChatEnded((sid) => { if (chatSecrets.revokeChat(sid)) broadcastChatSecrets(sid); });
+  // Belt and braces: a chat that is gone without saying so loses its grants within a minute.
+  const chatSecretSweep = setInterval(() => {
+    if (!claudeUi) return;
+    for (const sid of chatSecrets.chatIds()) {
+      if (!claudeUi.has(sid)) { chatSecrets.revokeChat(sid); broadcastChatSecrets(sid); }
+      else chatSecrets.list(sid);   // drops anything run out
+    }
+  }, 60_000);
+  if (chatSecretSweep.unref) chatSecretSweep.unref();
+  /** The chat a grant would be for: an owner's open chat, never a collaborator's. */
+  function chatForSecrets(sessionId) {
+    const sid = String(sessionId || '');
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return { error: 'Name a chat.' };
+    const t = claudeUi ? claudeUi.list().find((x) => x.id === sid) : null;
+    if (!t) return { error: 'That chat is not open on this server.' };
+    if (t.collaborator) return { error: "Secrets cannot be pre-authorised for a collaborator's chat." };
+    return { sid };
+  }
+
   /** Public-safe view of pending requests (never includes the secret value). */
   function publicSecretRequests() {
     return [...pendingSecretRequests.values()].map(r => ({
@@ -3654,6 +3689,43 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result);
     }
 
+    // ─── Secrets pre-authorised for one chat (capability 'chat-secret-preauth') ───
+    // Under /api/secrets, so a collaborator is refused before getting here;
+    // refused again by name in case that ever widens.
+    if (path === '/api/secrets/chat') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not allowed' }, 403);
+      if (req.method === 'GET') {
+        // No chat named: every chat's list, for a page drawing many chats.
+        if (!url.searchParams.get('sessionId')) {
+          const chats = {};
+          for (const sid of chatSecrets.chatIds()) { const g = chatSecrets.list(sid); if (g.length) chats[sid] = g; }
+          return json(res, { ok: true, chats, presets: PREAUTH_PRESETS });
+        }
+        const c = chatForSecrets(url.searchParams.get('sessionId'));
+        if (c.error) return json(res, { ok: false, error: c.error });
+        return json(res, { ok: true, sessionId: c.sid, grants: chatSecrets.list(c.sid), presets: PREAUTH_PRESETS });
+      }
+      if (req.method !== 'POST') return json(res, { ok: false, error: 'Method not allowed' }, 405);
+      const body = JSON.parse(await readBody(req));
+      const c = chatForSecrets(body.sessionId);
+      if (c.error) return json(res, { ok: false, error: c.error });
+      let r;
+      switch (body.action) {
+        case 'grant':
+          r = grantChatSecrets({
+            vault: chatSecrets, chatId: c.sid, secrets: body.secrets,
+            duration: { duration: body.duration, minutes: body.minutes, untilChatEnds: body.untilChatEnds },
+            decrypt: (id, pin) => { const d = secrets.decryptSecret(id, pin); return d.ok ? { ok: true, name: d.name } : { ok: false, error: d.error }; },
+          });
+          break;
+        case 'revoke': r = { ok: true, revoked: chatSecrets.revoke(c.sid, String(body.secretId || '')) ? 1 : 0 }; break;
+        case 'revokeAll': r = { ok: true, revoked: chatSecrets.revokeChat(c.sid) }; break;
+        default: return json(res, { ok: false, error: `Unknown action: ${body.action}` }, 400);
+      }
+      if (r.ok) broadcastChatSecrets(c.sid);
+      return json(res, { ...r, grants: chatSecrets.list(c.sid) });
+    }
+
     // ─── Secrets (global) ───
     if (path === '/api/secrets' && req.method === 'GET') {
       return json(res, { ok: true, secrets: secrets.listSecrets(), requests: publicSecretRequests() });
@@ -3673,6 +3745,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         }
         case 'delete': {
           const r = secrets.deleteSecret(body.id);
+          if (r.ok) for (const sid of chatSecrets.forgetSecret(String(body.id || ''))) broadcastChatSecrets(sid);
           return json(res, r);
         }
         case 'check': {
@@ -3693,8 +3766,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (!reqEntry) return json(res, { ok: false, error: 'Request no longer pending (it may have timed out)' });
           const dec = secrets.decryptSecret(reqEntry.secretId, body.pin);
           if (!dec.ok) return json(res, dec); // wrong PIN — keep request pending for retry
+          // Optional (capability 'chat-secret-preauth'): allowForChat
+          // { duration | minutes | untilChatEnds } also keeps this PIN for the
+          // chat that asked, for its later secret_run calls.
+          let preauthorised = false;
+          if (body.allowForChat && typeof body.allowForChat === 'object' && reqEntry.sessionId && !isConfined(principal)) {
+            const c = chatForSecrets(reqEntry.sessionId);
+            const d = parseDuration(body.allowForChat);
+            if (!c.error && d.ok) {
+              preauthorised = chatSecrets.grant(c.sid, reqEntry.secretId, { name: dec.name || reqEntry.secretName, pin: body.pin, expiresAt: d.untilChatEnds ? null : Date.now() + d.ms });
+              if (preauthorised) broadcastChatSecrets(c.sid);
+            }
+          }
           reqEntry.fulfill(dec.value, body.pin);
-          return json(res, { ok: true });
+          return json(res, { ok: true, ...(body.allowForChat ? { preauthorised } : {}) });
         }
         case 'deny': {
           const reqEntry = pendingSecretRequests.get(body.reqId);
@@ -6439,7 +6524,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           runner: factoryRunner, chatId: sid, secret: { id: meta.meta.id, name: meta.meta.name },
           command, envName, reason: a.reason || '',
           decrypt: (id, pin) => secrets.decryptSecret(id, pin),
-          askPerson: ({ keepPin }) => waitForSecretApproval({
+          // A secret pre-authorised for this chat answers for the person
+          // (after a factory's own team has had its say).
+          askPerson: preauthorisedAsk({
+            vault: chatSecrets, chatId: sid, secretId: meta.meta.id,
+            decrypt: (id, pin) => secrets.decryptSecret(id, pin),
+            onRevoked: (chatId) => broadcastChatSecrets(chatId),
+            askPerson: ({ keepPin }) => waitForSecretApproval({
             secretId: meta.meta.id,
             secretName: meta.meta.name,
             projectAlias: a.alias || '',
@@ -6449,6 +6540,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             command,
             envName,
             keepPin,
+            }),
           }),
         });
         if (!auth.ok) return json(res, { ok: false, error: auth.error });

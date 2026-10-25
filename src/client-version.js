@@ -113,6 +113,14 @@ export const CAPABILITIES = Object.freeze([
   // snoozed with minutes) and alert_user waits for it. An older server sends
   // no alertId, and the phone then reports nothing.
   'alert-answers',
+  // Secrets pre-authorised for one chat: GET/POST /api/secrets/chat
+  // (grant with PINs and a duration, revoke, revokeAll; names and expiry
+  // only), the SSE event 'chat-secrets' { sessionId, grants }, and the
+  // optional allowForChat on POST /api/secrets action 'approve'. PINs in
+  // memory only; secret_run from that chat uses them, secret_get never. An
+  // older server has none of it, so clients show the lock, the menu entry
+  // and the "Allow for this chat" choice only when this is listed.
+  'chat-secret-preauth',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

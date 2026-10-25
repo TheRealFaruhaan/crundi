@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import mv.obitech.crundi.api.model.ChatSecretGrant
 import mv.obitech.crundi.api.model.SecretRequest
 import mv.obitech.crundi.ui.components.ButtonKind
 import mv.obitech.crundi.ui.components.CrundiButton
@@ -44,7 +45,11 @@ import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.theme.Dimens
 
 /** One secret request's card state: nothing, asking for the PIN, or working. */
-data class SecretPromptState(val armed: String? = null, val pin: String = "", val error: String? = null, val busy: String? = null)
+data class SecretPromptState(
+    val armed: String? = null, val pin: String = "", val error: String? = null, val busy: String? = null,
+    /** "Allow for this chat" ticked on the open card ('chat-secret-preauth'), and for how long (a preset key). */
+    val allow: Boolean = false, val allowFor: String = "1h",
+)
 
 /**
  * Claude asking to use a secret, wherever the person is (the web's
@@ -63,6 +68,10 @@ fun SecretPromptDock(
     onCancel: () -> Unit = {},
     onDeny: (SecretRequest) -> Unit = {},
     modifier: Modifier = Modifier,
+    /** Whether a card offers "Allow for this chat" (a run request from a chat, on a server that offers it). */
+    canAllow: (SecretRequest) -> Boolean = { false },
+    onAllow: (Boolean) -> Unit = {},
+    onAllowFor: (String) -> Unit = {},
 ) {
     if (requests.isEmpty()) return
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
@@ -70,7 +79,7 @@ fun SecretPromptDock(
             Modifier.navigationBarsPadding().padding(12.dp).widthIn(max = 460.dp).fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            for (r in requests) SecretRequestCard(r, state, onApprove, onPin, onUnlock, onCancel, onDeny)
+            for (r in requests) SecretRequestCard(r, state, onApprove, onPin, onUnlock, onCancel, onDeny, canAllow(r), onAllow, onAllowFor)
         }
     }
 }
@@ -79,6 +88,7 @@ fun SecretPromptDock(
 private fun SecretRequestCard(
     r: SecretRequest, s: SecretPromptState,
     onApprove: (SecretRequest) -> Unit, onPin: (String) -> Unit, onUnlock: (SecretRequest) -> Unit, onCancel: () -> Unit, onDeny: (SecretRequest) -> Unit,
+    canAllow: Boolean = false, onAllow: (Boolean) -> Unit = {}, onAllowFor: (String) -> Unit = {},
 ) {
     val run = r.kind == "run"
     val busy = s.busy == r.id
@@ -110,6 +120,13 @@ private fun SecretRequestCard(
                 )
                 CrundiButton(if (busy) "Unlocking…" else "Unlock", { onUnlock(r) }, kind = ButtonKind.Primary, enabled = !busy && s.pin.length == 6)
                 CrundiButton("Cancel", onCancel, enabled = !busy)
+            }
+            if (canAllow) {
+                CheckRow("Allow for this chat", s.allow) { onAllow(it) }
+                if (s.allow) {
+                    mv.obitech.crundi.ui.planning.ChipRow(ChatSecretGrant.PRESETS, s.allowFor) { onAllowFor(it) }
+                    Text(mv.obitech.crundi.ui.chats.ChatSecretPreauth.ALLOW_HINT, style = CrundiType.Meta)
+                }
             }
             s.error?.let { Text(it, style = CrundiType.Small.copy(color = CrundiColors.Red)) }
         } else Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
@@ -160,16 +177,22 @@ fun SecretPromptRoute(chatId: String? = null) {
     val requests = if (chatId == null) all else SecretPrompts.forChat(all, chatId, server?.terminals?.firstOrNull { it.id == chatId }?.project.orEmpty())
     var st by remember { mutableStateOf(SecretPromptState()) }
     val scope = rememberCoroutineScope()
+    val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
+    val preauth = mv.obitech.crundi.ui.chats.ChatSecretPreauth.supported(shell.capabilities) && server?.role != "collaborator"
     SecretPromptDock(
         requests, st,
-        onApprove = { st = SecretPromptState(armed = it.id) },
+        canAllow = { r -> preauth && r.kind == "run" && r.sessionId.isNotEmpty() },
+        onAllow = { st = st.copy(allow = it) },
+        onAllowFor = { st = st.copy(allowFor = it) },
+        onApprove = { st = SecretPromptState(armed = it.id, allowFor = st.allowFor) },
         onPin = { st = st.copy(pin = it, error = null) },
         onCancel = { st = SecretPromptState() },
         onUnlock = { r ->
             val pin = st.pin
+            val allow = if (preauth && st.allow && r.kind == "run" && r.sessionId.isNotEmpty()) st.allowFor else null
             st = st.copy(busy = r.id, error = null)
             scope.launch {
-                st = try { api.secrets.approve(r.id, pin); fetched = fetched?.filter { it.id != r.id }; SecretPromptState() }
+                st = try { api.secrets.approve(r.id, pin, allowForChat = allow); fetched = fetched?.filter { it.id != r.id }; SecretPromptState() }
                 catch (e: Exception) { st.copy(busy = null, pin = "", error = errorText(e)) }
             }
         },

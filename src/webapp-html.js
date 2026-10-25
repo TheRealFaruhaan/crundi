@@ -765,6 +765,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
       font-size: 11px; line-height: 1; padding: 3px 6px; flex-shrink: 0;
     }
     .term-font-btn:hover, .term-head-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+    /* A chat's pre-authorised secrets (app/vendor/crundi-chat-secrets.js): a
+       lock in the header when wide, a line in the folded menu when narrow. */
+    .chat-secrets-btn { display: inline-flex; align-items: center; gap: 4px; }
+    .chat-secrets-btn .ic { width: 12px; height: 12px; }
+    .chat-secrets-btn.on { color: var(--yellow); border-color: var(--yellow); }
+    .chat-secrets-btn .csb-label { display: none; }
+    .chat-secrets-btn .csb-n:empty { display: none; }
+    @container (max-width: 559px) { .chat-secrets-btn .csb-label { display: inline; } }
+    @media (max-width: 768px) { .chat-secrets-btn .csb-label { display: inline; } }
     .term-head-btn.term-close { font-size: 14px; padding: 1px 7px; }
     .term-head-btn.term-close:hover { color: var(--red); border-color: var(--red); }
     /* Armed state mirrors the chat Stop button: one click asks, the next acts. */
@@ -3827,6 +3836,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/codemirror.js?v=${vendorTag('codemirror.js')}"><\/script>
   <script src="/vendor/crundi-mini.js?v=${vendorTag('crundi-mini.js')}"><\/script>
   <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
+  <script src="/vendor/crundi-chat-secrets.js?v=${vendorTag('crundi-chat-secrets.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-docker.js?v=${vendorTag('crundi-docker.js')}"><\/script>
   <script src="/vendor/crundi-factories.js?v=${vendorTag('crundi-factories.js')}"><\/script>
@@ -7287,6 +7297,45 @@ export function getWebappHtml(botUsername, appVersion = '') {
       return h;
     }
 
+    // ─── Secrets pre-authorised for one chat ───
+    // The dialog and the PIN prompt's choice are app/vendor/crundi-chat-secrets.js,
+    // shared with the compact chat page. Offered only when the server lists
+    // 'chat-secret-preauth', to the owner, on the owner's own chats.
+    let chatSecretsReady = false;
+    function chatSecretsInit() {
+      const CS = window.CrundiChatSecrets;
+      if (!CS || userRole === 'collaborator') return;
+      if (!chatSecretsReady) {
+        chatSecretsReady = true;
+        CS.configure({ apiFetch, toast });
+        CS.onChange(paintChatSecretBtns);
+      }
+      CS.supported().then((yes) => { if (yes) CS.load(); paintChatSecretBtns(); });
+    }
+    function chatSecretsFor(t) {
+      const CS = window.CrundiChatSecrets;
+      return !!(CS && CS.isSupported() && userRole !== 'collaborator' && t && t.kind === 'ui' && !t.collaborator);
+    }
+    function chatSecretsBtnHtml(t) {
+      if (!window.CrundiChatSecrets || userRole === 'collaborator' || t.collaborator) return '';
+      return '<button class="term-font-btn chat-secrets-btn" data-action="chat-secrets" data-tid="' + t.id + '" title="Secrets pre-authorised for this chat" aria-label="Secrets for this chat"' + (chatSecretsFor(t) ? '' : ' style="display:none"') + '>'
+        + ic('lock') + '<span class="csb-n"></span><span class="csb-label">Secrets for this chat</span></button>';
+    }
+    function paintChatSecretBtns() {
+      const CS = window.CrundiChatSecrets;
+      document.querySelectorAll('.chat-secrets-btn').forEach((b) => {
+        const t = terminals.find(x => x.id === b.dataset.tid);
+        const on = chatSecretsFor(t);
+        b.style.display = on ? '' : 'none';
+        if (!on) return;
+        const n = CS.grants(b.dataset.tid).length;
+        b.classList.toggle('on', n > 0);
+        const cnt = b.querySelector('.csb-n');
+        if (cnt) cnt.textContent = n ? String(n) : '';
+        b.title = n ? n + ' secret' + (n === 1 ? '' : 's') + ' pre-authorised for this chat' : 'Pre-authorise secrets for this chat';
+      });
+    }
+
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
@@ -7300,7 +7349,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const fontBtns = '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
         + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
         + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
-      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns + nativeChatBtns(t) : fontBtns) + pinBtnHtml();
+      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + chatSecretsBtnHtml(t) + fontBtns + nativeChatBtns(t) : fontBtns) + pinBtnHtml();
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
         + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename"' + (t.longTitle ? ' data-long="' + escHtml(t.longTitle) + '"' : '') + '>' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
@@ -7342,6 +7391,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // Plan pill. Rebuilt in place rather than via headHtmlLive so a state
       // push does not wipe an in-progress rename or the armed close button.
       if (t.kind === 'ui') {
+        if (el.querySelector('.chat-secrets-btn')) paintChatSecretBtns();
         const kindTag = el.querySelector('.term-kind-tag');
         // A collaborator's chat, on the owner's screen: say whose it is. The
         // owner can still type into it; what they send runs in the
@@ -9122,6 +9172,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
           approvalItems = d.items || [];
           renderApprovals();
         } catch (err) { /* a malformed frame must not stop the stream */ }
+      });
+      chatSecretsInit();
+      es.addEventListener('chat-secrets', (e) => {
+        try { if (window.CrundiChatSecrets) window.CrundiChatSecrets.handleEvent(JSON.parse(e.data)); } catch (err) { /* a malformed frame must not stop the stream */ }
       });
       es.addEventListener('secret-requests', (e) => {
         try {
@@ -11157,6 +11211,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
 
     var sreqArmed = null;    // request id whose PIN field is open
+    var sreqAllow = { on: false, duration: '1h' };   // "Allow for this chat" on that card
     var sreqError = '';      // inline PIN error for that card
 
     // ─── Reclaim disk space ───
@@ -14054,6 +14109,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (cell) { closeHeadMenus(null); setPaneFull(cell, !cell.classList.contains('pane-full')); }
           break;
         }
+        case 'chat-secrets': {
+          e.stopPropagation();
+          closeHeadMenus(null);
+          if (d.tid && window.CrundiChatSecrets) window.CrundiChatSecrets.open(d.tid);
+          break;
+        }
         case 'head-more': {
           e.stopPropagation();
           const head = actionEl && actionEl.closest('.term-head');
@@ -15085,6 +15146,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
               + '<button class="kanban-btn primary" data-sp-confirm="' + escHtml(r.id) + '">Unlock</button>'
               + '<button class="kanban-btn" data-sp-cancel="1">Cancel</button>'
               + '</div>'
+              + (sreqCanAllow(r) ? '<div id="sreq-allow"></div>' : '')
               + (sreqError ? '<div class="sreq-err">' + escHtml(sreqError) + '</div>' : '')
             : '<div class="sreq-actions">'
               + '<button class="kanban-btn primary" data-sp-approve="' + escHtml(r.id) + '">Approve</button>'
@@ -15097,6 +15159,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const typed = ($('#sreq-pin') || {}).value || '';
       const hadFocus = document.activeElement && document.activeElement.id === 'sreq-pin';
       dock.innerHTML = h;
+      const allowHost = $('#sreq-allow');
+      if (allowHost) allowHost.appendChild(window.CrundiChatSecrets.allowRow(sreqAllow));
       const pin = $('#sreq-pin');
       if (pin) {
         pin.value = typed;
@@ -15109,6 +15173,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
     }
 
+    /** "Allow for this chat" is offered on a run request a chat of the owner's made. */
+    function sreqCanAllow(r) {
+      if (!r || r.kind !== 'run' || !r.sessionId) return false;
+      const t = terminals.find(x => x.id === r.sessionId);
+      return chatSecretsFor(t || { kind: 'ui' });
+    }
     async function confirmSecretPin(reqId) {
       const el = $('#sreq-pin');
       if (!el || !reqId) return;
@@ -15117,7 +15187,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const btn = $('[data-sp-confirm]');
       if (btn) { btn.disabled = true; btn.textContent = 'Unlocking\\u2026'; }
       let d;
-      try { d = await secretsPost({ action: 'approve', reqId: reqId, pin: pin }); }
+      const req = secretRequests.find(x => x.id === reqId);
+      const allow = sreqCanAllow(req) && window.CrundiChatSecrets ? window.CrundiChatSecrets.allowForChat(sreqAllow) : null;
+      try { d = await secretsPost(Object.assign({ action: 'approve', reqId: reqId, pin: pin }, allow ? { allowForChat: allow } : {})); }
       catch (err) { d = { ok: false, error: err.message }; }
       // A wrong PIN leaves the request pending on purpose, so the card stays up
       // and says why rather than vanishing.
@@ -15128,7 +15200,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       sreqArmed = null;
       sreqError = '';
-      toast('Approved', 'success');
+      sreqAllow = { on: false, duration: sreqAllow.duration };
+      toast(allow && d.preauthorised ? 'Approved, and allowed for this chat' : 'Approved', 'success');
       renderSecretPrompt();
     }
 
@@ -15136,6 +15209,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const ok = e.target.closest('[data-sp-approve]');
       if (ok) {
         sreqArmed = ok.dataset.spApprove;
+        sreqAllow = { on: false, duration: sreqAllow.duration };
         sreqError = '';
         renderSecretPrompt();
         return;

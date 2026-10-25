@@ -181,3 +181,22 @@ data class SecretRequest(
 )
 
 @Serializable data class Secrets(val secrets: List<Secret> = emptyList(), val requests: List<SecretRequest> = emptyList())
+
+/**
+ * A secret pre-authorised for one chat (GET /api/secrets/chat, SSE
+ * `chat-secrets`): its name and when it runs out, never a value or a PIN.
+ * [expiresAt] is null when it lasts until the chat ends.
+ */
+@Serializable
+data class ChatSecretGrant(
+    val secretId: String,
+    val name: String = "",
+    val expiresAt: String? = null,
+    val untilChatEnds: Boolean = false,
+    val grantedAt: String = "",
+) {
+    companion object {
+        /** The durations offered, as the server's PREAUTH_PRESETS (src/chat-secrets.js). */
+        val PRESETS = listOf("15m" to "15 minutes", "1h" to "1 hour", "8h" to "8 hours", "chat" to "Until this chat ends")
+    }
+}

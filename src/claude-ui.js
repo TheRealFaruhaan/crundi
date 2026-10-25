@@ -1436,6 +1436,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // And the owner's inbox must not keep offering buttons that would answer
       // a process that has exited.
       if (s.collaborator) sessionGoneCb?.(s.id);
+      chatEnded(s.id, 'exit');
       setState(s, 'idle');
       s.emitter.emit('event', { type: 'exit', code });
       // The transcript is nobody's now, so a later resume of it need not fork.
@@ -2098,6 +2099,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   /** Told when a collaborator's chat dies, so its escalations can be dropped. */
   let sessionGoneCb = null;
   function onSessionGone(cb) { sessionGoneCb = cb; }
+  // Anyone who keeps something for the life of one chat (its pre-authorised
+  // secrets): told when its Claude exits or the chat is closed.
+  const chatEndedCbs = [];
+  function onChatEnded(cb) { if (typeof cb === 'function') chatEndedCbs.push(cb); }
+  function chatEnded(id, why) { for (const cb of chatEndedCbs) { try { cb(id, why); } catch { /* one listener must not stop the rest */ } } }
   // Told whenever a chat's suggested next message appears or goes ('' when it
   // goes). The server passes it on to phones, which offer it on the chat's
   // notification as something to tap.
@@ -2608,6 +2614,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (s.agentTimers) { for (const t of s.agentTimers.values()) clearTimeout(t); s.agentTimers.clear(); }
     releaseSession('chat:' + id);
     sessions.delete(id);
+    chatEnded(id, 'close');
     console.log(`[claude-ui] Closed "${s.alias}" (${id})`);
     return { ok: true };
   }
@@ -2799,7 +2806,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   return {
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
-    history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, addCard, patchCard, setFirstChatHandler, onSessionGone, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
+    history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, addCard, patchCard, setFirstChatHandler, onSessionGone, onChatEnded, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },

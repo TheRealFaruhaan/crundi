@@ -1,5 +1,7 @@
 package mv.obitech.crundi.api
 
+import mv.obitech.crundi.api.model.ChatSecretGrant
+
 import kotlinx.serialization.json.JsonObject
 import mv.obitech.crundi.api.model.ApprovalItem
 import mv.obitech.crundi.api.model.Approvals
@@ -122,8 +124,27 @@ class SecretsApi internal constructor(private val rpc: Rpc) {
     suspend fun reveal(id: String, pin: String): String = rpc.post("/api/secrets", mapOf("action" to "reveal", "id" to id, "pin" to pin)).str("value") ?: ""
     /** Is this the PIN? (Starting a factory run: 'factory-secrets'.) Never returns the value. Wrong: ApiException "Incorrect PIN". */
     suspend fun check(id: String, pin: String) { rpc.post("/api/secrets", mapOf("action" to "check", "id" to id, "pin" to pin)) }
-    /** Let Claude have it (the value goes to Claude, not to this phone). */
-    suspend fun approve(requestId: String, pin: String) { rpc.post("/api/secrets", mapOf("action" to "approve", "reqId" to requestId, "pin" to pin)) }
+    /**
+     * Let Claude have it (the value goes to Claude, not to this phone).
+     * [allowForChat], a duration key ([ChatSecretGrant.PRESETS], 'chat-secret-preauth'):
+     * also keep the PIN for the chat that asked. Answers whether it was kept.
+     */
+    suspend fun approve(requestId: String, pin: String, allowForChat: String? = null): Boolean {
+        val r = rpc.post("/api/secrets", mapOf("action" to "approve", "reqId" to requestId, "pin" to pin, "allowForChat" to allowForChat?.let { mapOf("duration" to it) }))
+        return r.bool("preauthorised") == true
+    }
+
+    // ─── Pre-authorised for one chat (capability 'chat-secret-preauth') ───
+    // Names and expiry only come back; the PINs stay in the server's memory.
+    /** What is pre-authorised for [sessionId]. */
+    suspend fun chatGrants(sessionId: String): List<ChatSecretGrant> = rpc.read(rpc.get("/api/secrets/chat", mapOf("sessionId" to sessionId)), "grants", emptyList())
+    /** Check each PIN and keep them for [sessionId] for [duration] (a preset key). None kept unless all are right. */
+    suspend fun grantChat(sessionId: String, pins: Map<String, String>, duration: String): List<ChatSecretGrant> =
+        rpc.read(rpc.post("/api/secrets/chat", mapOf("action" to "grant", "sessionId" to sessionId, "duration" to duration, "secrets" to pins.map { (id, pin) -> mapOf("id" to id, "pin" to pin) })), "grants", emptyList())
+    suspend fun revokeChat(sessionId: String, secretId: String): List<ChatSecretGrant> =
+        rpc.read(rpc.post("/api/secrets/chat", mapOf("action" to "revoke", "sessionId" to sessionId, "secretId" to secretId)), "grants", emptyList())
+    suspend fun revokeAllChat(sessionId: String): List<ChatSecretGrant> =
+        rpc.read(rpc.post("/api/secrets/chat", mapOf("action" to "revokeAll", "sessionId" to sessionId)), "grants", emptyList())
     suspend fun deny(requestId: String) { rpc.post("/api/secrets", mapOf("action" to "deny", "reqId" to requestId)) }
 }
 

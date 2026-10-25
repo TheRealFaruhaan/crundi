@@ -37,6 +37,13 @@ button{font:inherit;color:inherit}
 #cp-head{display:flex;align-items:center;gap:10px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px;background:var(--bg-secondary);border-bottom:1px solid var(--border-subtle);flex:none}
 .cp-btn{width:38px;height:38px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:50%;background:transparent;cursor:pointer;color:var(--text-secondary)}
 .cp-btn:active{background:var(--bg-hover)}
+/* Secrets pre-authorised for this chat (crundi-chat-secrets.js): a lock in
+   the header when there is room, a line in the menu when there is not. */
+#cp-lock{display:none;position:relative}
+#cp-lock.on{color:var(--yellow)}
+#cp-lock b{position:absolute;top:4px;right:3px;min-width:14px;height:14px;border-radius:7px;background:var(--yellow);color:#000;font-size:10px;line-height:14px;font-weight:700}
+#cp-lock b:empty{display:none}
+@media (min-width:600px){#cp-lock.ok{display:inline-flex}#cp-menu [data-do="secrets"]{display:none!important}}
 .cp-btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #cp-mark{width:38px;height:38px;flex:none;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;letter-spacing:.3px;color:#fff;background:var(--bg-tertiary)}
 #cp-mark img{width:100%;height:100%;object-fit:cover;border-radius:12px;display:block}
@@ -112,6 +119,7 @@ button{font:inherit;color:inherit}
     <button class="cp-btn" id="cp-back" type="button" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
     <div id="cp-mark" aria-hidden="true"></div>
     <div id="cp-names"><div id="cp-title">Crundi</div><div id="cp-sub"><span id="cp-dot"></span><span id="cp-proj"></span></div></div>
+    <button class="cp-btn" id="cp-lock" type="button" aria-label="Secrets for this chat" title="Secrets for this chat"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><b></b></button>
     <button class="cp-btn" id="cp-more" type="button" aria-label="More" aria-haspopup="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
   </div>
   <div id="cp-conn"><i></i><span role="status" aria-live="polite"></span></div>
@@ -129,6 +137,7 @@ button{font:inherit;color:inherit}
 <div id="cp-menu" role="menu">
   <button type="button" data-do="plan" role="menuitem" style="display:none">Show the plan</button>
   <button type="button" data-do="rename" role="menuitem">Rename chat</button>
+  <button type="button" data-do="secrets" role="menuitem" style="display:none">Secrets for this chat</button>
   <button type="button" data-do="stop" role="menuitem">Stop Claude</button>
   <button type="button" data-do="open" role="menuitem">Open in Crundi</button>
 </div>
@@ -136,6 +145,7 @@ button{font:inherit;color:inherit}
 <script src="/vendor/crundi-mini.js?v=${esc(tag('crundi-mini.js'))}"></script>
 <script src="/vendor/claude-chat.js?v=${esc(tag('claude-chat.js'))}"></script>
 <script src="/vendor/crundi-widgets.js?v=${esc(tag('crundi-widgets.js'))}"></script>
+<script src="/vendor/crundi-chat-secrets.js?v=${esc(tag('crundi-chat-secrets.js'))}"></script>
 <script src="/vendor/crundi-chat-page.js?v=${esc(tag('crundi-chat-page.js'))}"></script>
 </body>
 </html>`;
