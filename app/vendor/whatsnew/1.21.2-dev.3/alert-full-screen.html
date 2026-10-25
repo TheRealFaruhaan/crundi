@@ -1,0 +1,38 @@
+<div class="wna a-afs">
+  <div class="phone">
+    <div class="scr">
+      <div class="dark"></div>
+      <div class="lit">
+        <div class="tag">URGENT ALERT</div>
+        <div class="t">web-1 is down</div>
+        <div class="b">The deploy chat is waiting for you.</div>
+        <div class="track"><span class="l">Dismiss</span><span class="r">Attend</span><div class="thumb"></div></div>
+      </div>
+      <div class="ring r1"></div><div class="ring r2"></div>
+    </div>
+  </div>
+  <div class="cap"><b>Full-screen urgent alerts</b><span>A locked phone lights up and rings, like an alarm.</span><span>Slide right to attend, left to dismiss.</span><span class="m">App settings, opt-in</span></div>
+  <style>
+    .a-afs{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-afs .phone{position:absolute;left:96px;top:26px;width:184px;height:348px;border-radius:28px;border:2px solid var(--border);background:var(--bg-secondary);padding:9px;box-sizing:border-box}
+    .a-afs .scr{position:relative;width:100%;height:100%;border-radius:20px;overflow:hidden;background:var(--bg-primary)}
+    .a-afs .dark{position:absolute;inset:0;background:#000;animation:aafs-dark 10s ease infinite}
+    .a-afs .lit{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 12px;text-align:center;opacity:0;animation:aafs-lit 10s ease infinite}
+    .a-afs .tag{font-family:var(--mono, ui-monospace, monospace);font-size:9px;letter-spacing:.06em;color:#ef4444}
+    .a-afs .t{font-size:15px;font-weight:600;margin-top:8px}
+    .a-afs .b{font-size:10.5px;color:var(--text-secondary);margin-top:6px;line-height:1.35}
+    .a-afs .track{position:relative;margin-top:40px;width:150px;height:38px;border-radius:19px;background:var(--bg-card);border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 12px;box-sizing:border-box;font-size:9.5px;color:var(--text-secondary)}
+    .a-afs .thumb{position:absolute;left:58px;top:3px;width:32px;height:32px;border-radius:50%;background:var(--text-primary);animation:aafs-thumb 10s ease infinite}
+    .a-afs .ring{position:absolute;left:50%;top:18%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:2px solid var(--accent);opacity:0}
+    .a-afs .r1{animation:aafs-ring 10s ease-out infinite}
+    .a-afs .r2{animation:aafs-ring2 10s ease-out infinite}
+    .a-afs .cap{position:absolute;left:316px;right:36px;top:136px;display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--text-secondary)}
+    .a-afs .cap b{font-size:16px;color:var(--text-primary)}
+    .a-afs .cap .m{font-size:11.5px;color:var(--text-muted)}
+    @keyframes aafs-dark{0%,12%{opacity:1}18%,92%{opacity:0}100%{opacity:1}}
+    @keyframes aafs-lit{0%,12%{opacity:0}18%,92%{opacity:1}100%{opacity:0}}
+    @keyframes aafs-thumb{0%,50%{transform:none;background:var(--text-primary)}62%,92%{transform:translateX(52px);background:var(--accent)}100%{transform:none}}
+    @keyframes aafs-ring{0%,16%{opacity:0;transform:scale(.6)}20%{opacity:.8}34%{opacity:0;transform:scale(2.4)}36%{opacity:0;transform:scale(.6)}40%{opacity:.8}54%,100%{opacity:0;transform:scale(2.4)}}
+    @keyframes aafs-ring2{0%,24%{opacity:0;transform:scale(.6)}28%{opacity:.6}42%,100%{opacity:0;transform:scale(2.4)}}
+  </style>
+</div>

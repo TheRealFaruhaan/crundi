@@ -61,6 +61,25 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.3 (en-US)
+
+Version code 21. Since 1.1.1-dev.2 (code 20): full-screen urgent alerts,
+opt-in, with an attend/dismiss slider, and the one-time urgent alert setup.
+Needs the Play Console's full-screen intent declaration (App content):
+core function neither calling nor alarms.
+
+```
+<en-US>
+Urgent alerts can now take the whole screen, like an alarm.
+
+- Turn on Full-screen urgent alerts in App settings: a locked phone lights up with the alert.
+- Slide right to attend, left to dismiss.
+- A one-time setup after install offers full screen and ringing through Do Not Disturb.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.2 (en-US)
 
 Version code 20. Since 1.1.1-dev.1 (code 19): urgent alerts keep ringing.
