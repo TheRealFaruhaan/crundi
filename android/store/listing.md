@@ -61,6 +61,28 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.1 (en-US)
+
+Version code 19. Everything new on the phone since 1.1.0 (code 18). Features
+the server must also have (secrets, pause choices, skills from a link, urgent
+alerts, the needs-cards option) appear only when the server lists them, so
+the minimum server stays at 1.21.1-dev.12.
+
+```
+<en-US>
+Build and watch factories from your phone, and much more.
+
+- Create and edit factories, and follow a run live in a workbench pane.
+- Skills in Settings, including install from a GitHub link.
+- Webhooks for schedules and factory triggers.
+- Urgent alerts that ring until you see them.
+- Unsent text stays in the chat box; a sleeping chat wakes when you send.
+- What's new after each update.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.0 (en-US)
 
 Version code 18, the first native release. Same notes as 1.1.0-dev.2 (code 17),
