@@ -172,12 +172,12 @@ function setup(name, limits, usage = { value: null }, extra = {}) {
 
 // ─── Woken by a background build while paused, or held by the Manager ───
 {
-  const { team, r } = setup('p2', {}, undefined, { settleMs: 60, wokeGraceMs: 40 });
+  const { team, r } = setup('p2', {}, undefined, { settleMs: 60, wokeGraceMs: 300 });   // grace wide enough for a slow CI runner
   const st = await r.startRun({ project: 'p2', factoryId: 'x', task: 'Do it' });
   await until(() => team.of('fe')[0]?.msgs.length && team.of('be')[0]?.msgs.length);
   const fe = team.of('fe')[0], mgr = team.of('manager')[0];
   let interrupts = 0; team.agents.interrupt = () => { interrupts++; };
-  await sleep(80);
+  await sleep(400);   // past the grace since the last message, so the next turn is a wake-up
   await r.pause(st.run.id);
   const n0 = fe.msgs.length;
   team.emit(fe.id, { type: 'state', state: 'working' });   // a background command finished: nothing was sent
@@ -197,7 +197,7 @@ function setup(name, limits, usage = { value: null }, extra = {}) {
   await sleep(100);
   ok(m.ok && fe.msgs.length === n1 && interrupts === 1, 'a turn right after a message is not taken for a wake-up');
   team.emit(fe.id, { type: 'state', state: 'idle' });
-  await sleep(100);
+  await sleep(400);   // past the grace since the Manager's message
   team.emit(fe.id, { type: 'state', state: 'working' });   // the build again, while the Manager holds them
   await until(() => fe.msgs.length > n1, 2000);
   ok(fe.msgs.length === n1 + 1 && /The Manager told you to wait, and your chat started a new turn on its own/.test(fe.msgs.at(-1)) && /until the Manager tells you to carry on/.test(fe.msgs.at(-1)), 'Manager hold: a wake-up is told to keep holding');
