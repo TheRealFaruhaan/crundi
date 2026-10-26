@@ -142,7 +142,9 @@ fun ChatSecretsCard(
         confirm = if (f.busy) "Checking…" else "Pre-authorise", onConfirm = { if (!f.busy) a.onGrant() },
         dismiss = "Close", onDismiss = a.onClose,
     ) {
-        Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // The list scrolls in whatever room is left, so the buttons below are
+        // always on screen, even in a bubble's short window.
+        Column(Modifier.weight(1f, fill = false).heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Section("Pre-authorised now")
             if (grants.isEmpty()) Text("Nothing is pre-authorised for this chat.", style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
             for (g in grants) Row(

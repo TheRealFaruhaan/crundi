@@ -433,7 +433,8 @@ private fun AgentBadge(icon: String, list: List<mv.obitech.crundi.api.model.Chat
 @Composable
 fun SheetOverlay(onDismiss: () -> Unit, content: @Composable () -> Unit) {
     Box(
-        Modifier.fillMaxSize().background(CrundiColors.Scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss).padding(16.dp),
+        // Above the keyboard: a sheet with PIN boxes keeps its buttons in view while typing.
+        Modifier.fillMaxSize().background(CrundiColors.Scrim).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss).imePadding().padding(16.dp),
         contentAlignment = Alignment.Center,
     ) {
         Box(Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) { content() }

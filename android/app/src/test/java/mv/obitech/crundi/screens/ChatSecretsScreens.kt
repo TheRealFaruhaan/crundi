@@ -2,6 +2,7 @@ package mv.obitech.crundi.screens
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -57,6 +58,18 @@ class ChatSecretsScreens : ScreenshotTest() {
                 ChatSecretsForm(grants = grants, secrets = secrets, chosen = listOf("s3"), pins = mapOf("s3" to "4829"), duration = "8h"),
                 now, ChatSecretsActions(),
             )
+        }
+    }
+
+    /** A bubble's short window and a long list: the list scrolls, the buttons stay on screen. */
+    @Test fun dialogShortWindow() = shoot("chats-secrets-dialog-short") {
+        val many = (1..9).map { Secret(id = "m$it", name = "Secret number $it with a long name") }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.height(560.dp)) {
+                mv.obitech.crundi.ui.chats.SheetOverlay({}) {
+                    ChatSecretsCard(ChatSecretsForm(secrets = many, chosen = listOf("m2", "m3"), pins = mapOf("m2" to "123456", "m3" to "654321"), duration = "1h"), now, ChatSecretsActions())
+                }
+            }
         }
     }
 
