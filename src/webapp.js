@@ -90,7 +90,7 @@ import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
 import { cleanAutoTitle, cleanLongTitle } from './chat-title.js';
-import { createAutoTitler, titlesFromChat } from './chat-autotitle.js';
+import { createAutoTitler, titlesFromChat, isDefaultTitle } from './chat-autotitle.js';
 import * as chatMedia from './chat-media.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
@@ -2001,19 +2001,38 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   });
   // A Claude terminal pane takes the title Claude Code shows for its session.
   if (claudeTerminals && claudeTerminals.onAutoTitle) claudeTerminals.onAutoTitle(() => { broadcastState(); retitleLiveCards(); });
-  // A chat that sat idle gets a recap: a moment to check whether the work
-  // has become a different job since the chat was named. The new title is
-  // made from the person's own messages (what the chat is for), never from
-  // the recap (where it is just now), and it replaces the old one only when
-  // the chat's Claude Code judges the work a different job: the next release
-  // or the next step of the same work keeps its name. Not over a title the
-  // person chose, and not a collaborator's chat.
-  if (claudeUi && claudeUi.onRecap) claudeUi.onRecap(async (id, recap) => {
-    if (!recap || recap.why !== 'idle') return;
+  // Titles follow the work, mid-chat. At the end of a turn, in the
+  // background (nothing waits for it), the chat is titled again from the
+  // person's latest requests, and renamed only when its Claude Code judges
+  // those a different job from the current title: the next step, a newer
+  // version or a fix keeps the name. Checked only when they have said
+  // something new with substance since the last check, and at most every
+  // RETITLE_EVERY_MS per chat: the judging reads the whole conversation, so
+  // a long chat pays for each one in usage. Not over a title the person
+  // chose, and not a collaborator's chat.
+  const RETITLE_EVERY_MS = 10 * 60_000;
+  const retitleSeen = new Map();   // chat id -> { at, said }
+  const retitleLater = new Map();  // chat id -> timer for a check the window held back
+  async function maybeRetitle(id) {
     const m = claudeUi.meta(id);
-    if (!m || m.collaborator || m.titleByUser) return;
+    if (!m || m.collaborator || m.titleByUser || isDefaultTitle(m.title)) return;
     const said = claudeUi.personText(id);
     if (!said) return;
+    const last = retitleSeen.get(id);
+    if (last && last.said === said) return;
+    // Something new, but checked too recently: look again when the window
+    // opens, so a switch in the chat's last message is not left waiting for
+    // a message that may never come.
+    if (last && Date.now() - last.at < RETITLE_EVERY_MS) {
+      if (!retitleLater.has(id)) {
+        const t = setTimeout(() => { retitleLater.delete(id); maybeRetitle(id).catch(() => {}); }, RETITLE_EVERY_MS - (Date.now() - last.at) + 1000);
+        if (typeof t.unref === 'function') t.unref();
+        retitleLater.set(id, t);
+      }
+      return;
+    }
+    retitleSeen.set(id, { at: Date.now(), said });
+    if (retitleSeen.size > 2000) retitleSeen.delete(retitleSeen.keys().next().value);
     const t = await claudeUi.generateTitle(id, said);
     const named = t ? titlesFromChat(t) : null;
     const was = m.longTitle || m.title;
@@ -2026,7 +2045,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const r = claudeUi.rename(id, named.title, { auto: true, long: named.long });
     console.log(`[retitle] (${id}) "${m.title}" -> "${named.title}"${r && r.ok ? '' : ' refused'}`);
     if (r && r.ok) { broadcastState(); retitleLiveCards(); }
-  });
+  }
+  if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => { maybeRetitle(id).catch(() => {}); });
 
   // ─── Widgets (Claude-authored UI; see widget-api.js) ───
   // Owner pages only: a widget event names a project and a widget, and a

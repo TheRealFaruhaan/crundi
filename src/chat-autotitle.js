@@ -42,6 +42,9 @@ function fit(text, max, clean) {
     if ([...next].length > max) break;
     out = next;
   }
+  // A cut that ends on a joining word ("Directory listing and") reads as
+  // broken off: drop it.
+  out = out.replace(/(?:\s+(?:and|or|of|for|to|in|on|at|with|by|from|the|a|an|vs|&|-|—))+$/i, '');
   const fitted = clean(out);
   return fitted.ok && fitted.title ? fitted.title : null;
 }
@@ -74,7 +77,10 @@ export function titlesFromReply(reply) {
 export function titlesFromChat(text) {
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
   if (!raw) return null;
-  const title = fit(raw, MAX_AUTO_TITLE, cleanAutoTitle);
+  // Cut at a word within what a title may be (the stated 20 plus the five
+  // the rule accepts), not at 20: "Product categorization duplicates" cut at
+  // 20 left only "Product", which names nothing.
+  const title = fit(raw, MAX_AUTO_TITLE + 5, cleanAutoTitle);
   if (!title) return null;
   let long = fit(raw, MAX_LONG_TITLE, cleanLongTitle) || '';
   if (long.toLowerCase() === title.toLowerCase()) long = '';

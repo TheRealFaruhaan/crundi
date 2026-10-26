@@ -109,6 +109,8 @@ ok(BASE.length < MAX_LAYER, 'the base prompt still fits in one layer', String(BA
     const tf = titlesFromChat('Directory listing and a.txt');
     ok(tf && tf.title === 'Directory listing' && tf.long === 'Directory listing and a.txt', 'from chat: the long form as given, the short one cut at a word');
     ok(titlesFromChat('Kanban trigger').long === '', 'from chat: a short title has no separate long form');
+    ok(titlesFromChat('Product categorization duplicates').title === 'Product categorization', 'from chat: cut within what a title may be (25), not to one word', JSON.stringify(titlesFromChat('Product categorization duplicates')));
+    ok(titlesFromChat('Payments service staging Docker deployment').title === 'Payments service staging', 'from chat: a longer one cut at a word', JSON.stringify(titlesFromChat('Payments service staging Docker deployment')));
     ok(titlesFromChat('') === null && titlesFromChat('Supercalifragilisticexpialidociousness') === null, 'from chat: nothing, or no word that fits, is no title');
     let spawned = 0;
     titles.f = 'Chat';
