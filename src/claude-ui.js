@@ -55,12 +55,38 @@ import { sandboxStatus, capDropLauncher, worktreeGitPaths } from './collab-sandb
  * collaborator's `env` would print all of it. Only what a shell and the CLI
  * need is passed through, and package caches point at their own folder.
  */
+/**
+ * Summaries Claude Code makes itself, on the person's own subscription, that
+ * a headless (stream-json) session leaves off unless asked:
+ *   CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES   a `tool_use_summary` frame after a
+ *     batch of tool calls ("Read a.txt twice, listed files"), see
+ *     handleToolUseSummary;
+ *   CLAUDE_CODE_AGENT_PROGRESS_SUMMARIES  a model-written `summary` on a
+ *     subagent's task_progress about every 30 seconds (with
+ *     agentProgressSummaries in initialize).
+ * Both are internal to Claude Code: a version without them sends nothing
+ * extra, and nothing here depends on them arriving.
+ */
+const SUMMARY_ENV = { CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES: '1', CLAUDE_CODE_AGENT_PROGRESS_SUMMARIES: '1' };
+
+/**
+ * Claude Code's own recap instruction (the one its terminal shows when you
+ * come back to a session), asked as a side question.
+ */
+export const RECAP_PROMPT = 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Lead with the overall goal and current task, then the one next action. Skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.';
+/** A chat left idle this long after a turn gets a recap of where it stands. */
+export const RECAP_IDLE_MS = Number(process.env.CRUNDI_RECAP_IDLE_MS) > 0 ? Number(process.env.CRUNDI_RECAP_IDLE_MS) : 5 * 60_000;  // the env: for trying it out
+const MAX_RECAP = 400;
+const MAX_ASIDE_QUESTION = 2000;
+const MAX_ASIDE_ANSWER = 8000;
+
 function collaboratorEnv(collaborator) {
   const keep = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE',
     'TERM', 'TZ', 'TMPDIR', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CLAUDE_CONFIG_DIR'];
   const env = {};
   for (const k of keep) if (process.env[k] !== undefined) env[k] = process.env[k];
   env.CRUNDI_UI_SESSION = '1';
+  Object.assign(env, SUMMARY_ENV);
   const c = collaborator && collaborator.cacheDir;
   if (c) {
     Object.assign(env, {
@@ -132,9 +158,11 @@ function transcriptUserText(rec) {
   }
   // trim() keeps a leading zero-width space (sendMessage's path guard).
   text = String(text || '').replace(/^\u200b/, '').trim();
-  // Slash-command plumbing and injected reminders are the CLI talking to
-  // itself, not the user.
-  if (!text || /^<(command-name|command-message|local-command-stdout|local-command-stderr|system-reminder)>/.test(text)) return '';
+  // Slash-command plumbing, injected reminders and a background task's
+  // completion notice are the CLI talking to itself, not the user. The live
+  // stream never carries a <task-notification>, so only a replay could show
+  // one, as if the person had typed it.
+  if (!text || /^<(command-name|command-message|local-command-stdout|local-command-stderr|system-reminder|task-notification)>/.test(text)) return '';
   return text;
 }
 
@@ -900,6 +928,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // every bubble showing the same passing detail and no way to tell the
       // agents apart, so the step is kept separately.
       if (msg.description) a.step = String(msg.description).slice(0, MAX_LABEL);
+      // The model's own line on where the agent is (agentProgressSummaries),
+      // about every 30 seconds. Kept apart from `step`, which changes with
+      // every tool call; a client shows this one when it has it.
+      if (msg.summary) a.progress = String(msg.summary).slice(0, MAX_LABEL);
       if (msg.subagent_type) a.subagentType = msg.subagent_type;
       if (msg.last_tool_name) a.lastTool = msg.last_tool_name;
       if (msg.usage) a.usage = msg.usage;
@@ -1341,6 +1373,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
           // hooks a terminal id to report against — UI mode derives agent state
           // from the message stream, so the hooks intentionally no-op here.
           CRUNDI_UI_SESSION: '1',
+          ...SUMMARY_ENV,
           // Inherited by the tool bridge: which chat its calls belong to.
           CRUNDI_CHAT_ID: id,
           ...(extraEnv && typeof extraEnv === 'object' ? extraEnv : {}),
@@ -1380,6 +1413,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // it during execution — long after the permission card scrolled away.
       plan: null,
       suggestion: null, // { text, uuid } — the CLI's predicted next message, while idle
+      recap: null,      // { text, at, why } — where the chat stands, after it sat idle or was resumed
+      recapTimer: null,
+      recapTurn: 0,     // the turn count the current recap (or one on its way) covers
+      turns: 0,
       // Set when this chat belongs to an outside collaborator. Drives where
       // permission requests go: they cannot approve their own escalations.
       collaborator: collaborator || null,
@@ -1437,6 +1474,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // a process that has exited.
       if (s.collaborator) sessionGoneCb?.(s.id);
       chatEnded(s.id, 'exit');
+      if (s.recapTimer) { clearTimeout(s.recapTimer); s.recapTimer = null; }
       setState(s, 'idle');
       s.emitter.emit('event', { type: 'exit', code });
       // The transcript is nobody's now, so a later resume of it need not fork.
@@ -1459,7 +1497,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       // promptSuggestions: after each turn the CLI predicts the user's next
       // message and emits it as a `prompt_suggestion` frame (see
       // handlePromptSuggestion). Off unless asked for here.
-      request: { subtype: 'initialize', systemPrompt: [''], promptSuggestions: true },
+      // agentProgressSummaries: a subagent's task_progress carries a short
+      // model-written `summary` of where it is (see handleTaskEvent).
+      request: { subtype: 'initialize', systemPrompt: [''], promptSuggestions: true, agentProgressSummaries: true },
     });
 
     // Spawning takes a moment, so say so rather than showing an empty cell.
@@ -1548,6 +1588,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       case 'control_response': return handleControlResponse(s, msg);
       case 'command_lifecycle': return handleCommandLifecycle(s, msg);
       case 'prompt_suggestion': return handlePromptSuggestion(s, msg);
+      case 'tool_use_summary': return handleToolUseSummary(s, msg);
     }
   }
 
@@ -2060,6 +2101,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // Cleared every turn: the completion notification never reaches us, so the
     // only honest scope for "waiting" is the turn that armed it.
     s.waiting.clear();
+    s.turns = (s.turns || 0) + 1;
+    scheduleIdleRecap(s);
   }
 
   /**
@@ -2109,6 +2152,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // notification as something to tap.
   let suggestionCb = null;
   function onSuggestion(cb) { suggestionCb = cb; }
+  // Told when a chat gets a recap (after sitting idle, or on being resumed).
+  let recapCb = null;
+  function onRecap(cb) { recapCb = cb; }
 
   function handleControlRequest(s, msg) {
     const req = msg.request || {};
@@ -2297,6 +2343,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       account: resp.account || null,
     });
 
+    // A conversation picked up again: say where it stood, as Claude Code's
+    // terminal does when you come back to one. Not for a fork (the parent's
+    // story is not this chat's yet) or a /compact opener (it rewrites it).
+    if (s.resuming && !s.forking && !s.pendingFirstMessage && !s.factory) makeRecap(s, 'resumed');
+
     // Auto-run the queued opener (currently only /compact) now that the CLI is
     // accepting input.
     if (s.pendingFirstMessage) {
@@ -2304,6 +2355,173 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       s.pendingFirstMessage = null;
       sendMessage(s.id, text);
     }
+  }
+
+  // ─── Asking the chat's own Claude Code (side questions, titles) ───
+
+  /**
+   * One control request to the chat's CLI, answered or not within `timeoutMs`.
+   * Never throws.
+   * @returns {Promise<{ok:boolean, response?:object, error?:string}>}
+   */
+  function control(s, request, timeoutMs = 30_000) {
+    if (!s?.proc) return Promise.resolve({ ok: false, error: 'Session is not running' });
+    const requestId = 'cr-' + genId();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        s.pendingControls?.delete(requestId);
+        resolve({ ok: false, error: 'The session did not answer in time' });
+      }, timeoutMs);
+      if (!s.pendingControls) s.pendingControls = new Map();
+      s.pendingControls.set(requestId, (response, error) => {
+        clearTimeout(timer);
+        resolve(error ? { ok: false, error: String(error) } : { ok: true, response: response || {} });
+      });
+      if (!send(s, { type: 'control_request', request_id: requestId, request })) {
+        clearTimeout(timer);
+        s.pendingControls.delete(requestId);
+        resolve({ ok: false, error: 'Failed to write to the session' });
+      }
+    });
+  }
+
+  /**
+   * Ask the chat something on the side: Claude Code answers from the
+   * conversation so far (its cache, no tools) and nothing is added to the
+   * conversation itself. Works while a turn is running.
+   * @returns {Promise<{ok:boolean, answer?:string, error?:string}>}
+   */
+  async function askAside(id, question, { timeoutMs = 60_000 } = {}) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: `No session "${id}"` };
+    if (!s.proc) return { ok: false, error: 'Session is not running' };
+    const q = String(question ?? '').trim().slice(0, MAX_ASIDE_QUESTION);
+    if (!q) return { ok: false, error: 'Question is empty' };
+    const r = await control(s, { subtype: 'side_question', question: q }, timeoutMs);
+    if (!r.ok) return { ok: false, error: /unknown|unsupported|not supported/i.test(r.error || '') ? 'This version of Claude Code cannot answer side questions.' : r.error };
+    const answer = typeof r.response.response === 'string' ? r.response.response.trim() : '';
+    if (!answer) return { ok: false, error: 'No answer' };
+    return { ok: true, answer: answer.slice(0, MAX_ASIDE_ANSWER) };
+  }
+
+  /**
+   * Claude Code's own session title (two to five words, a noun phrase) for
+   * `description`. null when it has none or cannot. Not persisted: once a
+   * session has a saved title, asking with persist hands that one back
+   * whatever the description says, so a retitle would never change it.
+   * Crundi keeps the chat's title itself.
+   */
+  async function generateTitle(id, description, { timeoutMs = 30_000 } = {}) {
+    const s = sessions.get(id);
+    if (!s?.proc) return null;
+    const r = await control(s, { subtype: 'generate_session_title', description: String(description || '').slice(0, 4000), persist: false }, timeoutMs);
+    const t = r.ok && typeof r.response.title === 'string' ? r.response.title.trim() : '';
+    return t || null;
+  }
+
+  /**
+   * What the person has asked for in this chat, as one text to title: their
+   * first message still held and their latest few, oldest first. Their own
+   * words say what the chat is for; Claude's replies and a recap say where it
+   * is just now, which is the wrong thing to name a chat after. Slash
+   * commands and Crundi's own posts are left out.
+   */
+  function personText(id, { latest = 5, max = 2000 } = {}) {
+    const s = sessions.get(id);
+    if (!s) return '';
+    const said = s.messages
+      .filter((e) => e.kind === 'user' && e.by !== 'system' && typeof e.text === 'string' && e.text.trim() && !e.text.trim().startsWith('/'))
+      .map((e) => e.text.trim());
+    if (!said.length) return '';
+    const picked = said.length > latest + 1 ? [said[0], ...said.slice(-latest)] : said;
+    const each = Math.max(200, Math.floor(max / picked.length));
+    return picked.map((t) => t.length > each ? t.slice(0, each) + '…' : t).join('\n\n').slice(0, max);
+  }
+
+  /**
+   * Has the chat become a different job from the one its title names? Asked
+   * of the chat's own Claude Code on the side, so it judges from the whole
+   * conversation; nothing is added to it. A newer version number, the next
+   * step of the same work or a detail of it is the same job. Anything but a
+   * clear DIFFERENT (no answer, an older Claude Code) keeps the title.
+   */
+  async function isDifferentJob(id, title) {
+    const r = await askAside(id, 'This chat is titled "' + String(title || '').slice(0, 80) + '". Judging by what the person has asked for in this conversation, is the work now mainly a different job from the one that title names? '
+      + 'The next step of the same work, a newer version number, a fix to it or a detail of it is the SAME job. Answer with exactly one word: SAME or DIFFERENT.', { timeoutMs: 45_000 });
+    return !!(r.ok && /^\W*different\b/i.test(r.answer));
+  }
+
+  // ─── Recap: where the chat stands, for someone coming back to it ───
+
+  function clearRecap(s) {
+    if (s.recapTimer) { clearTimeout(s.recapTimer); s.recapTimer = null; }
+    if (!s.recap) return;
+    s.recap = null;
+    s.emitter.emit('event', { type: 'recap', recap: null });
+  }
+
+  /** The person closed the recap. */
+  function dismissRecap(id) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: 'No such session' };
+    clearRecap(s);
+    return { ok: true };
+  }
+
+  /**
+   * After a turn: if the chat is still idle RECAP_IDLE_MS later, make a
+   * recap. Once per turn; a new message cancels it (clearRecap). Factory
+   * chats report to their run instead, and scheduled jobs to their runner.
+   */
+  function scheduleIdleRecap(s) {
+    if (s.recapTimer) clearTimeout(s.recapTimer);
+    s.recapTimer = null;
+    if (s.factory || s.background || !s.proc) return;
+    const turn = s.turns;
+    s.recapTimer = setTimeout(() => {
+      s.recapTimer = null;
+      if (s.state === 'idle' && s.turns === turn && s.recapTurn !== turn) makeRecap(s, 'idle');
+    }, RECAP_IDLE_MS);
+    if (typeof s.recapTimer.unref === 'function') s.recapTimer.unref();
+  }
+
+  /** Ask the chat for a recap and show it. `why`: 'idle' or 'resumed'. */
+  async function makeRecap(s, why) {
+    const turn = s.turns;
+    s.recapTurn = turn;
+    const r = await control(s, { subtype: 'side_question', question: RECAP_PROMPT }, 60_000);
+    // Gone, or the person spoke while it was being written: it is stale.
+    if (!sessions.has(s.id) || !s.proc || s.turns !== turn || s.state !== 'idle') return;
+    const text = r.ok && typeof r.response.response === 'string' ? r.response.response.trim().replace(/\s+/g, ' ') : '';
+    // Nothing to say (a resumed chat with no history answers so).
+    if (!text || r.response.synthetic) return;
+    s.recap = { text: text.slice(0, MAX_RECAP), at: Date.now(), why };
+    s.emitter.emit('event', { type: 'recap', recap: s.recap });
+    if (recapCb) { try { recapCb(s.id, s.recap); } catch { /* the listener's problem */ } }
+  }
+
+  // ─── Tool-use summaries ───
+
+  /**
+   * A one-line label for a batch of tool calls ("Read a.txt twice, listed
+   * files"), from Claude Code (CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES). Put on
+   * each tool entry it covers as `group` (the first one's id) and
+   * `groupSummary`, so a client can fold the batch into one row. An older
+   * client ignores both fields and shows the rows as before.
+   */
+  function handleToolUseSummary(s, msg) {
+    const text = typeof msg.summary === 'string' ? msg.summary.trim().slice(0, MAX_LABEL) : '';
+    const ids = Array.isArray(msg.preceding_tool_use_ids) ? msg.preceding_tool_use_ids : [];
+    if (!text || !ids.length) return;
+    const want = new Set(ids);
+    const covered = [];
+    for (let i = s.messages.length - 1; i >= 0 && covered.length < want.size; i--) {
+      const e = s.messages[i];
+      if (e.kind === 'tool' && want.has(e.toolUseId)) covered.unshift(e);
+    }
+    if (!covered.length) return;
+    const group = covered[0].id;
+    for (const e of covered) patchEntry(s, e, { group, groupSummary: text });
   }
 
   // ─── Outbound actions ───
@@ -2327,6 +2545,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     noteGoalCommand(s, body);
     // Any message going out retires the suggestion, sent from it or not.
     clearSuggestion(s);
+    // and the recap: the person is back and has moved on.
+    clearRecap(s);
     // Who is speaking, in a collaborator's chat. The owner's message lifts the
     // permission prompts (see ownerTurn); ANY collaborator input restores them
     // at once — set here, at send time, so even a message still queued behind
@@ -2605,6 +2825,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
     // A collaborator chat's own tool config holds their scoped key.
     if (s.collabMcpFile) { try { unlinkSync(s.collabMcpFile); } catch { /* already gone */ } }
+    if (s.recapTimer) { clearTimeout(s.recapTimer); s.recapTimer = null; }
     s.emitter.removeAllListeners();
     // FLUSH, don't cancel. Writes are debounced by 1.5s, so cancelling here
     // threw away everything said in the last moment before the cell was
@@ -2682,7 +2903,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       id: s.id, alias: s.alias, title: s.title, order: s.order,
       sessionId: s.sessionId || '', model: s.model || '', effort: s.effort || '',
       permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
-      background: !!s.background, collaborator: !!s.collaborator, cwd: s.cwd || '',
+      background: !!s.background, collaborator: !!s.collaborator, cwd: s.cwd || '', titleByUser: !!s.titleByUser,
       factory: s.factory || null,
       running: !!s.proc, state: s.state, busyTasks,
       pendingInjections: (s.pendingInjections || []).length,
@@ -2705,6 +2926,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       goal: goalSnapshot(s),
       plan: planSnapshot(s),
       suggestion: s.suggestion || null,
+      recap: s.recap || null,
       // So a client that reloads mid-turn puts the drawer back rather than
       // losing sight of a message that has not landed yet.
       pendingInjections: (s.pendingInjections || []).map(p => ({ text: p.text, uuid: p.uuid, state: p.state || 'sent' })),
@@ -2807,6 +3029,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, addCard, patchCard, setFirstChatHandler, onSessionGone, onChatEnded, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
+    askAside, generateTitle, dismissRecap, onRecap, personText, isDifferentJob,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },

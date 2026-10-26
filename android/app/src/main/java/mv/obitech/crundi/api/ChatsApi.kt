@@ -99,6 +99,17 @@ class ChatsApi internal constructor(private val rpc: Rpc) {
 
     suspend fun dismissSuggestion(id: String) { rpc.post(at(id, "dismiss-suggestion")) }
 
+    /** Close the chat's recap (capability "chat-recap"). */
+    suspend fun dismissRecap(id: String) { rpc.post(at(id, "dismiss-recap")) }
+
+    /**
+     * Ask a question on the side (capability "chat-aside"): answered from the
+     * conversation so far, without adding anything to it, even mid-turn.
+     * Can take up to a minute. A refusal is an [ApiException] with the server's words.
+     */
+    suspend fun aside(id: String, question: String): String =
+        rpc.post(at(id, "aside"), mapOf("question" to question), slow = true).str("answer") ?: throw ApiException(200, "No answer")
+
     /** Put the chats of a project in this order. */
     suspend fun reorder(project: String, order: List<String>) { rpc.post("/api/ui-sessions/reorder", mapOf("project" to project, "order" to order)) }
 

@@ -311,7 +311,7 @@ fun AgentRow(a: ChatAgent, actions: EntryActions) {
         Text(a.subagentType.ifEmpty { "Agent" }, style = ChatType.ToolName, maxLines = 1)
         Column(Modifier.weight(1f)) {
             Text(a.description, style = ChatType.Small, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (a.running && a.step.isNotEmpty()) Text(a.step, style = CrundiType.Meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (a.running && a.doing.isNotEmpty()) Text(a.doing, style = CrundiType.Meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text("transcript", style = CrundiType.Meta)
         CrundiIcon("chevron-right", size = 12.dp, tint = CrundiColors.TextMuted)

@@ -248,6 +248,10 @@ fun PaneMenuBody(v: PaneView, actions: PaneActions, onDismiss: () -> Unit = {}) 
             if (chatId != null && mv.obitech.crundi.ui.chats.ChatSecretPreauth.supported(caps) && p?.collaborator == null) {
                 MenuItem("lock", "Secrets for this chat") { onDismiss(); mv.obitech.crundi.ui.chats.ChatSecretsBus.open(chatId) }
             }
+            // A question on the side, answered in the chat's own sheet (ChatSummaries.kt).
+            if (chatId != null && mv.obitech.crundi.ui.chats.ChatAside.supported(caps)) {
+                MenuItem("message-square", "Ask on the side") { onDismiss(); mv.obitech.crundi.ui.chats.ChatAsideBus.open(chatId) }
+            }
         }
         if (v.kind != PaneKind.Parked) {
             MenuItem("chevron-left", "Move left") { onDismiss(); actions.move(v, -1) }

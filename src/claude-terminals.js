@@ -18,6 +18,28 @@ import { fileURLToPath } from 'url';
 import { getProject } from './project-store.js';
 import { systemPromptArgs } from './system-prompt.js';
 import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
+import { titlesFromChat } from './chat-autotitle.js';
+
+/**
+ * The title Claude Code's interactive screen gives itself, from the window
+ * title it sets (OSC 0 or 2) as the session goes: a spinner glyph, then its
+ * own session title ("✳ Package.json name field"). '' when the text is not
+ * one: its default "Claude Code", or nothing left once the glyph is gone.
+ */
+export function claudeWindowTitle(osc) {
+  const t = String(osc || '').replace(/^[^\p{L}\p{N}]+/u, '').replace(/\s+/g, ' ').trim();
+  if (!t || /^claude( code)?$/i.test(t)) return '';
+  return t.slice(0, 120);
+}
+
+/** Every window title set in a chunk of terminal output, in order. */
+export function windowTitlesIn(data) {
+  const out = [];
+  const re = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+  let m;
+  while ((m = re.exec(String(data || '')))) out.push(m[1]);
+  return out;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -506,8 +528,25 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     const canRetryFresh = flagList.includes('--continue');
     let retriedFresh = false;
 
+    // Claude Code names its session itself and shows it as the window title;
+    // the pane takes it (both forms, cut to fit), unless the person named the
+    // pane. A shell's window titles are its own business.
+    const takeTitle = (data) => {
+      if (shellOnly || rawCommand || !String(data).includes('\x1b]')) return;
+      for (const raw of windowTitlesIn(data)) {
+        const t = claudeWindowTitle(raw);
+        if (!t || t === entry.claudeTitle) continue;
+        entry.claudeTitle = t;
+        const named = titlesFromChat(t);
+        if (!named || entry.titleByUser) continue;
+        const r = rename(id, named.title, { auto: true, long: named.long });
+        if (r.ok && autoTitleCb) { try { autoTitleCb(id); } catch { /* the listener's problem */ } }
+      }
+    };
+
     const wire = (p) => {
       p.onData((data) => {
+        takeTitle(data);
         // Append to scrollback (trim if too long)
         entry.scrollback += data;
         if (entry.scrollback.length > MAX_SCROLLBACK) {
@@ -705,9 +744,13 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     };
   }
 
+  // Told when a pane takes the title Claude Code gave its session.
+  let autoTitleCb = null;
+  function onAutoTitle(cb) { autoTitleCb = cb; }
+
   const self = {
     list, create, close, closeProject, write, resize, rename, setOrder, getScrollback, on, off, closeAll, info,
-    setSessionId, meta,
+    setSessionId, meta, onAutoTitle,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },

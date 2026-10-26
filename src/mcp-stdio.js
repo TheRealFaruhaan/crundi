@@ -343,11 +343,6 @@ const TOOLS = [
       },
     },
   },
-  {
-    name: 'rename_chat',
-    description: 'Name the Crundi chat (or terminal) you are running in after the task the person gave. Call it FIRST, before any other tool, when a task is given; do not call it again until the scope or topic of the work changes. Give two forms: title, at most 20 characters, shown on a phone and in narrow panes (e.g. "Fix login redirect"); and long, at most 50 characters, shown where the header has room (e.g. "Fix the redirect loop after password login"). Plain words, no quotes, no trailing punctuation. Refused if the person has named the chat themselves; leave it then.',
-    inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'Short title, at most 20 characters' }, long: { type: 'string', description: 'Longer title saying a little more, at most 50 characters' } }, required: ['title'] },
-  },
 
   // ─── Building factories (any chat or terminal) ───
   {
@@ -614,11 +609,6 @@ async function handleToolCall(name, args) {
   if (FACTORY_RUN_TOOLS.has(name)) {
     delete args.sessionId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
-  }
-  if (name === 'rename_chat') {
-    delete args.sessionId; delete args.terminalId;
-    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
-    else if (process.env.CRUNDI_TERMINAL_ID) args.terminalId = process.env.CRUNDI_TERMINAL_ID;
   }
 
   const result = await apiCall(name, args);

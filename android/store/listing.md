@@ -61,6 +61,57 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.2 (en-US)
+
+Version code 31. Production, since 1.1.1 (code 28): everything from
+1.1.2-dev.1 and 1.1.2-dev.2.
+
+```
+<en-US>
+Claude Code's own summaries in your chats.
+
+- A recap when you come back to a chat that sat idle, or one you pick up again.
+- Ask on the side: type /btw and a question, or use Ask on the side in the chat menu. The answer is not added to the conversation.
+- Runs of tool calls fold into one line saying what they did; tap to open.
+- Subagents show a line on where they have got to.
+
+Needs a Crundi server, version 1.21.3 or newer, for recaps and asking on the side.
+</en-US>
+```
+
+## Release notes, 1.1.2-dev.2 (en-US)
+
+Version code 30. Since 1.1.2-dev.1 (code 29): the chat screen's actions
+read the live chat (the recap's close button did nothing).
+
+```
+<en-US>
+Fixes.
+
+- The close button on a chat's recap now closes it.
+- Sending a message hides the recap and the suggested reply at once.
+- A message sent while Claude is busy leaves the Sending card once Claude reads it, even if you sent the same words before.
+</en-US>
+```
+
+## Release notes, 1.1.2-dev.1 (en-US)
+
+Version code 29. Since 1.1.1 (code 28): recaps (capability chat-recap),
+side questions (chat-aside), folded tool batches and agent progress lines.
+
+```
+<en-US>
+Claude Code's own summaries in your chats.
+
+- A recap when you come back to a chat that sat idle, or one you pick up again.
+- Ask on the side: type /btw and a question, or use Ask on the side in the chat menu. The answer is not added to the conversation.
+- Runs of tool calls fold into one line saying what they did; tap to open.
+- Subagents show a line on where they have got to.
+
+Needs a Crundi server, version 1.21.3-dev.1 or newer, for recaps and asking on the side.
+</en-US>
+```
+
 ## Release notes, 1.1.1 (en-US)
 
 Version code 28. Production, since 1.1.0 (code 18): everything from

@@ -1,0 +1,44 @@
+<div class="wna a-cts">
+  <div class="win">
+    <div class="row r1"><span class="ok"></span><b>Read</b> src/auth.js</div>
+    <div class="row r2"><span class="ok"></span><b>Grep</b> "session" in src/</div>
+    <div class="row r3"><span class="ok"></span><b>Read</b> src/session.js</div>
+    <div class="row r4"><span class="ok"></span><b>Bash</b> npm test -- auth</div>
+    <div class="grp"><span class="ok"></span>Read auth and session code, ran auth tests<span class="n">4 tools</span><span class="car"></span></div>
+    <div class="agent">
+      <span class="sp"></span><span class="nm">Explore</span>
+      <span class="ln l1">Reading src/routes</span>
+      <span class="ln l2">Mapping where sessions are created and checked</span>
+    </div>
+  </div>
+  <style>
+    .a-cts{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-cts .win{position:absolute;left:70px;right:70px;top:30px;bottom:30px;border-radius:14px;border:1px solid var(--border);background:var(--bg-secondary);overflow:hidden}
+    .a-cts .row,.a-cts .grp{position:absolute;left:18px;right:18px;height:32px;display:flex;align-items:center;gap:9px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary)}
+    .a-cts .row{font-family:var(--mono,ui-monospace,monospace);font-size:12px}
+    .a-cts .row b{color:var(--accent-hover)}
+    .a-cts .ok{flex:none;width:7px;height:7px;border-radius:50%;background:var(--green)}
+    .a-cts .r1{top:20px;animation:acts-r1 10s ease infinite}
+    .a-cts .r2{top:60px;animation:acts-r2 10s ease infinite}
+    .a-cts .r3{top:100px;animation:acts-r3 10s ease infinite}
+    .a-cts .r4{top:140px;animation:acts-r4 10s ease infinite}
+    .a-cts .grp{top:20px;color:var(--text-primary);opacity:0;animation:acts-g 10s ease infinite}
+    .a-cts .n{margin-left:auto;font-size:11px;color:var(--text-muted)}
+    .a-cts .car{width:0;height:0;border-left:5px solid var(--text-muted);border-top:4px solid transparent;border-bottom:4px solid transparent}
+    .a-cts .agent{position:absolute;left:18px;right:18px;top:66px;height:66px;padding:10px 12px;border-radius:10px;border:1px solid var(--accent);background:var(--bg-card);opacity:0;animation:acts-ag 10s ease infinite}
+    .a-cts .sp{position:absolute;left:12px;top:13px;width:10px;height:10px;border-radius:50%;border:2px solid var(--accent-dim);border-top-color:var(--accent);animation:acts-spin 1s linear infinite}
+    .a-cts .nm{position:absolute;left:32px;top:10px;font-weight:600}
+    .a-cts .ln{position:absolute;left:32px;top:34px;color:var(--text-secondary)}
+    .a-cts .l1{animation:acts-l1 10s ease infinite}
+    .a-cts .l2{opacity:0;animation:acts-l2 10s ease infinite}
+    @keyframes acts-r1{0%,30%{opacity:1}36%,94%{opacity:0}100%{opacity:1}}
+    @keyframes acts-r2{0%,30%{opacity:1;transform:none}36%,94%{opacity:0;transform:translateY(-40px)}100%{opacity:1}}
+    @keyframes acts-r3{0%,30%{opacity:1;transform:none}36%,94%{opacity:0;transform:translateY(-80px)}100%{opacity:1}}
+    @keyframes acts-r4{0%,30%{opacity:1;transform:none}36%,94%{opacity:0;transform:translateY(-120px)}100%{opacity:1}}
+    @keyframes acts-g{0%,32%{opacity:0}38%,94%{opacity:1}100%{opacity:0}}
+    @keyframes acts-ag{0%,44%{opacity:0;transform:translateY(8px)}50%,94%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes acts-l1{0%,64%{opacity:1}68%,100%{opacity:0}}
+    @keyframes acts-l2{0%,66%{opacity:0}70%,94%{opacity:1}100%{opacity:0}}
+    @keyframes acts-spin{to{transform:rotate(360deg)}}
+  </style>
+</div>

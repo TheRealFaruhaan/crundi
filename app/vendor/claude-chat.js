@@ -290,6 +290,19 @@
     // fanned out to ten agents and five commands stacked fifteen pills over
     // the conversation, covering most of a phone screen. Now each kind is one
     // badge: an icon and a count, which opens a list.
+    // Back to the newest message: shown once the reader is well up the log.
+    '.cc-jump{position:absolute;left:50%;bottom:10px;z-index:16;width:38px;height:38px;margin-left:-19px;border-radius:50%;border:1px solid var(--border);background:var(--bg-secondary,#12121a);color:var(--text-primary);box-shadow:0 6px 18px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;opacity:0;transform:translateY(14px) scale(.85);pointer-events:none;transition:opacity .22s ease,transform .26s cubic-bezier(.2,.9,.3,1.25),border-color .15s,background .15s}',
+    '.cc-jump.on{opacity:1;transform:none;pointer-events:auto}',
+    '.cc-jump:hover,.cc-jump:focus-visible{border-color:var(--accent);background:var(--accent-dim);outline:none}',
+    '.cc-jump svg{width:18px;height:18px}',
+    '.cc-jump.on svg{animation:cc-jump-in .5s ease .1s both}',
+    '.cc-jump.new{border-color:var(--accent)}',
+    '.cc-jump.new svg{animation:cc-jump-nudge 1.6s ease-in-out infinite}',
+    '.cc-jump-dot{position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;background:var(--accent);border:2px solid var(--bg-primary);transform:scale(0);transition:transform .2s cubic-bezier(.2,.9,.3,1.4)}',
+    '.cc-jump.new .cc-jump-dot{transform:scale(1)}',
+    '@keyframes cc-jump-in{0%{transform:translateY(-6px);opacity:0}60%{transform:translateY(2px);opacity:1}100%{transform:none}}',
+    '@keyframes cc-jump-nudge{0%,55%,100%{transform:none}70%{transform:translateY(3px)}85%{transform:translateY(-1px)}}',
+    '@media (prefers-reduced-motion:reduce){.cc-jump,.cc-jump-dot{transition:opacity .15s}.cc-jump.on svg,.cc-jump.new svg{animation:none}}',
     '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:min(320px,calc(100% - 20px))}',
     '.cc-agents:empty{display:none}',
     '.cc-agbadges{display:flex;align-items:center;justify-content:flex-end;gap:6px;max-width:100%}',
@@ -404,6 +417,24 @@
     '.cc-sug:hover,.cc-sug:focus-visible{border-style:solid;border-color:rgba(99,102,241,.55);background:var(--accent-dim);color:var(--text-primary);outline:none}',
     '.cc-sug-x{position:absolute;top:4px;right:4px;width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:none;border:none;border-radius:6px;color:var(--text-muted);cursor:pointer;font-size:calc(11px*var(--cc-fs,1));line-height:1;padding:0}',
     '.cc-sug-x:hover{color:var(--text-primary);background:rgba(148,163,184,.15)}',
+    // The recap Claude Code writes when a chat sat idle or was picked up again.
+    '.cc-recap-row{pointer-events:auto;align-self:stretch;margin-top:3px}',
+    '.cc-recap{position:relative;padding:8px 30px 8px 11px;border:1px solid var(--border-subtle);border-left:3px solid var(--accent);background:var(--bg-secondary,#12121a);box-shadow:0 4px 14px rgba(0,0,0,.35);border-radius:8px;color:var(--text-secondary);font-size:calc(12.5px*var(--cc-fs,1));line-height:1.45;white-space:pre-wrap;word-break:break-word}',
+    '.cc-recap-cap{display:block;font-size:calc(10.5px*var(--cc-fs,1));font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);margin-bottom:2px}',
+    // A side question (/btw): answered from the conversation, never part of it.
+    '.cc-aside{border:1px dashed var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary,rgba(255,255,255,.02));padding:8px 10px;margin:6px 0}',
+    '.cc-aside-head{display:flex;align-items:center;gap:8px;font-size:calc(10.5px*var(--cc-fs,1));font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted)}',
+    '.cc-aside-head span{flex:1}',
+    '.cc-aside-x{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:calc(11px*var(--cc-fs,1));padding:2px 5px;border-radius:5px}',
+    '.cc-aside-x:hover{color:var(--text-primary);background:rgba(148,163,184,.15)}',
+    '.cc-aside-q{color:var(--text-primary);margin:4px 0 6px;white-space:pre-wrap;word-break:break-word}',
+    '.cc-aside-a{color:var(--text-secondary)}',
+    '.cc-aside-a.busy{display:flex;align-items:center;gap:7px}',
+    '.cc-aside-note{margin-top:6px;font-size:calc(10.5px*var(--cc-fs,1));color:var(--text-muted)}',
+    // A batch of tool calls Claude Code summed up in one line, folded.
+    '.cc-tgroup{display:flex;align-items:center;gap:7px;padding:6px 9px;cursor:pointer;user-select:none}',
+    '.cc-tgroup-n{color:var(--text-muted);font-size:calc(11px*var(--cc-fs,1));flex:none}',
+    '.cc-tgroup + .cc-tool-wrap,.cc-tgroup + .cc-tool{margin-top:4px}',
     '.cc-sched-at{background:var(--bg-secondary,#111119);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font:inherit;padding:6px 8px}',
     '.cc-sched-note{color:var(--text-muted);font-size:calc(11px*var(--cc-fs,1))}',
     '.cc-sched-note:empty{display:none}',
@@ -912,6 +943,13 @@
     agentDock.appendChild(badgeRow);
     logWrap.appendChild(log);
     logWrap.appendChild(agentDock);
+    // Back to the newest message (syncJump says when it shows).
+    var jumpBtn = el('button', 'cc-jump',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg><span class="cc-jump-dot"></span>');
+    jumpBtn.type = 'button';
+    jumpBtn.title = 'Go to the newest message';
+    jumpBtn.setAttribute('aria-label', 'Go to the newest message');
+    logWrap.appendChild(jumpBtn);
     // Hidden until there is a plan AND the header pill is clicked.
     var planPanel = el('div', 'cc-plan');
     var planHd = el('div', 'cc-plan-hd');
@@ -1025,6 +1063,9 @@
     var handedOver = [];       // {text, uuid, state} written to stdin, oldest first
     var sentNode = null;       // the separate "handed over" drawer
     var suggestion = null;     // {text, uuid}: the CLI's guess at the next message
+    var recap = null;          // {text, at, why}: where the chat stood when the person came back
+    var recapNode = null;
+    var groupOpen = new Set(); // tool batches the reader unfolded (by group id)
     var sugNode = null;        // its tap-to-send bubble, last in the floating dock
     var activityNode = null;   // in-log "working" row for turns that stream nothing
 
@@ -1140,6 +1181,28 @@
       if (!log.clientHeight) return; // a reset while hidden is not a user scroll
       stickBottom = atBottom();
       lastTop = log.scrollTop;
+      syncJump();
+    });
+
+    // ─── Back to the newest message ───
+    // The button shows once the reader is a good way up the log (a third of
+    // its height, and at least 240px), not the moment they nudge it, and goes
+    // again near the bottom. Something arriving below while they read earns
+    // it a dot and a small nudge.
+    function jumpAway() { return log.scrollHeight - log.scrollTop - log.clientHeight; }
+    function syncJump() {
+      if (!log.clientHeight) return;
+      var far = jumpAway() > Math.max(240, log.clientHeight / 3);
+      jumpBtn.classList.toggle('on', far);
+      if (!far && jumpAway() < 60) jumpBtn.classList.remove('new');
+    }
+    function noteBelow() {
+      if (!stickBottom && jumpAway() > 60) { jumpBtn.classList.add('new'); syncJump(); }
+    }
+    jumpBtn.addEventListener('click', function () {
+      stickBottom = true;
+      jumpBtn.classList.remove('new', 'on');
+      try { log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' }); } catch (e) { log.scrollTop = log.scrollHeight; }
     });
     // ─── Selection stays in the conversation ───
     //
@@ -1436,7 +1499,23 @@
           break;
         }
         case 'thinking':   node.appendChild(thinkingNode(e)); break;
-        case 'tool':       node.appendChild(toolNode(e)); break;
+        case 'tool': {
+          // A batch Claude Code summed up in one line folds behind that line;
+          // its first row carries the line, the others show only when open.
+          // A subagent's row is never folded away: it is the way into the
+          // agent's transcript.
+          var isAgentRow = e.toolUseId && agents.has(e.toolUseId) && agents.get(e.toolUseId).meta.kind !== 'task';
+          if (e.group && e.groupSummary && !isAgentRow) {
+            var gOpen = groupOpen.has(e.group);
+            if (e.group === e.id) node.appendChild(toolGroupHead(e, gOpen));
+            if (gOpen) node.appendChild(toolNode(e));
+            node.style.display = node.childNodes.length ? '' : 'none';
+          } else {
+            node.style.display = '';
+            node.appendChild(toolNode(e));
+          }
+          break;
+        }
         case 'permission': node.appendChild(permissionNode(e)); break;
         case 'factory-result': node.appendChild(factoryResultNode(e)); break;
         case 'question':   node.appendChild(questionNode(e)); break;
@@ -1523,6 +1602,35 @@
       box.appendChild(head);
       box.appendChild(body);
       return box;
+    }
+
+    function groupMembers(g) {
+      var out = [];
+      entries.forEach(function (rec) { if (rec.data.kind === 'tool' && rec.data.group === g) out.push(rec); });
+      return out;
+    }
+
+    function toolGroupHead(e, open) {
+      var members = groupMembers(e.group);
+      // Painted before it is registered (the first paint of a new row).
+      if (!members.some(function (r) { return r.data.id === e.id; })) members.push({ data: e });
+      var running = members.some(function (r) { return r.data.status === 'running'; });
+      var failed = members.some(function (r) { return r.data.isError; });
+      var head = el('div', 'cc-tool cc-tgroup',
+        (running ? '<span class="cc-spin"></span>' : '<span class="' + (failed ? 'cc-dot-err' : 'cc-dot-ok') + '"></span>')
+        + '<span class="cc-tool-sum" style="color:var(--text-primary)">' + esc(e.groupSummary) + '</span>'
+        + '<span class="cc-tgroup-n">' + members.length + (members.length === 1 ? ' tool' : ' tools') + '</span>'
+        + '<span class="cc-caret" style="color:var(--text-muted)">' + (open ? '\u25be' : '\u25b8') + '</span>');
+      head.title = open ? 'Fold these tool calls' : 'Show each tool call';
+      head.addEventListener('click', function () {
+        if (groupOpen.has(e.group)) groupOpen.delete(e.group); else groupOpen.add(e.group);
+        repaintGroup(e.group);
+      });
+      return head;
+    }
+
+    function repaintGroup(g) {
+      groupMembers(g).forEach(function (rec) { paint(rec.node, rec.data); });
     }
 
     function toolNode(e) {
@@ -2079,6 +2187,7 @@
       // Any message going out retires the suggestion (the server does too).
       suggestion = null;
       renderSuggestion();
+      if (recap) { recap = null; renderRecap(); }
       apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2300,6 +2409,83 @@
         .catch(function () {});
     }
 
+    // ─── Recap: where the chat stands, for someone coming back ───
+    // Claude Code writes it (its own "while you were away" line) when the chat
+    // has sat idle a while after a turn, or has just been picked up again.
+    function renderRecap() {
+      if (!recap || !recap.text) {
+        if (recapNode) { recapNode.remove(); recapNode = null; }
+        dockLayout();
+        return;
+      }
+      var stick = atBottom();
+      if (!recapNode || recapNode.parentNode !== agentDock) {
+        recapNode = el('div', 'cc-recap-row');
+        recapNode.addEventListener('click', function (e) {
+          if (e.target.closest('.cc-sug-x')) dismissRecap();
+        });
+        // Above the suggestion, which answers it.
+        agentDock.insertBefore(recapNode, sugNode && sugNode.parentNode === agentDock ? sugNode : null);
+      }
+      recapNode.innerHTML = '<div class="cc-recap"><span class="cc-recap-cap">'
+        + (recap.why === 'resumed' ? 'Where this chat stands' : 'While you were away') + '</span>'
+        + esc(recap.text)
+        + '<button class="cc-sug-x" title="Dismiss" aria-label="Dismiss recap">\u2715</button></div>';
+      dockLayout();
+      scrollDown(stick);
+    }
+
+    function dismissRecap() {
+      if (!recap) return;
+      recap = null;
+      renderRecap();
+      apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/dismiss-recap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .catch(function () { /* it goes anyway with the next message */ });
+    }
+
+    // ─── Side questions (/btw) ───
+    function asideQuestion(text) {
+      var m = /^\/btw\s+([\s\S]*\S)\s*$/i.exec(text);
+      return m ? m[1] : '';
+    }
+
+    function askAside(question, original) {
+      // Asking means the person is back: the recap has done its job, and
+      // left up it would float over the answer.
+      dismissRecap();
+      var card = el('div', 'cc-aside');
+      card.innerHTML = '<div class="cc-aside-head"><span>On the side</span>'
+        + '<button class="cc-aside-x" title="Close" aria-label="Close">\u2715</button></div>'
+        + '<div class="cc-aside-q">' + esc(question) + '</div>'
+        + '<div class="cc-aside-a busy"><span class="cc-spin"></span><span>Asking\u2026</span></div>'
+        + '<div class="cc-aside-note">Not added to the conversation.</div>';
+      card.querySelector('.cc-aside-x').addEventListener('click', function () { card.remove(); });
+      log.appendChild(card);
+      if (activityNode && activityNode.parentNode === log) log.appendChild(activityNode);
+      scrollDown(true);
+      var ans = card.querySelector('.cc-aside-a');
+      apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/aside', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: question }),
+      }).then(function (r) {
+        // A server from before side questions has no such route: send the
+        // message as typed, which is what it did before.
+        if (r.status === 404) { card.remove(); sendText(original); return null; }
+        return r.json();
+      }).then(function (d) {
+        if (!d) return;
+        ans.classList.remove('busy');
+        if (d.ok) ans.innerHTML = md(d.answer || '');
+        else { ans.innerHTML = ''; ans.appendChild(el('div', 'cc-error', esc(d.error || 'No answer'))); }
+        scrollDown(followingBottom());
+      }).catch(function (err) {
+        ans.classList.remove('busy');
+        ans.innerHTML = '';
+        ans.appendChild(el('div', 'cc-error', esc(String(err.message || err))));
+      });
+    }
+
     // The second drawer: written to the CLI's stdin, not yet taken into the
     // turn. Deliberately its own node rather than a mode of the first — a new
     // batch being typed must not hide the one still in flight, which is the
@@ -2376,6 +2562,14 @@
       stickBottom = true;
       scrollDown(true);
       hideSlash();
+      // "/btw <question>": asked on the side, as in Claude Code's terminal,
+      // not sent. It works while Claude is busy, so it never queues.
+      var aside = asideQuestion(text);
+      if (aside) { askAside(aside, text); return; }
+      sendText(text);
+    }
+
+    function sendText(text) {
       // Busy (working, or blocked on a prompt) → queue it for the next turn.
       if (state !== 'idle') { enqueue(text); return; }
       postMessage(text);
@@ -2652,7 +2846,10 @@
       var m = v.match(/^\/([a-z0-9_:-]*)$/i);
       if (!m || !slashCommands.length) { hideSlash(); return; }
       var q = m[1].toLowerCase();
-      var hits = slashCommands.filter(function (c) {
+      // /btw is Crundi's (a side question), so it is offered alongside the CLI's own.
+      var offered = slashCommands.some(function (c) { return ((typeof c === 'string' ? c : c.name) || '') === 'btw'; })
+        ? slashCommands : slashCommands.concat([{ name: 'btw', description: 'Ask on the side: answered from the conversation, not added to it' }]);
+      var hits = offered.filter(function (c) {
         var n = (typeof c === 'string' ? c : c.name) || '';
         return n.toLowerCase().indexOf(q) === 0;
       }).slice(0, 40);
@@ -2879,6 +3076,10 @@
       var shown = !!(sugNode && sugNode.parentNode === agentDock)
         || agentBadge.classList.contains('on') || taskBadge.classList.contains('on');
       var pad = shown ? Math.max(LOG_PAD, agentDock.offsetHeight + 14) : LOG_PAD;
+      // The arrow back to the newest message sits above a recap or a
+      // suggestion (both run across the dock); beside the badges alone it fits.
+      var wideDock = !!((sugNode && sugNode.parentNode === agentDock) || (recapNode && recapNode.parentNode === agentDock));
+      jumpBtn.style.bottom = (wideDock ? agentDock.offsetHeight + 16 : 10) + 'px';
       if (log.style.paddingBottom !== pad + 'px') {
         var stick = stickBottom;
         log.style.paddingBottom = pad + 'px';
@@ -3059,7 +3260,7 @@
       if (sub) {
         var bits = [];
         if (m.subagentType) bits.push(m.subagentType);
-        if (running && m.step) bits.push(m.step);
+        if (running && (m.progress || m.step)) bits.push(m.progress || m.step);
         else bits.push(m.status || 'done');
         if (m.usage && m.usage.tool_uses) bits.push(m.usage.tool_uses + ' tools');
         if (m.usage && m.usage.total_tokens) bits.push(Math.round(m.usage.total_tokens / 1000) + 'k tok');
@@ -3156,7 +3357,7 @@
     function agentRowSub(m) {
       var bits = [];
       if (m.subagentType) bits.push(m.subagentType);
-      if (agentRunning(m)) bits.push(m.step || 'running');
+      if (agentRunning(m)) bits.push(m.progress || m.step || 'running');
       else bits.push(m.status === 'completed' || !m.status ? 'finished' : m.status);
       var tok = m.usage && m.usage.total_tokens;
       if (tok) bits.push((tok >= 1000 ? Math.round(tok / 1000) + 'k' : String(tok)) + ' tok');
@@ -3270,6 +3471,15 @@
       if (data.kind === 'thinking') thinkingChanged(data, true);
       var node = renderEntry(data);
       entries.set(data.id, { data: data, node: node });
+      if (data.kind !== 'gone') noteBelow();
+      // A row joining a folded batch (a reload replays them in order): its
+      // line counts it now, and it hides behind the line once it is painted
+      // as a member.
+      if (data.kind === 'tool' && data.group) {
+        paint(node, data);
+        var gh = data.group !== data.id && entries.get(data.group);
+        if (gh) paint(gh.node, gh.data);
+      }
       var stick = followingBottom();
       log.appendChild(node);
       // The activity row is not a conversation entry; keep it last.
@@ -3612,9 +3822,11 @@
       setSessionId(session.sessionId);
       if (session.totalCostUsd) costLbl.textContent = '$' + session.totalCostUsd.toFixed(4);
       suggestion = session.suggestion || null;
+      recap = session.recap || null;
       setState(session.state || 'idle');
       input.disabled = session.status !== 'running';
       renderSuggestion();
+      renderRecap();
       if (session.status !== 'running') {
         input.placeholder = 'Session ended.';
         stateLbl.textContent = 'exited';
@@ -3646,6 +3858,11 @@
           if (rec.data.kind === 'thinking') thinkingChanged(rec.data, false);
           var stick = followingBottom();
           paint(rec.node, rec.data);
+          // The batch's line counts its rows and shows whether any still run.
+          if (rec.data.kind === 'tool' && rec.data.group && rec.data.group !== rec.data.id) {
+            var gHead = entries.get(rec.data.group);
+            if (gHead) paint(gHead.node, gHead.data);
+          }
           scrollDown(stick);
           // An open task panel shows this same command: keep it current, so a
           // command still running when the bubble was opened fills in its
@@ -3713,6 +3930,7 @@
         case 'agent-patch': patchAgentEntry(ev.toolUseId, ev.id, ev.patch); break;
         case 'state': setState(ev.state); break;
         case 'suggestion': suggestion = ev.suggestion || null; renderSuggestion(); break;
+        case 'recap': recap = ev.recap || null; renderRecap(); break;
         case 'init':
           slashCommands = ev.slashCommands || [];
           if (ev.model) modelLbl.textContent = ev.model;
@@ -3746,6 +3964,8 @@
           stateLbl.textContent = 'exited';
           suggestion = null;
           renderSuggestion();
+          recap = null;
+          renderRecap();
           break;
       }
     }

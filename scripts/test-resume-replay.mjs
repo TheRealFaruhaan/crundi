@@ -29,6 +29,9 @@ const recs = [
   { type: 'user', message: { role: 'user', content: 'Build the thing' } },
   { type: 'user', isMeta: true, message: { role: 'user', content: 'meta noise' } },
   { type: 'user', message: { role: 'user', content: '<command-name>/model</command-name>' } },
+  // A background task finishing: Claude Code writes its notice as a user turn.
+  { type: 'user', message: { role: 'user', content: '<task-notification>\n<task-id>b456nj320</task-id>\n<status>completed</status>\n</task-notification>' } },
+  { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '<task-notification><task-id>a1</task-id></task-notification>' }] } },
   { type: 'assistant', message: { id: 'm1', content: [{ type: 'thinking', thinking: '', signature: 'sig' }] } },
   { type: 'assistant', message: { id: 'm1', content: [{ type: 'thinking', thinking: 'Plan it out' }] } },
   { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Running it' }] } },
