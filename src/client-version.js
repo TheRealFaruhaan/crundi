@@ -137,6 +137,15 @@ export const CAPABILITIES = Object.freeze([
   // is an old one; the client then offers "set a passphrase" right there and
   // sends action 'edit' with that lock and a newPin.
   'secret-upgrade',
+  // Claude Code's own summaries in a chat. 'chat-recap': a session gets
+  // `recap` {text, at, why} after sitting idle 5 minutes or being resumed,
+  // with a 'recap' event and POST /api/ui-sessions/:id/dismiss-recap.
+  // 'chat-aside': POST /api/ui-sessions/:id/aside {question} answers from
+  // the conversation without adding to it. Field-only, no capability needed:
+  // tool entries may carry `group` and `groupSummary` (a batch's one-line
+  // label), and an agent `progress` (its model-written status line).
+  'chat-recap',
+  'chat-aside',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

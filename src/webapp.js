@@ -90,7 +90,7 @@ import { createChatSchedule } from './chat-schedule.js';
 import { createWidgetApi } from './widget-api.js';
 import { publicBaseUrl } from './public-url.js';
 import { cleanAutoTitle, cleanLongTitle } from './chat-title.js';
-import { createAutoTitler } from './chat-autotitle.js';
+import { createAutoTitler, titlesFromChat } from './chat-autotitle.js';
 import * as chatMedia from './chat-media.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
@@ -1994,7 +1994,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     claudeBin: () => { try { return resolveClaudeBin(); } catch { return null; } },
     currentTitle: (id) => { const m = claudeUi && claudeUi.meta(id); return m && !m.collaborator ? m.title : null; },
     apply: (id, title, long) => claudeUi.rename(id, title, { auto: true, long: long || '' }),
+    // Claude Code's own title, asked of the chat itself; the one-off model
+    // call is the fallback when it gives none.
+    fromChat: (id, text) => claudeUi.generateTitle(id, text),
     onApplied: () => { broadcastState(); retitleLiveCards(); },
+  });
+  // A Claude terminal pane takes the title Claude Code shows for its session.
+  if (claudeTerminals && claudeTerminals.onAutoTitle) claudeTerminals.onAutoTitle(() => { broadcastState(); retitleLiveCards(); });
+  // A chat that sat idle gets a recap; the work may have become a different
+  // job since it was named, so Claude Code titles it again from the recap.
+  // Not over a title the person chose, and not a collaborator's chat.
+  if (claudeUi && claudeUi.onRecap) claudeUi.onRecap(async (id, recap) => {
+    if (!recap || recap.why !== 'idle') return;
+    const m = claudeUi.meta(id);
+    if (!m || m.collaborator || m.titleByUser) return;
+    const t = await claudeUi.generateTitle(id, recap.text);
+    const named = t ? titlesFromChat(t) : null;
+    if (!named || named.title === m.title) return;
+    const r = claudeUi.rename(id, named.title, { auto: true, long: named.long });
+    if (r && r.ok) { broadcastState(); retitleLiveCards(); }
   });
 
   // ─── Widgets (Claude-authored UI; see widget-api.js) ───
@@ -4431,7 +4449,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result);
     }
 
-    const uiMatch = path.match(/^\/api\/ui-sessions\/([^/]+)\/(send|cancel-queued|respond|answer-closed|interrupt|close|rename|permission-mode|model|history|dismiss-agents|dismiss-suggestion)$/);
+    const uiMatch = path.match(/^\/api\/ui-sessions\/([^/]+)\/(send|cancel-queued|respond|answer-closed|interrupt|close|rename|permission-mode|model|history|dismiss-agents|dismiss-suggestion|dismiss-recap|aside)$/);
     if (uiMatch) {
       const sid = decodeURIComponent(uiMatch[1]);
       const action = uiMatch[2];
@@ -4469,6 +4487,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Dismissing an agent bubble belongs to the conversation, not to the
       // browser that dismissed it — see claude-ui.dismissAgents.
       if (action === 'dismiss-suggestion') return json(res, claudeUi.dismissSuggestion(sid));
+      // Capability 'chat-recap': the recap goes when the person closes it.
+      if (action === 'dismiss-recap') return json(res, claudeUi.dismissRecap(sid));
+      // Capability 'chat-aside': a question answered from the conversation
+      // so far, without adding to it (Claude Code's side question).
+      if (action === 'aside') return json(res, await claudeUi.askAside(sid, body.question));
       if (action === 'dismiss-agents') {
         return json(res, claudeUi.dismissAgents(sid, body.all ? 'all' : (body.toolUseIds || [])));
       }

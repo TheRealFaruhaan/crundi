@@ -42,11 +42,11 @@ ok((src.match(/if \(auto && \w+\.titleByUser\) return \{ ok: false/g) || []).len
 ok((src.match(/if \(!auto\) \w+\.titleByUser = true;/g) || []).length === 2, 'chat and terminal both remember a rename the person made');
 
 const bridge = (await import('node:fs')).readFileSync(new URL('../src/mcp-stdio.js', import.meta.url), 'utf8');
-ok(/name === 'rename_chat'\) \{\s*delete args\.sessionId; delete args\.terminalId;/.test(bridge), 'the session to rename comes from the process, never from the caller');
+ok(!/name: 'rename_chat'/.test(bridge), 'rename_chat is gone: Claude Code names the session itself');
 const { COLLABORATOR_MCP_TOOLS } = await import('../src/access-policy.js');
 ok(!COLLABORATOR_MCP_TOOLS.has('rename_chat'), 'not offered to collaborators (their session is not checked for ownership yet)');
 const { BASE, MAX_LAYER } = await import('../src/system-prompt.js');
-ok(/Always name the chat first/.test(BASE) && /at most 20 characters/.test(BASE) && /at most 50 characters/.test(BASE) && /until the scope or topic of the work changes/.test(BASE), 'the base prompt: rename first on a task with both forms, not again until the scope changes');
+ok(!/rename_chat|name the chat/i.test(BASE), 'the base prompt no longer asks Claude to name its chat');
 ok(BASE.length < MAX_LAYER, 'the base prompt still fits in one layer', String(BASE.length));
 
 // ─── The server-side namer ───
@@ -102,6 +102,45 @@ ok(BASE.length < MAX_LAYER, 'the base prompt still fits in one layer', String(BA
   ok(createAutoTitler({ claudeBin: () => null, currentTitle: () => 'Chat', apply: () => ({ ok: true }) }).maybe('e', 'job') === true, 'namer: no claude binary is survivable');
   await wait();
   ok(titles.e === 'Chat', 'namer: and leaves the title alone');
+
+  // Claude Code's own title, from the chat itself, comes first.
+  {
+    const { titlesFromChat } = await import('../src/chat-autotitle.js');
+    const tf = titlesFromChat('Directory listing and a.txt');
+    ok(tf && tf.title === 'Directory listing' && tf.long === 'Directory listing and a.txt', 'from chat: the long form as given, the short one cut at a word');
+    ok(titlesFromChat('Kanban trigger').long === '', 'from chat: a short title has no separate long form');
+    ok(titlesFromChat('') === null && titlesFromChat('Supercalifragilisticexpialidociousness') === null, 'from chat: nothing, or no word that fits, is no title');
+    let spawned = 0;
+    titles.f = 'Chat';
+    const viaChat = createAutoTitler({
+      claudeBin: () => '/bin/claude', currentTitle: (id) => titles[id] ?? null,
+      apply: (id, t, long) => { titles[id] = t; longs[id] = long; return { ok: true }; },
+      fromChat: async () => 'Payment retry logic', spawnImpl: fake('SHORT: Other\nLONG: Other', () => { spawned++; }),
+    });
+    viaChat.maybe('f', 'refactor the payment retry logic'); await wait();
+    ok(titles.f === 'Payment retry logic' && spawned === 0, 'from chat: used when the chat gives one, with no extra process');
+    titles.g = 'Chat';
+    const fallback = createAutoTitler({
+      claudeBin: () => '/bin/claude', currentTitle: (id) => titles[id] ?? null,
+      apply: (id, t, long) => { titles[id] = t; longs[id] = long; return { ok: true }; },
+      fromChat: async () => null, spawnImpl: fake('SHORT: Port lookup\nLONG: Find the port'),
+    });
+    fallback.maybe('g', 'what port?'); await wait();
+    ok(titles.g === 'Port lookup', 'from chat: none given, the one-off call names it');
+  }
+}
+
+// ─── A Claude terminal pane takes Claude Code's window title ───
+{
+  const { claudeWindowTitle, windowTitlesIn } = await import('../src/claude-terminals.js');
+  ok(claudeWindowTitle('\u2733 Package.json name field') === 'Package.json name field', 'terminal: the spinner glyph goes, the title stays');
+  ok(claudeWindowTitle('\u25d1 Package.json name field') === 'Package.json name field', 'terminal: whichever glyph the spinner is on');
+  ok(claudeWindowTitle('Claude Code') === '' && claudeWindowTitle('\u2733 Claude Code') === '' && claudeWindowTitle('  ') === '', 'terminal: the default title is not a name');
+  const data = 'x\x1b]0;\u2733 First title\x07y\x1b]2;\u2722 Second\x1b\\z';
+  ok(JSON.stringify(windowTitlesIn(data)) === JSON.stringify(['\u2733 First title', '\u2722 Second']), 'terminal: OSC 0 and 2, ended by BEL or ST, in order');
+  ok(windowTitlesIn('plain output').length === 0, 'terminal: ordinary output has none');
+  const tsrc = (await import('node:fs')).readFileSync(new URL('../src/claude-terminals.js', import.meta.url), 'utf8');
+  ok(/if \(shellOnly \|\| rawCommand/.test(tsrc) && /entry\.titleByUser\) continue/.test(tsrc), 'terminal: not a shell, not over a title the person typed');
 }
 
 try { rmSync(tmp, { recursive: true, force: true }); } catch { /* leave it */ }

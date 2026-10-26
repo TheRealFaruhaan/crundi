@@ -75,8 +75,6 @@ export const BASE = [
   '- Also: get_usage for the current Claude usage windows, syntax_check for a fast parse of a file you just wrote.',
   '',
   'Use them where they fit, and call them rather than describing what calling them would do.',
-  '',
-  'Always name the chat first. When the person gives you a task, your first action is rename_chat (mcp__crundi__rename_chat; load it through tool search if it is not loaded yet) with two forms of a title naming that task: title, at most 20 characters, for example "Fix login redirect"; and long, at most 50 characters, saying a little more, for example "Fix the redirect loop after password login". Do it before any other tool call, and do not mention it in your reply. Do not rename again until the scope or topic of the work changes. A bare greeting has no task to name yet, so wait for one. If the tool says the person named the chat themselves, leave their title. (Crundi also names an unnamed chat by itself as a backstop; your title replaces it.)',
 ].join('\n');
 
 /** Trim, normalise line endings, and cap one user-supplied layer. */

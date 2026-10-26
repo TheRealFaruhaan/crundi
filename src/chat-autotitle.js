@@ -8,8 +8,10 @@
  * model), started when the first message goes in. The chat itself spends
  * nothing on it and cannot forget.
  *
- * rename_chat stays, for the cases only the chat can judge: the title is
- * wrong, or the work has turned into a different job.
+ * The title now comes from the chat's own Claude Code first
+ * (generate_session_title), and when a chat sits idle its recap is titled
+ * again, so a job that turned into another one is renamed without Claude
+ * having to stop and do it (the rename_chat tool is gone).
  */
 
 import { spawn } from 'node:child_process';
@@ -63,6 +65,22 @@ export function titlesFromReply(reply) {
   return { title, long };
 }
 
+/**
+ * Claude Code's title for a chat made into both forms: the long one as it
+ * is (within its limit), the short one cut at a word to fit. Without a word
+ * that fits the short limit there is no title.
+ * @returns {{title:string, long:string}|null}
+ */
+export function titlesFromChat(text) {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+  const title = fit(raw, MAX_AUTO_TITLE, cleanAutoTitle);
+  if (!title) return null;
+  let long = fit(raw, MAX_LONG_TITLE, cleanLongTitle) || '';
+  if (long.toLowerCase() === title.toLowerCase()) long = '';
+  return { title, long };
+}
+
 /** The short title alone (kept for callers that want one string). */
 export function titleFromReply(reply) { const t = titlesFromReply(reply); return t ? t.title : null; }
 
@@ -71,10 +89,11 @@ export function titleFromReply(reply) { const t = titlesFromReply(reply); return
  * @param {()=>string|null} deps.claudeBin   path of the `claude` binary, or null
  * @param {(id:string)=>string|null} deps.currentTitle   the chat's title now, null if gone
  * @param {(id:string, title:string, long:string)=>{ok:boolean}} deps.apply   set both forms (refused over a person's title)
+ * @param {(id:string, text:string)=>Promise<string|null>} [deps.fromChat]   Claude Code's own title for the chat (generate_session_title), tried first
  * @param {()=>void} [deps.onApplied]
  * @param {typeof spawn} [deps.spawnImpl]    for tests
  */
-export function createAutoTitler({ claudeBin, currentTitle, apply, onApplied = () => {}, spawnImpl = spawn }) {
+export function createAutoTitler({ claudeBin, currentTitle, apply, fromChat = null, onApplied = () => {}, spawnImpl = spawn }) {
   // Attempts per chat. A chat that opens with "hi" has no job yet, so the
   // next message gets another go; three in all, then it is left as it is.
   const tried = new Map();
@@ -107,6 +126,22 @@ export function createAutoTitler({ claudeBin, currentTitle, apply, onApplied = (
   }
 
   /**
+   * Both forms of a title. First Claude Code's own, from the chat itself
+   * (two to five words, so it needs no separate process): it is the long
+   * form, and the short form is it cut at a word to fit. Then, if it gave
+   * none, the one-off model call.
+   */
+  async function titleFor(id, body) {
+    if (fromChat) {
+      let t = null;
+      try { t = await fromChat(id, body); } catch { t = null; }
+      const named = t ? titlesFromChat(t) : null;
+      if (named) return named;
+    }
+    return titlesFromReply(await ask(body));
+  }
+
+  /**
    * Call when a message is sent into a chat. Does nothing unless the chat's
    * title is still the one it was launched with and it has attempts left.
    * Never throws and never delays the caller.
@@ -119,8 +154,7 @@ export function createAutoTitler({ claudeBin, currentTitle, apply, onApplied = (
     if (running >= MAX_RUNNING) return false;   // not counted: the next message tries again
     tried.set(id, (tried.get(id) || 0) + 1);
     running++;
-    ask(body).then((reply) => {
-      const named = titlesFromReply(reply);
+    titleFor(id, body).then((named) => {
       const title = named && named.title;
       // Claude or the person may have named it while this was thinking.
       if (!isDefaultTitle(currentTitle(id))) return settled(id);
