@@ -77,8 +77,8 @@ const env = new Function(`
   ${lift('  function scheduleIdleRecap(s) {')}
   ${lift('  async function makeRecap(s, why) {')}
   ${lift('  function handleToolUseSummary(s, msg) {')}
-  ${lift('  function personText(id, { latest = 5, max = 2000 } = {}) {')}
-  ${lift('  async function isDifferentJob(id, title) {')}
+  ${lift('  function personText(id, { latest = 3, max = 2000 } = {}) {')}
+  ${lift("  async function isDifferentJob(id, title, proposed = '') {")}
   return { sessions, sent, control, askAside, generateTitle, clearRecap, scheduleIdleRecap, makeRecap, handleToolUseSummary, personText, isDifferentJob,
     onRecap: (cb) => { recapCb = cb; } };
 `)();
@@ -216,29 +216,39 @@ const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 {
   const { s } = mk({ id: 'p1' });
   const u = (text, by) => ({ kind: 'user', text, ...(by ? { by } : {}) });
-  s.messages.push(u('Fix the login redirect'), { kind: 'assistant-text', text: 'Releasing 2.4.0 now' },
-    u('/compact'), u('Crundi ran a command', 'system'), u('  '), u('and the cookie expiry'));
-  check('the person\'s own words, not Claude\'s, slash commands or Crundi\'s posts', env.personText('p1') === 'Fix the login redirect\n\nand the cookie expiry', JSON.stringify(env.personText('p1')));
-  for (let i = 1; i <= 8; i++) s.messages.push(u('step ' + i));
+  s.messages.push(u('Fix the login redirect loop after password sign-in'), { kind: 'assistant-text', text: 'Releasing 2.4.0 now' },
+    u('/compact'), u('Crundi ran a command and posted its output', 'system'), u('  '), u('and the session cookie expires far too early'));
+  check('the person\'s own words, not Claude\'s, slash commands or Crundi\'s posts', env.personText('p1') === 'Fix the login redirect loop after password sign-in\n\nand the session cookie expires far too early', JSON.stringify(env.personText('p1')));
+  // The Dhivo chat that kept "Grafana alert calls": the work moved on, and
+  // its latest messages were mostly "Go" and "Yes".
+  s.messages.push(u('Sort out the ones needing categorization and rename the generic ones'), u('Tell me about 1'),
+    u('How come they are duplicate? They are supposed to update'), u('go ahead, show me the counts first'), u('Go'), u('Yes'));
   const t = env.personText('p1');
-  check('the first message, then the latest five', t.startsWith('Fix the login redirect\n\nstep 4') && t.endsWith('step 8') && !t.includes('cookie') && !t.includes('step 3'), JSON.stringify(t));
+  check('the latest three with some substance; short answers and the first message left out',
+    t === 'Sort out the ones needing categorization and rename the generic ones\n\nHow come they are duplicate? They are supposed to update\n\ngo ahead, show me the counts first', JSON.stringify(t));
+  const { s: terse } = mk({ id: 'p3' });
+  terse.messages.push(u('Go'), u('Yes'));
+  check('only short answers: they stand in', env.personText('p3') === 'Go\n\nYes');
   s.messages.push(u('x'.repeat(5000)));
   check('kept short', env.personText('p1').length <= 2000);
   check('nothing said yet: nothing to title', env.personText('nope') === '' && (() => { const { s: e } = mk({ id: 'p2' }); return env.personText('p2') === ''; })());
 }
 {
   const { s } = mk({ id: 'j1' });
-  let p = env.isDifferentJob('j1', 'Crundi 1.21.3-dev.1');
+  let p = env.isDifferentJob('j1', 'Grafana alert calls', 'Product categorization duplicates');
   const q = env.sent[env.sent.length - 1].request;
-  check('the job question is asked on the side, naming the title', q.subtype === 'side_question' && q.question.includes('"Crundi 1.21.3-dev.1"') && /newer version number/.test(q.question) && /SAME or DIFFERENT/.test(q.question));
+  check('the job question is asked on the side, about the recent requests, naming both titles',
+    q.subtype === 'side_question' && q.question.includes('"Grafana alert calls"') && q.question.includes('"Product categorization duplicates"')
+    && /most recent requests/.test(q.question) && !/mainly/.test(q.question) && /newer version number/.test(q.question) && /SAME or DIFFERENT/.test(q.question));
   answer(s, { response: 'SAME' });
-  check('SAME keeps the title', (await p) === false);
+  check('SAME keeps the title', (await p).different === false);
   p = env.isDifferentJob('j1', 'x'); answer(s, { response: 'Different.' });
-  check('DIFFERENT renames', (await p) === true);
+  check('DIFFERENT renames', (await p).different === true);
   p = env.isDifferentJob('j1', 'x'); answer(s, null, 'Unknown control request subtype: side_question');
-  check('no answer keeps the title', (await p) === false);
+  const none = await p;
+  check('no answer keeps the title, and says why', none.different === false && /no answer/.test(none.answer));
   p = env.isDifferentJob('j1', 'x'); answer(s, { response: 'It is not different, the same job' });
-  check('only a clear DIFFERENT counts', (await p) === false);
+  check('only a clear DIFFERENT counts', (await p).different === false);
 }
 
 // ─── The server side ───
@@ -247,7 +257,8 @@ check('routes: aside and dismiss-recap', /dismiss-suggestion\|dismiss-recap\|asi
 check('the namer asks the chat first', /fromChat: \(id, text\) => claudeUi\.generateTitle\(id, text\)/.test(web));
 check('an idle recap retitles, never over the person\'s title', /recap\.why !== 'idle'/.test(web) && /m\.titleByUser\) return;/.test(web));
 check('from the person\'s messages, never the recap', /claudeUi\.generateTitle\(id, said\)/.test(web) && !/generateTitle\(id, recap\.text\)/.test(web));
-check('only when it is a different job, and not if renamed meanwhile', /if \(!\(await claudeUi\.isDifferentJob\(id, m\.title\)\)\) return;/.test(web) && /now\.title !== m\.title\) return;/.test(web));
+check('only when it is a different job, and not if renamed meanwhile', /const job = await claudeUi\.isDifferentJob\(id, was, named\.long \|\| named\.title\);/.test(web) && /if \(!job\.different\) return/.test(web) && /now\.title !== m\.title\) return;/.test(web));
+check('every decision is logged', /\[retitle\] \(\$\{id\}\) kept/.test(web) && /\[retitle\] \(\$\{id\}\) "\$\{m\.title\}" -> /.test(web) && /\[claude-ui\] \(\$\{s\.id\}\) recap \(/.test(src));
 const caps = readFileSync(join(root, 'src', 'client-version.js'), 'utf8');
 check('capabilities: chat-recap and chat-aside', /'chat-recap',/.test(caps) && /'chat-aside',/.test(caps));
 

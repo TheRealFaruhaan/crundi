@@ -71,9 +71,10 @@ Version code 31. Production, since 1.1.1 (code 28): everything from
 Claude Code's own summaries in your chats.
 
 - A recap when you come back to a chat that sat idle, or one you pick up again.
-- Ask on the side: type /btw and a question, or use Ask on the side in the chat menu. The answer is not added to the conversation.
+- Ask on the side: type /btw and a question, or use Ask on the side in the chat menu.
 - Runs of tool calls fold into one line saying what they did; tap to open.
 - Subagents show a line on where they have got to.
+- An arrow back to the newest message when you scroll up a chat.
 
 Needs a Crundi server, version 1.21.3 or newer, for recaps and asking on the side.
 </en-US>
