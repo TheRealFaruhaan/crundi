@@ -13,6 +13,7 @@ import mv.obitech.crundi.api.model.AgentState
 import mv.obitech.crundi.api.model.ChatAgent
 import mv.obitech.crundi.api.model.ChatEntry
 import mv.obitech.crundi.api.model.ChatPlan
+import mv.obitech.crundi.api.model.ChatRecap
 import mv.obitech.crundi.api.model.ChatState
 import mv.obitech.crundi.api.model.ChatSuggestion
 import mv.obitech.crundi.api.model.FactoryRole
@@ -46,6 +47,7 @@ object ChatReducer {
             goal = session["goal"] as? JsonObject,
             plan = plan(session["plan"]),
             suggestion = suggestion(session["suggestion"]),
+            recap = recap(session["recap"]),
             pendingInjections = (session["pendingInjections"] as? JsonArray)?.mapNotNull { runCatching { CrundiJson.decodeFromJsonElement<PendingInjection>(it) }.getOrNull() }.orEmpty(),
             factory = (session["factory"] as? JsonObject)?.let { runCatching { CrundiJson.decodeFromJsonElement<FactoryRole>(it) }.getOrNull() },
         )
@@ -127,6 +129,8 @@ object ChatReducer {
             }
             "goal" -> s.copy(goal = ev["goal"] as? JsonObject)
             "suggestion" -> s.copy(suggestion = suggestion(ev["suggestion"]))
+            // Set when the chat has sat idle or was resumed; null once closed or a message went.
+            "recap" -> s.copy(recap = recap(ev["recap"]))
             else -> s
         }
     }
@@ -144,6 +148,9 @@ object ChatReducer {
 
     private fun plan(el: kotlinx.serialization.json.JsonElement?): ChatPlan? =
         if (el == null || el is JsonNull) null else runCatching { CrundiJson.decodeFromJsonElement<ChatPlan>(el) }.getOrNull()
+
+    private fun recap(el: kotlinx.serialization.json.JsonElement?): ChatRecap? =
+        if (el == null || el is JsonNull) null else runCatching { CrundiJson.decodeFromJsonElement<ChatRecap>(el) }.getOrNull()?.takeIf { it.text.isNotBlank() }
 
     private fun suggestion(el: kotlinx.serialization.json.JsonElement?): ChatSuggestion? =
         if (el == null || el is JsonNull) null else runCatching { CrundiJson.decodeFromJsonElement<ChatSuggestion>(el) }.getOrNull()?.takeIf { it.text.isNotEmpty() }

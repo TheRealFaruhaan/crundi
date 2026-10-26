@@ -106,6 +106,18 @@ data class NewChat(
 
 @Serializable data class ChatPlan(val text: String = "", val filePath: String = "", val at: Long = 0, val status: String = "")
 @Serializable data class ChatSuggestion(val text: String = "", val uuid: String = "")
+
+/**
+ * Where a chat stands (capability "chat-recap"): Claude Code's own recap,
+ * made after the chat sat idle for a while ([why] "idle") or when it was
+ * resumed ("resumed"). It goes when the person closes it or sends a message.
+ */
+@Serializable data class ChatRecap(val text: String = "", val at: Long = 0, val why: String = "") {
+    /** The card's caption. */
+    val caption get() = if (why == "resumed") "Where this chat stands" else "While you were away"
+    /** Which recap this is, to hide it here the moment it is closed or answered (before the server's recap:null). */
+    val key get() = "$at:$text"
+}
 /** A message sent mid-turn, not yet taken by Claude. state: sent, queued (can be recalled), started. */
 @Serializable data class PendingInjection(val text: String = "", val uuid: String = "", val state: String = "sent")
 
@@ -184,6 +196,13 @@ data class ChatEntry(
     val costUsd: Double = 0.0,
     val durationMs: Long = 0,
     val numTurns: Int = 0,
+    /**
+     * tool: the batch it belongs to (the id of the batch's first tool entry)
+     * and that batch's one-line label, from Claude Code's tool-use summaries.
+     * Both arrive later, by a patch; empty until then (and on older servers).
+     */
+    val group: String = "",
+    val groupSummary: String = "",
     val raw: JsonObject = JsonObject(emptyMap()),
 ) {
     val isPending get() = (kind == "permission" || kind == "question") && status == "pending"
@@ -226,6 +245,7 @@ data class ChatEntry(
                 hasSuggestions = (o["suggestions"] as? JsonArray)?.isNotEmpty() == true,
                 escalated = b("escalated"), answeredInput = o["answeredInput"] as? JsonObject,
                 subtype = s("subtype"), costUsd = d("costUsd"), durationMs = l("durationMs"), numTurns = l("numTurns").toInt(),
+                group = s("group"), groupSummary = s("groupSummary"),
                 raw = o,
             )
         }
@@ -244,6 +264,8 @@ data class ChatAgent(
     val status: String = "",
     /** The step it is on now ("Reading README.md"). */
     val step: String = "",
+    /** A model-written line on where it is, about every 30 s (Claude Code's agent progress summaries); empty on older servers. */
+    val progress: String = "",
     val lastTool: String = "",
     val summary: String = "",
     val endedAt: Long = 0,
@@ -254,6 +276,8 @@ data class ChatAgent(
     val raw: JsonObject = JsonObject(emptyMap()),
 ) {
     val running get() = status == "running"
+    /** What it is doing now, in one line: its progress line when it has one, else its step. */
+    val doing get() = progress.ifEmpty { step }
 
     companion object {
         fun from(o: JsonObject, keep: List<ChatEntry> = emptyList()): ChatAgent {
@@ -261,7 +285,7 @@ data class ChatAgent(
             val msgs = (o["messages"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.let(ChatEntry::from) } ?: keep
             return ChatAgent(
                 toolUseId = s("toolUseId"), kind = s("kind").ifEmpty { "agent" }, description = s("description"), subagentType = s("subagentType"),
-                prompt = s("prompt"), status = s("status"), step = s("step"), lastTool = s("lastTool"), summary = s("summary"),
+                prompt = s("prompt"), status = s("status"), step = s("step"), progress = s("progress"), lastTool = s("lastTool"), summary = s("summary"),
                 endedAt = (o["endedAt"] as? JsonPrimitive)?.let { it.longOrNull ?: it.doubleOrNull?.toLong() } ?: 0L,
                 dismissed = (o["dismissed"] as? JsonPrimitive)?.booleanOrNull ?: false,
                 count = (o["count"] as? JsonPrimitive)?.longOrNull?.toInt() ?: msgs.size,
@@ -297,6 +321,8 @@ data class ChatState(
     val goal: JsonObject? = null,
     val plan: ChatPlan? = null,
     val suggestion: ChatSuggestion? = null,
+    /** Where the chat stands, for someone coming back to it (capability "chat-recap"). */
+    val recap: ChatRecap? = null,
     val pendingInjections: List<PendingInjection> = emptyList(),
     val factory: FactoryRole? = null,
     /** Set when the Claude process ended (exit code). */

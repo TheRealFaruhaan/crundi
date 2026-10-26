@@ -121,6 +121,11 @@ sealed interface ChatSheet {
     data class Video(val media: ChatMedia) : ChatSheet
     /** The secrets pre-authorised for this chat (ChatSecrets.kt). */
     data object Secrets : ChatSheet
+    /**
+     * A question on the side (ChatSummaries.kt): being written until
+     * [asked], then waiting, then its [answer] or why there is none ([error]).
+     */
+    data class Aside(val question: String = "", val asked: Boolean = false, val answer: String? = null, val error: String? = null) : ChatSheet
 }
 
 /** Everything the chat screen draws. */
@@ -168,12 +173,20 @@ data class ChatUi(
     val secretsOk: Boolean = false,
     /** How many are pre-authorised now. */
     val secretGrants: Int = 0,
+    /** The server makes recaps (capability "chat-recap"). */
+    val recapOk: Boolean = false,
+    /** The server answers side questions (capability "chat-aside"): /btw and "Ask on the side". */
+    val asideOk: Boolean = false,
+    /** The recap closed here or sent over (its key), hidden before the server's recap:null arrives. */
+    val retiredRecap: String? = null,
 ) {
     /** Put to sleep (parked): the live state's row for it says so (ChatSleep). */
     val asleep get() = ChatSleep.asleep(pane)
     val title get() = pane?.label?.takeIf { it.isNotEmpty() } ?: chat.title.ifEmpty { "Chat" }
     val pending get() = chat.pendingInjections + localPending.filter { l -> chat.pendingInjections.none { it.uuid == l.uuid && l.uuid.isNotEmpty() } }
     val busy get() = chat.state == AgentState.Working || pending.isNotEmpty()
+    /** The recap card's recap, when there is one to show. */
+    val recap get() = ChatRecaps.shown(chat.recap, recapOk, retiredRecap)
 }
 
 /** Everything the chat screen can be asked to do. */
@@ -190,6 +203,10 @@ interface ChatActions : EntryActions, ComposerActions, ScheduleActions {
     fun dismissAgents() {}
     /** Wake a sleeping chat: "resume", "compact" or "new" (ParkedBody's buttons). */
     fun wake(mode: String) {}
+    /** Close the recap card. */
+    fun dismissRecap() {}
+    /** Ask [question] on the side; the answer shows in the sheet. */
+    fun askAside(question: String) {}
 }
 
 private fun activity(c: ChatState): String? {
@@ -275,8 +292,12 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                     contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 48.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(entries, key = { it.id.ifEmpty { it.seq.toString() } }) { e ->
-                        ChatEntryView(e, c.id, ui.open, actions, c.agents, ui.busyEntries, ui.factoryDiffs)
+                    // A batch of tool calls Claude Code has labelled folds into one row (ChatSummaries.kt).
+                    items(foldToolBatches(entries, c.agents), key = { it.key }) { r ->
+                        when (r) {
+                            is ChatRow.One -> ChatEntryView(r.entry, c.id, ui.open, actions, c.agents, ui.busyEntries, ui.factoryDiffs)
+                            is ChatRow.Batch -> ToolBatchRow(r, c.id, ui.open, actions, c.agents, ui.busyEntries)
+                        }
                     }
                     if (act != null) item(key = "~activity") { Box(Modifier.miniTarget(c.id, "activity")) { ActivityRow(act) } }
                     if (c.exited) item(key = "~ended") {
@@ -299,6 +320,8 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
               }
             }
             }
+            // Where the chat stands, for someone coming back to it, just over the box.
+            if (!asleep) ui.recap?.let { r -> RecapCard(r, actions::dismissRecap, Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) }
             if (ui.error != null) Banner(ui.error, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), kind = BadgeKind.Bad, icon = "alert-triangle")
             if (ui.notice != null) Banner(ui.notice, Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), kind = BadgeKind.Good, icon = "check")
             Composer(
@@ -306,7 +329,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                 busy = ui.busy && !asleep, ended = c.exited && !asleep, canSend = ui.waking == null, stopArmed = ui.stopArmed,
                 mode = c.permissionMode.ifEmpty { if (c.skipPermissions) "bypassPermissions" else "default" },
                 model = c.model, stateWords = stateLine(c.state, c.exited, asleep, ui.waking != null), cost = c.totalCostUsd,
-                commands = c.slashCommands, pending = ui.pending, suggestion = c.suggestion, uploads = ui.uploads,
+                commands = ChatAside.commands(c.slashCommands, ui.asideOk), pending = ui.pending, suggestion = c.suggestion, uploads = ui.uploads,
                 scheduled = ui.schedule.items.size, scheduleOpen = ui.schedule.open, onSchedule = actions::schedule,
                 enterSends = ui.enterSends, miniId = c.id,
             )
@@ -322,6 +345,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
             if (s is ChatSheet.Picture) ImageViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-image")); actions.sheet(null) }, onClose = { actions.sheet(null) })
             else if (s is ChatSheet.Video) VideoViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-video")) }, onClose = { actions.sheet(null) })
             else if (s is ChatSheet.Secrets) SheetOverlay({ actions.sheet(null) }) { secretsSheet() }
+            else if (s is ChatSheet.Aside) SheetOverlay({ actions.sheet(null) }) { AsideSheet(s, actions) { actions.sheet(null) } }
             else SheetOverlay({ actions.sheet(null) }) { ChatSheetContent(s, ui, actions, wide) }
         }
     }
@@ -455,6 +479,7 @@ private fun ChatSheetContent(s: ChatSheet, ui: ChatUi, a: ChatActions, wide: Boo
             // Narrow: the header has no room for the lock, so it is here.
             secrets = if (ui.secretsOk && !wide) ({ a.sheet(ChatSheet.Secrets) }) else null,
             secretGrants = ui.secretGrants,
+            aside = if (ui.asideOk && !ui.asleep) ({ a.sheet(ChatSheet.Aside()) }) else null,
         ), onDismiss = close)
         ChatSheet.Mode -> SheetCard("Permission mode", close) {
             val cur = ui.chat.permissionMode.ifEmpty { "default" }
@@ -486,7 +511,7 @@ private fun ChatSheetContent(s: ChatSheet, ui: ChatUi, a: ChatActions, wide: Boo
                     if (ag.running) Spinner(10.dp) else Dot(if (ag.status == "failed") CrundiColors.Red else CrundiColors.Green)
                     Column(Modifier.weight(1f)) {
                         Text(ag.description.ifEmpty { ag.subagentType.ifEmpty { "Agent" } }, style = CrundiType.Body.copy(color = if (ag.running) CrundiColors.TextPrimary else CrundiColors.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(listOfNotNull(ag.subagentType.takeIf { it.isNotEmpty() }, ag.step.ifEmpty { ag.status }.takeIf { it.isNotEmpty() }, "${ag.count} steps").joinToString(" · "), style = CrundiType.Meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(listOfNotNull(ag.subagentType.takeIf { it.isNotEmpty() }, ag.doing.ifEmpty { ag.status }.takeIf { it.isNotEmpty() }, "${ag.count} steps").joinToString(" · "), style = CrundiType.Meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     CrundiIcon("chevron-right", size = 14.dp, tint = CrundiColors.TextMuted)
                 }
@@ -499,7 +524,7 @@ private fun ChatSheetContent(s: ChatSheet, ui: ChatUi, a: ChatActions, wide: Boo
             val ag = ui.chat.agents[s.toolUseId]
             SheetCard(ag?.description?.ifEmpty { null } ?: ag?.subagentType ?: "Agent", close) {
                 if (ag == null) { Text("This agent has gone.", style = CrundiType.Small, modifier = Modifier.padding(10.dp)); return@SheetCard }
-                Text(listOfNotNull(ag.subagentType.ifEmpty { null }, ag.status.ifEmpty { null }, ag.step.ifEmpty { null }).joinToString(" · "), style = CrundiType.Meta, modifier = Modifier.padding(horizontal = 8.dp))
+                Text(listOfNotNull(ag.subagentType.ifEmpty { null }, ag.status.ifEmpty { null }, ag.doing.ifEmpty { null }).joinToString(" · "), style = CrundiType.Meta, modifier = Modifier.padding(horizontal = 8.dp))
                 LazyColumn(Modifier.heightIn(max = 520.dp).padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (ag.prompt.isNotEmpty()) item { ChatEntryView(ChatEntry("prompt", "user", text = truncate(ag.prompt, 1200)), ui.chat.id, ui.open, a) }
                     items(ag.messages, key = { "ag-" + it.id }) { e -> ChatEntryView(e, ui.chat.id, ui.open, a) }
@@ -509,6 +534,7 @@ private fun ChatSheetContent(s: ChatSheet, ui: ChatUi, a: ChatActions, wide: Boo
         }
         is ChatSheet.Video -> {}
         ChatSheet.Secrets -> {}
+        is ChatSheet.Aside -> {}
         is ChatSheet.Picture -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val img = rememberServerImage(s.media.path, 2048)
             if (img != null) Image(img, contentDescription = s.media.caption.ifEmpty { "Image" }, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth())
@@ -608,11 +634,17 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
     // Secrets pre-authorised for this chat: an owner's own chat, on a server that offers it.
     val secretsOk = ChatSecretPreauth.supported(shellData.capabilities) && server?.role != "collaborator" && paneRow?.collaborator == null
     val grants = rememberChatGrants(api, chatId, secretsOk)
+    // Claude Code's own summaries (ChatSummaries.kt), on a server that makes them.
+    val recapOk = ChatRecaps.supported(shellData.capabilities)
+    val asideOk = ChatAside.supported(shellData.capabilities)
+    LaunchedEffect(chatId, asideOk) {
+        if (asideOk) ChatAsideBus.opens.collect { if (it == chatId) ui = ui.copy(sheet = ChatSheet.Aside()) }
+    }
     // Asked for from outside the chat's own header (a workbench pane's menu).
     LaunchedEffect(chatId, secretsOk) {
         if (secretsOk) ChatSecretsBus.opens.collect { if (it == chatId) ui = ui.copy(sheet = ChatSheet.Secrets) }
     }
-    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true, secretsOk = secretsOk, secretGrants = ChatSecretPreauth.active(grants, System.currentTimeMillis()).size)
+    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true, secretsOk = secretsOk, secretGrants = ChatSecretPreauth.active(grants, System.currentTimeMillis()).size, recapOk = recapOk, asideOk = asideOk)
     // A new chat (or one back under a new id) with nothing of its own takes the project's draft, unless another open chat has it.
     LaunchedEffect(project) { composer.attach(project, ui.draft)?.let { ui = ui.copy(draft = it) } }
 
@@ -695,6 +727,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
             if (r is ChatSleep.Outcome.Sent) ui = ui.copy(
                 draft = if (ui.draft.trim() == text) "" else ui.draft, sentSeq = ui.sentSeq + 1,
                 retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion,
+                retiredRecap = ui.chat.recap?.key ?: ui.retiredRecap,
             )
             if (r is ChatSleep.Outcome.Failed) ui = ui.copy(error = r.message)
             if (r.id != chatId) { composer.forget(); onMoved(r.id, ChatCarry(ui.draft, ui.error)) }
@@ -741,10 +774,17 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         override fun send() {
             val text = ui.draft.trim()
             if (text.isEmpty() || ui.waking != null) return
+            // "/btw ..." is a question on the side, as in Claude Code, not a message (a server without them gets it as typed).
+            ChatAside.question(text, view.asideOk)?.let { q ->
+                ui = ui.copy(draft = "")
+                if (q.isEmpty()) ui = ui.copy(sheet = ChatSheet.Aside()) else askAside(q)
+                return
+            }
             // Asleep: wake it, then send. The text stays in the box meanwhile.
             if (view.asleep) { wakeChat("resume", text, known = true); return }
             val wasBusy = view.busy
-            ui = ui.copy(draft = "", stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion)
+            // The recap goes as a message does (the server clears it too, and says so a moment later).
+            ui = ui.copy(draft = "", stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion, retiredRecap = ui.chat.recap?.key ?: ui.retiredRecap)
             scope.launch {
                 try {
                     val r = api.chats.send(chatId, text)
@@ -844,7 +884,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         override fun useSuggestion(s: ChatSuggestion) {
             val text = s.text.trim()
             if (text.isEmpty() || view.busy) return
-            ui = ui.copy(retiredSuggestion = s.uuid.ifEmpty { s.text }, sentSeq = ui.sentSeq + 1)
+            ui = ui.copy(retiredSuggestion = s.uuid.ifEmpty { s.text }, sentSeq = ui.sentSeq + 1, retiredRecap = ui.chat.recap?.key ?: ui.retiredRecap)
             scope.launch {
                 try { api.chats.send(chatId, text) } catch (e: Exception) {
                     ui = ui.copy(draft = text)
@@ -854,6 +894,22 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
             }
         }
         override fun dismissSuggestion() { act { api.chats.dismissSuggestion(chatId) } }
+        override fun dismissRecap() {
+            val r = ui.chat.recap ?: return
+            ui = ui.copy(retiredRecap = r.key)
+            act { api.chats.dismissRecap(chatId) }
+        }
+        // The answer lands in the sheet only if that question's sheet is still open; it is kept nowhere else.
+        override fun askAside(question: String) {
+            val q = question.trim()
+            if (q.isEmpty()) return
+            val asking = ChatSheet.Aside(question = q, asked = true)
+            ui = ui.copy(sheet = asking)
+            scope.launch {
+                val done = try { asking.copy(answer = api.chats.aside(chatId, q)) } catch (e: Exception) { asking.copy(error = errorText(e)) }
+                if (ui.sheet == asking) ui = ui.copy(sheet = done)
+            }
+        }
         override fun dismissAgents() { act { api.chats.dismissAgents(chatId, all = true) } }
         override fun setMode(mode: String) { act { api.chats.setPermissionMode(chatId, mode) } }
         override fun setModel(model: String) { act { api.chats.setModel(chatId, model) } }

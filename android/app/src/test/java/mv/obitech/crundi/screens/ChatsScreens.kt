@@ -118,6 +118,29 @@ class ChatsScreens : ScreenshotTest() {
         ChatScreen(ChatUi(ChatState("a1b2c3d4e5f60718")), noChat)
     }
 
+    /** chat-summaries.jsonl: a batch of tool calls with its label, an agent's progress line, an idle recap. */
+    private fun summaries(): ChatState {
+        var s = ChatState("c5d6e7f8a9b0c1d2")
+        for (line in FakeApi.text("chat-summaries.jsonl").lines().filter { it.isNotBlank() }) s = mv.obitech.crundi.api.ChatReducer.message(s, CrundiJson.parseToJsonElement(line).jsonObject)
+        return s
+    }
+
+    @Test fun chatSummaries() = snap("chats-chat-summaries") {
+        ChatScreen(ChatUi(summaries(), recapOk = true, asideOk = true), noChat)
+    }
+
+    @Test fun chatSummariesOpen() = snap("chats-chat-summaries-open") {
+        ChatScreen(ChatUi(summaries(), open = setOf("g:t1")), noChat)
+    }
+
+    @Test fun asideAsk() = snap("chats-aside-ask") {
+        ChatScreen(ChatUi(summaries(), asideOk = true, sheet = ChatSheet.Aside("What is left to do?")), noChat)
+    }
+
+    @Test fun asideAnswer() = snap("chats-aside-answer") {
+        ChatScreen(ChatUi(summaries(), asideOk = true, sheet = ChatSheet.Aside("What is left to do?", asked = true, answer = "Only the pull request: the parser is tidied and **its tests pass**.")), noChat)
+    }
+
     @Test fun factoryResult() = snap("chats-chat-factory-result") {
         val card = ChatEntry.from(CrundiJson.parseToJsonElement(FACTORY_RESULT).jsonObject)
         val c = chat(0)
