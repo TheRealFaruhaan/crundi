@@ -61,6 +61,24 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1 (en-US)
+
+Version code 28. Production, since 1.1.0 (code 18): everything from
+1.1.1-dev.1 to 1.1.1-dev.9.
+
+```
+<en-US>
+- Urgent alerts can take the screen and ring like an alarm: slide to attend or dismiss, snooze 5 to 60 minutes, ring 1 to 15 minutes.
+- Approve secrets in one step, with a passphrase or your fingerprint.
+- Allow chosen secrets for one chat, and revoke them.
+- Edit a secret; old 6-digit PINs offer a passphrase on use.
+- Secret requests in chat bubbles.
+- What's new tour on the phone.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.9 (en-US)
 
 Version code 27. Since 1.1.1-dev.8 (code 26): passphrases (capability

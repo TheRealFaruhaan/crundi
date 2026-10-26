@@ -1,0 +1,76 @@
+{
+  "steps": [
+    {
+      "id": "factory-secrets",
+      "tag": "Factories",
+      "title": "Secrets a factory may use",
+      "body": "A factory can list the secrets its team may use, by name only. When you start a run you type each one's passphrase once; it is kept in memory for that run and forgotten when it ends. The Manager uses them without asking you again, values stay hidden in every output, and the journal notes who used which.",
+      "art": "factory-secrets.html",
+      "artTitle": "Start run"
+    },
+    {
+      "id": "factory-pause-now",
+      "tag": "Factories",
+      "title": "Pause now, or until usage resets",
+      "body": "Pause now asks how: let the steps in progress finish their turn, or stop them now; stopped steps carry on where they were at Resume. You can also have the run carry on by itself once the usage window resets, so a run that hit the limit at night is going again by the morning.",
+      "art": "factory-pause.html",
+      "artTitle": "Pause"
+    },
+    {
+      "id": "trigger-needs-cards",
+      "tag": "Factories",
+      "title": "Triggers that wait for work",
+      "body": "A trigger can now start a run only when a column of the board has a card in it. Set a \"next card\" trigger to Only if To do has a card, and the team works down To do and stops when it is empty, instead of waking a Manager with nothing to do. A firing that finds the column empty is noted in the trigger's history as skipped.",
+      "art": "trigger-needs-cards.html",
+      "artTitle": "Trigger"
+    },
+    {
+      "id": "skills-from-link",
+      "tag": "Skills",
+      "title": "Install skills from a GitHub link",
+      "body": "In Settings, Skills, paste a GitHub link or an npx skills add line beside Upload. A repository with several skills lets you choose which; each one remembers where it came from and gets an Update button. It works on the web, the desktop and the phone, and chats can do it too.",
+      "art": "skills-from-link.html",
+      "artTitle": "Skills"
+    },
+    {
+      "id": "alert-full-screen",
+      "tag": "Phone app",
+      "title": "Urgent alerts that take the screen",
+      "body": "An urgent alert can now light up a locked phone and ring like an alarm: slide right to attend, which opens the chat once the phone is unlocked, or left to dismiss. Turn on Full-screen urgent alerts in the app's settings; a one-time setup after installing offers it, along with ringing through Do Not Disturb. While the phone is in use it rings as a notification at the top, as before.",
+      "art": "alert-full-screen.html",
+      "artTitle": "Crundi"
+    },
+    {
+      "id": "alert-ring-snooze",
+      "tag": "Urgent alerts",
+      "title": "Alerts that wait for your answer",
+      "body": "An urgent alert now rings for 5 minutes (set 1 to 15 in the phone app's settings), and you can snooze it for 5, 15, 30 minutes or an hour. Claude hears what you did: attended, dismissed, snoozed, or no answer, and carries on from there. While it waits it can keep working in the background.",
+      "art": "alert-ring-snooze.html",
+      "artTitle": "Crundi"
+    },
+    {
+      "id": "secret-passphrases",
+      "tag": "Secrets",
+      "title": "Passphrases, and secrets you can edit",
+      "body": "Secrets are now locked with a passphrase of at least 8 characters, not only digits, and a much slower key, so a copy of the secrets file is far harder to crack. A secret still on an old 6-digit PIN keeps working, and each time you use it you are offered to set a passphrase there and then. Edit a secret to change its passphrase or its value, with the current one.",
+      "art": "secret-passphrases.html",
+      "artTitle": "Secrets"
+    },
+    {
+      "id": "chat-secret-preauth",
+      "tag": "Secrets",
+      "title": "Allow secrets for one chat",
+      "body": "Let a chat use chosen secrets without asking each time: for 15 minutes, an hour, 8 hours, or until the chat ends. Open the lock in the chat's header, or tick Allow for this chat when a secret is asked for. It only lets the chat run commands with them; the values are never shown. Passphrases stay in the server's memory, never on disk, and you can see and revoke each one.",
+      "art": "chat-secret-preauth.html",
+      "artTitle": "Chat"
+    },
+    {
+      "id": "secret-pin-fingerprint",
+      "tag": "Phone app",
+      "title": "Secrets with your fingerprint",
+      "body": "The phone app can keep a secret's passphrase behind your fingerprint: tick Save for fingerprint when you approve. Next time a fingerprint button sits where Approve is; touch it and the request is approved by itself. Type instead and Approve comes back. Turn it on in the app's settings; the chat bubble shows secret requests too.",
+      "art": "secret-pin-fingerprint.html",
+      "artTitle": "Crundi"
+    }
+  ]
+}
