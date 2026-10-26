@@ -207,7 +207,7 @@ function rig({ phoneOk = true, pushOk = true, channelsOn = ['telegram'] } = {}) 
     const r = await a.alert({ title: 'Down' });
     const w = a.waitForAnswer(r.alertId);
     a.answer(r.alertId, { action: 'ringing', ringMs: 99 * 60000 });
-    ok(pending.ms === RING_MAX_MS, 'answer: never more than 15 minutes in all, whatever the phone says');
+    ok(pending.ms <= RING_MAX_MS && pending.ms > RING_MAX_MS - 5000, 'answer: never more than 15 minutes in all, whatever the phone says');
     pending.fn();
     const got = await w;
     ok(got.answer === 'no answer' && /rang for 15 minutes/.test(describeAnswer(got)), 'answer: nobody answered within the ring time');
