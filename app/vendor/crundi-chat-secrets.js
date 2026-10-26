@@ -41,8 +41,13 @@
     o = o || {};
     if (o.apiFetch) host.apiFetch = o.apiFetch;
     if (o.toast) host.toast = o.toast;
+    if (SL()) SL().configure(o);
     injectCss();
   }
+  // How a lock is typed (6-digit PIN or passphrase) and the upgrade prompt:
+  // crundi-secret-lock.js, loaded first. Without it, PINs as before.
+  function SL() { return window.CrundiSecretLock || null; }
+  function lockOk(s, v) { return SL() ? SL().lockOk(SL().kindOf(s), v) : /^[0-9]{6}$/.test(v || ''); }
 
   function api(path, opts) {
     if (!host.apiFetch) return Promise.reject(new Error('Not ready'));
@@ -190,8 +195,10 @@
         var pin = document.createElement('input');
         pin.className = 'ccs-pin'; pin.setAttribute('inputmode', 'numeric'); pin.setAttribute('maxlength', '6'); pin.setAttribute('autocomplete', 'off');
         pin.type = 'password'; pin.placeholder = 'PIN'; pin.setAttribute('aria-label', 'PIN for ' + s.name); pin.setAttribute('data-sid', s.id);
+        var pass = s.lock === 'passphrase' && SL();
+        if (pass) { SL().field(pin, 'passphrase', s.name); pin.classList.add('ccs-pass'); }
         pin.value = dlg.pins[s.id] || '';
-        pin.oninput = function () { pin.value = pin.value.replace(/[^0-9]/g, '').slice(0, 6); dlg.pins[s.id] = pin.value; };
+        pin.oninput = function () { if (!pass) pin.value = pin.value.replace(/[^0-9]/g, '').slice(0, 6); dlg.pins[s.id] = pin.value; };
         pin.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
         row.appendChild(pin);
         if (dlg.bad === s.id) row.classList.add('ccs-bad');
@@ -210,7 +217,9 @@
     var ids = Object.keys(dlg.chosen);
     dlg.err.textContent = '';
     if (!ids.length) { dlg.err.textContent = 'Choose at least one secret.'; return; }
-    for (var i = 0; i < ids.length; i++) if (!/^[0-9]{6}$/.test(dlg.pins[ids[i]] || '')) { dlg.bad = ids[i]; drawPick(); dlg.err.textContent = 'Enter the 6-digit PIN of each secret chosen.'; return; }
+    var byId = {};
+    (dlg.secrets || []).forEach(function (s) { byId[s.id] = s; });
+    for (var i = 0; i < ids.length; i++) if (!lockOk(byId[ids[i]], dlg.pins[ids[i]] || '')) { dlg.bad = ids[i]; drawPick(); dlg.err.textContent = 'Enter the PIN or passphrase of each secret chosen.'; return; }
     dlg.busy = true; dlg.go.disabled = true; dlg.go.textContent = 'Checking…';
     var body = { action: 'grant', sessionId: dlg.sid, duration: dlg.duration, secrets: ids.map(function (id) { return { id: id, pin: dlg.pins[id] }; }) };
     post(body).then(function (d) {
@@ -227,6 +236,13 @@
       }
       setGrants(dlg.sid, d.grants);
       host.toast('Pre-authorised for this chat');
+      // An old lock just accepted: offer to set a passphrase now, with it.
+      if (Array.isArray(d.upgradable) && SL()) {
+        d.upgradable.forEach(function (id) {
+          var s = byId[id];
+          if (s && dlg.pins[id]) SL().upgrade({ id: id, name: s.name, lock: s.lock, pin: dlg.pins[id] });
+        });
+      }
       dlg.chosen = {}; dlg.pins = {}; dlg.bad = '';
       drawPick();
     });
@@ -245,7 +261,7 @@
     head.appendChild(el('div', 'ccs-title', 'Secrets for this chat'));
     var x = el('button', 'ccs-x', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Close'); x.onclick = close; head.appendChild(x);
     card.appendChild(head);
-    card.appendChild(el('div', 'ccs-hint', 'A pre-authorised secret lets this chat run commands with it without asking for the PIN. Only to run: its value is never shown, and Claude reading a value still asks you every time. The PINs are kept in the server’s memory only, for this chat only.'));
+    card.appendChild(el('div', 'ccs-hint', 'A pre-authorised secret lets this chat run commands with it without asking for the PIN or passphrase. Only to run: its value is never shown, and Claude reading a value still asks you every time. They are kept in the server’s memory only, for this chat only.'));
     card.appendChild(el('div', 'ccs-sec', 'Pre-authorised now'));
     var list = el('div', 'ccs-list'); card.appendChild(list);
     card.appendChild(el('div', 'ccs-sec', 'Pre-authorise'));
@@ -278,7 +294,7 @@
       load(sid).then(function (d) { if (d && !d.ok && dlg) err.textContent = d.error || ''; });
       api('/api/secrets').then(function (d) {
         if (!dlg || dlg.sid !== sid) return;
-        dlg.secrets = d && d.ok ? (d.secrets || []).map(function (s) { return { id: s.id, name: s.name }; }) : [];
+        dlg.secrets = d && d.ok ? (d.secrets || []).map(function (s) { return { id: s.id, name: s.name, lock: s.lock === 'passphrase' ? 'passphrase' : 'pin', needsUpgrade: !!s.needsUpgrade }; }) : [];
         drawPick();
       }).catch(function () { if (dlg) { dlg.secrets = []; drawPick(); } });
     });
@@ -311,6 +327,7 @@
       '.ccs-pick{flex:1;display:flex;align-items:center;gap:8px;cursor:pointer;min-width:0}',
       '.ccs-pin{width:110px;padding:7px 9px;border-radius:var(--radius-sm,6px);border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font-family:var(--mono,monospace);font-size:15px;letter-spacing:.25em;text-align:center}',
       '.ccs-pin:focus{outline:none;border-color:var(--accent)}',
+      '.ccs-pin.ccs-pass{width:150px;letter-spacing:normal;font-family:inherit;text-align:left}',
       '.ccs-durs{display:flex;flex-wrap:wrap;gap:6px}',
       '.ccs-chip{padding:6px 11px;border-radius:99px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:12.5px;cursor:pointer}',
       '.ccs-chip.on{background:var(--accent-dim,var(--bg-hover));border-color:var(--accent);color:var(--accent-hover,var(--text-primary))}',

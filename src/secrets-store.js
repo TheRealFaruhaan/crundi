@@ -268,7 +268,7 @@ export async function editSecret(id, { pin, newPin, value, name, description } =
   const s = store.secrets.find(x => x.id === id);
   if (!s || s.salt !== before.salt || s.data !== before.data) return { ok: false, error: 'The secret changed meanwhile; try again.' };
   if (sealed) Object.assign(s, sealed, relock ? { lock: 'passphrase' } : {});
-  if (name !== undefined && String(name).trim()) s.name = String(name).trim();
+  if (name !== undefined && name !== null && String(name).trim()) s.name = String(name).trim();
   if (description !== undefined && description !== null) s.description = String(description);
   s.updatedAt = new Date().toISOString();
   save(store);

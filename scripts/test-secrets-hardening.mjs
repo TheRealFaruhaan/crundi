@@ -87,7 +87,7 @@ const web = read('src', 'webapp.js');
 ok(/writePrivateFile\(keyFile, internalApiKey\)/.test(web), '.api-key is written 0600');
 ok(/writePrivateFile\(envPath, content/.test(web), 'the .env is written 0600');
 const idx = read('src', 'index.js');
-ok(/securePrivateFolders\(\{ appDir: config\.appDir, dataDir: config\.dataDir \}\)/.test(idx), 'the server tightens its folders at start');
+ok(/securePrivateFolders\(\{ appDir: ownAppDir \? config\.appDir : '', dataDir: config\.dataDir \}\)/.test(idx), 'the server tightens its folders at start');
 const tmpWrites = [];
 for (const f of readdirSync(join(root, 'src')).filter((n) => n.endsWith('.js') && n !== 'webapp-html.js' && n !== 'rpa.js' && n !== 'private-fs.js')) {
   for (const line of read('src', f).split('\n')) if (/writeFileSync\(tmp\b/.test(line) && !/0o600/.test(line)) tmpWrites.push(f + ': ' + line.trim());
@@ -228,6 +228,26 @@ ok(/lock: r\.lock, needsUpgrade: r\.needsUpgrade/.test(web), 'check says lock an
 ok(/upgradable/.test(read('src', 'factory-runner.js')), 'a factory start says which unlocked secrets are upgradable');
 const { mayAccess, ROLE_COLLABORATOR } = await import('../src/access-policy.js');
 ok(!mayAccess({ role: ROLE_COLLABORATOR, collabKey: 'pc:sam', projects: ['demo'], roots: { demo: '/tmp/wt' } }, 'POST', '/api/secrets'), 'a collaborator cannot reach the edit');
+
+// ─── Clients (web) ───
+const html = read('src', 'webapp-html.js');
+const lockJs = read('app', 'vendor', 'crundi-secret-lock.js');
+const page = read('src', 'chat-page.js');
+const pageJs = read('app', 'vendor', 'crundi-chat-page.js');
+const csJs = read('app', 'vendor', 'crundi-chat-secrets.js');
+const fxJs = read('app', 'vendor', 'crundi-factories.js');
+ok(html.indexOf('src="/vendor/crundi-secret-lock.js') > 0 && html.indexOf('src="/vendor/crundi-secret-lock.js') < html.indexOf('src="/vendor/crundi-chat-secrets.js'), 'the workbench loads crundi-secret-lock.js before the chat secrets script');
+ok(page.indexOf('src="/vendor/crundi-secret-lock.js') > 0 && page.indexOf('src="/vendor/crundi-secret-lock.js') < page.indexOf('src="/vendor/crundi-chat-page.js'), 'and so does the compact chat page');
+ok(/At least ' \+ MIN \+ ' characters, and not only digits/.test(lockJs) && /\/\[\^0-9\]\/\.test\(t\)/.test(lockJs), 'the shared script has the same rule as the server');
+ok(/This secret uses an old 6-digit PIN\. Set a new passphrase \(8\+ characters\)\./.test(lockJs) && /'Not now'/.test(lockJs) && /'Update'/.test(lockJs), 'the upgrade prompt: its words, Update and Not now');
+ok(/supports\('secret-upgrade'\)/.test(lockJs) && /action: 'edit', id: o\.id, pin: oldPin, newPin: np/.test(lockJs), 'the upgrade is capability gated and sends the lock just typed');
+ok(!/localStorage|sessionStorage/.test(lockJs) && !/\b(prompt|confirm|alert)\(/.test(lockJs), 'nothing kept in the browser, no browser dialogs');
+ok(/r\.lock === 'passphrase'/.test(html) && /L\.upgrade\(\{ id: req\.secretId/.test(html), 'workbench request card: a passphrase field, and the upgrade after an old lock');
+ok(/data-sact="edit"/.test(html) && /L\.edit\(s,/.test(html) && /supports\('secret-edit'\)/.test(html), 'workbench Secrets list: Edit, capability gated');
+ok(/sec-add-pin2/.test(html) && /id="sec-add-save"[^>]*disabled/.test(html), 'workbench add form: passphrase typed twice, Save disabled until it meets the rule');
+ok(/lock = r\.lock === 'passphrase' && SL/.test(pageJs) && /SL\.upgrade\(\{ id: r\.secretId/.test(pageJs), 'chat page request card: a passphrase field and the upgrade');
+ok(/d\.upgradable/.test(csJs) && /SL\(\)\.upgrade/.test(csJs) && /s\.lock === 'passphrase'/.test(csJs), 'pre-authorise dialog: passphrase fields and the upgrade');
+ok(/r\.upgradable/.test(fxJs) && /L\.upgrade/.test(fxJs) && /x\.lock === 'passphrase'/.test(fxJs), 'factory start: passphrase fields and the upgrade');
 
 rmSync(base, { recursive: true, force: true });
 console.log(failed ? `\n${failed} failed` : '\nall passed');

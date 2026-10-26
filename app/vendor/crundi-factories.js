@@ -73,6 +73,7 @@
     '.fx-pin p{margin:0;font-size:12.5px;color:var(--text-secondary);line-height:1.45;word-break:break-word}',
     '.fx-pin input{width:100%;box-sizing:border-box;text-align:center;letter-spacing:.4em;font-size:18px;padding:9px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px}',
     '.fx-pin input:focus{outline:none;border-color:var(--accent)}',
+    '.fx-pin input.fx-pass{letter-spacing:normal;text-align:left;font-size:15px}',
     '.fx-pin-err{color:var(--red);font-size:12px;min-height:16px}',
     '.fx-pin-step{font-size:11.5px;color:var(--text-muted)}',
     '.fx-pin-btns{display:flex;gap:8px}',
@@ -223,7 +224,14 @@
   // which never returns the value) before the next is asked; Skip leaves that
   // secret locked, and the person is asked when the team first uses it.
   // Resolves { pins: { id: PIN } }, or null when the person cancels.
+  // How each is typed (a 6-digit PIN, or a passphrase) is crundi-secret-lock.js.
+  function SL(ctx) {
+    var L = window.CrundiSecretLock || null;
+    if (L && ctx) L.configure({ apiFetch: ctx.apiFetch, toast: ctx.toast });
+    return L;
+  }
   function askSecretPins(ctx, list) {
+    var L = SL(ctx);
     return new Promise(function (resolve) {
       var pins = {}, i = 0;
       var bg = el('div', 'fx-pin-bg');
@@ -241,13 +249,17 @@
         var x = list[i];
         h.innerHTML = ctx.icon('lock') + '<span>' + esc(x.name) + '</span>';
         stepEl.textContent = list.length > 1 ? 'Secret ' + (i + 1) + ' of ' + list.length : '';
-        sub.textContent = 'This factory may use this secret. Its PIN is kept in memory for this run only, so the team does not stop to ask; the value is never shown. Skip to be asked when it is first used.';
+        var pass = x.lock === 'passphrase' && L;
+        sub.textContent = 'This factory may use this secret. Its ' + (pass ? 'passphrase' : 'PIN') + ' is kept in memory for this run only, so the team does not stop to ask; the value is never shown. Skip to be asked when it is first used.';
+        if (pass) { L.field(inp, 'passphrase', x.name); inp.classList.add('fx-pass'); inp.placeholder = 'Passphrase'; }
+        else { inp.type = 'password'; inp.inputMode = 'numeric'; inp.maxLength = 6; inp.placeholder = '••••••'; inp.classList.remove('fx-pass'); inp.dataset.lock = 'pin'; }
         inp.value = ''; err.textContent = '';
         setTimeout(function () { inp.focus(); }, 30);
       }
       async function submit() {
-        var pin = inp.value.trim();
-        if (!/^[0-9]{6}$/.test(pin)) { err.textContent = 'Enter a 6-digit PIN'; return; }
+        var pass = list[i].lock === 'passphrase' && L;
+        var pin = pass ? inp.value : inp.value.trim();
+        if (pass ? !L.lockOk('passphrase', pin) : !/^[0-9]{6}$/.test(pin)) { err.textContent = pass ? 'Enter the passphrase' : 'Enter a 6-digit PIN'; return; }
         unlock.disabled = true;
         var r = await post(ctx, '/api/secrets', { action: 'check', id: list[i].id, pin: pin }).catch(function (e) { return { ok: false, error: e.message }; });
         unlock.disabled = false;
@@ -276,7 +288,7 @@
     if (caps.indexOf('factory-secrets') < 0) return [];
     var d = await getJson(ctx, '/api/secrets').catch(function () { return null; });
     var known = (d && d.secrets) || [];
-    return ids.map(function (id) { return known.find(function (x) { return x.id === id; }); }).filter(Boolean).map(function (x) { return { id: x.id, name: x.name }; });
+    return ids.map(function (id) { return known.find(function (x) { return x.id === id; }); }).filter(Boolean).map(function (x) { return { id: x.id, name: x.name, lock: x.lock === 'passphrase' ? 'passphrase' : 'pin' }; });
   }
 
   // ─── Start a factory: a change request ───
@@ -485,7 +497,20 @@
       var r = await post(ctx, '/api/factory-runs', { action: 'start', project: projSel.value, factoryId: fSel.value, cr: { title: v.title, sections: v.sections, attachments: attachments }, mergeMode: mm.value || undefined, ignoreMissingSkills: !!ignoreMissingSkills, secretPins: secretPins || undefined }).catch(function (e) { return { ok: false, error: e.message }; });
       lbl.textContent = 'Start'; go.disabled = false;
       if (r.ok || r.field === 'secrets') heldPins = null;
-      if (r.ok) { dropDraft(fSel.value); md.close(); ctx.toast('Factory started.', 'success'); if (opts.onStarted) opts.onStarted(r.run); return; }
+      if (r.ok) {
+        dropDraft(fSel.value); md.close(); ctx.toast('Factory started.', 'success'); if (opts.onStarted) opts.onStarted(r.run);
+        // Secrets unlocked with an old lock: offer to set a passphrase now,
+        // with what was just typed (the run keeps working: the server moves
+        // its kept lock to the new one).
+        var L = SL(ctx);
+        if (L && Array.isArray(r.upgradable) && secretPins) {
+          r.upgradable.forEach(function (id) {
+            var x = (toUnlock || []).find(function (s) { return s.id === id; }) || { id: id, name: '' };
+            if (secretPins[id]) L.upgrade({ id: id, name: x.name, lock: x.lock, pin: secretPins[id] });
+          });
+        }
+        return;
+      }
       if (r.field === 'secrets') { info.innerHTML = ''; info.appendChild(el('div', 'fx-err', esc(r.error || 'A secret could not be unlocked.') + ' Press Start to type it again.')); return; }
       if (r.field && r.field !== 'attachments') return fieldError(r.field, r.error);
       if (r.missingSkills) {

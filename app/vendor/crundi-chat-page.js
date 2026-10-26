@@ -268,9 +268,14 @@
   var asks = [], askArmed = '', askError = '', askShown = '', askAuto = false;
   var askAllow = { on: false, duration: '1h' };   // "Allow for this chat" on the open card
   var CS = window.CrundiChatSecrets || null;
+  // How the lock is typed (PIN or passphrase) and the "set a passphrase"
+  // prompt after an old one is accepted: crundi-secret-lock.js.
+  var SL = window.CrundiSecretLock || null, slReady = false;
+  function slInit() { if (SL && !slReady) { slReady = true; SL.configure({ apiFetch: apiFetch, toast: toast }); } }
   function canAllow(r) { return !!(CS && CS.isSupported() && r && r.kind === 'run' && r.sessionId === sid); }
   function loadAsks() {
     if (stopped || !view || document.visibilityState !== 'visible') return;
+    slInit();
     apiFetch('/api/secrets').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
       if (!d) return;
       asks = (d.requests || []).filter(function (r) { return r.sessionId ? r.sessionId === sid : (!r.project || r.project === meta.project); });
@@ -309,10 +314,12 @@
         var pin = document.createElement('input');
         pin.setAttribute('inputmode', 'numeric'); pin.setAttribute('maxlength', '6'); pin.setAttribute('autocomplete', 'off');
         pin.placeholder = 'PIN'; pin.setAttribute('aria-label', '6-digit PIN');
+        var lock = r.lock === 'passphrase' && SL ? 'passphrase' : 'pin';
+        if (lock === 'passphrase') { SL.field(pin, 'passphrase', r.secretName); pin.className = 'pass'; }
         row.appendChild(pin);
         var unlock = function () {
-          var v = String(pin.value || '').trim();
-          if (!/^[0-9]{6}$/.test(v)) { askError = 'Enter a 6-digit PIN'; drawAsks(); return; }
+          var v = lock === 'passphrase' ? String(pin.value || '') : String(pin.value || '').trim();
+          if (lock === 'passphrase' ? !SL.lockOk('passphrase', v) : !/^[0-9]{6}$/.test(v)) { askError = lock === 'passphrase' ? 'Enter the passphrase' : 'Enter a 6-digit PIN'; drawAsks(); return; }
           var allow = canAllow(r) ? CS.allowForChat(askAllow) : null;
           var body = { action: 'approve', reqId: r.id, pin: v };
           if (allow) body.allowForChat = allow;
@@ -322,6 +329,8 @@
             if (!d || !d.ok) { askError = (d && d.error) || 'Wrong PIN'; askShown = ''; drawAsks(); return; }
             askArmed = ''; askError = ''; askAllow = { on: false, duration: askAllow.duration };
             toast(allow && d.preauthorised ? 'Approved, and allowed for this chat' : 'Approved'); loadAsks();
+            // An old lock: offer to set a passphrase now, with the one just typed.
+            if ((d.needsUpgrade || r.needsUpgrade) && SL) SL.upgrade({ id: r.secretId, name: r.secretName, lock: r.lock, pin: v });
           });
         };
         pin.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); unlock(); } });

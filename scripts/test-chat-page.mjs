@@ -62,13 +62,14 @@ const html = getChatPageHtml({ version: '1.20.0-dev.1', rootCss, tag: (f) => 'ta
 ok(html.startsWith('<!DOCTYPE html>') && html.includes('data-version="1.20.0-dev.1"'), 'the page says which server version built it');
 ok(html.includes('--bg-primary: #0a0a0f') && html.includes('--accent: #6366f1'), 'it carries the main page\'s palette, taken from the main page');
 const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
-ok(scripts.length === 5 && scripts.every((m) => /\bsrc="\/vendor\/[a-z-]+\.js\?v=tag-[a-z-]+\.js"/.test(m[1]) && m[2] === ''), 'every script is a file, with a version on its address; none is written into the page');
+ok(scripts.length === 6 && scripts.every((m) => /\bsrc="\/vendor\/[a-z-]+\.js\?v=tag-[a-z-]+\.js"/.test(m[1]) && m[2] === ''), 'every script is a file, with a version on its address; none is written into the page');
 ok(html.indexOf('claude-chat.js') < html.indexOf('crundi-chat-page.js'), 'the chat component loads before the page that hosts it');
 ok(!/\son[a-z]+=/.test(html.replace(/<style>[\s\S]*?<\/style>/, '')), 'and no handler is written into the markup');
 for (const id of ['cp-back', 'cp-mark', 'cp-title', 'cp-proj', 'cp-more', 'cp-chat', 'cp-note', 'cp-menu']) ok(html.includes(`id="${id}"`), 'the page has its ' + id);
-ok(getChatPageHtml({ version: '"><script>x</script>', rootCss: '', tag: () => '"><b>' }).match(/<script\b/g).length === 5, 'nothing passed in can add markup');
+ok(getChatPageHtml({ version: '"><script>x</script>', rootCss: '', tag: () => '"><b>' }).match(/<script\b/g).length === 6, 'nothing passed in can add markup');
 // Secrets pre-authorised for this chat: the same dialog and PIN choice as the workbench.
 ok(html.includes('/vendor/crundi-chat-secrets.js') && html.indexOf('crundi-chat-secrets.js') < html.indexOf('crundi-chat-page.js'), 'the shared chat-secrets script loads before the page');
+ok(html.includes('/vendor/crundi-secret-lock.js') && html.indexOf('crundi-secret-lock.js') < html.indexOf('crundi-chat-page.js'), 'the shared secret-lock script (PIN or passphrase, upgrade) loads before the page');
 ok(html.includes('id="cp-lock"') && html.includes('data-do="secrets"'), 'a lock in the header (wide) and a menu line (narrow) for this chat\'s secrets');
 
 // ─── Its script ───

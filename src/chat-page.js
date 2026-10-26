@@ -95,6 +95,7 @@ button{font:inherit;color:inherit}
 .cp-ask-row button{padding:9px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg-tertiary);cursor:pointer;font-size:14px}
 .cp-ask-row button.go{background:var(--accent);border-color:var(--accent);color:#fff}
 .cp-ask-row input{flex:1;min-width:110px;padding:9px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);font:inherit;font-size:16px;letter-spacing:3px}
+.cp-ask-row input.pass{letter-spacing:normal}
 .cp-ask-err{color:var(--red);font-size:12.5px;margin-top:6px}
 /* Reconnecting: a thin line under the header, as on the main page. Waits a
    moment so a blip shows nothing; amber and moving while it tries, red when
@@ -145,6 +146,7 @@ button{font:inherit;color:inherit}
 <script src="/vendor/crundi-mini.js?v=${esc(tag('crundi-mini.js'))}"></script>
 <script src="/vendor/claude-chat.js?v=${esc(tag('claude-chat.js'))}"></script>
 <script src="/vendor/crundi-widgets.js?v=${esc(tag('crundi-widgets.js'))}"></script>
+<script src="/vendor/crundi-secret-lock.js?v=${esc(tag('crundi-secret-lock.js'))}"></script>
 <script src="/vendor/crundi-chat-secrets.js?v=${esc(tag('crundi-chat-secrets.js'))}"></script>
 <script src="/vendor/crundi-chat-page.js?v=${esc(tag('crundi-chat-page.js'))}"></script>
 </body>

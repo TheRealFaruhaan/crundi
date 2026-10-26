@@ -12,10 +12,10 @@
 import './restore-apply.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, unlinkSync } from 'node:fs';
 import { ensurePrivateDir, securePrivateFolders } from './private-fs.js';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { config, getOldAppDataDir, isFreshInstall } from './config.js';
+import { config, envPath, getOldAppDataDir, isFreshInstall } from './config.js';
 import { createBot } from './bot.js';
 import { createWebApp } from './webapp.js';
 import { createClaudeTerminals } from './claude-terminals.js';
@@ -52,7 +52,11 @@ if (!existsSync(config.dataDir)) {
   console.log(`[crundi] Created data dir: ${config.dataDir}`);
 }
 try {
-  const t = securePrivateFolders({ appDir: config.appDir, dataDir: config.dataDir });
+  // The config folder only when it is the one in use (its .env is ours): a
+  // dev instance pointed elsewhere (scripts/dev-isolated.sh) leaves the live
+  // server's folder alone.
+  const ownAppDir = resolve(dirname(envPath)) === resolve(config.appDir);
+  const t = securePrivateFolders({ appDir: ownAppDir ? config.appDir : '', dataDir: config.dataDir });
   if (t.changed) console.log(`[crundi] Made ${t.changed} item${t.changed === 1 ? '' : 's'} in the data folder owner-only`);
 } catch (err) { console.warn('[crundi] Could not tighten the data folder:', err.message); }
 
