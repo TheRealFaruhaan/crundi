@@ -268,7 +268,7 @@ check('routes: aside and dismiss-recap', /dismiss-suggestion\|dismiss-recap\|asi
 check('the namer asks the chat first', /fromChat: \(id, text\) => claudeUi\.generateTitle\(id, text\)/.test(web));
 check('retitled at the end of a turn, not after sitting idle', /claudeUi\.onTurnEnd\(\(id\) => \{ maybeRetitle\(id\)/.test(web) && !/claudeUi\.onRecap\(/.test(web));
 check('claude-ui reports a turn end for the person\'s chats only', /if \(turnEndCb && !s\.factory && !s\.background\)/.test(src));
-check('the name marks what it stands for: on a rename and after a replay, and trimming is counted', /s\.title = \(title && String\(title\)\.trim\(\)\) \|\| 'Chat';\n\s*markTitled\(s\);/.test(src) && /markTitled\(s\);\n\s*s\.emitter\.emit\('event', \{ type: 'history'/.test(src) && /s\.dropped = \(s\.dropped \|\| 0\) \+ cut;/.test(src));
+check('the name marks what it stands for: on a rename and after a replay, and trimming is counted', /s\.title = \(title && String\(title\)\.trim\(\)\) \|\| 'Chat';\r?\n\s*markTitled\(s\);/.test(src) && /markTitled\(s\);\r?\n\s*s\.emitter\.emit\('event', \{ type: 'history'/.test(src) && /s\.dropped = \(s\.dropped \|\| 0\) \+ cut;/.test(src));
 check('every decision is logged', /\[retitle\] \(\$\{id\}\) kept/.test(web) && /\[retitle\] \(\$\{id\}\) "\$\{m\.title\}" -> /.test(web) && /\[claude-ui\] \(\$\{s\.id\}\) recap \(/.test(src));
 
 // The retitle itself, lifted out of webapp.js and run against a fake chat.
