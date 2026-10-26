@@ -82,7 +82,7 @@ ok(a.ok && a.value === VALUE1 && a.preauthorised && asked === 0, 'secret_run fro
 ok(!('pin' in a), 'the PIN is not handed back to a caller that does not keep it');
 const auth = await authoriseSecretUse({ runner: null, chatId: 'chatA', secret: { id: S1, name: 'Deploy token' }, command: 'x', decrypt, askPerson: ask('chatA', S1) });
 ok(auth.ok && auth.value === VALUE1 && asked === 0, "through secret_run's own decision (authoriseSecretUse)");
-const run = await runWithSecret({ command: 'printf %s "$SECRET" | wc -c', value: auth.value, envName: 'SECRET' });
+const run = await runWithSecret({ command: `node -e "process.stdout.write(String((process.env.SECRET||'').length))"`, value: auth.value, envName: 'SECRET' });
 ok(run.ok && run.stdout.trim() === String(VALUE1.length), 'the command gets the value in its environment');
 a = await ask('chatA', S2)({});
 ok(!a.ok && asked === 1, 'a secret not pre-authorised still asks the person');
