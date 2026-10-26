@@ -10,6 +10,7 @@ internal object IconPaths {
     val all: Map<String, List<String>> = mapOf(
         "alert-triangle" to listOf("M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z", "M12 9L12 13", "M12 17L12.01 17"),
         "archive" to listOf("M21 8L21 21L3 21L3 8", "M1 3h22v5h-22Z", "M10 12L14 12"),
+        "arrow-down" to listOf("M12 5L12 19", "M19 12L12 19L5 12"),
         "arrow-left" to listOf("M19 12L5 12", "M12 19L5 12L12 5"),
         "arrow-up" to listOf("M12 19L12 5", "M5 12L12 5L19 12"),
         "ban" to listOf("M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0Z", "M5.6 5.6L18.4 18.4"),

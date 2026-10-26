@@ -13,7 +13,15 @@
       "tag": "Chats",
       "title": "Ask on the side with /btw",
       "body": "Type /btw and a question to ask about the chat without adding to it: what changed, which files, where it got to. Claude answers from the conversation so far, even while it is busy, and nothing goes into the conversation.",
-      "keys": [ { "keys": ["/btw", "question"], "text": "ask on the side" } ],
+      "keys": [
+        {
+          "keys": [
+            "/btw",
+            "question"
+          ],
+          "text": "ask on the side"
+        }
+      ],
       "art": "chat-btw.html",
       "artTitle": "Chat"
     },
@@ -32,6 +40,14 @@
       "body": "Chats are named by Claude Code itself from your first message, and named again when the work turns into a different job. Claude terminal panes take the same titles. A name you give a chat yourself is never changed.",
       "art": "chat-titles.html",
       "artTitle": "Workbench"
+    },
+    {
+      "id": "chat-jump",
+      "tag": "Chats",
+      "title": "Back to the newest message",
+      "body": "Scroll a good way up a chat and an arrow appears at the bottom; tap it to go straight back to the newest message. If something new arrives while you are reading further up, the arrow gets a dot.",
+      "art": "chat-jump.html",
+      "artTitle": "Chat"
     }
   ]
 }

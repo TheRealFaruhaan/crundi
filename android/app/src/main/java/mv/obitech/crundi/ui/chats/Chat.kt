@@ -24,6 +24,7 @@ import mv.obitech.crundi.ui.planning.dashedBorder
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import mv.obitech.crundi.ui.workbench.LocalPane
@@ -58,6 +59,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import kotlin.reflect.KProperty
@@ -278,6 +280,15 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                 val n = list.layoutInfo.totalItemsCount
                 if (n > 0) list.animateScrollToItem(n - 1)
             }
+            // Back to the newest message (ChatJump.kt): shown well up the log,
+            // with a dot once something has come in below.
+            val density = LocalDensity.current.density
+            val jumpFar by remember(list) { androidx.compose.runtime.derivedStateOf { ChatJump.far(list.layoutInfo, density) } }
+            var newBelow by remember { mutableStateOf(false) }
+            var dockPx by remember { mutableStateOf(0) }
+            LaunchedEffect(entries.size) { if (jumpFar) newBelow = true }
+            LaunchedEffect(list) { androidx.compose.runtime.snapshotFlow { ChatJump.atEnd(list.layoutInfo, density) }.collect { if (it) newBelow = false } }
+            val jumpScope = rememberCoroutineScope()
             LaunchedEffect(entries.size, lastLen, act) {
                 val info = list.layoutInfo
                 val nearEnd = info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 3 } ?: true
@@ -308,7 +319,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                 val shown = c.agents.values.filter { !it.dismissed }
                 // The floating dock (.cc-agdock): the badges, then the suggested
                 // next message, at the right like a message of yours would be.
-                Column(Modifier.align(Alignment.BottomEnd).padding(start = 40.dp, end = 10.dp, bottom = 8.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.align(Alignment.BottomEnd).padding(start = 40.dp, end = 10.dp, bottom = 8.dp).onSizeChanged { dockPx = it.height }, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.miniTarget(c.id, "badges"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         AgentBadge("terminal", shown.filter { it.kind == "task" }, "background command", "background commands", actions::tasks)
                         AgentBadge("layers", shown.filter { it.kind != "task" }, "agent", "agents", actions::agents)
@@ -316,6 +327,17 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                     val sug = c.suggestion
                     if (sug != null && sugOn) SuggestionBubble(sug.text, { actions.useSuggestion(sug) }, actions::dismissSuggestion, Modifier.miniTarget(c.id, "sug"))
                 }
+                JumpToNewest(jumpFar, newBelow, {
+                    newBelow = false
+                    // To the last row, then the rest of it: a long last message would otherwise stop at its top.
+                    jumpScope.launch {
+                        val n = list.layoutInfo.totalItemsCount
+                        if (n > 0) list.animateScrollToItem(n - 1)
+                        val rest = ChatJump.distanceBelow(list.layoutInfo)
+                        if (rest > 0) list.animateScrollBy(rest.toFloat())
+                    }
+                // Above the suggested reply, which runs across the dock; beside the badges alone it fits.
+                }, Modifier.align(Alignment.BottomCenter).padding(bottom = if (sugOn) with(LocalDensity.current) { dockPx.toDp() } + 16.dp else 8.dp))
               }
               }
             }

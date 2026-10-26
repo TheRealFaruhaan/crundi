@@ -290,6 +290,19 @@
     // fanned out to ten agents and five commands stacked fifteen pills over
     // the conversation, covering most of a phone screen. Now each kind is one
     // badge: an icon and a count, which opens a list.
+    // Back to the newest message: shown once the reader is well up the log.
+    '.cc-jump{position:absolute;left:50%;bottom:10px;z-index:16;width:38px;height:38px;margin-left:-19px;border-radius:50%;border:1px solid var(--border);background:var(--bg-secondary,#12121a);color:var(--text-primary);box-shadow:0 6px 18px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;opacity:0;transform:translateY(14px) scale(.85);pointer-events:none;transition:opacity .22s ease,transform .26s cubic-bezier(.2,.9,.3,1.25),border-color .15s,background .15s}',
+    '.cc-jump.on{opacity:1;transform:none;pointer-events:auto}',
+    '.cc-jump:hover,.cc-jump:focus-visible{border-color:var(--accent);background:var(--accent-dim);outline:none}',
+    '.cc-jump svg{width:18px;height:18px}',
+    '.cc-jump.on svg{animation:cc-jump-in .5s ease .1s both}',
+    '.cc-jump.new{border-color:var(--accent)}',
+    '.cc-jump.new svg{animation:cc-jump-nudge 1.6s ease-in-out infinite}',
+    '.cc-jump-dot{position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;background:var(--accent);border:2px solid var(--bg-primary);transform:scale(0);transition:transform .2s cubic-bezier(.2,.9,.3,1.4)}',
+    '.cc-jump.new .cc-jump-dot{transform:scale(1)}',
+    '@keyframes cc-jump-in{0%{transform:translateY(-6px);opacity:0}60%{transform:translateY(2px);opacity:1}100%{transform:none}}',
+    '@keyframes cc-jump-nudge{0%,55%,100%{transform:none}70%{transform:translateY(3px)}85%{transform:translateY(-1px)}}',
+    '@media (prefers-reduced-motion:reduce){.cc-jump,.cc-jump-dot{transition:opacity .15s}.cc-jump.on svg,.cc-jump.new svg{animation:none}}',
     '.cc-agents{position:absolute;right:10px;bottom:8px;display:flex;flex-direction:column;align-items:flex-end;gap:5px;z-index:15;pointer-events:none;max-width:min(320px,calc(100% - 20px))}',
     '.cc-agents:empty{display:none}',
     '.cc-agbadges{display:flex;align-items:center;justify-content:flex-end;gap:6px;max-width:100%}',
@@ -930,6 +943,13 @@
     agentDock.appendChild(badgeRow);
     logWrap.appendChild(log);
     logWrap.appendChild(agentDock);
+    // Back to the newest message (syncJump says when it shows).
+    var jumpBtn = el('button', 'cc-jump',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg><span class="cc-jump-dot"></span>');
+    jumpBtn.type = 'button';
+    jumpBtn.title = 'Go to the newest message';
+    jumpBtn.setAttribute('aria-label', 'Go to the newest message');
+    logWrap.appendChild(jumpBtn);
     // Hidden until there is a plan AND the header pill is clicked.
     var planPanel = el('div', 'cc-plan');
     var planHd = el('div', 'cc-plan-hd');
@@ -1161,6 +1181,28 @@
       if (!log.clientHeight) return; // a reset while hidden is not a user scroll
       stickBottom = atBottom();
       lastTop = log.scrollTop;
+      syncJump();
+    });
+
+    // ─── Back to the newest message ───
+    // The button shows once the reader is a good way up the log (a third of
+    // its height, and at least 240px), not the moment they nudge it, and goes
+    // again near the bottom. Something arriving below while they read earns
+    // it a dot and a small nudge.
+    function jumpAway() { return log.scrollHeight - log.scrollTop - log.clientHeight; }
+    function syncJump() {
+      if (!log.clientHeight) return;
+      var far = jumpAway() > Math.max(240, log.clientHeight / 3);
+      jumpBtn.classList.toggle('on', far);
+      if (!far && jumpAway() < 60) jumpBtn.classList.remove('new');
+    }
+    function noteBelow() {
+      if (!stickBottom && jumpAway() > 60) { jumpBtn.classList.add('new'); syncJump(); }
+    }
+    jumpBtn.addEventListener('click', function () {
+      stickBottom = true;
+      jumpBtn.classList.remove('new', 'on');
+      try { log.scrollTo({ top: log.scrollHeight, behavior: 'smooth' }); } catch (e) { log.scrollTop = log.scrollHeight; }
     });
     // ─── Selection stays in the conversation ───
     //
@@ -3034,6 +3076,10 @@
       var shown = !!(sugNode && sugNode.parentNode === agentDock)
         || agentBadge.classList.contains('on') || taskBadge.classList.contains('on');
       var pad = shown ? Math.max(LOG_PAD, agentDock.offsetHeight + 14) : LOG_PAD;
+      // The arrow back to the newest message sits above a recap or a
+      // suggestion (both run across the dock); beside the badges alone it fits.
+      var wideDock = !!((sugNode && sugNode.parentNode === agentDock) || (recapNode && recapNode.parentNode === agentDock));
+      jumpBtn.style.bottom = (wideDock ? agentDock.offsetHeight + 16 : 10) + 'px';
       if (log.style.paddingBottom !== pad + 'px') {
         var stick = stickBottom;
         log.style.paddingBottom = pad + 'px';
@@ -3425,6 +3471,7 @@
       if (data.kind === 'thinking') thinkingChanged(data, true);
       var node = renderEntry(data);
       entries.set(data.id, { data: data, node: node });
+      if (data.kind !== 'gone') noteBelow();
       // A row joining a folded batch (a reload replays them in order): its
       // line counts it now, and it hides behind the line once it is painted
       // as a member.
