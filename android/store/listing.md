@@ -61,6 +61,26 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.7 (en-US)
+
+Version code 25. Since 1.1.1-dev.6 (code 24): ring time and snooze for
+urgent alerts (answers reported to alert_user), per-chat secret
+pre-authorisation (server capability chat-secret-preauth), secret PINs
+behind biometrics, and secret requests in chat bubbles.
+
+```
+<en-US>
+Urgent alerts and secrets, made easier.
+
+- Urgent alerts ring for 5 minutes (1 to 15 in App settings), with snooze for 5, 15, 30 min or 1 hour.
+- Allow chosen secrets for one chat, for a time or until the chat ends; see and revoke them.
+- Secret PINs behind your fingerprint: tap and the PIN goes in.
+- Secret requests now show in chat bubbles.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.6 (en-US)
 
 Version code 24. Since 1.1.1-dev.5 (code 23): the slider runs Attend or
