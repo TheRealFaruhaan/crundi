@@ -2,7 +2,7 @@
 /**
  * test-chat-summaries.mjs — the summaries a chat's own Claude Code makes.
  *
- * Verified against the real CLI (2.1.302) before this was written:
+ * Verified against the real CLI (2.1.302, and again on 2.1.310) before this was written:
  *   side_question {question}            -> {response, synthetic}, also mid-turn
  *                                          and on a resumed session before its
  *                                          first turn
