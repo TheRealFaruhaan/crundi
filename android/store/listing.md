@@ -61,6 +61,21 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.2-dev.2 (en-US)
+
+Version code 30. Since 1.1.2-dev.1 (code 29): the chat screen's actions
+read the live chat (the recap's close button did nothing).
+
+```
+<en-US>
+Fixes.
+
+- The close button on a chat's recap now closes it.
+- Sending a message hides the recap and the suggested reply at once.
+- A message sent while Claude is busy leaves the Sending card once Claude reads it, even if you sent the same words before.
+</en-US>
+```
+
 ## Release notes, 1.1.2-dev.1 (en-US)
 
 Version code 29. Since 1.1.1 (code 28): recaps (capability chat-recap),

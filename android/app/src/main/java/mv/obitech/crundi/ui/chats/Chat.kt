@@ -726,8 +726,8 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
             // The box is cleared only once the message is really sent, and only of that message.
             if (r is ChatSleep.Outcome.Sent) ui = ui.copy(
                 draft = if (ui.draft.trim() == text) "" else ui.draft, sentSeq = ui.sentSeq + 1,
-                retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion,
-                retiredRecap = ui.chat.recap?.key ?: ui.retiredRecap,
+                retiredSuggestion = chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion,
+                retiredRecap = chat.recap?.key ?: ui.retiredRecap,
             )
             if (r is ChatSleep.Outcome.Failed) ui = ui.copy(error = r.message)
             if (r.id != chatId) { composer.forget(); onMoved(r.id, ChatCarry(ui.draft, ui.error)) }
@@ -784,13 +784,13 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
             if (view.asleep) { wakeChat("resume", text, known = true); return }
             val wasBusy = view.busy
             // The recap goes as a message does (the server clears it too, and says so a moment later).
-            ui = ui.copy(draft = "", stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = ui.chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion, retiredRecap = ui.chat.recap?.key ?: ui.retiredRecap)
+            ui = ui.copy(draft = "", stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion, retiredRecap = chat.recap?.key ?: ui.retiredRecap)
             scope.launch {
                 try {
                     val r = api.chats.send(chatId, text)
                     if (r.injected || wasBusy) ui = ui.copy(
                         localPending = ui.localPending + PendingInjection(text, r.uuid, if (r.uuid.isNotEmpty()) "queued" else "sent"),
-                        localSentAt = ui.localSentAt + (text to ui.chat.messages.size),
+                        localSentAt = ui.localSentAt + (text to chat.messages.size),
                     )
                 } catch (e: Exception) {
                     ui = ui.copy(draft = text)
@@ -884,7 +884,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         override fun useSuggestion(s: ChatSuggestion) {
             val text = s.text.trim()
             if (text.isEmpty() || view.busy) return
-            ui = ui.copy(retiredSuggestion = s.uuid.ifEmpty { s.text }, sentSeq = ui.sentSeq + 1, retiredRecap = ui.chat.recap?.key ?: ui.retiredRecap)
+            ui = ui.copy(retiredSuggestion = s.uuid.ifEmpty { s.text }, sentSeq = ui.sentSeq + 1, retiredRecap = chat.recap?.key ?: ui.retiredRecap)
             scope.launch {
                 try { api.chats.send(chatId, text) } catch (e: Exception) {
                     ui = ui.copy(draft = text)
@@ -895,7 +895,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         }
         override fun dismissSuggestion() { act { api.chats.dismissSuggestion(chatId) } }
         override fun dismissRecap() {
-            val r = ui.chat.recap ?: return
+            val r = chat.recap ?: return
             ui = ui.copy(retiredRecap = r.key)
             act { api.chats.dismissRecap(chatId) }
         }

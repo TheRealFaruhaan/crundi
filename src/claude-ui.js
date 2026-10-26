@@ -158,9 +158,11 @@ function transcriptUserText(rec) {
   }
   // trim() keeps a leading zero-width space (sendMessage's path guard).
   text = String(text || '').replace(/^\u200b/, '').trim();
-  // Slash-command plumbing and injected reminders are the CLI talking to
-  // itself, not the user.
-  if (!text || /^<(command-name|command-message|local-command-stdout|local-command-stderr|system-reminder)>/.test(text)) return '';
+  // Slash-command plumbing, injected reminders and a background task's
+  // completion notice are the CLI talking to itself, not the user. The live
+  // stream never carries a <task-notification>, so only a replay could show
+  // one, as if the person had typed it.
+  if (!text || /^<(command-name|command-message|local-command-stdout|local-command-stderr|system-reminder|task-notification)>/.test(text)) return '';
   return text;
 }
 
