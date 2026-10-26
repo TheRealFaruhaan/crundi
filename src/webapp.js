@@ -43,6 +43,8 @@ import * as kanban from './kanban-store.js';
 import * as factoryStore from './factory-store.js';
 import { validateFactory } from './factory-model.js';
 import { createFactoryRunner, claudeUiAgents, factoryLiveCard } from './factory-runner.js';
+import { authoriseSecretUse } from './factory-secrets.js';
+import { createChatSecretVault, grantChatSecrets, preauthorisedAsk, parseDuration, PREAUTH_PRESETS } from './chat-secrets.js';
 import * as factoryCleanup from './factory-cleanup.js';
 import { createTriggerStore, createTriggerDispatcher, publicTrigger } from './factory-triggers.js';
 import { FACTORY_GUIDE } from './factory-guide.js';
@@ -50,6 +52,7 @@ import { factoryTemplates } from './factory-templates.js';
 import { inspectRepo as inspectFactoryRepo } from './factory-git.js';
 import * as notes from './notes-store.js';
 import * as secrets from './secrets-store.js';
+import { writePrivateFile } from './private-fs.js';
 import * as mindmap from './mindmap-store.js';
 import * as media from './media-store.js';
 import * as schedule from './schedule-store.js';
@@ -65,6 +68,7 @@ import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
 import { createBackups } from './backup.js';
 import * as skills from './skills-store.js';
+import * as skillsGithub from './skills-github.js';
 import { sandboxStatus, setupSandbox } from './collab-sandbox.js';
 import { COLLAB_FORWARD_COOKIE, mintCollabForwardToken, readCollabForwardToken, collabMayReachForward } from './forward-access.js';
 import { spawn as spawnOwnerCommand } from 'node:child_process';
@@ -78,6 +82,7 @@ import { toSvg as crundiCodeSvg, doneClass as crundiCodeDoneClass, DONE_MS as CR
 import * as forwards from './forwards.js';
 import * as webPush from './web-push.js';
 import * as mobilePush from './mobile-push.js';
+import { createAlerter, describeAnswer } from './alert-user.js';
 import { getChatPageHtml } from './chat-page.js';
 import { chatMark } from './project-mark.js';
 import { findProjectIcon, storedIcon, projectIconUrl, readProjectIcon } from './project-icon.js';
@@ -305,7 +310,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   } catch { /* ignore */ }
   if (!internalApiKey) {
     internalApiKey = randomBytes(32).toString('hex');
-    try { writeFileSync(keyFile, internalApiKey); } catch { /* ignore */ }
+    try { writePrivateFile(keyFile, internalApiKey); } catch { /* ignore */ }
   }
 
   // Access tokens: token → { username, familyId, expiresAt }
@@ -980,7 +985,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { if (existsSync(sf)) st = JSON.parse(readFileSync(sf, 'utf-8')) || {}; } catch { st = {}; }
       st.notifyPrefs = { ...notifyPrefs };
       delete st.notifyAgentStatus; delete st.notifyFinished; delete st.notifyNeedsInput; // superseded
-      writeFileSync(sf, JSON.stringify(st));
+      writeFileSync(sf, JSON.stringify(st), { mode: 0o600 });
     } catch { /* non-fatal */ }
   }
 
@@ -993,6 +998,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     agents: claudeUiAgents(claudeUi, { dataDir: config.dataDir }),
     getProject: (alias) => getProjectUnscoped(alias),
     getFactory: (id) => factoryStore.getFactory(id),
+    // The factory's secrets: a PIN typed at the start is checked here and its
+    // value dropped at once; only the PIN is kept, in the runner's memory.
+    unlockSecret: async (id, pin) => { const r = await secrets.decryptSecret(id, pin); return r.ok ? { ok: true, name: r.name, needsUpgrade: !!r.needsUpgrade } : { ok: false, error: r.error }; },
+    secretMeta: (id) => secrets.getSecretMeta(id),
     // What a project can see: global, synced, and that project's own skills.
     listSkills: (project) => {
       const key = 'project:' + String(project || '').toLowerCase();
@@ -1057,6 +1066,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     startRun: (a) => factoryRunner.startRun(a),
     activeRunFor: (p) => factoryRunner.activeRunFor(p),
     tellRun: (runId, x) => factoryRunner.tellFromTrigger(runId, x),
+    cardsIn: (p, column) => kanban.getColumn(p, column).tasks.length,
     notify: (text) => { try { notifyEvent('factory', text, {}); } catch { /* best effort */ } },
   }) : null;
   if (triggerDispatch) {
@@ -1304,12 +1314,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: (text, meta) => mobilePush.send(text, meta),
   });
 
+  // The alert_user MCP tool: a push of its own kind that rings the phone, with
+  // the server's limits on how often (see alert-user.js).
+  const alerter = createAlerter({
+    phone: () => {
+      if (!mobilePush.hasKey()) return { ok: false, reason: `This server has no push key. ${mobilePush.keyHelp()}` };
+      if (!mobilePush.devices().length) return { ok: false, reason: 'No phone is paired with this server and registered for notifications.' };
+      if (!channels.isEnabled('mobile')) return { ok: false, reason: 'Phone notifications are turned off in Settings, Notifications.' };
+      return { ok: true };
+    },
+    push: (text, meta) => mobilePush.send(text, meta),
+    deliver: (text, meta, opts) => channels.deliver(text, meta, opts),
+  });
+
   // Single entry point for every Telegram notification. Honors the per-event
   // policy ('always' | 'away' | 'never') and the presence gate for 'away'.
   function notifyEvent(key, message, meta = {}) {
     const mode = notifyPrefs[key];
     if (mode !== 'always' && mode !== 'away') return;   // 'never' / unknown
-    if (mode === 'away' && anyClientPresent()) {
+    // This chat just rang the phone with an urgent alert (alert_user). A
+    // notification that sounds now, on the phone or in Telegram on the same
+    // phone, would stop that ringing (Android plays one sound at a time), so
+    // it goes to the phone app only, quietly: still listed, never heard.
+    const hushed = meta.chat && meta.chat.id && alerter.hushing(meta.chat.id);
+    if (hushed || (mode === 'away' && anyClientPresent())) {
       // The owner is here, so nothing needs to ping them. The phone app is
       // told all the same, marked quiet: its bubbles, its live card and its
       // list of what happened are kept from these, and a phone that only
@@ -2104,6 +2132,45 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const pendingSecretRequests = new Map();
   const SECRET_REQUEST_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes per request
 
+  // ─── Secrets pre-authorised for one chat (src/chat-secrets.js) ───
+  // PINs in memory only, per chat id; secret_run from that chat uses them,
+  // secret_get never does. Gone when the time runs out, they are revoked, the
+  // chat ends or the server stops. Owners only: the routes sit under
+  // /api/secrets (refused to collaborators by access-policy.js), and the
+  // event goes to owners' streams only. It carries names and times, never a PIN.
+  const chatSecrets = createChatSecretVault({ onChange: (sid) => broadcastChatSecrets(sid) });
+  function broadcastChatSecrets(sessionId) {
+    const payload = `event: chat-secrets\ndata: ${JSON.stringify({ sessionId, grants: chatSecrets.list(sessionId) })}\n\n`;
+    for (const client of sseClients) {
+      if (isConfined(client.principal)) continue;
+      try { client.res.write(payload); } catch { sseClients.delete(client); }
+    }
+  }
+  if (claudeUi && claudeUi.onChatEnded) claudeUi.onChatEnded((sid) => { if (chatSecrets.revokeChat(sid)) broadcastChatSecrets(sid); });
+  // Belt and braces: a chat that is gone without saying so loses its grants within a minute.
+  const chatSecretSweep = setInterval(() => {
+    if (!claudeUi) return;
+    for (const sid of chatSecrets.chatIds()) {
+      if (!claudeUi.has(sid)) { chatSecrets.revokeChat(sid); broadcastChatSecrets(sid); }
+      else chatSecrets.list(sid);   // drops anything run out
+    }
+  }, 60_000);
+  if (chatSecretSweep.unref) chatSecretSweep.unref();
+  /** The chat a grant would be for: an owner's open chat, never a collaborator's. */
+  function chatForSecrets(sessionId) {
+    const sid = String(sessionId || '');
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return { error: 'Name a chat.' };
+    const t = claudeUi ? claudeUi.list().find((x) => x.id === sid) : null;
+    if (!t) return { error: 'That chat is not open on this server.' };
+    if (t.collaborator) return { error: "Secrets cannot be pre-authorised for a collaborator's chat." };
+    return { sid };
+  }
+
+  function lockInfo(secretId) {
+    const m = secrets.getSecretMeta(secretId);
+    return m ? { lock: m.lock, needsUpgrade: m.needsUpgrade } : {};
+  }
+
   /** Public-safe view of pending requests (never includes the secret value). */
   function publicSecretRequests() {
     return [...pendingSecretRequests.values()].map(r => ({
@@ -2114,6 +2181,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // token" are different decisions, and only one of them can be made
       // without seeing the command.
       kind: r.kind || 'get', command: r.command || '', envName: r.envName || '',
+      // How to ask for it: 'pin' (6 digits) or 'passphrase'; needsUpgrade
+      // when it is on an old lock. Optional: an older client ignores them.
+      ...lockInfo(r.secretId),
       // The chat that asked, when one did: that chat shows the request.
       sessionId: r.sessionId || '',
     }));
@@ -2260,7 +2330,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * The value is never cached — every request is independent and needs its own
    * PIN entry.
    */
-  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '', sessionId = '' }) {
+  function waitForSecretApproval({ secretId, secretName, projectAlias, reason, kind = 'get', command = '', envName = '', sessionId = '', keepPin = false }) {
     return new Promise((resolve) => {
       const id = randomBytes(8).toString('hex');
       const timer = setTimeout(() => {
@@ -2273,11 +2343,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         id, secretId, secretName, projectAlias, reason, kind, command, envName, sessionId,
         createdAt: new Date().toISOString(),
         timer,
-        fulfill: (value) => {
+        fulfill: (value, pin) => {
           clearTimeout(timer);
           pendingSecretRequests.delete(id);
           broadcastSecretRequests();
-          resolve({ ok: true, name: secretName, value });
+          // keepPin: a factory run keeps the PIN of a secret on its list for
+          // the rest of the run. Never part of a response.
+          resolve({ ok: true, name: secretName, value, ...(keepPin && pin ? { pin: String(pin) } : {}) });
         },
         reject: (error) => {
           clearTimeout(timer);
@@ -3569,11 +3641,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       switch (body.action) {
         case 'start':
           if (!body.project || aliasDenied(body.project)) return json(res, { ok: false, error: 'Unknown project' }, 403);
-          result = await factoryRunner.startRun({ project: body.project, factoryId: body.factoryId, task: body.task, cr: body.cr, mergeMode: body.mergeMode, ignoreMissingSkills: !!body.ignoreMissingSkills });
+          result = await factoryRunner.startRun({
+            project: body.project, factoryId: body.factoryId, task: body.task, cr: body.cr, mergeMode: body.mergeMode, ignoreMissingSkills: !!body.ignoreMissingSkills,
+            // Optional (capability 'factory-secrets'): { secretId: PIN } for the
+            // factory's secrets, kept in memory for this run. Secrets are the
+            // owner's alone, so a collaborator's are ignored (and the start
+            // form cannot be used to try PINs).
+            secretPins: !isConfined(principal) && body.secretPins && typeof body.secretPins === 'object' ? body.secretPins : null,
+          });
           break;
         case 'stop': result = await factoryRunner.stopRun(body.id); break;
         case 'resume': result = await factoryRunner.resume(body.id); break;
-        case 'pause': result = await factoryRunner.pause(body.id); break;
+        // Optional (capability 'factory-pause-options'): mode 'now' stops the
+        // turns in progress; resumeOnReset carries on after the usage reset.
+        case 'pause': result = await factoryRunner.pause(body.id, { mode: body.mode === 'now' ? 'now' : 'finish', resumeOnReset: !!body.resumeOnReset }); break;
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
         case 'limits': result = await factoryRunner.setLimits(body.id, body.limits || {}); break;
@@ -3617,6 +3698,43 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, result);
     }
 
+    // ─── Secrets pre-authorised for one chat (capability 'chat-secret-preauth') ───
+    // Under /api/secrets, so a collaborator is refused before getting here;
+    // refused again by name in case that ever widens.
+    if (path === '/api/secrets/chat') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not allowed' }, 403);
+      if (req.method === 'GET') {
+        // No chat named: every chat's list, for a page drawing many chats.
+        if (!url.searchParams.get('sessionId')) {
+          const chats = {};
+          for (const sid of chatSecrets.chatIds()) { const g = chatSecrets.list(sid); if (g.length) chats[sid] = g; }
+          return json(res, { ok: true, chats, presets: PREAUTH_PRESETS });
+        }
+        const c = chatForSecrets(url.searchParams.get('sessionId'));
+        if (c.error) return json(res, { ok: false, error: c.error });
+        return json(res, { ok: true, sessionId: c.sid, grants: chatSecrets.list(c.sid), presets: PREAUTH_PRESETS });
+      }
+      if (req.method !== 'POST') return json(res, { ok: false, error: 'Method not allowed' }, 405);
+      const body = JSON.parse(await readBody(req));
+      const c = chatForSecrets(body.sessionId);
+      if (c.error) return json(res, { ok: false, error: c.error });
+      let r;
+      switch (body.action) {
+        case 'grant':
+          r = await grantChatSecrets({
+            vault: chatSecrets, chatId: c.sid, secrets: body.secrets,
+            duration: { duration: body.duration, minutes: body.minutes, untilChatEnds: body.untilChatEnds },
+            decrypt: async (id, pin) => { const d = await secrets.decryptSecret(id, pin); return d.ok ? { ok: true, name: d.name, needsUpgrade: !!d.needsUpgrade } : { ok: false, error: d.error }; },
+          });
+          break;
+        case 'revoke': r = { ok: true, revoked: chatSecrets.revoke(c.sid, String(body.secretId || '')) ? 1 : 0 }; break;
+        case 'revokeAll': r = { ok: true, revoked: chatSecrets.revokeChat(c.sid) }; break;
+        default: return json(res, { ok: false, error: `Unknown action: ${body.action}` }, 400);
+      }
+      if (r.ok) broadcastChatSecrets(c.sid);
+      return json(res, { ...r, grants: chatSecrets.list(c.sid) });
+    }
+
     // ─── Secrets (global) ───
     if (path === '/api/secrets' && req.method === 'GET') {
       return json(res, { ok: true, secrets: secrets.listSecrets(), requests: publicSecretRequests() });
@@ -3627,7 +3745,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const { action } = body;
       switch (action) {
         case 'add': {
-          const r = secrets.addSecret({ name: body.name, description: body.description, value: body.value, pin: body.pin });
+          const r = await secrets.addSecret({ name: body.name, description: body.description, value: body.value, pin: body.pin });
+          return json(res, r);
+        }
+        case 'edit': {
+          // Capability 'secret-edit' (and 'secret-upgrade', which is this with
+          // newPin only). Proven by the current lock (pin): newPin re-locks it
+          // with a passphrase, value replaces the value under the same lock,
+          // name/description as updateMeta. Never returns the value.
+          const id = String(body.id || '');
+          const r = await secrets.editSecret(id, {
+            pin: body.pin, newPin: body.newPin, value: body.value, name: body.name, description: body.description,
+          });
+          if (r.ok && r.relocked) {
+            // Whatever kept the old lock in memory keeps working with the new one.
+            for (const sid of chatSecrets.replacePin(id, String(body.pin), String(body.newPin))) broadcastChatSecrets(sid);
+            try { factoryRunner && factoryRunner.relockSecret && factoryRunner.relockSecret(id, String(body.pin), String(body.newPin)); } catch { /* the run asks again */ }
+            broadcastSecretRequests();
+          }
           return json(res, r);
         }
         case 'updateMeta': {
@@ -3636,11 +3771,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         }
         case 'delete': {
           const r = secrets.deleteSecret(body.id);
+          if (r.ok) for (const sid of chatSecrets.forgetSecret(String(body.id || ''))) broadcastChatSecrets(sid);
           return json(res, r);
+        }
+        case 'check': {
+          // Is this the secret's PIN? For the prompts at the start of a factory
+          // run: says yes or no, never the value.
+          const r = await secrets.decryptSecret(body.id, body.pin);
+          return json(res, r.ok ? { ok: true, name: r.name, lock: r.lock, needsUpgrade: r.needsUpgrade } : { ok: false, error: r.error });
         }
         case 'reveal': {
           // The authenticated web user views a secret's value themselves.
-          const r = secrets.decryptSecret(body.id, body.pin);
+          const r = await secrets.decryptSecret(body.id, body.pin);
           return json(res, r);
         }
         case 'approve': {
@@ -3648,10 +3790,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           // on success, hand the value to the waiting MCP call.
           const reqEntry = pendingSecretRequests.get(body.reqId);
           if (!reqEntry) return json(res, { ok: false, error: 'Request no longer pending (it may have timed out)' });
-          const dec = secrets.decryptSecret(reqEntry.secretId, body.pin);
+          const dec = await secrets.decryptSecret(reqEntry.secretId, body.pin);
           if (!dec.ok) return json(res, dec); // wrong PIN — keep request pending for retry
-          reqEntry.fulfill(dec.value);
-          return json(res, { ok: true });
+          // Optional (capability 'chat-secret-preauth'): allowForChat
+          // { duration | minutes | untilChatEnds } also keeps this PIN for the
+          // chat that asked, for its later secret_run calls.
+          let preauthorised = false;
+          if (body.allowForChat && typeof body.allowForChat === 'object' && reqEntry.sessionId && !isConfined(principal)) {
+            const c = chatForSecrets(reqEntry.sessionId);
+            const d = parseDuration(body.allowForChat);
+            if (!c.error && d.ok) {
+              preauthorised = chatSecrets.grant(c.sid, reqEntry.secretId, { name: dec.name || reqEntry.secretName, pin: body.pin, expiresAt: d.untilChatEnds ? null : Date.now() + d.ms });
+              if (preauthorised) broadcastChatSecrets(c.sid);
+            }
+          }
+          reqEntry.fulfill(dec.value, body.pin);
+          // needsUpgrade: the lock just used is an old one; the client may offer
+          // to re-lock it now (action 'edit' with this pin and a newPin).
+          return json(res, { ok: true, ...(body.allowForChat ? { preauthorised } : {}), ...(dec.needsUpgrade ? { needsUpgrade: true } : {}) });
         }
         case 'deny': {
           const reqEntry = pendingSecretRequests.get(body.reqId);
@@ -4688,15 +4844,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // it owns every field — this is for the setup path, which knows only two.
     function writeEnvKeys(pairs) {
       try {
-        const dir = dirname(envPath);
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
         let content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
         for (const [key, value] of Object.entries(pairs)) {
           const line = `${key}=${value}`;
           const re = new RegExp(`^${key}=.*$`, 'm');
           content = re.test(content) ? content.replace(re, line) : (content.replace(/\n*$/, '\n') + line + '\n');
         }
-        writeFileSync(envPath, content, 'utf-8');
+        writePrivateFile(envPath, content, { encoding: 'utf-8' });
         return { ok: true };
       } catch (err) { return { ok: false, error: err.message }; }
     }
@@ -4893,6 +5047,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (path === '/api/skills/transfer') return reply(skills.transfer(body.scope, body.name, body.to, { move: !!body.move, overwrite: !!body.overwrite, as: body.as || '' }));
       if (path === '/api/skills/file') return reply(skills.writeFile(body.scope, body.name, body.path, { content: body.content }));
       if (path === '/api/skills/file-delete') return reply(skills.deleteFile(body.scope, body.name, body.path));
+      // From a GitHub link (capability 'skills-install-link'). Only files are
+      // copied: nothing from the repository is run. preview:true lists the
+      // skills there and installs nothing; without it, a link to several
+      // skills and no skill / all answers choose:true with the list.
+      if (path === '/api/skills/install-from-link') {
+        const link = String(body.url || '');
+        if (body.preview) return reply(await skillsGithub.preview(link));
+        return reply(await skillsGithub.installFromLink(body.scope, link, { skill: body.skill || '', all: !!body.all, name: body.name || '', overwrite: !!body.overwrite }));
+      }
+      if (path === '/api/skills/update-from-source') return reply(await skillsGithub.update(body.scope, body.name, { force: !!body.force }));
       return json(res, { ok: false, error: 'Not found' }, 404);
     }
 
@@ -5161,7 +5325,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           try { if (existsSync(stateFile)) state = JSON.parse(readFileSync(stateFile, 'utf-8')); } catch {}
           const newId = body.chatId ? Number(body.chatId) : null;
           state.chatId = newId;
-          writeFileSync(stateFile, JSON.stringify(state));
+          writeFileSync(stateFile, JSON.stringify(state), { mode: 0o600 });
           if (setChatId) setChatId(newId);
         }
         // Live update (no restart): per-event notification policy.
@@ -5199,7 +5363,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           let state = {};
           try { if (existsSync(stateFile)) state = JSON.parse(readFileSync(stateFile, 'utf-8')) || {}; } catch { state = {}; }
           state.autoParkMinutes = n;
-          writeFileSync(stateFile, JSON.stringify(state));
+          writeFileSync(stateFile, JSON.stringify(state), { mode: 0o600 });
           autoParkMinutes = n;
         }
         if (body.systemPrompt !== undefined) {
@@ -5208,7 +5372,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           try { if (existsSync(stateFile)) state = JSON.parse(readFileSync(stateFile, 'utf-8')) || {}; } catch { state = {}; }
           const clean = clampLayer(body.systemPrompt);
           if (clean) state.systemPrompt = clean; else delete state.systemPrompt;
-          writeFileSync(stateFile, JSON.stringify(state));
+          writeFileSync(stateFile, JSON.stringify(state), { mode: 0o600 });
         }
         return json(res, { ok: true, restartRequired, clearedLimitReset });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
@@ -5580,6 +5744,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const p = whatsNew.plan({ editions, current: APP_VERSION, channel: serverUpdate.getChannel(), state, all: url.searchParams.get('all') === '1' });
         return json(res, { ok: true, version: APP_VERSION, steps: p.steps });
       } catch (err) { return json(res, { ok: false, error: err.message, steps: [] }); }
+    }
+    // The phone says what happened to an urgent alert (alert-user.js answer):
+    // ringing (with its ring time), attended, dismissed, snoozed. The owner's
+    // phone only.
+    if (path === '/api/alerts/answer' && req.method === 'POST') {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not allowed' }, 403);
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch { body = {}; }
+      return json(res, { ok: true, waiting: alerter.answer(body.alertId, { action: body.action, ringMs: body.ringMs, minutes: body.minutes }) });
     }
     if (path === '/api/whatsnew/seen' && req.method === 'POST') {
       if (isConfined(principal)) return json(res, { ok: true });
@@ -6081,7 +6254,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       if (body.tool === 'factory_control') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
-        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null })); }
+        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null, mode: a.mode === 'now' ? 'now' : '', resumeOnReset: !!a.resumeOnReset })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
       if (body.tool === 'factory_status') {
@@ -6368,23 +6541,42 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const command = String(a.command || '').trim();
         if (!command) return json(res, { ok: false, error: 'No command given.' });
 
-        const approval = await waitForSecretApproval({
-          secretId: meta.meta.id,
-          secretName: meta.meta.name,
-          projectAlias: a.alias || '',
-          reason: a.reason || '',
-          sessionId: String(a.sessionId || ''),
-          kind: 'run',
-          command,
-          envName,
+        // From a factory run's chat, a secret on the factory's list that the
+        // person unlocked at the start runs without a PIN: for the Manager and
+        // the Gatekeeper at once, for anyone else once the Gatekeeper or the
+        // Manager approves. Anything else asks the person, as always.
+        const sid = String(a.sessionId || '');
+        const auth = await authoriseSecretUse({
+          runner: factoryRunner, chatId: sid, secret: { id: meta.meta.id, name: meta.meta.name },
+          command, envName, reason: a.reason || '',
+          decrypt: (id, pin) => secrets.decryptSecret(id, pin),
+          // A secret pre-authorised for this chat answers for the person
+          // (after a factory's own team has had its say).
+          askPerson: preauthorisedAsk({
+            vault: chatSecrets, chatId: sid, secretId: meta.meta.id,
+            decrypt: (id, pin) => secrets.decryptSecret(id, pin),
+            onRevoked: (chatId) => broadcastChatSecrets(chatId),
+            askPerson: ({ keepPin }) => waitForSecretApproval({
+            secretId: meta.meta.id,
+            secretName: meta.meta.name,
+            projectAlias: a.alias || '',
+            reason: a.reason || '',
+            sessionId: sid,
+            kind: 'run',
+            command,
+            envName,
+            keepPin,
+            }),
+          }),
         });
-        if (!approval.ok) return json(res, approval);
+        if (!auth.ok) return json(res, { ok: false, error: auth.error });
+        const value = auth.value;
 
         // From here the plaintext exists only in this call frame and the child's
         // environment. It is never returned, logged, or put in the response.
         const cwd = a.cwd || (a.alias ? (getProject(a.alias)?.path || undefined) : undefined);
         const run = await runWithSecret({
-          command, value: approval.value, envName, cwd,
+          command, value, envName, cwd,
           timeoutMs: Math.min(Math.max(Number(a.timeoutMs) || 120000, 1000), 600000),
         });
         return json(res, {
@@ -6394,6 +6586,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
 
       // Built-in notification tools
+      // alert_user: owner only (not in COLLABORATOR_MCP_TOOLS). The chat it is
+      // about comes from the bridge's own environment, never from Claude.
+      if (body.tool === 'alert_user') {
+        const sid = String(a.sessionId || '');
+        const term = sid && claudeUi ? claudeUi.list().find((x) => x.id === sid) : null;
+        const chat = term && !term.collaborator
+          ? { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) }
+          : null;
+        try {
+          const r = await alerter.alert({ title: a.title, body: a.body, level: a.level }, chat ? { chat } : {});
+          // An alert that rings: wait for the person's answer (or the end of
+          // the ring time) and give it to the caller.
+          if (!r.ok || !r.alertId) return json(res, r);
+          const { alertId, note, ...rest } = r;
+          const w = await alerter.waitForAnswer(alertId);
+          return json(res, { ...rest, ...w, note: describeAnswer(w) });
+        }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
       if (body.tool === 'send_message_to_user' && bot) {
         try {
           const chatId = getChatId ? getChatId() : null;
@@ -6553,7 +6765,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           const only = a.scope ? all.skills.filter(s => s.scope === scope) : all.skills;
           return json(res, {
             ok: true,
-            skills: only.map(s => ({ name: s.name, scope: s.scope, description: s.description, files: s.files, kind: s.origin, readOnly: s.readOnly, problem: s.problem || undefined })),
+            skills: only.map(s => ({ name: s.name, scope: s.scope, description: s.description, files: s.files, kind: s.origin, readOnly: s.readOnly, problem: s.problem || undefined, source: s.source || undefined })),
             scopes: all.scopes.map(x => ({ scope: x.id, path: x.path })),
           });
         }
@@ -6568,11 +6780,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (body.tool === 'skill_delete') return json(res, skills.remove(scope, a.name));
         // skill_install
         const opts = { name: a.name || '', overwrite: !!a.overwrite };
+        if (a.url) {
+          const r = await skillsGithub.installFromLink(scope, String(a.url), { ...opts, skill: a.skill || '', all: !!a.all });
+          if (r.choose) r.error += ' Call skill_install again with skill set to one of the names in skills, or all:true.';
+          return json(res, r);
+        }
+        if (a.update) return json(res, await skillsGithub.update(scope, String(a.update), { force: !!a.overwrite }));
         if (a.path) return json(res, skills.installFromPath(scope, String(a.path), opts));
         if (typeof a.content === 'string' && a.content) {
           return json(res, skills.install(scope, { ...opts, filename: (a.name || 'SKILL') + '.md', data: Buffer.from(a.content, 'utf8') }));
         }
-        return json(res, { ok: false, error: 'Give either path (a skill folder, .zip, .skill or SKILL.md on this machine) or content (the text of a SKILL.md)' });
+        return json(res, { ok: false, error: 'Give url (a GitHub link or an npx skills add line), path (a skill folder, .zip, .skill or SKILL.md on this machine) or content (the text of a SKILL.md)' });
       }
 
       // Delegate to external dispatch handler (for browser, screenshots, etc.)

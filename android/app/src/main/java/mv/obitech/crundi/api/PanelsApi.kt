@@ -91,11 +91,11 @@ class BrowsersApi internal constructor(private val rpc: Rpc) {
     /** [on]: "server", "desktop", or null for the default. Answers its key. */
     suspend fun open(project: String, url: String, name: String = "default", width: Int = 1280, height: Int = 720, on: String? = null): String =
         rpc.post("/api/browsers/open", mapOf("alias" to project, "url" to url, "name" to name, "width" to width, "height" to height, "on" to on), slow = true).str("key") ?: ""
-    suspend fun close(key: String) { rpc.post("/api/browsers/${URLEncoder.encode(key, "UTF-8")}/close") }
-    suspend fun navigate(key: String, url: String) { rpc.post("/api/browsers/${URLEncoder.encode(key, "UTF-8")}/navigate", mapOf("url" to url), slow = true) }
+    suspend fun close(key: String) { rpc.post("/api/browsers/${seg(key)}/close") }
+    suspend fun navigate(key: String, url: String) { rpc.post("/api/browsers/${seg(key)}/navigate", mapOf("url" to url), slow = true) }
     /** What it shows now, as PNG bytes. */
     suspend fun screenshot(key: String): ByteArray {
-        val b64 = rpc.get("/api/browsers/${URLEncoder.encode(key, "UTF-8")}/screenshot", slow = true).str("data") ?: throw ApiException(200, "The browser sent no picture.")
+        val b64 = rpc.get("/api/browsers/${seg(key)}/screenshot", slow = true).str("data") ?: throw ApiException(200, "The browser sent no picture.")
         return Base64.getDecoder().decode(b64)
     }
 }

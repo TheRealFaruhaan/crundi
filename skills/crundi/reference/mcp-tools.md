@@ -21,6 +21,7 @@ long-lived. See `platform-linux.md` / `platform-windows.md`.
 | Tool | Notes |
 |---|---|
 | `send_message_to_user` | Out-of-band; arrives when nobody is watching the chat |
+| `alert_user` | `title`, optional `body`, `level` (`urgent` default, or `normal`). Rings the paired phone for the person's ring time (5 min default, 1 to 15) and waits for the answer: `answer` is attended, dismissed, snoozed (`snoozeMinutes`), `no answer` or `not confirmed`. Call it from a background agent if other urgent work must go on meanwhile. Only for what must be acted on or known now; at most 3 urgent an hour (then sent without ringing) and 20 alerts an hour. With no phone it goes through the other channels. |
 | `send_photo_to_user` | Image by path, to Telegram: for when they are not looking at the chat |
 | `show_image` | Draws images in the chat itself, under the call. `path`, or `paths` (up to 8, strings or `{path, caption}`), optional `caption`. PNG/JPEG/GIF/WebP, 10 MB each; files are copied. |
 | `show_video` | A video player in the chat, with a poster frame. Same arguments. MP4/MOV/WebM, 250 MB each; copied. |

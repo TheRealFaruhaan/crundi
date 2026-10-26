@@ -34,14 +34,18 @@ android {
         applicationId = "mv.obitech.crundi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
-        versionName = "1.1.0"
+        versionCode = 28
+        versionName = "1.1.1"
 
         // The oldest server this app can work with. The server holds the
         // mirror of this (MIN_CLIENT in src/client-version.js) and each side
         // refuses the other below its own number. Raise it only for a real
         // break: the Play Store updates the app by itself and nobody updates
         // a server by itself, so "app newer than server" is the normal case.
+        // THE RULE (src/client-version.js): a new feature checks the server's
+        // capabilities, and a missing endpoint says "not supported by this
+        // server" instead of breaking, so this stays where it is for minor
+        // releases. 1.21.1-dev.12 was the last raise of that kind.
         buildConfigField("String", "MIN_SERVER", "\"1.21.1-dev.12\"")
         for (k in listOf("PROJECT_ID", "SENDER_ID", "APP_ID", "API_KEY")) {
             buildConfigField("String", "FIREBASE_$k", "\"${firebase[k] ?: ""}\"")
@@ -170,6 +174,8 @@ dependencies {
     // Firebase brings Fragment 1.1, which predates the ActivityResult APIs the
     // pairing and scan screens use (release lint refuses it). A current one wins.
     implementation("androidx.fragment:fragment-ktx:1.8.6")
+    // Secret PINs kept behind the fingerprint (BiometricPins): BiometricPrompt with a Keystore key.
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.core:core-ktx:1.17.0")
 
     // The native UI: Jetpack Compose, one BOM pins every Compose library.

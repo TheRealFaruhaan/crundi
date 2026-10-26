@@ -103,7 +103,7 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
     try {
       mkdirSync(config.dataDir, { recursive: true });
       const tmp = FILE() + '.tmp';
-      writeFileSync(tmp, JSON.stringify({ items, seenReset, pendingReset, lapsedAt }));
+      writeFileSync(tmp, JSON.stringify({ items, seenReset, pendingReset, lapsedAt }), { mode: 0o600 });
       renameSync(tmp, FILE());
     } catch { /* best effort */ }
   }

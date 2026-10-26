@@ -1,0 +1,532 @@
+{
+  "ok": true,
+  "factory": {
+    "id": "fac_squad",
+    "name": "Product squad",
+    "description": "A planner splits the work; the frontend, backend and database engineers build their parts in parallel branches; a tester checks the \"Done when\" list; a reviewer approves or sends findings back to whoever needs them.",
+    "version": 3,
+    "createdAt": "2026-10-20T09:00:00.000Z",
+    "updatedAt": "2026-10-23T18:30:00.000Z",
+    "settings": {
+      "managerMode": "normal",
+      "mergeMode": "ask",
+      "setupCommand": "",
+      "autoRecover": false,
+      "teamMode": "ask",
+      "presets": [
+        "git-read",
+        "tests"
+      ],
+      "rules": [],
+      "managerRules": true,
+      "crTemplate": [
+        {
+          "id": "goal",
+          "label": "Goal",
+          "hint": "Why this change, and what it should achieve. One or two sentences.",
+          "required": true,
+          "list": false
+        },
+        {
+          "id": "current",
+          "label": "Current situation",
+          "hint": "What exists or happens today, and what is wrong or missing. For a new project: what there is to start from.",
+          "required": false,
+          "list": false
+        },
+        {
+          "id": "expected",
+          "label": "Expected result",
+          "hint": "What it should do when finished: behaviour, screens, data, APIs. Concrete examples help.",
+          "required": true,
+          "list": false
+        },
+        {
+          "id": "done",
+          "label": "Done when",
+          "hint": "One check per line. The reviewers hold the work to these, and the Manager finishes only when they all pass.",
+          "required": true,
+          "list": true
+        },
+        {
+          "id": "scope",
+          "label": "Out of scope",
+          "hint": "What not to do or touch, one per line.",
+          "required": false,
+          "list": true
+        },
+        {
+          "id": "notes",
+          "label": "Constraints and references",
+          "hint": "Tech to use or avoid, conventions, links, anything the team should know.",
+          "required": false,
+          "list": false
+        }
+      ],
+      "limits": {
+        "pauseAt5h": 100,
+        "pauseAtWeek": 100,
+        "maxParallel": 0,
+        "oneAtATimeAbove": 0
+      },
+      "tickMinutes": 0,
+      "secrets": [],
+      "gatekeeper": {
+        "enabled": false,
+        "model": "haiku"
+      },
+      "caps": {
+        "maxHandoffs": 200,
+        "maxMinutes": 480,
+        "tokenBudget": 0
+      }
+    },
+    "roster": [
+      {
+        "id": "manager",
+        "name": "Manager",
+        "persona": "You lead the team like a good engineering manager: you make sure the change request is understood before work starts (ask the person when it is not), give each person what they need, keep the work moving, and only finish when every \"Done when\" check is met and the reviewers are satisfied. When something goes wrong you decide; you do not do the work yourself.",
+        "model": "",
+        "effort": "",
+        "memory": "keep",
+        "tools": {
+          "allow": [],
+          "deny": []
+        },
+        "skills": [],
+        "presets": []
+      },
+      {
+        "id": "plan",
+        "name": "Planner",
+        "persona": "You are the team's planner. Read the change request and the code it touches, then write a short, concrete plan to the shared folder as plan.md: the steps, the files each step changes, who should do which part, and how each \"Done when\" check will be met. Flag anything unclear or risky for the Manager. You do not write code.",
+        "model": "",
+        "effort": "",
+        "memory": "keep",
+        "tools": {
+          "allow": [],
+          "deny": [
+            "Edit",
+            "Write",
+            "MultiEdit",
+            "NotebookEdit"
+          ]
+        },
+        "skills": [],
+        "presets": []
+      },
+      {
+        "id": "fe",
+        "name": "Frontend dev",
+        "persona": "You are a frontend developer. You build interfaces that match the project's existing style and components, work on narrow phone screens as well as desktop, and handle loading, empty and error states. Check your work in a real browser before you hand off. Keep changes focused on the change request and follow the plan in the shared folder if there is one.",
+        "model": "",
+        "effort": "",
+        "memory": "keep",
+        "tools": {
+          "allow": [],
+          "deny": []
+        },
+        "skills": [
+          "frontend-design",
+          "crundi"
+        ],
+        "presets": []
+      },
+      {
+        "id": "be",
+        "name": "Backend dev",
+        "persona": "You are a backend developer. You change server code and APIs carefully: validate input, keep existing behaviour working, return clear errors, and add or update tests for what you touch. Keep changes focused on the change request and follow the plan in the shared folder if there is one.",
+        "model": "",
+        "effort": "",
+        "memory": "keep",
+        "tools": {
+          "allow": [],
+          "deny": []
+        },
+        "skills": [
+          "crundi"
+        ],
+        "presets": []
+      },
+      {
+        "id": "db",
+        "name": "Database engineer",
+        "persona": "You own the data: schema, migrations, indexes and queries. Every schema change is a migration that can run on existing data and be rolled back; you never drop or rewrite data without saying so in your handoff. Check query plans for anything that will grow, keep constraints in the database rather than only in code, and seed or fixture data the others need. Write the data model to the shared folder as data.md when you change it.",
+        "model": "",
+        "effort": "",
+        "memory": "keep",
+        "tools": {
+          "allow": [],
+          "deny": []
+        },
+        "skills": [
+          "crundi"
+        ],
+        "presets": [
+          "tests"
+        ]
+      },
+      {
+        "id": "qa",
+        "name": "Tester",
+        "persona": "You test the change against the change request's \"Done when\" checks. Run the project's tests and write new ones for the behaviour it adds; for anything with an interface, drive it in a real browser. Try the obvious ways it could break. Report what you ran and what failed, with the exact output, as findings.",
+        "model": "",
+        "effort": "",
+        "memory": "keep",
+        "tools": {
+          "allow": [],
+          "deny": []
+        },
+        "skills": [
+          "crundi"
+        ],
+        "presets": [
+          "tests",
+          "packages"
+        ]
+      },
+      {
+        "id": "rev",
+        "name": "Reviewer",
+        "persona": "You review the team's change with fresh eyes. Read the diff against where the run started, check it meets the change request's \"Done when\" checks, and look for bugs, missing edge cases and anything that breaks existing behaviour. File each problem as a finding; blocking only for what you would not ship. Check last round's findings before raising new ones. You do not edit code.",
+        "model": "",
+        "effort": "",
+        "memory": "fresh",
+        "tools": {
+          "allow": [],
+          "deny": [
+            "Edit",
+            "Write",
+            "MultiEdit",
+            "NotebookEdit"
+          ]
+        },
+        "skills": [],
+        "presets": []
+      }
+    ],
+    "nodes": [
+      {
+        "id": "start",
+        "type": "start",
+        "label": "Change request",
+        "position": {
+          "x": -120,
+          "y": 0
+        }
+      },
+      {
+        "id": "mgr",
+        "type": "manager",
+        "label": "Manager",
+        "position": {
+          "x": -120,
+          "y": 170
+        }
+      },
+      {
+        "id": "end",
+        "type": "end",
+        "label": "Result",
+        "position": {
+          "x": -120,
+          "y": 1530
+        }
+      },
+      {
+        "id": "plan",
+        "type": "employee",
+        "label": "Plan",
+        "position": {
+          "x": -120,
+          "y": 340
+        },
+        "employeeId": "plan"
+      },
+      {
+        "id": "parts",
+        "type": "decision",
+        "label": "Which parts?",
+        "position": {
+          "x": -120,
+          "y": 510
+        },
+        "decision": {
+          "kind": "many",
+          "question": "Which parts of the plan need work in this round?",
+          "options": [
+            {
+              "id": "ui",
+              "label": "Interface"
+            },
+            {
+              "id": "api",
+              "label": "Server"
+            },
+            {
+              "id": "data",
+              "label": "Data"
+            }
+          ],
+          "answeredBy": null,
+          "review": false
+        }
+      },
+      {
+        "id": "fe",
+        "type": "employee",
+        "label": "Frontend",
+        "position": {
+          "x": -400,
+          "y": 680
+        },
+        "employeeId": "fe"
+      },
+      {
+        "id": "be",
+        "type": "employee",
+        "label": "Backend",
+        "position": {
+          "x": -120,
+          "y": 680
+        },
+        "employeeId": "be"
+      },
+      {
+        "id": "db",
+        "type": "employee",
+        "label": "Database",
+        "position": {
+          "x": 160,
+          "y": 680
+        },
+        "employeeId": "db"
+      },
+      {
+        "id": "built",
+        "type": "join",
+        "label": "Built",
+        "position": {
+          "x": -120,
+          "y": 850
+        },
+        "join": {
+          "forkId": "parts"
+        }
+      },
+      {
+        "id": "qa",
+        "type": "employee",
+        "label": "Test",
+        "position": {
+          "x": -120,
+          "y": 1020
+        },
+        "employeeId": "qa"
+      },
+      {
+        "id": "rev",
+        "type": "employee",
+        "label": "Review",
+        "position": {
+          "x": -120,
+          "y": 1190
+        },
+        "employeeId": "rev"
+      },
+      {
+        "id": "ok",
+        "type": "decision",
+        "label": "Approved?",
+        "position": {
+          "x": -120,
+          "y": 1360
+        },
+        "decision": {
+          "kind": "yesno",
+          "question": "Is the change ready to ship?",
+          "options": [],
+          "answeredBy": "rev",
+          "review": true
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e8",
+        "kind": "flow",
+        "source": "start",
+        "sourceHandle": "out",
+        "target": "mgr",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e9",
+        "kind": "flow",
+        "source": "mgr",
+        "sourceHandle": "finish",
+        "target": "end",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e10",
+        "kind": "flow",
+        "source": "mgr",
+        "sourceHandle": "out",
+        "target": "plan",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e11",
+        "kind": "flow",
+        "source": "plan",
+        "sourceHandle": "out",
+        "target": "parts",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e12",
+        "kind": "flow",
+        "source": "parts",
+        "sourceHandle": "ui",
+        "target": "fe",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e13",
+        "kind": "flow",
+        "source": "parts",
+        "sourceHandle": "api",
+        "target": "be",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e14",
+        "kind": "flow",
+        "source": "parts",
+        "sourceHandle": "data",
+        "target": "db",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e15",
+        "kind": "flow",
+        "source": "parts",
+        "sourceHandle": "none",
+        "target": "built",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e16",
+        "kind": "flow",
+        "source": "fe",
+        "sourceHandle": "out",
+        "target": "built",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e17",
+        "kind": "flow",
+        "source": "be",
+        "sourceHandle": "out",
+        "target": "built",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e18",
+        "kind": "flow",
+        "source": "db",
+        "sourceHandle": "out",
+        "target": "built",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e19",
+        "kind": "flow",
+        "source": "built",
+        "sourceHandle": "out",
+        "target": "qa",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e20",
+        "kind": "flow",
+        "source": "qa",
+        "sourceHandle": "out",
+        "target": "rev",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e21",
+        "kind": "flow",
+        "source": "rev",
+        "sourceHandle": "out",
+        "target": "ok",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 0
+      },
+      {
+        "id": "e22",
+        "kind": "flow",
+        "source": "ok",
+        "sourceHandle": "yes",
+        "target": "mgr",
+        "requireNote": false,
+        "noteLabel": "",
+        "maxRounds": 5
+      },
+      {
+        "id": "e23",
+        "kind": "flow",
+        "source": "ok",
+        "sourceHandle": "no",
+        "target": "parts",
+        "requireNote": true,
+        "noteLabel": "What to change",
+        "maxRounds": 3
+      },
+      {
+        "id": "n1",
+        "kind": "note",
+        "source": "mgr",
+        "sourceHandle": "note",
+        "target": "rev",
+        "requireNote": false,
+        "noteLabel": "What to look at closely",
+        "maxRounds": 0
+      }
+    ]
+  },
+  "validation": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  }
+}

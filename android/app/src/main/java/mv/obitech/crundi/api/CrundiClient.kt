@@ -61,6 +61,8 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
     val approvals = ApprovalsApi(rpc)
     val usage = UsageApi(rpc)
     val system = SystemApi(rpc)
+    /** The Claude skills on the server (Settings > Skills). */
+    val skills = SkillsApi(rpc)
     /** Panels (widgets): list, frame documents, data, calls from frames. See api.md "Panels". */
     val widgets = WidgetsApi(rpc)
     /** The server's own browsers (Browsers tab list). */
@@ -78,6 +80,15 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
         socket.messages("ui:$id", msg("type" to "subscribe-ui", "id" to id), msg("type" to "unsubscribe-ui", "id" to id)) {
             (it.type() == "ui-history" || it.type() == "ui-event") && (it["id"] as? JsonPrimitive)?.contentOrNull == id
         }.runningFold(ChatState(id)) { s, m -> ChatReducer.message(s, m) }
+
+    /**
+     * Catch a chat up with the server: its history again, which replaces
+     * what [chat] has (entries by id, in the server's order, the state as
+     * the server has it). What a reconnect does by itself; asked for when a
+     * bubble opens again, the app comes back to the front, or the stream
+     * goes quiet mid-turn (ChatWatchdog). False when nothing shows the chat.
+     */
+    fun resyncChat(id: String): Boolean = socket.resync("ui:$id")
 
     /** A terminal's output and input. */
     fun terminal(id: String) = TerminalStream(socket, id)

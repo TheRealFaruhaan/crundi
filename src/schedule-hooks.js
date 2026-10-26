@@ -52,7 +52,7 @@ export function createScheduleHooks({ dataDir, getSchedule, setRuntime = () => {
   const save = () => {
     try {
       mkdirSync(dataDir, { recursive: true });
-      writeFileSync(FILE + '.tmp', JSON.stringify(seen));
+      writeFileSync(FILE + '.tmp', JSON.stringify(seen), { mode: 0o600 });
       renameSync(FILE + '.tmp', FILE);
     } catch (err) { console.warn('[schedule-hooks] could not save:', err.message); }
   };

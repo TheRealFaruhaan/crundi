@@ -137,6 +137,7 @@ ok(server.includes("entry.answered === false") && server.includes('entry.answere
 // keeps that login and renews it for all of them.
 const chatPage = readFileSync(join(root, 'app', 'vendor', 'crundi-chat-page.js'), 'utf8');
 ok(cv.CAPABILITIES.includes('app-page-login'), 'the server says it can give the app a page login to keep');
+ok(cv.CAPABILITIES.includes('webhooks'), 'the server says it has schedule webhooks and signed factory triggers');
 const pl = server.slice(server.indexOf("path === '/api/pair/page-login'"), server.indexOf('// ─── SSE endpoint ───'));
 ok(pl.length > 0 && /dev\.role !== 'background'/.test(pl), 'only a paired phone\'s own background login may ask for its page login');
 ok(/f\.device\?\.role !== 'page'/.test(pl) && !pl.includes('revokeFamily('), 'it retires that phone\'s old page login alone, not the whole phone');

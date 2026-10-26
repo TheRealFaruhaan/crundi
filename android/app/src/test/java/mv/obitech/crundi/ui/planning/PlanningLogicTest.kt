@@ -6,7 +6,13 @@ import mv.obitech.crundi.api.model.KanbanBoard
 import mv.obitech.crundi.api.model.KanbanTask
 import mv.obitech.crundi.api.model.NoteBlock
 import mv.obitech.crundi.api.model.NotePage
+import mv.obitech.crundi.api.model.FactoryTrigger
+import mv.obitech.crundi.api.model.HookSettings
+import mv.obitech.crundi.api.model.Schedule
+import mv.obitech.crundi.api.model.ScheduleAction
 import mv.obitech.crundi.api.model.ScheduleWhen
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -96,6 +102,105 @@ class PlanningLogicTest {
         assertEquals("Mo,We,Fr 08:30", whenSummary(ScheduleWhen("recurring", "08:30", days = listOf(5, 1, 3))))
         assertEquals("2026-10-25 23:00", whenSummary(ScheduleWhen("once", "23:00", "2026-10-25")))
         assertEquals("no days · 09:00", whenSummary(ScheduleWhen("recurring", "09:00")))
+    }
+
+    // ─── Webhooks (server 1.21.1) ───
+
+    @Test fun aCalledScheduleSaysWhenCalled() {
+        assertEquals("When called", whenSummary(ScheduleWhen("webhook", "09:00")))
+        assertEquals("When called", whenSummary(ScheduleWhen("webhook", "")))
+    }
+
+    @Test fun webhooksAreKnownByNameVersionOrData() {
+        // 1.21.1 has them but does not list the capability.
+        assertTrue(Webhooks.supported("1.21.1", emptySet()))
+        assertTrue(Webhooks.supported("1.21.1-dev.12", emptySet()))
+        assertTrue(Webhooks.supported("1.22.0", emptySet()))
+        assertFalse(Webhooks.supported("1.21.1-dev.11", emptySet()))
+        assertFalse(Webhooks.supported("1.21.0", setOf("handshake", "pairing")))
+        assertFalse(Webhooks.supported("", emptySet()))
+        assertTrue(Webhooks.supported("", setOf("webhooks")))
+        assertTrue(Webhooks.inSchedules(listOf(Schedule("a", `when` = ScheduleWhen("webhook")))))
+        assertTrue(Webhooks.inSchedules(listOf(Schedule("a", webhook = HookSettings(auth = "key")))))
+        assertFalse(Webhooks.inSchedules(listOf(Schedule("a"))))
+        assertTrue(Webhooks.inTriggers(listOf(FactoryTrigger("t", webhook = HookSettings("k", auth = "key")))))
+        assertFalse(Webhooks.inTriggers(listOf(FactoryTrigger("t", kind = "webhook", webhook = HookSettings("k")))))
+    }
+
+    private val hook = Schedule("a1b2c3d4e5f60718", "Alerts", "crundi", action = ScheduleAction("chat", prompt = "Look into {{payload.message}}", session = "resume", sessionId = "8441d374"),
+        `when` = ScheduleWhen("webhook", "07:15", "", listOf(2)), webhook = HookSettings("KEY", "SECRET", "signature", "x-sig", "", "{{payload.groupKey}}"))
+
+    @Test fun aCalledScheduleSavesAsCalledWithItsSettings() {
+        val f = ScheduleForm(hook)
+        assertEquals(null, f.problem(emptyList()))
+        val s = f.toSchedule("Indian/Maldives")
+        // Not turned into a timed one; the stored time and days go back as they were.
+        assertEquals(ScheduleWhen("webhook", "07:15", "", listOf(2)), s.`when`)
+        assertEquals(hook.webhook, s.webhook)
+        assertEquals("resume", s.action.session)
+        assertEquals("8441d374", s.action.sessionId)
+    }
+
+    @Test fun editingTheWebhookKeepsTheRest() {
+        val f = ScheduleForm(hook)
+        f.hook = f.hook.copy(auth = "key", idempotency = "{{payload.id}}")
+        val wh = f.toSchedule("").webhook!!
+        assertEquals("key", wh.auth)
+        assertEquals("{{payload.id}}", wh.idempotency)
+        assertEquals("x-sig", wh.signatureHeader)
+        assertEquals("KEY", wh.key)
+    }
+
+    @Test fun aTimedScheduleFromAnOlderServerGetsNoWebhook() {
+        val s = Schedule("s1", "Morning", "crundi", action = ScheduleAction("command", command = "make"), `when` = ScheduleWhen("recurring", "08:30", days = listOf(1, 3)))
+        val out = ScheduleForm(s).toSchedule("")
+        assertNull(out.webhook)
+        assertEquals(ScheduleWhen("recurring", "08:30", "", listOf(1, 3)), out.`when`)
+    }
+
+    @Test fun aTimedScheduleKeepsWebhookSettingsItHad() {
+        // Switched from When called back to Recurring on the web: its settings stay for next time.
+        val s = hook.copy(`when` = ScheduleWhen("recurring", "08:30", days = listOf(1)))
+        assertEquals(hook.webhook, ScheduleForm(s).toSchedule("").webhook)
+    }
+
+    @Test fun aWhenModeThisAppDoesNotKnowGoesBackAsItCame() {
+        val w = ScheduleWhen("cron", "08:30", "2026-11-01", listOf(1, 2))
+        assertEquals(w, ScheduleForm(hook.copy(`when` = w)).toSchedule("").`when`)
+    }
+
+    @Test fun whenCalledTakesAChatOrAServiceAndNoTime() {
+        val f = ScheduleForm(ScheduleForm.blank("crundi")).apply { name = "Hook"; prompt = "Look"; time = "" }
+        assertEquals("agent", f.kind)
+        f.pickWhen("webhook")
+        assertEquals("chat", f.kind)
+        assertEquals(null, f.problem(emptyList()))
+        f.kind = "command"
+        assertEquals("A webhook can run a background chat or a service action", f.problem(emptyList()))
+        f.kind = "service"
+        assertEquals("Pick a service", f.problem(emptyList()))
+        // A new one sends the default settings; the server makes the key and secret.
+        f.kind = "chat"
+        assertEquals(HookSettings(auth = "key", signatureHeader = "x-crundi-signature", timestampHeader = "", idempotency = ""), f.toSchedule("").webhook)
+        f.pickWhen("recurring")
+        assertEquals("Set a time", f.problem(emptyList()))
+    }
+
+    @Test fun webhookUrlsCarryTheKeyOnlyWhenNotSigned() {
+        val key = HookSettings("K1", "S1", "key")
+        assertEquals("https://dev.faruhaan.com/api/schedule-hook/a1?key=K1", Webhooks.scheduleUrl("dev.faruhaan.com", "a1", key))
+        assertEquals("https://dev.faruhaan.com/api/schedule-hook/a1", Webhooks.scheduleUrl("dev.faruhaan.com", "a1", key.copy(auth = "signature")))
+        assertEquals("https://dev.faruhaan.com/api/factory-hook/trigger/trg_1?key=K1", Webhooks.triggerUrl("dev.faruhaan.com", "trg_1", key))
+        assertFalse(Webhooks.maskedUrl("https://h/api/schedule-hook/a1?key=K1").contains("K1"))
+        assertEquals("https://h/x", Webhooks.maskedUrl("https://h/x"))
+    }
+
+    @Test fun aTriggerEditKeepsItsKeyAndSecret() {
+        val sent = HookSettings("K", "S", "key", "x-crundi-signature", "", "")
+        val e = TriggerHooks.edited(sent, Webhooks.filled(sent).copy(auth = "signature", idempotency = "{{payload.id}}"))
+        assertEquals(HookSettings("K", "S", "signature", "x-crundi-signature", "", "{{payload.id}}"), e)
+        // An older server's trigger (only a key): the editor fills the rest only if it is shown and changed.
+        assertEquals(HookSettings("k", auth = "key", signatureHeader = "x-crundi-signature", timestampHeader = "", idempotency = ""), Webhooks.filled(HookSettings("k")).copy(secret = null))
     }
 
     @Test fun agoReadsLikeTheDesktop() {

@@ -12,6 +12,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- The live card's chip in the status bar (Android 16 and later). -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <!-- Urgent alerts may ring through Do Not Disturb, only if the person
+         turns that on in App settings and then grants Do Not Disturb access
+         in Android's own settings (android/URGENT-ALERTS.md). -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Full-screen urgent alerts, opt-in (android/URGENT-ALERTS.md). Play
+         grants it only to calling and alarm apps; the person turns it on. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Plain http is allowed because a server on a home network often has
@@ -40,6 +47,15 @@
         <activity android:name=".PairActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ScanActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".SettingsActivity" android:exported="false" android:label="App settings" />
+        <!-- An urgent alert over the lock screen, like an alarm clock's. -->
+        <activity
+            android:name=".AlertActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop" />
         <!-- The live card's Bubble button: shows nothing, opens the bubble, goes. -->
         <activity
             android:name=".BubbleActivity"
@@ -72,6 +88,8 @@
         </service>
         <receiver android:name=".ReplyReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:exported="false" />
+        <receiver android:name=".AlertDismissReceiver" android:exported="false" />
+        <receiver android:name=".SnoozeReceiver" android:exported="false" />
 
         <!-- Firebase is set up by hand in Push.init, from values read at build
              time, so its own automatic start is switched off: it would look

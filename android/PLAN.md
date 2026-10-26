@@ -112,6 +112,10 @@ Details that follow from how the server works today:
   back to Telegram and web push.
 - An optional foreground service shows live progress while a chat is working.
   It is not the delivery path.
+- Urgent alerts (the alert_user MCP tool, push kind `alert`) ring on their
+  own Urgent channel until seen. The store policy check behind them (no
+  full-screen intent, no fake call, no exact alarms, Do Not Disturb opt-in
+  only, iOS time-sensitive only) is dated and sourced in URGENT-ALERTS.md.
 
 ### Relay keys
 

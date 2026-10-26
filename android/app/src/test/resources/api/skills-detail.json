@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "skill": { "scope": "global", "name": "frontend-design", "title": "frontend-design", "description": "Distinctive, intentional visual design when building new UI or reshaping an existing one.", "files": 3, "more": false, "size": 12840, "origin": "user", "readOnly": false, "problem": "" },
+  "path": "/home/crundi/.claude/skills/frontend-design",
+  "files": [
+    { "path": "SKILL.md", "size": 4210, "mtime": 1792500000000 },
+    { "path": "reference/typography.md", "size": 6120, "mtime": 1792500000000 },
+    { "path": "scripts/contrast.py", "size": 2510, "mtime": 1792500000000 }
+  ],
+  "more": false,
+  "skippedLinks": 0,
+  "readOnlyReason": ""
+}

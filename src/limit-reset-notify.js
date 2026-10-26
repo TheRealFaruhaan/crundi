@@ -99,7 +99,7 @@ export function createLimitResetNotifier({
       mkdirSync(config.dataDir, { recursive: true });
       const f = stateFile();
       const tmp = f + '.tmp';
-      writeFileSync(tmp, JSON.stringify(state, null, 2));
+      writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
       renameSync(tmp, f);
     } catch { /* non-fatal: at worst a reset is announced twice */ }
   }

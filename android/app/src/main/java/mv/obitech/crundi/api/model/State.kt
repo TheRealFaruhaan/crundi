@@ -162,9 +162,15 @@ data class ApprovalItem(
 @Serializable data class Approvals(val items: List<ApprovalItem> = emptyList(), val count: Int = 0)
 
 /** A secret the server holds: names only, never values (GET /api/secrets). */
-@Serializable data class Secret(val id: String, val name: String = "", val description: String = "", val createdAt: String = "", val updatedAt: String = "")
+@Serializable data class Secret(
+    val id: String, val name: String = "", val description: String = "", val createdAt: String = "", val updatedAt: String = "",
+    /** How it is locked ('secret-passphrase'): "pin" (6 digits, an older server's only kind) or "passphrase". */
+    val lock: String = "pin",
+    /** On an old lock (a 6-digit PIN or weaker parameters): offer to re-lock it after use ('secret-upgrade'). */
+    val needsUpgrade: Boolean = false,
+)
 
-/** Claude asking to use a secret (SSE `secret-requests`): approve with the 6-digit PIN, or deny. */
+/** Claude asking to use a secret (SSE `secret-requests`): approve with its PIN or passphrase, or deny. */
 @Serializable
 data class SecretRequest(
     val id: String,
@@ -178,6 +184,29 @@ data class SecretRequest(
     val command: String = "",
     val envName: String = "",
     val sessionId: String = "",
+    /** The secret's lock, "pin" or "passphrase" ('secret-passphrase'); an older server says nothing: a PIN. */
+    val lock: String = "pin",
+    /** The secret is on an old lock: offer to re-lock it once approved ('secret-upgrade'). */
+    val needsUpgrade: Boolean = false,
 )
 
 @Serializable data class Secrets(val secrets: List<Secret> = emptyList(), val requests: List<SecretRequest> = emptyList())
+
+/**
+ * A secret pre-authorised for one chat (GET /api/secrets/chat, SSE
+ * `chat-secrets`): its name and when it runs out, never a value or a PIN.
+ * [expiresAt] is null when it lasts until the chat ends.
+ */
+@Serializable
+data class ChatSecretGrant(
+    val secretId: String,
+    val name: String = "",
+    val expiresAt: String? = null,
+    val untilChatEnds: Boolean = false,
+    val grantedAt: String = "",
+) {
+    companion object {
+        /** The durations offered, as the server's PREAUTH_PRESETS (src/chat-secrets.js). */
+        val PRESETS = listOf("15m" to "15 minutes", "1h" to "1 hour", "8h" to "8 hours", "chat" to "Until this chat ends")
+    }
+}

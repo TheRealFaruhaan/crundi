@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "path": "SKILL.md",
+  "size": 4210,
+  "readOnly": false,
+  "text": "---\nname: frontend-design\ndescription: Distinctive, intentional visual design when building new UI or reshaping an existing one.\n---\n\n# Frontend design\n\nBefore writing any code, pick a direction and say it in one line:\nwhat it should feel like, and the one thing people will remember.\n\n## Type\n\n- One display face, one text face. Never more than two.\n- Set a scale (1.25) and keep to it.\n\n## Colour\n\n- Start from the brand colour; derive the rest.\n- Check contrast with scripts/contrast.py.\n"
+}

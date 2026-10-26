@@ -293,6 +293,15 @@ function payloadWith(text, meta, bodyMax) {
     // takes those notifications down.
     // Somebody is already at Crundi: show this, and make no sound over it.
     ...(meta.quiet ? { quiet: true } : {}),
+    // An alert (kind "alert", the alert_user tool) that should ring until it
+    // is seen. `downgraded`: it was asked for as urgent, and the server's
+    // hourly limit sent it as a normal one. An app that does not know either
+    // shows the alert as an ordinary notification.
+    ...(meta.urgent ? { urgent: true } : {}),
+    // Which alert this is, so the phone can say how it was answered
+    // (POST /api/alerts/answer). An app that does not know it ignores it.
+    ...(meta.alertId ? { alertId: String(meta.alertId).slice(0, 40) } : {}),
+    ...(meta.downgraded ? { downgraded: true } : {}),
     ...(Array.isArray(meta.clear) ? { clear: meta.clear.map((k) => String(k).slice(0, 40)).slice(0, 10) } : {}),
     // Chats whose own request has been answered: their notifications go too.
     ...(Array.isArray(meta.chats) && meta.chats.length ? { chats: meta.chats.map((k) => String(k).slice(0, 80)).slice(0, 20) } : {}),

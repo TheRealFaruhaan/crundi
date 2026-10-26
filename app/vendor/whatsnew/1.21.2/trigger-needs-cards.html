@@ -1,0 +1,33 @@
+<div class="wna a-tnc">
+  <div class="opt">Start a run <b>Only if To do has a card</b></div>
+  <div class="col todo"><div class="h">To do</div></div>
+  <div class="col done"><div class="h">Done</div></div>
+  <div class="card ca">Login page</div>
+  <div class="card cb">Dark mode</div>
+  <div class="log l1"><span class="dot g"></span>Login page reached Done. To do has a card: <b>run started</b></div>
+  <div class="log l2"><span class="dot m"></span>Dark mode reached Done. To do is empty: <b>skipped, no run</b></div>
+  <style>
+    .a-tnc{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-tnc .opt{position:absolute;left:36px;top:22px;padding:7px 12px;border-radius:9px;border:1px solid var(--accent);background:var(--bg-card);color:var(--text-secondary);font-size:12px}
+    .a-tnc .opt b{margin-left:6px;color:var(--accent);font-weight:600}
+    .a-tnc .col{position:absolute;top:70px;width:262px;height:150px;border-radius:12px;border:1px solid var(--border);background:var(--bg-secondary)}
+    .a-tnc .todo{left:36px}
+    .a-tnc .done{left:342px}
+    .a-tnc .h{padding:9px 12px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted);font-weight:600}
+    .a-tnc .card{position:absolute;left:48px;width:214px;padding:9px 12px;border-radius:9px;border:1px solid var(--border);background:var(--bg-card);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+    .a-tnc .ca{top:104px;animation:atnc-a 11s ease infinite}
+    .a-tnc .cb{top:154px;animation:atnc-b 11s ease infinite}
+    .a-tnc .log{position:absolute;left:36px;right:36px;display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);opacity:0}
+    .a-tnc .log b{color:var(--text-primary);font-weight:600}
+    .a-tnc .l1{top:246px;animation:atnc-c 11s ease infinite}
+    .a-tnc .l2{top:298px;animation:atnc-d 11s ease infinite}
+    .a-tnc .l2 b{color:var(--text-muted)}
+    .a-tnc .dot{flex:none;width:8px;height:8px;border-radius:50%}
+    .a-tnc .dot.g{background:var(--green)}
+    .a-tnc .dot.m{background:var(--text-muted)}
+    @keyframes atnc-a{0%,14%{transform:none}22%,94%{transform:translateX(306px)}100%{transform:none}}
+    @keyframes atnc-b{0%,20%{transform:none}26%,46%{transform:translateY(-50px)}54%,94%{transform:translate(306px,0)}100%{transform:none}}
+    @keyframes atnc-c{0%,22%{opacity:0;transform:translateY(6px)}27%,94%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes atnc-d{0%,54%{opacity:0;transform:translateY(6px)}59%,94%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

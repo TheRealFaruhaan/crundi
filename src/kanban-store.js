@@ -39,7 +39,7 @@ function loadAll() {
 
 function saveAll(map) {
   ensureDataDir();
-  writeFileSync(FILE(), JSON.stringify(map, null, 2));
+  writeFileSync(FILE(), JSON.stringify(map, null, 2), { mode: 0o600 });
 }
 
 function genId() {

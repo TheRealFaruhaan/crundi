@@ -11,7 +11,6 @@ import mv.obitech.crundi.api.model.Pane
 import mv.obitech.crundi.api.model.ResumableSession
 import mv.obitech.crundi.api.model.SendResult
 import java.io.InputStream
-import java.net.URLEncoder
 
 /**
  * Chats (Claude in UI mode). The list of chats comes from the live state
@@ -19,7 +18,7 @@ import java.net.URLEncoder
  * streams over the socket ([CrundiClient.chat]). These are the actions.
  */
 class ChatsApi internal constructor(private val rpc: Rpc) {
-    private fun at(id: String, action: String) = "/api/ui-sessions/${URLEncoder.encode(id, "UTF-8")}/$action"
+    private fun at(id: String, action: String) = "/api/ui-sessions/${seg(id)}/$action"
 
     /** Every chat with its project mark (GET /api/ui-sessions). The live state has the same list without marks. */
     suspend fun list(): List<Pane> = rpc.read(rpc.get("/api/ui-sessions"), "sessions", emptyList())
@@ -119,12 +118,12 @@ class ChatsApi internal constructor(private val rpc: Rpc) {
     suspend fun schedule(project: String, text: String, trigger: String, at: String? = null): ChatScheduleItem =
         rpc.read(rpc.post("/api/chat-schedule", mapOf("project" to project, "text" to text, "trigger" to mapOf("type" to trigger, "at" to at).filterValues { it != null })), "item")
 
-    suspend fun unschedule(itemId: String) { rpc.delete("/api/chat-schedule/${URLEncoder.encode(itemId, "UTF-8")}") }
+    suspend fun unschedule(itemId: String) { rpc.delete("/api/chat-schedule/${seg(itemId)}") }
 }
 
 /** Terminals (Claude or a shell in a PTY). Output and input go over the socket ([CrundiClient.terminal]). */
 class TerminalsApi internal constructor(private val rpc: Rpc) {
-    private fun at(id: String, action: String) = "/api/terminals/${URLEncoder.encode(id, "UTF-8")}/$action"
+    private fun at(id: String, action: String) = "/api/terminals/${seg(id)}/$action"
 
     /**
      * Open a terminal. [shell] true for a plain shell, otherwise Claude
@@ -142,7 +141,7 @@ class TerminalsApi internal constructor(private val rpc: Rpc) {
     suspend fun reorder(project: String, order: List<String>) { rpc.post("/api/terminals/reorder", mapOf("project" to project, "order" to order)) }
 
     // ─── Parked panes (a chat or terminal put away, kept to resume) ───
-    private fun pane(id: String, action: String) = "/api/panes/${URLEncoder.encode(id, "UTF-8")}/$action"
+    private fun pane(id: String, action: String) = "/api/panes/${seg(id)}/$action"
 
     /** What a parked pane last showed: [PanePreview.screen] for a terminal, messages for a chat. */
     suspend fun preview(id: String): PanePreview {

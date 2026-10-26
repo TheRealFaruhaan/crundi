@@ -180,5 +180,6 @@ data class UpdateInfo(
 @Serializable data class LoginSession(val id: String, val current: Boolean = false, val device: SessionDevice? = null, val username: String = "", val createdAt: Long = 0, val lastSeenAt: Long = 0, val userAgent: String = "", val ip: String = "")
 
 @Serializable data class WhatsNewKey(val keys: List<String> = emptyList(), val text: String = "")
-@Serializable data class WhatsNewStep(val id: String = "", val version: String = "", val tag: String = "", val title: String = "", val body: String = "", val keys: List<WhatsNewKey> = emptyList())
+/** One step of What's new. [art] is an HTML fragment for a 640 x 400 stage (markup and styles only); [artTitle] labels its little window. An older server sends neither. */
+@Serializable data class WhatsNewStep(val id: String = "", val version: String = "", val tag: String = "", val title: String = "", val body: String = "", val keys: List<WhatsNewKey> = emptyList(), val art: String = "", val artTitle: String = "")
 @Serializable data class WhatsNew(val version: String = "", val steps: List<WhatsNewStep> = emptyList())

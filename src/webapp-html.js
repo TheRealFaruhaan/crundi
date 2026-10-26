@@ -765,6 +765,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
       font-size: 11px; line-height: 1; padding: 3px 6px; flex-shrink: 0;
     }
     .term-font-btn:hover, .term-head-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+    /* A chat's pre-authorised secrets (app/vendor/crundi-chat-secrets.js): a
+       lock in the header when wide, a line in the folded menu when narrow. */
+    .chat-secrets-btn { display: inline-flex; align-items: center; gap: 4px; }
+    .chat-secrets-btn .ic { width: 12px; height: 12px; }
+    .chat-secrets-btn.on { color: var(--yellow); border-color: var(--yellow); }
+    .chat-secrets-btn .csb-label { display: none; }
+    .chat-secrets-btn .csb-n:empty { display: none; }
+    @container (max-width: 559px) { .chat-secrets-btn .csb-label { display: inline; } }
+    @media (max-width: 768px) { .chat-secrets-btn .csb-label { display: inline; } }
     .term-head-btn.term-close { font-size: 14px; padding: 1px 7px; }
     .term-head-btn.term-close:hover { color: var(--red); border-color: var(--red); }
     /* Armed state mirrors the chat Stop button: one click asks, the next acts. */
@@ -2746,6 +2755,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .secrets-add textarea { resize: vertical; min-height: 44px; }
     .secrets-add input:focus, .secrets-add textarea:focus { border-color: var(--accent); outline: none; }
     .secrets-add .hint { font-size: 0.74rem; color: var(--text-muted); }
+    .secrets-add .hint.warn { color: var(--yellow); }
+    .secrets-add .kanban-btn:disabled { opacity: 0.5; cursor: default; }
+    .secret-item .sec-tag {
+      display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 99px; vertical-align: 1px;
+      font-size: 0.66rem; font-weight: 600; color: var(--yellow); border: 1px solid var(--yellow); background: var(--yellow-dim);
+    }
+    .pin-modal input.pass, .sreq-pin input.pass { letter-spacing: normal; font-family: inherit; font-size: 0.95rem; }
 
     /* ─── PIN modal ─── */
     .pin-modal {
@@ -3270,6 +3286,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .sk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
     .sk-bar label { font-size: 0.76rem; color: var(--text-secondary); }
     .sk-bar select.bk-in { width: auto; flex: 1 1 150px; min-width: 0; max-width: 260px; }
+    .sk-link { margin-top: 10px; }
+    .sk-link .bk-in { flex: 3 1 240px; font-family: var(--mono); font-size: 0.74rem; }
+    .sk-pick { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .sk-pick-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); }
+    .sk-pick-row > span { flex: 1; min-width: 0; font-size: 0.76rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+    .sk-pick-row b { color: var(--text-primary); }
+    .sk-src a { color: var(--accent); overflow-wrap: anywhere; }
+    .sk-src code { font-family: var(--mono); font-size: 0.7rem; }
     .sk-group { margin-top: 16px; }
     .sk-group > h5 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
     .sk-group > h5 code { font-family: var(--mono); font-size: 0.68rem; font-weight: 400; color: var(--text-muted); overflow-wrap: anywhere; }
@@ -3819,6 +3843,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/codemirror.js?v=${vendorTag('codemirror.js')}"><\/script>
   <script src="/vendor/crundi-mini.js?v=${vendorTag('crundi-mini.js')}"><\/script>
   <script src="/vendor/claude-chat.js?v=${vendorTag('claude-chat.js')}"><\/script>
+  <script src="/vendor/crundi-secret-lock.js?v=${vendorTag('crundi-secret-lock.js')}"><\/script>
+  <script src="/vendor/crundi-chat-secrets.js?v=${vendorTag('crundi-chat-secrets.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-docker.js?v=${vendorTag('crundi-docker.js')}"><\/script>
   <script src="/vendor/crundi-factories.js?v=${vendorTag('crundi-factories.js')}"><\/script>
@@ -7279,6 +7305,45 @@ export function getWebappHtml(botUsername, appVersion = '') {
       return h;
     }
 
+    // ─── Secrets pre-authorised for one chat ───
+    // The dialog and the PIN prompt's choice are app/vendor/crundi-chat-secrets.js,
+    // shared with the compact chat page. Offered only when the server lists
+    // 'chat-secret-preauth', to the owner, on the owner's own chats.
+    let chatSecretsReady = false;
+    function chatSecretsInit() {
+      const CS = window.CrundiChatSecrets;
+      if (!CS || userRole === 'collaborator') return;
+      if (!chatSecretsReady) {
+        chatSecretsReady = true;
+        CS.configure({ apiFetch, toast });
+        CS.onChange(paintChatSecretBtns);
+      }
+      CS.supported().then((yes) => { if (yes) CS.load(); paintChatSecretBtns(); });
+    }
+    function chatSecretsFor(t) {
+      const CS = window.CrundiChatSecrets;
+      return !!(CS && CS.isSupported() && userRole !== 'collaborator' && t && t.kind === 'ui' && !t.collaborator);
+    }
+    function chatSecretsBtnHtml(t) {
+      if (!window.CrundiChatSecrets || userRole === 'collaborator' || t.collaborator) return '';
+      return '<button class="term-font-btn chat-secrets-btn" data-action="chat-secrets" data-tid="' + t.id + '" title="Secrets pre-authorised for this chat" aria-label="Secrets for this chat"' + (chatSecretsFor(t) ? '' : ' style="display:none"') + '>'
+        + ic('lock') + '<span class="csb-n"></span><span class="csb-label">Secrets for this chat</span></button>';
+    }
+    function paintChatSecretBtns() {
+      const CS = window.CrundiChatSecrets;
+      document.querySelectorAll('.chat-secrets-btn').forEach((b) => {
+        const t = terminals.find(x => x.id === b.dataset.tid);
+        const on = chatSecretsFor(t);
+        b.style.display = on ? '' : 'none';
+        if (!on) return;
+        const n = CS.grants(b.dataset.tid).length;
+        b.classList.toggle('on', n > 0);
+        const cnt = b.querySelector('.csb-n');
+        if (cnt) cnt.textContent = n ? String(n) : '';
+        b.title = n ? n + ' secret' + (n === 1 ? '' : 's') + ' pre-authorised for this chat' : 'Pre-authorise secrets for this chat';
+      });
+    }
+
     function headHtmlLive(t) {
       const exited = t.status === 'exited';
       const isChat = t.kind === 'ui';
@@ -7292,7 +7357,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const fontBtns = '<button class="term-font-btn" data-action="term-font" data-dir="-1" data-tid="' + t.id + '" title="Smaller text">A-</button>'
         + '<button class="term-font-btn" data-action="term-font-reset" data-tid="' + t.id + '" title="Reset text size">' + ic('rotate-ccw') + '</button>'
         + '<button class="term-font-btn" data-action="term-font" data-dir="1" data-tid="' + t.id + '" title="Larger text">A+</button>';
-      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + fontBtns + nativeChatBtns(t) : fontBtns) + pinBtnHtml();
+      const controls = (isChat ? planTagHtml(t) + '<span class="term-kind-tag">chat</span>' + chatSecretsBtnHtml(t) + fontBtns + nativeChatBtns(t) : fontBtns) + pinBtnHtml();
       return '<span class="term-drag" title="Drag to reorder">\\u22ee\\u22ee</span>'
         + '<span class="term-status-dot' + dotCls + '" title="' + (exited ? 'exited' : as) + '"></span>'
         + '<span class="term-title" data-action="term-rename" data-tid="' + t.id + '" title="Click to rename"' + (t.longTitle ? ' data-long="' + escHtml(t.longTitle) + '"' : '') + '>' + escHtml(t.title || (isChat ? 'Chat' : 'Terminal')) + '</span>'
@@ -7334,6 +7399,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // Plan pill. Rebuilt in place rather than via headHtmlLive so a state
       // push does not wipe an in-progress rename or the armed close button.
       if (t.kind === 'ui') {
+        if (el.querySelector('.chat-secrets-btn')) paintChatSecretBtns();
         const kindTag = el.querySelector('.term-kind-tag');
         // A collaborator's chat, on the owner's screen: say whose it is. The
         // owner can still type into it; what they send runs in the
@@ -9114,6 +9180,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
           approvalItems = d.items || [];
           renderApprovals();
         } catch (err) { /* a malformed frame must not stop the stream */ }
+      });
+      chatSecretsInit();
+      es.addEventListener('chat-secrets', (e) => {
+        try { if (window.CrundiChatSecrets) window.CrundiChatSecrets.handleEvent(JSON.parse(e.data)); } catch (err) { /* a malformed frame must not stop the stream */ }
       });
       es.addEventListener('secret-requests', (e) => {
         try {
@@ -11149,6 +11219,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
 
     var sreqArmed = null;    // request id whose PIN field is open
+    var sreqAuto = false;    // opened by itself (the first card), so not focused
+    var sreqAllow = { on: false, duration: '1h' };   // "Allow for this chat" on that card
     var sreqError = '';      // inline PIN error for that card
 
     // ─── Reclaim disk space ───
@@ -12617,6 +12689,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
     let skTarget = 'global';    // where Upload and New put a skill
     let skShowSynced = false;
     let skError = '';
+    let skLinkOk = null;        // does the server install from a link? null until known
+    let skLinkText = '';        // what is in the link field
+    let skLinkBusy = false;
 
     function skQuery(o) {
       const q = new URLSearchParams();
@@ -12661,6 +12736,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if (!d.ok) throw new Error(d.error || 'Could not load the skills');
         skData = d; skError = '';
       } catch (e) { skError = e.message; }
+      if (skLinkOk === null) {
+        // Install from a link is newer than the rest of this section: ask the
+        // server whether it has it, so an older one says so instead of failing.
+        try {
+          const hs = await (await apiFetch('/api/handshake')).json();
+          const caps = (hs && hs.server && hs.server.capabilities) || [];
+          skLinkOk = caps.indexOf('skills-install-link') >= 0;
+        } catch (e) { /* unknown: try, and a 404 will say */ }
+      }
       if (skData && !skData.scopes.some(x => x.id === skTarget)) skTarget = 'global';
       if (skOpen && skData && !skData.skills.some(x => skIs(x, skOpen))) { skOpen = null; skDetail = null; skFile = null; skForm = ''; }
       if (skOpen) await skLoadDetail();
@@ -12680,6 +12764,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (sk.origin === 'bundled') t += '<span class="sk-tag">Included with Crundi</span>';
       if (sk.origin === 'synced') t += '<span class="sk-tag">Synced</span>';
       if (sk.origin === 'linked') t += '<span class="sk-tag">Link</span>';
+      if (sk.source) t += '<span class="sk-tag">GitHub</span>';
       if (sk.problem) t += '<span class="sk-tag warn">Needs attention</span>';
       return t;
     }
@@ -12702,7 +12787,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
       let h = '<div class="sk-detail">';
       if (skDetail.readOnlyReason) h += '<div class="sk-note">' + ic('lock') + '<span>' + escHtml(skDetail.readOnlyReason) + '</span></div>';
       if (sk.problem) h += '<div class="sk-note warn">' + ic('info') + '<span>' + escHtml(sk.problem) + '.</span></div>';
+      if (sk.source) h += skSourceHtml(sk.source);
       h += '<div class="bk-actions">'
+        + (!ro && sk.source && skLinkOk !== false ? '<button type="button" class="svc-btn" data-sk="update">' + ic('refresh') + ' Update</button>' : '')
         + (ro ? '' : '<button type="button" class="svc-btn" data-sk="rename">' + ic('pencil') + ' Rename</button>')
         + '<button type="button" class="svc-btn" data-sk="transfer">' + ic('copy') + (ro ? ' Copy to…' : ' Copy or move…') + '</button>'
         + '<button type="button" class="svc-btn" data-sk="download">' + ic('download') + ' Download</button>'
@@ -12760,9 +12847,33 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       return h + '</div>';
     }
+    function skSourceHtml(src) {
+      const when = src.installedAt ? new Date(src.installedAt) : null;
+      return '<div class="sk-note sk-src">' + ic('git-branch') + '<span>From <a href="' + escHtml(src.url || ('https://github.com/' + src.repo)) + '" target="_blank" rel="noopener noreferrer">' + escHtml(src.repo) + '</a>'
+        + (src.ref ? ', ' + escHtml(src.ref) : '')
+        + (src.path ? ', <code>' + escHtml(src.path) + '</code>' : '')
+        + (src.commit ? ' at <code>' + escHtml(src.commit.slice(0, 7)) + '</code>' : '')
+        + (when && !isNaN(when) ? '. Installed ' + escHtml(when.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })) : '')
+        + '. Update installs it again from there.</span></div>';
+    }
+    function skLinkHtml() {
+      const off = skLinkOk === false;
+      return '<div class="sk-form sk-link"><label class="sk-form-label" for="sk-link">Or install from a GitHub link, or paste an npx skills add line. Only the skill’s files are copied; nothing from the repository is run.</label>'
+        + '<input class="bk-in" id="sk-link" placeholder="https://github.com/owner/repo --skill name" autocomplete="off" spellcheck="false" autocapitalize="off" value="' + escHtml(skLinkText) + '"' + (off || skLinkBusy ? ' disabled' : '') + '>'
+        + '<button type="button" class="svc-btn primary" data-sk="link-go" data-sk-default' + (off || skLinkBusy ? ' disabled' : '') + '>' + ic('git-branch') + (skLinkBusy ? ' Fetching…' : ' Install from link') + '</button>'
+        + (off ? '<div class="bk-hint" style="flex:1 1 100%;">This server does not support this yet. Update the server to use it. Upload still works.</div>' : '')
+        + '</div>';
+    }
     function skPendingHtml() {
       const p = skPending;
       if (!p) return '';
+      if (p.kind === 'link-choose') {
+        return '<div class="sk-note warn" style="margin-top:10px;">' + ic('info') + '<div style="flex:1;min-width:0;"><span>' + escHtml(p.message) + '</span>'
+          + '<div class="sk-pick">' + p.skills.map(x => '<div class="sk-pick-row"><span><b>' + escHtml(x.name) + '</b>' + (x.description ? ' ' + escHtml(x.description) : '') + '</span>'
+            + '<button type="button" class="svc-btn" data-sk="link-pick" data-name="' + escHtml(x.name) + '">Install</button></div>').join('') + '</div>'
+          + '<div class="bk-actions"><button type="button" class="svc-btn primary" data-sk="link-all">Install all ' + p.skills.length + '</button>'
+          + '<button type="button" class="svc-btn" data-sk="pending-cancel">Cancel</button></div></div></div>';
+      }
       if (p.needsName) {
         return '<div class="sk-form" style="margin-top:10px;"><label class="sk-form-label" for="sk-pname">' + escHtml(p.message) + '</label>'
           + '<input class="bk-in" id="sk-pname" placeholder="skill-name" maxlength="64" autocomplete="off" spellcheck="false">'
@@ -12789,7 +12900,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         + '<button type="button" class="svc-btn primary" data-sk="upload">' + ic('upload') + ' Upload</button>'
         + '<button type="button" class="svc-btn" data-sk="new">' + ic('plus') + ' New</button>'
         + '<input type="file" id="sk-upload" accept=".zip,.skill,.md,application/zip" hidden></div>'
-        + '<div class="bk-hint">Upload a .zip or .skill archive holding one or more skills, or a single SKILL.md. Up to ' + Math.round((d.limits ? d.limits.upload : 52428800) / 1048576) + ' MB.</div>';
+        + '<div class="bk-hint">Upload a .zip or .skill archive holding one or more skills, or a single SKILL.md. Up to ' + Math.round((d.limits ? d.limits.upload : 52428800) / 1048576) + ' MB.</div>'
+        + skLinkHtml();
       if (skError) h += '<p class="bk-err" style="margin-top:8px;">' + escHtml(skError) + '</p>';
       h += skPendingHtml();
       if (skForm === 'new') {
@@ -12850,6 +12962,42 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (d.needsName) { skPending = { kind: 'upload', file: p.file, scope: p.scope, needsName: true, message: 'This upload does not say what the skill is called. Give it a name: lowercase letters, digits and hyphens.' }; skError = ''; drawSkills(); return; }
       skPending = null; skError = d.error || 'Could not install that'; drawSkills();
     }
+    // From a GitHub link, possibly asked again: which skill, or to replace.
+    async function skLinkInstall(p) {
+      let d;
+      skLinkBusy = true; drawSkills();
+      try {
+        const res = await apiFetch('/api/skills/install-from-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: p.url, scope: p.scope, skill: p.skill || '', all: !!p.all, overwrite: !!p.overwrite }) });
+        if (res.status === 404) { skLinkOk = false; d = { ok: false, error: 'This server does not support this yet. Update the server to use it.' }; }
+        else d = await res.json();
+      } catch (e) { d = { ok: false, error: e.message }; }
+      skLinkBusy = false;
+      if (d.ok) {
+        skPending = null; skLinkText = '';
+        const n = d.installed.map(x => x.name);
+        toast('Installed ' + (n.length === 1 ? n[0] : n.length + ' skills') + '. New chats will have ' + (n.length === 1 ? 'it' : 'them') + '.');
+        skError = '';
+        if (n.length === 1) { skOpen = { scope: d.installed[0].scope, name: n[0] }; skFile = null; skForm = ''; }
+        await skLoad();
+        return;
+      }
+      if (d.choose) { skPending = { kind: 'link-choose', url: p.url, scope: p.scope, skills: d.skills || [], message: d.error }; skError = ''; drawSkills(); return; }
+      if (d.conflict) { skPending = { kind: 'link', url: p.url, scope: p.scope, skill: p.skill, all: p.all, existing: d.existing }; skError = ''; drawSkills(); return; }
+      skPending = null; skError = d.error || 'Could not install that'; drawSkills();
+    }
+    async function skUpdate(sk) {
+      let d;
+      try {
+        const res = await apiFetch('/api/skills/update-from-source', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: sk.scope, name: sk.name }) });
+        if (res.status === 404) { skLinkOk = false; d = { ok: false, error: 'This server does not support this yet. Update the server to use it.' }; }
+        else d = await res.json();
+      } catch (e) { d = { ok: false, error: e.message }; }
+      if (!d.ok) { toast(d.error || 'Could not update it', 'error'); drawSkills(); return; }
+      if (d.upToDate) { toast(sk.name + ' is up to date'); return; }
+      toast('Updated ' + sk.name + (d.source && d.source.commit ? ' to ' + d.source.commit.slice(0, 7) : '') + '. New chats will have it.');
+      skFile = null;
+      await skLoad();
+    }
     async function skTransfer(p) {
       const d = await skPost('/api/skills/transfer', { scope: p.from.scope, name: p.from.name, to: p.scope, as: p.as, move: p.move, overwrite: !!p.overwrite });
       if (d.ok) {
@@ -12865,6 +13013,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     async function onSkillsChange(e) {
       const t = e.target;
       if (t.id === 'sk-target') { skTarget = t.value; if (skForm === 'new') drawSkills(); return; }
+      if (t.id === 'sk-link') { skLinkText = t.value; return; }
       if (t.id === 'sk-upload') {
         const file = t.files && t.files[0]; t.value = '';
         if (!file) return;
@@ -12920,11 +13069,29 @@ export function getWebappHtml(botUsername, appVersion = '') {
         }
         if (act === 'pending-replace' && skPending) {
           const p = Object.assign({}, skPending, { overwrite: true });
-          if (p.kind === 'upload') await skUpload(p); else await skTransfer(p);
+          if (p.kind === 'upload') await skUpload(p); else if (p.kind === 'link') await skLinkInstall(p); else await skTransfer(p);
           return;
         }
         if (act === 'pending-name' && skPending) { await skUpload({ file: skPending.file, scope: skPending.scope, name: val('#sk-pname') }); return; }
+        if (act === 'link-go') {
+          skLinkText = val('#sk-link');
+          if (!skLinkText) { $('#sk-link').focus(); return; }
+          skForm = ''; skError = ''; skPending = null;
+          await skLinkInstall({ url: skLinkText, scope: skTarget });
+          return;
+        }
+        if ((act === 'link-pick' || act === 'link-all') && skPending && skPending.kind === 'link-choose') {
+          const p = skPending;
+          await skLinkInstall({ url: p.url, scope: p.scope, skill: act === 'link-pick' ? b.dataset.name : '', all: act === 'link-all' });
+          return;
+        }
         if (!skOpen) return;
+        if (act === 'update') {
+          if (!skLeaveFile()) return;
+          if (!confirm('Install "' + skOpen.name + '" again from where it came from? This replaces its files, including any changes made here.')) return;
+          await skUpdate(skOpen);
+          return;
+        }
         if (act === 'download') { await skDownload('/api/skills/download?' + skQuery(skOpen), skOpen.name + '.zip'); return; }
         if (act === 'delete') {
           if (!confirm('Delete the skill "' + skOpen.name + '" and all its files? This cannot be undone.')) return;
@@ -13951,6 +14118,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (cell) { closeHeadMenus(null); setPaneFull(cell, !cell.classList.contains('pane-full')); }
           break;
         }
+        case 'chat-secrets': {
+          e.stopPropagation();
+          closeHeadMenus(null);
+          if (d.tid && window.CrundiChatSecrets) window.CrundiChatSecrets.open(d.tid);
+          break;
+        }
         case 'head-more': {
           e.stopPropagation();
           const head = actionEl && actionEl.closest('.term-head');
@@ -14925,6 +15098,17 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
 
     // ─── Secrets ───
+    // How a lock is typed (6-digit PIN or passphrase), the upgrade prompt and
+    // the edit dialog: app/vendor/crundi-secret-lock.js.
+    function secretLock() {
+      const L = window.CrundiSecretLock;
+      if (L) L.configure({ apiFetch, toast });
+      return L || null;
+    }
+    function lockOfSecret(id) {
+      const s = secretsList.find(x => x.id === id);
+      return s && s.lock === 'passphrase' ? 'passphrase' : 'pin';
+    }
     async function loadSecrets() {
       try {
         const res = await apiFetch('/api/secrets');
@@ -14955,6 +15139,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function renderSecretPrompt() {
       let dock = $('#sreq-dock');
       if (!secretRequests.length) { if (dock) dock.remove(); return; }
+      // The PIN box is on the card from the start: typing the PIN is the
+      // approval. The first request is open without a click (not focused,
+      // so it never takes the keyboard from the composer); Approve on another
+      // card moves the box there.
+      if (!sreqArmed || !secretRequests.some(x => x.id === sreqArmed)) { sreqArmed = secretRequests[0].id; sreqAuto = true; }
       if (!dock) {
         dock = document.createElement('div');
         dock.className = 'sreq-dock';
@@ -14978,14 +15167,17 @@ export function getWebappHtml(botUsername, appVersion = '') {
             : '<div class="sreq-why">Claude will be able to read this value.</div>')
           + (sreqArmed === r.id
             ? '<div class="sreq-pin">'
-              + '<input id="sreq-pin" inputmode="numeric" maxlength="6" placeholder="PIN" autocomplete="off" aria-label="6-digit PIN">'
-              + '<button class="kanban-btn primary" data-sp-confirm="' + escHtml(r.id) + '">Unlock</button>'
-              + '<button class="kanban-btn" data-sp-cancel="1">Cancel</button>'
+              + (r.lock === 'passphrase'
+                ? '<input id="sreq-pin" class="pass" type="password" placeholder="Passphrase" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Passphrase" data-lock="passphrase">'
+                : '<input id="sreq-pin" inputmode="numeric" maxlength="6" placeholder="PIN" autocomplete="off" aria-label="6-digit PIN">')
+              + '<button class="kanban-btn primary" data-sp-confirm="' + escHtml(r.id) + '">Approve</button>'
+              + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Reject</button>'
               + '</div>'
+              + (sreqCanAllow(r) ? '<div id="sreq-allow"></div>' : '')
               + (sreqError ? '<div class="sreq-err">' + escHtml(sreqError) + '</div>' : '')
             : '<div class="sreq-actions">'
               + '<button class="kanban-btn primary" data-sp-approve="' + escHtml(r.id) + '">Approve</button>'
-              + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Deny</button>'
+              + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Reject</button>'
               + '</div>')
           + '</div>';
       }
@@ -14994,27 +15186,38 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const typed = ($('#sreq-pin') || {}).value || '';
       const hadFocus = document.activeElement && document.activeElement.id === 'sreq-pin';
       dock.innerHTML = h;
+      const allowHost = $('#sreq-allow');
+      if (allowHost) allowHost.appendChild(window.CrundiChatSecrets.allowRow(sreqAllow));
       const pin = $('#sreq-pin');
       if (pin) {
         pin.value = typed;
         if (hadFocus || sreqError) { pin.focus(); pin.select(); }
-        else setTimeout(() => pin.focus(), 30);
+        else if (!sreqAuto) setTimeout(() => pin.focus(), 30);
         pin.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter') { ev.preventDefault(); confirmSecretPin(sreqArmed); }
-          if (ev.key === 'Escape') { sreqArmed = null; sreqError = ''; renderSecretPrompt(); }
+          if (ev.key === 'Escape') { sreqError = ''; pin.blur(); }
         });
       }
     }
 
+    /** "Allow for this chat" is offered on a run request a chat of the owner's made. */
+    function sreqCanAllow(r) {
+      if (!r || r.kind !== 'run' || !r.sessionId) return false;
+      const t = terminals.find(x => x.id === r.sessionId);
+      return chatSecretsFor(t || { kind: 'ui' });
+    }
     async function confirmSecretPin(reqId) {
       const el = $('#sreq-pin');
       if (!el || !reqId) return;
-      const pin = String(el.value || '').trim();
-      if (!/^\\d{6}$/.test(pin)) { sreqError = 'Enter a 6-digit PIN'; renderSecretPrompt(); return; }
+      const pass = el.dataset.lock === 'passphrase';
+      const pin = pass ? String(el.value || '') : String(el.value || '').trim();
+      if (pass ? !pin : !/^\\d{6}$/.test(pin)) { sreqError = pass ? 'Enter the passphrase' : 'Enter a 6-digit PIN'; renderSecretPrompt(); return; }
       const btn = $('[data-sp-confirm]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Unlocking\\u2026'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Approving\\u2026'; }
       let d;
-      try { d = await secretsPost({ action: 'approve', reqId: reqId, pin: pin }); }
+      const req = secretRequests.find(x => x.id === reqId);
+      const allow = sreqCanAllow(req) && window.CrundiChatSecrets ? window.CrundiChatSecrets.allowForChat(sreqAllow) : null;
+      try { d = await secretsPost(Object.assign({ action: 'approve', reqId: reqId, pin: pin }, allow ? { allowForChat: allow } : {})); }
       catch (err) { d = { ok: false, error: err.message }; }
       // A wrong PIN leaves the request pending on purpose, so the card stays up
       // and says why rather than vanishing.
@@ -15025,14 +15228,20 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       sreqArmed = null;
       sreqError = '';
-      toast('Approved', 'success');
+      sreqAllow = { on: false, duration: sreqAllow.duration };
+      toast(allow && d.preauthorised ? 'Approved, and allowed for this chat' : 'Approved', 'success');
       renderSecretPrompt();
+      // An old lock: offer to set a passphrase now, with the one just typed.
+      const L = secretLock();
+      if (L && req && (d.needsUpgrade || req.needsUpgrade)) L.upgrade({ id: req.secretId, name: req.secretName, lock: req.lock, pin, onUpdated: loadSecrets });
     }
 
     async function onSecretPromptClick(e) {
       const ok = e.target.closest('[data-sp-approve]');
       if (ok) {
         sreqArmed = ok.dataset.spApprove;
+        sreqAuto = false;
+        sreqAllow = { on: false, duration: sreqAllow.duration };
         sreqError = '';
         renderSecretPrompt();
         return;
@@ -15046,7 +15255,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         sreqArmed = null;
         sreqError = '';
         await secretsPost({ action: 'deny', reqId: no.dataset.spDeny });
-        toast('Denied', 'info');
+        toast('Rejected', 'info');
       }
     }
 
@@ -15071,9 +15280,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         + '<input id="sec-add-name" placeholder="Name (e.g. AWS Access Key)" autocomplete="off">'
         + '<textarea id="sec-add-desc" placeholder="Description — Claude searches names &amp; descriptions"></textarea>'
         + '<textarea id="sec-add-value" placeholder="Secret value"></textarea>'
-        + '<input id="sec-add-pin" inputmode="numeric" maxlength="6" placeholder="6-digit PIN to encrypt this secret" autocomplete="off">'
-        + '<div class="hint">The PIN is never stored. If you lose it, this secret can only be deleted &amp; recreated.</div>'
-        + '<button class="kanban-btn primary" data-sact="add" style="align-self:flex-start">Save secret</button>'
+        + '<input id="sec-add-pin" type="password" placeholder="Passphrase to encrypt this secret" autocomplete="new-password" autocapitalize="off" spellcheck="false" aria-label="Passphrase">'
+        + '<input id="sec-add-pin2" type="password" placeholder="Confirm the passphrase" autocomplete="new-password" autocapitalize="off" spellcheck="false" aria-label="Confirm the passphrase">'
+        + '<div class="hint" id="sec-add-rule">At least 8 characters, and not only digits.</div>'
+        + '<div class="hint">The passphrase is never stored. If you lose it, this secret can only be deleted &amp; recreated.</div>'
+        + '<button class="kanban-btn primary" data-sact="add" id="sec-add-save" style="align-self:flex-start" disabled>Save secret</button>'
         + '</div>';
       h += '<div><div class="secrets-section-title">Secrets (' + secretsList.length + ')</div><div class="secret-list">';
       if (!secretsList.length) h += '<div class="secrets-empty">No secrets yet.</div>';
@@ -15081,13 +15292,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const revealed = revealedSecrets[s.id];
         const isRevealed = revealed !== undefined;
         h += '<div class="secret-item"><div class="sec-info">'
-          + '<div class="sec-name">' + escHtml(s.name) + '</div>'
+          + '<div class="sec-name">' + escHtml(s.name)
+          + (s.needsUpgrade ? '<span class="sec-tag" title="' + (s.lock === 'passphrase' ? 'Sealed with an older, weaker key. Edit it to seal it again.' : 'Locked with an old 6-digit PIN. Edit it to set a passphrase.') + '">' + (s.lock === 'passphrase' ? 'Old lock' : 'Old PIN') + '</span>' : '')
+          + '</div>'
           + (s.description ? '<div class="sec-desc">' + escHtml(s.description) + '</div>' : '')
           + (isRevealed ? '<div class="sec-value">' + escHtml(revealed) + '</div>' : '')
           + '</div><div class="sec-actions">'
           + (isRevealed
               ? '<button data-sact="copy" data-sid="' + s.id + '">Copy</button><button data-sact="hide" data-sid="' + s.id + '">Hide</button>'
               : '<button data-sact="reveal" data-sid="' + s.id + '" data-sname="' + escHtml(s.name) + '">Reveal</button>')
+          + '<button data-sact="edit" data-sid="' + s.id + '">Edit</button>'
           + '<button class="danger" data-sact="delete" data-sid="' + s.id + '" data-sname="' + escHtml(s.name) + '">Delete</button>'
           + '</div></div>';
       }
@@ -15100,19 +15314,40 @@ export function getWebappHtml(botUsername, appVersion = '') {
       return res.json();
     }
 
+    function secretPassphraseOk(t) {
+      const L = window.CrundiSecretLock;
+      if (L) return L.passphraseOk(t);
+      return Array.from(String(t || '')).length >= 8 && /[^0-9]/.test(String(t || ''));
+    }
     function setupSecretsHandlers() {
       const panel = $('#secrets-panel');
+      // The add form's Save waits for a passphrase that meets the rule, typed twice.
+      panel.addEventListener('input', (e) => {
+        if (!e.target.closest('.secrets-add')) return;
+        const a = ($('#sec-add-pin') || {}).value || '', b = ($('#sec-add-pin2') || {}).value || '';
+        const rule = $('#sec-add-rule'), save = $('#sec-add-save');
+        const why = !a ? '' : !secretPassphraseOk(a) ? 'At least 8 characters, and not only digits.' : (b && a !== b ? 'The two do not match.' : '');
+        if (rule) { rule.textContent = why || 'At least 8 characters, and not only digits.'; rule.classList.toggle('warn', !!why); }
+        if (save) save.disabled = !(secretPassphraseOk(a) && a === b && ($('#sec-add-name').value || '').trim() && ($('#sec-add-value').value || ''));
+      });
       panel.addEventListener('click', async (e) => {
         const approveBtn = e.target.closest('[data-sreq-approve]');
         if (approveBtn) {
           const reqId = approveBtn.dataset.sreqApprove;
+          const req = secretRequests.find(x => x.id === reqId) || {};
+          const lock = req.lock === 'passphrase' ? 'passphrase' : 'pin';
           openPinModal({
             title: 'Approve access',
-            subtitle: 'Enter the PIN for "' + approveBtn.dataset.sname + '" to release it to Claude.',
+            subtitle: 'Enter the ' + (lock === 'passphrase' ? 'passphrase' : 'PIN') + ' for "' + approveBtn.dataset.sname + '" to release it to Claude.',
             submitLabel: 'Approve',
+            lock,
             onSubmit: async (pin) => {
               const d = await secretsPost({ action: 'approve', reqId, pin });
-              if (d.ok) { toast('Approved', 'success'); loadSecrets(); }
+              if (d.ok) {
+                toast('Approved', 'success'); loadSecrets();
+                const L = secretLock();
+                if (L && (d.needsUpgrade || req.needsUpgrade)) L.upgrade({ id: req.secretId, name: req.secretName, lock, pin, onUpdated: loadSecrets });
+              }
               return d;
             },
           });
@@ -15132,23 +15367,38 @@ export function getWebappHtml(botUsername, appVersion = '') {
           const name = $('#sec-add-name').value.trim();
           const description = $('#sec-add-desc').value;
           const value = $('#sec-add-value').value;
-          const pin = $('#sec-add-pin').value.trim();
+          const pin = $('#sec-add-pin').value;
           if (!name) { toast('Name is required', 'error'); return; }
           if (!value) { toast('Value is required', 'error'); return; }
-          if (!/^\\d{6}$/.test(pin)) { toast('PIN must be exactly 6 digits', 'error'); return; }
+          if (!secretPassphraseOk(pin)) { toast('Passphrase: at least 8 characters, and not only digits', 'error'); return; }
+          if (pin !== $('#sec-add-pin2').value) { toast('The two passphrases do not match', 'error'); return; }
           const d = await secretsPost({ action: 'add', name, description, value, pin });
           if (d.ok) { toast('Secret saved', 'success'); loadSecrets(); }
           else toast(d.error || 'Failed to save', 'error');
         } else if (act === 'reveal') {
+          const lock = lockOfSecret(sid);
           openPinModal({
             title: 'Reveal secret',
-            subtitle: 'Enter the PIN for "' + btn.dataset.sname + '".',
+            subtitle: 'Enter the ' + (lock === 'passphrase' ? 'passphrase' : 'PIN') + ' for "' + btn.dataset.sname + '".',
             submitLabel: 'Reveal',
+            lock,
             onSubmit: async (pin) => {
               const d = await secretsPost({ action: 'reveal', id: sid, pin });
-              if (d.ok) { revealedSecrets[sid] = d.value; renderSecrets(); }
-              return d;
+              if (d.ok) {
+                revealedSecrets[sid] = d.value; renderSecrets();
+                const L = secretLock();
+                if (L && d.needsUpgrade) L.upgrade({ id: sid, name: btn.dataset.sname, lock, pin, onUpdated: loadSecrets });
+              }
+              return { ok: d.ok, error: d.error };
             },
+          });
+        } else if (act === 'edit') {
+          const L = secretLock();
+          const s = secretsList.find(x => x.id === sid);
+          if (!L || !s) return;
+          L.supports('secret-edit').then((yes) => {
+            if (!yes) { toast(L.UNSUPPORTED, 'error'); return; }
+            L.edit(s, { onSaved: () => { delete revealedSecrets[sid]; loadSecrets(); } });
           });
         } else if (act === 'hide') {
           delete revealedSecrets[sid]; renderSecrets();
@@ -16706,8 +16956,18 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
 
     // ─── PIN modal ───
-    function openPinModal({ title, subtitle, submitLabel = 'Unlock', onSubmit }) {
+    let pinLock = 'pin';
+    function openPinModal({ title, subtitle, submitLabel = 'Unlock', onSubmit, lock = 'pin' }) {
       pinOnSubmit = onSubmit;
+      pinLock = lock === 'passphrase' ? 'passphrase' : 'pin';
+      const pi = $('#pin-input');
+      if (pinLock === 'passphrase') {
+        pi.removeAttribute('inputmode'); pi.removeAttribute('pattern'); pi.removeAttribute('maxlength');
+        pi.placeholder = 'Passphrase'; pi.classList.add('pass'); pi.setAttribute('aria-label', 'Passphrase');
+      } else {
+        pi.setAttribute('inputmode', 'numeric'); pi.setAttribute('pattern', '[0-9]*'); pi.setAttribute('maxlength', '6');
+        pi.placeholder = '\u2022\u2022\u2022\u2022\u2022\u2022'; pi.classList.remove('pass'); pi.setAttribute('aria-label', '6-digit PIN');
+      }
       $('#pin-title').textContent = title || 'Enter PIN';
       $('#pin-subtitle').textContent = subtitle || '';
       $('#pin-error').textContent = '';
@@ -16723,8 +16983,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     async function submitPin() {
       if (!pinOnSubmit) return;
-      const pin = $('#pin-input').value.trim();
-      if (!/^\\d{6}$/.test(pin)) { $('#pin-error').textContent = 'Enter a 6-digit PIN'; return; }
+      const raw = $('#pin-input').value;
+      const pin = pinLock === 'passphrase' ? raw : raw.trim();
+      if (pinLock === 'passphrase' ? !pin : !/^\\d{6}$/.test(pin)) { $('#pin-error').textContent = pinLock === 'passphrase' ? 'Enter the passphrase' : 'Enter a 6-digit PIN'; return; }
       $('#pin-submit-btn').disabled = true;
       let r;
       try { r = await pinOnSubmit(pin); } catch (err) { r = { ok: false, error: err.message }; }

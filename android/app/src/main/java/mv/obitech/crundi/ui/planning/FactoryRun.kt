@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import mv.obitech.crundi.api.model.FactoryRun
 import mv.obitech.crundi.api.model.RunAsk
@@ -48,6 +49,7 @@ import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.components.CrundiCard
 import mv.obitech.crundi.ui.components.CrundiChip
 import mv.obitech.crundi.ui.components.CrundiDialog
+import mv.obitech.crundi.ui.operations.CheckRow
 import mv.obitech.crundi.ui.components.CrundiDivider
 import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.components.ErrorState
@@ -65,6 +67,10 @@ import mv.obitech.crundi.ui.theme.Dimens
 class RunCallbacks(
     val onBack: () -> Unit = {},
     val onPause: () -> Unit = {},
+    /** Pause with its choices (the server lists 'factory-pause-options'): stop the turns now, carry on after the usage reset. */
+    val onPauseWith: (now: Boolean, resumeOnReset: Boolean) -> Unit = { _, _ -> },
+    /** Offer Pause's choices rather than a plain Pause. */
+    val pauseOptions: Boolean = false,
     val onResume: () -> Unit = {},
     val onStop: () -> Unit = {},
     val onRecover: (String) -> Unit = {},
@@ -86,12 +92,16 @@ fun FactoryRunRoute(id: String, onAllRuns: (() -> Unit)? = null) {
     val nav = LocalNavigator.current
     val loader = rememberLoader(id, events = arrayOf("factoryRun"), accept = { it.id == null || it.id == id }) { api.factories.run(id) }
     val actions = rememberActions { loader.refresh() }
+    val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
+    val pauseOptions = PauseOptions.supported(shell.capabilities)
     // The desktop polls every 4 s while a run is open; events do most of it here, this is the safety net.
     LaunchedEffect(loader) { while (true) { delay(10_000); if (loader.load.valueOrNull?.active != false) loader.refresh() } }
-    val cb = remember(id) {
+    val cb = remember(id, pauseOptions) {
         RunCallbacks(
             onBack = { onAllRuns?.invoke() ?: nav.back() },
             onPause = { actions.run { api.factories.pause(id) } },
+            onPauseWith = { now, reset -> actions.run { api.factories.pause(id, now, reset) } },
+            pauseOptions = pauseOptions,
             onResume = { actions.run { api.factories.resume(id) } },
             onStop = { actions.run { api.factories.stop(id) } },
             onRecover = { n -> actions.run { api.factories.recover(id, n.ifBlank { null }) } },
@@ -163,9 +173,38 @@ fun FactoryRunScreen(run: Load<FactoryRun>, cb: RunCallbacks = RunCallbacks(), i
 @Composable
 private fun RunControls(r: FactoryRun, cb: RunCallbacks, onStop: () -> Unit) {
     val live = r.status in setOf("starting", "running", "waiting", "paused", "finishing")
+    var choosing by remember { mutableStateOf(false) }
     if (r.status == "paused" || r.waitingOn == "paused") CrundiButton("Resume", cb.onResume, icon = "play")
-    else if (r.status in setOf("running", "waiting")) CrundiButton("Pause", cb.onPause, icon = "pause")
+    else if (r.status in setOf("running", "waiting")) CrundiButton("Pause", { if (cb.pauseOptions) choosing = true else cb.onPause() }, icon = "pause")
     if (live) CrundiButton("Stop", onStop, kind = ButtonKind.Ghost, icon = "stop")
+    if (choosing) PauseChoiceDialog({ choosing = false }) { now, reset -> choosing = false; cb.onPauseWith(now, reset) }
+}
+
+/** Pause's choices are offered only when the server lists them; an older one does a plain pause. */
+internal object PauseOptions {
+    const val CAPABILITY = "factory-pause-options"
+    fun supported(capabilities: Set<String>): Boolean = CAPABILITY in capabilities
+}
+
+/**
+ * Pause, with its choices, as the web's: let the steps in progress finish
+ * their turn, or stop them now (they carry on at Resume); and optionally
+ * carry on by itself when the usage window resets.
+ */
+@Composable
+internal fun PauseChoiceDialog(onDismiss: () -> Unit, onPick: (now: Boolean, resumeOnReset: Boolean) -> Unit) {
+    var reset by remember { mutableStateOf(false) }
+    CrundiDialog("Pause this factory?", onDismiss, message = "Nobody new starts a step. Steps in progress can finish their turn, or stop now and carry on at Resume.") {
+        PauseChoiceBody(reset, { reset = it }, onPick)
+    }
+}
+
+/** The dialog's choices, apart from its window (for screenshot tests). */
+@Composable
+internal fun PauseChoiceBody(reset: Boolean, onReset: (Boolean) -> Unit, onPick: (now: Boolean, resumeOnReset: Boolean) -> Unit) {
+    CheckRow("Carry on by itself when usage resets", reset, onChange = onReset)
+    CrundiButton("Let current steps finish", { onPick(false, reset) }, Modifier.fillMaxWidth(), kind = ButtonKind.Primary)
+    CrundiButton("Stop them now", { onPick(true, reset) }, Modifier.fillMaxWidth(), kind = ButtonKind.Danger)
 }
 
 @Composable
@@ -183,8 +222,9 @@ private fun duration(ms: Long): String {
     return when { m < 1 -> "under a minute"; m < 60 -> "$m min"; else -> "${m / 60}h ${m % 60}m" }
 }
 
+/** The run's own pane (what needs you, the CR, facts, findings, permissions); also the workbench pane's Details drawer, with its own [hint]. */
 @Composable
-private fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long) {
+internal fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long, hint: String = "Tap a step to see what happened there and open that person's chat.") {
     // What needs the person first.
     if (r.status == "crashed") CrashCard(r, cb)
     if (r.capHit != null) Panel("It reached its limit", CrundiColors.Yellow) {
@@ -219,7 +259,7 @@ private fun ColumnScope.RunPane(r: FactoryRun, cb: RunCallbacks, now: Long) {
         Text("The team's actions", style = CrundiType.Small)
         ChipRow(listOf("ask" to "Ask the Manager", "bypass" to "Bypass too"), r.teamMode.ifEmpty { "ask" }, onPick = cb.onTeamMode)
     }
-    Text("Tap a step to see what happened there and open that person's chat.", style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans))
+    Text(hint, style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans))
 }
 
 @Composable
@@ -359,8 +399,9 @@ private fun Findings(r: FactoryRun) {
     }
 }
 
+/** One step: who, now, visits and what was said there. [transcript]: the chat opens as a live transcript in the pane, as the web's panel words it. */
 @Composable
-private fun ColumnScope.StepPane(r: FactoryRun, id: String, cb: RunCallbacks, onClose: () -> Unit) {
+internal fun ColumnScope.StepPane(r: FactoryRun, id: String, cb: RunCallbacks, transcript: Boolean = false, onClose: () -> Unit) {
     val snap = r.snapshot ?: return
     val n = snap.nodes.firstOrNull { it.id == id } ?: return
     val view = RunView(r)
@@ -387,7 +428,8 @@ private fun ColumnScope.StepPane(r: FactoryRun, id: String, cb: RunCallbacks, on
     KV("Now", now)
     KV("Visits", visits.size.toString())
     val chat = if (n.type == "manager") r.managerChatId else emp?.chatId.orEmpty()
-    if (chat.isNotEmpty()) CrundiButton(if (n.type == "manager") "Open the Manager's chat" else "Open their chat", { cb.onOpenChat(chat) }, icon = if (n.type == "manager") "crown" else "message-square")
+    val what = if (transcript) "transcript" else "chat"
+    if (chat.isNotEmpty()) CrundiButton(if (n.type == "manager") "Open the Manager's $what" else "Open their $what", { cb.onOpenChat(chat) }, icon = if (n.type == "manager") "crown" else "message-square")
     for (t in tokens.filter { it.wait != null }) WaitCard(t, cb, System.currentTimeMillis())
     for (a in r.asks.filter { it.nodeId == id }) AskCard(a, cb)
     for (v in visits.reversed()) CrundiCard(Modifier.fillMaxWidth()) {
@@ -404,7 +446,7 @@ private fun ColumnScope.StepPane(r: FactoryRun, id: String, cb: RunCallbacks, on
 }
 
 @Composable
-private fun Timeline(r: FactoryRun) {
+internal fun Timeline(r: FactoryRun) {
     if (r.history.isEmpty()) { Text("Nothing has happened yet.", style = CrundiType.Small); return }
     for (h in r.history.reversed()) {
         val (line, color) = when (h.type) {

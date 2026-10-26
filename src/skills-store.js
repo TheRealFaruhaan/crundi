@@ -41,6 +41,16 @@ import { shippedDir } from './skills-sync.js';
 /** Written by the installers into every skill they place, and only by them. */
 export const BUNDLED_MARK = '.crundi-bundled';
 
+/**
+ * Where a skill installed from a link came from: { repo, ref, path, commit,
+ * installedAt } as JSON, at the top of the skill. Like BUNDLED_MARK it is not
+ * one of the skill's files (not listed, not editable, not in a download), but
+ * it travels with the skill when it is copied, moved or backed up, so the copy
+ * can still be updated from the same place. Only install() writes it, and only
+ * when it is given a source; an archive cannot bring one of its own.
+ */
+export const SOURCE_MARK = '.crundi-source.json';
+
 export const LIMITS = {
   upload: 50 * 1024 * 1024,        // the archive as uploaded
   unpacked: 100 * 1024 * 1024,     // everything in it, unpacked
@@ -219,7 +229,7 @@ function walk(dir, limit = LIMITS.files) {
       if (st.isSymbolicLink()) { links++; continue; }
       if (st.isDirectory()) { visit(p, r); continue; }
       if (!st.isFile()) continue;
-      if (r === BUNDLED_MARK) continue;
+      if (r === BUNDLED_MARK || r === SOURCE_MARK) continue;
       files.push({ path: r, size: st.size, mtime: st.mtimeMs, mode: st.mode & 0o777 });
     }
   };
@@ -236,6 +246,21 @@ function syncedDir(root, name) {
     }
   } catch { /* nothing synced */ }
   return '';
+}
+
+/** The source record of a skill folder, or null. Only well-formed records count. */
+function readSource(dir) {
+  try {
+    const st = lstatSync(join(dir, SOURCE_MARK));
+    if (!st.isFile() || st.size > 16 * 1024) return null;
+    const r = JSON.parse(readFileSync(join(dir, SOURCE_MARK), 'utf8'));
+    if (!r || typeof r !== 'object' || typeof r.repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(r.repo)) return null;
+    const str = (v) => (typeof v === 'string' ? v.slice(0, 1024) : '');
+    return {
+      host: 'github', repo: r.repo, ref: str(r.ref), path: str(r.path), commit: str(r.commit),
+      installedAt: str(r.installedAt), url: 'https://github.com/' + r.repo + (r.ref ? '/tree/' + r.ref + (r.path ? '/' + r.path : '') : ''),
+    };
+  } catch { return null; }
 }
 
 function describe(scope, name, dir) {
@@ -256,6 +281,7 @@ function describe(scope, name, dir) {
   if (!hasMd) problem = 'No SKILL.md, so Claude will not load it';
   else if (!fm.has) problem = 'SKILL.md has no front matter (name and description)';
   else if (!fm.description) problem = 'SKILL.md has no description, so Claude cannot tell when to use it';
+  const source = readSource(dir);
   return {
     scope, name,
     title: fm.name || name,
@@ -267,6 +293,9 @@ function describe(scope, name, dir) {
     size: files.reduce((n, f) => n + f.size, 0),
     modifiedAt: files.reduce((n, f) => Math.max(n, f.mtime), 0) || st.mtimeMs,
     origin, readOnly: origin !== 'user', problem,
+    // Only when it came from a link (see SOURCE_MARK); absent otherwise, so
+    // older clients see exactly the fields they always did.
+    ...(source ? { source } : {}),
   };
 }
 
@@ -354,7 +383,7 @@ export function get(scope, name) {
 
 function fileTarget(found, rel) {
   const r = safeRel(rel);
-  if (!r || r === BUNDLED_MARK) return { ok: false, error: 'Not a valid file path' };
+  if (!r || r === BUNDLED_MARK || r === SOURCE_MARK) return { ok: false, error: 'Not a valid file path' };
   const abs = resolve(found.dir, r);
   if (!inside(found.dir, abs) || abs === resolve(found.dir)) return { ok: false, error: 'Not a valid file path' };
   return { ok: true, rel: r, abs };
@@ -568,10 +597,16 @@ function skillsInArchive(entries) {
  * free place to go, so a pack never half-installs. With a clash and no
  * `overwrite`, the reply is { ok:false, conflict:true, existing:[names] }.
  *
+ * `source(root)`, given by an install from a link (skills-github.js), returns
+ * the source record for the skill found at `root` in the archive; it is saved
+ * with that skill as SOURCE_MARK. An upload has none, and a SOURCE_MARK inside
+ * an archive is never copied, so only Crundi itself can say where a skill
+ * came from.
+ *
  * @param {string} scope
- * @param {{ filename?: string, data: Buffer, name?: string, overwrite?: boolean }} opts
+ * @param {{ filename?: string, data: Buffer, name?: string, overwrite?: boolean, source?: (root: string) => object|null }} opts
  */
-export function install(scope, { filename = '', data, name = '', overwrite = false } = {}) {
+export function install(scope, { filename = '', data, name = '', overwrite = false, source = null } = {}) {
   const sr = scopeRoot(scope);
   if (!sr.ok) return sr;
   if (sr.scope === 'synced') return { ok: false, error: 'Synced skills are managed by Claude Code' };
@@ -593,7 +628,7 @@ export function install(scope, { filename = '', data, name = '', overwrite = fal
         const fm = parseFrontmatter(md.entry.read().toString('utf8'));
         const fromFm = slug(fm.name);
         const fromDir = slug(s.root.split('/').pop());
-        return { name: wanted || (checkName(fromFm) ? '' : fromFm) || fromDir || stem, files: s.files, fm };
+        return { name: wanted || (checkName(fromFm) ? '' : fromFm) || fromDir || stem, files: s.files.filter(f => f.rel !== SOURCE_MARK), fm, root: s.root };
       });
     } else {
       if (data.subarray(0, 8192).includes(0)) return { ok: false, error: 'Upload a .zip or .skill archive, or a SKILL.md file' };
@@ -601,7 +636,7 @@ export function install(scope, { filename = '', data, name = '', overwrite = fal
       const fm = parseFrontmatter(text);
       if (!fm.has) return { ok: false, error: 'That file is not a SKILL.md: it has no front matter with a name and description' };
       const fromFm = slug(fm.name);
-      plan = [{ name: wanted || (checkName(fromFm) ? '' : fromFm) || (stem === 'skill' ? '' : stem), single: data, fm }];
+      plan = [{ name: wanted || (checkName(fromFm) ? '' : fromFm) || (stem === 'skill' ? '' : stem), single: data, fm, root: '' }];
     }
   } catch (err) { return { ok: false, error: err.message }; }
 
@@ -642,6 +677,8 @@ export function install(scope, { filename = '', data, name = '', overwrite = fal
             if (f.entry.mode & 0o111) { try { chmodSync(abs, 0o755); } catch { /* not on this filesystem */ } }
           }
         }
+        const rec = typeof source === 'function' ? source(p.root) : null;
+        if (rec) writeFileSync(join(staged, SOURCE_MARK), JSON.stringify({ ...rec, installedAt: new Date().toISOString() }, null, 2) + '\n');
         swapIn(sr, p.name, staged);
       } catch (err) {
         rmSync(staged, { recursive: true, force: true });
@@ -783,6 +820,11 @@ export function backupFiles() {
     if (s.origin !== 'user') continue;
     const dir = join(globalDir(), s.name);
     for (const f of walk(dir, Infinity).files) out.push({ abs: join(dir, f.path), rel: s.name + '/' + f.path, size: f.size, mode: f.mode, mtime: f.mtime });
+    // Where it came from goes too, so a restored skill can still be updated.
+    try {
+      const st = lstatSync(join(dir, SOURCE_MARK));
+      if (st.isFile()) out.push({ abs: join(dir, SOURCE_MARK), rel: s.name + '/' + SOURCE_MARK, size: st.size, mode: st.mode & 0o777, mtime: st.mtimeMs });
+    } catch { /* not from a link */ }
   }
   return out;
 }

@@ -79,6 +79,14 @@ nobody is watching the transcript. Use them for anything worth knowing before th
 user next looks — a long job finishing, a blocker, a result they asked to be told
 about. Do not narrate routine progress into them.
 
+`alert_user` rings the person's phone. Keep it for what they must act on or
+know right now (an outage, a decision that blocks a long job, a
+wake-me-when-done they asked for); everything else is `send_message_to_user`.
+An urgent alert waits for the answer (attended, dismissed, snoozed, or no
+answer within their ring time, up to about 15 minutes) and returns it; when
+there is time-sensitive work to carry on with meanwhile, call it from a
+background agent.
+
 ### Showing things in the chat
 
 A chat's transcript is text. Four tools put something else in it, drawn under the

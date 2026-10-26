@@ -1,6 +1,5 @@
 package mv.obitech.crundi.ui.shell
 
-import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -27,8 +26,6 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -52,9 +49,7 @@ enum class MarkMotion {
  */
 @Composable
 fun RobotHead(modifier: Modifier = Modifier, size: Dp = 24.dp, motion: MarkMotion = MarkMotion.Idle) {
-    val ctx = LocalContext.current
-    val still = LocalInspectionMode.current ||
-        runCatching { Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
+    val still = mv.obitech.crundi.ui.components.motionStill()
     if (still) { Canvas(modifier.size(size)) { drawHead(1f, 1f) }; return }
 
     // Driven step by step rather than as an infinite transition from 1 to 1:

@@ -23,7 +23,10 @@ object AppGraph {
 
     private fun create(app: Context, server: Server): AppServices {
         val client = CrundiClient.forServer(app, server)
-        val shell = LiveShellSource(client, server.host, server.username, app.getSharedPreferences("crundi", Context.MODE_PRIVATE), "project.${server.id}")
+        // The handshake's word is read each time, not kept: it is made again
+        // on every open, and the server may have been updated since.
+        val shell = LiveShellSource(client, server.host, server.username, app.getSharedPreferences("crundi", Context.MODE_PRIVATE), "project.${server.id}",
+            about = { ServerCaps.version(app, server.id) to ServerCaps.get(app, server.id) })
         return object : AppServices {
             override val shell: ShellSource = shell
             override val api: CrundiClient = client

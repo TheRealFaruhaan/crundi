@@ -159,6 +159,10 @@ interface EntryActions {
     fun deny(e: ChatEntry) {}
     fun answer(e: ChatEntry, answers: Map<String, String>, notes: Map<String, String> = emptyMap()) {}
     fun dismissQuestion(e: ChatEntry) {}
+    /** A question card's half-made answer, kept from before (ChatDrafts), or null. */
+    fun savedAnswer(e: ChatEntry): List<ChatDrafts.Pick>? = null
+    /** The card's answer changed: keep it, so leaving the chat does not lose it. */
+    fun keepAnswer(e: ChatEntry, picks: List<ChatDrafts.Pick>) {}
     fun factory(e: ChatEntry, choice: String, note: String? = null) {}
     fun factoryDiff(e: ChatEntry) {}
     fun openAgent(toolUseId: String) {}

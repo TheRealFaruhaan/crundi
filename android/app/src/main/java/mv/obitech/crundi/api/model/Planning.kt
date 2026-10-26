@@ -120,7 +120,7 @@ data class MindNode(
 
 // ─── Schedules ───
 
-/** When a schedule fires. days: 0 = Sunday .. 6 = Saturday. */
+/** When a schedule fires. [mode]: once, recurring, or webhook (called, not timed: no days or time). days: 0 = Sunday .. 6 = Saturday. */
 @Serializable data class ScheduleWhen(val mode: String = "recurring", val time: String = "09:00", val date: String = "", val days: List<Int> = emptyList())
 
 /**
@@ -159,6 +159,31 @@ data class ScheduleCondition(
     val status: String = "",
 )
 
+/**
+ * How a webhook (a schedule's "When called", a factory trigger's) is called
+ * (server 1.21.1). [auth]: key (in the URL, X-Crundi-Key or Bearer) or
+ * signature (HMAC-SHA256 of the raw body with [secret], in
+ * [signatureHeader]; with [timestampHeader], of "time:body", as Grafana
+ * does). [idempotency]: a template such as {{payload.groupKey}}; a call
+ * whose key was already seen is not processed again. The server makes the
+ * key and secret and never takes them from input, so they are null here
+ * unless read from it. Every field is nullable so that what an older server
+ * did not send is not sent back.
+ */
+@Serializable
+data class HookSettings(
+    val key: String? = null,
+    val secret: String? = null,
+    val auth: String? = null,
+    val signatureHeader: String? = null,
+    val timestampHeader: String? = null,
+    val idempotency: String? = null,
+) {
+    val signed get() = auth == "signature"
+    /** For a save: what may be set, without the credentials. */
+    fun forSave() = copy(key = null, secret = null)
+}
+
 @Serializable
 data class Schedule(
     val id: String = "",
@@ -169,11 +194,15 @@ data class Schedule(
     val action: ScheduleAction = ScheduleAction(),
     val `when`: ScheduleWhen = ScheduleWhen(),
     val conditions: List<ScheduleCondition> = emptyList(),
+    /** For when.mode webhook (server 1.21.1; absent before, and on schedules not saved since). */
+    val webhook: HookSettings? = null,
     val createdAt: String = "",
     val updatedAt: String = "",
     val lastRun: String? = null,
     val lastMet: Boolean = false,
-)
+) {
+    val calledNotTimed get() = `when`.mode == "webhook"
+}
 
 @Serializable data class ScheduleServiceChoice(val key: String, val name: String = "", val alias: String = "", val status: String = "")
 
@@ -201,7 +230,10 @@ data class ChatScheduleItem(
 
 // ─── Factories ───
 
-@Serializable data class FactorySummary(val id: String, val name: String = "", val description: String = "", val version: Int = 0, val createdAt: String = "", val updatedAt: String = "", val nodeCount: Int = 0, val employeeCount: Int = 0, val runnable: Boolean = false, val errorCount: Int = 0, val warningCount: Int = 0, val crTemplate: List<CrField> = emptyList())
+@Serializable data class FactorySummary(val id: String, val name: String = "", val description: String = "", val version: Int = 0, val createdAt: String = "", val updatedAt: String = "", val nodeCount: Int = 0, val employeeCount: Int = 0, val runnable: Boolean = false, val errorCount: Int = 0, val warningCount: Int = 0, val crTemplate: List<CrField> = emptyList(), val secrets: List<String> = emptyList())
+
+/** A skill this machine has (GET /api/skills): offered for pinning in the factory editor. */
+@Serializable data class SkillBrief(val name: String, val description: String = "", val scope: String = "")
 
 /** One section of a change request form. */
 @Serializable data class CrField(val id: String, val label: String = "", val hint: String = "", val required: Boolean = false, val list: Boolean = false)
@@ -215,6 +247,8 @@ data class ChatScheduleItem(
 @Serializable data class FactoryDecision(val kind: String = "yesno", val question: String = "", val options: List<Option> = emptyList(), val answeredBy: String? = null, val review: Boolean = false)
 @Serializable data class FactoryAsk(val prompt: String = "", val replies: List<Option> = emptyList())
 @Serializable data class FactoryWait(val kind: String = "time", val minutes: Double = 0.0, val at: String = "", val command: String = "", val every: Double = 0.0, val timeout: Double = 0.0, val what: String = "")
+/** A Join's pick-any decision ([forkId]): whose parallel branches meet here. */
+@Serializable data class FactoryJoin(val forkId: String = "")
 
 /**
  * A step of a factory's flow. [type]: start, manager, employee, decision,
@@ -232,6 +266,7 @@ data class FactoryNode(
     val decision: FactoryDecision? = null,
     val ask: FactoryAsk? = null,
     val wait: FactoryWait? = null,
+    val join: FactoryJoin? = null,
 )
 
 /** [kind] flow or note (a note edge feeds a node's "notein"). [maxRounds] 0 = no limit. */
@@ -245,12 +280,46 @@ data class FactoryMember(
     val model: String = "",
     val effort: String = "",
     val memory: String = "keep",
-    val tools: JsonObject? = null,
+    val tools: FactoryTools = FactoryTools(),
     val skills: List<String> = emptyList(),
+    /** Permission presets for this person only (the factory's apply to everyone). */
     val presets: List<String> = emptyList(),
 )
 
-/** A factory's definition (GET /api/factories/get). [settings] kept loose: the editor passes it back as it came. */
+/** Claude Code tool rules for one person: always allowed, never allowed. */
+@Serializable data class FactoryTools(val allow: List<String> = emptyList(), val deny: List<String> = emptyList())
+
+/**
+ * A factory's settings, every field src/factory-model.js keeps (normalizeFactory).
+ * Fields a newer server adds survive a save all the same: the editor saves
+ * over the server's own JSON (FactoryJson.forSave).
+ */
+@Serializable
+data class FactorySettings(
+    val managerMode: String = "normal",
+    val mergeMode: String = "ask",
+    val setupCommand: String = "",
+    val autoRecover: Boolean = false,
+    val teamMode: String = "ask",
+    val presets: List<String> = listOf("git-read", "tests"),
+    val rules: List<String> = emptyList(),
+    val managerRules: Boolean = true,
+    val crTemplate: List<CrField> = emptyList(),
+    val limits: FactoryLimits = FactoryLimits(),
+    /** The Manager's check-in, minutes (5 to 1440); 0: the Manager chooses. */
+    val tickMinutes: Int = 0,
+    val gatekeeper: FactoryGatekeeper = FactoryGatekeeper(),
+    val caps: FactoryCaps = FactoryCaps(),
+    /** Secrets a run may use without a PIN at each use (ids only; 'factory-secrets'). Their PINs are asked at the start. */
+    val secrets: List<String> = emptyList(),
+)
+
+/** How hard a run may use the person's Claude usage (normalizeLimits). */
+@Serializable data class FactoryLimits(val pauseAt5h: Int = 100, val pauseAtWeek: Int = 100, val maxParallel: Int = 0, val oneAtATimeAbove: Int = 0)
+@Serializable data class FactoryGatekeeper(val enabled: Boolean = false, val model: String = "haiku")
+@Serializable data class FactoryCaps(val maxHandoffs: Int = 200, val maxMinutes: Int = 480, val tokenBudget: Long = 0)
+
+/** A factory's definition (GET /api/factories/get). */
 @Serializable
 data class Factory(
     val id: String = "",
@@ -259,26 +328,46 @@ data class Factory(
     val version: Int = 0,
     val createdAt: String = "",
     val updatedAt: String = "",
-    val settings: JsonObject = JsonObject(emptyMap()),
+    val settings: FactorySettings = FactorySettings(),
     val roster: List<FactoryMember> = emptyList(),
     val nodes: List<FactoryNode> = emptyList(),
     val edges: List<FactoryEdge> = emptyList(),
 )
 
-@Serializable data class FactoryIssue(val code: String = "", val message: String = "", val fix: String = "", val nodeId: String? = null, val edgeId: String? = null, val employeeId: String? = null)
+/** A problem validateFactory found, and where: a step ([nodeId], or several: [nodeIds]), a connection, a person. */
+@Serializable data class FactoryIssue(val code: String = "", val message: String = "", val fix: String = "", val nodeId: String? = null, val edgeId: String? = null, val employeeId: String? = null, val nodeIds: List<String> = emptyList(), val handle: String? = null, val skill: String? = null)
 @Serializable data class FactoryValidation(val ok: Boolean = true, val errors: List<FactoryIssue> = emptyList(), val warnings: List<FactoryIssue> = emptyList())
 
-/** A factory and whether it can run. */
-data class FactoryDetail(val factory: Factory, val validation: FactoryValidation)
+/**
+ * A factory and whether it can run. [raw] is the definition exactly as the
+ * server sent it: saving goes over it, so nothing the app does not know is lost.
+ */
+data class FactoryDetail(val factory: Factory, val validation: FactoryValidation, val raw: JsonObject? = null)
 
 // ─── Factory runs ───
 
 @Serializable data class RunWait(val kind: String = "", val what: String = "", val startedAt: JsonElement? = null, val deadline: JsonElement? = null, val timeoutAt: JsonElement? = null, val tries: Int = 0, val last: String = "")
 
 /** Where the run is: one token per active branch of the flow. status: moving, work, answer, ask, wait, join, delegated, finished. */
-@Serializable data class RunToken(val id: String, val nodeId: String = "", val label: String = "", val status: String = "", val employeeId: String = "", val employee: String = "", val blocked: Boolean = false, val wait: RunWait? = null)
+@Serializable data class RunToken(
+    val id: String, val nodeId: String = "", val label: String = "", val status: String = "", val employeeId: String = "", val employee: String = "", val blocked: Boolean = false, val wait: RunWait? = null,
+    /** A job the Manager handed out (factory_delegate): the task, on a token that belongs to no step. */
+    val job: String? = null,
+)
 
-@Serializable data class RunEmployee(val chatId: String = "", val busy: String? = null, val queued: Int = 0, val retired: Boolean = false, val name: String = "")
+/** What a person is doing this second, from their chat (servers from 1.21: the tool in flight, thinking, writing). state: working, idle, ... */
+@Serializable data class RunActivity(val state: String = "", val text: String = "", val at: JsonElement? = null)
+
+@Serializable data class RunEmployee(
+    val chatId: String = "", val busy: String? = null, val queued: Int = 0, val retired: Boolean = false, val name: String = "",
+    /** Held by the Manager (not handed new work for now). */
+    val held: Boolean = false,
+    /** Missing from older servers: the live view then says "Starting" or "Deciding". */
+    val activity: RunActivity? = null,
+)
+
+/** Someone with work waiting for a free seat (the run's limit on people at once). */
+@Serializable data class RunSeat(val tokenId: String = "", val employeeId: String = "", val employee: String = "")
 
 /** A review finding. status: open, claimed, closed, dismissed. */
 @Serializable data class RunFinding(val id: String, val text: String = "", val where: String = "", val blocking: Boolean = false, val status: String = "open", val by: String = "", val reopened: Int = 0)
@@ -333,6 +422,7 @@ data class FactoryRun(
     val paused: JsonObject? = null,
     val error: String = "",
     val timeLeftMs: Long? = null,
+    val waitingForSeat: List<RunSeat> = emptyList(),
     // Only from /get:
     val history: List<RunHistoryItem> = emptyList(),
     /** The factory as it was when the run started: the graph to draw. */
@@ -355,7 +445,6 @@ data class FactoryRun(
 
 @Serializable data class TriggerSchedule(val at: String = "09:00", val days: List<Int> = emptyList())
 @Serializable data class TriggerKanban(val status: String = "")
-@Serializable data class TriggerWebhook(val key: String = "")
 @Serializable data class TriggerCr(val title: String = "", val sections: Map<String, String> = emptyMap())
 @Serializable data class TriggerHistory(val at: JsonElement? = null, val outcome: String = "", val source: String = "", val runId: String? = null, val title: String? = null, val note: String? = null)
 
@@ -370,14 +459,19 @@ data class FactoryTrigger(
     val kind: String = "schedule",
     val schedule: TriggerSchedule? = null,
     val kanban: TriggerKanban? = null,
-    val webhook: TriggerWebhook? = null,
+    /** Servers before 1.21.1 send only the key. */
+    val webhook: HookSettings? = null,
     val cr: TriggerCr = TriggerCr(),
     val mergeMode: String = "",
-    /** queue or skip */
+    /** queue, skip, or manager (1.21.1: tell the running Manager, marked mid-run) */
     val ifBusy: String = "queue",
+    /** A column that must hold a card for it to start a run ("" = always). Null: left as it is (servers before 'trigger-needs-cards' do not know it). */
+    val needsCards: String? = null,
     val createdAt: JsonElement? = null,
     val lastFired: JsonElement? = null,
     val history: List<TriggerHistory> = emptyList(),
+    /** Idempotency keys it remembers (30 days). */
+    val seenCount: Int = 0,
 )
 
 @Serializable data class CleanupItem(val id: String, val kind: String = "", val path: String = "", val project: String = "", val runId: String = "", val factoryName: String = "", val status: String = "", val branch: String = "", val repo: String = "", val bytes: Long = 0, val ageMs: Long = 0, val uncommitted: JsonElement? = null, val why: String = "")

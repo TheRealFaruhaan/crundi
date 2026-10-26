@@ -51,6 +51,13 @@ class TransportTest {
         assertEquals("/api/projects", r.path)
     }
 
+    @Test fun aServiceKeyWithASpaceGoesOutAsPercent20() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"ok":true}""").setHeader("Content-Type", "application/json"))
+        CrundiClient(transport()).services.restart("dhivo-socials:Social Desk")
+        // What the server's decodeURIComponent turns back into the key ("+" would stay a plus).
+        assertEquals("/api/services/dhivo-socials%3ASocial%20Desk/restart", server.takeRequest().path)
+    }
+
     @Test fun renewsOnceOn401() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":"Unauthorized"}""").setHeader("Content-Type", "application/json"))
         server.enqueue(MockResponse().setBody("""{"ok":true,"branch":"dev","files":[],"ahead":0,"behind":0}""").setHeader("Content-Type", "application/json"))

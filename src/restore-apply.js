@@ -117,7 +117,7 @@ export function applyStagedRestore({ appDir = defaultAppDir(), log = console.log
     at: Date.now(), key: info.key || '', backupCreatedAt: info.manifest?.createdAt || '',
     fromHost: info.manifest?.host || '', replaced, transcripts, skills, safetyCopy: safety,
   };
-  try { writeFileSync(join(appDir, 'restore-result.json'), JSON.stringify(result, null, 2)); } catch { /* ignore */ }
+  try { writeFileSync(join(appDir, 'restore-result.json'), JSON.stringify(result, null, 2), { mode: 0o600 }); } catch { /* ignore */ }
   log(`[restore] Restored the backup made ${result.backupCreatedAt || '(unknown time)'} on ${result.fromHost || 'another machine'}: ${replaced} item(s) replaced, ${transcripts} transcript(s) and ${skills} skill(s) added. The previous files are in ${safety}`);
   return result;
 }

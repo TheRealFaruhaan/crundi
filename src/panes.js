@@ -66,7 +66,7 @@ export function createPanes(o) {
     if (body === lastWritten) return;
     try {
       const tmp = FILE + '.tmp';
-      writeFileSync(tmp, body);
+      writeFileSync(tmp, body, { mode: 0o600 });
       renameSync(tmp, FILE);
       lastWritten = body;
     } catch (err) {

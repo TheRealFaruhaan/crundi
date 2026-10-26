@@ -75,7 +75,12 @@ data class SecretsState(
 )
 
 /** A PIN to ask for: what it unlocks and the words of the dialog. */
-data class PinAsk(val title: String, val subtitle: String, val submit: String, val run: suspend (String) -> Unit)
+/** [reject]: for a request, the dialog's other button rejects it ("Reject") instead of only closing ("Cancel"). */
+/** [lock]: "pin" (6 digits) or "passphrase". [accepted]: called with the lock once [run] succeeded (the upgrade offer). */
+data class PinAsk(
+    val title: String, val subtitle: String, val submit: String, val reject: (suspend () -> Unit)? = null,
+    val lock: String = "pin", val accepted: ((String) -> Unit)? = null, val run: suspend (String) -> Unit,
+)
 
 class SecretsEvents(
     /** Ask for the PIN, then run with it; a wrong PIN keeps the dialog open with the server's words. */
@@ -86,6 +91,8 @@ class SecretsEvents(
     val onApprove: (SecretRequest) -> Unit = {},
     val onDeny: (SecretRequest) -> Unit = {},
     val onAdd: (name: String, description: String, value: String, pin: String) -> Unit = { _, _, _, _ -> },
+    /** Edit it ('secret-edit'): the dialog asks for the current lock. */
+    val onEdit: (Secret) -> Unit = {},
     val onCloseNote: () -> Unit = {},
     val onRetry: () -> Unit = {},
 )
@@ -99,6 +106,13 @@ fun SecretsRoute() {
     val liveRequests by api.events.secretRequests.collectAsStateWithLifecycle(initialValue = null)
     val revealed = remember { mutableStateMapOf<String, String>() }
     var pin by remember { mutableStateOf<PinAsk?>(null) }
+    var editing by remember { mutableStateOf<Secret?>(null) }
+    var upgrade by remember { mutableStateOf<PendingUpgrade?>(null) }
+    val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
+    val caps = shell.capabilities
+    // After an old lock was accepted here: offer to set a passphrase ('secret-upgrade').
+    fun offer(id: String, name: String, lock: String, needs: Boolean): ((String) -> Unit)? =
+        if (SecretLocks.offerUpgrade(caps, needs)) { p -> upgrade = PendingUpgrade(id, name, lock, p) } else null
     // Nothing revealed outlives the screen.
     DisposableEffect(Unit) { onDispose { revealed.clear() } }
     LaunchedEffect(revealed.keys.toSet()) { if (revealed.isNotEmpty()) { delay(REVEAL_MS); revealed.clear() } }
@@ -112,29 +126,40 @@ fun SecretsRoute() {
             note = actions.note,
         ),
         SecretsEvents(
-            onReveal = { s -> pin = PinAsk("Reveal secret", "Enter the PIN for \"${s.name}\".", "Reveal") { p -> revealed[s.id] = api.secrets.reveal(s.id, p) } },
+            onReveal = { s -> pin = PinAsk("Reveal secret", "Enter the ${SecretLocks.noun(s.lock)} for \"${s.name}\".", "Reveal", lock = s.lock, accepted = offer(s.id, s.name, s.lock, s.needsUpgrade)) { p -> revealed[s.id] = api.secrets.reveal(s.id, p) } },
             onHide = { s -> revealed.remove(s.id) },
             onCopy = { s -> revealed[s.id]?.let { clip.setText(AnnotatedString(it)); actions.note = Actions.Note("Copied", false) } },
             onDelete = { s -> actions.run(s.id, "Deleted", list::reload) { api.secrets.delete(s.id) } },
             onApprove = { r ->
-                pin = PinAsk("Approve access", "Enter the PIN for \"${r.secretName}\" to release it to Claude.", "Approve") { p ->
+                pin = PinAsk("Approve access", "Enter the ${SecretLocks.noun(r.lock)} for \"${r.secretName}\" to release it to Claude.", "Approve", reject = { api.secrets.deny(r.id); list.reload() }, lock = r.lock, accepted = offer(r.secretId, r.secretName, r.lock, r.needsUpgrade)) { p ->
                     api.secrets.approve(r.id, p); actions.note = Actions.Note("Approved", false); list.reload()
                 }
             },
             onDeny = { r -> actions.run(r.id, "Denied", list::reload) { api.secrets.deny(r.id) } },
             onAdd = { n, d, v, p -> actions.run("add", "Secret saved", list::reload) { api.secrets.add(n, v, p, d) } },
+            onEdit = { s -> editing = s },
             onCloseNote = actions::clear,
             onRetry = list::reload,
         ),
+        passphrase = SecretLocks.CAP_PASSPHRASE in caps,
+        canEdit = SecretLocks.CAP_EDIT in caps,
     )
     pin?.let { ask -> PinDialog(ask, onDone = { pin = null }) }
+    editing?.let { s -> EditSecretDialog(api, s) { saved -> editing = null; if (saved) { revealed.remove(s.id); actions.note = Actions.Note("Secret saved", false); list.reload() } } }
+    upgrade?.let { up -> UpgradeLockDialog(api, up) { np -> upgrade = null; if (np != null) list.reload() } }
 }
 
 @Composable
-fun SecretsScreen(state: SecretsState, events: SecretsEvents = SecretsEvents(), adding: Boolean = false) {
+fun SecretsScreen(
+    state: SecretsState, events: SecretsEvents = SecretsEvents(), adding: Boolean = false,
+    /** The server takes passphrases ('secret-passphrase'): new secrets get one. */
+    passphrase: Boolean = false,
+    /** The server can edit a secret ('secret-edit'). */
+    canEdit: Boolean = false,
+) {
     var add by remember { mutableStateOf(adding) }
     Column(Modifier.fillMaxSize()) {
-        PanelHeader("Secrets", meta = state.secrets.valueOrNull?.let { "${it.size} stored · values need the PIN" }) {
+        PanelHeader("Secrets", meta = state.secrets.valueOrNull?.let { "${it.size} stored · values need the ${if (passphrase) "passphrase" else "PIN"}" }) {
             CrundiButton("Add secret", { add = true }, kind = ButtonKind.Primary, icon = "plus")
         }
         NoteBanner(state.note, events.onCloseNote)
@@ -151,12 +176,12 @@ fun SecretsScreen(state: SecretsState, events: SecretsEvents = SecretsEvents(), 
                     EmptyState("lock", "No secrets yet.", body = "Add one, and Claude can use it with your PIN without ever showing it in a chat.", action = "Add secret", onAction = { add = true },
                         modifier = Modifier.padding(top = Dimens.S6))
                 }
-                items(l.value, key = { it.id }) { s -> SecretRow(s, state.revealed[s.id], state.busy == s.id, events) }
+                items(l.value, key = { it.id }) { s -> SecretRow(s, state.revealed[s.id], state.busy == s.id, events, canEdit) }
             }
         }
     }
     if (add) CrundiDialog("Add a secret", onDismiss = { add = false }, dismiss = null) {
-        AddSecretForm(onCancel = { add = false }, onSave = { n, d, v, p -> add = false; events.onAdd(n, d, v, p) })
+        AddSecretForm(onCancel = { add = false }, onSave = { n, d, v, p -> add = false; events.onAdd(n, d, v, p) }, passphrase = passphrase)
     }
 }
 
@@ -179,13 +204,13 @@ private fun RequestCard(r: SecretRequest, busy: Boolean, events: SecretsEvents) 
         } else Text("Claude will be able to read this value.", style = CrundiType.Small)
         Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CrundiButton("Approve", { events.onApprove(r) }, kind = ButtonKind.Primary, icon = "check", enabled = !busy)
-            CrundiButton("Deny", { events.onDeny(r) }, icon = "x", enabled = !busy)
+            CrundiButton("Reject", { events.onDeny(r) }, icon = "x", enabled = !busy)
         }
     }
 }
 
 @Composable
-private fun SecretRow(s: Secret, value: String?, busy: Boolean, events: SecretsEvents) {
+private fun SecretRow(s: Secret, value: String?, busy: Boolean, events: SecretsEvents, canEdit: Boolean = false) {
     var confirm by remember { mutableStateOf(false) }
     Column(
         Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 5.dp).fillMaxWidth().clip(Dimens.Shape).background(CrundiColors.BgCard)
@@ -194,7 +219,12 @@ private fun SecretRow(s: Secret, value: String?, busy: Boolean, events: SecretsE
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             CrundiIcon("key", size = Dimens.IconSm, tint = CrundiColors.TextSecondary)
-            Text(s.name, style = CrundiType.Code.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(s.name, style = CrundiType.Code.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f, fill = !s.needsUpgrade), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // On an old lock: a 6-digit PIN, or weaker parameters. Edit re-locks it.
+            if (s.needsUpgrade) {
+                StatusBadge(if (SecretLocks.passphrase(s.lock)) "Old lock" else "Old PIN", BadgeKind.Warn)
+                androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+            }
             val at = Fmt.iso(s.updatedAt.ifEmpty { s.createdAt })
             if (at > 0) Text(Fmt.ago(at), style = CrundiType.Meta)
         }
@@ -210,6 +240,7 @@ private fun SecretRow(s: Secret, value: String?, busy: Boolean, events: SecretsE
                 CrundiButton("Copy", { events.onCopy(s) }, icon = "copy")
                 CrundiButton("Hide", { events.onHide(s) }, icon = "eye-off")
             }
+            if (canEdit) CrundiButton("Edit", { events.onEdit(s) }, icon = "pencil", enabled = !busy)
             CrundiButton("Delete", { confirm = true }, kind = ButtonKind.Danger, icon = "trash", enabled = !busy)
         }
     }
@@ -220,19 +251,26 @@ private fun SecretRow(s: Secret, value: String?, busy: Boolean, events: SecretsE
 }
 
 @Composable
-fun AddSecretForm(onCancel: () -> Unit, onSave: (String, String, String, String) -> Unit) {
+fun AddSecretForm(onCancel: () -> Unit, onSave: (String, String, String, String) -> Unit, passphrase: Boolean = false) {
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var value by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
+    var pin2 by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         CrundiTextField(name, { name = it }, placeholder = "Name (e.g. AWS Access Key)")
         CrundiTextField(description, { description = it }, placeholder = "Description: Claude searches names and descriptions", singleLine = false, minLines = 2)
         CrundiTextField(value, { value = it }, placeholder = "Secret value", mono = true, password = true)
-        CrundiTextField(pin, { t -> pin = t.filter(Char::isDigit).take(6) }, placeholder = "6-digit PIN to encrypt this secret", password = true, mono = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword))
-        Text("The PIN is never stored. If you lose it, this secret can only be deleted and recreated.", style = CrundiType.Small)
+        if (passphrase) {
+            // A passphrase, typed twice ('secret-passphrase'): the server's rule.
+            NewLockFields(pin, pin2, { pin = it }, { pin2 = it })
+            Text("The passphrase is never stored. If you lose it, this secret can only be deleted and recreated.", style = CrundiType.Small)
+        } else {
+            CrundiTextField(pin, { t -> pin = t.filter(Char::isDigit).take(6) }, placeholder = "6-digit PIN to encrypt this secret", password = true, mono = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword))
+            Text("The PIN is never stored. If you lose it, this secret can only be deleted and recreated.", style = CrundiType.Small)
+        }
         error?.let { Text(it, style = CrundiType.Small.copy(color = CrundiColors.Red)) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)) {
             CrundiButton("Cancel", onCancel)
@@ -240,29 +278,28 @@ fun AddSecretForm(onCancel: () -> Unit, onSave: (String, String, String, String)
                 error = when {
                     name.isBlank() -> "Name is required"
                     value.isEmpty() -> "Value is required"
-                    !Regex("^\\d{6}$").matches(pin) -> "PIN must be exactly 6 digits"
+                    passphrase && !SecretLocks.passphraseOk(pin) -> "Passphrase: ${SecretLocks.RULE.lowercase()}"
+                    passphrase && pin != pin2 -> "The two passphrases do not match"
+                    !passphrase && !Regex("^\\d{6}$").matches(pin) -> "PIN must be exactly 6 digits"
                     else -> null
                 }
                 if (error == null) onSave(name.trim(), description.trim(), value, pin)
-            }, kind = ButtonKind.Primary, icon = "lock")
+            }, kind = ButtonKind.Primary, icon = "lock", enabled = !passphrase || (name.isNotBlank() && value.isNotEmpty() && SecretLocks.newLockReady(pin, pin2)))
         }
     }
 }
 
 /** The PIN dialog body: six digits, the action, and the server's words when it says no. */
 @Composable
-fun PinCard(ask: PinAsk, pin: String, onPin: (String) -> Unit, error: String?, working: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
+fun PinCard(ask: PinAsk, pin: String, onPin: (String) -> Unit, error: String?, working: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier, extra: (@Composable () -> Unit)? = null) {
     DialogCard(
         ask.title, modifier, message = ask.subtitle,
-        confirm = if (working) "Unlocking…" else ask.submit, onConfirm = { if (!working) onSubmit() }, onDismiss = onCancel,
+        confirm = if (working) "${ask.submit}…" else ask.submit, onConfirm = { if (!working) onSubmit() }, onDismiss = onCancel,
+        dismiss = if (ask.reject != null) "Reject" else "Cancel",
     ) {
-        CrundiTextField(
-            pin, { t -> onPin(t.filter(Char::isDigit).take(6)) }, placeholder = "6-digit PIN", password = true, mono = true, icon = "lock",
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { onSubmit() }),
-        )
-        // Six dots that fill as digits are typed: the length at a glance.
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
+        LockField(pin, onPin, ask.lock, placeholder = if (SecretLocks.passphrase(ask.lock)) "Passphrase" else "6-digit PIN", icon = "lock", onDone = onSubmit)
+        // Six dots that fill as digits are typed: the length at a glance (a PIN only).
+        if (!SecretLocks.passphrase(ask.lock)) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)) {
             repeat(6) { i ->
                 androidx.compose.foundation.layout.Box(
                     Modifier.padding(top = 2.dp).clip(androidx.compose.foundation.shape.CircleShape)
@@ -273,6 +310,7 @@ fun PinCard(ask: PinAsk, pin: String, onPin: (String) -> Unit, error: String?, w
             }
         }
         if (error != null) Text(error, style = CrundiType.Small.copy(color = CrundiColors.Red))
+        extra?.invoke()
     }
 }
 
@@ -283,13 +321,19 @@ private fun PinDialog(ask: PinAsk, onDone: () -> Unit) {
     var working by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     fun submit() {
-        if (!Regex("^\\d{6}$").matches(pin)) { error = "Enter a 6-digit PIN"; return }
+        if (!SecretLocks.lockOk(ask.lock, pin)) { error = SecretLocks.askText(ask.lock); return }
         working = true
         scope.launch {
-            try { ask.run(pin); pin = ""; onDone() } catch (e: ApiException) { error = errorText(e); pin = "" } finally { working = false }
+            try { val p = pin; ask.run(p); pin = ""; onDone(); ask.accepted?.invoke(p) } catch (e: ApiException) { error = errorText(e); pin = "" } finally { working = false }
         }
     }
     androidx.compose.ui.window.Dialog(onDismissRequest = { pin = ""; onDone() }) {
-        PinCard(ask, pin, { pin = it; error = null }, error, working, ::submit, { pin = ""; onDone() }, Modifier.padding(16.dp))
+        PinCard(ask, pin, { pin = it; error = null }, error, working, ::submit, {
+            pin = ""
+            // A request's Reject refuses it; anything else just closes.
+            // Not this dialog's scope: it goes as soon as onDone() closes it.
+            ask.reject?.let { r -> kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch { runCatching { r() } } }
+            onDone()
+        }, Modifier.padding(16.dp))
     }
 }

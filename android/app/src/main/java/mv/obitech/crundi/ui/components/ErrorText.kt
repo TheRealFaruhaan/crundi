@@ -12,7 +12,20 @@ object ErrorWords {
     const val OFFLINE = "The server cannot be reached. Check the connection and try again."
     const val SIGNED_OUT = "This phone is no longer signed in to the server. Pair it again from App settings."
     const val UNKNOWN = "Something went wrong. Try again."
+    /** An older server than this app: the route is not there yet (src/client-version.js, THE RULE). */
+    const val NOT_SUPPORTED = "This server does not support this yet. Update the server to use it."
 }
+
+/**
+ * The server has no such route: it is older than this app. That is a 404 (or
+ * 405) carrying the router's own "Not found", not a route answering that the
+ * thing it was asked about is gone ("Skill not found", "File not found").
+ */
+fun routeMissing(t: Throwable): Boolean =
+    t is ApiException && (t.status == 404 || t.status == 405) && t.message.trim().trimEnd('.').equals("Not found", ignoreCase = true)
+
+/** [errorText], but a missing route says the server needs an update. */
+fun errorOrUnsupported(t: Throwable): String = if (routeMissing(t)) ErrorWords.NOT_SUPPORTED else errorText(t)
 
 fun errorText(t: Throwable): String = when {
     t is ApiException && t.offline -> ErrorWords.OFFLINE

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.RemoteInput
+import mv.obitech.crundi.api.seg
 import org.json.JSONObject
 
 /**
@@ -23,7 +24,7 @@ class ReplyReceiver : BroadcastReceiver() {
         val app = ctx.applicationContext
         val pending = goAsync()
         Bg.run({
-            val sent = Api.authed(app, serverId, "POST", "/api/ui-sessions/$chatId/send", JSONObject().put("text", text))
+            val sent = Api.authed(app, serverId, "POST", "/api/ui-sessions/${seg(chatId)}/send", JSONObject().put("text", text))
             // The chat's name and mark, for redrawing the notification.
             val list = Api.authed(app, serverId, "GET", "/api/ui-sessions")
             val sessions = list.json?.optJSONArray("sessions")

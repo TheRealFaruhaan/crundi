@@ -48,6 +48,10 @@ class PushService : FirebaseMessagingService() {
                 } else if (payload.optBoolean("silent") && kind == "suggestion") {
                     PushLog.add(app, "From ${server.host}: a suggested reply ${if (payload.optString("suggestion").isEmpty()) "withdrawn" else "offered"}")
                     Notifier.suggest(app, server, payload)
+                } else if (kind == "alert") {
+                    // alert_user: rings until seen, or shown quietly. It logs
+                    // its own line, with the outcome.
+                    Notifier.alert(app, server, payload)
                 } else {
                     PushLog.add(app, "From ${server.host}: a notification ($kind)${if (payload.optBoolean("quiet")) ", quiet: you are at Crundi" else ""}")
                     Notifier.show(app, server, payload)

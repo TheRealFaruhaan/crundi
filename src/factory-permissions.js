@@ -163,6 +163,9 @@ const clip = (s, n) => { const t = String(s ?? ''); return t.length > n ? t.slic
 /** One line describing what is being asked. */
 export function describeRequest(req) {
   const i = req.input || {};
+  // A factory secret request (factory-secrets.js): the secret's name and the
+  // command, never its value.
+  if (req.kind === 'secret') return `run \`${clip(i.command, 400)}\` with the secret "${clip(i.secret, 120)}" bound to $${clip(i.envName || 'SECRET', 60)} (the value is never shown to anyone)${i.reason ? `. Reason: ${clip(i.reason, 200)}` : ''}`;
   if (req.toolName === 'Bash') return `run \`${clip(i.command, 400)}\`${i.description ? ` (${clip(i.description, 160)})` : ''}`;
   if (req.toolName === 'WebFetch') return `fetch ${clip(i.url, 300)}`;
   if (req.toolName === 'WebSearch') return `search the web for "${clip(i.query, 200)}"`;
@@ -173,12 +176,14 @@ export function describeRequest(req) {
 
 /** The message carrying a batch of requests to the Manager. */
 export function batchMessage(items, { bypass = false, gatekeeper = false, escalated = false, rulesAllowed = true } = {}) {
+  const secretsOnly = items.length > 0 && items.every(it => it.kind === 'secret');
+  if (secretsOnly) return secretBatchMessage(items, { gatekeeper, escalated });
   const lines = [gatekeeper
     ? `[Factory] Permission request${items.length === 1 ? '' : 's'} for you to answer by the Manager's policy (factory_permission, mcp__crundi__factory_permission).`
     : `[Factory] Permission request${items.length === 1 ? '' : 's'} from your team${escalated ? ', passed on by the Gatekeeper' : ''}. Answer with factory_permission (mcp__crundi__factory_permission); your decision is final.`, ''];
   for (const it of items) {
     lines.push(`- ${it.id} · ${it.employee} wants to ${describeRequest(it)}`);
-    if (it.description && it.toolName !== 'Bash') lines.push(`    ${clip(it.description, 300)}`);
+    if (it.description && it.toolName !== 'Bash' && it.kind !== 'secret') lines.push(`    ${clip(it.description, 300)}`);
     if (it.gateNote) lines.push(`    The Gatekeeper: ${clip(it.gateNote, 300)}`);
   }
   if (gatekeeper) {
@@ -188,7 +193,25 @@ export function batchMessage(items, { bypass = false, gatekeeper = false, escala
     if (rulesAllowed) lines.push('Add rule (for example "Bash(npm test:*)") to an allow so this person may do the same again without asking; add ruleFor: "everyone" to grant it to the whole team.');
     else lines.push('Standing rules are turned off for this factory: answer each request on its own.');
   }
+  if (items.some(it => it.kind === 'secret')) lines.push('A request to use a secret is answered on its own: a rule never covers it.');
   if (bypass && !gatekeeper) lines.push('The person launched you with bypass permissions: they trust you. Approve reasonable requests promptly' + (rulesAllowed ? ' and grant rules for safe repeated commands' : '') + '; deny what is risky or off-task.');
+  lines.push('This is not a handoff: answer these, then carry on with whatever you were doing.');
+  return lines.join('\n');
+}
+
+/**
+ * The message carrying secret requests: "[Factory] Secret request". Answered
+ * the same way as a permission request, but never by a rule: each use of a
+ * secret is decided on its own.
+ */
+export function secretBatchMessage(items, { gatekeeper = false, escalated = false } = {}) {
+  const lines = [`[Factory] Secret request${items.length === 1 ? '' : 's'} from your team${escalated ? ', passed on by the Gatekeeper' : ''}. Answer with factory_permission (mcp__crundi__factory_permission)${gatekeeper ? ' by the Manager\'s policy' : '; your decision is final'}.`, ''];
+  for (const it of items) {
+    lines.push(`- ${it.id} · ${it.employee} wants to ${describeRequest(it)}`);
+    if (it.gateNote) lines.push(`    The Gatekeeper: ${clip(it.gateNote, 300)}`);
+  }
+  lines.push('', 'For each: { id, allow: true|false, reason }' + (gatekeeper ? ', or { id, escalate: true, reason } to pass it to the Manager when unsure.' : '.'));
+  lines.push('Allow only a command the task needs, that uses the secret for what it is for and does not print, save or send it anywhere else. A rule cannot cover a secret: each use is answered on its own. If the person has not unlocked the secret for this run, they are asked for its PIN after you allow it.');
   lines.push('This is not a handoff: answer these, then carry on with whatever you were doing.');
   return lines.join('\n');
 }
@@ -269,6 +292,7 @@ export function gatekeeperPrompt({ factory, task, project, policy, team }) {
     '- Follow the Manager\'s policy below. Allow what the task plainly needs and the policy covers; deny what is risky, destructive or off-task, with a reason the employee can act on.',
     '- If you are unsure, or the policy does not cover it, pass it to the Manager: { id, escalate: true, reason }. Do not guess on anything that could do harm.',
     '- You never do the work yourself and never change files.',
+    '- "[Factory] Secret request" messages ask to run a command with one of the factory\'s secrets (you see its name and the command, never the value). Allow only what the task needs and the policy covers; pass anything unclear to the Manager.',
     '- Some things are refused before they reach you: sudo, restarting Crundi, pushing or changing remotes, the server\'s ports, writing outside the run\'s folders.',
     '',
     'The team: ' + (team || []).map(r => r.name).join(', '),

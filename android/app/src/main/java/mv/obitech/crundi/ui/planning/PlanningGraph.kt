@@ -22,6 +22,7 @@ fun NavGraphBuilder.planningGraph() {
     composable(FactoryRoutes.RUN) { FactoryRunRoute(it.arg("id")) }
     composable(FactoryRoutes.DIFF) { RunDiffRoute(it.arg("id")) }
     composable(FactoryRoutes.FACTORY) { FactoryDetailRoute(it.arg("id")) }
+    composable(FactoryRoutes.EDIT, arguments = listOf(navArgument("focus") { defaultValue = "" })) { FactoryEditRoute(it.arg("id"), it.arg("focus")) }
     composable(FactoryRoutes.START, arguments = listOf(navArgument("factory") { defaultValue = "" })) { StartRunRoute(it.arg("factory")) }
     composable(FactoryRoutes.TRIGGER, arguments = listOf(navArgument("id") { defaultValue = "" })) { TriggerEditRoute(it.arg("id")) }
 }

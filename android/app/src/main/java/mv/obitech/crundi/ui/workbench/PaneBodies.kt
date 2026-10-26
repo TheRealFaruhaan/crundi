@@ -41,7 +41,7 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
                     else -> mv.obitech.crundi.ui.workspace.terminal.TerminalPreview(id)                          // ui.workspace
                 }
             }) // Lead
-            PaneKind.Pending -> TerminalLauncher({ wb.launch(v.key, it) }, busy = wb.launching[v.key] == true, error = wb.launchErrors[v.key]) // Lead
+            PaneKind.Pending -> TerminalLauncher({ wb.pick(v.key, it) }, busy = wb.launching[v.key] == true, error = wb.launchErrors[v.key]) // Lead
             PaneKind.Files -> FilesRoute()                                                  // ui.workspace
             PaneKind.Git -> GitRoute()                                                      // ui.workspace
             PaneKind.Media -> MediaRoute()                                                  // ui.workspace
@@ -49,7 +49,7 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
             PaneKind.Kanban -> PlanningPane(v)                                              // ui.planning
             PaneKind.Notes -> PlanningPane(v)                                               // ui.planning (picker, then one page: data pageId)
             PaneKind.MindMap -> PlanningPane(v)                                             // ui.planning
-            PaneKind.Factory -> PlanningPane(v)                                             // ui.planning (factories, then one run: data runId)
+            PaneKind.Factory -> PlanningPane(v)                                             // ui.planning (the project's factory: its live graph during a run)
             PaneKind.Panel -> mv.obitech.crundi.ui.panels.PanelPane(v.cell)                  // ui.operations (WebView exception)
         }
       }

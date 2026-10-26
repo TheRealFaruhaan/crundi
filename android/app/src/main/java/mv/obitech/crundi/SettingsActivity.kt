@@ -82,6 +82,17 @@ class SettingsActivity : ComponentActivity() {
     private fun liveSettings() {
         runCatching { startActivity(Intent("android.settings.MANAGE_APP_PROMOTED_NOTIFICATIONS").putExtra(Settings.EXTRA_APP_PACKAGE, packageName)) }.onFailure { notificationSettings() }
     }
+    private fun dndAccessSettings() {
+        runCatching { startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) }.onFailure { notificationSettings() }
+    }
+    /** Android 14 and up: this app's "full-screen notifications" switch. */
+    private fun fullScreenSettings() {
+        if (Build.VERSION.SDK_INT >= 34) runCatching {
+            startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, android.net.Uri.parse("package:$packageName")))
+            return
+        }
+        notificationSettings()
+    }
     private fun notificationSettings() = startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
 
     /** Ask for a permission if Android will still show the question; otherwise send the person to where it can be changed. */
@@ -143,6 +154,53 @@ class SettingsActivity : ComponentActivity() {
             false -> SettingItem.Line("Live card", "The status bar chip is turned off. The card still shows among your notifications.", false, "Allow") { liveSettings() }
             null -> SettingItem.Line("Live card", "Shown among your notifications while Claude works. The status bar chip needs Android 16 or newer.")
         }
+        if (Push.available) {
+            // Urgent alerts ring through Do Not Disturb only if the person
+            // says so here AND grants the access in Android's settings.
+            // Whatever the state, the channel follows it (made or removed).
+            Notifier.urgentDndChannel(this)
+            val dndOn = UrgentAlerts.dndOptIn(this)
+            val granted = UrgentAlerts.dndGranted(this)
+            perms += when {
+                !dndOn -> SettingItem.Line("Ring through Do Not Disturb", "Off. Urgent alerts stay silent while Do Not Disturb is on.", null, "Turn on") {
+                    UrgentAlerts.setDndOptIn(this, true)
+                    if (!UrgentAlerts.dndGranted(this)) dndAccessSettings() else draw()
+                }
+                !granted -> SettingItem.Line("Ring through Do Not Disturb", "On, but Crundi has not been given Do Not Disturb access, so urgent alerts stay silent in Do Not Disturb. Allow it in Android's settings.", false, "Allow") { dndAccessSettings() }
+                else -> SettingItem.Line("Ring through Do Not Disturb", "On. Urgent alerts ring at alarm volume even in Do Not Disturb.", true, "Turn off") {
+                    UrgentAlerts.setDndOptIn(this, false); draw()
+                }
+            }
+            if (dndOn && !granted) perms += SettingItem.Button("Turn off ringing through Do Not Disturb") { UrgentAlerts.setDndOptIn(this, false); draw() }
+            // Full screen, like an alarm clock: the person's choice, and on
+            // Android 14 and up also Android's switch for this app.
+            val fullOn = UrgentAlerts.fullScreenOptIn(this)
+            val fullOk = UrgentAlerts.fullScreenGranted(this)
+            perms += when {
+                !fullOn -> SettingItem.Line("Full-screen urgent alerts", "Off. Urgent alerts ring as a notification at the top of the screen.", null, "Turn on") {
+                    UrgentAlerts.setFullScreenOptIn(this, true)
+                    if (!UrgentAlerts.fullScreenGranted(this)) fullScreenSettings() else draw()
+                }
+                !fullOk -> SettingItem.Line("Full-screen urgent alerts", "On, but Android has not allowed Crundi to show full-screen notifications, so urgent alerts stay a notification. Allow it in Android's settings.", false, "Allow") { fullScreenSettings() }
+                else -> SettingItem.Line("Full-screen urgent alerts", "On. When the phone is locked or asleep, an urgent alert lights up the screen like an alarm: slide right to attend, left to dismiss.", true, "Turn off") {
+                    UrgentAlerts.setFullScreenOptIn(this, false); draw()
+                }
+            }
+            if (fullOn && !fullOk) perms += SettingItem.Button("Turn off full-screen urgent alerts") { UrgentAlerts.setFullScreenOptIn(this, false); draw() }
+            // How long an urgent alert rings before it counts as unanswered
+            // (and alert_user, waiting on it, hears "no answer").
+            val ring = UrgentAlerts.ringMinutes(this)
+            perms += SettingItem.Line("Urgent alerts ring for", "$ring minute${if (ring == 1) "" else "s"}, then stop and count as unanswered. Snooze brings one back after 5, 15, 30 or 60 minutes.", null, "Change") {
+                val choices = UrgentAlerts.RING_RANGE.toList()
+                android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("Ring for")
+                    .setSingleChoiceItems(choices.map { "$it minute${if (it == 1) "" else "s"}" }.toTypedArray(), choices.indexOf(ring)) { dlg, which ->
+                        UrgentAlerts.setRingMinutes(this, choices[which]); dlg.dismiss(); draw()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
         val cam = has(Manifest.permission.CAMERA)
         perms += SettingItem.Line("Camera", if (cam) "Allowed. Used to scan the pairing picture, and to take a photo for a chat." else "Not allowed. Needed to scan the pairing picture.", cam, if (cam) "Manage" else "Allow") {
             if (cam) appDetails() else ask(Manifest.permission.CAMERA, 2)
@@ -153,6 +211,21 @@ class SettingsActivity : ComponentActivity() {
         }
         perms += SettingItem.Line("Files", "Downloads are saved to the phone's Downloads folder. Android asks for no permission for that, and files you attach are picked one at a time.")
         out += SettingSection("Permissions", perms)
+
+        // ─── Secret PINs behind the fingerprint (BiometricPins) ───
+        val pins = BiometricPins.store(this)
+        // The enrolled biometrics changed: Android destroyed the key, so the PINs are useless.
+        val forgottenNow = pins.enabled && pins.list().isNotEmpty() && !PinKey.stillValid()
+        if (forgottenNow) pins.forgetAll()
+        out += SettingSection("Secret PINs", PinSettings.items(
+            BiometricPins.available(this), pins.enabled, pins.list(), forgottenNow,
+            toggle = {
+                if (pins.enabled) { pins.enabled = false; PinKey.delete() } else pins.enabled = true
+                draw()
+            },
+            forget = { p -> pins.forget(p.server, p.secretId); draw() },
+            forgetAll = { pins.forgetAll(); draw() },
+        ))
 
         // ─── Servers ───
         val srv = ArrayList<SettingItem>()
@@ -174,6 +247,16 @@ class SettingsActivity : ComponentActivity() {
                 }
             }
             if (!isCurrent) srv += SettingItem.Button("Remove ${s.host}") { removing = s }
+            if (Push.available) {
+                // Per server: an urgent alert from it rings until seen, or is
+                // shown as an ordinary notification.
+                val urgentOn = UrgentAlerts.serverOn(this, s.id)
+                srv += SettingItem.Line(
+                    "Urgent alerts from ${s.host}",
+                    if (urgentOn) "On. Claude can ring this phone until you look, at most 3 times an hour." else "Off. Urgent alerts from this server are shown as ordinary notifications, without ringing.",
+                    null, if (urgentOn) "Turn off" else "Turn on",
+                ) { UrgentAlerts.setServerOn(this, s.id, !urgentOn); draw() }
+            }
         }
         srv += SettingItem.Button("Connect another server", primary = true) { startActivity(Intent(this, PairActivity::class.java)) }
         out += SettingSection("Servers", srv)
@@ -217,6 +300,8 @@ class SettingsActivity : ComponentActivity() {
             LiveCards.forget(app, s.id)
             Icons.forget(s.id)
             PageLogin.forget(app, s.id)
+            UrgentAlerts.forget(app, s.id)
+            BiometricPins.store(app).forgetServer(SavedPins.serverKey(s.baseUrl))
             AppGraph.forget(s.id)
             Servers.remove(app, s.id)
             if (Servers.all(app).isEmpty()) {

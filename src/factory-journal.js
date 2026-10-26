@@ -233,13 +233,26 @@ export function reduce(prev, ev) {
       break;
     case 'perm-asked':
       r.perms.seq = Math.max(r.perms.seq, Number(String(ev.id).slice(1)) || 0);
-      r.perms.outstanding.push({ id: ev.id, employeeId: ev.employeeId, employee: ev.employee, toolName: ev.toolName, input: ev.input, at });
+      r.perms.outstanding.push({ id: ev.id, employeeId: ev.employeeId, employee: ev.employee, toolName: ev.toolName, input: ev.input, at, ...(ev.kind ? { kind: ev.kind } : {}) });
       break;
     case 'perm-decided':
       // Passed on by the Gatekeeper: still waiting, now on the Manager.
       if (ev.decision !== 'escalated') r.perms.outstanding = r.perms.outstanding.filter(p => p.id !== ev.id);
-      r.perms.log.push({ at, id: ev.id, employee: ev.employee, toolName: ev.toolName, input: ev.input, decision: ev.decision, by: ev.by, reason: ev.reason || '', rule: ev.rule || undefined });
+      r.perms.log.push({ at, id: ev.id, employee: ev.employee, toolName: ev.toolName, input: ev.input, decision: ev.decision, by: ev.by, reason: ev.reason || '', rule: ev.rule || undefined, ...(ev.kind ? { kind: ev.kind } : {}) });
       if (r.perms.log.length > LOG_MAX) r.perms.log.splice(0, r.perms.log.length - LOG_MAX);
+      break;
+    case 'secrets-unlocked':
+      // The factory's secrets the person unlocked when the run started, by
+      // name. The PINs are never here: they live in the runner's memory.
+      r.secrets = { ...(r.secrets || { log: [] }), unlockedAtStart: (ev.secrets || []).map(x => ({ id: x.id, name: x.name })) };
+      break;
+    case 'secret-used':
+      // One use of a secret by the team: its name, who, who approved it and
+      // whether it was pre-authorised. Never a value or a PIN.
+      r.secrets = r.secrets || { unlockedAtStart: [], log: [] };
+      r.secrets.log = [...(r.secrets.log || []), { at, secretId: ev.secretId || '', secret: ev.secret || '', employeeId: ev.employeeId || '', employee: ev.employee || '', approvedBy: Array.isArray(ev.approvedBy) ? ev.approvedBy.slice() : [], preauthorised: !!ev.preauthorised, ok: ev.ok !== false }];
+      if (r.secrets.log.length > LOG_MAX) r.secrets.log.splice(0, r.secrets.log.length - LOG_MAX);
+      history(rec, { type: 'secret-used', secret: ev.secret || '', employee: ev.employee || '', approvedBy: Array.isArray(ev.approvedBy) ? ev.approvedBy.slice() : [], preauthorised: !!ev.preauthorised });
       break;
     case 'cap':
       r.capHit = { which: ev.which, limit: ev.limit, at };
@@ -252,6 +265,14 @@ export function reduce(prev, ev) {
     case 'manager-message':
       // Told someone mid-step: shown on the timeline, changes no state.
       break;
+    case 'pause-until':
+      // A pause waiting for the usage reset that was made with no usage
+      // reading: the reset it waits for, from the first reading after.
+      if (r.paused) r.paused = { ...r.paused, resetsAt: ev.resetsAt || '', ...(Array.isArray(ev.windows) ? { windows: ev.windows } : {}) };
+      break;
+    case 'hold':
+      // Someone's chat woke by itself while paused or held, and was told to hold.
+      break;
     case 'tick':
       // The Manager set its check-in ticker (when the factory leaves it open).
       r.tickMinutes = ev.minutes || 0;
@@ -261,7 +282,14 @@ export function reduce(prev, ev) {
       r.limits = ev.limits || null;
       break;
     case 'pause':
-      r.paused = { by: ev.by || 'person', at, ...(ev.resetsAt ? { resetsAt: ev.resetsAt } : {}), ...(ev.reason ? { reason: ev.reason } : {}) };
+      // mode 'now': the turns in progress were stopped (stopped: who). With
+      // resumeOnReset it carries on by itself once the usage window that was
+      // full (windows, resetsAt) has reset, like a pause by the usage limit.
+      r.paused = {
+        by: ev.by || 'person', at, ...(ev.resetsAt ? { resetsAt: ev.resetsAt } : {}), ...(ev.reason ? { reason: ev.reason } : {}),
+        ...(ev.mode === 'now' ? { mode: 'now', stopped: Array.isArray(ev.stopped) ? ev.stopped : [] } : {}),
+        ...(ev.resumeOnReset ? { resumeOnReset: true, windows: Array.isArray(ev.windows) ? ev.windows : [] } : {}),
+      };
       closeClock(r, at);
       break;
     case 'resume':

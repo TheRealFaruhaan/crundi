@@ -2,7 +2,6 @@ package mv.obitech.crundi
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -11,7 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
-import mv.obitech.crundi.ui.chats.ChatRoute
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import mv.obitech.crundi.ui.chats.BubbleChat
 import mv.obitech.crundi.ui.shell.Host
 import mv.obitech.crundi.ui.shell.LocalAppServices
 import mv.obitech.crundi.ui.shell.LocalHost
@@ -26,10 +28,16 @@ import mv.obitech.crundi.ui.theme.CrundiTheme
  * It shares the main window's services (AppGraph), so with the app already
  * running it shows the chat without connecting again.
  */
-class ChatActivity : ComponentActivity() {
+// A FragmentActivity so BiometricPrompt can sit over the bubble (BiometricPins).
+class ChatActivity : androidx.fragment.app.FragmentActivity() {
+    private val pinKeeper by lazy { ActivityPinKeeper(this) }
     private var serverId = ""
     private var chatId = ""
     private var openKey = ""
+    private var resumed = false
+    // The chat it opened with, and the one it shows now (a chat woken from sleep can move).
+    private var startChat = ""
+    private var shownChat by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,6 +46,8 @@ class ChatActivity : ComponentActivity() {
         val server = Servers.byId(this, serverId)
         if (server == null || !Regex("^[A-Za-z0-9_-]{1,80}$").matches(chatId)) { finish(); return }
         openKey = "$serverId:$chatId"
+        startChat = chatId
+        shownChat = chatId
         opened(openKey)
         // While any bubble is up, the app stays running and online (Link).
         Link.hold(applicationContext, "bubbles", true)
@@ -53,10 +63,11 @@ class ChatActivity : ComponentActivity() {
         val services = AppGraph.forServer(this, server)
         setContent {
             CrundiTheme {
-                CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host) {
+                CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalPinKeeper provides pinKeeper) {
                     // The bubble's chat has Mini too (ui.mini); there is no top bar, so it walks straight in.
                     mv.obitech.crundi.ui.mini.MiniStage(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
-                        ChatRoute(chatId)
+                        // The chat, and Claude asking for a secret from it (ui.chats.BubbleChat).
+                        BubbleChat(startChat, shownChat)
                     }
                 }
             }
@@ -67,6 +78,22 @@ class ChatActivity : ComponentActivity() {
         override val isBubble = true
         override fun chatOnScreen(chatId: String, onScreen: Boolean) {
             if (onScreen && chatId == this@ChatActivity.chatId) Notifier.clearChat(this@ChatActivity, serverId, chatId, why = "its own window reported it seen")
+        }
+        // A chat woken from sleep under another id: this window is that chat now.
+        // Its notification and the system's bubble stay under the old id; a new
+        // one for the chat comes under the new id, and a window opened again
+        // from this one's intent opens the chat it now shows.
+        override fun chatMoved(from: String, to: String) {
+            if (from != this@ChatActivity.chatId || !Regex("^[A-Za-z0-9_-]{1,80}$").matches(to)) return
+            val shown = resumed
+            if (shown) OnScreen.bubbleOpen("chat:$openKey", false)
+            closed(openKey)
+            this@ChatActivity.chatId = to
+            shownChat = to
+            openKey = "$serverId:$to"
+            opened(openKey)
+            if (shown) OnScreen.bubbleOpen("chat:$openKey", true)
+            intent.putExtra(Notifier.EXTRA_CHAT, to)
         }
         override fun openInMain(path: String) = this@ChatActivity.openMain(path)
         override fun close() = finish()
@@ -97,10 +124,12 @@ class ChatActivity : ComponentActivity() {
     // notification for it is left out (OnScreen).
     override fun onResume() {
         super.onResume()
+        resumed = true
         if (openKey.isNotEmpty()) OnScreen.bubbleOpen("chat:$openKey", true)
     }
 
     override fun onPause() {
+        resumed = false
         if (openKey.isNotEmpty()) OnScreen.bubbleOpen("chat:$openKey", false)
         super.onPause()
     }

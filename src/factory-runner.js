@@ -54,6 +54,7 @@ import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES
 import { missingSkills } from './factory-skills.js';
 import { checkCr, crMarkdown, crBrief, crText, normalizeTemplate } from './factory-cr.js';
 import { requestContext } from './factory-triggers.js';
+import { createSecretVault, decide as decideSecret } from './factory-secrets.js';
 
 /** Runs in these states hold their project: no second run can start. */
 export const UNFINISHED = UNFINISHED_SET;
@@ -63,6 +64,8 @@ const SETUP_TIMEOUT_MS = 15 * 60 * 1000;
 const SETUP_OUTPUT_MAX = 4000;
 const PERMISSION_BATCH_MS = 1500;   // parallel branches asking at once arrive as one message
 const AUTO_RECOVER_DELAYS = [30_000, 2 * 60_000, 10 * 60_000];
+const WOKE_GRACE_MS = 3000;   // a turn starting this soon after a send was started by it
+const SECRET_ASK_MS = 10 * 60 * 1000;
 
 /**
  * @param {object} o
@@ -75,13 +78,20 @@ const AUTO_RECOVER_DELAYS = [30_000, 2 * 60_000, 10 * 60_000];
  * @param {{ under:(root:string)=>string[], remove:(key:string)=>any }} [o.services]  preview services a run started, by folder
  * @param {(kind:string, run:object, text:string) => void} [o.notify]
  * @param {(run:object) => void} [o.onChange]
+ * @param {(id:string, pin:string) => Promise<{ok:boolean, name?:string, needsUpgrade?:boolean, error?:string}>} [o.unlockSecret]
+ *        checks a secret's PIN (secrets-store.decryptSecret); the value it
+ *        returns is dropped at once
+ * @param {(id:string) => {id:string, name:string}|null} [o.secretMeta]  a secret's name
  */
 export function createFactoryRunner({
   dataDir, agents, getProject, getFactory, git = Git, listSkills = () => [], services = null,
   notify = () => {}, onChange = () => {},
+  unlockSecret = null, secretMeta = () => null,
+  secretAskMs = SECRET_ASK_MS,   // how long a secret request waits on the Manager or the Gatekeeper
   settleMs = SETTLE_MS, setupTimeoutMs = SETUP_TIMEOUT_MS, permissionBatchMs = PERMISSION_BATCH_MS,
   autoRecoverDelays = AUTO_RECOVER_DELAYS,
   tickScale = 1,   // tests shrink the ticker's minutes
+  wokeGraceMs = WOKE_GRACE_MS,   // tests shorten it
   now = () => new Date().toISOString(),
 }) {
   const RUNS = join(dataDir, 'factory-runs');
@@ -91,8 +101,24 @@ export function createFactoryRunner({
   const chats = new Map();
   /** Projects claimed by a run that is still being set up (before its first event). */
   const claiming = new Set();
+  /**
+   * The secrets each run's person unlocked (factory-secrets.js): in memory
+   * only, never in the journal or the cache, so a restart starts it empty.
+   */
+  const vault = createSecretVault();
 
   if (typeof agents.onPermission === 'function') agents.onPermission((req) => onPermissionRequest(req));
+
+  /**
+   * Everything the runner says into a chat goes through here, so a turn that
+   * starts with no message behind it (a background command finishing wakes
+   * the CLI on its own) can be told apart from one it started. chatId -> ms.
+   */
+  const lastSent = new Map();
+  function sendTo(chatId, text) {
+    lastSent.set(chatId, Date.now());
+    return agents.send(chatId, text);
+  }
 
   // ─── Journal and cache ───
 
@@ -119,6 +145,10 @@ export function createFactoryRunner({
     const fd = openSync(journalFile(id), 'a');
     try { writeSync(fd, JSON.stringify(e) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
     entry.rec = reduce(entry.rec, e);
+    // Stopped, finished, discarded or crashed: its unlocked secrets go.
+    // (Paused is still running and keeps them.)
+    const status = entry.rec?.state?.status;
+    if (status && (!UNFINISHED.has(status) || status === 'crashed')) vault.forgetRun(id);
     writeCache(entry);
     return entry.rec;
   }
@@ -126,7 +156,7 @@ export function createFactoryRunner({
   function writeCache(entry) {
     const id = st(entry).id;
     const tmp = cacheFile(id) + '.tmp';
-    writeFileSync(tmp, JSON.stringify({ rec: entry.rec, error: entry.live.error || '' }));
+    writeFileSync(tmp, JSON.stringify({ rec: entry.rec, error: entry.live.error || '' }), { mode: 0o600 });
     renameSync(tmp, cacheFile(id));
     try { onChange(summary(entry)); } catch { /* a listener's problem */ }
   }
@@ -239,7 +269,10 @@ export function createFactoryRunner({
       managerMode: r.managerMode,
       teamMode: r.teamMode || 'ask',
       gatekeeper: !!s.snapshot.settings.gatekeeper?.enabled,
-      permissions: L.permissions.map(p => ({ id: p.id, employee: p.employee, toolName: p.toolName, input: p.input, at: p.at, sent: p.sent })),
+      // The factory's secrets: names, and whether each is unlocked for this
+      // run right now (the PINs stay in memory and are never shown).
+      secrets: (s.snapshot.settings.secrets || []).map(id => ({ id, name: secretMeta(id)?.name || '', unlocked: vault.has(s.id, id) })),
+      permissions: L.permissions.map(p => ({ id: p.id, employee: p.employee, toolName: p.toolName, input: p.input, at: p.at, sent: p.sent, ...(p.kind ? { kind: p.kind } : {}) })),
       rules: scopedRules(r.rules),
       outcome: s.outcome,
       setup: r.setup,
@@ -289,7 +322,7 @@ export function createFactoryRunner({
    * files: [{ name, content }] written into the change request's folder and
    * listed with its attachments (a trigger's copy of the call that started it).
    */
-  async function startRun({ project, factoryId, task, cr, files = [], mergeMode, ignoreMissingSkills = false, trigger = null } = {}) {
+  async function startRun({ project, factoryId, task, cr, files = [], mergeMode, ignoreMissingSkills = false, trigger = null, secretPins = null } = {}) {
     const key = String(project || '').toLowerCase();
     const proj = getProject(key);
     if (!proj) return { ok: false, error: `Project "${project}" not found.` };
@@ -325,6 +358,22 @@ export function createFactoryRunner({
     const missing = missingSkills(factory, crIn ? crText(crIn) : taskText, new Set(known.map(x => x.name)));
     if (missing.length && !ignoreMissingSkills) {
       return { ok: false, missingSkills: missing, error: `This factory names skill${missing.length === 1 ? '' : 's'} this project does not have: ${missing.map(n => '/' + n).join(', ')}. Install ${missing.length === 1 ? 'it' : 'them'}, or start anyway.` };
+    }
+
+    // The PINs the person typed for the factory's secrets, checked before
+    // anything is made: a wrong one is said now, while they are there.
+    const unlocked = [];
+    if (secretPins && typeof secretPins === 'object' && unlockSecret) {
+      for (const sid of factory.settings.secrets || []) {
+        const pin = secretPins[sid];
+        if (pin == null || pin === '') continue;
+        const r = await unlockSecret(sid, String(pin));
+        if (!r || !r.ok) {
+          const name = r?.name || secretMeta(sid)?.name || sid;
+          return { ok: false, field: 'secrets', secretId: sid, error: r?.error === 'Secret not found' ? `The secret "${name}" no longer exists; remove it from the factory.` : `The PIN or passphrase for "${name}" is not right.` };
+        }
+        unlocked.push({ id: sid, name: r.name || secretMeta(sid)?.name || sid, pin: String(pin), needsUpgrade: !!r.needsUpgrade });
+      }
     }
 
     claiming.add(key);
@@ -365,6 +414,11 @@ export function createFactoryRunner({
       });
       runs.set(id, entry);
       claiming.delete(key);
+      if (unlocked.length) {
+        for (const u of unlocked) vault.remember(id, u.id, u.pin);
+        // Which were unlocked, by name: never the PINs.
+        commit(entry, { type: 'secrets-unlocked', secrets: unlocked.map(u => ({ id: u.id, name: u.name })) });
+      }
 
       const setupCmd = factory.settings.setupCommand.trim();
       if (setupCmd) {
@@ -390,7 +444,9 @@ export function createFactoryRunner({
         await drain(entry);
       });
       notify('started', summary(entry), `Factory "${factory.name}" started in ${key}.`);
-      return { ok: true, run: summary(entry) };
+      // upgradable: secrets unlocked with an old lock, for the client's "set a passphrase" prompt.
+      const upgradable = unlocked.filter(u => u.needsUpgrade).map(u => u.id);
+      return { ok: true, run: summary(entry), ...(upgradable.length ? { upgradable } : {}) };
     } finally {
       claiming.delete(key);
     }
@@ -502,11 +558,18 @@ export function createFactoryRunner({
    */
   function watch(entry, chatId, employeeId) {
     let timer = null;
+    let prev = '';
+    try { prev = agents.state(chatId) || ''; } catch { /* not there yet */ }
     const fn = (ev) => {
       if (!ev) return;
       if (ev.type === 'exit') { clearTimeout(timer); recordUsage(entry, chatId, employeeId); return onExit(entry, chatId, employeeId); }
       if (ev.type !== 'state') return;
+      const was = prev;
+      prev = ev.state;
       if (ev.state === 'idle') recordUsage(entry, chatId, employeeId);
+      // A turn starting from rest (idle, or parked on a background command)
+      // with nobody having sent anything: the CLI woke itself.
+      if (RESTING.has(was) && !RESTING.has(ev.state) && !sentRecently(chatId)) woke(entry, chatId, employeeId);
       if (ev.state !== 'idle') {
         clearTimeout(timer); timer = null;
         if (employeeId === MANAGER_ID && entry.live.managerIdle) { entry.live.managerIdle = false; writeCache(entry); }
@@ -517,6 +580,47 @@ export function createFactoryRunner({
     };
     entry.watchers[chatId] = { fn, clear: () => clearTimeout(timer) };
     agents.on(chatId, fn);
+  }
+
+  /** The states a chat rests in between turns ('waiting': parked on a background command). */
+  const RESTING = new Set(['idle', 'waiting']);
+  /** Did anyone (the runner, the Manager through it, or the person) send into this chat just now? */
+  function sentRecently(chatId) {
+    let person = 0;
+    try { person = agents.sentAt ? Number(agents.sentAt(chatId)) || 0 : 0; } catch { /* unknown */ }
+    return Date.now() - Math.max(lastSent.get(chatId) || 0, person) < wokeGraceMs;
+  }
+
+  /**
+   * Someone's chat started a turn on its own (a background build finishing)
+   * while they are meant to be still: the run is paused, or the Manager told
+   * them to wait. Told to hold, in the words of the Manager's hold, and
+   * stopped first so the message is read now rather than after more work.
+   * onSettled leaves them alone afterwards (paused or held), so no stall
+   * nudge or escalation follows; resume() or the Manager lets them go on.
+   */
+  function woke(entry, chatId, employeeId) {
+    if (!rr(entry).paused && !entry.live.employees[employeeId]?.held) return;   // the usual case: nothing to do
+    return locked(entry, async () => {
+      const emp = entry.live.employees[employeeId];
+      if (employeeId === MANAGER_ID || !emp || emp.chatId !== chatId || !emp.busy) return;
+      if (!UNFINISHED.has(st(entry).status) || st(entry).status === 'crashed') return;
+      const paused = !!rr(entry).paused;
+      if (!paused && !emp.held) return;
+      if (sentRecently(chatId)) return;   // something was sent while this waited for the lock
+      if (agents.interrupt) { try { await agents.interrupt(chatId); } catch { /* it may have just ended */ } }
+      if (paused) emp.pauseHeld = true;
+      const why = paused ? 'The run is paused' : 'The Manager told you to wait';
+      const sent = sendTo(chatId, `[Factory] ${why}, and your chat started a new turn on its own (a background command finishing, most likely). Your turn was stopped for this message.\n\n${holdText(paused ? 'the run is resumed' : 'the Manager tells you to carry on')}`);
+      if (sent && sent.ok === false) return;
+      commit(entry, { type: 'hold', employeeId, why: paused ? 'paused' : 'held' });
+      writeCache(entry);
+    });
+  }
+
+  /** What a held employee is told: the Manager's hold, until whatever lets them go. */
+  function holdText(until) {
+    return `Stop where you are and wait. Do not hand off and do nothing else until ${until}; your work so far stays as it is.`;
   }
 
   /** What a chat has cost so far, into the journal when it changed (each turn's end). */
@@ -555,7 +659,7 @@ export function createFactoryRunner({
       if (emp.held) return;   // told by the Manager to wait: idle on purpose
       if (!emp.nudged) {
         emp.nudged = true;
-        agents.send(chatId, nudgeMessage());
+        sendTo(chatId, nudgeMessage());
         return;
       }
       const name = st(entry).snapshot.roster.find(r => r.id === employeeId)?.name || employeeId;
@@ -671,7 +775,7 @@ export function createFactoryRunner({
       context: await runContextFor(entry, ef),
       cr: crFor(entry, ef, !!recovery),
     });
-    const sent = agents.send(s.chatId, msg);
+    const sent = sendTo(s.chatId, msg);
     if (sent && sent.ok === false) entry.live.error = `Could not message ${r?.name || ef.employeeId}: ${sent.error}`;
     else if (notice) commit(entry, { type: 'notice-clear', tokenId: ef.tokenId });
   }
@@ -820,7 +924,7 @@ export function createFactoryRunner({
         dropPermissions(entry, (p) => p.chatId === emp.chatId, 'Your step was cancelled.');
         if (emp.chatId) {
           try { agents.interrupt(emp.chatId); } catch { /* not mid-turn */ }
-          agents.send(emp.chatId, cancelMessage(ef.reason || 'the flow moved on'));
+          sendTo(emp.chatId, cancelMessage(ef.reason || 'the flow moved on'));
         }
         await dequeue(entry, eid);
       }
@@ -1011,6 +1115,8 @@ export function createFactoryRunner({
   // ─── Permissions: employees ask, the Manager decides ───
 
   function answer(item, allow, message) {
+    // A secret request (askSecret) is waited on by its secret_run call, not by a CLI.
+    if (item.resolve) { item.resolve({ allow, message: message || '', by: item.decidedBy || 'crundi' }); return true; }
     let r;
     try { r = agents.respond(item.chatId, { requestId: item.requestId, behavior: allow ? 'allow' : 'deny', message }); }
     catch (err) { r = { ok: false, error: err.message }; }
@@ -1018,7 +1124,7 @@ export function createFactoryRunner({
   }
 
   function decided(entry, item, decision, by, extra = {}) {
-    commit(entry, { type: 'perm-decided', id: item.id, employee: item.employee, toolName: item.toolName, input: item.input, decision, by, ...extra });
+    commit(entry, { type: 'perm-decided', id: item.id, employee: item.employee, toolName: item.toolName, input: item.input, decision, by, ...(item.kind ? { kind: item.kind } : {}), ...extra });
   }
 
   /** Remove requests in flight; if a reason is given, the employees are told no. */
@@ -1026,7 +1132,8 @@ export function createFactoryRunner({
     const keep = [];
     for (const p of entry.live.permissions) {
       if (!pred(p)) { keep.push(p); continue; }
-      if (reason) answer(p, false, denyMessage(reason, 'Crundi'));
+      // A secret request has a caller waiting on it, so it is always answered.
+      if (reason || p.resolve) answer(p, false, denyMessage(reason || 'the chat that asked has ended', 'Crundi'));
       decided(entry, p, 'dropped', 'crundi', { reason });
     }
     entry.live.permissions = keep;
@@ -1099,7 +1206,7 @@ export function createFactoryRunner({
         if (toGate.length) {
           const g = await ensureSession(entry, GATEKEEPER_ID);
           if (g.ok) {
-            const sent = agents.send(g.chatId, batchMessage(toGate, { gatekeeper: true }));
+            const sent = sendTo(g.chatId, batchMessage(toGate, { gatekeeper: true }));
             if (!sent || sent.ok !== false) for (const p of toGate) p.sent = true;
           } else {
             for (const p of toGate) { p.escalated = true; toManager.push(p); }
@@ -1108,7 +1215,7 @@ export function createFactoryRunner({
         if (toManager.length) {
           const m = await ensureSession(entry, MANAGER_ID);
           if (!m.ok) { dropPermissions(entry, (p) => toManager.includes(p), `the Manager is unavailable (${m.error})`); return; }
-          const sent = agents.send(m.chatId, batchMessage(toManager, { bypass: rr(entry).managerMode === 'bypass', escalated: gatekeeperOn(entry), rulesAllowed: st(entry).snapshot.settings.managerRules }));
+          const sent = sendTo(m.chatId, batchMessage(toManager, { bypass: rr(entry).managerMode === 'bypass', escalated: gatekeeperOn(entry), rulesAllowed: st(entry).snapshot.settings.managerRules }));
           if (sent && sent.ok === false) return scheduleDelivery(entry);
           for (const p of toManager) p.sent = true;
         }
@@ -1158,7 +1265,7 @@ export function createFactoryRunner({
         commit(entry, { type: 'policy', text: String(policy) });
         results.push('Policy saved' + (gatekeeperOn(entry) ? ' and sent to the Gatekeeper.' : '.'));
         const g = entry.live.employees[GATEKEEPER_ID];
-        if (g && g.chatId) agents.send(g.chatId, '[Factory] The Manager updated the policy:\n' + String(policy).slice(0, 4000));
+        if (g && g.chatId) sendTo(g.chatId, '[Factory] The Manager updated the policy:\n' + String(policy).slice(0, 4000));
       }
       for (const r of pre) {
         const text = typeof r === 'object' && r ? String(r.rule || '') : String(r);
@@ -1177,15 +1284,18 @@ export function createFactoryRunner({
           continue;
         }
         const allow = d.allow === true || d.allow === 'true';
-        if (allow && d.rule && !grant(String(d.rule), id, d.ruleFor ? whoOf(d.ruleFor) : item.employeeId)) continue;
+        item.decidedBy = isGate ? 'gatekeeper' : 'manager';
+        // A rule never covers a secret: each use is answered on its own.
+        if (allow && d.rule && item.kind !== 'secret' && !grant(String(d.rule), id, d.ruleFor ? whoOf(d.ruleFor) : item.employeeId)) continue;
         const delivered = answer(item, allow, allow ? undefined : denyMessage(reason, isGate ? 'The Gatekeeper' : 'The Manager'));
         entry.live.permissions = entry.live.permissions.filter(p => p !== item);
-        decided(entry, item, allow ? 'allowed' : 'denied', isGate ? 'gatekeeper' : 'manager', { reason, ...(allow && d.rule ? { rule: d.rule } : {}) });
+        decided(entry, item, allow ? 'allowed' : 'denied', isGate ? 'gatekeeper' : 'manager', { reason, ...(allow && d.rule && item.kind !== 'secret' ? { rule: d.rule } : {}) });
         results.push(`${id}: ${allow ? 'allowed' : 'denied'}${delivered ? '' : ' (that request was no longer waiting)'}`);
       }
       // A rule just granted answers anything else waiting that it covers.
       if (newRules.length) {
         for (const item of [...entry.live.permissions]) {
+          if (item.kind === 'secret') continue;
           const hit = newRules.find(r => (r.who === '*' || r.who === item.employeeId) && ruleMatches(r.rule, item));
           if (!hit) continue;
           const rule = hit.rule;
@@ -1222,7 +1332,7 @@ export function createFactoryRunner({
         if (emp.chatId && agents.isAlive(emp.chatId)) {
           const r = agents.setPermissionMode(emp.chatId, 'default');
           if (r && r.ok === false) return { ok: false, error: r.error };
-          agents.send(emp.chatId, '[Factory] The person turned bypass permissions off. Your own actions now ask them first. You still decide your team\'s permission requests.');
+          sendTo(emp.chatId, '[Factory] The person turned bypass permissions off. Your own actions now ask them first. You still decide your team\'s permission requests.');
         }
         commit(entry, { type: 'manager-mode', mode: 'normal' });
         return { ok: true, run: summary(entry) };
@@ -1235,7 +1345,7 @@ export function createFactoryRunner({
       commit(entry, { type: 'manager-mode', mode: 'bypass' });
       const s = await ensureSession(entry, MANAGER_ID, { reuseId: sameId || '' });
       if (!s.ok) { commit(entry, { type: 'manager-mode', mode: 'normal' }); return { ok: false, error: s.error }; }
-      if (emp.busy) agents.send(s.chatId, '[Factory] You were relaunched with bypass permissions: the person trusts you. You still owe a handoff for the step above; carry on.');
+      if (emp.busy) sendTo(s.chatId, '[Factory] You were relaunched with bypass permissions: the person trusts you. You still owe a handoff for the step above; carry on.');
       return { ok: true, run: summary(entry) };
     });
   }
@@ -1243,26 +1353,82 @@ export function createFactoryRunner({
   // ─── Pause, resume, caps ───
 
   /**
-   * Pause: nobody new is started; employees finish the turn they are in and
-   * their handoffs are routed, but what follows is held until resume().
+   * Pause: nobody new is started; what follows is held until resume().
+   *
+   * mode 'finish' (the default): employees finish the turn they are in and
+   * their handoffs are routed. mode 'now': every turn in progress on a step
+   * is stopped as well, the Manager's too (unless it is the Manager pausing:
+   * that turn is the one asking); the steps stay theirs and resume() tells
+   * them to carry on. resumeOnReset: carry on by itself once the usage
+   * window that was full when it paused has reset (watchUsage).
    */
-  async function pause(runId, { by = 'person', resetsAt = '', reason = '' } = {}) {
+  async function pause(runId, { by = 'person', resetsAt = '', reason = '', mode = 'finish', resumeOnReset = false } = {}) {
     const entry = runs.get(runId);
     if (!entry) return { ok: false, error: 'Run not found.' };
+    if (mode !== 'now' && mode !== 'finish') return { ok: false, error: 'mode is "finish" (let current steps finish) or "now" (stop them now).' };
     return locked(entry, async () => {
       if (!['running', 'waiting'].includes(st(entry).status)) return { ok: false, error: `The run is ${st(entry).status}; it cannot be paused.` };
-      commit(entry, { type: 'pause', by, ...(resetsAt ? { resetsAt } : {}), ...(reason ? { reason: String(reason).slice(0, 300) } : {}) });
+      let windows = [];
+      if (resumeOnReset && by !== 'usage') ({ windows, resetsAt } = await resetPoint(entry));
+      const stopping = mode === 'now' ? midTurn(entry, by) : [];
+      commit(entry, {
+        type: 'pause', by, ...(resetsAt ? { resetsAt } : {}), ...(reason ? { reason: String(reason).slice(0, 300) } : {}),
+        ...(mode === 'now' ? { mode, stopped: stopping } : {}),
+        ...(resumeOnReset && by !== 'usage' ? { resumeOnReset: true, windows } : {}),
+      });
       clearClock(entry);
+      // Stopped the way the person's Stop button does. The turn ends idle,
+      // which onSettled ignores while paused.
+      for (const eid of stopping) {
+        const chatId = entry.live.employees[eid]?.chatId;
+        if (chatId && agents.interrupt) { try { await agents.interrupt(chatId); } catch { /* it may have just ended */ } }
+      }
+      const later = resumeOnReset && by !== 'usage' ? ` It carries on by itself when the usage window resets${resetsAt ? ` (after ${resetsAt})` : ''}.` : '';
       if (by === 'usage') notify('paused', summary(entry), `Factory "${st(entry).snapshot.name}" paused: usage reached the limit you set.${resetsAt ? ` It carries on by itself after ${resetsAt}.` : ''}`);
-      if (by === 'manager') notify('paused', summary(entry), `Factory "${st(entry).snapshot.name}" paused by its Manager${reason ? `: ${reason}` : ''}.`);
+      if (by === 'manager') notify('paused', summary(entry), `Factory "${st(entry).snapshot.name}" paused by its Manager${reason ? `: ${reason}` : ''}.${later}`);
       return { ok: true, run: summary(entry) };
     });
+  }
+
+  /** Who is mid-turn on a step right now (the Manager in any turn), for a pause that stops them. */
+  function midTurn(entry, by) {
+    const out = [];
+    for (const [eid, emp] of Object.entries(entry.live.employees)) {
+      if (!emp.chatId || !agents.isAlive(emp.chatId)) continue;
+      if (eid === MANAGER_ID ? by === 'manager' : !emp.busy) continue;
+      let state = '';
+      try { state = agents.state(emp.chatId) || ''; } catch { continue; }
+      if (state && !RESTING.has(state)) out.push(eid);
+    }
+    return out;
+  }
+
+  /**
+   * When a pause that waits for the usage reset may end: the windows over
+   * this run's thresholds now and the latest of their resets. With none over,
+   * the 5-hour window's next reset; with no reading at all, the next reading
+   * under the thresholds.
+   */
+  async function resetPoint(entry) {
+    let u = usageNow;
+    if (usageSource) {
+      try {
+        const fresh = await Promise.race([usageSource(), new Promise(res => { const t = setTimeout(() => res(null), 5000); t.unref?.(); })]);
+        if (fresh && fresh.ok !== false) u = usageNow = fresh;
+      } catch { /* the last reading will do */ }
+    }
+    if (!u || u.ok === false) return { windows: [], resetsAt: '' };
+    const L = limitsOf(entry);
+    const full = [['fiveHour', u.fiveHour, L.pauseAt5h], ['week', u.week, L.pauseAtWeek]].filter(([, w, at]) => w && w.utilization >= at);
+    if (!full.length) return { windows: [], resetsAt: u.fiveHour?.resetsAt || '' };
+    return { windows: full.map(([k]) => k), resetsAt: full.map(([, w]) => w.resetsAt).filter(Boolean).sort().pop() || '' };
   }
 
   /**
    * Carry on after a pause or a cap (a cap grants another maxHandoffs or
    * maxMinutes). Held steps start; anyone whose turn stopped while the run was
-   * held (the usage limit cuts turns short) is told to continue.
+   * held (the usage limit cuts turns short, a pause "now" stops them) or who
+   * was told to hold is told to continue.
    */
   async function resume(runId, { reason = '' } = {}) {
     const entry = runs.get(runId);
@@ -1270,18 +1436,35 @@ export function createFactoryRunner({
     return locked(entry, async () => {
       const r = rr(entry);
       if (!r.capHit && !r.paused) return { ok: false, error: 'This run is not paused or held.' };
-      const why = reason || (r.paused?.by === 'usage' ? 'the usage limit was reached; it has reset now' : r.paused ? 'the person paused the run; it is resumed now' : 'the run reached a limit; the person let it carry on');
+      const p = r.paused;
+      const stopped = new Set(p?.stopped || []);
+      const base = reason || (p?.by === 'usage' ? 'the usage limit was reached; it has reset now'
+        : p?.resumeOnReset ? `${p.by === 'manager' ? 'the Manager' : 'the person'} paused the run until the usage window reset; it has reset now`
+        : p ? `${p.by === 'manager' ? 'the Manager' : 'the person'} paused the run; it is resumed now`
+        : 'the run reached a limit; the person let it carry on');
       commit(entry, { type: 'resume' });
       startClock(entry);
       for (const [eid, emp] of Object.entries(entry.live.employees)) {
-        if (!emp.busy || !emp.chatId || !agents.isAlive(emp.chatId)) continue;
-        if (agents.state(emp.chatId) !== 'idle') continue;
-        const ef = activationFor(entry, emp.busy);
-        if (ef) await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, eid, ef, why, '') });
+        const held = emp.held || emp.pauseHeld;
+        const wasHeld = emp.held ? 'the Manager had told you to wait' : emp.pauseHeld ? 'you were told to hold while it was paused' : '';
+        emp.held = false; emp.pauseHeld = false;
+        const why = stopped.has(eid) ? `${base}. Your turn was stopped by the pause; pick up where you were`
+          : held ? `${base}. ${wasHeld[0].toUpperCase() + wasHeld.slice(1)}; you may carry on now` : base;
+        if (!emp.chatId || !agents.isAlive(emp.chatId)) continue;
+        const idle = agents.state(emp.chatId) === 'idle';
+        if (emp.busy && idle) {
+          const ef = activationFor(entry, emp.busy);
+          if (ef) await startStep(entry, emp, ef, { recovery: await recoveryFor(entry, eid, ef, why, '') });
+        } else if (held && emp.busy) {
+          // Still in a turn: the message waits for its next pause.
+          sendTo(emp.chatId, `[Factory] The run is resumed: ${why}. Carry on with your step.`);
+        } else if (eid === MANAGER_ID && stopped.has(eid)) {
+          sendTo(emp.chatId, `[Factory] The run is resumed: ${base}. The pause stopped your turn; carry on where you were.`);
+        }
       }
       // Steps nobody is working on: a recovery while paused leaves them for
       // here (their chats ended with the restart), so start them now.
-      await startOrphanedSteps(entry, why);
+      await startOrphanedSteps(entry, base);
       await drain(entry);
       return { ok: true, run: summary(entry) };
     });
@@ -1354,7 +1537,7 @@ export function createFactoryRunner({
     if (!m || !m.chatId || !agents.isAlive(m.chatId)) return;
     if (agents.state(m.chatId) !== 'idle') return;   // busy: skip, send nothing
     const t = tickOf(entry);
-    agents.send(m.chatId, `[Factory] Tick (every ${t.minutes} min). A wake-up, not a task: glance at the run only if something might be stuck or wrong (factory_status shows it in one block). Almost always nothing needs doing; then answer in a word, or not at all.${t.chosen ? '' : ' You have not set your ticker yet: choose how often you want these with factory_tick.'}`);
+    sendTo(m.chatId, `[Factory] Tick (every ${t.minutes} min). A wake-up, not a task: glance at the run only if something might be stuck or wrong (factory_status shows it in one block). Almost always nothing needs doing; then answer in a word, or not at all.${t.chosen ? '' : ' You have not set your ticker yet: choose how often you want these with factory_tick.'}`);
   }
 
   /** factory_tick, from the Manager: how often it wants waking, when the factory leaves it open. */
@@ -1384,10 +1567,16 @@ export function createFactoryRunner({
    * { fiveHour:{utilization,resetsAt}, week:{…} }); it only asks while a run
    * is going or waiting on the limit.
    */
+  /** Paused until a usage window resets: by the usage limit, or by someone who asked for it (resumeOnReset). */
+  function waitsForReset(e) {
+    const p = rr(e).paused;
+    return !!p && (p.by === 'usage' || !!p.resumeOnReset) && st(e).status === 'paused';
+  }
+
   function watchUsage(getUsage, { tickMs = 60_000 } = {}) {
     usageSource = getUsage;
     const tick = async () => {
-      const relevant = [...runs.values()].filter(e => ['running', 'waiting'].includes(st(e).status) || rr(e).paused?.by === 'usage');
+      const relevant = [...runs.values()].filter(e => ['running', 'waiting'].includes(st(e).status) || waitsForReset(e));
       if (!relevant.length) return;
       let u;
       try { u = await getUsage(); } catch { return; }
@@ -1399,13 +1588,28 @@ export function createFactoryRunner({
         const full = [[u.fiveHour, L.pauseAt5h], [u.week, L.pauseAtWeek]].filter(([w, at]) => w && w.utilization >= at).map(([w]) => w);
         const resetsAt = full.map(w => w.resetsAt).filter(Boolean).sort().pop() || '';
         if (!full.length) await locked(e, () => releaseSeats(e));   // the one-at-a-time rule may have lifted
+        // Paused to wait for the reset with no usage reading at the time (no
+        // source yet, or it failed): this first reading says which reset to
+        // wait for, the full windows' or else the 5-hour window's. Until then
+        // nothing is known, so it does not resume on this reading.
+        const p = rr(e).paused;
+        if (p && p.resumeOnReset && p.by !== 'usage' && !p.resetsAt && waitsForReset(e)) {
+          const at = full.length ? resetsAt : (u.fiveHour?.resetsAt || '');
+          const windows = [['fiveHour', u.fiveHour], ['week', u.week]].filter(([, w]) => w && full.includes(w)).map(([k]) => k);
+          if (at) {
+            await locked(e, () => { if (rr(e).paused && !rr(e).paused.resetsAt) commit(e, { type: 'pause-until', resetsAt: at, windows }); });
+            continue;
+          }
+        }
         if (full.length && !rr(e).paused && ['running', 'waiting'].includes(st(e).status)) {
           await pause(st(e).id, { by: 'usage', resetsAt });
-        } else if (!full.length && rr(e).paused?.by === 'usage') {
+        } else if (!full.length && waitsForReset(e)) {
+          // Past the reset recorded when it paused, and nothing over the line.
           const at = Date.parse(rr(e).paused.resetsAt || '');
           if (Number.isFinite(at) && Date.now() < at) continue;
-          await resume(st(e).id);
-          notify('resumed', summary(e), `Factory "${st(e).snapshot.name}" carries on: the usage limit has reset.`);
+          const byUsage = rr(e).paused.by === 'usage';
+          const res = await resume(st(e).id);
+          if (res.ok) notify('resumed', summary(e), `Factory "${st(e).snapshot.name}" carries on: the usage ${byUsage ? 'limit' : 'window'} has reset.`);
         }
       }
     };
@@ -1489,7 +1693,7 @@ export function createFactoryRunner({
     let w = { status: '', diffStat: '' };
     try { w = await git.workSummary(r.worktree, r.baseCommit); } catch { /* best effort */ }
     const recent = st(entry).history.filter(h => h.type === 'handoff').slice(-5).map(h => `${roster.get(h.by) || h.by}: ${String(h.summary || '').split('\n')[0].slice(0, 200)}`);
-    agents.send(m.chatId, recoveryOverview({
+    sendTo(m.chatId, recoveryOverview({
       run: st(entry), reason, tokens: st(entry).tokens.map(describe), recent, dropped,
       status: w.status, diffStat: w.diffStat, note: text, wasFinishing: from === 'finishing',
     }));
@@ -1955,12 +2159,19 @@ export function createFactoryRunner({
    * factory_control, from the Manager's chat: pause or resume the run, or
    * change its usage limits, when the person asks (or to stay inside them).
    */
-  async function controlFromManager(chatId, { action, reason = '', limits = null } = {}) {
+  async function controlFromManager(chatId, { action, reason = '', limits = null, mode = '', resumeOnReset = false } = {}) {
     const info = chatInfo(chatId);
     if (!info || info.employeeId !== MANAGER_ID) return { ok: false, error: 'Only the Manager of a factory run can do this.' };
     if (action === 'pause') {
-      const r = await pause(info.runId, { by: 'manager', reason });
-      return r.ok ? { ok: true, message: 'Paused. Nobody new starts a step; whoever is mid-turn finishes it. Resume with action "resume" when the person says so.' } : r;
+      const now = mode === 'now';
+      const r = await pause(info.runId, { by: 'manager', reason, mode: now ? 'now' : 'finish', resumeOnReset: !!resumeOnReset });
+      if (!r.ok) return r;
+      const p = r.run.paused || {};
+      return {
+        ok: true,
+        message: `Paused. Nobody new starts a step; ${now ? `${(p.stopped || []).length ? 'the turns in progress were stopped, and those people' : 'nobody was mid-turn; everyone'} carries on at Resume` : 'whoever is mid-turn finishes it'}. `
+          + (resumeOnReset ? `It resumes by itself when the usage window resets${p.resetsAt ? ` (after ${p.resetsAt})` : ''}, or with action "resume".` : 'Resume with action "resume" when the person says so.'),
+      };
     }
     if (action === 'resume') {
       const r = await resume(info.runId, { reason: reason ? 'the Manager resumed it: ' + reason : '' });
@@ -2006,9 +2217,9 @@ export function createFactoryRunner({
       const wasHeld = !!emp.held;
       emp.held = !!hold;
       const tail = hold
-        ? 'Stop where you are and wait. Do not hand off and do nothing else until the Manager tells you to carry on; your work so far stays as it is.'
+        ? holdText('the Manager tells you to carry on')
         : wasHeld ? 'You may carry on with your step now.' : 'Carry on with your step; this message does not end it.';
-      const sent = agents.send(emp.chatId, `[Factory] A message from the Manager${interrupt ? ' (your turn was stopped for it)' : ''} while you work on "${node?.label || (t?.delegate ? 'the job it gave you' : 'your step')}":\n\n${body}\n\n${tail}`);
+      const sent = sendTo(emp.chatId, `[Factory] A message from the Manager${interrupt ? ' (your turn was stopped for it)' : ''} while you work on "${node?.label || (t?.delegate ? 'the job it gave you' : 'your step')}":\n\n${body}\n\n${tail}`);
       if (sent && sent.ok === false) { emp.held = wasHeld; return { ok: false, error: `Could not reach ${r.name}: ${sent.error}` }; }
       commit(entry, { type: 'manager-message', employeeId: r.id, text: body, ...(interrupt ? { interrupt: true } : {}), ...(hold ? { hold: true } : {}) });
       writeCache(entry);
@@ -2048,7 +2259,7 @@ export function createFactoryRunner({
         '',
         requestContext(trigger, { cr, idem, file, request }),
       ].join('\n');
-      const sent = agents.send(m.chatId, text.slice(0, 30000));
+      const sent = sendTo(m.chatId, text.slice(0, 30000));
       if (sent && sent.ok === false) return { ok: false, error: sent.error || 'Could not reach the Manager.' };
       commit(entry, { type: 'trigger-message', triggerId: trigger.id, name: trigger.name, title: cr.title, key: idem || '', file });
       writeCache(entry);
@@ -2086,7 +2297,110 @@ export function createFactoryRunner({
     return summary(entry);
   }
 
-  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose };
+  // ─── Secrets the factory may use (factory-secrets.js) ───
+
+  /** Is the run one whose chats can still be using a secret? Paused counts. */
+  const secretsLive = (entry) => UNFINISHED.has(st(entry).status) && st(entry).status !== 'crashed';
+
+  /**
+   * What a secret_run from this chat means. null when the chat is not part of
+   * a factory run. Otherwise: who asks, whether the secret is on the
+   * factory's list, how it is decided (factory-secrets.js decide()), the PIN
+   * if the person unlocked it for this run, and a refusal if the command is
+   * one a factory may never run (sudo, restarting Crundi, pushing…).
+   */
+  function secretContext(chatId, secretId, command = '') {
+    const info = chatInfo(chatId);
+    const entry = info && runs.get(info.runId);
+    if (!entry) return null;
+    const live = secretsLive(entry);
+    const listed = live && (st(entry).snapshot.settings.secrets || []).includes(secretId);
+    const emp = st(entry).snapshot.roster.find(r => r.id === info.employeeId);
+    const employee = info.employeeId === GATEKEEPER_ID ? 'Gatekeeper' : emp?.name || info.employeeId;
+    const deny = command ? hardDeny({ toolName: 'Bash', input: { command } }) : '';
+    return {
+      runId: st(entry).id, employeeId: info.employeeId, employee, listed,
+      route: decideSecret({ employeeId: info.employeeId, listed }),
+      pin: listed ? vault.pin(st(entry).id, secretId) : '',
+      deny,
+    };
+  }
+
+  /**
+   * An employee wants to use a listed secret: put it to the Gatekeeper (or
+   * the Manager) as a "[Factory] Secret request", batched and answered like a
+   * permission request. Resolves { allow, message, by }.
+   */
+  function askSecret(chatId, { secretId, secretName, command, envName = 'SECRET', reason = '' } = {}) {
+    const info = chatInfo(chatId);
+    const entry = info && runs.get(info.runId);
+    if (!entry) return Promise.resolve({ allow: false, message: 'This chat is not part of a running factory.', by: 'crundi' });
+    return new Promise((resolveOuter) => {
+      let done = false, item = null;
+      const finish = (r) => { if (done) return; done = true; clearTimeout(timer); resolveOuter(r); };
+      const timer = setTimeout(() => {
+        locked(entry, async () => {
+          if (done || !item) return finish({ allow: false, message: 'Nobody answered the secret request in time.', by: 'crundi' });
+          entry.live.permissions = entry.live.permissions.filter(p => p !== item);
+          decided(entry, item, 'dropped', 'crundi', { reason: 'not answered in time' });
+          finish({ allow: false, message: denyMessage('nobody answered the secret request in time', 'Crundi'), by: 'crundi' });
+        });
+      }, secretAskMs);
+      timer.unref?.();
+      locked(entry, async () => {
+        if (!secretsLive(entry)) return finish({ allow: false, message: denyMessage(`the run is ${st(entry).status}`, 'Crundi'), by: 'crundi' });
+        const emp = st(entry).snapshot.roster.find(r => r.id === info.employeeId);
+        const clipped = (v, n) => { const t = String(v ?? ''); return t.length > n ? t.slice(0, n) + '…' : t; };
+        item = {
+          id: 'p' + (rr(entry).perms.seq + 1), kind: 'secret',
+          chatId, employeeId: info.employeeId, employee: emp?.name || info.employeeId,
+          toolName: 'secret_run', displayName: 'secret_run', description: '',
+          // The secret's name and the command, never its value.
+          input: { secret: String(secretName || ''), secretId: String(secretId || ''), command: clipped(command, 4000), envName: String(envName || 'SECRET'), reason: clipped(reason, 1000) },
+          at: now(), sent: false,
+          resolve: (r) => finish(r),
+        };
+        commit(entry, { type: 'perm-asked', id: item.id, kind: 'secret', employeeId: item.employeeId, employee: item.employee, toolName: item.toolName, input: item.input });
+        entry.live.permissions.push(item);
+        writeCache(entry);
+        scheduleDelivery(entry);
+      });
+    });
+  }
+
+  /**
+   * The person typed a listed secret's PIN (after a restart, or a run started
+   * by a trigger): keep it for the rest of the run.
+   */
+  function rememberSecret(runId, secretId, pin) {
+    const entry = runs.get(runId);
+    if (!entry || !secretsLive(entry) || !pin) return false;
+    if (!(st(entry).snapshot.settings.secrets || []).includes(secretId)) return false;
+    vault.remember(runId, secretId, pin);
+    return true;
+  }
+
+  /** A PIN that no longer opens its secret (it was recreated): drop it. */
+  function forgetSecret(runId, secretId) { vault.forget(runId, secretId); }
+  /** A secret was re-locked: runs holding its old lock keep it unlocked with the new one. */
+  function relockSecret(secretId, oldPin, newPin) { return vault.replacePin(secretId, oldPin, newPin); }
+
+  /**
+   * One use of a secret by the team, for the journal: its name, who used it,
+   * who approved it and whether it was pre-authorised. Never a value or a PIN.
+   */
+  function secretUsed(runId, { secretId = '', secretName = '', employeeId = '', employee = '', approvedBy = [], preauthorised = false, ok = true } = {}) {
+    const entry = runs.get(runId);
+    if (!entry) return Promise.resolve();
+    return locked(entry, async () => {
+      commit(entry, { type: 'secret-used', secretId: String(secretId), secret: String(secretName), employeeId: String(employeeId), employee: String(employee), approvedBy: (Array.isArray(approvedBy) ? approvedBy : []).map(String), preauthorised: !!preauthorised, ok: !!ok });
+    });
+  }
+
+  /** Which of a run's listed secrets are unlocked now (ids, never PINs). */
+  function unlockedSecrets(runId) { return vault.unlocked(runId); }
+
+  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose, secretContext, askSecret, rememberSecret, forgetSecret, relockSecret, secretUsed, unlockedSecrets };
 }
 
 /**
@@ -2192,6 +2506,8 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
     isAlive: (id) => !!(claudeUi.has(id) && claudeUi.meta(id)?.running),
     sessionUuid: (id) => claudeUi.meta(id)?.sessionId || '',
     state: (id) => claudeUi.meta(id)?.state || '',
+    // When anyone (the runner or the person) last sent into the chat, in ms.
+    sentAt: (id) => claudeUi.meta(id)?.lastSendAt || 0,
     respond: (id, r) => claudeUi.respond(id, r),
     setPermissionMode: (id, mode) => claudeUi.setPermissionMode(id, mode),
     onPermission: (cb) => claudeUi.onFactoryPermission(cb),

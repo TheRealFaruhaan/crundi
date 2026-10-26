@@ -28,7 +28,7 @@ function loadOrder() {
 export function setProjectOrder(aliases) {
   if (!Array.isArray(aliases)) return { ok: false, error: 'order must be an array' };
   ensureDataDir();
-  writeFileSync(ORDER_FILE(), JSON.stringify(aliases.map(s => String(s).toLowerCase()), null, 2));
+  writeFileSync(ORDER_FILE(), JSON.stringify(aliases.map(s => String(s).toLowerCase()), null, 2), { mode: 0o600 });
   return { ok: true };
 }
 
@@ -60,7 +60,7 @@ export function setProjectIconFile(alias, file) {
   if (icons[key] === next) return false;
   icons[key] = next;
   ensureDataDir();
-  try { writeFileSync(ICONS_FILE(), JSON.stringify(icons, null, 2)); } catch { /* it is found again next time */ }
+  try { writeFileSync(ICONS_FILE(), JSON.stringify(icons, null, 2), { mode: 0o600 }); } catch { /* it is found again next time */ }
   return true;
 }
 
@@ -72,7 +72,7 @@ function load() {
 
 function save(map) {
   ensureDataDir();
-  writeFileSync(FILE(), JSON.stringify(map, null, 2));
+  writeFileSync(FILE(), JSON.stringify(map, null, 2), { mode: 0o600 });
 }
 
 /** Normalize entry — old format was just a string path. */

@@ -65,6 +65,19 @@
     '.fx-modal h3{margin:0;font-size:15px}',
     '.fx-modal-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}',
     '.fx-modal.fx-modal-wide{width:min(680px,100%)}',
+    // The PIN prompt at the start of a run, like the page's own PIN dialog, above the start form.
+    '.fx-pin-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:950;display:flex;align-items:center;justify-content:center;padding:20px}',
+    '.fx-pin{background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:22px;width:100%;max-width:340px;text-align:center;display:flex;flex-direction:column;gap:10px;box-shadow:0 24px 60px rgba(0,0,0,.6)}',
+    '.fx-pin h3{margin:0;font-size:15px;display:flex;align-items:center;justify-content:center;gap:6px}',
+    '.fx-pin h3 .ic{width:16px;height:16px}',
+    '.fx-pin p{margin:0;font-size:12.5px;color:var(--text-secondary);line-height:1.45;word-break:break-word}',
+    '.fx-pin input{width:100%;box-sizing:border-box;text-align:center;letter-spacing:.4em;font-size:18px;padding:9px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px}',
+    '.fx-pin input:focus{outline:none;border-color:var(--accent)}',
+    '.fx-pin input.fx-pass{letter-spacing:normal;text-align:left;font-size:15px}',
+    '.fx-pin-err{color:var(--red);font-size:12px;min-height:16px}',
+    '.fx-pin-step{font-size:11.5px;color:var(--text-muted)}',
+    '.fx-pin-btns{display:flex;gap:8px}',
+    '.fx-pin-btns .fx-btn{flex:1;justify-content:center}',
     '.fx-panel-live{position:absolute;inset:0;display:flex;flex-direction:column;min-height:0}',
     '.fx-section{display:flex;flex-direction:column;gap:2px;margin:18px 2px 10px;font-size:14px}',
     '.fx-section span{font-size:12.5px;color:var(--text-secondary)}',
@@ -203,6 +216,79 @@
     document.addEventListener('keydown', key);
     document.body.appendChild(bg);
     return { box: m, close: close };
+  }
+
+  // ─── The factory's secrets: their PINs, asked at the start of a run ───
+  //
+  // One secret at a time. Each PIN is checked by the server (action 'check',
+  // which never returns the value) before the next is asked; Skip leaves that
+  // secret locked, and the person is asked when the team first uses it.
+  // Resolves { pins: { id: PIN } }, or null when the person cancels.
+  // How each is typed (a 6-digit PIN, or a passphrase) is crundi-secret-lock.js.
+  function SL(ctx) {
+    var L = window.CrundiSecretLock || null;
+    if (L && ctx) L.configure({ apiFetch: ctx.apiFetch, toast: ctx.toast });
+    return L;
+  }
+  function askSecretPins(ctx, list) {
+    var L = SL(ctx);
+    return new Promise(function (resolve) {
+      var pins = {}, i = 0;
+      var bg = el('div', 'fx-pin-bg');
+      var box = el('div', 'fx-pin'); bg.appendChild(box);
+      var h = el('h3'), stepEl = el('div', 'fx-pin-step'), sub = el('p');
+      var inp = el('input'); inp.type = 'password'; inp.inputMode = 'numeric'; inp.maxLength = 6; inp.autocomplete = 'off'; inp.placeholder = '••••••';
+      var err = el('div', 'fx-pin-err');
+      var row = el('div', 'fx-pin-btns');
+      var cancel = btn('Cancel', 'ghost', '', ctx), skip = btn('Skip', '', '', ctx), unlock = btn('Unlock', 'primary', 'lock', ctx);
+      row.appendChild(cancel); row.appendChild(skip); row.appendChild(unlock);
+      [h, stepEl, sub, inp, err, row].forEach(function (x) { box.appendChild(x); });
+      function done(v) { bg.remove(); window.removeEventListener('keydown', key, true); resolve(v); }
+      function show() {
+        if (i >= list.length) return done({ pins: pins });
+        var x = list[i];
+        h.innerHTML = ctx.icon('lock') + '<span>' + esc(x.name) + '</span>';
+        stepEl.textContent = list.length > 1 ? 'Secret ' + (i + 1) + ' of ' + list.length : '';
+        var pass = x.lock === 'passphrase' && L;
+        sub.textContent = 'This factory may use this secret. Its ' + (pass ? 'passphrase' : 'PIN') + ' is kept in memory for this run only, so the team does not stop to ask; the value is never shown. Skip to be asked when it is first used.';
+        if (pass) { L.field(inp, 'passphrase', x.name); inp.classList.add('fx-pass'); inp.placeholder = 'Passphrase'; }
+        else { inp.type = 'password'; inp.inputMode = 'numeric'; inp.maxLength = 6; inp.placeholder = '••••••'; inp.classList.remove('fx-pass'); inp.dataset.lock = 'pin'; }
+        inp.value = ''; err.textContent = '';
+        setTimeout(function () { inp.focus(); }, 30);
+      }
+      async function submit() {
+        var pass = list[i].lock === 'passphrase' && L;
+        var pin = pass ? inp.value : inp.value.trim();
+        if (pass ? !L.lockOk('passphrase', pin) : !/^[0-9]{6}$/.test(pin)) { err.textContent = pass ? 'Enter the passphrase' : 'Enter a 6-digit PIN'; return; }
+        unlock.disabled = true;
+        var r = await post(ctx, '/api/secrets', { action: 'check', id: list[i].id, pin: pin }).catch(function (e) { return { ok: false, error: e.message }; });
+        unlock.disabled = false;
+        if (!r || !r.ok) { err.textContent = (r && r.error) || 'Failed'; inp.select(); inp.focus(); return; }
+        pins[list[i].id] = pin; i++; show();
+      }
+      // Captured before the start form's own Escape, which would close it too.
+      function key(e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
+        else if (e.key === 'Enter' && document.activeElement === inp) { e.preventDefault(); e.stopPropagation(); submit(); }
+      }
+      cancel.onclick = function () { done(null); };
+      skip.onclick = function () { i++; show(); };
+      unlock.onclick = submit;
+      window.addEventListener('keydown', key, true);
+      document.body.appendChild(bg);
+      show();
+    });
+  }
+
+  /** The factory's secrets by name, when the server can pre-authorise them; [] otherwise. */
+  async function secretsToUnlock(ctx, f) {
+    var ids = (f && f.secrets) || [];
+    if (!ids.length) return [];
+    var caps = await serverCaps(ctx);
+    if (caps.indexOf('factory-secrets') < 0) return [];
+    var d = await getJson(ctx, '/api/secrets').catch(function () { return null; });
+    var known = (d && d.secrets) || [];
+    return ids.map(function (id) { return known.find(function (x) { return x.id === id; }); }).filter(Boolean).map(function (x) { return { id: x.id, name: x.name, lock: x.lock === 'passphrase' ? 'passphrase' : 'pin' }; });
   }
 
   // ─── Start a factory: a change request ───
@@ -382,11 +468,21 @@
       ctx.toast(msg, 'error');
       if (t) { t.classList.add('fx-bad'); t.focus(); setTimeout(function () { t.classList.remove('fx-bad'); }, 2500); }
     }
+    var heldPins = null;
     async function start(ignoreMissingSkills) {
       if (!title.value.trim()) return fieldError('title', 'Give the change request a title.');
       for (var i = 0; i < template.length; i++) {
         var sec = template[i];
         if (sec.required && !inputs[sec.id].value.trim()) return fieldError(sec.id, 'Fill in "' + sec.label + '".');
+      }
+      // The factory's secrets: their PINs now, while the person is here.
+      // "Start anyway" right after keeps the PINs just typed.
+      var secretPins = ignoreMissingSkills && heldPins ? heldPins : null;
+      var toUnlock = secretPins ? [] : await secretsToUnlock(ctx, current());
+      if (toUnlock.length) {
+        var got = await askSecretPins(ctx, toUnlock);
+        if (!got) return;
+        secretPins = heldPins = got.pins;
       }
       go.disabled = true; var lbl = go.querySelector('span');
       var attachments = [];
@@ -398,9 +494,24 @@
       }
       lbl.textContent = 'Starting…';
       var v = values();
-      var r = await post(ctx, '/api/factory-runs', { action: 'start', project: projSel.value, factoryId: fSel.value, cr: { title: v.title, sections: v.sections, attachments: attachments }, mergeMode: mm.value || undefined, ignoreMissingSkills: !!ignoreMissingSkills }).catch(function (e) { return { ok: false, error: e.message }; });
+      var r = await post(ctx, '/api/factory-runs', { action: 'start', project: projSel.value, factoryId: fSel.value, cr: { title: v.title, sections: v.sections, attachments: attachments }, mergeMode: mm.value || undefined, ignoreMissingSkills: !!ignoreMissingSkills, secretPins: secretPins || undefined }).catch(function (e) { return { ok: false, error: e.message }; });
       lbl.textContent = 'Start'; go.disabled = false;
-      if (r.ok) { dropDraft(fSel.value); md.close(); ctx.toast('Factory started.', 'success'); if (opts.onStarted) opts.onStarted(r.run); return; }
+      if (r.ok || r.field === 'secrets') heldPins = null;
+      if (r.ok) {
+        dropDraft(fSel.value); md.close(); ctx.toast('Factory started.', 'success'); if (opts.onStarted) opts.onStarted(r.run);
+        // Secrets unlocked with an old lock: offer to set a passphrase now,
+        // with what was just typed (the run keeps working: the server moves
+        // its kept lock to the new one).
+        var L = SL(ctx);
+        if (L && Array.isArray(r.upgradable) && secretPins) {
+          r.upgradable.forEach(function (id) {
+            var x = (toUnlock || []).find(function (s) { return s.id === id; }) || { id: id, name: '' };
+            if (secretPins[id]) L.upgrade({ id: id, name: x.name, lock: x.lock, pin: secretPins[id] });
+          });
+        }
+        return;
+      }
+      if (r.field === 'secrets') { info.innerHTML = ''; info.appendChild(el('div', 'fx-err', esc(r.error || 'A secret could not be unlocked.') + ' Press Start to type it again.')); return; }
       if (r.field && r.field !== 'attachments') return fieldError(r.field, r.error);
       if (r.missingSkills) {
         info.innerHTML = '';
@@ -428,6 +539,40 @@
     return d;
   }
 
+  // What the server can do (its handshake), asked once. A server that does not
+  // list 'factory-pause-options' gets a plain Pause, as before.
+  var capsAsked = null;
+  function serverCaps(ctx) {
+    if (!capsAsked) capsAsked = getJson(ctx, '/api/handshake').then(function (hs) { return (hs && hs.server && hs.server.capabilities) || []; }).catch(function () { capsAsked = null; return []; });
+    return capsAsked;
+  }
+
+  /** What a paused run says about itself: who paused it, and whether it carries on by itself. */
+  function pausedText(p) {
+    if (p.by === 'usage') return 'Paused: usage reached the limit set for this run; it carries on by itself after the window resets.';
+    var head = p.by === 'manager' ? 'Paused by the Manager' + (p.reason ? ': ' + p.reason : '') : 'Paused';
+    return p.resumeOnReset ? head + '; it carries on by itself when the usage window resets.' : p.by === 'manager' && p.reason ? head : head + '.';
+  }
+
+  /**
+   * Pause, with its choices when the server has them: let the steps in
+   * progress finish their turn or stop them now, and optionally carry on by
+   * itself when the usage window resets. A small card under the buttons.
+   */
+  function pauseChoice(wrap, act) {
+    var old = wrap.querySelector('.fx-pause-choice');
+    if (old) { old.remove(); return; }
+    var box = el('div', 'fx-card fx-pause-choice'); box.style.flexBasis = '100%';
+    box.appendChild(el('div', 'fx-note', 'Pause: nobody new starts a step. Steps in progress can finish their turn, or stop now and carry on at Resume.'));
+    var lab = el('label', 'fx-check'); var reset = el('input'); reset.type = 'checkbox'; lab.appendChild(reset); lab.appendChild(el('span', '', 'Carry on by itself when usage resets')); box.appendChild(lab);
+    var row = el('div', 'fx-row-btns');
+    var fin = btn('Let current steps finish', ''); fin.onclick = function () { act({ action: 'pause', mode: 'finish', resumeOnReset: reset.checked }); };
+    var now = btn('Stop them now', 'ghost danger'); now.onclick = function () { act({ action: 'pause', mode: 'now', resumeOnReset: reset.checked }); };
+    var no = btn('Cancel', 'ghost'); no.onclick = function () { box.remove(); };
+    row.appendChild(fin); row.appendChild(now); row.appendChild(no); box.appendChild(row);
+    wrap.appendChild(box);
+  }
+
   // ─── The run's controls, shared by the panel ───
   function runControls(ctx, run, refresh) {
     var wrap = el('div', 'fx-row-btns');
@@ -439,7 +584,14 @@
     };
     var graph = btn('Live graph', 'primary', 'git-branch', ctx); graph.onclick = function () { ctx.openTab(run.id); }; wrap.appendChild(graph);
     if (run.managerChatId) { var mc = btn('Manager\'s chat', '', 'message-square', ctx); mc.onclick = function () { openChat(ctx, run.managerChatId, 'Manager'); }; wrap.appendChild(mc); }
-    if ((run.status === 'running' || run.status === 'waiting') && !run.paused) { var p = btn('Pause', 'ghost'); p.onclick = function () { act({ action: 'pause' }); }; wrap.appendChild(p); }
+    if ((run.status === 'running' || run.status === 'waiting') && !run.paused) {
+      var p = btn('Pause', 'ghost');
+      p.onclick = async function () {
+        var caps = await serverCaps(ctx);
+        if (caps.indexOf('factory-pause-options') >= 0) pauseChoice(wrap, act); else act({ action: 'pause' });
+      };
+      wrap.appendChild(p);
+    }
     if (run.paused || run.capHit) { var rs = btn(run.capHit ? 'Let it carry on' : 'Resume', ''); rs.onclick = function () { act({ action: 'resume' }); }; wrap.appendChild(rs); }
     if (['starting', 'running', 'waiting', 'paused', 'crashed', 'finishing'].indexOf(run.status) >= 0) {
       var st = btn('Stop', 'ghost danger'); st.onclick = function () { act({ action: 'stop' }, 'Stop this factory? Its team stops and the Manager\'s chat stays as an ordinary chat. The worktree is kept (see Cleanup).'); }; wrap.appendChild(st);
@@ -551,6 +703,7 @@
         (run.tokens || []).filter(function (t) { return t.wait; }).forEach(function (t) { box.appendChild(waitCard(ctx, run, t, function () { load(project); })); });
         if (run.status === 'finishing') box.appendChild(el('div', 'fx-note', 'The team is done. The result is waiting for you in the Manager\'s chat: merge it, ask for changes, keep the branch, or discard it.'));
         if (run.waitingOn === 'manager') box.appendChild(el('div', 'fx-note', 'The Manager is talking to you in its chat.'));
+        if (run.paused) box.appendChild(el('div', 'fx-note', esc(pausedText(run.paused))));
         if (run.capHit) box.appendChild(el('div', 'fx-warn', 'It reached its limit (' + esc(run.capHit.which === 'maxMinutes' ? run.capHit.limit + ' minutes' : run.capHit.limit + ' handoffs') + ') and is waiting for you.'));
         box.appendChild(runControls(ctx, run, function () { load(project); }));
       } else {
@@ -603,6 +756,11 @@
   var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var COLUMNS = [['backlog', 'Backlog'], ['todo', 'To do'], ['in_progress', 'In progress'], ['done', 'Done']];
   function triggerWhen(t) {
+    var w = triggerWhen0(t);
+    var c = t.needsCards && COLUMNS.find(function (x) { return x[0] === t.needsCards; });
+    return c ? w + ', if ' + c[1] + ' has a card' : w;
+  }
+  function triggerWhen0(t) {
     if (t.kind === 'schedule') return 'At ' + t.schedule.at + (t.schedule.days.length && t.schedule.days.length < 7 ? ' on ' + t.schedule.days.map(function (d) { return DAYS[d]; }).join(', ') : ' every day');
     if (t.kind === 'kanban') return 'When a card enters ' + (COLUMNS.find(function (c) { return c[0] === t.kanban.status; }) || ['', t.kanban.status])[1];
     return 'When its webhook is called';
@@ -652,6 +810,9 @@
     var mm = sel([['', 'As the factory says'], ['ask', 'Show me first, I decide'], ['auto', 'Merge automatically (with Undo)']], cur.mergeMode);
     var busy = sel([['manager', 'Tell its Manager (a run of the same factory)'], ['queue', 'Wait its turn, then start'], ['skip', 'Skip it']], cur.ifBusy);
     var row2 = el('div', 'fx-cr-row'); row2.appendChild(field('When the work is done', mm)); row2.appendChild(field('If a run is already going', busy)); b.appendChild(row2);
+    // Only start when a column has a card: a "next card" chain stops when To do runs out.
+    var needs = sel([['', 'Always']].concat(COLUMNS.map(function (c) { return [c[0], 'Only if ' + c[1] + ' has a card']; })), cur.needsCards || '');
+    b.appendChild(field('Start a run', needs));
     var en = el('label', 'fx-check'); var enI = el('input'); enI.type = 'checkbox'; enI.checked = cur.enabled !== false; en.appendChild(enI); en.appendChild(el('span', '', 'On')); b.appendChild(en);
     // Webhook settings: how calls prove who they are from, and what makes a repeat.
     var wh = cur.webhook || {};
@@ -782,7 +943,7 @@
     b.appendChild(actions);
     function collect() {
       var sections = {}; Object.keys(inputs).forEach(function (k) { if (inputs[k].value.trim()) sections[k] = inputs[k].value; });
-      return { id: saved ? saved.id : undefined, name: name.value, enabled: enI.checked, project: project, factoryId: fSel.value, kind: kind.value, schedule: { at: at.value || '09:00', days: days }, kanban: { status: col.value }, cr: { title: title.value, sections: sections }, mergeMode: mm.value, ifBusy: busy.value,
+      return { id: saved ? saved.id : undefined, name: name.value, enabled: enI.checked, project: project, factoryId: fSel.value, kind: kind.value, schedule: { at: at.value || '09:00', days: days }, kanban: { status: col.value }, cr: { title: title.value, sections: sections }, mergeMode: mm.value, ifBusy: busy.value, needsCards: needs.value,
         webhook: { auth: auth.value, signatureHeader: sigH.value, timestampHeader: tsH.value, idempotency: idemI.value } };
     }
     save.onclick = async function () {

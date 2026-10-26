@@ -16,6 +16,20 @@
 //
 // This is a compatibility check and not a security one. A client states its
 // own version, so anything that matters still depends on the login.
+//
+// THE RULE (the owner's, from 1.21.1, for every client and server: the web
+// page, the desktop apps, the Android app, the phone's chat page, the relay):
+// minor changes stay backwards compatible both ways, so that the minimums
+// here and in each client can be pinned broadly. Only a major upgrade raises
+// them, and the release says so.
+//   - A new feature is a NEW endpoint or an optional field, never a changed
+//     meaning of an existing one: an older client on a newer server goes on
+//     working as it did.
+//   - It also adds its name to CAPABILITIES below, so a newer client on an
+//     older server can hide or disable it before anyone taps it.
+//   - A client that still meets a missing endpoint (404, unknown route) fails
+//     that one action gracefully: "This server does not support this yet.
+//     Update the server to use it." The rest of the screen keeps working.
 
 import { compareVersions, parseVersion } from './whatsnew.js';
 
@@ -24,8 +38,8 @@ export const HANDSHAKE_PATH = '/api/handshake';
 /**
  * The oldest client of each kind this server accepts. '' means any.
  *
- * Raise one ONLY for a real incompatibility: every raise interrupts whoever is
- * below it. Where a newer client can simply do without something, list it in
+ * Raise one ONLY for a real incompatibility (a major upgrade, see THE RULE
+ * above): every raise interrupts whoever is below it. Where a newer client can simply do without something, list it in
  * CAPABILITIES instead and let the client hide what is missing.
  */
 export const MIN_CLIENT = Object.freeze({
@@ -60,6 +74,69 @@ export const CAPABILITIES = Object.freeze([
   // page it shows (POST /api/pair/page-login gives it one), instead of
   // handing the page a refresh token of its own. See src/webapp.js.
   'app-page-login',
+  // Webhooks for schedules ("When called": POST /api/schedule-hook/<id>,
+  // rotateHook) and signed factory webhook triggers (auth, signatureHeader,
+  // timestampHeader, idempotency, ifBusy 'manager', rotate which=secret).
+  // 1.21.1 has them but does not list this, so a client also accepts that
+  // version (1.21.1-dev.12 and later) or the webhook fields in the data.
+  'webhooks',
+  // Skills installed from a GitHub link or a pasted "npx skills add" line
+  // (POST /api/skills/install-from-link), remembering their source, and
+  // updated from it (POST /api/skills/update-from-source).
+  'skills-install-link',
+  // Factory pause options: POST /api/factory-runs action 'pause' takes mode
+  // 'now' (stop the turns in progress; they carry on at resume) and
+  // resumeOnReset (carry on by itself once the usage window resets). An older
+  // server ignores both and does a plain pause, so clients offer the choices
+  // only when this is listed.
+  'factory-pause-options',
+  // Factory secrets: a factory lists secrets it may use (settings.secrets,
+  // ids only); POST /api/factory-runs action 'start' takes secretPins
+  // ({ secretId: PIN }, kept in memory for that run), and POST /api/secrets
+  // action 'check' says whether a PIN is right without the value. An older
+  // server drops the list and the PINs, and every use asks for the PIN as
+  // before, so clients show the picker and the start prompts only when this
+  // is listed.
+  'factory-secrets',
+  // The alert_user MCP tool: pushes of kind "alert" that may carry
+  // urgent: true (ring until seen) or downgraded: true (the server's hourly
+  // limit turned an urgent one into a normal one). Both are optional fields;
+  // an app that does not know the kind shows it as an ordinary notification.
+  'alert-user',
+  // Factory triggers that need cards: needsCards names a board column
+  // ("todo") that must hold a card for the trigger to start a run; an empty
+  // one skips it (and drops queued firings). An older server drops the field,
+  // so clients offer it only when this is listed.
+  'trigger-needs-cards',
+  // Urgent alerts carry alertId; the phone reports what happened to one
+  // (POST /api/alerts/answer: ringing with ringMs, attended, dismissed,
+  // snoozed with minutes) and alert_user waits for it. An older server sends
+  // no alertId, and the phone then reports nothing.
+  'alert-answers',
+  // Secrets pre-authorised for one chat: GET/POST /api/secrets/chat
+  // (grant with PINs and a duration, revoke, revokeAll; names and expiry
+  // only), the SSE event 'chat-secrets' { sessionId, grants }, and the
+  // optional allowForChat on POST /api/secrets action 'approve'. PINs in
+  // memory only; secret_run from that chat uses them, secret_get never. An
+  // older server has none of it, so clients show the lock, the menu entry
+  // and the "Allow for this chat" choice only when this is listed.
+  'chat-secret-preauth',
+  // Passphrases: every secret in GET /api/secrets and every secret request
+  // carries lock ('pin' = 6 digits, 'passphrase' = any text) and
+  // needsUpgrade. New secrets (action 'add') take a passphrase of at least 8
+  // characters, not digits only; old 6-digit PINs still open their secrets.
+  // Clients show a text field instead of the 6-digit one for a passphrase,
+  // and a passphrase field when creating. An older server has only PINs.
+  'secret-passphrase',
+  // Edit a secret: POST /api/secrets action 'edit' { id, pin (the current
+  // lock), newPin?, value?, name?, description? }. Re-locking needs a
+  // passphrase as above. An older server answers "Unknown secrets action".
+  'secret-edit',
+  // Upgrade an old lock on use: approve, check, reveal, the chat grant and
+  // the factory start say needsUpgrade / upgradable when the lock just given
+  // is an old one; the client then offers "set a passphrase" right there and
+  // sends action 'edit' with that lock and a newPin.
+  'secret-upgrade',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

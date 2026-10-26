@@ -24,6 +24,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import mv.obitech.crundi.ui.chats.chatsGraph
 import mv.obitech.crundi.ui.components.CrundiDialog
@@ -89,9 +90,21 @@ fun CrundiApp(
         else { lastBack = now; Toast.makeText(ctx.applicationContext, "Press back again to exit", Toast.LENGTH_SHORT).show() }
     }
 
+    // What's new: offered once per launch per server, once the handshake is
+    // done (this is only composed after it) and the live connection is up.
+    // The server says whether there is anything; nothing new, an error or an
+    // older server without it shows nothing.
+    val tour = remember(services) { mv.obitech.crundi.ui.operations.WhatsNewTour.of(services) }
+    LaunchedEffect(tour) {
+        if (tour.offered) return@LaunchedEffect
+        kotlinx.coroutines.withTimeoutOrNull(20_000) { services.shell.state.first { it.connection == Connection.Connected } }
+        kotlinx.coroutines.delay(1600)
+        tour.autoShow()
+    }
+
     // Mini's stage: one layer over the whole app, where the robot walks (ui.mini).
     mv.obitech.crundi.ui.mini.MiniStage(Modifier.fillMaxSize()) {
-    CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalNavigator provides navigator, LocalWorkbench provides wb) {
+    CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalNavigator provides navigator, LocalWorkbench provides wb, mv.obitech.crundi.ui.operations.LocalWhatsNew provides tour) {
         ShellScaffold(
             data = data,
             current = Routes.areaOf(route),
@@ -126,6 +139,8 @@ fun CrundiApp(
         }
         // The top bar's Panels button: its chips and their panels (ui.panels).
         if (panelsOpen) mv.obitech.crundi.ui.panels.PanelChipsPopover(onDismiss = { panelsOpen = false }, onOpenTab = { navigator.area(Area.Panels) })
+        // What's new, over everything but a secret request (ui.operations.WhatsNew).
+        mv.obitech.crundi.ui.operations.WhatsNewOverlay(tour)
         // Claude asking to use a secret: a card over every screen, answered with the PIN (ui.operations).
         mv.obitech.crundi.ui.operations.SecretPromptRoute()
         if (addingProject) AddProjectDialog(services, onDone = { alias ->

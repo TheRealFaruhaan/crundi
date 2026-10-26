@@ -83,6 +83,14 @@ class ChatPaneScreens : ScreenshotTest() {
         Box(Modifier.fillMaxSize()) { InPane(ChatUi(FakeApi.chat(0), pane = pane)); SecretPromptDock(requests, SecretPromptState()) }
     }
 
+    // The bubble's chat (ChatActivity, ui.chats.BubbleChat): the same prompt over the chat.
+    @Test fun secretInBubble() = still("chats-bubble-secret-request", host = object : Host { override val isBubble = true }) {
+        Box(Modifier.fillMaxSize()) {
+            ChatScreen(ChatUi(FakeApi.chat(0), pane = pane, isBubble = true), noChat)
+            SecretPromptDock(requests.drop(1), SecretPromptState(armed = "r2", pin = "48"))
+        }
+    }
+
     @Test fun secretPin() = still("secrets-request-pin") {
         Box(Modifier.fillMaxSize()) {
             InPane(ChatUi(FakeApi.chat(0), pane = pane))

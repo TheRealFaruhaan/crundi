@@ -107,7 +107,7 @@ function writePage(alias, page) {
   if (body.length > MAX_PAGE_BYTES) return { ok: false, error: 'This page is too large to save (over 2 MB).' };
   const f = fileFor(alias, page.id);
   const tmp = f + '.tmp';
-  writeFileSync(tmp, body);
+  writeFileSync(tmp, body, { mode: 0o600 });
   renameSync(tmp, f);
   return { ok: true };
 }

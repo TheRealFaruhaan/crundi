@@ -3,6 +3,7 @@ package mv.obitech.crundi
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import mv.obitech.crundi.api.seg
 import org.json.JSONObject
 
 /**
@@ -22,7 +23,7 @@ class DecisionReceiver : BroadcastReceiver() {
         val app = ctx.applicationContext
         val pending = goAsync()
         Bg.run({
-            val r = Api.authed(app, serverId, "POST", "/api/ui-sessions/$chatId/respond", JSONObject().put("requestId", requestId).put("behavior", behavior))
+            val r = Api.authed(app, serverId, "POST", "/api/ui-sessions/${seg(chatId)}/respond", JSONObject().put("requestId", requestId).put("behavior", behavior))
             val list = Api.authed(app, serverId, "GET", "/api/ui-sessions")
             val sessions = list.json?.optJSONArray("sessions")
             var chat: ChatRef? = null

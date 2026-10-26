@@ -101,7 +101,7 @@ export function getChannel() {
 export function setChannel(ch) {
   const next = ch === 'dev' ? 'dev' : 'production';
   mkdirSync(config.dataDir, { recursive: true });
-  writeFileSync(CHANNEL_FILE(), JSON.stringify({ channel: next }));
+  writeFileSync(CHANNEL_FILE(), JSON.stringify({ channel: next }), { mode: 0o600 });
   state.latest = null; state.checkedAt = 0; state.error = '';
   return next;
 }

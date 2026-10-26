@@ -42,6 +42,25 @@ object Uploads {
         }, sourceSize = size)
     }
 
+    /**
+     * The file itself as the body (application/octet-stream), streamed. For
+     * the few routes that take the bytes raw rather than in base64 JSON
+     * (POST /api/skills/upload and /api/skills/file-upload).
+     */
+    fun raw(size: Long, source: () -> InputStream): Upload = Upload("application/octet-stream", size, write = { out, count ->
+        source().use { ins ->
+            val buf = ByteArray(64 * 1024)
+            var done = 0L
+            while (true) {
+                val n = ins.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                done += n
+                count(done)
+            }
+        }
+    }, sourceSize = size)
+
     internal fun toJson(v: Any?): kotlinx.serialization.json.JsonElement = when (v) {
         null -> kotlinx.serialization.json.JsonNull
         is kotlinx.serialization.json.JsonElement -> v

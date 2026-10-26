@@ -265,9 +265,17 @@
   // sat for three minutes and failed. Requests from this chat (and ones no
   // chat is named for) are shown over the top of it, with the same two
   // answers: approve with the PIN, or deny.
-  var asks = [], askArmed = '', askError = '', askShown = '';
+  var asks = [], askArmed = '', askError = '', askShown = '', askAuto = false;
+  var askAllow = { on: false, duration: '1h' };   // "Allow for this chat" on the open card
+  var CS = window.CrundiChatSecrets || null;
+  // How the lock is typed (PIN or passphrase) and the "set a passphrase"
+  // prompt after an old one is accepted: crundi-secret-lock.js.
+  var SL = window.CrundiSecretLock || null, slReady = false;
+  function slInit() { if (SL && !slReady) { slReady = true; SL.configure({ apiFetch: apiFetch, toast: toast }); } }
+  function canAllow(r) { return !!(CS && CS.isSupported() && r && r.kind === 'run' && r.sessionId === sid); }
   function loadAsks() {
     if (stopped || !view || document.visibilityState !== 'visible') return;
+    slInit();
     apiFetch('/api/secrets').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
       if (!d) return;
       asks = (d.requests || []).filter(function (r) { return r.sessionId ? r.sessionId === sid : (!r.project || r.project === meta.project); });
@@ -281,6 +289,10 @@
   function drawAsks() {
     var host = $('cp-ask');
     if (askArmed && !asks.some(function (r) { return r.id === askArmed; })) { askArmed = ''; askError = ''; }
+    // The PIN box is on the card from the start: typing the PIN is the
+    // approval. The first request opens by itself (without taking the
+    // keyboard); Approve on another card moves the box there.
+    if (!askArmed && asks.length) { askArmed = asks[0].id; askAuto = true; }
     // Rebuilt only when something changed: rebuilding under someone who is
     // half-way through a PIN would eat the digits.
     var sig = asks.map(function (r) { return r.id; }).join(',') + '|' + askArmed + '|' + askError;
@@ -302,26 +314,35 @@
         var pin = document.createElement('input');
         pin.setAttribute('inputmode', 'numeric'); pin.setAttribute('maxlength', '6'); pin.setAttribute('autocomplete', 'off');
         pin.placeholder = 'PIN'; pin.setAttribute('aria-label', '6-digit PIN');
+        var lock = r.lock === 'passphrase' && SL ? 'passphrase' : 'pin';
+        if (lock === 'passphrase') { SL.field(pin, 'passphrase', r.secretName); pin.className = 'pass'; }
         row.appendChild(pin);
         var unlock = function () {
-          var v = String(pin.value || '').trim();
-          if (!/^[0-9]{6}$/.test(v)) { askError = 'Enter a 6-digit PIN'; drawAsks(); return; }
-          askPost({ action: 'approve', reqId: r.id, pin: v }).then(function (d) {
+          var v = lock === 'passphrase' ? String(pin.value || '') : String(pin.value || '').trim();
+          if (lock === 'passphrase' ? !SL.lockOk('passphrase', v) : !/^[0-9]{6}$/.test(v)) { askError = lock === 'passphrase' ? 'Enter the passphrase' : 'Enter a 6-digit PIN'; drawAsks(); return; }
+          var allow = canAllow(r) ? CS.allowForChat(askAllow) : null;
+          var body = { action: 'approve', reqId: r.id, pin: v };
+          if (allow) body.allowForChat = allow;
+          askPost(body).then(function (d) {
             // A wrong PIN leaves the request waiting on purpose, so the card
             // stays and says why.
             if (!d || !d.ok) { askError = (d && d.error) || 'Wrong PIN'; askShown = ''; drawAsks(); return; }
-            askArmed = ''; askError = ''; toast('Approved'); loadAsks();
+            askArmed = ''; askError = ''; askAllow = { on: false, duration: askAllow.duration };
+            toast(allow && d.preauthorised ? 'Approved, and allowed for this chat' : 'Approved'); loadAsks();
+            // An old lock: offer to set a passphrase now, with the one just typed.
+            if ((d.needsUpgrade || r.needsUpgrade) && SL) SL.upgrade({ id: r.secretId, name: r.secretName, lock: r.lock, pin: v });
           });
         };
         pin.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); unlock(); } });
-        btn('Unlock', 'go', unlock);
-        btn('Cancel', '', function () { askArmed = ''; askError = ''; drawAsks(); });
-        setTimeout(function () { try { pin.focus(); } catch (e) { /* not focusable yet */ } }, 30);
+        btn('Approve', 'go', unlock);
+        btn('Reject', '', function () { askArmed = ''; askError = ''; askPost({ action: 'deny', reqId: r.id }).then(loadAsks); });
+        if (!askAuto) setTimeout(function () { try { pin.focus(); } catch (e) { /* not focusable yet */ } }, 30);
       } else {
-        btn('Approve', 'go', function () { askArmed = r.id; askError = ''; drawAsks(); });
-        btn('Deny', '', function () { askPost({ action: 'deny', reqId: r.id }).then(loadAsks); });
+        btn('Approve', 'go', function () { askArmed = r.id; askAuto = false; askError = ''; askAllow = { on: false, duration: askAllow.duration }; drawAsks(); });
+        btn('Reject', '', function () { askPost({ action: 'deny', reqId: r.id }).then(loadAsks); });
       }
       card.appendChild(row);
+      if (askArmed === r.id && canAllow(r)) card.appendChild(CS.allowRow(askAllow));
       if (askArmed === r.id && askError) add('cp-ask-err', askError);
       host.appendChild(card);
     });
@@ -351,6 +372,18 @@
     });
     // A secret request the moment it is raised, not at the next look.
     es.addEventListener('secret-requests', function () { loadAsks(); });
+    // This chat's pre-authorised secrets, the moment they change.
+    es.addEventListener('chat-secrets', function (e) { try { if (CS) CS.handleEvent(JSON.parse(e.data)); } catch (x) { /* a malformed frame must not stop the stream */ } });
+    // The whole workbench, every few seconds: what the server says this
+    // chat is doing (Catching up). Read only while a turn shows at work.
+    es.addEventListener('state', function (e) {
+      if (meta.state !== 'working') { serverState = null; return; }
+      try {
+        var d = JSON.parse(e.data), t = null, list = (d && d.terminals) || [];
+        for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === sid) { t = list[i]; break; }
+        serverState = t ? (t.status === 'exited' ? 'exited' : (t.agentState || '')) : null;
+      } catch (x) { /* a malformed frame must not stop the stream */ }
+    });
     es.onerror = function () {
       // The stream is checked at connect, with a token that lasts fifteen
       // minutes. A browser retries with the same address for ever, so it is
@@ -515,6 +548,7 @@
     ws.onmessage = function (e) {
       var msg; try { msg = JSON.parse(e.data); } catch (err) { return; }
       if (!view || msg.id !== sid) return;
+      heardAt = Date.now();
       if (msg.type === 'ui-history') {
         view.applyHistory(msg.session);
         // The Manager of a factory run: a way to its live graph.
@@ -550,9 +584,35 @@
   }
   document.addEventListener('visibilitychange', function () {
     present();
-    if (document.visibilityState === 'visible' && (!ws || ws.readyState > 1)) { retry = 0; connect(); }
+    if (document.visibilityState !== 'visible') return;
+    if (!ws || ws.readyState > 1) { retry = 0; connect(); }
+    // Open, but the page was away (a bubble folded, the phone asleep) and a
+    // reply may have ended meanwhile: ask for the conversation again, as a
+    // reconnect does. It replaces what is drawn.
+    else if (ws.readyState === 1 && view) { heardAt = Date.now(); view.resubscribe(); }
   });
   setInterval(present, 60000);
+
+  // ─── Catching up ───
+  // A bubble that stopped mid-sentence and said "working" for ever: the
+  // socket had gone quiet without closing, which a browser cannot see (it
+  // has no way to ping). So while the chat shows a turn at work, two signs
+  // that it has fallen behind, and a new socket for either (it replays the
+  // conversation on open): the server's own list, on the event stream, has
+  // said for a while that the chat is not working; or nothing at all has come
+  // for it in two minutes (a long tool run is quiet too, so not sooner).
+  var heardAt = Date.now(), serverState = null, disagreeSince = 0, caughtUpAt = 0;
+  function catchUp() { caughtUpAt = Date.now(); disagreeSince = 0; heardAt = caughtUpAt; retry = 0; connect(); }
+  setInterval(function () {
+    if (stopped || !view || document.visibilityState !== 'visible') return;
+    if (meta.state !== 'working') { disagreeSince = 0; return; }
+    var now = Date.now();
+    if (serverState !== null && serverState !== 'working') {
+      if (!disagreeSince) disagreeSince = now;
+      if (now - disagreeSince >= 8000 && (!caughtUpAt || now - caughtUpAt >= 30000)) { catchUp(); return; }
+    } else disagreeSince = 0;
+    if (now - Math.max(heardAt, caughtUpAt) >= 120000) catchUp();
+  }, 2000);
 
   // ─── Buttons ───
   $('cp-back').onclick = function () {
@@ -607,7 +667,31 @@
     if (act === 'open') openMain('/chat/' + encodeURIComponent(sid));
     if (act === 'plan' && view && view.togglePlan) view.togglePlan();
     if (act === 'rename') renameHere();
+    if (act === 'secrets' && CS) CS.open(sid);
   };
+  // ─── Secrets pre-authorised for this chat ───
+  // The lock in the header (wide) and the menu line (narrow) open the shared
+  // dialog. Shown only when the server offers it.
+  function paintLock() {
+    if (!CS) return;
+    var ok = CS.isSupported();
+    var n = ok ? CS.grants(sid).length : 0;
+    var lock = $('cp-lock');
+    lock.className = 'cp-btn' + (ok ? ' ok' : '') + (n ? ' on' : '');
+    lock.querySelector('b').textContent = n ? String(n) : '';
+    lock.title = n ? n + ' secret' + (n === 1 ? '' : 's') + ' pre-authorised for this chat' : 'Pre-authorise secrets for this chat';
+    var item = menu.querySelector('[data-do="secrets"]');
+    item.style.display = ok ? '' : 'none';
+    item.textContent = n ? 'Secrets for this chat (' + n + ')' : 'Secrets for this chat';
+  }
+  $('cp-lock').onclick = function (e) { e.stopPropagation(); if (CS) CS.open(sid); };
+  function startSecrets() {
+    if (!CS) return;
+    CS.configure({ apiFetch: apiFetch, toast: toast });
+    CS.onChange(function (which) { if (!which || which === sid) paintLock(); });
+    CS.supported().then(function (yes) { if (yes) CS.load(sid); paintLock(); drawAsksAgain(); });
+  }
+  function drawAsksAgain() { askShown = ''; drawAsks(); }
   // ─── Start ───
   function start() {
     if (!sid || !/^[A-Za-z0-9_-]{1,80}$/.test(sid)) { note('Not a chat', 'This address does not name a chat.', 'Open Crundi', function () { openMain('/'); }); return; }
@@ -648,6 +732,7 @@
       });
       connect();
       listen();
+      startSecrets();
     });
   }
   start();

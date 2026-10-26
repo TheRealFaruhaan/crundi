@@ -108,9 +108,16 @@ class SchedulesApi internal constructor(private val rpc: Rpc) {
     /** A chat job set to "resume": make its chat now, so there is a session to resume. Save with [update] first. */
     suspend fun provisionChat(id: String): Schedule = rpc.read(rpc.post("/api/schedules", mapOf("action" to "provisionChat", "id" to id)), "schedule")
 
+    /**
+     * A webhook schedule's new key or secret ([which]: key or secret): calls
+     * made with the old one stop working. Server 1.21.1.
+     */
+    suspend fun rotateHook(id: String, which: String): Schedule = rpc.read(rpc.post("/api/schedules", mapOf("action" to "rotateHook", "id" to id, "which" to which)), "schedule")
+
+    /** What a save sends: webhook only when there is one (the server merges it with what it has, and makes the key and secret itself). */
     private fun body(s: Schedule): JsonObject {
-        val o = CrundiJson.encodeToJsonElement(s) as JsonObject
-        return JsonObject(o.filterKeys { it in setOf("name", "project", "enabled", "tz", "action", "when", "conditions") })
+        val o = CrundiJson.encodeToJsonElement(s.copy(webhook = s.webhook?.forSave())) as JsonObject
+        return JsonObject(o.filterKeys { it in setOf("name", "project", "enabled", "tz", "action", "when", "conditions", "webhook") })
     }
 }
 
@@ -118,21 +125,27 @@ class SchedulesApi internal constructor(private val rpc: Rpc) {
 class FactoriesApi internal constructor(private val rpc: Rpc) {
     suspend fun list(): List<FactorySummary> = rpc.read(rpc.get("/api/factories"), "factories", emptyList())
     suspend fun templates(): List<FactoryTemplate> = rpc.read(rpc.get("/api/factory-templates"), "templates", emptyList())
-    suspend fun get(id: String): FactoryDetail { val o = rpc.get("/api/factories/get", mapOf("id" to id)); return FactoryDetail(rpc.read(o, "factory"), rpc.read(o, "validation", FactoryValidation())) }
+    suspend fun get(id: String): FactoryDetail = detail(rpc.get("/api/factories/get", mapOf("id" to id)))
 
-    private suspend fun lib(action: String, vararg f: Pair<String, Any?>): FactoryDetail {
-        val o = rpc.post("/api/factories", mapOf("action" to action, *f))
-        return FactoryDetail(rpc.read(o, "factory"), rpc.read(o, "validation", FactoryValidation()))
-    }
+    private suspend fun lib(action: String, vararg f: Pair<String, Any?>): FactoryDetail = detail(rpc.post("/api/factories", mapOf("action" to action, *f)))
+
+    private fun detail(o: JsonObject) = FactoryDetail(rpc.read(o, "factory"), rpc.read(o, "validation", FactoryValidation()), o["factory"] as? JsonObject)
     suspend fun create(name: String): FactoryDetail = lib("create", "name" to name)
     suspend fun fromTemplate(templateId: String, name: String? = null): FactoryDetail = lib("fromTemplate", "templateId" to templateId, "name" to name)
     suspend fun duplicate(id: String, name: String? = null): FactoryDetail = lib("duplicate", "id" to id, "name" to name)
-    /** Save an edited definition. A newer version on the server: ApiException whose body has conflict=true. */
-    suspend fun save(factory: Factory): FactoryDetail = lib("save", "id" to factory.id, "definition" to CrundiJson.encodeToJsonElement(factory), "baseVersion" to factory.version)
+    /**
+     * Save an edited definition over [raw] (the server's last copy, so fields
+     * this app does not know survive: [FactoryJson]), as of [baseVersion].
+     * A newer version on the server: ApiException whose body has conflict=true.
+     */
+    suspend fun save(factory: Factory, raw: JsonObject? = null, baseVersion: Int = factory.version): FactoryDetail =
+        lib("save", "id" to factory.id, "definition" to FactoryJson.forSave(factory, raw), "baseVersion" to baseVersion)
     suspend fun delete(id: String) { rpc.post("/api/factories", mapOf("action" to "delete", "id" to id)) }
     /** The factory as a file to share: {format, formatVersion, factory}. */
     suspend fun export(id: String): JsonObject = rpc.read(rpc.get("/api/factories/export", mapOf("id" to id)), "data")
     suspend fun import(data: String): FactoryDetail = lib("import", "data" to data)
+    /** The skills this machine has (GET /api/skills), for the editor's skill fields. */
+    suspend fun skills(): List<mv.obitech.crundi.api.model.SkillBrief> = rpc.read(rpc.get("/api/skills"), "skills", emptyList())
 
     // ─── Runs ───
     suspend fun runs(project: String? = null): List<FactoryRun> = rpc.read(rpc.get("/api/factory-runs", mapOf("project" to project)), "runs", emptyList())
@@ -148,14 +161,22 @@ class FactoriesApi internal constructor(private val rpc: Rpc) {
      * Start a run with a change request: [sections] by the factory's
      * crTemplate field id; [attachments] are uploaded paths ([ChatsApi.attach]).
      */
-    suspend fun start(project: String, factoryId: String, title: String, sections: Map<String, String>, attachments: List<Pair<String, String>> = emptyList(), mergeMode: String? = null, ignoreMissingSkills: Boolean = false): FactoryRun =
+    suspend fun start(project: String, factoryId: String, title: String, sections: Map<String, String>, attachments: List<Pair<String, String>> = emptyList(), mergeMode: String? = null, ignoreMissingSkills: Boolean = false, secretPins: Map<String, String>? = null): FactoryRun =
         rpc.read(rpc.post("/api/factory-runs", mapOf("action" to "start", "project" to project, "factoryId" to factoryId, "mergeMode" to mergeMode,
             "ignoreMissingSkills" to ignoreMissingSkills.takeIf { it },
+            // The factory's secrets: { id: PIN }, kept in the server's memory for this run ('factory-secrets').
+            "secretPins" to secretPins?.takeIf { it.isNotEmpty() },
             "cr" to mapOf("title" to title, "sections" to sections, "attachments" to attachments.map { mapOf("path" to it.first, "name" to it.second) }))), "run")
 
     private suspend fun runAct(action: String, id: String, vararg f: Pair<String, Any?>): FactoryRun = rpc.read(rpc.post("/api/factory-runs", mapOf("action" to action, "id" to id, *f)), "run")
     suspend fun stop(id: String) = runAct("stop", id)
-    suspend fun pause(id: String) = runAct("pause", id)
+    /**
+     * Pause. [now]: stop the turns in progress too (they carry on at resume);
+     * [resumeOnReset]: carry on by itself once the usage window resets. Both
+     * need the server's 'factory-pause-options'; an older one ignores them.
+     */
+    suspend fun pause(id: String, now: Boolean = false, resumeOnReset: Boolean = false) =
+        runAct("pause", id, "mode" to (if (now) "now" else null), "resumeOnReset" to resumeOnReset.takeIf { it })
     suspend fun resume(id: String) = runAct("resume", id)
     suspend fun recover(id: String, note: String? = null) = runAct("recover", id, "note" to note)
     /** Answer an Ask step. */
@@ -169,10 +190,10 @@ class FactoriesApi internal constructor(private val rpc: Rpc) {
 
     // ─── Triggers ───
     suspend fun triggers(project: String? = null): List<FactoryTrigger> = rpc.read(rpc.get("/api/factory-triggers", mapOf("project" to project)), "triggers", emptyList())
-    suspend fun saveTrigger(t: FactoryTrigger): FactoryTrigger = rpc.read(rpc.post("/api/factory-triggers", mapOf("action" to "save", "trigger" to CrundiJson.encodeToJsonElement(t))), "trigger")
+    suspend fun saveTrigger(t: FactoryTrigger): FactoryTrigger = rpc.read(rpc.post("/api/factory-triggers", mapOf("action" to "save", "trigger" to CrundiJson.encodeToJsonElement(t.copy(webhook = t.webhook?.forSave())))), "trigger")
     suspend fun deleteTrigger(id: String) { rpc.post("/api/factory-triggers", mapOf("action" to "delete", "id" to id)) }
-    /** A webhook trigger's new key. */
-    suspend fun rotateTrigger(id: String): FactoryTrigger = rpc.read(rpc.post("/api/factory-triggers", mapOf("action" to "rotate", "id" to id)), "trigger")
+    /** A webhook trigger's new key, or ([which] secret, server 1.21.1) its new secret. */
+    suspend fun rotateTrigger(id: String, which: String = "key"): FactoryTrigger = rpc.read(rpc.post("/api/factory-triggers", mapOf("action" to "rotate", "id" to id, "which" to which.takeIf { it != "key" })), "trigger")
     /** Fire it now. Answers the server's word: run, queued or skipped. */
     suspend fun runTrigger(id: String): JsonObject = rpc.post("/api/factory-triggers", mapOf("action" to "run", "id" to id))
 

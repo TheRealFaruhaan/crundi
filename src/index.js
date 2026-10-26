@@ -11,10 +11,11 @@
 // before config.js reads the .env and the stores read their files.
 import './restore-apply.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, unlinkSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { ensurePrivateDir, securePrivateFolders } from './private-fs.js';
+import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { config, getOldAppDataDir, isFreshInstall } from './config.js';
+import { config, envPath, getOldAppDataDir, isFreshInstall } from './config.js';
 import { createBot } from './bot.js';
 import { createWebApp } from './webapp.js';
 import { createClaudeTerminals } from './claude-terminals.js';
@@ -44,10 +45,20 @@ console.warn = (...args) => { origWarn(...args); captureLog('warn', args); };
 console.error = (...args) => { origError(...args); captureLog('error', args); };
 
 // ─── Data directory setup ───
+// Owner-only: the folder holds secrets.json, .api-key and the login sessions.
+// An existing folder is tightened too (see private-fs.js).
 if (!existsSync(config.dataDir)) {
-  mkdirSync(config.dataDir, { recursive: true });
+  ensurePrivateDir(config.dataDir);
   console.log(`[crundi] Created data dir: ${config.dataDir}`);
 }
+try {
+  // The config folder only when it is the one in use (its .env is ours): a
+  // dev instance pointed elsewhere (scripts/dev-isolated.sh) leaves the live
+  // server's folder alone.
+  const ownAppDir = resolve(dirname(envPath)) === resolve(config.appDir);
+  const t = securePrivateFolders({ appDir: ownAppDir ? config.appDir : '', dataDir: config.dataDir });
+  if (t.changed) console.log(`[crundi] Made ${t.changed} item${t.changed === 1 ? '' : 's'} in the data folder owner-only`);
+} catch (err) { console.warn('[crundi] Could not tighten the data folder:', err.message); }
 
 // ─── First-launch migration from old app ───
 if (isFreshInstall()) {
@@ -90,7 +101,7 @@ function loadState() {
 }
 
 function saveState(state) {
-  try { writeFileSync(stateFile, JSON.stringify(state)); } catch { /* ignore */ }
+  try { writeFileSync(stateFile, JSON.stringify(state), { mode: 0o600 }); } catch { /* ignore */ }
 }
 
 const savedState = loadState();

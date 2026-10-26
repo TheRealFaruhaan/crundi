@@ -1,5 +1,7 @@
 package mv.obitech.crundi.api
 
+import mv.obitech.crundi.api.model.ChatSecretGrant
+
 import kotlinx.serialization.json.JsonObject
 import mv.obitech.crundi.api.model.ApprovalItem
 import mv.obitech.crundi.api.model.Approvals
@@ -38,11 +40,10 @@ import mv.obitech.crundi.api.model.UpdateStatus
 import mv.obitech.crundi.api.model.Usage
 import mv.obitech.crundi.api.model.UsagePoint
 import mv.obitech.crundi.api.model.WhatsNew
-import java.net.URLEncoder
 
 /** Services. The list is live in [CrundiClient.state] (services); this adds cpu, containers and the actions. */
 class ServicesApi internal constructor(private val rpc: Rpc) {
-    private fun at(key: String, action: String) = "/api/services/${URLEncoder.encode(key, "UTF-8")}/$action"
+    private fun at(key: String, action: String) = "/api/services/${seg(key)}/$action"
 
     suspend fun list(): List<Service> = rpc.read(rpc.get("/api/services"), "services", emptyList())
     /** Register a service. A collaborator's waits for the owner: [Registered.pendingApproval]. */
@@ -69,11 +70,11 @@ class ForwardsApi internal constructor(private val rpc: Rpc) {
     suspend fun list(): Forwards = rpc.read(rpc.get("/api/forwards"), null)
     suspend fun options(): ForwardOptions = rpc.read(rpc.get("/api/forwards/options"), null)
     suspend fun add(f: NewForward): Forward = rpc.read(rpc.post("/api/forwards", mapOf("name" to f.name, "port" to f.port, "mode" to f.mode, "public" to f.public, "description" to f.description, "project" to f.project)), "forward")
-    suspend fun remove(host: String) { rpc.delete("/api/forwards/${URLEncoder.encode(host, "UTF-8")}") }
+    suspend fun remove(host: String) { rpc.delete("/api/forwards/${seg(host)}") }
     /** Watch it (tell the person when it goes down or comes back). */
-    suspend fun setWatch(host: String, watch: Boolean): Forward = rpc.read(rpc.patch("/api/forwards/${URLEncoder.encode(host, "UTF-8")}", mapOf("watch" to watch)), "forward")
+    suspend fun setWatch(host: String, watch: Boolean): Forward = rpc.read(rpc.patch("/api/forwards/${seg(host)}", mapOf("watch" to watch)), "forward")
     /** Give it to a project ("" for none). */
-    suspend fun setProject(host: String, project: String): Forward = rpc.read(rpc.patch("/api/forwards/${URLEncoder.encode(host, "UTF-8")}", mapOf("project" to project)), "forward")
+    suspend fun setProject(host: String, project: String): Forward = rpc.read(rpc.patch("/api/forwards/${seg(host)}", mapOf("project" to project)), "forward")
 }
 
 /** Docker. Live logs and shells go over the socket ([CrundiClient.dockerLogs], [CrundiClient.dockerShell]). Owner only. */
@@ -110,7 +111,8 @@ class DockerApi internal constructor(private val rpc: Rpc) {
 }
 
 /**
- * Secrets: names only. Values are revealed with the 6-digit PIN. Claude's
+ * Secrets: names only. Values are revealed with the secret's PIN (6 digits, older
+ * secrets) or passphrase. Claude's
  * requests to use one arrive live ([CrundiClient.secretRequests]) and are
  * approved with the PIN or denied.
  */
@@ -121,9 +123,42 @@ class SecretsApi internal constructor(private val rpc: Rpc) {
     suspend fun delete(id: String) { rpc.post("/api/secrets", mapOf("action" to "delete", "id" to id)) }
     /** The value. Wrong PIN: ApiException "Incorrect PIN". Show it briefly; never store it. */
     suspend fun reveal(id: String, pin: String): String = rpc.post("/api/secrets", mapOf("action" to "reveal", "id" to id, "pin" to pin)).str("value") ?: ""
-    /** Let Claude have it (the value goes to Claude, not to this phone). */
-    suspend fun approve(requestId: String, pin: String) { rpc.post("/api/secrets", mapOf("action" to "approve", "reqId" to requestId, "pin" to pin)) }
+    /** Is this the PIN? (Starting a factory run: 'factory-secrets'.) Never returns the value. Wrong: ApiException "Incorrect PIN". */
+    suspend fun check(id: String, pin: String) { rpc.post("/api/secrets", mapOf("action" to "check", "id" to id, "pin" to pin)) }
+    /**
+     * Let Claude have it (the value goes to Claude, not to this phone).
+     * [allowForChat], a duration key ([ChatSecretGrant.PRESETS], 'chat-secret-preauth'):
+     * also keep the PIN for the chat that asked. Answers whether it was kept.
+     */
+    suspend fun approve(requestId: String, pin: String, allowForChat: String? = null): Boolean {
+        val r = rpc.post("/api/secrets", mapOf("action" to "approve", "reqId" to requestId, "pin" to pin, "allowForChat" to allowForChat?.let { mapOf("duration" to it) }))
+        return r.bool("preauthorised") == true
+    }
+
+    // ─── Pre-authorised for one chat (capability 'chat-secret-preauth') ───
+    // Names and expiry only come back; the PINs stay in the server's memory.
+    /** What is pre-authorised for [sessionId]. */
+    suspend fun chatGrants(sessionId: String): List<ChatSecretGrant> = rpc.read(rpc.get("/api/secrets/chat", mapOf("sessionId" to sessionId)), "grants", emptyList())
+    /** Check each PIN and keep them for [sessionId] for [duration] (a preset key). None kept unless all are right. */
+    suspend fun grantChat(sessionId: String, pins: Map<String, String>, duration: String): List<ChatSecretGrant> =
+        rpc.read(rpc.post("/api/secrets/chat", mapOf("action" to "grant", "sessionId" to sessionId, "duration" to duration, "secrets" to pins.map { (id, pin) -> mapOf("id" to id, "pin" to pin) })), "grants", emptyList())
+    suspend fun revokeChat(sessionId: String, secretId: String): List<ChatSecretGrant> =
+        rpc.read(rpc.post("/api/secrets/chat", mapOf("action" to "revoke", "sessionId" to sessionId, "secretId" to secretId)), "grants", emptyList())
+    suspend fun revokeAllChat(sessionId: String): List<ChatSecretGrant> =
+        rpc.read(rpc.post("/api/secrets/chat", mapOf("action" to "revokeAll", "sessionId" to sessionId)), "grants", emptyList())
     suspend fun deny(requestId: String) { rpc.post("/api/secrets", mapOf("action" to "deny", "reqId" to requestId)) }
+
+    /**
+     * Edit a secret ('secret-edit'), proven by its current lock [pin]:
+     * [newPin] re-locks it with a passphrase (8+ characters, not digits only),
+     * [value] replaces the value under the same lock, [name] and
+     * [description] as [rename]. Also the upgrade of an old lock
+     * ('secret-upgrade': [newPin] only). Never returns the value. Wrong lock:
+     * ApiException "Incorrect PIN" / "Incorrect passphrase".
+     */
+    suspend fun edit(id: String, pin: String, newPin: String? = null, value: String? = null, name: String? = null, description: String? = null) {
+        rpc.post("/api/secrets", mapOf("action" to "edit", "id" to id, "pin" to pin, "newPin" to newPin, "value" to value, "name" to name, "description" to description))
+    }
 }
 
 /** Things waiting on the person, across every chat and collaborator. Live in [CrundiClient.approvals]. */

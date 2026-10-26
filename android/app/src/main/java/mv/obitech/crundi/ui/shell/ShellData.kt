@@ -71,6 +71,9 @@ data class ShellData(
     val panels: Int = 0,
     /** Some chat or terminal is working right now: the robot in the top bar shows it. */
     val working: Boolean = false,
+    /** What the server said of itself in its handshake ("" and empty until known): for hiding what an older server cannot do. */
+    val serverVersion: String = "",
+    val capabilities: Set<String> = emptySet(),
 ) {
     val project: ProjectSummary? get() = projects.firstOrNull { it.alias == currentProject }
 }

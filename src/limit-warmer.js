@@ -84,7 +84,7 @@ export function createLimitWarmer({ getUsage, isBusy, onChange, onMessage, onRol
   function save() {
     try {
       mkdirSync(config.dataDir, { recursive: true });
-      writeFileSync(stateFile(), JSON.stringify(state));
+      writeFileSync(stateFile(), JSON.stringify(state), { mode: 0o600 });
     } catch { /* best effort */ }
   }
 

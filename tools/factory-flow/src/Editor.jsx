@@ -52,6 +52,9 @@ function Inner({ apiFetch, factoryId, onClose, initial }) {
   const [rosterSel, setRosterSel] = useState(null);
   const [rosterAddTo, setRosterAddTo] = useState(null);
   const [skills, setSkills] = useState([]);
+  // The machine's secrets, by name (never values), when the server can
+  // pre-authorise them for a run (capability 'factory-secrets'). null: hidden.
+  const [secretList, setSecretList] = useState(null);
   const [run, setRun] = useState(null);
   const [toast, setToast] = useState('');
   // Measured node sizes. React Flow reports them as 'dimensions' changes; in
@@ -68,6 +71,10 @@ function Inner({ apiFetch, factoryId, onClose, initial }) {
 
   useEffect(() => {
     apiFetch('/api/skills').then(r => r.json()).then(j => setSkills((j.skills || []).map(s => ({ name: s.name, description: s.description || '', scope: s.scope })))).catch(() => {});
+    apiFetch('/api/handshake').then(r => r.json()).then(hs => {
+      if (!((hs && hs.server && hs.server.capabilities) || []).includes('factory-secrets')) return;
+      return apiFetch('/api/secrets').then(r => r.json()).then(j => { if (j && j.ok) setSecretList((j.secrets || []).map(x => ({ id: x.id, name: x.name, description: x.description || '' }))); });
+    }).catch(() => {});
   }, []);
   const globalSkills = useMemo(() => new Set(skills.filter(s => s.scope === 'global' || s.scope === 'synced').map(s => s.name)), [skills]);
   const uniqueSkills = useMemo(() => { const m = new Map(); for (const s of skills) if (!m.has(s.name)) m.set(s.name, s); return [...m.values()]; }, [skills]);
@@ -279,7 +286,7 @@ function Inner({ apiFetch, factoryId, onClose, initial }) {
     if (selNode) return <NodeInspector f={f} node={selNode} issues={flow.issues.nodes.get(selNode.id) || []} skills={uniqueSkills} mutate={mutate}
       remove={() => onNodesChange([{ type: 'remove', id: selNode.id }])} openRoster={(id, nodeId) => { if (id === 'new') { setRosterAddTo(nodeId); setRosterSel(null); } else setRosterSel(id); setTab('team'); }} />;
     if (selEdge) return <EdgeInspector f={f} edge={selEdge} issues={flow.issues.edges.get(selEdge.id) || []} mutate={mutate} remove={() => onEdgesChange([{ type: 'remove', id: selEdge.id }])} />;
-    return <FactorySettings f={f} mutate={mutate} skills={uniqueSkills} />;
+    return <FactorySettings f={f} mutate={mutate} skills={uniqueSkills} secretList={secretList} />;
   };
   const tabs = [
     ...(phone ? [{ id: 'add', icon: 'plus', label: 'Add' }] : []),

@@ -62,6 +62,9 @@ fun WorkbenchRoute() {
             confirm = "Rename", onConfirm = { wb.renaming = null; wb.applyRename(v, name) },
         ) { CrundiTextField(name, { name = it.take(80) }, placeholder = "Name", modifier = Modifier.fillMaxWidth()) }
     }
+    wb.chooser?.let { c ->
+        SessionChooserDialog(c, onNew = wb::chooseNew, onPick = wb::choosePick, onResume = wb::chooseResume, onBack = wb::chooserBack, onCancel = wb::cancelChooser)
+    }
     val ctx = LocalContext.current
     LaunchedEffect(wb.notice) {
         wb.notice?.let { Toast.makeText(ctx.applicationContext, it, Toast.LENGTH_LONG).show(); wb.notice = null }

@@ -100,6 +100,37 @@ const fr = await d.runNow(f.id);
 ok(!fr.ok && store.get(f.id).history[0].outcome === 'failed' && store.get(f.id).history[0].note === 'nope', 'run now: a run that cannot start is recorded with why');
 ok(d.preview({ kind: 'kanban', cr: { title: '{{card.title}}!' } }, { card: { title: 'X' } }).title === 'X!', 'preview: the CR as it would come out');
 
+// Needs cards: a "next card" chain does not wake a Manager with nothing to do.
+{
+  const st = T.createTriggerStore(mkdtempSync(join(tmpdir(), 'factory-trg-needs-')));
+  const runs = [];
+  let busyN = false;
+  const cols = { todo: 0 };
+  const dn = T.createTriggerDispatcher({
+    store: st,
+    startRun: async (a) => { runs.push(a); return { ok: true, run: { id: 'run_n' + runs.length } }; },
+    activeRunFor: () => busyN,
+    cardsIn: (p, c) => (p === 'p' ? cols[c] || 0 : 0),
+  });
+  ok(T.normalizeTrigger({ needsCards: 'nope' }).needsCards === '' && T.normalizeTrigger({ needsCards: 'todo' }).needsCards === 'todo', 'needsCards: a column or nothing');
+  const nx = st.upsert({ name: 'Next card', project: 'p', factoryId: 'f', kind: 'kanban', kanban: { status: 'done' }, needsCards: 'todo', cr: { title: 'Next after {{card.title}}' } }).trigger;
+  let rn = await dn.onKanban('p', { id: 'a', title: 'A' }, 'done');
+  ok(!rn[0].ok && rn[0].skipped && runs.length === 0 && st.get(nx.id).history[0].outcome === 'skipped' && /To do is empty/.test(st.get(nx.id).history[0].note), 'needsCards: To do empty, so no run, and it says why');
+  cols.todo = 2;
+  rn = await dn.onKanban('p', { id: 'b', title: 'B' }, 'done');
+  ok(rn[0].ok && runs.length === 1, 'needsCards: a card in To do, so it starts');
+  busyN = true;
+  await dn.onKanban('p', { id: 'c', title: 'C' }, 'done');
+  await dn.onKanban('p', { id: 'd', title: 'D' }, 'done');
+  ok(st.get(nx.id).queue.length === 2, 'needsCards: while busy it queues, the column judged later');
+  busyN = false; cols.todo = 0;
+  await dn.tick(new Date(2026, 9, 21, 4, 0));
+  ok(runs.length === 1 && st.get(nx.id).queue.length === 0 && st.get(nx.id).history[0].outcome === 'skipped', 'needsCards: queued firings meeting an empty To do are dropped, not started');
+  const plain = st.upsert({ name: 'Plain', project: 'p', factoryId: 'f', kind: 'kanban', kanban: { status: 'done' }, cr: { title: 'x' } }).trigger;
+  rn = await dn.onKanban('p', { id: 'e', title: 'E' }, 'done');
+  ok(rn.some(x => x.ok) && runs.length === 2 && st.get(plain.id).history[0].outcome === 'started', 'needsCards: unset, it starts as before');
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);
