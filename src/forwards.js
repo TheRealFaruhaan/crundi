@@ -58,7 +58,7 @@ function save() {
   try {
     mkdirSync(config.dataDir, { recursive: true });
     const tmp = FILE() + '.tmp';
-    writeFileSync(tmp, JSON.stringify(store, null, 2));
+    writeFileSync(tmp, JSON.stringify(store, null, 2), { mode: 0o600 });
     renameSync(tmp, FILE());
     return true;
   } catch (err) {

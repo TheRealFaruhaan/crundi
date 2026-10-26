@@ -549,7 +549,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         json = JSON.stringify({ ...head, messages: msgs, agents });
       }
       const tmp = historyFile(historyKeyFor(s)) + '.tmp';
-      writeFileSync(tmp, json);
+      writeFileSync(tmp, json, { mode: 0o600 });
       renameSync(tmp, historyFile(historyKeyFor(s)));
     } catch { /* disk full / permissions — history is best-effort, never fatal */ }
   }

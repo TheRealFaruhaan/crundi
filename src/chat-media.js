@@ -226,7 +226,7 @@ export function addMedia(sessionId, kind, items) {
     }
     const ids = Object.keys(refs).sort((a, b) => refs[a].at - refs[b].at);
     for (const old of ids.slice(0, Math.max(0, ids.length - LIMITS.fileRefs))) delete refs[old];
-    writeFileSync(join(dir, 'files.json'), JSON.stringify(refs));
+    writeFileSync(join(dir, 'files.json'), JSON.stringify(refs), { mode: 0o600 });
     return { ok: true, items: out };
   }
   for (const c of checked) {

@@ -72,7 +72,7 @@ function readJson(file, fallback) {
 /** Write through a temp file, so a reader never sees half a document. */
 function writeJson(file, value) {
   const tmp = file + '.' + randomBytes(4).toString('hex') + '.tmp';
-  writeFileSync(tmp, JSON.stringify(value));
+  writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 });
   renameSync(tmp, file);
 }
 

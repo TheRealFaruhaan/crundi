@@ -209,7 +209,10 @@ fi
 
 # ─── Install ───
 say "Installing to ${PREFIX}"
-mkdir -p "$PREFIX" "$CONFIG_DIR"
+mkdir -p "$PREFIX"
+# Owner-only from the start: the data folder holds secrets.json, .api-key and
+# the login sessions. (The server tightens an existing folder at start too.)
+mkdir -p -m 700 "$CONFIG_DIR"
 
 # Copy rather than symlink: an upgrade should not break a running server by
 # swapping files under it, and the source directory may well be a git checkout
@@ -422,6 +425,13 @@ if [ -n "$SERVICE_USER" ]; then
   # Written by root a moment ago, and unreadable to the service user otherwise.
   [ -d "${TARGET_HOME}/.claude/skills" ] && chown -R "${SERVICE_USER}:${SERVICE_USER}" "${TARGET_HOME}/.claude"
 fi
+
+# Nobody but the user running Crundi may read its config and data folders:
+# folders 0700, files 0600 (go-rwx keeps the owner's own bits, so the browser
+# downloaded into data/chrome still runs).
+chmod 700 "$CONFIG_DIR" 2>/dev/null || true
+[ -d "$CONFIG_DIR/data" ] && chmod 700 "$CONFIG_DIR/data" 2>/dev/null || true
+find "$CONFIG_DIR" -maxdepth 2 \( -type f -o -type d \) -exec chmod go-rwx {} + 2>/dev/null || true
 
 # A system unit running as the service user. Not a user unit: those need
 # lingering to survive logout, and there is no login session here to linger.

@@ -46,7 +46,7 @@ function readOne(id) {
 function writeOne(f) {
   ensureDir(DIR());
   const tmp = fileOf(f.id) + '.tmp';
-  writeFileSync(tmp, JSON.stringify(f, null, 2));
+  writeFileSync(tmp, JSON.stringify(f, null, 2), { mode: 0o600 });
   renameSync(tmp, fileOf(f.id));
 }
 

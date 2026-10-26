@@ -157,7 +157,7 @@ export function readSettings(dataDir) {
 export function writeSettings(dataDir, s) {
   const next = { autoDeleteDays: Math.max(0, Math.min(365, Math.round(Number(s.autoDeleteDays) || 0))) };
   const tmp = SETTINGS(dataDir) + '.tmp';
-  writeFileSync(tmp, JSON.stringify(next));
+  writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
   renameSync(tmp, SETTINGS(dataDir));
   return next;
 }

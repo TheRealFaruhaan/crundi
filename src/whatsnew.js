@@ -110,7 +110,7 @@ export function loadState(file, { usedBefore = false } = {}) {
   try { const j = JSON.parse(readFileSync(file, 'utf8')); if (j && typeof j === 'object') return { seen: String(j.seen || '0.0.0'), ids: Array.isArray(j.ids) ? j.ids.map(String) : [], fresh: !!j.fresh }; }
   catch { /* none yet */ }
   const st = { seen: '0.0.0', ids: [], fresh: !usedBefore };
-  try { writeFileSync(file, JSON.stringify(st)); } catch { /* decided again next time */ }
+  try { writeFileSync(file, JSON.stringify(st), { mode: 0o600 }); } catch { /* decided again next time */ }
   return st;
 }
 
@@ -123,7 +123,7 @@ export function markSeen(file, { editions, current, channel }) {
     for (const s of e.steps) ids.add(s.id);
   }
   const st = { seen: current, ids: [...ids].slice(-2000), fresh: false };
-  writeFileSync(file, JSON.stringify(st));
+  writeFileSync(file, JSON.stringify(st), { mode: 0o600 });
   return st;
 }
 

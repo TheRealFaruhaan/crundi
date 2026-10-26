@@ -283,7 +283,7 @@ export function createTriggerStore(dataDir) {
   const save = () => {
     mkdirSync(dirname(FILE), { recursive: true });
     const tmp = FILE + '.tmp';
-    writeFileSync(tmp, JSON.stringify({ triggers: cache }, null, 2));
+    writeFileSync(tmp, JSON.stringify({ triggers: cache }, null, 2), { mode: 0o600 });
     renameSync(tmp, FILE);
   };
   return {

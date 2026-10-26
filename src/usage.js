@@ -52,7 +52,7 @@ function persistOAuth(tok) {
     const j = existsSync(file) ? JSON.parse(readFileSync(file, 'utf-8')) : {};
     j.claudeAiOauth = { ...(j.claudeAiOauth || {}), accessToken: tok.accessToken, refreshToken: tok.refreshToken, expiresAt: tok.expiresAt };
     const tmp = file + '.tmp';
-    writeFileSync(tmp, JSON.stringify(j, null, 2));
+    writeFileSync(tmp, JSON.stringify(j, null, 2), { mode: 0o600 });
     renameSync(tmp, file);
   } catch { /* non-fatal — we still use the in-memory token */ }
 }
@@ -116,7 +116,7 @@ function loadHistory() {
 function saveHistory() {
   try {
     if (!existsSync(config.dataDir)) mkdirSync(config.dataDir, { recursive: true });
-    writeFileSync(HISTORY_FILE(), JSON.stringify(history));
+    writeFileSync(HISTORY_FILE(), JSON.stringify(history), { mode: 0o600 });
   } catch { /* non-fatal */ }
 }
 

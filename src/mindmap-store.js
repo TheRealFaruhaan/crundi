@@ -34,7 +34,7 @@ function load() {
 
 function save(store) {
   ensureDataDir();
-  writeFileSync(FILE(), JSON.stringify(store, null, 2));
+  writeFileSync(FILE(), JSON.stringify(store, null, 2), { mode: 0o600 });
 }
 
 function genId() {
