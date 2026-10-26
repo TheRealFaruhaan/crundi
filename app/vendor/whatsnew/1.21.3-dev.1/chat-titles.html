@@ -1,0 +1,25 @@
+<div class="wna a-ctt">
+  <div class="tab"><span class="ic">M</span><span class="t t1">Chat</span><span class="t t2">Login redirect loop</span><span class="t t3">Session cookie expiry</span></div>
+  <div class="win">
+    <div class="msg m1">the login page keeps redirecting to itself</div>
+    <div class="msg m2">and the session cookie expires too early</div>
+  </div>
+  <style>
+    .a-ctt{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-ctt .tab{position:absolute;left:120px;right:120px;top:40px;height:46px;display:flex;align-items:center;gap:12px;padding:0 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);overflow:hidden}
+    .a-ctt .ic{flex:none;width:28px;height:28px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+    .a-ctt .t{position:absolute;left:56px;top:13px;line-height:20px;font-size:15px;font-weight:600;opacity:0}
+    .a-ctt .t1{animation:actt-t1 11s ease infinite}
+    .a-ctt .t2{animation:actt-t2 11s ease infinite}
+    .a-ctt .t3{animation:actt-t3 11s ease infinite}
+    .a-ctt .win{position:absolute;left:120px;right:120px;top:104px;height:220px;border-radius:12px;border:1px solid var(--border);background:var(--bg-secondary)}
+    .a-ctt .msg{position:absolute;right:14px;max-width:300px;padding:8px 12px;border-radius:12px;background:var(--accent-dim);border:1px solid var(--accent);opacity:0}
+    .a-ctt .m1{top:18px;animation:actt-m1 11s ease infinite}
+    .a-ctt .m2{top:70px;animation:actt-m2 11s ease infinite}
+    @keyframes actt-t1{0%,10%{opacity:1}16%,100%{opacity:0}}
+    @keyframes actt-t2{0%,14%{opacity:0;transform:translateY(8px)}20%,56%{opacity:1;transform:none}62%,100%{opacity:0;transform:translateY(-8px)}}
+    @keyframes actt-t3{0%,60%{opacity:0;transform:translateY(8px)}66%,94%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes actt-m1{0%,6%{opacity:0}10%,94%{opacity:1}100%{opacity:0}}
+    @keyframes actt-m2{0%,40%{opacity:0}46%,94%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

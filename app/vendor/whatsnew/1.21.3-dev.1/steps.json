@@ -1,0 +1,37 @@
+{
+  "steps": [
+    {
+      "id": "chat-recap",
+      "tag": "Chats",
+      "title": "A recap when you come back",
+      "body": "When a chat has sat idle for five minutes after Claude finished, or you pick an old chat up again, Claude Code writes two lines on where it stands and the one next step, at the bottom of the chat. It goes when you reply or close it.",
+      "art": "chat-recap.html",
+      "artTitle": "Chat"
+    },
+    {
+      "id": "chat-btw",
+      "tag": "Chats",
+      "title": "Ask on the side with /btw",
+      "body": "Type /btw and a question to ask about the chat without adding to it: what changed, which files, where it got to. Claude answers from the conversation so far, even while it is busy, and nothing goes into the conversation.",
+      "keys": [ { "keys": ["/btw", "question"], "text": "ask on the side" } ],
+      "art": "chat-btw.html",
+      "artTitle": "Chat"
+    },
+    {
+      "id": "chat-tool-summaries",
+      "tag": "Chats",
+      "title": "Tool calls summed up",
+      "body": "A run of tool calls folds into one line saying what it did, such as \"Read auth and session code, ran auth tests\"; tap it to see each call. A subagent shows a written line on where it has got to, updated as it works.",
+      "art": "chat-tool-summaries.html",
+      "artTitle": "Chat"
+    },
+    {
+      "id": "chat-titles-follow",
+      "tag": "Chats",
+      "title": "Titles that keep up",
+      "body": "Chats are named by Claude Code itself from your first message, and named again when the work turns into a different job. Claude terminal panes take the same titles. A name you give a chat yourself is never changed.",
+      "art": "chat-titles.html",
+      "artTitle": "Workbench"
+    }
+  ]
+}

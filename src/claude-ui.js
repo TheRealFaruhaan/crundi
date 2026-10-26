@@ -75,7 +75,7 @@ const SUMMARY_ENV = { CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES: '1', CLAUDE_CODE_AGEN
  */
 export const RECAP_PROMPT = 'The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Lead with the overall goal and current task, then the one next action. Skip root-cause narrative, fix internals, secondary to-dos, and em-dash tangents.';
 /** A chat left idle this long after a turn gets a recap of where it stands. */
-export const RECAP_IDLE_MS = 5 * 60_000;
+export const RECAP_IDLE_MS = Number(process.env.CRUNDI_RECAP_IDLE_MS) > 0 ? Number(process.env.CRUNDI_RECAP_IDLE_MS) : 5 * 60_000;  // the env: for trying it out
 const MAX_RECAP = 400;
 const MAX_ASIDE_QUESTION = 2000;
 const MAX_ASIDE_ANSWER = 8000;
@@ -2404,13 +2404,15 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
 
   /**
    * Claude Code's own session title (two to five words, a noun phrase) for
-   * `description`, written into the session's transcript too (persist), so
-   * the resume list shows it. null when it has none or cannot.
+   * `description`. null when it has none or cannot. Not persisted: once a
+   * session has a saved title, asking with persist hands that one back
+   * whatever the description says, so a retitle would never change it.
+   * Crundi keeps the chat's title itself.
    */
   async function generateTitle(id, description, { timeoutMs = 30_000 } = {}) {
     const s = sessions.get(id);
     if (!s?.proc) return null;
-    const r = await control(s, { subtype: 'generate_session_title', description: String(description || '').slice(0, 4000), persist: true }, timeoutMs);
+    const r = await control(s, { subtype: 'generate_session_title', description: String(description || '').slice(0, 4000), persist: false }, timeoutMs);
     const t = r.ok && typeof r.response.title === 'string' ? r.response.title.trim() : '';
     return t || null;
   }

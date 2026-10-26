@@ -1,0 +1,36 @@
+<div class="wna a-crp">
+  <div class="win">
+    <div class="hd"><span class="dot"></span>Release checklist</div>
+    <div class="msg u">Tag main and check the release builds</div>
+    <div class="msg c">Tagged v2.4.0. The Windows build is still running.</div>
+    <div class="away"><span class="clk"></span>5 minutes later</div>
+    <div class="recap">
+      <span class="cap">While you were away</span>
+      Shipping v2.4.0: the tag is pushed and two of three builds passed. Next: wait for the Windows build, then publish.
+      <span class="x"></span>
+    </div>
+    <div class="box"><span class="cur"></span></div>
+  </div>
+  <style>
+    .a-crp{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-crp .win{position:absolute;left:70px;right:70px;top:26px;bottom:26px;border-radius:14px;border:1px solid var(--border);background:var(--bg-secondary);overflow:hidden}
+    .a-crp .hd{height:40px;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--bg-card);font-weight:600}
+    .a-crp .dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+    .a-crp .msg{position:absolute;max-width:330px;padding:8px 12px;border-radius:12px;line-height:1.4}
+    .a-crp .u{right:16px;top:58px;background:var(--accent-dim);border:1px solid var(--accent)}
+    .a-crp .c{left:16px;top:108px;color:var(--text-secondary)}
+    .a-crp .away{position:absolute;left:0;right:0;top:160px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:11px;color:var(--text-muted);opacity:0;animation:acrp-away 10s ease infinite}
+    .a-crp .clk{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--text-muted);position:relative}
+    .a-crp .clk:after{content:'';position:absolute;left:4px;top:1px;width:1.5px;height:4px;background:var(--text-muted)}
+    .a-crp .recap{position:absolute;left:16px;right:16px;top:196px;padding:10px 32px 10px 13px;border-radius:9px;border:1px solid var(--border);border-left:3px solid var(--accent);background:var(--bg-card);color:var(--text-secondary);line-height:1.45;opacity:0;animation:acrp-recap 10s ease infinite}
+    .a-crp .cap{display:block;font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted);margin-bottom:3px}
+    .a-crp .x{position:absolute;right:10px;top:10px;width:10px;height:10px}
+    .a-crp .x:before,.a-crp .x:after{content:'';position:absolute;left:4px;top:-1px;width:1.5px;height:12px;background:var(--text-muted);transform:rotate(45deg)}
+    .a-crp .x:after{transform:rotate(-45deg)}
+    .a-crp .box{position:absolute;left:16px;right:16px;bottom:14px;height:36px;border-radius:9px;border:1px solid var(--border);background:var(--bg-primary)}
+    .a-crp .cur{position:absolute;left:12px;top:10px;width:1.5px;height:16px;background:var(--accent);animation:acrp-cur 1s steps(1) infinite}
+    @keyframes acrp-away{0%,18%{opacity:0}26%,90%{opacity:1}100%{opacity:0}}
+    @keyframes acrp-recap{0%,30%{opacity:0;transform:translateY(10px)}38%,90%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes acrp-cur{0%{opacity:1}50%{opacity:0}}
+  </style>
+</div>

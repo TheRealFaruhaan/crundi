@@ -1,0 +1,33 @@
+<div class="wna a-cbw">
+  <div class="win">
+    <div class="hd"><span class="sp"></span>Working on the migration</div>
+    <div class="tool"><span class="sp s2"></span><b>Bash</b> npm run migrate</div>
+    <div class="aside">
+      <div class="cap">On the side</div>
+      <div class="q">which tables does this touch?</div>
+      <div class="a">users and orders, plus a new invoices table.</div>
+      <div class="note">Not added to the conversation.</div>
+    </div>
+    <div class="box"><span class="ty">/btw which tables does this touch?</span><span class="cur"></span></div>
+  </div>
+  <style>
+    .a-cbw{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12.5px}
+    .a-cbw .win{position:absolute;left:70px;right:70px;top:26px;bottom:26px;border-radius:14px;border:1px solid var(--border);background:var(--bg-secondary);overflow:hidden}
+    .a-cbw .hd{height:40px;display:flex;align-items:center;gap:9px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--bg-card);font-weight:600}
+    .a-cbw .sp{width:10px;height:10px;border-radius:50%;border:2px solid var(--accent-dim);border-top-color:var(--accent);animation:acbw-spin 1s linear infinite}
+    .a-cbw .tool{position:absolute;left:16px;right:16px;top:56px;display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);font-family:var(--mono,ui-monospace,monospace);font-size:12px}
+    .a-cbw .tool b{color:var(--accent-hover)}
+    .a-cbw .aside{position:absolute;left:16px;right:16px;top:108px;padding:10px 12px;border-radius:8px;border:1px dashed var(--border);background:var(--bg-card);opacity:0;animation:acbw-aside 10s ease infinite}
+    .a-cbw .cap{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
+    .a-cbw .q{margin:5px 0 7px}
+    .a-cbw .a{color:var(--text-secondary);opacity:0;animation:acbw-ans 10s ease infinite}
+    .a-cbw .note{margin-top:7px;font-size:10.5px;color:var(--text-muted)}
+    .a-cbw .box{position:absolute;left:16px;right:16px;bottom:14px;height:36px;display:flex;align-items:center;padding:0 12px;border-radius:9px;border:1px solid var(--accent);background:var(--bg-primary);color:var(--text-primary)}
+    .a-cbw .ty{display:inline-block;overflow:hidden;white-space:nowrap;width:0;animation:acbw-type 10s steps(34) infinite}
+    .a-cbw .cur{width:1.5px;height:16px;background:var(--accent);margin-left:1px}
+    @keyframes acbw-spin{to{transform:rotate(360deg)}}
+    @keyframes acbw-type{0%,4%{width:0}28%,30%{width:250px}31%,100%{width:0}}
+    @keyframes acbw-aside{0%,30%{opacity:0;transform:translateY(8px)}35%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes acbw-ans{0%,44%{opacity:0}50%,92%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

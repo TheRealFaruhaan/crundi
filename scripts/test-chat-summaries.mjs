@@ -7,7 +7,9 @@
  *                                          and on a resumed session before its
  *                                          first turn
  *   generate_session_title {description, persist} -> {title} (null without a
- *                                          description)
+ *                                          description; with persist, a session
+ *                                          that already has a saved title gets
+ *                                          that one back, whatever the description)
  *   CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES=1 -> tool_use_summary {summary,
  *                                          preceding_tool_use_ids}
  *   CLAUDE_CODE_AGENT_PROGRESS_SUMMARIES=1 + initialize agentProgressSummaries
@@ -141,7 +143,7 @@ const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
   const { s } = mk();
   let p = env.generateTitle('s1', 'refactor the retry logic');
   const req = env.sent[env.sent.length - 1];
-  check('generate_session_title with the description, persisted', req.request.subtype === 'generate_session_title' && req.request.description === 'refactor the retry logic' && req.request.persist === true);
+  check('generate_session_title with the description, not persisted (a saved title would come back unchanged)', req.request.subtype === 'generate_session_title' && req.request.description === 'refactor the retry logic' && req.request.persist === false);
   answer(s, { title: ' Payment retry logic ' });
   check('the title, trimmed', (await p) === 'Payment retry logic');
   p = env.generateTitle('s1', 'x');
