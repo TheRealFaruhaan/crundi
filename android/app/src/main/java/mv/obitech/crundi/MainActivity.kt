@@ -9,7 +9,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -49,7 +48,9 @@ import mv.obitech.crundi.ui.theme.CrundiTheme
  * A tapped notification or live card arrives here with a server path
  * (/chat/<id>), which is turned into a route (DeepLinks) and opened.
  */
-class MainActivity : ComponentActivity() {
+// A FragmentActivity (a ComponentActivity too) so BiometricPrompt can sit over it (BiometricPins).
+class MainActivity : androidx.fragment.app.FragmentActivity() {
+    private val pinKeeper by lazy { ActivityPinKeeper(this) }
     private var server: Server? = null
     /** What is on screen: null while connecting, a Notice, or Ready. */
     private var screen by mutableStateOf<Screen>(Screen.Connecting(""))
@@ -74,6 +75,7 @@ class MainActivity : ComponentActivity() {
                         is Screen.Connecting -> LoadingState(text = if (s.host.isEmpty()) null else "Connecting to ${s.host}")
                         is Screen.Notice -> NoticeScreen(s.text, s.action, s.onAction) { startActivity(Intent(this@MainActivity, PairActivity::class.java)) }
                         is Screen.Ready -> androidx.compose.runtime.CompositionLocalProvider(
+                            LocalPinKeeper provides pinKeeper,
                             mv.obitech.crundi.ui.workbench.LocalWorkbenchStore provides androidx.compose.runtime.remember(s.server.id) { mv.obitech.crundi.ui.workbench.WorkbenchStore.forServer(this@MainActivity, s.server.id) },
                         ) {
                             CrundiApp(
@@ -200,20 +202,28 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("crundi", Context.MODE_PRIVATE)
         if (prefs.getBoolean("asked.notify", false)) return
         prefs.edit().putBoolean("asked.notify", true).apply()
+        askingNotify = true
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
     }
 
-    /** Notifications allowed (or nothing to ask): the one-time urgent alert setup follows. */
+    /**
+     * Notifications allowed (or nothing to ask): the one-time urgent alert
+     * setup follows, then the one-time offer of secret PINs behind the
+     * fingerprint (BiometricSetup). Each is shown once; while the
+     * notification question is up, this waits for its answer.
+     */
     private fun offerUrgentSetup() {
-        if (!Push.available) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        UrgentSetup.offer(this)
+        if (askingNotify) return
+        val notifyOk = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (Push.available && notifyOk) UrgentSetup.offer(this) { BiometricSetup.offer(this) }
+        else BiometricSetup.offer(this)
     }
+    private var askingNotify = false
 
     @Deprecated("The platform call is what requestPermissions answers to")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_NOTIFY) offerUrgentSetup()
+        if (requestCode == REQ_NOTIFY) { askingNotify = false; offerUrgentSetup() }
     }
 
     // Until when "this chat is on screen" is ignored: a bubble was just asked for.

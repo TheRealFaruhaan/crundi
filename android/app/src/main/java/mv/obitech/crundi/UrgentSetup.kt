@@ -27,10 +27,11 @@ object UrgentSetup {
     fun steps(full: Boolean, fullGranted: Boolean, dnd: Boolean, dndGranted: Boolean): List<String> =
         listOfNotNull(FULL.takeIf { full && !fullGranted }, DND.takeIf { dnd && !dndGranted })
 
-    fun offer(activity: Activity) {
-        if (!Push.available) return
+    /** [then]: what comes next (the fingerprint offer), once this is answered, or at once when it is not shown. */
+    fun offer(activity: Activity, then: () -> Unit = {}) {
+        if (!Push.available) return then()
         val prefs = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.getBoolean(PREF_ASKED, false)) return
+        if (prefs.getBoolean(PREF_ASKED, false)) return then()
         prefs.edit().putBoolean(PREF_ASKED, true).apply()
         val picked = booleanArrayOf(true, true)
         AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
@@ -48,6 +49,7 @@ object UrgentSetup {
                 next(activity)
             }
             .setNegativeButton("Not now", null)
+            .setOnDismissListener { then() }
             .show()
     }
 

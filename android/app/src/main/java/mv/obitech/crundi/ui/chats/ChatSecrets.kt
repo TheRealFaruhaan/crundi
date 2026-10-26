@@ -130,7 +130,12 @@ class ChatSecretsActions(
 
 /** The dialog's body: what is pre-authorised now, then pre-authorise more. Stateless, for tests. */
 @Composable
-fun ChatSecretsCard(f: ChatSecretsForm, now: Long, a: ChatSecretsActions, modifier: Modifier = Modifier) {
+fun ChatSecretsCard(
+    f: ChatSecretsForm, now: Long, a: ChatSecretsActions, modifier: Modifier = Modifier,
+    /** A PIN for this secret is saved behind the fingerprint (BiometricPins): it can fill the box. */
+    savedPin: (String) -> Boolean = { false },
+    onFingerprint: (String) -> Unit = {},
+) {
     val grants = ChatSecretPreauth.active(f.grants, now)
     DialogCard(
         "Secrets for this chat", modifier, message = ChatSecretPreauth.HINT,
@@ -160,7 +165,10 @@ fun ChatSecretsCard(f: ChatSecretsForm, now: Long, a: ChatSecretsActions, modifi
                 list.isEmpty() -> Text("There are no secrets yet. Add them under Secrets.", style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
                 else -> for (s in list) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CheckRow(s.name, s.id in f.chosen, Modifier.weight(1f)) { a.onToggle(s.id) }
-                    if (s.id in f.chosen) PinBox(f.pins[s.id].orEmpty(), { a.onPin(s.id, it) }, bad = f.bad == s.id, label = "PIN for ${s.name}")
+                    if (s.id in f.chosen) {
+                        if (mv.obitech.crundi.PinButtons.fingerprint(savedPin(s.id), f.pins[s.id].orEmpty())) mv.obitech.crundi.ui.operations.FingerprintButton({ onFingerprint(s.id) }, enabled = !f.busy)
+                        PinBox(f.pins[s.id].orEmpty(), { a.onPin(s.id, it) }, bad = f.bad == s.id, label = "PIN for ${s.name}")
+                    }
                 }
             }
             Text("For how long", style = CrundiType.Meta)
@@ -215,7 +223,12 @@ fun ChatSecretsRoute(api: CrundiClient, chatId: String, grants: List<ChatSecretG
     // The times shown ("12 min left") move on while it is open.
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
     fun close() { f = f.copy(pins = emptyMap()); onClose() }
-    ChatSecretsCard(f, now, ChatSecretsActions(
+    val keeper = mv.obitech.crundi.LocalPinKeeper.current
+    val serverKey = remember(api) { mv.obitech.crundi.SavedPins.serverKey(api.transport.baseUrl) }
+    ChatSecretsCard(f, now, savedPin = { keeper.saved(serverKey, it) }, onFingerprint = { id ->
+        val name = f.secrets?.firstOrNull { it.id == id }?.name.orEmpty()
+        keeper.unlock(serverKey, id, name, onPin = { pin -> f = ChatSecretPreauth.pin(f, id, pin) }, onFail = { why -> if (why != null) f = f.copy(error = why) })
+    }, a = ChatSecretsActions(
         onToggle = { f = ChatSecretPreauth.toggle(f, it) },
         onPin = { id, v -> f = ChatSecretPreauth.pin(f, id, v) },
         onDuration = { f = f.copy(duration = it) },

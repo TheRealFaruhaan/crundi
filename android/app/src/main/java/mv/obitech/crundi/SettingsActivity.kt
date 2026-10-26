@@ -212,6 +212,21 @@ class SettingsActivity : ComponentActivity() {
         perms += SettingItem.Line("Files", "Downloads are saved to the phone's Downloads folder. Android asks for no permission for that, and files you attach are picked one at a time.")
         out += SettingSection("Permissions", perms)
 
+        // ─── Secret PINs behind the fingerprint (BiometricPins) ───
+        val pins = BiometricPins.store(this)
+        // The enrolled biometrics changed: Android destroyed the key, so the PINs are useless.
+        val forgottenNow = pins.enabled && pins.list().isNotEmpty() && !PinKey.stillValid()
+        if (forgottenNow) pins.forgetAll()
+        out += SettingSection("Secret PINs", PinSettings.items(
+            BiometricPins.available(this), pins.enabled, pins.list(), forgottenNow,
+            toggle = {
+                if (pins.enabled) { pins.enabled = false; PinKey.delete() } else pins.enabled = true
+                draw()
+            },
+            forget = { p -> pins.forget(p.server, p.secretId); draw() },
+            forgetAll = { pins.forgetAll(); draw() },
+        ))
+
         // ─── Servers ───
         val srv = ArrayList<SettingItem>()
         val current = Servers.current(this)?.id
@@ -286,6 +301,7 @@ class SettingsActivity : ComponentActivity() {
             Icons.forget(s.id)
             PageLogin.forget(app, s.id)
             UrgentAlerts.forget(app, s.id)
+            BiometricPins.store(app).forgetServer(SavedPins.serverKey(s.baseUrl))
             AppGraph.forget(s.id)
             Servers.remove(app, s.id)
             if (Servers.all(app).isEmpty()) {

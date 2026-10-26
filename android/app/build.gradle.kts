@@ -174,6 +174,8 @@ dependencies {
     // Firebase brings Fragment 1.1, which predates the ActivityResult APIs the
     // pairing and scan screens use (release lint refuses it). A current one wins.
     implementation("androidx.fragment:fragment-ktx:1.8.6")
+    // Secret PINs kept behind the fingerprint (BiometricPins): BiometricPrompt with a Keystore key.
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.core:core-ktx:1.17.0")
 
     // The native UI: Jetpack Compose, one BOM pins every Compose library.

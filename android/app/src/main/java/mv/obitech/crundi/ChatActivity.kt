@@ -2,7 +2,6 @@ package mv.obitech.crundi
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -29,7 +28,9 @@ import mv.obitech.crundi.ui.theme.CrundiTheme
  * It shares the main window's services (AppGraph), so with the app already
  * running it shows the chat without connecting again.
  */
-class ChatActivity : ComponentActivity() {
+// A FragmentActivity so BiometricPrompt can sit over the bubble (BiometricPins).
+class ChatActivity : androidx.fragment.app.FragmentActivity() {
+    private val pinKeeper by lazy { ActivityPinKeeper(this) }
     private var serverId = ""
     private var chatId = ""
     private var openKey = ""
@@ -62,7 +63,7 @@ class ChatActivity : ComponentActivity() {
         val services = AppGraph.forServer(this, server)
         setContent {
             CrundiTheme {
-                CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host) {
+                CompositionLocalProvider(LocalAppServices provides services, LocalHost provides host, LocalPinKeeper provides pinKeeper) {
                     // The bubble's chat has Mini too (ui.mini); there is no top bar, so it walks straight in.
                     mv.obitech.crundi.ui.mini.MiniStage(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
                         // The chat, and Claude asking for a secret from it (ui.chats.BubbleChat).
