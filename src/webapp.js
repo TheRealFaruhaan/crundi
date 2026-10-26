@@ -2001,16 +2001,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   });
   // A Claude terminal pane takes the title Claude Code shows for its session.
   if (claudeTerminals && claudeTerminals.onAutoTitle) claudeTerminals.onAutoTitle(() => { broadcastState(); retitleLiveCards(); });
-  // A chat that sat idle gets a recap; the work may have become a different
-  // job since it was named, so Claude Code titles it again from the recap.
-  // Not over a title the person chose, and not a collaborator's chat.
+  // A chat that sat idle gets a recap: a moment to check whether the work
+  // has become a different job since the chat was named. The new title is
+  // made from the person's own messages (what the chat is for), never from
+  // the recap (where it is just now), and it replaces the old one only when
+  // the chat's Claude Code judges the work a different job: the next release
+  // or the next step of the same work keeps its name. Not over a title the
+  // person chose, and not a collaborator's chat.
   if (claudeUi && claudeUi.onRecap) claudeUi.onRecap(async (id, recap) => {
     if (!recap || recap.why !== 'idle') return;
     const m = claudeUi.meta(id);
     if (!m || m.collaborator || m.titleByUser) return;
-    const t = await claudeUi.generateTitle(id, recap.text);
+    const said = claudeUi.personText(id);
+    if (!said) return;
+    const t = await claudeUi.generateTitle(id, said);
     const named = t ? titlesFromChat(t) : null;
-    if (!named || named.title === m.title) return;
+    if (!named || named.title.toLowerCase() === String(m.title || '').toLowerCase()) return;
+    if (!(await claudeUi.isDifferentJob(id, m.title))) return;
+    const now = claudeUi.meta(id);
+    if (!now || now.titleByUser || now.title !== m.title) return;   // renamed meanwhile
     const r = claudeUi.rename(id, named.title, { auto: true, long: named.long });
     if (r && r.ok) { broadcastState(); retitleLiveCards(); }
   });

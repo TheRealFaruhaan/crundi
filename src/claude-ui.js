@@ -2419,6 +2419,38 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     return t || null;
   }
 
+  /**
+   * What the person has asked for in this chat, as one text to title: their
+   * first message still held and their latest few, oldest first. Their own
+   * words say what the chat is for; Claude's replies and a recap say where it
+   * is just now, which is the wrong thing to name a chat after. Slash
+   * commands and Crundi's own posts are left out.
+   */
+  function personText(id, { latest = 5, max = 2000 } = {}) {
+    const s = sessions.get(id);
+    if (!s) return '';
+    const said = s.messages
+      .filter((e) => e.kind === 'user' && e.by !== 'system' && typeof e.text === 'string' && e.text.trim() && !e.text.trim().startsWith('/'))
+      .map((e) => e.text.trim());
+    if (!said.length) return '';
+    const picked = said.length > latest + 1 ? [said[0], ...said.slice(-latest)] : said;
+    const each = Math.max(200, Math.floor(max / picked.length));
+    return picked.map((t) => t.length > each ? t.slice(0, each) + '…' : t).join('\n\n').slice(0, max);
+  }
+
+  /**
+   * Has the chat become a different job from the one its title names? Asked
+   * of the chat's own Claude Code on the side, so it judges from the whole
+   * conversation; nothing is added to it. A newer version number, the next
+   * step of the same work or a detail of it is the same job. Anything but a
+   * clear DIFFERENT (no answer, an older Claude Code) keeps the title.
+   */
+  async function isDifferentJob(id, title) {
+    const r = await askAside(id, 'This chat is titled "' + String(title || '').slice(0, 80) + '". Judging by what the person has asked for in this conversation, is the work now mainly a different job from the one that title names? '
+      + 'The next step of the same work, a newer version number, a fix to it or a detail of it is the SAME job. Answer with exactly one word: SAME or DIFFERENT.', { timeoutMs: 45_000 });
+    return !!(r.ok && /^\W*different\b/i.test(r.answer));
+  }
+
   // ─── Recap: where the chat stands, for someone coming back to it ───
 
   function clearRecap(s) {
@@ -2997,7 +3029,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, addCard, patchCard, setFirstChatHandler, onSessionGone, onChatEnded, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
-    askAside, generateTitle, dismissRecap, onRecap,
+    askAside, generateTitle, dismissRecap, onRecap, personText, isDifferentJob,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },

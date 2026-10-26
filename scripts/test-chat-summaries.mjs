@@ -77,7 +77,9 @@ const env = new Function(`
   ${lift('  function scheduleIdleRecap(s) {')}
   ${lift('  async function makeRecap(s, why) {')}
   ${lift('  function handleToolUseSummary(s, msg) {')}
-  return { sessions, sent, control, askAside, generateTitle, clearRecap, scheduleIdleRecap, makeRecap, handleToolUseSummary,
+  ${lift('  function personText(id, { latest = 5, max = 2000 } = {}) {')}
+  ${lift('  async function isDifferentJob(id, title) {')}
+  return { sessions, sent, control, askAside, generateTitle, clearRecap, scheduleIdleRecap, makeRecap, handleToolUseSummary, personText, isDifferentJob,
     onRecap: (cb) => { recapCb = cb; } };
 `)();
 
@@ -210,11 +212,42 @@ const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
   check('a message going out cancels the wait', c.recapTimer === null);
 }
 
+// ─── What a retitle is made from, and when it happens ───
+{
+  const { s } = mk({ id: 'p1' });
+  const u = (text, by) => ({ kind: 'user', text, ...(by ? { by } : {}) });
+  s.messages.push(u('Fix the login redirect'), { kind: 'assistant-text', text: 'Releasing 2.4.0 now' },
+    u('/compact'), u('Crundi ran a command', 'system'), u('  '), u('and the cookie expiry'));
+  check('the person\'s own words, not Claude\'s, slash commands or Crundi\'s posts', env.personText('p1') === 'Fix the login redirect\n\nand the cookie expiry', JSON.stringify(env.personText('p1')));
+  for (let i = 1; i <= 8; i++) s.messages.push(u('step ' + i));
+  const t = env.personText('p1');
+  check('the first message, then the latest five', t.startsWith('Fix the login redirect\n\nstep 4') && t.endsWith('step 8') && !t.includes('cookie') && !t.includes('step 3'), JSON.stringify(t));
+  s.messages.push(u('x'.repeat(5000)));
+  check('kept short', env.personText('p1').length <= 2000);
+  check('nothing said yet: nothing to title', env.personText('nope') === '' && (() => { const { s: e } = mk({ id: 'p2' }); return env.personText('p2') === ''; })());
+}
+{
+  const { s } = mk({ id: 'j1' });
+  let p = env.isDifferentJob('j1', 'Crundi 1.21.3-dev.1');
+  const q = env.sent[env.sent.length - 1].request;
+  check('the job question is asked on the side, naming the title', q.subtype === 'side_question' && q.question.includes('"Crundi 1.21.3-dev.1"') && /newer version number/.test(q.question) && /SAME or DIFFERENT/.test(q.question));
+  answer(s, { response: 'SAME' });
+  check('SAME keeps the title', (await p) === false);
+  p = env.isDifferentJob('j1', 'x'); answer(s, { response: 'Different.' });
+  check('DIFFERENT renames', (await p) === true);
+  p = env.isDifferentJob('j1', 'x'); answer(s, null, 'Unknown control request subtype: side_question');
+  check('no answer keeps the title', (await p) === false);
+  p = env.isDifferentJob('j1', 'x'); answer(s, { response: 'It is not different, the same job' });
+  check('only a clear DIFFERENT counts', (await p) === false);
+}
+
 // ─── The server side ───
 const web = readFileSync(join(root, 'src', 'webapp.js'), 'utf8');
 check('routes: aside and dismiss-recap', /dismiss-suggestion\|dismiss-recap\|aside\)\$/.test(web) && /claudeUi\.askAside\(sid, body\.question\)/.test(web) && /claudeUi\.dismissRecap\(sid\)/.test(web));
 check('the namer asks the chat first', /fromChat: \(id, text\) => claudeUi\.generateTitle\(id, text\)/.test(web));
 check('an idle recap retitles, never over the person\'s title', /recap\.why !== 'idle'/.test(web) && /m\.titleByUser\) return;/.test(web));
+check('from the person\'s messages, never the recap', /claudeUi\.generateTitle\(id, said\)/.test(web) && !/generateTitle\(id, recap\.text\)/.test(web));
+check('only when it is a different job, and not if renamed meanwhile', /if \(!\(await claudeUi\.isDifferentJob\(id, m\.title\)\)\) return;/.test(web) && /now\.title !== m\.title\) return;/.test(web));
 const caps = readFileSync(join(root, 'src', 'client-version.js'), 'utf8');
 check('capabilities: chat-recap and chat-aside', /'chat-recap',/.test(caps) && /'chat-aside',/.test(caps));
 
