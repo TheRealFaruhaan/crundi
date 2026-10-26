@@ -2016,11 +2016,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (!said) return;
     const t = await claudeUi.generateTitle(id, said);
     const named = t ? titlesFromChat(t) : null;
-    if (!named || named.title.toLowerCase() === String(m.title || '').toLowerCase()) return;
-    if (!(await claudeUi.isDifferentJob(id, m.title))) return;
+    const was = m.longTitle || m.title;
+    if (!named) return console.log(`[retitle] (${id}) no title from Claude Code; kept "${m.title}"`);
+    if (named.title.toLowerCase() === String(m.title || '').toLowerCase()) return;
+    const job = await claudeUi.isDifferentJob(id, was, named.long || named.title);
+    if (!job.different) return console.log(`[retitle] (${id}) kept "${m.title}": same job as "${named.title}" (${job.answer})`);
     const now = claudeUi.meta(id);
     if (!now || now.titleByUser || now.title !== m.title) return;   // renamed meanwhile
     const r = claudeUi.rename(id, named.title, { auto: true, long: named.long });
+    console.log(`[retitle] (${id}) "${m.title}" -> "${named.title}"${r && r.ok ? '' : ' refused'}`);
     if (r && r.ok) { broadcastState(); retitleLiveCards(); }
   });
 

@@ -2420,35 +2420,46 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   /**
-   * What the person has asked for in this chat, as one text to title: their
-   * first message still held and their latest few, oldest first. Their own
-   * words say what the chat is for; Claude's replies and a recap say where it
-   * is just now, which is the wrong thing to name a chat after. Slash
-   * commands and Crundi's own posts are left out.
+   * What the person is asking for now, as one text to title: their latest
+   * few messages, oldest first. Their own words say what the work is;
+   * Claude's replies and a recap say where it is just now, which is the
+   * wrong thing to name a chat after. The first message is left out on
+   * purpose: it is what the chat was named from, and a title that follows
+   * the work has to be free of it. Slash commands and Crundi's own posts
+   * are left out too.
    */
-  function personText(id, { latest = 5, max = 2000 } = {}) {
+  function personText(id, { latest = 3, max = 2000 } = {}) {
     const s = sessions.get(id);
     if (!s) return '';
-    const said = s.messages
+    const all = s.messages
       .filter((e) => e.kind === 'user' && e.by !== 'system' && typeof e.text === 'string' && e.text.trim() && !e.text.trim().startsWith('/'))
       .map((e) => e.text.trim());
+    // "Go", "Yes", "Tell me about 1": answers, not requests. They say
+    // nothing about the job, so the latest messages with some substance are
+    // taken; only when there are none do the short ones stand in.
+    const meant = all.filter((t) => t.length >= 20);
+    const said = (meant.length ? meant : all).slice(-latest);
     if (!said.length) return '';
-    const picked = said.length > latest + 1 ? [said[0], ...said.slice(-latest)] : said;
-    const each = Math.max(200, Math.floor(max / picked.length));
-    return picked.map((t) => t.length > each ? t.slice(0, each) + '…' : t).join('\n\n').slice(0, max);
+    const each = Math.max(200, Math.floor(max / said.length));
+    return said.map((t) => t.length > each ? t.slice(0, each) + '…' : t).join('\n\n').slice(0, max);
   }
 
   /**
-   * Has the chat become a different job from the one its title names? Asked
-   * of the chat's own Claude Code on the side, so it judges from the whole
-   * conversation; nothing is added to it. A newer version number, the next
-   * step of the same work or a detail of it is the same job. Anything but a
+   * Is what the person is working on now a different job from the one the
+   * chat's title names? Asked of the chat's own Claude Code on the side, so
+   * it judges from the conversation; nothing is added to it. It is shown the
+   * title made from the latest requests, and judges those, not the whole
+   * conversation: a long chat that has moved on would otherwise always be
+   * "mainly" what it started as. The next step of the same work, a newer
+   * version number, a fix or a detail of it is the same job. Anything but a
    * clear DIFFERENT (no answer, an older Claude Code) keeps the title.
    */
-  async function isDifferentJob(id, title) {
-    const r = await askAside(id, 'This chat is titled "' + String(title || '').slice(0, 80) + '". Judging by what the person has asked for in this conversation, is the work now mainly a different job from the one that title names? '
-      + 'The next step of the same work, a newer version number, a fix to it or a detail of it is the SAME job. Answer with exactly one word: SAME or DIFFERENT.', { timeoutMs: 45_000 });
-    return !!(r.ok && /^\W*different\b/i.test(r.answer));
+  async function isDifferentJob(id, title, proposed = '') {
+    const r = await askAside(id, 'This chat is titled "' + String(title || '').slice(0, 80) + '". '
+      + 'Going by the person\'s most recent requests (their last few messages), is what they are working on now a different job from the one that title names?'
+      + (proposed ? ' A title for the recent work would be "' + String(proposed).slice(0, 80) + '".' : '')
+      + ' The next step of the same work, a newer version number, a fix to it or a detail of it is the SAME job; a different feature, problem, project or topic is DIFFERENT. Answer with exactly one word: SAME or DIFFERENT.', { timeoutMs: 45_000 });
+    return { different: !!(r.ok && /^\W*different\b/i.test(r.answer)), answer: r.ok ? String(r.answer).slice(0, 40) : 'no answer (' + (r.error || '') + ')' };
   }
 
   // ─── Recap: where the chat stands, for someone coming back to it ───
@@ -2481,6 +2492,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     s.recapTimer = setTimeout(() => {
       s.recapTimer = null;
       if (s.state === 'idle' && s.turns === turn && s.recapTurn !== turn) makeRecap(s, 'idle');
+      else console.log(`[claude-ui] (${s.id}) no idle recap: state ${s.state}, turn ${s.turns} (was ${turn})`);
     }, RECAP_IDLE_MS);
     if (typeof s.recapTimer.unref === 'function') s.recapTimer.unref();
   }
@@ -2496,6 +2508,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // Nothing to say (a resumed chat with no history answers so).
     if (!text || r.response.synthetic) return;
     s.recap = { text: text.slice(0, MAX_RECAP), at: Date.now(), why };
+    console.log(`[claude-ui] (${s.id}) recap (${why})`);
     s.emitter.emit('event', { type: 'recap', recap: s.recap });
     if (recapCb) { try { recapCb(s.id, s.recap); } catch { /* the listener's problem */ } }
   }
@@ -2903,7 +2916,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       id: s.id, alias: s.alias, title: s.title, order: s.order,
       sessionId: s.sessionId || '', model: s.model || '', effort: s.effort || '',
       permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
-      background: !!s.background, collaborator: !!s.collaborator, cwd: s.cwd || '', titleByUser: !!s.titleByUser,
+      background: !!s.background, collaborator: !!s.collaborator, cwd: s.cwd || '', titleByUser: !!s.titleByUser, longTitle: s.longTitle || '',
       factory: s.factory || null,
       running: !!s.proc, state: s.state, busyTasks,
       pendingInjections: (s.pendingInjections || []).length,
