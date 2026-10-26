@@ -77,9 +77,10 @@ const env = new Function(`
   ${lift('  function scheduleIdleRecap(s) {')}
   ${lift('  async function makeRecap(s, why) {')}
   ${lift('  function handleToolUseSummary(s, msg) {')}
+  function markTitled(s) { s.titleMark = (s.dropped || 0) + s.messages.length; }
   ${lift('  function personText(id, { latest = 3, max = 2000 } = {}) {')}
   ${lift("  async function isDifferentJob(id, title, proposed = '') {")}
-  return { sessions, sent, control, askAside, generateTitle, clearRecap, scheduleIdleRecap, makeRecap, handleToolUseSummary, personText, isDifferentJob,
+  return { sessions, sent, control, askAside, generateTitle, clearRecap, scheduleIdleRecap, makeRecap, handleToolUseSummary, personText, isDifferentJob, markTitled,
     onRecap: (cb) => { recapCb = cb; } };
 `)();
 
@@ -229,6 +230,16 @@ const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
   const { s: terse } = mk({ id: 'p3' });
   terse.messages.push(u('Go'), u('Yes'));
   check('only short answers: they stand in', env.personText('p3') === 'Go\n\nYes');
+  // A chat opened on an earlier conversation, or just renamed: only what is
+  // said after that counts (a new chat over the math one was renamed back to it).
+  const { s: cont } = mk({ id: 'p4' });
+  cont.messages.push(u('Add a subtract function to math.js and the README'), u('Now add multiply the same way please'));
+  env.markTitled(cont);
+  check('since the name: nothing new yet, nothing to title', env.personText('p4') === '');
+  cont.messages.push(u('Describe a Grafana alert for failed scheduled jobs'));
+  check('since the name: only the new request', env.personText('p4') === 'Describe a Grafana alert for failed scheduled jobs', JSON.stringify(env.personText('p4')));
+  cont.dropped = 1; cont.messages.shift();
+  check('since the name: still right after old entries are trimmed away', env.personText('p4') === 'Describe a Grafana alert for failed scheduled jobs');
   s.messages.push(u('x'.repeat(5000)));
   check('kept short', env.personText('p1').length <= 2000);
   check('nothing said yet: nothing to title', env.personText('nope') === '' && (() => { const { s: e } = mk({ id: 'p2' }); return env.personText('p2') === ''; })());
@@ -255,10 +266,54 @@ const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
 const web = readFileSync(join(root, 'src', 'webapp.js'), 'utf8');
 check('routes: aside and dismiss-recap', /dismiss-suggestion\|dismiss-recap\|aside\)\$/.test(web) && /claudeUi\.askAside\(sid, body\.question\)/.test(web) && /claudeUi\.dismissRecap\(sid\)/.test(web));
 check('the namer asks the chat first', /fromChat: \(id, text\) => claudeUi\.generateTitle\(id, text\)/.test(web));
-check('an idle recap retitles, never over the person\'s title', /recap\.why !== 'idle'/.test(web) && /m\.titleByUser\) return;/.test(web));
-check('from the person\'s messages, never the recap', /claudeUi\.generateTitle\(id, said\)/.test(web) && !/generateTitle\(id, recap\.text\)/.test(web));
-check('only when it is a different job, and not if renamed meanwhile', /const job = await claudeUi\.isDifferentJob\(id, was, named\.long \|\| named\.title\);/.test(web) && /if \(!job\.different\) return/.test(web) && /now\.title !== m\.title\) return;/.test(web));
+check('retitled at the end of a turn, not after sitting idle', /claudeUi\.onTurnEnd\(\(id\) => \{ maybeRetitle\(id\)/.test(web) && !/claudeUi\.onRecap\(/.test(web));
+check('claude-ui reports a turn end for the person\'s chats only', /if \(turnEndCb && !s\.factory && !s\.background\)/.test(src));
+check('the name marks what it stands for: on a rename and after a replay, and trimming is counted', /s\.title = \(title && String\(title\)\.trim\(\)\) \|\| 'Chat';\n\s*markTitled\(s\);/.test(src) && /markTitled\(s\);\n\s*s\.emitter\.emit\('event', \{ type: 'history'/.test(src) && /s\.dropped = \(s\.dropped \|\| 0\) \+ cut;/.test(src));
 check('every decision is logged', /\[retitle\] \(\$\{id\}\) kept/.test(web) && /\[retitle\] \(\$\{id\}\) "\$\{m\.title\}" -> /.test(web) && /\[claude-ui\] \(\$\{s\.id\}\) recap \(/.test(src));
+
+// The retitle itself, lifted out of webapp.js and run against a fake chat.
+{
+  const a = web.indexOf('  const RETITLE_EVERY_MS'), b = web.indexOf('  if (claudeUi && claudeUi.onTurnEnd)');
+  const body = web.slice(a, b).replace('const RETITLE_EVERY_MS = 10 * 60_000;', 'const RETITLE_EVERY_MS = 50;');
+  const { titlesFromChat, isDefaultTitle } = await import('../src/chat-autotitle.js');
+  const chat = { title: 'Grafana alert calls', longTitle: '', titleByUser: false, collaborator: false };
+  let said = 'The scheduled jobs can alert me through mcp now', proposed = 'Product categorization duplicates', judge = 'DIFFERENT';
+  const calls = { title: 0, judge: 0, renamed: [] };
+  const claudeUi = {
+    meta: () => ({ ...chat }),
+    personText: () => said,
+    generateTitle: async () => { calls.title++; return proposed; },
+    isDifferentJob: async () => { calls.judge++; return { different: judge === 'DIFFERENT', answer: judge }; },
+    rename: (id, t, o) => { chat.title = t; chat.longTitle = o.long; calls.renamed.push(t); return { ok: true }; },
+  };
+  const log = console.log; console.log = (...x) => { if (!String(x[0]).startsWith('[retitle]')) log(...x); };
+  const maybeRetitle = new Function('claudeUi', 'titlesFromChat', 'isDefaultTitle', 'broadcastState', 'retitleLiveCards', body + '\nreturn maybeRetitle;')(claudeUi, titlesFromChat, isDefaultTitle, () => {}, () => {});
+  said = '';
+  await maybeRetitle('c1');
+  check('retitle: nothing said since the name, nothing asked', calls.title === 0 && calls.judge === 0);
+  said = 'Sort out the products needing categorization';
+  await maybeRetitle('c1');
+  check('retitle: a new request, a different job: renamed at the end of that turn', calls.title === 1 && calls.judge === 1 && chat.title === 'Product categorization');
+  await maybeRetitle('c1');
+  check('retitle: nothing new said: not asked again', calls.title === 1);
+  said += '\n\nHow come they are duplicate? They should update';
+  await maybeRetitle('c1');
+  check('retitle: something new inside the window: held back', calls.title === 1);
+  await new Promise((r) => setTimeout(r, 1200));
+  check('retitle: and checked once the window opens, without another message', calls.title === 2);
+  check('retitle: a new title that matches the current one is not put to the judge', calls.judge === 1);
+  judge = 'SAME'; said += '\n\nshow me the counts first please';
+  await new Promise((r) => setTimeout(r, 60));
+  proposed = 'Duplicate product counts';
+  await maybeRetitle('c1');
+  check('retitle: the same job keeps the title', calls.judge === 2 && chat.title === 'Product categorization', calls.judge + ' ' + chat.title);
+  chat.titleByUser = true; said += '\n\nsomething else entirely now'; judge = 'DIFFERENT';
+  await new Promise((r) => setTimeout(r, 60));
+  const before = calls.title;
+  await maybeRetitle('c1');
+  check('retitle: never over a title the person chose', calls.title === before && chat.title === 'Product categorization');
+  console.log = log;
+}
 const caps = readFileSync(join(root, 'src', 'client-version.js'), 'utf8');
 check('capabilities: chat-recap and chat-aside', /'chat-recap',/.test(caps) && /'chat-aside',/.test(caps));
 

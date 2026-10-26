@@ -696,6 +696,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       }
     }
     s.replaySpliced = true;
+    // What was said before this chat was opened is not new: the title it
+    // was opened with stands for it (see personText).
+    markTitled(s);
     s.emitter.emit('event', { type: 'history', session: snapshot(s) });
     console.log(`[claude-ui] Replayed ${d.messages.length} ${source} entries for "${s.alias}"`);
   }
@@ -958,7 +961,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function emitEntry(s, entry) {
     entry.seq = nextSeq();
     s.messages.push(entry);
-    if (s.messages.length > MAX_MESSAGES) s.messages.splice(0, s.messages.length - MAX_MESSAGES);
+    if (s.messages.length > MAX_MESSAGES) {
+      const cut = s.messages.length - MAX_MESSAGES;
+      s.messages.splice(0, cut);
+      s.dropped = (s.dropped || 0) + cut;   // keeps positions (titleMark) counting from the start
+    }
     s.emitter.emit('event', { type: 'entry', entry });
     // A question is written NOW, not on the debounce.
     //
@@ -2103,6 +2110,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     s.waiting.clear();
     s.turns = (s.turns || 0) + 1;
     scheduleIdleRecap(s);
+    if (turnEndCb && !s.factory && !s.background) { try { turnEndCb(s.id); } catch { /* the listener's problem */ } }
   }
 
   /**
@@ -2155,6 +2163,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // Told when a chat gets a recap (after sitting idle, or on being resumed).
   let recapCb = null;
   function onRecap(cb) { recapCb = cb; }
+  // Told when one of the person's chats finishes a turn (not a factory's or
+  // a scheduled job's): the moment to see whether its title still fits.
+  let turnEndCb = null;
+  function onTurnEnd(cb) { turnEndCb = cb; }
 
   function handleControlRequest(s, msg) {
     const req = msg.request || {};
@@ -2419,6 +2431,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     return t || null;
   }
 
+  /** The chat's title now stands for everything said so far. */
+  function markTitled(s) { s.titleMark = (s.dropped || 0) + s.messages.length; }
+
   /**
    * What the person is asking for now, as one text to title: their latest
    * few messages, oldest first. Their own words say what the work is;
@@ -2431,7 +2446,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function personText(id, { latest = 3, max = 2000 } = {}) {
     const s = sessions.get(id);
     if (!s) return '';
-    const all = s.messages
+    // Only what was said since the chat got the name it has: what came
+    // before is what that name was made from (or, in a continued chat, the
+    // conversation it was opened on), and counting it pulled the new title
+    // back to the old work.
+    const from = Math.max(0, (s.titleMark || 0) - (s.dropped || 0));
+    const all = s.messages.slice(from)
       .filter((e) => e.kind === 'user' && e.by !== 'system' && typeof e.text === 'string' && e.text.trim() && !e.text.trim().startsWith('/'))
       .map((e) => e.text.trim());
     // "Go", "Yes", "Tell me about 1": answers, not requests. They say
@@ -2874,6 +2894,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (!s) return { ok: false, error: `No session "${id}"` };
     if (auto && s.titleByUser) return { ok: false, error: 'The person named this chat themselves. Leave their title.', keptTitle: s.title };
     s.title = (title && String(title).trim()) || 'Chat';
+    markTitled(s);
     // The long form belongs to the title it was given with. A title the
     // person typed has no long form: what they typed is shown everywhere.
     s.longTitle = auto ? String(long || '') : '';
@@ -3042,7 +3063,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, addCard, patchCard, setFirstChatHandler, onSessionGone, onChatEnded, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,
-    askAside, generateTitle, dismissRecap, onRecap, personText, isDifferentJob,
+    askAside, generateTitle, dismissRecap, onRecap, onTurnEnd, personText, isDifferentJob,
     onCollaboratorUsage, onPendingChange, onEscalationGone, allowHostForSession, collaboratorSessionFor,
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
