@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "id": "secret-passphrases",
+      "tag": "Secrets",
+      "title": "Passphrases, and secrets you can edit",
+      "body": "Secrets are now locked with a passphrase of at least 8 characters, not only digits, and a much slower key, so a copy of the secrets file is far harder to crack. A secret still on an old 6-digit PIN keeps working, and each time you use it you are offered to set a passphrase there and then. Edit a secret to change its passphrase or its value, with the current one.",
+      "art": "secret-passphrases.html",
+      "artTitle": "Secrets"
+    }
+  ]
+}

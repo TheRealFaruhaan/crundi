@@ -61,6 +61,25 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.9 (en-US)
+
+Version code 27. Since 1.1.1-dev.8 (code 26): passphrases (capability
+secret-passphrase), editing a secret (secret-edit), the upgrade prompt for
+old locks (secret-upgrade), and refused saved locks forgotten everywhere.
+
+```
+<en-US>
+Stronger secrets.
+
+- Secrets are locked with a passphrase of 8+ characters, not only digits.
+- A secret on an old 6-digit PIN offers to switch to a passphrase each time it is used.
+- Edit a secret: change its passphrase, or its value, with the current one.
+- A saved fingerprint passphrase the server refuses is forgotten, so the new one can be saved.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.8 (en-US)
 
 Version code 26. Since 1.1.1-dev.7 (code 25): one-step secret approval
