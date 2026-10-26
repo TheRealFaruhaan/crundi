@@ -36,11 +36,11 @@ const read = (...p) => readFileSync(join(root, ...p), 'utf8');
 let failed = 0;
 const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
 
-const VALUE1 = 'tok-CHAT-one-5d2e81', PIN1 = '318274';
-const VALUE2 = 'tok-CHAT-two-a7b9c3', PIN2 = '905163';
-const S1 = secrets.addSecret({ name: 'Deploy token', value: VALUE1, pin: PIN1 }).id;
-const S2 = secrets.addSecret({ name: 'Other token', value: VALUE2, pin: PIN2 }).id;
-const check = (id, pin) => { const d = secrets.decryptSecret(id, pin); return d.ok ? { ok: true, name: d.name } : { ok: false, error: d.error }; };
+const VALUE1 = 'tok-CHAT-one-5d2e81', PIN1 = 'north-318274';
+const VALUE2 = 'tok-CHAT-two-a7b9c3', PIN2 = 'south-905163';
+const S1 = (await secrets.addSecret({ name: 'Deploy token', value: VALUE1, pin: PIN1 })).id;
+const S2 = (await secrets.addSecret({ name: 'Other token', value: VALUE2, pin: PIN2 })).id;
+const check = async (id, pin) => { const d = await secrets.decryptSecret(id, pin); return d.ok ? { ok: true, name: d.name } : { ok: false, error: d.error }; };
 const decrypt = (id, pin) => secrets.decryptSecret(id, pin);
 
 let clock = 1_000_000;
@@ -60,14 +60,14 @@ ok(CS.parseDuration({ minutes: 90 }).ms === 90 * 60000, 'minutes');
 ok(!CS.parseDuration({ minutes: 0 }).ok && !CS.parseDuration({ minutes: 100000 }).ok && !CS.parseDuration({}).ok && !CS.parseDuration({ duration: 'year' }).ok, 'nonsense durations refused');
 
 // ─── The PIN is verified ───
-let r = CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: PIN1 }, { id: S2, pin: '000000' }], duration: { duration: '1h' }, decrypt: check, now });
-ok(!r.ok && r.secretId === S2 && /Incorrect PIN/.test(r.error), 'a wrong PIN is refused, naming the secret');
+let r = await CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: PIN1 }, { id: S2, pin: '000000' }], duration: { duration: '1h' }, decrypt: check, now });
+ok(!r.ok && r.secretId === S2 && /Incorrect passphrase/.test(r.error), 'a wrong passphrase is refused, naming the secret');
 ok(vault.list('chatA').length === 0, 'and none of the batch is kept, not even the right one');
-r = CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: '12' }], duration: { duration: '1h' }, decrypt: check, now });
-ok(!r.ok, 'a PIN that is not 6 digits is refused');
-r = CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [], duration: { duration: '1h' }, decrypt: check, now });
+r = await CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: '12' }], duration: { duration: '1h' }, decrypt: check, now });
+ok(!r.ok, 'a wrong short one is refused');
+r = await CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [], duration: { duration: '1h' }, decrypt: check, now });
 ok(!r.ok, 'no secrets chosen is refused');
-r = CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: PIN1 }], duration: { duration: '1h' }, decrypt: check, now });
+r = await CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: PIN1 }], duration: { duration: '1h' }, decrypt: check, now });
 ok(r.ok && r.granted.length === 1, 'the right PIN pre-authorises the secret');
 const listed = vault.list('chatA');
 ok(listed.length === 1 && listed[0].name === 'Deploy token' && listed[0].expiresAt === new Date(clock + 3600000).toISOString() && listed[0].untilChatEnds === false, 'the list has the name and when it expires');
@@ -111,14 +111,14 @@ await new Promise((res) => setTimeout(res, 120));
 ok(!timed.pin('chatT', S1) && changes.includes('timer:chatT'), 'a timed grant drops itself when its time comes');
 
 // ─── Revoke ───
-CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: PIN1 }, { id: S2, pin: PIN2 }], duration: { duration: 'chat' }, decrypt: check, now });
+await CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: PIN1 }, { id: S2, pin: PIN2 }], duration: { duration: 'chat' }, decrypt: check, now });
 ok(vault.list('chatA').length === 2 && vault.list('chatA').every((g) => g.untilChatEnds && g.expiresAt === null), 'two secrets until the chat ends');
 ok(vault.revoke('chatA', S1) && !vault.pin('chatA', S1) && !!vault.pin('chatA', S2), 'revoking one leaves the other');
-CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: PIN1 }], duration: { duration: '15m' }, decrypt: check, now });
+await CS.grantChatSecrets({ vault, chatId: 'chatA', secrets: [{ id: S1, pin: PIN1 }], duration: { duration: '15m' }, decrypt: check, now });
 ok(vault.revokeChat('chatA') === 2 && vault.list('chatA').length === 0, 'revoke all');
 
 // ─── The chat ends ───
-CS.grantChatSecrets({ vault, chatId: 'chatE', secrets: [{ id: S1, pin: PIN1 }], duration: { duration: 'chat' }, decrypt: check, now });
+await CS.grantChatSecrets({ vault, chatId: 'chatE', secrets: [{ id: S1, pin: PIN1 }], duration: { duration: 'chat' }, decrypt: check, now });
 const ui = read('src', 'claude-ui.js');
 ok(/chatEnded\(s\.id, 'exit'\)/.test(ui) && /chatEnded\(id, 'close'\)/.test(ui) && /onChatEnded,/.test(ui), "claude-ui tells when a chat's Claude exits or the chat is closed");
 ok(/claudeUi\.onChatEnded\(\(sid\) => \{ if \(chatSecrets\.revokeChat\(sid\)\)/.test(web), 'and the server drops that chat\'s grants then');
@@ -126,14 +126,14 @@ vault.revokeChat('chatE');
 ok(!vault.pin('chatE', S1), 'after which nothing is left');
 
 // ─── A recreated secret ───
-CS.grantChatSecrets({ vault, chatId: 'chatR', secrets: [{ id: S2, pin: PIN2 }], duration: { duration: 'chat' }, decrypt: check, now });
+await CS.grantChatSecrets({ vault, chatId: 'chatR', secrets: [{ id: S2, pin: PIN2 }], duration: { duration: 'chat' }, decrypt: check, now });
 ok(vault.forgetSecret(S2).includes('chatR') && !vault.pin('chatR', S2), 'deleting a secret drops it from every chat');
 vault.grant('chatR', S2, { name: 'Other token', pin: '111111', expiresAt: null });
 a = await ask('chatR', S2)({});
 ok(!a.ok && !vault.pin('chatR', S2), 'a kept PIN that no longer opens the secret is dropped and the person asked');
 
 // ─── Nothing persisted ───
-CS.grantChatSecrets({ vault, chatId: 'chatP', secrets: [{ id: S1, pin: PIN1 }, { id: S2, pin: PIN2 }], duration: { duration: '8h' }, decrypt: check, now });
+await CS.grantChatSecrets({ vault, chatId: 'chatP', secrets: [{ id: S1, pin: PIN1 }, { id: S2, pin: PIN2 }], duration: { duration: '8h' }, decrypt: check, now });
 ok(JSON.stringify(vault) === '{}' && !inspect(vault, { depth: 9 }).includes(PIN1), 'JSON.stringify and inspect of the vault show nothing');
 const walk = (d) => readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : [p]; });
 const onDisk = walk(process.env.DATA_DIR).map((f) => readFileSync(f, 'utf8')).join('\n');

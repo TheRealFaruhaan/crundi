@@ -121,6 +121,22 @@ export const CAPABILITIES = Object.freeze([
   // older server has none of it, so clients show the lock, the menu entry
   // and the "Allow for this chat" choice only when this is listed.
   'chat-secret-preauth',
+  // Passphrases: every secret in GET /api/secrets and every secret request
+  // carries lock ('pin' = 6 digits, 'passphrase' = any text) and
+  // needsUpgrade. New secrets (action 'add') take a passphrase of at least 8
+  // characters, not digits only; old 6-digit PINs still open their secrets.
+  // Clients show a text field instead of the 6-digit one for a passphrase,
+  // and a passphrase field when creating. An older server has only PINs.
+  'secret-passphrase',
+  // Edit a secret: POST /api/secrets action 'edit' { id, pin (the current
+  // lock), newPin?, value?, name?, description? }. Re-locking needs a
+  // passphrase as above. An older server answers "Unknown secrets action".
+  'secret-edit',
+  // Upgrade an old lock on use: approve, check, reveal, the chat grant and
+  // the factory start say needsUpgrade / upgradable when the lock just given
+  // is an old one; the client then offers "set a passphrase" right there and
+  // sends action 'edit' with that lock and a newPin.
+  'secret-upgrade',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

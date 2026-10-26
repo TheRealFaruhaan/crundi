@@ -50,10 +50,10 @@ function repo(name) {
 }
 
 // Two real secrets in the real (encrypted) store.
-const VALUE1 = 'tok-VALUE-one-9f3a', PIN1 = '482913';
-const VALUE2 = 'tok-VALUE-two-77c1', PIN2 = '650274';
-const S1 = secrets.addSecret({ name: 'Deploy token', value: VALUE1, pin: PIN1 }).id;
-const S2 = secrets.addSecret({ name: 'Other token', value: VALUE2, pin: PIN2 }).id;
+const VALUE1 = 'tok-VALUE-one-9f3a', PIN1 = 'alpha-482913';
+const VALUE2 = 'tok-VALUE-two-77c1', PIN2 = 'bravo-650274';
+const S1 = (await secrets.addSecret({ name: 'Deploy token', value: VALUE1, pin: PIN1 })).id;
+const S2 = (await secrets.addSecret({ name: 'Other token', value: VALUE2, pin: PIN2 })).id;
 const meta = (id) => secrets.getSecretMeta(id);
 const secretOf = (id) => ({ id, name: meta(id).name });
 
@@ -104,7 +104,7 @@ function team({ asks, finishWith = null } = {}) {
 function runnerFor(t, dir, f, extra = {}) {
   const r = createFactoryRunner({
     dataDir: process.env.DATA_DIR, agents: t.agents, getProject: () => ({ path: dir }), getFactory: () => ({ factory: f }),
-    unlockSecret: (id, pin) => { const d = secrets.decryptSecret(id, pin); return d.ok ? { ok: true, name: d.name } : { ok: false, error: d.error }; },
+    unlockSecret: async (id, pin) => { const d = await secrets.decryptSecret(id, pin); return d.ok ? { ok: true, name: d.name } : { ok: false, error: d.error }; },
     secretMeta: meta, settleMs: 10_000, permissionBatchMs: 20, ...extra,
   });
   t.setRunner(r);
@@ -122,7 +122,7 @@ function use(r, chatId, id, { command = 'echo "$SECRET" | wc -c', person = null 
   return FS.authoriseSecretUse({ runner: r, chatId, secret: secretOf(id), command, decrypt: (i, p) => secrets.decryptSecret(i, p), askPerson })
     .then(res => ({ ...res, calls }));
 }
-const personTypes = (id, pin) => async (o) => { const d = secrets.decryptSecret(id, pin); return d.ok ? { ok: true, value: d.value, ...(o.keepPin ? { pin } : {}) } : d; };
+const personTypes = (id, pin) => async (o) => { const d = await secrets.decryptSecret(id, pin); return d.ok ? { ok: true, value: d.value, ...(o.keepPin ? { pin } : {}) } : d; };
 
 function onDisk(runId) {
   const dir = join(process.env.DATA_DIR, 'factory-runs', runId);

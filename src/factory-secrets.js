@@ -64,6 +64,13 @@ export function createSecretVault() {
     /** The ids unlocked for a run (never the PINs). */
     unlocked(runId) { return [...(runs.get(runId)?.keys() || [])]; },
     forget(runId, secretId) { runs.get(runId)?.delete(secretId); },
+    /** A secret was re-locked: every run holding its old lock gets the new one. */
+    replacePin(secretId, oldPin, newPin) {
+      if (!newPin) return 0;
+      let n = 0;
+      for (const m of runs.values()) if (m.get(secretId) === String(oldPin)) { m.set(secretId, String(newPin)); n++; }
+      return n;
+    },
     forgetRun(runId) { runs.delete(runId); },
     clear() { runs.clear(); },
     // Kept out of JSON.stringify and util.inspect, so a stray log of the
@@ -98,7 +105,7 @@ export function approverLabel(list) {
  * @param {string} o.chatId                the calling chat ('' if unknown)
  * @param {{id:string, name:string}} o.secret
  * @param {string} o.command
- * @param {(id:string, pin:string) => {ok:boolean, value?:string}} o.decrypt
+ * @param {(id:string, pin:string) => Promise<{ok:boolean, value?:string}>|{ok:boolean, value?:string}} o.decrypt
  * @param {(o:{keepPin:boolean}) => Promise<{ok:boolean, value?:string, pin?:string, error?:string}>} o.askPerson
  * @returns {Promise<{ok:true, value:string, preauthorised:boolean, approvedBy:string[]} | {ok:false, error:string}>}
  */
@@ -119,7 +126,7 @@ export async function authoriseSecretUse({ runner, chatId = '', secret, command 
     // Read again: the person may have unlocked it while the team decided.
     const pin = runner.secretContext(chatId, secret.id)?.pin || '';
     if (pin) {
-      const dec = decrypt(secret.id, pin);
+      const dec = await decrypt(secret.id, pin);
       if (dec && dec.ok) { journal({ preauthorised: true }); return { ok: true, value: dec.value, preauthorised: true, approvedBy }; }
       runner.forgetSecret(fx.runId, secret.id);   // the secret was recreated: its old PIN is no use
     }

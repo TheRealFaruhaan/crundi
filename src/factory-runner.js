@@ -78,7 +78,7 @@ const SECRET_ASK_MS = 10 * 60 * 1000;
  * @param {{ under:(root:string)=>string[], remove:(key:string)=>any }} [o.services]  preview services a run started, by folder
  * @param {(kind:string, run:object, text:string) => void} [o.notify]
  * @param {(run:object) => void} [o.onChange]
- * @param {(id:string, pin:string) => {ok:boolean, name?:string, error?:string}} [o.unlockSecret]
+ * @param {(id:string, pin:string) => Promise<{ok:boolean, name?:string, needsUpgrade?:boolean, error?:string}>} [o.unlockSecret]
  *        checks a secret's PIN (secrets-store.decryptSecret); the value it
  *        returns is dropped at once
  * @param {(id:string) => {id:string, name:string}|null} [o.secretMeta]  a secret's name
@@ -156,7 +156,7 @@ export function createFactoryRunner({
   function writeCache(entry) {
     const id = st(entry).id;
     const tmp = cacheFile(id) + '.tmp';
-    writeFileSync(tmp, JSON.stringify({ rec: entry.rec, error: entry.live.error || '' }));
+    writeFileSync(tmp, JSON.stringify({ rec: entry.rec, error: entry.live.error || '' }), { mode: 0o600 });
     renameSync(tmp, cacheFile(id));
     try { onChange(summary(entry)); } catch { /* a listener's problem */ }
   }
@@ -367,12 +367,12 @@ export function createFactoryRunner({
       for (const sid of factory.settings.secrets || []) {
         const pin = secretPins[sid];
         if (pin == null || pin === '') continue;
-        const r = unlockSecret(sid, String(pin));
+        const r = await unlockSecret(sid, String(pin));
         if (!r || !r.ok) {
           const name = r?.name || secretMeta(sid)?.name || sid;
-          return { ok: false, field: 'secrets', secretId: sid, error: r?.error === 'Secret not found' ? `The secret "${name}" no longer exists; remove it from the factory.` : `The PIN for "${name}" is not right.` };
+          return { ok: false, field: 'secrets', secretId: sid, error: r?.error === 'Secret not found' ? `The secret "${name}" no longer exists; remove it from the factory.` : `The PIN or passphrase for "${name}" is not right.` };
         }
-        unlocked.push({ id: sid, name: r.name || secretMeta(sid)?.name || sid, pin: String(pin) });
+        unlocked.push({ id: sid, name: r.name || secretMeta(sid)?.name || sid, pin: String(pin), needsUpgrade: !!r.needsUpgrade });
       }
     }
 
@@ -444,7 +444,9 @@ export function createFactoryRunner({
         await drain(entry);
       });
       notify('started', summary(entry), `Factory "${factory.name}" started in ${key}.`);
-      return { ok: true, run: summary(entry) };
+      // upgradable: secrets unlocked with an old lock, for the client's "set a passphrase" prompt.
+      const upgradable = unlocked.filter(u => u.needsUpgrade).map(u => u.id);
+      return { ok: true, run: summary(entry), ...(upgradable.length ? { upgradable } : {}) };
     } finally {
       claiming.delete(key);
     }
@@ -2380,6 +2382,8 @@ export function createFactoryRunner({
 
   /** A PIN that no longer opens its secret (it was recreated): drop it. */
   function forgetSecret(runId, secretId) { vault.forget(runId, secretId); }
+  /** A secret was re-locked: runs holding its old lock keep it unlocked with the new one. */
+  function relockSecret(secretId, oldPin, newPin) { return vault.replacePin(secretId, oldPin, newPin); }
 
   /**
    * One use of a secret by the team, for the journal: its name, who used it,
@@ -2396,7 +2400,7 @@ export function createFactoryRunner({
   /** Which of a run's listed secrets are unlocked now (ids, never PINs). */
   function unlockedSecrets(runId) { return vault.unlocked(runId); }
 
-  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose, secretContext, askSecret, rememberSecret, forgetSecret, secretUsed, unlockedSecrets };
+  return { load, startRun, tellFromTrigger, handoff, askReply, endWait, resume, pause, recover, stopRun, finishAction, runDiff, runEvents, guardsChat, delegateJob, resultFromManager, setTeamMode, statusFor, setLimits, controlFromManager, messageFromManager, tickFromManager, listRuns, getRun, activeRunFor, chatInfo, answerPermissions, setManagerMode, watchUsage, dispose, secretContext, askSecret, rememberSecret, forgetSecret, relockSecret, secretUsed, unlockedSecrets };
 }
 
 /**

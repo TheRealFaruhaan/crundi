@@ -35,7 +35,9 @@ export const MAX_PREAUTH_MINUTES = 24 * 60;
 export const MAX_CHAT_GRANTS = 20;
 
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
-const PIN_RE = /^\d{6}$/;
+// A secret's lock: a 6-digit PIN (old secrets) or a passphrase. Its shape is
+// the store's business; here only that there is one, of a sane size.
+const isLock = (x) => typeof x === 'string' && x.length > 0 && x.length <= 1024;
 
 /**
  * How long, from a request body: { untilChatEnds: true } or { minutes: n }
@@ -84,7 +86,7 @@ export function createChatSecretVault({ now = () => Date.now(), onChange = () =>
      * expiresAt: a time in ms, or null for "until this chat ends".
      */
     grant(chatId, secretId, { name = '', pin, expiresAt = null } = {}) {
-      if (!ID_RE.test(String(chatId || '')) || !secretId || !PIN_RE.test(String(pin || ''))) return false;
+      if (!ID_RE.test(String(chatId || '')) || !secretId || !isLock(String(pin || ''))) return false;
       let m = chats.get(chatId);
       if (!m) { m = new Map(); chats.set(chatId, m); }
       if (!m.has(secretId) && m.size >= MAX_CHAT_GRANTS) return false;
@@ -139,6 +141,20 @@ export function createChatSecretVault({ now = () => Date.now(), onChange = () =>
       for (const chatId of [...chats.keys()]) if (drop(chatId, secretId)) changed.push(chatId);
       return changed;
     },
+    /**
+     * A secret was re-locked: a grant holding its old lock gets the new one,
+     * so the chat keeps its pre-authorisation. Grants holding anything else
+     * are left (they fail at use and are dropped then). Chats changed.
+     */
+    replacePin(secretId, oldPin, newPin) {
+      const changed = [];
+      if (!isLock(String(newPin || ''))) return changed;
+      for (const [chatId, m] of chats) {
+        const g = m.get(secretId);
+        if (g && g.pin === String(oldPin)) { g.pin = String(newPin); changed.push(chatId); }
+      }
+      return changed;
+    },
     /** Chats holding anything. */
     chatIds() { return [...chats.keys()]; },
     clear() { for (const chatId of [...chats.keys()]) vault.revokeChat(chatId); },
@@ -158,11 +174,12 @@ export function createChatSecretVault({ now = () => Date.now(), onChange = () =>
  * @param {string} o.chatId
  * @param {Array<{id:string, pin:string}>} o.secrets
  * @param {object} o.duration           parseDuration's input
- * @param {(id:string, pin:string) => {ok:boolean, name?:string, error?:string}} o.decrypt
+ * @param {(id:string, pin:string) => Promise<{ok:boolean, name?:string, error?:string}>|{ok:boolean, name?:string, error?:string}} o.decrypt
  * @param {() => number} [o.now]
- * @returns {{ok:true, granted:string[]} | {ok:false, error:string, secretId?:string}}
+ * @returns {Promise<{ok:true, granted:string[], upgradable?:string[]} | {ok:false, error:string, secretId?:string}>}
+ *   upgradable: the ids whose lock is old (needsUpgrade), for the client's prompt
  */
-export function grantChatSecrets({ vault, chatId, secrets, duration, decrypt, now = () => Date.now() }) {
+export async function grantChatSecrets({ vault, chatId, secrets, duration, decrypt, now = () => Date.now() }) {
   const d = parseDuration(duration);
   if (!d.ok) return d;
   const list = Array.isArray(secrets) ? secrets : [];
@@ -175,16 +192,17 @@ export function grantChatSecrets({ vault, chatId, secrets, duration, decrypt, no
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const pin = String((s && s.pin) || '');
-    if (!PIN_RE.test(pin)) return { ok: false, error: 'Enter a 6-digit PIN for each secret.', secretId: id };
-    const r = decrypt(id, pin);
+    if (!isLock(pin)) return { ok: false, error: 'Enter the PIN or passphrase for each secret.', secretId: id };
+    const r = await decrypt(id, pin);
     if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'Incorrect PIN', secretId: id };
-    checked.push({ id, name: r.name || '', pin });
+    checked.push({ id, name: r.name || '', pin, needsUpgrade: !!r.needsUpgrade });
   }
   const expiresAt = d.untilChatEnds ? null : now() + d.ms;
   const granted = [];
   for (const c of checked) if (vault.grant(chatId, c.id, { name: c.name, pin: c.pin, expiresAt })) granted.push(c.id);
   if (!granted.length) return { ok: false, error: 'Nothing could be pre-authorised for this chat.' };
-  return { ok: true, granted };
+  const upgradable = checked.filter((c) => c.needsUpgrade && granted.includes(c.id)).map((c) => c.id);
+  return { ok: true, granted, ...(upgradable.length ? { upgradable } : {}) };
 }
 
 /**
@@ -198,7 +216,7 @@ export function preauthorisedAsk({ vault, chatId, secretId, decrypt, askPerson, 
   return async (opts = {}) => {
     const pin = chatId ? vault.pin(chatId, secretId) : '';
     if (pin) {
-      const dec = decrypt(secretId, pin);
+      const dec = await decrypt(secretId, pin);
       if (dec && dec.ok) return { ok: true, value: dec.value, preauthorised: true, ...(opts.keepPin ? { pin } : {}) };
       vault.revoke(chatId, secretId);
       onRevoked(chatId);
