@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -55,14 +57,17 @@ data class SecretPromptState(
     val armed: String? = null, val pin: String = "", val error: String? = null, val busy: String? = null,
     /** "Allow for this chat" ticked on the open card ('chat-secret-preauth'), and for how long (a preset key). */
     val allow: Boolean = false, val allowFor: String = "1h",
+    /** "Save PIN for fingerprint" ticked on the open card (BiometricPins): kept once the PIN is accepted. */
+    val save: Boolean = false,
 )
 
 /**
  * Claude asking to use a secret, wherever the person is (the web's
  * sreq-dock, renderSecretPrompt): a card per request at the bottom of the
  * screen. "Release <name>" (Claude reads the value) or "Run a command with
- * <name>" (the command, the variable it is bound to). Approve opens the PIN
- * in the card itself; Unlock sends it; Deny refuses. Stateless, for tests.
+ * <name>" (the command, the variable it is bound to). The PIN box is on the
+ * card from the start: typing the PIN is the approval, Unlock (or the
+ * fingerprint) sends it, Deny refuses. Stateless, for tests.
  */
 @Composable
 fun SecretPromptDock(
@@ -81,6 +86,9 @@ fun SecretPromptDock(
     /** A PIN for this request's secret is saved behind the fingerprint (BiometricPins). */
     savedPin: (SecretRequest) -> Boolean = { false },
     onFingerprint: (SecretRequest) -> Unit = {},
+    /** Whether a card offers "Save PIN for fingerprint" (the option on, this PIN not saved yet). */
+    canSave: (SecretRequest) -> Boolean = { false },
+    onSave: (Boolean) -> Unit = {},
 ) {
     if (requests.isEmpty()) return
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
@@ -88,7 +96,7 @@ fun SecretPromptDock(
             Modifier.navigationBarsPadding().padding(12.dp).widthIn(max = 460.dp).fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            for (r in requests) SecretRequestCard(r, state, onApprove, onPin, onUnlock, onCancel, onDeny, canAllow(r), onAllow, onAllowFor, savedPin(r), { onFingerprint(r) })
+            for (r in requests) SecretRequestCard(r, state, onApprove, onPin, onUnlock, onCancel, onDeny, canAllow(r), onAllow, onAllowFor, savedPin(r), { onFingerprint(r) }, canSave(r), onSave)
         }
     }
 }
@@ -99,9 +107,14 @@ private fun SecretRequestCard(
     onApprove: (SecretRequest) -> Unit, onPin: (String) -> Unit, onUnlock: (SecretRequest) -> Unit, onCancel: () -> Unit, onDeny: (SecretRequest) -> Unit,
     canAllow: Boolean = false, onAllow: (Boolean) -> Unit = {}, onAllowFor: (String) -> Unit = {},
     saved: Boolean = false, onFingerprint: () -> Unit = {},
+    canSave: Boolean = false, onSave: (Boolean) -> Unit = {},
 ) {
     val run = r.kind == "run"
     val busy = s.busy == r.id
+    // One card is being answered at a time: the one typed in last (or the
+    // only one). Its PIN, ticks and error are the state's; the others start empty.
+    val mine = s.armed == r.id
+    val pin = if (mine) s.pin else ""
     Column(
         Modifier.fillMaxWidth().shadow(16.dp, Dimens.Shape).background(CrundiColors.BgCard, Dimens.Shape).border(Dimens.Hairline, CrundiColors.Accent, Dimens.Shape).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -122,38 +135,43 @@ private fun SecretRequestCard(
             )
             Text("the value is bound to \$${r.envName} and never shown to Claude", style = CrundiType.Meta)
         } else Text("Claude will be able to read this value.", style = CrundiType.Small)
-        if (s.armed == r.id) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                CrundiTextField(
-                    s.pin, { onPin(it.filter(Char::isDigit).take(6)) }, Modifier.weight(1f), placeholder = "PIN", password = true, mono = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                )
-                // A PIN saved behind the fingerprint, nothing typed: the fingerprint
-                // in Unlock's place. Typing brings Unlock back (PinButtons).
-                if (mv.obitech.crundi.PinButtons.fingerprint(saved, s.pin)) FingerprintButton(onFingerprint, enabled = !busy)
-                else CrundiButton(if (busy) "Unlocking…" else "Unlock", { onUnlock(r) }, kind = ButtonKind.Primary, enabled = !busy && s.pin.length == 6)
-                CrundiButton("Cancel", onCancel, enabled = !busy)
-            }
-            if (canAllow) {
-                CheckRow("Allow for this chat", s.allow) { onAllow(it) }
-                if (s.allow) {
-                    mv.obitech.crundi.ui.planning.ChipRow(ChatSecretGrant.PRESETS, s.allowFor) { onAllowFor(it) }
-                    Text(mv.obitech.crundi.ui.chats.ChatSecretPreauth.ALLOW_HINT, style = CrundiType.Meta)
-                }
-            }
-            s.error?.let { Text(it, style = CrundiType.Small.copy(color = CrundiColors.Red)) }
-        } else Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-            CrundiButton("Approve", { onApprove(r) }, kind = ButtonKind.Primary, enabled = !busy)
-            CrundiButton("Deny", { onDeny(r) }, enabled = !busy)
+        // The PIN is the approval: no separate step. Box and buttons one
+        // height, in one line: Approve (the fingerprint while nothing is
+        // typed and a PIN is saved) and Reject.
+        Row(
+            Modifier.fillMaxWidth().height(PIN_ROW_HEIGHT),
+            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CrundiTextField(
+                pin, { if (!mine) onApprove(r); onPin(it.filter(Char::isDigit).take(6)) }, Modifier.weight(1f).fillMaxHeight(), placeholder = "PIN", password = true, mono = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            )
+            // A PIN saved behind the fingerprint, nothing typed: the fingerprint
+            // in Approve's place. Typing brings Approve back (PinButtons).
+            if (mv.obitech.crundi.PinButtons.fingerprint(saved, pin)) FingerprintButton({ if (!mine) onApprove(r); onFingerprint() }, enabled = !busy, modifier = Modifier.fillMaxHeight().widthIn(min = PIN_ROW_HEIGHT))
+            else CrundiButton(if (busy) "Approving…" else "Approve", { onUnlock(r) }, Modifier.fillMaxHeight(), kind = ButtonKind.Primary, enabled = !busy && mine && pin.length == 6)
+            CrundiButton("Reject", { onDeny(r) }, Modifier.fillMaxHeight(), enabled = !busy)
         }
+        if (canAllow) {
+            CheckRow("Allow for this chat", mine && s.allow) { if (!mine) onApprove(r); onAllow(it) }
+            if (mine && s.allow) {
+                mv.obitech.crundi.ui.planning.ChipRow(ChatSecretGrant.PRESETS, s.allowFor) { onAllowFor(it) }
+                Text(mv.obitech.crundi.ui.chats.ChatSecretPreauth.ALLOW_HINT, style = CrundiType.Meta)
+            }
+        }
+        if (canSave) CheckRow("Save PIN for fingerprint", mine && s.save) { if (!mine) onApprove(r); onSave(it) }
+        if (mine) s.error?.let { Text(it, style = CrundiType.Small.copy(color = CrundiColors.Red)) }
     }
 }
 
+/** One height for the PIN box and its buttons, so they line up. */
+val PIN_ROW_HEIGHT = 48.dp
+
 /** The fingerprint button that stands where a PIN window's submit button is (BiometricPins). */
 @Composable
-fun FingerprintButton(onClick: () -> Unit, enabled: Boolean = true, modifier: Modifier = Modifier) {
+fun FingerprintButton(onClick: () -> Unit, enabled: Boolean = true, modifier: Modifier = Modifier.size(PIN_ROW_HEIGHT)) {
     androidx.compose.foundation.layout.Box(
-        modifier.size(46.dp).clip(Dimens.ShapeSm).background(if (enabled) CrundiColors.Accent else CrundiColors.BgTertiary, Dimens.ShapeSm)
+        modifier.clip(Dimens.ShapeSm).background(if (enabled) CrundiColors.Accent else CrundiColors.BgTertiary, Dimens.ShapeSm)
             .clickable(enabled = enabled, onClickLabel = "Use your fingerprint", onClick = onClick)
             .semantics { contentDescription = "Use your fingerprint" }.testTag("pin-fingerprint"),
         contentAlignment = Alignment.Center,
@@ -206,7 +224,6 @@ fun SecretPromptRoute(chatId: String? = null) {
     // PINs saved behind the fingerprint, for this server (BiometricPins).
     val keeper = mv.obitech.crundi.LocalPinKeeper.current
     val serverKey = remember(api) { mv.obitech.crundi.SavedPins.serverKey(api.transport.baseUrl) }
-    var offer by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     fun unlockWith(r: SecretRequest, pin: String, typed: Boolean) {
         val allow = if (preauth && st.allow && r.kind == "run" && r.sessionId.isNotEmpty()) st.allowFor else null
         st = st.copy(pin = pin, busy = r.id, error = null)
@@ -214,7 +231,10 @@ fun SecretPromptRoute(chatId: String? = null) {
             st = try {
                 api.secrets.approve(r.id, pin, allowForChat = allow)
                 fetched = fetched?.filter { it.id != r.id }
-                if (mv.obitech.crundi.PinButtons.offerSave(keeper.on, keeper.saved(serverKey, r.secretId), typed)) offer = Triple(r.secretId, r.secretName, pin)
+                // "Save PIN for fingerprint" was ticked: keep it (the fingerprint confirms).
+                if (st.save && mv.obitech.crundi.PinButtons.offerSave(keeper.on, keeper.saved(serverKey, r.secretId), typed)) {
+                    keeper.save(serverKey, r.secretId, r.secretName, pin) { _, why -> if (why != null) st = st.copy(error = why) }
+                }
                 SecretPromptState(allowFor = st.allowFor)
             } catch (e: Exception) {
                 // A saved PIN the server refuses (the secret was made again): forget it.
@@ -232,7 +252,10 @@ fun SecretPromptRoute(chatId: String? = null) {
         onFingerprint = { r ->
             keeper.unlock(serverKey, r.secretId, r.secretName, onPin = { pin -> unlockWith(r, pin, typed = false) }, onFail = { why -> if (why != null) st = st.copy(error = why) })
         },
-        onApprove = { st = SecretPromptState(armed = it.id, allowFor = st.allowFor) },
+        canSave = { r -> keeper.on && !keeper.saved(serverKey, r.secretId) },
+        onSave = { st = st.copy(save = it) },
+        // Starting on another card: that card's answer begins empty.
+        onApprove = { if (st.armed != it.id) st = SecretPromptState(armed = it.id, allowFor = st.allowFor) },
         onPin = { st = st.copy(pin = it, error = null) },
         onCancel = { st = SecretPromptState() },
         onUnlock = { r -> unlockWith(r, st.pin, typed = true) },
@@ -243,12 +266,4 @@ fun SecretPromptRoute(chatId: String? = null) {
             }
         },
     )
-    offer?.let { (secretId, name, pin) ->
-        mv.obitech.crundi.ui.components.CrundiDialog(
-            "Save this PIN behind your fingerprint?", onDismiss = { offer = null },
-            message = "Keep the PIN for $name on this phone, encrypted with a key only your fingerprint unlocks. Next time, a touch approves it.",
-            confirm = "Save with fingerprint", dismiss = "Not now",
-            onConfirm = { offer = null; keeper.save(serverKey, secretId, name, pin) { _, why -> if (why != null) st = st.copy(error = why) } },
-        )
-    }
 }

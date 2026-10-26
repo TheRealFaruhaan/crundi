@@ -75,7 +75,8 @@ data class SecretsState(
 )
 
 /** A PIN to ask for: what it unlocks and the words of the dialog. */
-data class PinAsk(val title: String, val subtitle: String, val submit: String, val run: suspend (String) -> Unit)
+/** [reject]: for a request, the dialog's other button rejects it ("Reject") instead of only closing ("Cancel"). */
+data class PinAsk(val title: String, val subtitle: String, val submit: String, val reject: (suspend () -> Unit)? = null, val run: suspend (String) -> Unit)
 
 class SecretsEvents(
     /** Ask for the PIN, then run with it; a wrong PIN keeps the dialog open with the server's words. */
@@ -117,7 +118,7 @@ fun SecretsRoute() {
             onCopy = { s -> revealed[s.id]?.let { clip.setText(AnnotatedString(it)); actions.note = Actions.Note("Copied", false) } },
             onDelete = { s -> actions.run(s.id, "Deleted", list::reload) { api.secrets.delete(s.id) } },
             onApprove = { r ->
-                pin = PinAsk("Approve access", "Enter the PIN for \"${r.secretName}\" to release it to Claude.", "Approve") { p ->
+                pin = PinAsk("Approve access", "Enter the PIN for \"${r.secretName}\" to release it to Claude.", "Approve", reject = { api.secrets.deny(r.id); list.reload() }) { p ->
                     api.secrets.approve(r.id, p); actions.note = Actions.Note("Approved", false); list.reload()
                 }
             },
@@ -179,7 +180,7 @@ private fun RequestCard(r: SecretRequest, busy: Boolean, events: SecretsEvents) 
         } else Text("Claude will be able to read this value.", style = CrundiType.Small)
         Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CrundiButton("Approve", { events.onApprove(r) }, kind = ButtonKind.Primary, icon = "check", enabled = !busy)
-            CrundiButton("Deny", { events.onDeny(r) }, icon = "x", enabled = !busy)
+            CrundiButton("Reject", { events.onDeny(r) }, icon = "x", enabled = !busy)
         }
     }
 }
@@ -254,7 +255,8 @@ fun AddSecretForm(onCancel: () -> Unit, onSave: (String, String, String, String)
 fun PinCard(ask: PinAsk, pin: String, onPin: (String) -> Unit, error: String?, working: Boolean, onSubmit: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier, extra: (@Composable () -> Unit)? = null) {
     DialogCard(
         ask.title, modifier, message = ask.subtitle,
-        confirm = if (working) "Unlocking…" else ask.submit, onConfirm = { if (!working) onSubmit() }, onDismiss = onCancel,
+        confirm = if (working) "${ask.submit}…" else ask.submit, onConfirm = { if (!working) onSubmit() }, onDismiss = onCancel,
+        dismiss = if (ask.reject != null) "Reject" else "Cancel",
     ) {
         CrundiTextField(
             pin, { t -> onPin(t.filter(Char::isDigit).take(6)) }, placeholder = "6-digit PIN", password = true, mono = true, icon = "lock",
@@ -291,6 +293,12 @@ private fun PinDialog(ask: PinAsk, onDone: () -> Unit) {
         }
     }
     androidx.compose.ui.window.Dialog(onDismissRequest = { pin = ""; onDone() }) {
-        PinCard(ask, pin, { pin = it; error = null }, error, working, ::submit, { pin = ""; onDone() }, Modifier.padding(16.dp))
+        PinCard(ask, pin, { pin = it; error = null }, error, working, ::submit, {
+            pin = ""
+            // A request's Reject refuses it; anything else just closes.
+            // Not this dialog's scope: it goes as soon as onDone() closes it.
+            ask.reject?.let { r -> kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch { runCatching { r() } } }
+            onDone()
+        }, Modifier.padding(16.dp))
     }
 }

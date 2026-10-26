@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -241,6 +242,12 @@ fun PaneMenuBody(v: PaneView, actions: PaneActions, onDismiss: () -> Unit = {}) 
                 KindTag("chat")
             }
             MenuItem("layers", "Bubble") { onDismiss(); actions.bubble(v) }
+            // The chat's own header is not drawn in a pane: its secrets are reached from here.
+            val caps = mv.obitech.crundi.ui.shell.LocalAppServices.current.shell.state.collectAsState().value.capabilities
+            val chatId = v.paneId
+            if (chatId != null && mv.obitech.crundi.ui.chats.ChatSecretPreauth.supported(caps) && p?.collaborator == null) {
+                MenuItem("lock", "Secrets for this chat") { onDismiss(); mv.obitech.crundi.ui.chats.ChatSecretsBus.open(chatId) }
+            }
         }
         if (v.kind != PaneKind.Parked) {
             MenuItem("chevron-left", "Move left") { onDismiss(); actions.move(v, -1) }

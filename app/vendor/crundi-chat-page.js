@@ -265,7 +265,7 @@
   // sat for three minutes and failed. Requests from this chat (and ones no
   // chat is named for) are shown over the top of it, with the same two
   // answers: approve with the PIN, or deny.
-  var asks = [], askArmed = '', askError = '', askShown = '';
+  var asks = [], askArmed = '', askError = '', askShown = '', askAuto = false;
   var askAllow = { on: false, duration: '1h' };   // "Allow for this chat" on the open card
   var CS = window.CrundiChatSecrets || null;
   function canAllow(r) { return !!(CS && CS.isSupported() && r && r.kind === 'run' && r.sessionId === sid); }
@@ -284,6 +284,10 @@
   function drawAsks() {
     var host = $('cp-ask');
     if (askArmed && !asks.some(function (r) { return r.id === askArmed; })) { askArmed = ''; askError = ''; }
+    // The PIN box is on the card from the start: typing the PIN is the
+    // approval. The first request opens by itself (without taking the
+    // keyboard); Approve on another card moves the box there.
+    if (!askArmed && asks.length) { askArmed = asks[0].id; askAuto = true; }
     // Rebuilt only when something changed: rebuilding under someone who is
     // half-way through a PIN would eat the digits.
     var sig = asks.map(function (r) { return r.id; }).join(',') + '|' + askArmed + '|' + askError;
@@ -321,12 +325,12 @@
           });
         };
         pin.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); unlock(); } });
-        btn('Unlock', 'go', unlock);
-        btn('Cancel', '', function () { askArmed = ''; askError = ''; drawAsks(); });
-        setTimeout(function () { try { pin.focus(); } catch (e) { /* not focusable yet */ } }, 30);
+        btn('Approve', 'go', unlock);
+        btn('Reject', '', function () { askArmed = ''; askError = ''; askPost({ action: 'deny', reqId: r.id }).then(loadAsks); });
+        if (!askAuto) setTimeout(function () { try { pin.focus(); } catch (e) { /* not focusable yet */ } }, 30);
       } else {
-        btn('Approve', 'go', function () { askArmed = r.id; askError = ''; askAllow = { on: false, duration: askAllow.duration }; drawAsks(); });
-        btn('Deny', '', function () { askPost({ action: 'deny', reqId: r.id }).then(loadAsks); });
+        btn('Approve', 'go', function () { askArmed = r.id; askAuto = false; askError = ''; askAllow = { on: false, duration: askAllow.duration }; drawAsks(); });
+        btn('Reject', '', function () { askPost({ action: 'deny', reqId: r.id }).then(loadAsks); });
       }
       card.appendChild(row);
       if (askArmed === r.id && canAllow(r)) card.appendChild(CS.allowRow(askAllow));

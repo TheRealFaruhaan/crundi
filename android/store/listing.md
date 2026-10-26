@@ -61,6 +61,25 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.1-dev.8 (en-US)
+
+Version code 26. Since 1.1.1-dev.7 (code 25): one-step secret approval
+(PIN on the card, Approve and Reject, one height), save-with-fingerprint as
+a tick box, and Secrets for this chat in a workbench pane's menu.
+
+```
+<en-US>
+Approving a secret is one step now.
+
+- The PIN box is on the request card straight away: Approve sends it, Reject refuses.
+- With a saved PIN, the fingerprint sits in Approve's place until you type.
+- Save PIN for fingerprint is a tick box on the card.
+- Secrets for this chat is in a workbench chat's menu.
+
+Needs a Crundi server, version 1.21.1 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.1-dev.7 (en-US)
 
 Version code 25. Since 1.1.1-dev.6 (code 24): ring time and snooze for

@@ -258,3 +258,14 @@ fun ChatSecretsRoute(api: CrundiClient, chatId: String, grants: List<ChatSecretG
         onClose = ::close,
     ))
 }
+
+/**
+ * "Secrets for this chat" asked for from outside the chat: a workbench pane's
+ * menu, where the chat's own header (with its lock and menu) is not drawn.
+ * The chat with that id opens its secrets sheet.
+ */
+object ChatSecretsBus {
+    private val flow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val opens: kotlinx.coroutines.flow.SharedFlow<String> get() = flow
+    fun open(chatId: String) { flow.tryEmit(chatId) }
+}

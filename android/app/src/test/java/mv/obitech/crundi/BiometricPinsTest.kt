@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -130,7 +131,7 @@ class BiometricPinsTest {
 
     private val req = SecretRequest("r1", "s1", "PLAY_UPLOAD_KEY", "crundi", "", kind = "run", command = "./sign.sh", envName = "KEY", sessionId = "c1")
 
-    @Test fun typingSwapsTheFingerprintForUnlockAndBack() {
+    @Test fun typingSwapsTheFingerprintForApproveAndBack() {
         var fingered = 0
         compose.setContent {
             CrundiTheme {
@@ -139,19 +140,19 @@ class BiometricPinsTest {
             }
         }
         compose.onNodeWithTag("pin-fingerprint").assertExists()
-        compose.onNodeWithText("Unlock").assertDoesNotExist()
+        compose.onNodeWithText("Approve").assertDoesNotExist()
         compose.onNode(hasSetTextAction()).performTextInput("4")
         compose.onNodeWithTag("pin-fingerprint").assertDoesNotExist()
-        compose.onNodeWithText("Unlock").assertExists()
+        compose.onNodeWithText("Approve").assertExists()
         compose.onNode(hasSetTextAction()).performTextClearance()
         compose.onNodeWithTag("pin-fingerprint").assertExists().performClick()
         assertEquals(1, fingered)
     }
 
-    @Test fun noSavedPinMeansTheOrdinaryUnlock() {
+    @Test fun noSavedPinMeansTheOrdinaryApprove() {
         compose.setContent { CrundiTheme { SecretPromptDock(listOf(req), SecretPromptState(armed = "r1")) } }
         compose.onNodeWithTag("pin-fingerprint").assertDoesNotExist()
-        compose.onNodeWithText("Unlock").assertExists()
+        compose.onNodeWithText("Approve").assertExists()
     }
 
     @Test fun theFingerprintFillsThePinAndSubmitsIt() {
@@ -170,8 +171,8 @@ class BiometricPinsTest {
             override fun forget(server: String, secretId: String) {}
         }
         compose.setContent { CrundiTheme { CompositionLocalProvider(LocalAppServices provides services, LocalPinKeeper provides keeper) { SecretPromptRoute() } } }
-        compose.waitUntil(5000) { compose.onAllNodes(hasText("Approve")).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Approve").performClick()
+        // The PIN box is on the card from the start: no Approve step first.
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("pin-fingerprint")).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("pin-fingerprint").performClick()
         compose.waitUntil(5000) { t.requests.any { it.method == "POST" && it.path == "/api/secrets" } }
         val body = t.requests.last { it.method == "POST" && it.path == "/api/secrets" }.json!!.jsonObject

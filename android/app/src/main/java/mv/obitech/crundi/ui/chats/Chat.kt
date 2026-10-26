@@ -607,6 +607,10 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
     // Secrets pre-authorised for this chat: an owner's own chat, on a server that offers it.
     val secretsOk = ChatSecretPreauth.supported(shellData.capabilities) && server?.role != "collaborator" && paneRow?.collaborator == null
     val grants = rememberChatGrants(api, chatId, secretsOk)
+    // Asked for from outside the chat's own header (a workbench pane's menu).
+    LaunchedEffect(chatId, secretsOk) {
+        if (secretsOk) ChatSecretsBus.opens.collect { if (it == chatId) ui = ui.copy(sheet = ChatSheet.Secrets) }
+    }
     val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true, secretsOk = secretsOk, secretGrants = ChatSecretPreauth.active(grants, System.currentTimeMillis()).size)
     // A new chat (or one back under a new id) with nothing of its own takes the project's draft, unless another open chat has it.
     LaunchedEffect(project) { composer.attach(project, ui.draft)?.let { ui = ui.copy(draft = it) } }

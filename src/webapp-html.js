@@ -11211,6 +11211,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
 
     var sreqArmed = null;    // request id whose PIN field is open
+    var sreqAuto = false;    // opened by itself (the first card), so not focused
     var sreqAllow = { on: false, duration: '1h' };   // "Allow for this chat" on that card
     var sreqError = '';      // inline PIN error for that card
 
@@ -15119,6 +15120,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function renderSecretPrompt() {
       let dock = $('#sreq-dock');
       if (!secretRequests.length) { if (dock) dock.remove(); return; }
+      // The PIN box is on the card from the start: typing the PIN is the
+      // approval. The first request is open without a click (not focused,
+      // so it never takes the keyboard from the composer); Approve on another
+      // card moves the box there.
+      if (!sreqArmed || !secretRequests.some(x => x.id === sreqArmed)) { sreqArmed = secretRequests[0].id; sreqAuto = true; }
       if (!dock) {
         dock = document.createElement('div');
         dock.className = 'sreq-dock';
@@ -15143,14 +15149,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + (sreqArmed === r.id
             ? '<div class="sreq-pin">'
               + '<input id="sreq-pin" inputmode="numeric" maxlength="6" placeholder="PIN" autocomplete="off" aria-label="6-digit PIN">'
-              + '<button class="kanban-btn primary" data-sp-confirm="' + escHtml(r.id) + '">Unlock</button>'
-              + '<button class="kanban-btn" data-sp-cancel="1">Cancel</button>'
+              + '<button class="kanban-btn primary" data-sp-confirm="' + escHtml(r.id) + '">Approve</button>'
+              + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Reject</button>'
               + '</div>'
               + (sreqCanAllow(r) ? '<div id="sreq-allow"></div>' : '')
               + (sreqError ? '<div class="sreq-err">' + escHtml(sreqError) + '</div>' : '')
             : '<div class="sreq-actions">'
               + '<button class="kanban-btn primary" data-sp-approve="' + escHtml(r.id) + '">Approve</button>'
-              + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Deny</button>'
+              + '<button class="kanban-btn" data-sp-deny="' + escHtml(r.id) + '">Reject</button>'
               + '</div>')
           + '</div>';
       }
@@ -15165,10 +15171,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (pin) {
         pin.value = typed;
         if (hadFocus || sreqError) { pin.focus(); pin.select(); }
-        else setTimeout(() => pin.focus(), 30);
+        else if (!sreqAuto) setTimeout(() => pin.focus(), 30);
         pin.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter') { ev.preventDefault(); confirmSecretPin(sreqArmed); }
-          if (ev.key === 'Escape') { sreqArmed = null; sreqError = ''; renderSecretPrompt(); }
+          if (ev.key === 'Escape') { sreqError = ''; pin.blur(); }
         });
       }
     }
@@ -15185,7 +15191,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const pin = String(el.value || '').trim();
       if (!/^\\d{6}$/.test(pin)) { sreqError = 'Enter a 6-digit PIN'; renderSecretPrompt(); return; }
       const btn = $('[data-sp-confirm]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Unlocking\\u2026'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Approving\\u2026'; }
       let d;
       const req = secretRequests.find(x => x.id === reqId);
       const allow = sreqCanAllow(req) && window.CrundiChatSecrets ? window.CrundiChatSecrets.allowForChat(sreqAllow) : null;
@@ -15209,6 +15215,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const ok = e.target.closest('[data-sp-approve]');
       if (ok) {
         sreqArmed = ok.dataset.spApprove;
+        sreqAuto = false;
         sreqAllow = { on: false, duration: sreqAllow.duration };
         sreqError = '';
         renderSecretPrompt();
@@ -15223,7 +15230,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         sreqArmed = null;
         sreqError = '';
         await secretsPost({ action: 'deny', reqId: no.dataset.spDeny });
-        toast('Denied', 'info');
+        toast('Rejected', 'info');
       }
     }
 
