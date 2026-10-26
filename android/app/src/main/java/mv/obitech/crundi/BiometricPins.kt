@@ -167,8 +167,16 @@ interface PinKeeper {
     fun unlock(server: String, secretId: String, name: String, onPin: (String) -> Unit, onFail: (String?) -> Unit)
     /** Ask for the fingerprint and save [pin] behind it. */
     fun save(server: String, secretId: String, name: String, pin: String, done: (Boolean, String?) -> Unit)
-    /** A saved PIN the server no longer takes (the secret was made again): drop it. */
+    /**
+     * A saved PIN the server no longer takes (the secret was made again, or
+     * its lock was changed): drop it, so the new one can be saved.
+     */
     fun forget(server: String, secretId: String)
+
+    companion object {
+        /** What may be kept: a 6-digit PIN or a passphrase (any text, as the server takes it). */
+        fun storable(pin: String): Boolean = pin.isNotEmpty() && pin.length <= 1024
+    }
 
     object None : PinKeeper {
         override val on = false
@@ -222,13 +230,13 @@ class ActivityPinKeeper(private val activity: FragmentActivity) : PinKeeper {
         val cipher = try { PinKey.decrypter(sealed) } catch (e: PinKey.Invalidated) { invalidated(); return onFail(BiometricPins.INVALIDATED) } catch (e: Exception) { return onFail("The saved PIN could not be opened. Type it.") }
         prompt("Unlock $name", "Use your fingerprint to fill in its PIN", cipher, { c ->
             val pin = runCatching { String(c.doFinal(sealed.data), Charsets.UTF_8) }.getOrNull()
-            if (pin == null || !Regex("^\\d{6}$").matches(pin)) { store.forget(server, secretId); version.intValue++; onFail("The saved PIN could not be opened, so it was forgotten. Type it.") }
+            if (pin == null || !PinKeeper.storable(pin)) { store.forget(server, secretId); version.intValue++; onFail("The saved PIN could not be opened, so it was forgotten. Type it.") }
             else onPin(pin)
         }, onFail)
     }
 
     override fun save(server: String, secretId: String, name: String, pin: String, done: (Boolean, String?) -> Unit) {
-        if (!on || !Regex("^\\d{6}$").matches(pin)) return done(false, null)
+        if (!on || !PinKeeper.storable(pin)) return done(false, null)
         val cipher = try { PinKey.encrypter() } catch (e: PinKey.Invalidated) { invalidated(); return done(false, BiometricPins.INVALIDATED) } catch (e: Exception) { return done(false, "This phone could not make a key for it.") }
         prompt("Save the PIN for $name", "Use your fingerprint to keep it on this phone", cipher, { c ->
             val ok = runCatching { store.put(server, secretId, name, Sealed(c.iv, c.doFinal(pin.toByteArray(Charsets.UTF_8)))) }.isSuccess

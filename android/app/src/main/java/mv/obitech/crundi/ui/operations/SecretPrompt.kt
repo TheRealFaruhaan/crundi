@@ -142,14 +142,12 @@ private fun SecretRequestCard(
             Modifier.fillMaxWidth().height(PIN_ROW_HEIGHT),
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
-            CrundiTextField(
-                pin, { if (!mine) onApprove(r); onPin(it.filter(Char::isDigit).take(6)) }, Modifier.weight(1f).fillMaxHeight(), placeholder = "PIN", password = true, mono = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            )
+            // A 6-digit PIN as always, or a passphrase ('secret-passphrase').
+            LockField(pin, { if (!mine) onApprove(r); onPin(it) }, r.lock, Modifier.weight(1f).fillMaxHeight())
             // A PIN saved behind the fingerprint, nothing typed: the fingerprint
             // in Approve's place. Typing brings Approve back (PinButtons).
             if (mv.obitech.crundi.PinButtons.fingerprint(saved, pin)) FingerprintButton({ if (!mine) onApprove(r); onFingerprint() }, enabled = !busy, modifier = Modifier.fillMaxHeight().widthIn(min = PIN_ROW_HEIGHT))
-            else CrundiButton(if (busy) "Approving…" else "Approve", { onUnlock(r) }, Modifier.fillMaxHeight(), kind = ButtonKind.Primary, enabled = !busy && mine && pin.length == 6)
+            else CrundiButton(if (busy) "Approving…" else "Approve", { onUnlock(r) }, Modifier.fillMaxHeight(), kind = ButtonKind.Primary, enabled = !busy && mine && SecretLocks.lockOk(r.lock, pin))
             CrundiButton("Reject", { onDeny(r) }, Modifier.fillMaxHeight(), enabled = !busy)
         }
         if (canAllow) {
@@ -159,7 +157,7 @@ private fun SecretRequestCard(
                 Text(mv.obitech.crundi.ui.chats.ChatSecretPreauth.ALLOW_HINT, style = CrundiType.Meta)
             }
         }
-        if (canSave) CheckRow("Save PIN for fingerprint", mine && s.save) { if (!mine) onApprove(r); onSave(it) }
+        if (canSave) CheckRow(if (SecretLocks.passphrase(r.lock)) "Save passphrase for fingerprint" else "Save PIN for fingerprint", mine && s.save) { if (!mine) onApprove(r); onSave(it) }
         if (mine) s.error?.let { Text(it, style = CrundiType.Small.copy(color = CrundiColors.Red)) }
     }
 }
@@ -218,6 +216,8 @@ fun SecretPromptRoute(chatId: String? = null) {
     val all = SecretPrompts.merge(live, fetched)
     val requests = if (chatId == null) all else SecretPrompts.forChat(all, chatId, server?.terminals?.firstOrNull { it.id == chatId }?.project.orEmpty())
     var st by remember { mutableStateOf(SecretPromptState()) }
+    // An old lock just accepted: "set a passphrase" now ('secret-upgrade'). Memory only.
+    var upgrade by remember { mutableStateOf<PendingUpgrade?>(null) }
     val scope = rememberCoroutineScope()
     val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
     val preauth = mv.obitech.crundi.ui.chats.ChatSecretPreauth.supported(shell.capabilities) && server?.role != "collaborator"
@@ -231,13 +231,15 @@ fun SecretPromptRoute(chatId: String? = null) {
             st = try {
                 api.secrets.approve(r.id, pin, allowForChat = allow)
                 fetched = fetched?.filter { it.id != r.id }
+                if (SecretLocks.offerUpgrade(shell.capabilities, r.needsUpgrade)) upgrade = PendingUpgrade(r.secretId, r.secretName, r.lock, pin)
                 // "Save PIN for fingerprint" was ticked: keep it (the fingerprint confirms).
                 if (st.save && mv.obitech.crundi.PinButtons.offerSave(keeper.on, keeper.saved(serverKey, r.secretId), typed)) {
                     keeper.save(serverKey, r.secretId, r.secretName, pin) { _, why -> if (why != null) st = st.copy(error = why) }
                 }
                 SecretPromptState(allowFor = st.allowFor)
             } catch (e: Exception) {
-                // A saved PIN the server refuses (the secret was made again): forget it.
+                // A saved PIN the server refuses (the secret was made again, or its
+                // lock changed): forget it, so the new one can be saved.
                 if (!typed && e is mv.obitech.crundi.api.ApiException && e.status in 200..499) keeper.forget(serverKey, r.secretId)
                 st.copy(busy = null, pin = "", error = errorText(e))
             }
@@ -266,4 +268,5 @@ fun SecretPromptRoute(chatId: String? = null) {
             }
         },
     )
+    upgrade?.let { up -> UpgradeLockDialog(api, up) { upgrade = null } }
 }

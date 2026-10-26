@@ -662,7 +662,7 @@ fun StartRunRoute(factoryId: String) {
         },
     )
     unlocking?.let { list ->
-        SecretPinsDialog(list, check = { id, pin -> api.secrets.check(id, pin) }) { pins ->
+        SecretPinsDialog(list, check = { id, pin -> api.secrets.check(id, pin) }, api = api, offerUpgrade = mv.obitech.crundi.ui.operations.SecretLocks.CAP_UPGRADE in shell.capabilities) { pins ->
             unlocking = null
             val f = factories.load.valueOrNull?.firstOrNull { it.id == form.factoryId }
             if (pins != null && f != null) scope.launch { startWith(f, pins) }

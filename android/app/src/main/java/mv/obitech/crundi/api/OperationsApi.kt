@@ -111,7 +111,8 @@ class DockerApi internal constructor(private val rpc: Rpc) {
 }
 
 /**
- * Secrets: names only. Values are revealed with the 6-digit PIN. Claude's
+ * Secrets: names only. Values are revealed with the secret's PIN (6 digits, older
+ * secrets) or passphrase. Claude's
  * requests to use one arrive live ([CrundiClient.secretRequests]) and are
  * approved with the PIN or denied.
  */
@@ -146,6 +147,18 @@ class SecretsApi internal constructor(private val rpc: Rpc) {
     suspend fun revokeAllChat(sessionId: String): List<ChatSecretGrant> =
         rpc.read(rpc.post("/api/secrets/chat", mapOf("action" to "revokeAll", "sessionId" to sessionId)), "grants", emptyList())
     suspend fun deny(requestId: String) { rpc.post("/api/secrets", mapOf("action" to "deny", "reqId" to requestId)) }
+
+    /**
+     * Edit a secret ('secret-edit'), proven by its current lock [pin]:
+     * [newPin] re-locks it with a passphrase (8+ characters, not digits only),
+     * [value] replaces the value under the same lock, [name] and
+     * [description] as [rename]. Also the upgrade of an old lock
+     * ('secret-upgrade': [newPin] only). Never returns the value. Wrong lock:
+     * ApiException "Incorrect PIN" / "Incorrect passphrase".
+     */
+    suspend fun edit(id: String, pin: String, newPin: String? = null, value: String? = null, name: String? = null, description: String? = null) {
+        rpc.post("/api/secrets", mapOf("action" to "edit", "id" to id, "pin" to pin, "newPin" to newPin, "value" to value, "name" to name, "description" to description))
+    }
 }
 
 /** Things waiting on the person, across every chat and collaborator. Live in [CrundiClient.approvals]. */

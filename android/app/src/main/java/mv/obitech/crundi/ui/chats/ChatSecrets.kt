@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.mapNotNull
@@ -62,7 +63,7 @@ object ChatSecretPreauth {
     const val CAPABILITY = "chat-secret-preauth"
     fun supported(capabilities: Set<String>): Boolean = CAPABILITY in capabilities
 
-    const val HINT = "A pre-authorised secret lets this chat run commands with it without asking for the PIN. Only to run: its value is never shown, and Claude reading a value still asks you every time. The PINs are kept in the server's memory only, for this chat only."
+    const val HINT = "A pre-authorised secret lets this chat run commands with it without asking for the PIN or passphrase. Only to run: its value is never shown, and Claude reading a value still asks you every time. They are kept in the server's memory only, for this chat only."
     const val ALLOW_HINT = "This chat may then run commands with this secret without asking, until then. Its value is never shown."
 
     /** Grants the clock has not passed. */
@@ -85,15 +86,31 @@ object ChatSecretPreauth {
 
     /** The dialog's form after ticking or unticking a secret (its PIN goes with it). */
     fun toggle(f: ChatSecretsForm, id: String): ChatSecretsForm =
-        if (id in f.chosen) f.copy(chosen = f.chosen - id, pins = f.pins - id, error = null) else f.copy(chosen = f.chosen + id, error = null)
+        if (id in f.chosen) f.copy(chosen = f.chosen - id, pins = f.pins - id, filled = f.filled - id, error = null) else f.copy(chosen = f.chosen + id, error = null)
 
-    fun pin(f: ChatSecretsForm, id: String, typed: String): ChatSecretsForm = f.copy(pins = f.pins + (id to typed.filter(Char::isDigit).take(6)), error = null, bad = if (f.bad == id) null else f.bad)
+    /** A secret's lock kind, as the list says ("pin" when it does not: an older server). */
+    fun lockOf(f: ChatSecretsForm, id: String): String = f.secrets?.firstOrNull { it.id == id }?.lock ?: "pin"
+
+    /** Typed by the person: kept as the lock's field keeps it. */
+    fun pin(f: ChatSecretsForm, id: String, typed: String): ChatSecretsForm =
+        f.copy(pins = f.pins + (id to mv.obitech.crundi.ui.operations.SecretLocks.filter(lockOf(f, id), typed)), filled = f.filled - id, error = null, bad = if (f.bad == id) null else f.bad)
+
+    /** Filled in from the fingerprint (BiometricPins): remembered as such, so a refusal forgets the saved one. */
+    fun filledIn(f: ChatSecretsForm, id: String, saved: String): ChatSecretsForm =
+        f.copy(pins = f.pins + (id to saved), filled = f.filled + id, error = null, bad = if (f.bad == id) null else f.bad)
+
+    /** After a refusal naming [bad]: the saved lock to forget from the phone, when that one came from the fingerprint. */
+    fun refusedSaved(f: ChatSecretsForm, bad: String?): String? = bad?.takeIf { it in f.filled }
+
+    /** After a grant: the chosen secrets on an old lock, with the lock just accepted, to offer the upgrade for. */
+    fun upgrades(f: ChatSecretsForm, pins: Map<String, String>): List<mv.obitech.crundi.ui.operations.PendingUpgrade> =
+        pins.mapNotNull { (id, pin) -> f.secrets?.firstOrNull { it.id == id && it.needsUpgrade }?.let { mv.obitech.crundi.ui.operations.PendingUpgrade(id, it.name, it.lock, pin) } }
 
     /** What is wrong before sending, or null. */
     fun problem(f: ChatSecretsForm): Pair<String, String?>? {
         if (f.chosen.isEmpty()) return "Choose at least one secret." to null
-        val missing = f.chosen.firstOrNull { !Regex("^\\d{6}$").matches(f.pins[it].orEmpty()) }
-        return missing?.let { "Enter the 6-digit PIN of each secret chosen." to it }
+        val missing = f.chosen.firstOrNull { !mv.obitech.crundi.ui.operations.SecretLocks.lockOk(lockOf(f, it), f.pins[it].orEmpty()) }
+        return missing?.let { "Enter the PIN or passphrase of each secret chosen." to it }
     }
 
     /** A chat's list from the server's `chat-secrets` event. */
@@ -113,6 +130,8 @@ data class ChatSecretsForm(
     val error: String? = null,
     /** The secret whose PIN was wrong. */
     val bad: String? = null,
+    /** The secrets whose lock was filled in from the fingerprint (BiometricPins), not typed. */
+    val filled: Set<String> = emptySet(),
     val busy: Boolean = false,
     /** A secret being revoked (or "*" for all). */
     val revoking: String? = null,
@@ -169,7 +188,7 @@ fun ChatSecretsCard(
                     CheckRow(s.name, s.id in f.chosen, Modifier.weight(1f)) { a.onToggle(s.id) }
                     if (s.id in f.chosen) {
                         if (mv.obitech.crundi.PinButtons.fingerprint(savedPin(s.id), f.pins[s.id].orEmpty())) mv.obitech.crundi.ui.operations.FingerprintButton({ onFingerprint(s.id) }, enabled = !f.busy)
-                        PinBox(f.pins[s.id].orEmpty(), { a.onPin(s.id, it) }, bad = f.bad == s.id, label = "PIN for ${s.name}")
+                        PinBox(f.pins[s.id].orEmpty(), { a.onPin(s.id, it) }, bad = f.bad == s.id, label = "PIN for ${s.name}", lock = s.lock)
                     }
                 }
             }
@@ -186,13 +205,12 @@ private fun Section(text: String) {
 }
 
 @Composable
-internal fun PinBox(value: String, onValue: (String) -> Unit, bad: Boolean = false, label: String = "PIN") {
-    Column(Modifier.width(118.dp)) {
-        CrundiTextField(
-            value, { onValue(it.filter(Char::isDigit).take(6)) }, placeholder = "PIN", password = true, mono = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-        )
-        if (bad) Text("Wrong PIN", style = CrundiType.Meta.copy(color = CrundiColors.Red))
+internal fun PinBox(value: String, onValue: (String) -> Unit, bad: Boolean = false, label: String = "PIN", lock: String = "pin") {
+    val pass = mv.obitech.crundi.ui.operations.SecretLocks.passphrase(lock)
+    Column(Modifier.width(if (pass) 150.dp else 118.dp)) {
+        // A 6-digit PIN as always, or a passphrase ('secret-passphrase').
+        mv.obitech.crundi.ui.operations.LockField(value, onValue, lock)
+        if (bad) Text(mv.obitech.crundi.ui.operations.SecretLocks.wrongText(lock), style = CrundiType.Meta.copy(color = CrundiColors.Red))
     }
 }
 
@@ -227,9 +245,12 @@ fun ChatSecretsRoute(api: CrundiClient, chatId: String, grants: List<ChatSecretG
     fun close() { f = f.copy(pins = emptyMap()); onClose() }
     val keeper = mv.obitech.crundi.LocalPinKeeper.current
     val serverKey = remember(api) { mv.obitech.crundi.SavedPins.serverKey(api.transport.baseUrl) }
+    val shell by mv.obitech.crundi.ui.shell.LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
+    // Old locks just accepted, offered one at a time ('secret-upgrade'). Memory only.
+    var upgrades by remember(chatId) { mutableStateOf<List<mv.obitech.crundi.ui.operations.PendingUpgrade>>(emptyList()) }
     ChatSecretsCard(f, now, savedPin = { keeper.saved(serverKey, it) }, onFingerprint = { id ->
         val name = f.secrets?.firstOrNull { it.id == id }?.name.orEmpty()
-        keeper.unlock(serverKey, id, name, onPin = { pin -> f = ChatSecretPreauth.pin(f, id, pin) }, onFail = { why -> if (why != null) f = f.copy(error = why) })
+        keeper.unlock(serverKey, id, name, onPin = { pin -> f = ChatSecretPreauth.filledIn(f, id, pin) }, onFail = { why -> if (why != null) f = f.copy(error = why) })
     }, a = ChatSecretsActions(
         onToggle = { f = ChatSecretPreauth.toggle(f, it) },
         onPin = { id, v -> f = ChatSecretPreauth.pin(f, id, v) },
@@ -241,11 +262,16 @@ fun ChatSecretsRoute(api: CrundiClient, chatId: String, grants: List<ChatSecretG
             scope.launch {
                 f = try {
                     val g = api.secrets.grantChat(chatId, pins, f.duration)
-                    f.copy(grants = g, chosen = emptyList(), pins = emptyMap(), busy = false)
+                    if (mv.obitech.crundi.ui.operations.SecretLocks.CAP_UPGRADE in shell.capabilities) upgrades = upgrades + ChatSecretPreauth.upgrades(f, pins)
+                    f.copy(grants = g, chosen = emptyList(), pins = emptyMap(), filled = emptySet(), busy = false)
                 } catch (e: Exception) {
                     val bad = (e as? mv.obitech.crundi.api.ApiException)?.body?.str("secretId")
                     val who = f.secrets?.firstOrNull { it.id == bad }?.name
-                    f.copy(busy = false, bad = bad, pins = if (bad != null) f.pins - bad else f.pins, error = (if (who != null) "$who: " else "") + errorOrUnsupported(e))
+                    // A lock filled in from the fingerprint that the server refuses (the
+                    // secret was made again, or its lock changed): forget it from the
+                    // phone, so the new one can be saved.
+                    ChatSecretPreauth.refusedSaved(f, bad)?.let { keeper.forget(serverKey, it) }
+                    f.copy(busy = false, bad = bad, pins = if (bad != null) f.pins - bad else f.pins, filled = if (bad != null) f.filled - bad else f.filled, error = (if (who != null) "$who: " else "") + errorOrUnsupported(e))
                 }
             }
         },
@@ -259,6 +285,7 @@ fun ChatSecretsRoute(api: CrundiClient, chatId: String, grants: List<ChatSecretG
         },
         onClose = ::close,
     ))
+    upgrades.firstOrNull()?.let { up -> mv.obitech.crundi.ui.operations.UpgradeLockDialog(api, up) { upgrades = upgrades.drop(1) } }
 }
 
 /**

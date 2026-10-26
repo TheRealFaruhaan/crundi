@@ -18,6 +18,7 @@ import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.components.errorText
 import mv.obitech.crundi.ui.operations.PinAsk
 import mv.obitech.crundi.ui.operations.PinCard
+import mv.obitech.crundi.ui.operations.SecretLocks
 
 /**
  * A factory's pre-authorised secrets, as the web's (tools/factory-flow
@@ -43,6 +44,7 @@ internal object FactorySecrets {
 
     const val HINT = "Their PINs are asked when you start a run and kept in memory for that run only, so it does not stop at every use. Values are never shown. The Manager and the Gatekeeper use them directly; anyone else asks them first. Any other secret asks you each time."
     const val PROMPT = "This factory may use this secret. Its PIN is kept in memory for this run only, so the team does not stop to ask; the value is never shown. Skip to be asked when it is first used."
+    fun prompt(lock: String): String = if (SecretLocks.passphrase(lock)) PROMPT.replace("Its PIN", "Its passphrase") else PROMPT
 }
 
 /**
@@ -52,27 +54,43 @@ internal object FactorySecrets {
  * [onDone] gets { id: PIN } for those unlocked, or null when cancelled.
  */
 @Composable
-internal fun SecretPinsDialog(secrets: List<Secret>, check: suspend (String, String) -> Unit, onDone: (Map<String, String>?) -> Unit) {
+internal fun SecretPinsDialog(
+    secrets: List<Secret>, check: suspend (String, String) -> Unit,
+    /** The server re-locks old locks ('secret-upgrade'): offer it after one is accepted. */
+    api: mv.obitech.crundi.api.CrundiClient? = null, offerUpgrade: Boolean = false,
+    onDone: (Map<String, String>?) -> Unit,
+) {
     var i by remember { mutableStateOf(0) }
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var working by remember { mutableStateOf(false) }
     val pins = remember { LinkedHashMap<String, String>() }
+    // An old lock just accepted: "set a passphrase" before the next one. Memory only.
+    var upgrade by remember { mutableStateOf<mv.obitech.crundi.ui.operations.PendingUpgrade?>(null) }
     val scope = rememberCoroutineScope()
     if (i >= secrets.size) return
     val s = secrets[i]
     fun next() { pin = ""; error = null; if (i + 1 >= secrets.size) onDone(pins.toMap()) else i++ }
+    upgrade?.let { up ->
+        // Updated: the run is started with the new passphrase (the server has it now).
+        if (api != null) mv.obitech.crundi.ui.operations.UpgradeLockDialog(api, up) { np -> pins[up.secretId] = np ?: up.pin; upgrade = null; next() }
+        return
+    }
     fun submit() {
-        if (!Regex("^\\d{6}$").matches(pin)) { error = "Enter a 6-digit PIN"; return }
+        if (!SecretLocks.lockOk(s.lock, pin)) { error = SecretLocks.askText(s.lock); return }
         working = true
         scope.launch {
-            try { check(s.id, pin); pins[s.id] = pin; next() } catch (e: ApiException) { error = errorText(e); pin = "" } finally { working = false }
+            try {
+                check(s.id, pin); pins[s.id] = pin
+                if (offerUpgrade && api != null && s.needsUpgrade) { upgrade = mv.obitech.crundi.ui.operations.PendingUpgrade(s.id, s.name, s.lock, pin); pin = "" } else next()
+            } catch (e: ApiException) { error = errorText(e); pin = "" } finally { working = false }
         }
     }
     val ask = PinAsk(
         title = s.name.ifEmpty { "A secret" },
-        subtitle = (if (secrets.size > 1) "Secret ${i + 1} of ${secrets.size}. " else "") + FactorySecrets.PROMPT,
+        subtitle = (if (secrets.size > 1) "Secret ${i + 1} of ${secrets.size}. " else "") + FactorySecrets.prompt(s.lock),
         submit = "Unlock",
+        lock = s.lock,
         run = {},
     )
     androidx.compose.ui.window.Dialog(onDismissRequest = { pin = ""; onDone(null) }) {
