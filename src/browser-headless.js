@@ -409,6 +409,49 @@ async function closePage(key) {
   try { await cdpSend('Target.disposeBrowserContext', { browserContextId: entry.contextId }); } catch { /* ditto */ }
 }
 
+// Touch, pointer and mouse listeners on the element under (x, y) and every
+// ancestor up to window — what the page has wired to receive a gesture there.
+// Only DevTools can list listeners, hence CDP rather than page script. Kept
+// identical in app/main.js and src/browser-headless.js.
+async function touchListenersAt(send, x, y) {
+  const GROUP = 'crundi-touch';
+  const TYPES = /^(touch|pointer|mouse|click|dblclick|contextmenu|wheel|gesture|drag)/;
+  try {
+    const arr = await send('Runtime.evaluate', {
+      objectGroup: GROUP, returnByValue: false,
+      expression: `(function(){var a=[],el=document.elementFromPoint(${Math.round(x)},${Math.round(y)});`
+        + 'while(el){a.push(el);el=el.parentElement||(el.getRootNode&&el.getRootNode().host)||null;}'
+        + 'a.push(document,window);return a;})()',
+    });
+    if (!arr?.result?.objectId) return [];
+    const props = await send('Runtime.getProperties', { objectId: arr.result.objectId, ownProperties: true });
+    const items = (props.result || []).filter((p) => /^\d+$/.test(p.name) && p.value?.objectId)
+      .sort((a, b) => a.name - b.name);
+    const out = [];
+    for (const it of items) {
+      const res = await send('DOMDebugger.getEventListeners', { objectId: it.value.objectId });
+      // Not our own probe's listeners (browser-touch.js names them crundiTouch*).
+      const ls = (res.listeners || []).filter((l) => TYPES.test(l.type)
+        && !/crundiTouch/.test(String(l.handler?.description || '')));
+      if (!ls.length) continue;
+      out.push({
+        el: it.value.description || it.value.className || '?',
+        listeners: ls.map((l) => ({
+          type: l.type,
+          ...(l.useCapture ? { capture: true } : {}),
+          ...(l.passive ? { passive: true } : {}),
+          handler: String(l.handler?.description || '').replace(/\s+/g, ' ').slice(0, 120),
+        })),
+      });
+    }
+    return out;
+  } catch (err) {
+    return [{ error: `listeners unavailable: ${err.message}` }];
+  } finally {
+    send('Runtime.releaseObjectGroup', { objectGroup: GROUP }).catch(() => {});
+  }
+}
+
 // ─── Operations ───
 //
 // One entry per message type in app/main.js's browserIpcHandlers, returning the
@@ -588,6 +631,28 @@ const ops = {
       await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: msg.x, y: msg.y }, entry.sessionId);
     }
     return { ok: true };
+  },
+
+  // Replays a gesture planned by browser.js (planTouch): a list of CDP touch
+  // events, each followed by a wait. Touch emulation goes on first so the page
+  // sees a touch device rather than touch events from a mouse-only one.
+  async browserTouch(msg) {
+    const entry = page(msg.key);
+    if (!entry) return { ok: false, error: 'Browser not found' };
+    if (!entry.touch) {
+      await cdpSend('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, entry.sessionId);
+      entry.touch = true;
+    }
+    const send = (m, p) => cdpSend(m, p, entry.sessionId);
+    const listeners = msg.listenersAt ? await touchListenersAt(send, msg.listenersAt.x, msg.listenersAt.y) : undefined;
+    for (const st of msg.steps || []) {
+      await cdpSend('Input.dispatchTouchEvent', {
+        type: st.type,
+        touchPoints: (st.points || []).map((pt) => ({ x: pt.x, y: pt.y, id: pt.id })),
+      }, entry.sessionId);
+      if (st.wait > 0) await new Promise((r) => setTimeout(r, st.wait));
+    }
+    return { ok: true, listeners };
   },
 
   async browserResize(msg) {

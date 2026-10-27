@@ -70,6 +70,23 @@ Interaction: `browser_click` (`selector`), `browser_type` (`text`, `selector?`),
 `browser_fill` (`selector`, `value`), `browser_select` (`selector`, `value`),
 `browser_mouse` (`x`, `y`, `action`), `browser_scroll`, `browser_resize`.
 
+Touch: `browser_touch` (`x`, `y`, `action`: tap \| double_tap \| long_press \|
+swipe \| pinch). A swipe takes `toX`/`toY`, or `direction` (where the finger
+moves: `"up"` scrolls the content down) and `distance`; a short `duration`
+flings, a long one drags. A pinch takes `scale` around `x`,`y`. Use it for
+carousels, bottom sheets, pull-to-refresh, swipe-to-dismiss: anything that
+listens for touch or pointer events from a finger, which `browser_mouse` and
+`browser_scroll` never fire. Resize to a phone size first; the first touch
+turns on touch emulation, so reload if the page only checks for touch at load.
+
+Every `browser_touch` returns a `report` of what took the gesture; read
+`report.summary` first. It names the element under the finger (and any overlay
+on top of the one you meant), `touch-action` up to the nearest scroller, each
+`preventDefault` / `stopPropagation` / `setPointerCapture` made during the
+gesture with the script line that made it, the touch and pointer listeners on
+that path (`report.listeners`), and what actually scrolled, moved or zoomed.
+When a swipe "does nothing", this is how to find out what swallowed it.
+
 Inspection: `browser_eval` (`code`), `browser_snapshot` (accessibility tree),
 `browser_elements`, `browser_read_page`, `browser_view_source`,
 `browser_screenshot`, `browser_console` (`clear?`, `countOnly?`),

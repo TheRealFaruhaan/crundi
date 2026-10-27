@@ -11,6 +11,7 @@
 // ─── Constants ───
 
 import * as headless from './browser-headless.js';
+import { planTouch, probeInstallScript, probeCollectScript, summarizeProbe } from './browser-touch.js';
 
 const MAX_WIDTH = 1920;
 const MAX_HEIGHT = 1080;
@@ -491,6 +492,66 @@ export async function mouseBrowser(key, x, y, action) {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+}
+
+// ─── Touch gestures ───
+//
+// planTouch (browser-touch.js) turns a gesture into CDP touch steps, which the
+// backend replays; the probe scripts around it report what took the gesture.
+
+const TOUCH_CAPABILITY = 'browser-touch';
+const TOUCH_SETTLE_MS = 700;
+
+/** Can the backend this instance lives on replay touch steps? */
+function touchSupported(key) {
+  let backend = keyBackend.get(key);
+  if (!backend) backend = hasNativeHost() ? null : 'headless';
+  if (backend === 'headless' || backend === 'parent') return true;
+  return hostSupports(TOUCH_CAPABILITY);   // a remote app announces it
+}
+
+export async function touchBrowser(key, opts = {}) {
+  if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
+  const inst = browsers.get(key);
+  if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
+  if (!touchSupported(key)) {
+    return { ok: false, error: 'Touch is not supported by the desktop app this browser runs on. Update the Crundi app, or open the browser with on: "server".' };
+  }
+  const plan = planTouch(opts);
+  if (plan.error) return { ok: false, error: plan.error };
+  const report = opts.report !== false;
+  const totalMs = plan.steps.reduce((s, st) => s + st.wait, 0);
+  try {
+    // Probe first, so the report sees the page as the finger found it.
+    let install = null;
+    if (report) {
+      const r = await sendIpc('browserEval', { key, code: probeInstallScript(opts.x, opts.y) });
+      install = r.ok ? parseJson(r.result) : null;
+    }
+    const result = await sendIpc('browserTouch', {
+      key, steps: plan.steps, ...(report ? { listenersAt: { x: opts.x, y: opts.y } } : {}),
+    }, totalMs + IPC_TIMEOUT_MS);
+    if (!result.ok) return { ok: false, error: result.error };
+    resetIdleTimer(key);
+    const out = { ok: true, action: opts.action || 'tap' };
+    if (report) {
+      // A fling, a scroll-snap or a carousel's own animation finishes after
+      // the finger lifts; judge what moved once it has.
+      await new Promise((r) => setTimeout(r, TOUCH_SETTLE_MS));
+      const r = await sendIpc('browserEval', { key, code: probeCollectScript });
+      const collect = r.ok ? parseJson(r.result) : null;
+      if (collect && !collect.error) out.report = summarizeProbe(install, collect, result.listeners);
+      else out.report = { summary: [collect?.error || 'Could not read the page after the gesture.'], listeners: result.listeners };
+    }
+    return out;
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+function parseJson(v) {
+  if (v && typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return null; }
 }
 
 export async function evalBrowser(key, code) {
