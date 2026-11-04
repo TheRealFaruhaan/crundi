@@ -169,6 +169,7 @@ const COLLABORATOR_NEVER = [
   /^\/api\/docker/,         // shared docker daemon: other projects' containers, and root by another name
   /^\/api\/mcp\/call/,      // has its own key; collaborators get a scoped one
   /^\/api\/usage/,          // the owner's account spend
+  /^\/api\/voice/,          // the owner's voice assistant: their API keys and spend
   /^\/api\/notify/,
   /^\/api\/clipboard/,      // reads the host machine's clipboard
 ];

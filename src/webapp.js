@@ -92,6 +92,11 @@ import { publicBaseUrl } from './public-url.js';
 import { cleanAutoTitle, cleanLongTitle } from './chat-title.js';
 import { createAutoTitler, titlesFromChat, isDefaultTitle } from './chat-autotitle.js';
 import * as chatMedia from './chat-media.js';
+import * as voiceSettings from './voice/settings.js';
+import { makeTools as makeVoiceTools } from './voice/tools.js';
+import { createVoiceAgent } from './voice/agent.js';
+import { transcribe as voiceTranscribe } from './voice/stt.js';
+import { getVoicePageHtml } from './voice/page.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
 
@@ -2529,6 +2534,73 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     res.end(content);
   }
 
+  /** Settings as GET /api/settings returns them (also read by the voice assistant, redacted). */
+  function settingsView() {
+    const content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
+    const settings = {};
+    const KEYS = ['TELEGRAM_BOT_TOKEN', 'ALLOWED_USERNAME', 'PROJECTS_DIR', 'WEB_PORT', 'CLOUDFLARE_TUNNEL_TOKEN', 'CLOUDFLARE_TUNNEL_URL', 'DATA_DIR'];
+    for (const key of KEYS) {
+      const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
+      settings[key] = m ? m[1].trim() : '';
+    }
+    const chatId = getChatId ? getChatId() : '';
+    return {
+      settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs,
+      limitWarmup: limitWarmer.status(),
+      // So the UI can warn before switching it off, not after.
+      queuedLimitReset: chatSchedule.countPendingLimitReset(),
+      systemPrompt: globalPrompt(),
+      systemPromptMax: MAX_LAYER,
+      autoParkMinutes, autoParkMin: MIN_TIMEOUT_MIN,
+    };
+  }
+
+  // ─── Voice assistant (specs/voice-assistant.md) ───
+  //
+  // The owner's voice assistant: a Claude API conversation (its own key,
+  // metered, separate from the subscription the chats use) with read-only
+  // tools over this server's state. Owner only — collaborators never reach
+  // /api/voice/* (not in their allowlist).
+  const allProjects = () => Object.values(listProjects()).map(p => ({ alias: p.alias, name: p.name || p.alias, path: p.path }));
+  const voiceTools = makeVoiceTools({
+    listProjects: allProjects,
+    settings: () => settingsView(),
+    voiceSpend: () => voiceSettings.publicSettings(),
+    services: () => getAllServiceStatus().map(sv => ({
+      key: sv.key, name: sv.name, project: sv.alias, status: sv.status,
+      cpuPct: sv.cpuPct, memoryMB: sv.memoryBytes ? Math.round(sv.memoryBytes / 1048576) : null,
+      uptime: sv.startedAt ? formatUptime(Date.now() - new Date(sv.startedAt).getTime()) : null,
+    })),
+    serviceLogs: (key, lines) => getServiceLogs(key, lines),
+    notes, kanban, mindmap,
+    schedules: (project) => schedule.listSchedules(project),
+    usage: () => usage.getUsage(),
+    secrets: () => secrets.listSecrets(),
+    chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
+    terminals: () => (claudeTerminals ? claudeTerminals.list() : []),
+    chatHistory: (id) => {
+      const c = claudeUi && claudeUi.list().find(x => x.id === id);
+      if (!c || c.collaborator) return null;
+      return claudeUi.history(id);
+    },
+    terminalScrollback: (id) => (claudeTerminals && claudeTerminals.getScrollback ? claudeTerminals.getScrollback(id) : ''),
+  });
+  const voiceAgent = createVoiceAgent({ tools: voiceTools });
+
+  function readBodyBuffer(req, max) {
+    return new Promise((resolve, reject) => {
+      const parts = [];
+      let n = 0;
+      req.on('data', (c) => {
+        n += c.length;
+        if (n > max) { reject(new Error('Too large')); req.destroy(); return; }
+        parts.push(c);
+      });
+      req.on('end', () => resolve(Buffer.concat(parts)));
+      req.on('error', reject);
+    });
+  }
+
   async function handleRequest(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
@@ -2603,6 +2675,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // the API calls it goes on to make.
     if (/^\/chat\/[A-Za-z0-9_-]{1,80}\/?$/.test(path) && req.method === 'GET') {
       html(res, chatPageHtml());
+      return;
+    }
+    // The voice assistant's test page (voice/page.js). Holds nothing private;
+    // every call it makes is signed in like the main page's.
+    if (path === '/voice' && req.method === 'GET') {
+      html(res, getVoicePageHtml());
       return;
     }
 
@@ -3934,6 +4012,42 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Claude usage (real, account-wide) ───
+    // ─── Voice assistant ───
+    if (path === '/api/voice/settings' && req.method === 'GET') {
+      return json(res, { ok: true, ...voiceSettings.publicSettings() });
+    }
+    if (path === '/api/voice/settings' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const r = voiceSettings.updateSettings({
+        model: body.model, monthlyLimitUsd: body.monthlyLimitUsd,
+        anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey,
+      });
+      return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
+    }
+    if (path === '/api/voice/turn' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const r = await voiceAgent.turn(String(body.text || ''), { where: String(body.where || '').slice(0, 200) });
+      return json(res, r, r.ok ? 200 : (r.limitReached ? 402 : 400));
+    }
+    if (path === '/api/voice/reset' && req.method === 'POST') {
+      voiceAgent.reset();
+      return json(res, { ok: true });
+    }
+    // Audio in (raw body, its own Content-Type), text out. ?turn=1 also answers it.
+    if (path === '/api/voice/transcribe' && req.method === 'POST') {
+      let audio;
+      try { audio = await readBodyBuffer(req, 10 * 1024 * 1024); } catch { return json(res, { ok: false, error: 'Recording too large (10 MB at most)' }, 413); }
+      const r = await voiceTranscribe(audio, String(req.headers['content-type'] || ''), {
+        projects: allProjects().flatMap(p => [p.alias, p.name]),
+        services: getAllServiceStatus().map(sv => sv.name),
+      });
+      if (!r.ok || url.searchParams.get('turn') !== '1') return json(res, r, r.ok ? 200 : 400);
+      const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200) }) : { ok: false, error: 'Nothing was heard' };
+      return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok ? 200 : 400);
+    }
+
     if (path === '/api/usage' && req.method === 'GET') {
       const force = url.searchParams.get('force') === '1';
       return json(res, await usage.getUsage({ force }));
@@ -5322,23 +5436,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     if (path === '/api/settings' && req.method === 'GET') {
       try {
-        const content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
-        const settings = {};
-        const KEYS = ['TELEGRAM_BOT_TOKEN', 'ALLOWED_USERNAME', 'PROJECTS_DIR', 'WEB_PORT', 'CLOUDFLARE_TUNNEL_TOKEN', 'CLOUDFLARE_TUNNEL_URL', 'DATA_DIR'];
-        for (const key of KEYS) {
-          const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
-          settings[key] = m ? m[1].trim() : '';
-        }
-        const chatId = getChatId ? getChatId() : '';
-        return json(res, {
-          ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs,
-          limitWarmup: limitWarmer.status(),
-          // So the UI can warn before switching it off, not after.
-          queuedLimitReset: chatSchedule.countPendingLimitReset(),
-          systemPrompt: globalPrompt(),
-          systemPromptMax: MAX_LAYER,
-          autoParkMinutes, autoParkMin: MIN_TIMEOUT_MIN,
-        });
+        return json(res, { ok: true, ...settingsView() });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 

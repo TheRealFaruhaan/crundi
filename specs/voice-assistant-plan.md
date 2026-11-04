@@ -57,7 +57,21 @@ Results go back into the design doc.
 | 0.4b | **Hints don't fix it.** Same sentence, language en-US, Android 13+ word hints on: on-device gave "At DUI overhaul of the home screen as a company task"; default gave "at the UI overhaul of the home screen as the compound task" (best, 0.86). "kanban" never came through in 20+ guesses; on-device gives no confidence scores. Frequent error 11 (server disconnected) on the first try after the previous recogniser was destroyed; a reused recogniser should avoid it. |
 | 0.5 | Not run yet. |
 
-## Phase 1 — server brain, typed (no Android yet)
+## Phase 1 — server brain, typed (no Android yet) — BUILT 2026-11-05
+
+As built (`src/voice/`, `scripts/test-voice.mjs`, page at `/voice`):
+- The tools call Crundi's stores and managers directly, not its HTTP routes.
+  Read-only is enforced by the closed tool list (pinned by the test: no write
+  tool can be added by accident), not by a `ROLE_VOICE` route allowlist.
+  `/api/voice/*` is owner-only (in `COLLABORATOR_NEVER`).
+- Credentials inside settings and schedules show as "set"/"not set"; secret
+  values and collaborator chat keys never reach the model.
+- History is append-only; it restarts after 80 messages until Phase 2.
+- `/voice` test page: settings (model, limit, keys), type or hold-to-talk
+  (browser recording → Deepgram on the server → Claude), reply spoken with the
+  browser's en-GB voice, detail shown.
+
+Original plan:
 
 Goal: talk to Crundi by typing in a test page and get correct, safe answers.
 
