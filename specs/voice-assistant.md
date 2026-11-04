@@ -12,7 +12,25 @@ settings and usage.
 |---|---|---|
 | D1 | **Default trigger: Samsung side key** (Crundi as default digital assistant → Side button → Digital assistant). No always-on listening, no battery cost, works over the lock screen (§3.2). | 2026-11-04 |
 | D2 | **Gemini is a supported option too:** "Hey Google, open Crundi (Voice)" opens the voice screen, which goes back to sleep after silence (§3.5). AppFunctions to be revisited once Gemini supports third-party apps publicly. | 2026-11-04 |
-| D3 | Software "Hey Crundi" wake word (§3, §3.1) is not the default; open whether to offer it as an opt-in. | 2026-11-04 |
+| D3 | **"Hey Crundi" in the app:** a toggle; when on, Crundi listens for "Hey Crundi" whenever the app is open (foreground only, no foreground service needed). | 2026-11-04 |
+| D4 | **"Hey Crundi" in the background:** off by default, switched on either by a toggle in settings or by the voice agent itself through a tool ("keep listening for the next hour"). Runs as a microphone foreground service. | 2026-11-04 |
+| D5 | **Background listening turned on by voice always has a time limit.** The agent's tool requires a duration; the service stops itself when it runs out. | 2026-11-04 |
+
+### Background listening (D4, D5) — how it fits Android's rules
+
+- The voice agent's tool call reaches the phone while a voice session is on
+  screen, so Crundi is in the foreground and is allowed to start the
+  microphone foreground service. Same for the settings toggle. To verify on
+  device: that a side-key `VoiceInteractionSession` window counts as
+  foreground for this rule.
+- Tool shape (server → phone): `set_background_listening({ minutes })`,
+  `minutes` required, capped at a maximum. Turning it off needs no duration.
+- The service keeps its own deadline and stops itself at it; the ongoing
+  notification shows the time left and a Stop button.
+- If Android or Samsung kills the service it can't restart itself from the
+  background. Post a notification ("Hey Crundi stopped — tap to resume").
+- Open: default and maximum duration; whether the settings toggle also has a
+  time limit or stays on until switched off.
 
 ### Lock screen
 
@@ -254,8 +272,9 @@ have left" with no Crundi screen at all. Caveats:
    including over the lock screen.
 3. **Gemini entry (D2):** a "Crundi Voice" launcher alias / app shortcut that
    opens the same voice screen, with the silence timeout.
-4. **Optional:** sherpa-onnx "Hey Crundi" wake word behind an opt-in switch
-   (D3, undecided).
+4. **"Hey Crundi":** sherpa-onnx wake word, in-app toggle first (D3), then
+   the background service with its toggle, the voice tool and time limit
+   (D4, D5).
 5. **Write actions** with confirmations, then delegation to Claude Code chats.
 
 ## 6. Open questions
