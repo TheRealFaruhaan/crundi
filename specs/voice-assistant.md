@@ -30,6 +30,7 @@ settings and usage.
 | D18 | **Turn end when Crundi isn't open:** notification that opens where it was asked (full-screen if permitted); may speak the result; a spoken reply needs background listening on. | 2026-11-04 |
 | D19 | **Voice: a calm, British, butler-style AI voice**, in the spirit of Jarvis but not a copy (see §2.4). | 2026-11-04 |
 | D20 | **The user is "Master."** When Crundi addresses the user it says "Master" ("Yes, Master."). It doesn't have to on every reply; a plain "Yes." or "On it." is fine. | 2026-11-04 |
+| D21 | **Input goes to chats only, never terminals.** Voice can still read terminal output (D11) and open or close terminal panels (D14), but can't type into them. Supersedes the terminal part of D11/D15. | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -50,10 +51,10 @@ settings and usage.
 ### Access (D9–D11) — notes
 
 - Secrets (D16): names only, never values.
-- **Input to panels (D15).** Typing into a terminal can run any command, and
-  a message to a Claude Code chat can ask it to edit files, so this is where
-  D10 is enforced. Design:
-  - `send_to_panel({ panel, text, intent })` where `intent` is `explicit`
+- **Input to chats (D15, D21).** Terminals are read-only to voice. A message
+  to a Claude Code chat can still ask it to edit files, so this is where D10
+  is enforced. Design:
+  - `send_to_chat({ chat, text, intent })` (no terminal equivalent) where `intent` is `explicit`
     (the person said "tell it…", "type…", "send…", "reply…") or `inferred`
     (the agent decided to send something on its own reading).
   - `explicit` → send. `inferred` → read back, then send on "yes".
