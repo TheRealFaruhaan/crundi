@@ -22,6 +22,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.BufferedSink
+import okio.ByteString.Companion.toByteString
 import java.io.IOException
 import java.io.OutputStream
 import java.net.URLDecoder
@@ -181,6 +182,30 @@ class OkHttpTransport(
     }
 
     @Volatile private var lastSocketToken: String? = null
+
+    override fun openSocket(path: String, query: Map<String, String?>, listener: SocketListener): DataSocket {
+        val token = credentials.token() ?: credentials.renew(null)
+        val req = Request.Builder().url(url(path, query))
+            .header("X-Crundi-Client", clientTag).header("User-Agent", userAgent)
+            .apply { if (token != null) header("Authorization", "Bearer $token") }
+            .build()
+        val ws = longHttp.newWebSocket(req, object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) = listener.onOpen()
+            override fun onMessage(webSocket: WebSocket, text: String) = listener.onMessage(text)
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null) }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = listener.onClosed(0, reason)
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                // A refused sign-in: renew it, so the next try goes in with a good one.
+                if (response?.code == 401) runCatching { credentials.renew(token) }
+                listener.onClosed(response?.code ?: 0, t.message ?: "connection lost")
+            }
+        })
+        return object : DataSocket {
+            override fun send(text: String) = ws.send(text)
+            override fun send(bytes: ByteArray, length: Int) = ws.send(bytes.toByteString(0, length))
+            override fun close() { ws.close(1000, null) }
+        }
+    }
 
     override fun renewLogin() { credentials.renew(lastSocketToken) }
 

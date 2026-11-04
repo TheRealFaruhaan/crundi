@@ -79,6 +79,15 @@ interface Transport {
 
     /** What a media player must send to stream from this server (its sign-in): video and audio Claude showed. */
     fun streamHeaders(): Map<String, String> = emptyMap()
+
+    /**
+     * A WebSocket of its own for one job, signed in like every call: the voice
+     * assistant's microphone stream (/api/voice/listen), which sends binary
+     * audio frames and gets JSON back. Blocking (it may fetch a token first).
+     * A transport without one (an old fake) throws [ApiException] status 0.
+     */
+    fun openSocket(path: String, query: Map<String, String?>, listener: SocketListener): DataSocket =
+        throw ApiException(0, "This connection cannot open a stream.")
 }
 
 interface SocketListener {
@@ -91,6 +100,11 @@ interface SocketListener {
 interface SocketConnection {
     fun send(text: String): Boolean
     fun close()
+}
+
+/** A [SocketConnection] that also sends binary frames ([Transport.openSocket]). */
+interface DataSocket : SocketConnection {
+    fun send(bytes: ByteArray, length: Int = bytes.size): Boolean
 }
 
 /**

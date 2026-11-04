@@ -212,6 +212,26 @@ class SettingsActivity : ComponentActivity() {
         perms += SettingItem.Line("Files", "Downloads are saved to the phone's Downloads folder. Android asks for no permission for that, and files you attach are picked one at a time.")
         out += SettingSection("Permissions", perms)
 
+        // ─── Voice assistant (voice/, D33) ───
+        run {
+            val on = mv.obitech.crundi.voice.VoicePrefs.enabled(this)
+            val assistant = mv.obitech.crundi.voice.VoiceSettingsActivity.holdsAssistant(this)
+            val cur = Servers.current(this)
+            val caps = cur?.let { ServerCaps.get(this, it.id) }.orEmpty()
+            val missing = caps.isNotEmpty() && mv.obitech.crundi.api.VoiceApi.CAPABILITY !in caps
+            val state = when {
+                missing -> "The open server does not have the voice assistant yet. Update the server to use it."
+                !on -> "Off."
+                assistant -> "On. Hold the side key to talk to Crundi, on the lock screen too."
+                else -> "On. Open Crundi Voice, or make Crundi the digital assistant to use the side key."
+            }
+            out += SettingSection("Voice assistant", listOf(
+                SettingItem.Line("Voice assistant", state, if (missing) false else if (on) true else null, "Open") {
+                    startActivity(Intent(this, mv.obitech.crundi.voice.VoiceSettingsActivity::class.java))
+                },
+            ))
+        }
+
         // ─── Secret PINs behind the fingerprint (BiometricPins) ───
         val pins = BiometricPins.store(this)
         // The enrolled biometrics changed: Android destroyed the key, so the PINs are useless.

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The voice assistant (mode A, D33): what Android reads to offer Crundi as
+     the digital assistant app. Shown over the lock screen too. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="mv.obitech.crundi.voice.CrundiSessionService"
+    android:recognitionService="mv.obitech.crundi.voice.CrundiRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true"
+    android:supportsLocalInteraction="true" />

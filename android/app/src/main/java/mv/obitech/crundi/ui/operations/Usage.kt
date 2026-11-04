@@ -63,6 +63,8 @@ data class UsageState(
     val showWeek: Boolean = true,
     val showFive: Boolean = false,
     val now: Long = System.currentTimeMillis(),
+    /** The voice assistant's Claude API spend; null hides it (a server without it, a collaborator). */
+    val api: mv.obitech.crundi.api.VoiceSettings? = null,
 )
 
 class UsageEvents(
@@ -99,11 +101,14 @@ fun UsageRoute() {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val first = rememberLoad { api.usage.now() }
     val history = rememberLoad(range) { api.usage.history(range) }
+    // The voice assistant's API spend, as the web's usage modal shows it. Hidden when
+    // the server has no assistant (404) or says no: never an error on this screen.
+    val voice = rememberLoad { runCatching { api.voice.settings() }.getOrNull() }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
     val usage: Load<Usage?> = live?.let { Load.Ready(it) } ?: first.value
     UsageScreen(
-        UsageState(usage, history.value, range, week, five, now),
-        UsageEvents(onRange = { range = it }, onShowWeek = { week = it }, onShowFive = { five = it }, onRefresh = { first.reload(); history.reload() }, onBack = { nav.back() }),
+        UsageState(usage, history.value, range, week, five, now, api = voice.value.valueOrNull),
+        UsageEvents(onRange = { range = it }, onShowWeek = { week = it }, onShowFive = { five = it }, onRefresh = { first.reload(); history.reload(); voice.reload() }, onBack = { nav.back() }),
     )
 }
 
@@ -130,6 +135,7 @@ fun UsageScreen(state: UsageState, events: UsageEvents = UsageEvents()) {
                     WindowCard("5-hour", "5h", usage.fiveHour, FIVE_HOURS, state.now)
                     usage.weekOpus?.let { WindowCard("Weekly · Opus", "opus", it, WEEK, state.now, compact = true) }
                     usage.weekSonnet?.let { WindowCard("Weekly · Sonnet", "sonnet", it, WEEK, state.now, compact = true) }
+                    state.api?.let { ApiSpendCard(it) }
                     HistoryCard(state, events)
                 }
             }
@@ -165,6 +171,26 @@ private fun WindowCard(title: String, tag: String, w: UsageWindow?, windowMs: Lo
             }
         }
         if (!compact) Text("$tag ${w?.utilization ?: 0}% used · ${(time * 100).toInt()}% of the window gone", style = CrundiType.Meta)
+    }
+}
+
+/** The voice assistant's metered Claude API spend this month (separate from the subscription above). */
+@Composable
+private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings) {
+    val sp = v.spend
+    val frac = if (v.monthlyLimitUsd > 0) (sp.totalUsd / v.monthlyLimitUsd).toFloat().coerceIn(0f, 1f) else 1f
+    val usd = { d: Double -> "$" + "%.2f".format(java.util.Locale.US, d) }
+    Column(
+        Modifier.fillMaxWidth().clip(Dimens.Shape).background(CrundiColors.BgCard).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text("Claude API · voice assistant", style = CrundiType.Heading, modifier = Modifier.weight(1f))
+            Text(usd(sp.totalUsd), style = CrundiType.Code.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = if (v.limitReached) CrundiColors.Red else levelColor(frac)))
+        }
+        Meter(frac, color = if (v.limitReached) CrundiColors.Red else CrundiColors.Accent, height = 12.dp)
+        Text("of ${usd(v.monthlyLimitUsd)} this month · Claude ${usd(sp.claudeUsd)} · Deepgram ${usd(sp.deepgramUsd)} · ${sp.turns} request${if (sp.turns == 1) "" else "s"}", style = CrundiType.Meta.copy(fontSize = 12.sp))
+        if (v.limitReached) StatusBadge("limit reached: voice stops until next month", BadgeKind.Bad)
     }
 }
 

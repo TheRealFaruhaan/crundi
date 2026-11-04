@@ -19,7 +19,21 @@
     <!-- Full-screen urgent alerts, opt-in (android/URGENT-ALERTS.md). Play
          grants it only to calling and alarm apps; the person turns it on. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- The voice assistant holds the microphone in the foreground while it is
+         open, so it can listen over the lock screen (voice/MicStream.kt). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- The voice assistant's fallbacks: the phone's own voices and speech
+         recognition (Android 11+ package visibility). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <!-- Plain http is allowed because a server on a home network often has
          nothing else. The app never uses it without the person saying so
@@ -76,6 +90,55 @@
             android:documentLaunchMode="always"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- ─── Voice assistant (specs/voice-assistant.md, D33) ─── -->
+        <!-- Mode B: the voice screen, over the lock screen. -->
+        <activity
+            android:name=".voice.VoiceActivity"
+            android:exported="false"
+            android:label="Crundi Voice"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="mv.obitech.crundi.voice"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
+        <!-- What the side key's double press, or "Hey Google, open Crundi
+             Voice", opens. Turned off with the assistant in App settings. -->
+        <activity-alias
+            android:name=".voice.CrundiVoice"
+            android:targetActivity=".voice.VoiceActivity"
+            android:label="Crundi Voice"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <!-- Mode A: Crundi as the digital assistant app (hold the side key). -->
+        <service
+            android:name=".voice.CrundiVoiceService"
+            android:label="Crundi"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
+            <meta-data android:name="android.voice_interaction" android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".voice.CrundiSessionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true" />
+        <!-- Android requires an assistant to name one; it refuses every request. -->
+        <service android:name=".voice.CrundiRecognitionService" android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+        <service android:name=".voice.VoiceMicService" android:exported="false" android:foregroundServiceType="microphone" />
+        <activity android:name=".voice.VoiceSettingsActivity" android:exported="false" android:label="Voice assistant" />
 
         <service android:name=".PushService" android:exported="false">
             <intent-filter>

@@ -28,11 +28,13 @@
             android:taskAffinity="mv.obitech.crundi.voicelab"
             android:launchMode="singleTask" />
 
-        <!-- The name Gemini is asked to open: "Hey Google, open Crundi Voice". -->
+        <!-- Phase 0 is done: the real assistant (voice/) now owns the
+             digital-assistant registration and the "Crundi Voice" name. The
+             lab stays reachable as its own launcher entry. -->
         <activity-alias
-            android:name="mv.obitech.crundi.voicelab.CrundiVoice"
+            android:name="mv.obitech.crundi.voicelab.CrundiVoiceLab"
             android:targetActivity="mv.obitech.crundi.voicelab.VoiceLabActivity"
-            android:label="Crundi Voice"
+            android:label="Crundi Voice Lab"
             android:icon="@mipmap/ic_launcher"
             android:exported="true">
             <intent-filter>
@@ -40,35 +42,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
-
-        <!-- Makes the app selectable as the digital assistant app. -->
-        <service
-            android:name="mv.obitech.crundi.voicelab.LabVoiceService"
-            android:label="Crundi Voice Lab"
-            android:permission="android.permission.BIND_VOICE_INTERACTION"
-            android:exported="true">
-            <meta-data
-                android:name="android.voice_interaction"
-                android:resource="@xml/voicelab_interaction_service" />
-            <intent-filter>
-                <action android:name="android.service.voice.VoiceInteractionService" />
-            </intent-filter>
-        </service>
-
-        <service
-            android:name="mv.obitech.crundi.voicelab.LabSessionService"
-            android:permission="android.permission.BIND_VOICE_INTERACTION"
-            android:exported="true" />
-
-        <!-- Android requires an assistant to name a recognition service. This
-             one refuses every request; the lab uses the phone's own. -->
-        <service
-            android:name="mv.obitech.crundi.voicelab.LabRecognitionService"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.speech.RecognitionService" />
-            </intent-filter>
-        </service>
 
         <service
             android:name="mv.obitech.crundi.voicelab.LabMicService"
