@@ -8,7 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
-/** The phone's side of /api/voice/*, against a server in memory. */
+/** The phone's side of the voice routes (/api/voice/settings, turn, speak, listen), against a server in memory. */
 class VoiceApiTest {
     private val settingsJson = """{"ok":true,"model":"claude-haiku-5-5","models":[{"id":"claude-haiku-5-5","label":"Claude Haiku 5.5"}],
         "anthropicKeySet":true,"deepgramKeySet":true,"ttsVoice":"aura-2-draco-en","monthlyLimitUsd":50,
