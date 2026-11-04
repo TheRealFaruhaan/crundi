@@ -1,7 +1,7 @@
 # Voice assistant — build plan
 
-Status: plan for discussion, not started. Written 2026-11-04.
-Design and decisions (D1–D31): [voice-assistant.md](voice-assistant.md).
+Status: Phases 0 and 1 built and verified; Phase 3 built, awaiting the phone. Written 2026-11-04, updated 2026-11-05.
+Design and decisions (D1–D41): [voice-assistant.md](voice-assistant.md).
 
 Each phase ends with something usable and testable on its own. Phone first
 (D29); web and desktop reuse the server side later.
@@ -83,6 +83,42 @@ As built (`src/voice/`, `scripts/test-voice.mjs`, page at `/voice`):
   (browser recording → Deepgram on the server → Claude), reply spoken with the
   browser's en-GB voice, detail shown.
 
+### Phase 1 verified against the real services — 2026-11-05
+
+Run on the server with the owner's keys (Claude from the secrets vault,
+Deepgram saved into Voice assistant settings via `secret_run`, never seen),
+over a copy of the live data. `scripts/voice-live.mjs` repeats the Claude
+part: real agent, real tools, a data copy, settings in memory.
+
+| # | Check | Result |
+|---|---|---|
+| V1 | Claude turn, Haiku 5.5 | **Works.** "How much usage do I have left?" → "Plenty left, Master. The five-hour window is at 2 percent and the weekly window is at zero…", detail on screen, 3.9 s, $0.0004. "What's in the todo column of crundi?" → correct (empty), 1.8 s. |
+| V2 | Caching | **Works.** warm() writes the 3.3k-token prefix; every turn after reads 90–96% from cache. One miss found and fixed (below). |
+| V3 | Deepgram one-shot | **Works.** The kanban sentence (spoken by Aura-2 Draco) came back word for word, "kanban" included, confidence 0.99, 0.4 s. Synthetic speech is easy: a real-microphone check on `/voice` is still worth doing. |
+| V4 | Deepgram live | **Works**, both WebM/Opus (browser) and raw 16 kHz PCM (phone). Each sentence arrives as an utterance ~0.9 s after it ends; the stream survives a 15 s pause. All `stream.js` assumptions held (Results / UtteranceEnd / SpeechStarted, is_final, speech_final, KeepAlive, CloseStream, `Authorization: Token`). |
+| V5 | Voices | **Works.** `/v1/models` has the shape `parseVoices()` expects: 103 TTS models, 53 English after filtering, accent and gender in metadata. British male: **aura-2-draco-en** ("warm, approachable, trustworthy, baritone") and the older aura-helios-en. |
+| V6 | Flux | **Flux is speech-to-text, not text-to-speech**: a conversational model on `/v2/listen` (`flux-general-en`) with turn detection built in (~260 ms end of turn, `StartOfTurn` / `EndOfTurn` / `EagerEndOfTurn`). Its docs don't mention keyterm prompting, which is why Deepgram was chosen. Kept Nova-3; Flux is a proposal (below). |
+
+Fixed from these runs:
+- `get_kanban` returned whole boards (descriptions, deleted tasks, history):
+  Crundi's ran past the 30k tool-result cut, so "which project has the most
+  tasks" took 20 calls, 13 s and a guess. Now one line per task plus counts;
+  no project gives every project's counts in one call (2 s, 96% cached).
+- The live stream takes `?encoding=linear16&sample_rate=…` (whitelisted) for
+  the phone's PCM; KeepAlive every 4 s and always while paused.
+- 1-hour cache writes were priced at 1.25x; they cost 2x.
+- Capability `voice-assistant`; `/api/voice/turn` takes `locked`; the usage
+  modal shows the API spend (D41).
+
+Proposals (the owner decides):
+- **Voice: aura-2-draco-en** as the suggested Deepgram voice (D19): British,
+  male, calm baritone, a stock voice. Not set as the default yet.
+- **Flux** for live listening, if Deepgram confirms keyterms work with it:
+  quicker, better end-of-turn than endpointing + utterance end.
+- **Web and PC voice (D39)** right after Phase 3, as Phase 3b: the same
+  screen on the web workbench, and so on the PC. The PC's always-on
+  microphone (D40) needs the wake word, so it goes with Phase 6.
+
 Original plan:
 
 Goal: talk to Crundi by typing in a test page and get correct, safe answers.
@@ -141,7 +177,44 @@ answers; anything outside the allowlist is refused by the server.
 Decision needed in this phase: whether the ONNX dependency (tens of MB) is
 acceptable in all builds, or local embeddings ship as an optional download.
 
-## Phase 3 — Android: side key (the default trigger)
+## Phase 3 — Android: side key (the default trigger) — BUILT 2026-11-05, awaiting the phone
+
+As built (`android/app/src/main/java/mv/obitech/crundi/voice/`):
+- Mode A: `CrundiVoiceService` + `CrundiSession` (Compose in the session
+  window, over the lock screen) + `CrundiRecognitionService` (a stub Android
+  requires). Mode B: `VoiceActivity`, launcher alias "Crundi Voice",
+  showWhenLocked; it also asks for the microphone and for an unlock, which
+  the overlay can't. Both explained in App settings > Voice assistant (D33).
+- `VoiceController`: 16 kHz PCM (VOICE_COMMUNICATION, echo cancelling) →
+  `/api/voice/listen` → `/api/voice/turn` (with `locked`) → `Speaker`;
+  `/api/voice/warm` on open; `VoiceMicService` (microphone foreground
+  service) while open, Phase 0's working setup.
+- `VoiceMachine` (pure, JVM-tested): stream paused while speaking; barge-in
+  from the local level (echo-cancelled, over the room's noise, 280 ms) with a
+  0.5 s pre-roll so the first word isn't lost; what is said while thinking
+  is sent next; quiet 30 s → asleep; stream lost or silent 8 s → the phone's
+  recogniser (`FallbackRecognizer`, one instance reused).
+- `Speaker`: the Deepgram voice a sentence at a time, next one fetched while
+  one plays; the phone voice in D34's order otherwise or on failure.
+- `VoiceScreen`: the live orb (bars carry the voice round the ring, the core
+  swells, a comet turns while thinking), words as heard, the spoken answer,
+  the shown detail in a card.
+- Settings: on/off (also hides Crundi Voice), modes A and B with setup steps
+  and whether Crundi holds the assistant role, voice picker (Deepgram with
+  previews, British first; the phone's en-GB voices), model, limit, spend,
+  key status. The Usage screen shows the API spend (D41).
+- Older server: no `voice-assistant` capability or a 404 → "Update the
+  server". MIN_SERVER unchanged.
+- The debug Voice Lab no longer registers an assistant (two in one package
+  would be ambiguous); it is "Crundi Voice Lab" in the launcher.
+
+To check on the phone: side key locked and unlocked; barge-in (does echo
+cancelling keep Crundi's own voice from counting?); the first word after a
+barge-in; Deepgram voice latency; offline fallback (airplane mode with Wi-Fi
+off).
+
+Original plan:
+
 
 - `voice/CrundiVoiceService` (`VoiceInteractionService`),
   `CrundiSessionService`, session UI (overlay, works over lock screen),

@@ -1,6 +1,6 @@
 # Voice assistant ("Hey Crundi") — research
 
-Status: research only, not started. Written 2026-11-04. Build plan: [voice-assistant-plan.md](voice-assistant-plan.md).
+Status: Phase 0 and 1 built and verified against the real services; Phase 3 built, awaiting the phone. Written 2026-11-04, updated 2026-11-05. Build plan: [voice-assistant-plan.md](voice-assistant-plan.md).
 
 Goal: a voice assistant on the Android app, woken by "Crundi" or "Hey Crundi",
 that runs on **Claude API credits** and can control every project and read
@@ -48,6 +48,9 @@ settings and usage.
 | D36 | **No Whisper on the Crundi server.** It runs in the cloud on about 4 shared cores, sometimes fewer: a good Whisper model would take several seconds per command and compete with Claude Code sessions. If on-device + hints + Claude's correction isn't accurate enough, the next step is a cloud speech-to-text API (pay per minute, under a second), key on the server. | 2026-11-05 |
 | D37 | **Speech-to-text: Deepgram** (Nova-3, streaming, keyterm prompting with Crundi's vocabulary). Supersedes D27/D35 after Phase 0 (results 0.4 and 0.4b in the plan). Key on the Crundi server (Voice assistant settings), never on the phone. New accounts get a $200 free credit. Android's on-device recogniser stays as an offline fallback. | 2026-11-05 |
 | D38 | **Anthropic has no speech-to-text for the API.** The Messages API takes text, images and PDFs, not audio. Claude Code's voice dictation uses Anthropic's own speech-to-text, but only for claude.ai sign-ins, not API keys, so Crundi can't use it. Re-check when Anthropic adds audio. | 2026-11-05 |
+| D39 | **Voice on the app, the web and the PC, with parity** (supersedes D29's "phone first, web and desktop later"). One server side; each client gets the same voice screen and settings. The PC client loads the web page, so web and PC share one build. | 2026-11-05 |
+| D40 | **PC: an always-on microphone option, offered only while the PC is on charge.** On battery it is unavailable (or turns itself off). Needs a local wake word on the PC (Phase 6): streaming the microphone to Deepgram all day would cost about $0.55 an hour. | 2026-11-05 |
+| D41 | **The voice assistant's Claude API spend is shown in the usage modal** (web, PC and the app's Usage screen), next to the subscription usage: this month's total against the limit, Claude and Deepgram, number of requests. | 2026-11-05 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
