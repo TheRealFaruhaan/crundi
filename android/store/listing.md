@@ -61,6 +61,25 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.4 (en-US)
+
+Version code 35. Internal track. Since 1.1.3-dev.3 (code 34): the voice
+assistant (specs/voice-assistant.md, Phase 3) and its API spend on the
+Usage screen.
+
+```
+<en-US>
+Crundi's voice assistant, for testing.
+
+- Hold the side key with Crundi as the digital assistant, or open Crundi Voice and keep Gemini.
+- Live listening, spoken answers, talk over it to interrupt. Works on the lock screen.
+- App settings, Voice assistant: setup, voice, model, monthly limit.
+- The Usage screen shows the voice assistant's API spend.
+
+Needs a Crundi server with the voice assistant; older servers say so.
+</en-US>
+```
+
 ## Release notes, 1.1.2 (en-US)
 
 Version code 31. Production, since 1.1.1 (code 28): everything from
