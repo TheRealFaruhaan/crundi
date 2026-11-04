@@ -1,6 +1,6 @@
 # Voice assistant ("Hey Crundi") — research
 
-Status: research only, not started. Written 2026-11-04.
+Status: research only, not started. Written 2026-11-04. Build plan: [voice-assistant-plan.md](voice-assistant-plan.md).
 
 Goal: a voice assistant on the Android app, woken by "Crundi" or "Hey Crundi",
 that runs on **Claude API credits** and can control every project and read
