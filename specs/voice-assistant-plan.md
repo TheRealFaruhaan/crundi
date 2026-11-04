@@ -26,7 +26,15 @@ Each phase ends with something usable and testable on its own. Phone first
 
 ## Phase 0 — device checks (half a day, before Android work)
 
-Small throwaway test app or debug build on Master's Samsung:
+Built as **Voice Lab**, a debug-only screen in the Android app
+(`android/app/src/debug/…/voicelab/`; not in release or Play builds). Get it:
+Actions › Android › the run for branch `claude/voice-assistant` › artifact
+`crundi-android-github-debug`. The debug app has the same package name as the
+installed app, so installing it over a release or Play install needs that
+uninstalled first.
+
+On the phone: open **Crundi Voice** from the launcher, grant the microphone,
+run the checks, then **Copy report** and paste it back.
 
 | # | Check | Decides |
 |---|---|---|
@@ -38,7 +46,44 @@ Small throwaway test app or debug build on Master's Samsung:
 
 Results go back into the design doc.
 
-## Phase 1 — server brain, typed (no Android yet)
+### Phase 0 results — 2026-11-05, Samsung S24 Ultra (SM-S928B), Android 17 (API 37)
+
+| # | Result |
+|---|---|
+| 0.1 | **Works.** Side key opens the assistant overlay locked and unlocked; a microphone foreground service started from the overlay records real sound in both cases (peaks 4,000–10,500). The lab screen opens over the lock screen. Background-start controls not run. |
+| 0.2 | **Conflict found:** once Crundi is the default digital assistant, "Hey Google" no longer works — the hotword belongs to whichever app is the default assistant. D1 (side key via default assistant) and D2 (Gemini) can't both hold. Needs a decision. |
+| 0.3 | Google TTS has 13 en-GB voices (6 on-device, 6 network, 1 default). **Rejected: not close enough to the wanted voice.** A premium cloud voice is needed. |
+| 0.4 | On-device recognition is fast (2–8 ms after speech) but **inaccurate**: "Add the UI overhaul of the home screen as a kanban task" came out as "Mdua of the home screen as a compound task". The default (network) recogniser was no better ("…as a company"); errors 7 (no match) and 11 (server disconnected) also seen. Gemini gets the same sentence right. **D27 needs revisiting.** |
+| 0.4b | **Hints don't fix it.** Same sentence, language en-US, Android 13+ word hints on: on-device gave "At DUI overhaul of the home screen as a company task"; default gave "at the UI overhaul of the home screen as the compound task" (best, 0.86). "kanban" never came through in 20+ guesses; on-device gives no confidence scores. Frequent error 11 (server disconnected) on the first try after the previous recogniser was destroyed; a reused recogniser should avoid it. |
+| 0.5 | Not run yet. |
+
+## Phase 1 — server brain, typed (no Android yet) — BUILT 2026-11-05
+
+As built (`src/voice/`, `scripts/test-voice.mjs`, page at `/voice`):
+- The tools call Crundi's stores and managers directly, not its HTTP routes.
+  Read-only is enforced by the closed tool list (pinned by the test: no write
+  tool can be added by accident), not by a `ROLE_VOICE` route allowlist.
+  `/api/voice/*` is owner-only (in `COLLABORATOR_NEVER`).
+- Credentials inside settings and schedules show as "set"/"not set"; secret
+  values and collaborator chat keys never reach the model.
+- History is append-only; it restarts after 80 messages until Phase 2.
+- Prompt caching: 1-hour breakpoint on system (+ tools), 1-hour automatic
+  breakpoint on the conversation, nothing volatile before the new user
+  message, fixed model/effort. `POST /api/voice/warm` (called when a voice
+  session opens) re-sends the last request with `max_tokens: 0` to refresh
+  the cache while Master speaks. Each answer reports tokens read from cache.
+- Live speech to text: WebSocket `/api/voice/listen` (owner only) relays the
+  microphone to Deepgram's streaming API (interim words, end of speech by
+  endpointing + utterance end); audio is paused while Crundi talks. The
+  `/voice` page's "Start listening" uses it.
+- Deepgram Aura voices: `GET /api/voice/voices` (Deepgram's own list, with
+  accent and gender; known Aura-2 names if unreachable), `POST
+  /api/voice/speak` (mp3). Setting `ttsVoice`; empty = the device's voice.
+- `/voice` test page: settings (model, limit, keys), type or hold-to-talk
+  (browser recording → Deepgram on the server → Claude), reply spoken with the
+  browser's en-GB voice, detail shown.
+
+Original plan:
 
 Goal: talk to Crundi by typing in a test page and get correct, safe answers.
 
@@ -55,6 +100,11 @@ Goal: talk to Crundi by typing in a test page and get correct, safe answers.
   panels and their latest output (D9, D11).
 - `src/access-policy.js` — `ROLE_VOICE` with its own route allowlist.
   Critical-settings routes (D17) and file writes are absent from it.
+- `src/voice/stt.js` — Deepgram (D37): the phone streams audio over the
+  existing connection, the server relays it to Deepgram's streaming API
+  with keyterms (Crundi, kanban, mindmap, project and service names, read
+  live), and returns partial and final text. Key in Voice assistant
+  settings; Deepgram spend shown next to Claude spend.
 - `src/voice/budget.js` — API key from settings (server only), per-month
   spend from `response.usage` × model price, stop at the limit, default $50
   (D25).
@@ -63,6 +113,10 @@ Goal: talk to Crundi by typing in a test page and get correct, safe answers.
 - Settings page section "Voice assistant" (web UI, for configuration only).
 - Tests: tool allowlist (a voice token can't reach a critical-settings route
   or a file write), budget stop, secrets names-only, persona prompt snapshot.
+
+Phase 1 also gets a typed-or-uploaded test for speech: the Voice Lab
+records the kanban sentence and sends it through `stt.js`, to compare with
+the Phase 0 results.
 
 Exit: typed questions about usage, services, kanban, notes and files get right
 answers; anything outside the allowlist is refused by the server.
@@ -92,7 +146,8 @@ acceptable in all builds, or local embeddings ship as an optional download.
 - `voice/CrundiVoiceService` (`VoiceInteractionService`),
   `CrundiSessionService`, session UI (overlay, works over lock screen),
   `res/xml/voice_interaction_service.xml`, manifest entries.
-- On-device speech-to-text (D27) → `POST /api/voice/turn` → text-to-speech
+- Microphone audio streamed to the server for Deepgram (D37), on-device
+  recogniser as offline fallback → `POST /api/voice/turn` → text-to-speech
   with the chosen voice (D19). Full text shown on screen; long answers spoken
   as a summary (D28).
 - Locked phone: read-only answers; changes ask to unlock.
@@ -154,6 +209,5 @@ Now the agent may change things (exceptions to D10):
 | 5 Gemini | S |
 | 6 Hey Crundi | M |
 
-Phases 1 and 3 can't overlap much (3 needs 1's route). Phase 0 can run
-alongside 1. Phase 2 can go after 3 if a working phone assistant matters
-sooner than memory.
+Order decided: **0 → 1 → 3 (side key) → 2 (memory) → 4 → 5 → 6.** Phases 1
+and 3 can't overlap much (3 needs 1's route). Phase 0 can run alongside 1.
