@@ -33,7 +33,7 @@ settings and usage.
 | D21 | **Input goes to chats only, never terminals.** Voice can still read terminal output (D11) and open or close terminal panels (D14), but can't type into them. Supersedes the terminal part of D11/D15. | 2026-11-04 |
 | D22 | **Voice can create projects.** Same as the app's own "add project": a new folder under the projects folder (or registering an existing one). Only file-system change voice may make (exception to D10). | 2026-11-04 |
 | D23 | **Voice can start chats in any project**, with the project's default model, effort and mode unless told otherwise; the first message follows D15. | 2026-11-04 |
-| D24 | **Voice can close any chat, with confirmation** ("Close the API chat in Crundi? It's idle." → "yes"). A closed chat parks like any other pane and can be resumed. | 2026-11-04 |
+| D24 | **Voice can close any chat, with confirmation** ("Close the API chat in Crundi? It's idle." → "yes"). Closing works like closing it in the app: the pane is removed (`src/panes.js` forgets it). Open: whether voice should park it instead, so it can be resumed in place. | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
