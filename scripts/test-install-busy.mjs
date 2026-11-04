@@ -49,9 +49,20 @@ if (process.platform !== 'linux' || !existsSync('/bin/sleep')) {
   const tunnel = spawn(join(bin(PREFIX), 'cloudflared'), ['30'], { stdio: 'ignore' });
   await new Promise(r => setTimeout(r, 300));
 
-  // The old way, to prove the test would catch it.
-  const naive = spawnSync('cp', ['-r', join(SRC, 'node_modules'), PREFIX + '/'], { encoding: 'utf8' });
-  ok(naive.status !== 0 && /Text file busy/.test(naive.stderr), 'copying over a running program fails, as it did on the live server', naive.stderr.trim());
+  // The old way, to prove the test would catch it: on a copy of its own, so
+  // that where it does overwrite the program it can't harm the tunnel above.
+  // Newer kernels (Ubuntu 26.04's) let a running program be overwritten, so
+  // there it can't fail and the proof doesn't apply; the checks below still do.
+  const probe = join(tmp, 'probe');
+  mkdirSync(bin(probe), { recursive: true });
+  copyFileSync('/bin/sleep', join(bin(probe), 'cloudflared'));
+  chmodSync(join(bin(probe), 'cloudflared'), 0o755);
+  const probeRun = spawn(join(bin(probe), 'cloudflared'), ['30'], { stdio: 'ignore' });
+  await new Promise(r => setTimeout(r, 300));
+  const naive = spawnSync('cp', ['-r', join(SRC, 'node_modules'), probe + '/'], { encoding: 'utf8' });
+  probeRun.kill();
+  if (naive.status === 0) console.log('SKIP  this kernel lets a running program be overwritten, so the old way does not fail here');
+  else ok(/Text file busy/.test(naive.stderr), 'copying over a running program fails, as it did on the live server', naive.stderr.trim());
 
   const script = `set -euo pipefail\nsay() { :; }\nPREBUILT=1\nSRC=${JSON.stringify(SRC)}\nPREFIX=${JSON.stringify(PREFIX)}\n${step}\necho carried-on\n`;
   const run = spawnSync('bash', ['-c', script], { encoding: 'utf8' });
