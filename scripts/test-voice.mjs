@@ -183,11 +183,26 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   const h = agent.history;
   ok(h.length === 4 && h[1].content[0].type === 'thinking' && h[1].content[0].signature === 'sig', 'assistant content appended whole, thinking unchanged');
   ok(h[2].content.length === 2 && h[2].content.every(b => b.type === 'tool_result'), 'all tool results go back in one message');
-  ok(calls[0].model === 'claude-haiku-5-5' && calls[0].output_config.effort === 'low' && calls[0].cache_control.type === 'ephemeral', 'Haiku, low effort, cached prefix');
+  ok(calls[0].model === 'claude-haiku-5-5' && calls[0].output_config.effort === 'low', 'Haiku, low effort');
+  ok(calls[0].system[0].cache_control.ttl === '1h' && calls[0].cache_control.ttl === '1h', '1-hour breakpoint on system + tools, 1-hour automatic breakpoint on the conversation');
+  ok(calls[0].system.length === 1 && calls[0].system[0].text === SYSTEM_PROMPT, 'the system prompt is one fixed block');
+  ok(calls[1].messages.length === 3 && JSON.stringify(calls[1].messages.slice(0, 1)) === JSON.stringify(calls[0].messages), 'round two starts with round one unchanged (prefix match)');
   ok(!('tool_choice' in calls[0]) && !('temperature' in calls[0]), 'no forced tool choice, no sampling parameters');
   ok(calls[0].system === calls[1].system && JSON.stringify(calls[0].tools) === JSON.stringify(calls[1].tools), 'system and tools identical across rounds (cache-stable)');
   ok(/workbench/.test(h[0].content) && /what is on the kanban/.test(h[0].content), 'context rides in the user message, not the system prompt');
   ok(r.costUsd > 0, 'cost reported');
+  ok(r.cache && typeof r.cache.read === 'number' && typeof r.cache.written === 'number', 'cache use reported');
+
+  // warm(): re-sends the last request with max_tokens 0, unless recent
+  const n0 = calls.length;
+  const w1 = await agent.warm();
+  ok(w1.skipped === 'already warm' && calls.length === n0, 'warm() skips a cache that was just used');
+  const fresh = [];
+  const warmClient = () => ({ messages: { create: async (req) => { fresh.push(req); return { stop_reason: 'max_tokens', usage: { cache_creation_input_tokens: 900 }, content: [] }; } } });
+  const a2 = createVoiceAgent({ tools, client: warmClient });
+  const w2 = await a2.warm();
+  ok(w2.ok && fresh[0].max_tokens === 0 && fresh[0].messages.length === 1 && fresh[0].system[0].cache_control.ttl === '1h', 'warm() with no conversation writes the system + tools prefix');
+  ok(!('stream' in fresh[0]) && fresh[0].output_config.effort === 'low', 'warm() matches the real requests (no stream, same effort)');
 
   vs.updateSettings({ model: 'claude-opus-5-5' });
   await agent.turn('hello');

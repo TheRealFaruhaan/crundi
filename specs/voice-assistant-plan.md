@@ -67,6 +67,11 @@ As built (`src/voice/`, `scripts/test-voice.mjs`, page at `/voice`):
 - Credentials inside settings and schedules show as "set"/"not set"; secret
   values and collaborator chat keys never reach the model.
 - History is append-only; it restarts after 80 messages until Phase 2.
+- Prompt caching: 1-hour breakpoint on system (+ tools), 1-hour automatic
+  breakpoint on the conversation, nothing volatile before the new user
+  message, fixed model/effort. `POST /api/voice/warm` (called when a voice
+  session opens) re-sends the last request with `max_tokens: 0` to refresh
+  the cache while Master speaks. Each answer reports tokens read from cache.
 - `/voice` test page: settings (model, limit, keys), type or hold-to-talk
   (browser recording → Deepgram on the server → Claude), reply spoken with the
   browser's en-GB voice, detail shown.

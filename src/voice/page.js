@@ -115,7 +115,9 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   function showAnswer(r) {
     if (r.heard !== undefined) add('Heard', '<div>' + esc(r.heard || '(nothing)') + '</div>');
     if (!r.ok) { add('Crundi', '<div class="err">' + esc(r.error) + '</div>'); return; }
-    add('Crundi' + (r.tools && r.tools.length ? ' · looked at ' + r.tools.join(', ') : '') + (r.costUsd ? ' · $' + r.costUsd.toFixed(4) : ''),
+    const c = r.cache || {};
+    const hit = (c.read + c.written + c.uncached) ? Math.round(100 * c.read / (c.read + c.written + c.uncached)) : 0;
+    add('Crundi' + (r.tools && r.tools.length ? ' · looked at ' + r.tools.join(', ') : '') + (r.costUsd ? ' · $' + r.costUsd.toFixed(4) : '') + (c.read !== undefined ? ' · ' + hit + '% from cache' : ''),
       '<div class="speak">' + esc(r.speak) + '</div>' + (r.show ? '<pre>' + esc(r.show) + '</pre>' : ''));
     say(r.speak);
     loadSettings();
@@ -137,9 +139,11 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 
   // ─── hold to talk ───
   let rec = null, chunks = [], stream = null;
+  const warm = () => api('/api/voice/warm', { method: 'POST' }).catch(() => {});
   async function start(e) {
     e.preventDefault();
     if (rec) return;
+    warm();
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch (err) { add('Crundi', '<div class="err">Microphone not available: ' + esc(err.message) + '</div>'); return; }
     chunks = [];
@@ -199,6 +203,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     loadSettings();
   };
   loadSettings();
+  warm();
+  $('text').addEventListener('focus', warm);
 })();
 </script>
 </body></html>`;

@@ -4031,6 +4031,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const r = await voiceAgent.turn(String(body.text || ''), { where: String(body.where || '').slice(0, 200) });
       return json(res, r, r.ok ? 200 : (r.limitReached ? 402 : 400));
     }
+    // A voice session just opened: warm the prompt cache while Master speaks.
+    if (path === '/api/voice/warm' && req.method === 'POST') {
+      return json(res, await voiceAgent.warm());
+    }
     if (path === '/api/voice/reset' && req.method === 'POST') {
       voiceAgent.reset();
       return json(res, { ok: true });
