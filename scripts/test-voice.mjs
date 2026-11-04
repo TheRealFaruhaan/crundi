@@ -56,6 +56,8 @@ const throwsWith = (fn, re) => { try { fn(); return false; } catch (e) { return 
   const c = vs.claudeCost('claude-haiku-5-5', { input_tokens: 1e6, output_tokens: 1e6 });
   ok(Math.abs(c - 0.60) < 1e-9, 'Haiku cost arithmetic');
   ok(vs.claudeCost('claude-opus-5-5', { cache_read_input_tokens: 1e6 }) === 0.20, 'cache reads priced separately');
+  ok(Math.abs(vs.claudeCost('claude-haiku-5-5', { cache_creation_input_tokens: 1e6 }) - 0.20) < 1e-9, '1-hour cache writes cost twice the input price');
+  ok(Math.abs(vs.claudeCost('claude-haiku-5-5', { cache_creation_input_tokens: 2e6, cache_creation: { ephemeral_5m_input_tokens: 1e6, ephemeral_1h_input_tokens: 1e6 } }) - 0.325) < 1e-9, '5-minute writes are priced at 1.25x when reported');
 
   vs.updateSettings({ monthlyLimitUsd: 1 });
   const nov = new Date('2026-11-10T12:00:00Z');
@@ -311,6 +313,37 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(new URL(req.url).searchParams.get('model') === 'aura-2-draco-en' && JSON.parse(req.init.body).text === 'Yes, Master.', 'the chosen voice is used');
   ok(!(await vtts.speak('hi', 'not-a-voice', { fetchImpl: async () => ({ ok: true }) })).ok, 'a bad voice name is never sent');
   vs.updateSettings({ ttsVoice: '' });
+}
+
+// ─── found against the real services (2026-11-05) ───
+{
+  const { compactBoard, makeTools: mk } = await import('../src/voice/tools.js');
+  const board = {
+    statuses: ['backlog', 'todo', 'in_progress', 'done'],
+    tasks: [
+      { id: 'a', title: 'One', status: 'todo', description: 'x'.repeat(50000), todos: [{ done: true }, { done: false }, { done: true, deleted: true }] },
+      { id: 'b', title: 'Two', status: 'done', todos: [] },
+      { id: 'c', title: 'Gone', status: 'todo', deleted: true },
+    ],
+    history: [{ big: 'y'.repeat(50000) }],
+  };
+  const c = compactBoard(board);
+  ok(c.counts.total === 2 && c.counts.todo === 1 && c.counts.done === 1, 'a board is counted per column, deleted tasks left out');
+  ok(c.tasks[0].todosDone === 1 && c.tasks[0].todosTotal === 2 && !('description' in c.tasks[0]), 'tasks are one short line each');
+  ok(JSON.stringify(c).length < 1000, 'a busy board fits a tool result (no history, no descriptions)');
+  const kt = mk({
+    listProjects: () => [{ alias: 'p1', path: '/' }, { alias: 'p2', path: '/' }, { alias: 'p3', path: '/' }],
+    kanban: { getBoard: (a) => a === 'p1' ? board : a === 'p2' ? { tasks: [{ id: 'z', status: 'todo' }] } : { tasks: [] }, getColumn: () => ({}), getTask: () => ({}) },
+  }).find(t => t.name === 'get_kanban');
+  const all = await kt.run({});
+  ok(all.length === 2 && all[0].project === 'p1' && all[0].total === 2 && all[1].total === 1, 'no project: every project\'s counts, busiest first, empty boards left out');
+
+  ok(vstream.rawAudio({}) === null, 'no declared format: a container Deepgram reads itself');
+  ok(JSON.stringify(vstream.rawAudio({ encoding: 'linear16', sample_rate: '16000' })) === '{"encoding":"linear16","sample_rate":16000}', 'the phone\'s 16 kHz PCM is accepted');
+  ok(vstream.rawAudio({ encoding: 'linear16&x=1', sample_rate: '16000' }) === null && vstream.rawAudio({ encoding: 'linear16', sample_rate: '12345' }) === null, 'only known formats reach Deepgram');
+  const pu = new URL(vstream.streamUrl(['kanban'], { audio: { encoding: 'linear16', sample_rate: 16000 } }));
+  ok(pu.searchParams.get('encoding') === 'linear16' && pu.searchParams.get('sample_rate') === '16000' && pu.searchParams.get('channels') === '1', 'raw PCM is described in the stream URL');
+  ok(!new URL(vstream.streamUrl(['kanban'])).searchParams.has('encoding'), 'WebM is sent without an encoding');
 }
 
 // ─── access ───

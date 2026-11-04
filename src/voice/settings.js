@@ -17,11 +17,16 @@ import { join } from 'node:path';
 import { config } from '../config.js';
 import { writePrivateFile } from '../private-fs.js';
 
-/** Models offered in Voice assistant settings (D8). Prices: US$ per million tokens. */
+/**
+ * Models offered in Voice assistant settings (D8). Prices: US$ per million
+ * tokens. Cache writes cost 1.25x input for 5 minutes and 2x for 1 hour; the
+ * agent writes 1-hour entries, so a write reported without the breakdown is
+ * priced as 1 hour.
+ */
 export const MODELS = {
-  'claude-haiku-5-5': { label: 'Claude Haiku 5.5', input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.125 },
-  'claude-sonnet-5-5': { label: 'Claude Sonnet 5.5', input: 2.00, output: 10.00, cacheRead: 0.20, cacheWrite: 2.50 },
-  'claude-opus-5-5': { label: 'Claude Opus 5.5', input: 4.00, output: 20.00, cacheRead: 0.20, cacheWrite: 5.00 },
+  'claude-haiku-5-5': { label: 'Claude Haiku 5.5', input: 0.10, output: 0.50, cacheRead: 0.01 },
+  'claude-sonnet-5-5': { label: 'Claude Sonnet 5.5', input: 2.00, output: 10.00, cacheRead: 0.20 },
+  'claude-opus-5-5': { label: 'Claude Opus 5.5', input: 4.00, output: 20.00, cacheRead: 0.20 },
 };
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
 export const DEFAULT_LIMIT_USD = 50;
@@ -121,10 +126,14 @@ export function updateSettings(patch = {}) {
 export function claudeCost(model, usage = {}) {
   const p = MODELS[model] || MODELS[DEFAULT_MODEL];
   const M = 1e6;
+  const written = usage.cache_creation_input_tokens || 0;
+  const by = usage.cache_creation || {};
+  const fiveMin = Math.min(written, by.ephemeral_5m_input_tokens || 0);
   return ((usage.input_tokens || 0) * p.input
     + (usage.output_tokens || 0) * p.output
     + (usage.cache_read_input_tokens || 0) * p.cacheRead
-    + (usage.cache_creation_input_tokens || 0) * p.cacheWrite) / M;
+    + fiveMin * p.input * 1.25
+    + (written - fiveMin) * p.input * 2) / M;
 }
 
 export function addClaudeSpend(model, usage, now = new Date()) {

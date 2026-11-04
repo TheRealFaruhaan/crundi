@@ -28,10 +28,27 @@ import { getSettings, addDeepgramSpend } from './settings.js';
 import { keyterms } from './stt.js';
 
 const STREAM_URL = 'wss://api.deepgram.com/v1/listen';
-const KEEPALIVE_MS = 8000;
+/** Deepgram closes a stream after about 10 s without audio; it asks for a KeepAlive every 3–5 s. */
+const KEEPALIVE_MS = 4000;
+
+/**
+ * Raw audio formats a client may declare (?encoding=&sample_rate= on
+ * /api/voice/listen). The phone records 16-bit PCM; a browser sends WebM/Opus
+ * and declares nothing, because Deepgram reads the container itself.
+ */
+export const RAW_ENCODINGS = ['linear16'];
+export const SAMPLE_RATES = [8000, 16000, 24000, 44100, 48000];
+
+/** The client's declared format, or null for a container (WebM, Ogg) Deepgram reads itself. */
+export function rawAudio({ encoding, sample_rate: rate } = {}) {
+  if (!encoding) return null;
+  const n = Number(rate);
+  if (!RAW_ENCODINGS.includes(String(encoding)) || !SAMPLE_RATES.includes(n)) return null;
+  return { encoding: String(encoding), sample_rate: n };
+}
 
 /** The streaming URL: Nova-3, words as they're heard, end of speech detected. */
-export function streamUrl(terms, { language = 'en' } = {}) {
+export function streamUrl(terms, { language = 'en', audio = null } = {}) {
   const q = new URLSearchParams({
     model: 'nova-3', language,
     smart_format: 'true', punctuate: 'true',
@@ -40,6 +57,7 @@ export function streamUrl(terms, { language = 'en' } = {}) {
     utterance_end_ms: '1200',     // 1.2 s with no words ends the utterance
     vad_events: 'true',           // "speech started"
   });
+  if (audio) { q.set('encoding', audio.encoding); q.set('sample_rate', String(audio.sample_rate)); q.set('channels', '1'); }
   for (const t of terms) q.append('keyterm', t);
   return `${STREAM_URL}?${q}`;
 }
@@ -85,9 +103,10 @@ export function createAssembler() {
  * Relay one client socket to Deepgram until either side closes.
  * @param client  a ws WebSocket from the browser / phone
  * @param opts.projects, opts.services  names for keyterms
+ * @param opts.audio  { encoding, sample_rate } for raw PCM (see rawAudio), or null
  * @param opts.WebSocketImpl  tests pass a fake
  */
-export function relay(client, { projects = [], services = [], WebSocketImpl = WebSocket } = {}) {
+export function relay(client, { projects = [], services = [], audio = null, WebSocketImpl = WebSocket } = {}) {
   const send = (m) => { if (client.readyState === 1) client.send(JSON.stringify(m)); };
   const key = getSettings().deepgramKey;
   if (!key) {
@@ -95,7 +114,7 @@ export function relay(client, { projects = [], services = [], WebSocketImpl = We
     client.close();
     return;
   }
-  const dg = new WebSocketImpl(streamUrl(keyterms({ projects, services })), { headers: { Authorization: `Token ${key}` } });
+  const dg = new WebSocketImpl(streamUrl(keyterms({ projects, services }), { audio: rawAudio(audio || {}) }), { headers: { Authorization: `Token ${key}` } });
   const asm = createAssembler();
   const queue = [];
   let open = false;
@@ -104,7 +123,7 @@ export function relay(client, { projects = [], services = [], WebSocketImpl = We
   let done = false;
 
   const keepAlive = setInterval(() => {
-    if (open && Date.now() - lastAudio > KEEPALIVE_MS - 500) {
+    if (open && (paused || Date.now() - lastAudio > KEEPALIVE_MS - 500)) {
       try { dg.send(JSON.stringify({ type: 'KeepAlive' })); } catch { /* closing */ }
     }
   }, KEEPALIVE_MS);

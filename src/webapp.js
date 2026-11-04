@@ -7021,6 +7021,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           voiceRelay(ws, {
             projects: allProjects().flatMap(p => [p.alias, p.name]),
             services: getAllServiceStatus().map(sv => sv.name),
+            // The phone streams raw 16-bit PCM and says so; a browser sends WebM.
+            audio: { encoding: url.searchParams.get('encoding'), sample_rate: url.searchParams.get('sample_rate') },
           });
         });
         return;

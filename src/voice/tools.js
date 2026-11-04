@@ -77,6 +77,21 @@ function looksBinary(buf) {
   return false;
 }
 
+/**
+ * A board as the model needs it: one short line per live task and the counts
+ * per column. No descriptions, history or deleted tasks, which on a busy board
+ * run far past what a tool result may hold (get_kanban_task has the detail).
+ */
+export function compactBoard(board) {
+  const tasks = (Array.isArray(board?.tasks) ? board.tasks : []).filter(t => !t.deleted).map(t => {
+    const live = (t.todos || []).filter(td => !td.deleted);
+    return { id: t.id, title: t.title, status: t.status, todosDone: live.filter(td => td.done).length, todosTotal: live.length };
+  });
+  const counts = { total: tasks.length };
+  for (const st of board?.statuses || ['backlog', 'todo', 'in_progress', 'done']) counts[st] = tasks.filter(t => t.status === st).length;
+  return { counts, tasks };
+}
+
 /** Terminal output without colour codes and cursor moves. */
 export function stripAnsi(s) {
   return String(s || '')
@@ -227,11 +242,17 @@ export function makeTools(deps) {
     },
     {
       name: 'get_kanban',
-      description: 'A project\'s kanban board, or just one column. Statuses: backlog, todo, in_progress, done.',
-      input_schema: obj({ project: str('Project alias'), status: str('Optional: only this column') }, ['project']),
+      description: 'Kanban: one project\'s board (each task\'s id, title, status and todo progress, plus counts per column), or just one column. Leave project out for the task counts per column of every project. Statuses: backlog, todo, in_progress, done. Use get_kanban_task for a task\'s description and todos.',
+      input_schema: obj({ project: str('Project alias; leave out for every project\'s counts'), status: str('Optional: only this column') }),
       run: ({ project: alias, status }) => {
+        if (!alias) {
+          return deps.listProjects()
+            .map(p => ({ project: p.alias, ...compactBoard(deps.kanban.getBoard(p.alias)).counts }))
+            .filter(c => c.total > 0)
+            .sort((x, y) => y.total - x.total);
+        }
         const a = project(alias).alias;
-        return status ? deps.kanban.getColumn(a, String(status)) : deps.kanban.getBoard(a);
+        return status ? deps.kanban.getColumn(a, String(status)) : compactBoard(deps.kanban.getBoard(a));
       },
     },
     {
