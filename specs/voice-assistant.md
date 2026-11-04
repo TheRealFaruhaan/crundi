@@ -6,6 +6,24 @@ Goal: a voice assistant on the Android app, woken by "Crundi" or "Hey Crundi",
 that runs on **Claude API credits** and can control every project and read
 settings and usage.
 
+## 0. Decisions so far
+
+| # | Decision | Date |
+|---|---|---|
+| D1 | **Default trigger: Samsung side key** (Crundi as default digital assistant → Side button → Digital assistant). No always-on listening, no battery cost, works over the lock screen (§3.2). | 2026-11-04 |
+| D2 | **Gemini is a supported option too:** "Hey Google, open Crundi (Voice)" opens the voice screen, which goes back to sleep after silence (§3.5). AppFunctions to be revisited once Gemini supports third-party apps publicly. | 2026-11-04 |
+| D3 | Software "Hey Crundi" wake word (§3, §3.1) is not the default; open whether to offer it as an opt-in. | 2026-11-04 |
+
+### Lock screen
+
+- Side key / assist gesture: the assistant session shows over the lock screen,
+  no unlock needed.
+- Gemini: usually asks to unlock before opening another app (to test on
+  device), even though Crundi's voice screen can use `showWhenLocked` like
+  `AlertActivity`.
+- While locked, allow read-only answers only; anything that changes state
+  asks to unlock (§4).
+
 ## 1. Findings that change the plan
 
 1. **Porcupine is probably no longer free.** Community reports say Picovoice
@@ -231,11 +249,14 @@ have left" with no Crundi screen at all. Caveats:
 1. **Server:** `src/voice.js` tool loop + `/api/voice/turn`, built from the
    existing tools, read-only (usage, projects, kanban, service status). Test
    from the web UI with typed text.
-2. **Android assistant:** `VoiceInteractionService` + session + on-device STT +
-   TTS, so the assist gesture and side key work.
-3. **Wake word:** sherpa-onnx microphone foreground service behind an opt-in
-   switch.
-4. **Write actions** with confirmations, then delegation to Claude Code chats.
+2. **Android assistant (default trigger, D1):** `VoiceInteractionService` +
+   session + on-device STT + TTS, so the side key and assist gesture work,
+   including over the lock screen.
+3. **Gemini entry (D2):** a "Crundi Voice" launcher alias / app shortcut that
+   opens the same voice screen, with the silence timeout.
+4. **Optional:** sherpa-onnx "Hey Crundi" wake word behind an opt-in switch
+   (D3, undecided).
+5. **Write actions** with confirmations, then delegation to Claude Code chats.
 
 ## 6. Open questions
 
