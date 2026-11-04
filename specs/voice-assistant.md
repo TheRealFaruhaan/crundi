@@ -34,6 +34,11 @@ settings and usage.
 | D22 | **Voice can create projects.** Same as the app's own "add project": a new folder under the projects folder (or registering an existing one). Only file-system change voice may make (exception to D10). | 2026-11-04 |
 | D23 | **Voice can start chats in any project**, with the project's default model, effort and mode unless told otherwise; the first message follows D15. | 2026-11-04 |
 | D24 | **Voice can close any chat, with confirmation** ("Close the API chat in Crundi? It's idle." → "yes"). Closing works like closing it in the app: the pane is removed (`src/panes.js` forgets it). Open: whether voice should park it instead, so it can be resumed in place. | 2026-11-04 |
+| D25 | **API key kept on the server** (Voice assistant settings), never sent to the phone. **Spending limit, default $50, adjustable**; when reached, voice stops and says so. (Assumed per month; to confirm.) | 2026-11-04 |
+| D26 | **One memory, not per project.** Crundi is a single assistant across everything; it remembers, and compacts while idle (§2.5). | 2026-11-04 |
+| D27 | **Speech-to-text: Android's built-in on-device recognizer.** | 2026-11-04 |
+| D28 | **Long answers** (files, logs, long chat replies): short spoken summary, full text on screen. | 2026-11-04 |
+| D29 | **Phone first.** Web UI and desktop later, on the same server side. | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -173,9 +178,8 @@ The Claude call runs on the server because:
 
 ### 2.3 Speech on the phone
 
-- Speech-to-text: `SpeechRecognizer.createOnDeviceSpeechRecognizer` (API 31+).
-  `RECORD_AUDIO` is already in the manifest. Fully offline alternative:
-  sherpa-onnx speech recognition models.
+- Speech-to-text (D27): `SpeechRecognizer.createOnDeviceSpeechRecognizer`
+  (API 31+). `RECORD_AUDIO` is already in the manifest.
 - Text-to-speech: Android `TextToSpeech` (Samsung voices available).
 
 ### 2.4 The voice (D19)
@@ -199,6 +203,31 @@ Persona in the system prompt: concise, dry wit, polite. Addresses the user as
 acknowledgements are fine without it. "Yes.", "On it.", "Roger.",
 "Affirmative." are examples to set the tone, not a list to choose from: it
 uses its own words. Cool, not robotic.
+
+### 2.5 Memory (D26)
+
+One running conversation for the whole assistant, plus a small long-term
+notebook. No vector database: at one person's scale it adds moving parts
+without helping.
+
+1. **Running conversation.** Every voice turn is appended to one history on
+   the server. Recent turns are sent as-is.
+2. **Compaction while idle.** After a quiet period (e.g. 10 min), Crundi asks
+   the model to summarise older turns into a short "what we've been doing"
+   block and replaces them with it. Options: the API's server-side compaction
+   (beta `compact-2026-01-12`), or Crundi's own summary step — the latter
+   fits "compact while idle" better because it runs at a time we choose, not
+   when a size threshold is hit.
+3. **Long-term notebook.** The Claude memory tool (`memory_20250818`) lets the
+   model keep notes in files Crundi stores on the server: preferences ("Master
+   prefers short answers"), standing facts ("the API project is called…"),
+   ongoing threads. Survives compaction; viewable and editable in Voice
+   assistant settings.
+4. **Overview.** Because it's one memory, "what have we been working on this
+   week?" works across all projects.
+
+Cost note: the cached prefix (system prompt + tools + summary) keeps repeat
+turns cheap; compaction keeps the history from growing without limit.
 
 ## 3. Wake word on a Samsung without root
 
