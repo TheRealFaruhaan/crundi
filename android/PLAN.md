@@ -624,6 +624,21 @@ and the Linux desktop client.
   (`GET /api/push/mobile/states`, `LiveCards.catchUp`), draws what it did
   not know of and takes down what has stopped. It does not open a bubble:
   those come from notifications.
+- **The Now Bar and Gemini (app 1.1.3-dev.3).** The undocumented
+  `android.ongoingActivityNoti.automation` extra, tried in 1.0.0-dev.6, is One
+  UI's lane for Gemini acting in an app: on the owner's phone (Android 17, One
+  UI 9) it headed the card "Gemini Intelligence" with a glow, and
+  `automationPackage` did not change that (Gym Log PR 39 reports the same). It
+  is removed, with the setting that switched it and the chipIcon and nowbarIcon
+  guesses. A plain Live Update reaches the Now Bar as Crundi, with no glow, once
+  the person turns on Developer options, Live notifications for all apps: seen
+  on the owner's phone. An app cannot turn it on, and App settings no
+  longer mentions it, at the owner's request. The card has no Samsung-specific code at all.
+  Without it the card is an ordinary notification, unless Samsung lists the app
+  (by package name, no public way to apply was found). Also tried and rejected:
+  a fake media session, `ProgressStyle` (an unwanted progress line). Spoofing a
+  listed package is not an option. Two no-break spaces after the title, on every
+  phone, keep the timer off it; not yet seen on a phone.
 - **Not part of 1.0.0:** the Play in-app update prompt, a path from the
   demonstration server to the push relay.
 - **Next:** the Play Console steps in `android/store/PLAY_RELEASE.md`.

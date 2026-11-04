@@ -220,7 +220,7 @@ export const COLLABORATOR_MCP_TOOLS = new Set([
   'browser_select', 'browser_eval', 'browser_snapshot', 'browser_elements', 'browser_console',
   'browser_network', 'browser_cookies', 'browser_pdf', 'browser_read_page', 'browser_screenshot',
   'browser_scroll', 'browser_resize', 'browser_wait', 'browser_go_back', 'browser_go_forward',
-  'browser_view_source', 'browser_list', 'browser_close', 'browser_mouse',
+  'browser_view_source', 'browser_list', 'browser_close', 'browser_mouse', 'browser_touch',
   // Their own project's board and map.
   'kanban_list', 'kanban_list_column', 'kanban_get_task', 'kanban_add_task', 'kanban_update_task',
   'kanban_move_task', 'kanban_delete_task', 'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo',

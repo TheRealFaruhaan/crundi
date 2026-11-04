@@ -207,7 +207,8 @@ object LiveCards {
             (if (e.needs) "!  " else "") + clock(e.since) + "   " + e.title + (if (e.needs) "  · needs you" else if (e.state == "waiting") "  · waiting" else "")
         }
         val b = base(ctx, first, project)
-            .setContentTitle(title)
+            // Some phones set the timer straight after the title, with no gap.
+            .setContentTitle(if (needs.isEmpty() && working.size == 1) title + "\u00A0\u00A0" else title)
             .setContentText(if (ordered.size == 1) first.title else lines.lineSequence().first())
             .setStyle(NotificationCompat.BigTextStyle().bigText(lines))
             .setOngoing(true)
@@ -233,47 +234,9 @@ object LiveCards {
         val says = "${first.icon}|$title|$lines|${needs.size}|${working.size}|${first.since}|${working.firstOrNull { it.state == "working" } != null}"
         if (lastSaid[id] == says && (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications.any { it.id == id }) return
         lastSaid[id] = says
-        samsungIcon(ctx, b, first)
         val built = b.build()
         runCatching { nm.notify(id, built) }.onFailure { PushLog.add(ctx, "Android refused to show the live card: ${it.javaClass.simpleName}: ${it.message}") }
         noteChip(ctx, id, built)
-    }
-
-    /**
-     * Samsung only, and a guess. One UI reads extras of its own from a live
-     * card; these two are reported to carry the picture for the status bar
-     * chip and for the Now Bar. Whether they also change the picture at the
-     * left of the card, or do anything at all without Samsung's own style
-     * (which must not be set, see below), is not known. Anywhere else, and
-     * if the names are wrong, they are ignored.
-     */
-    private fun samsungIcon(ctx: Context, b: NotificationCompat.Builder, e: Entry) {
-        if (!samsungLive(ctx)) return
-        val icon = Icons.cached(ctx, e.serverId, e.icon) ?: return
-        val head = runCatching { Icons.head(icon, Ui.dp(ctx, 48), adaptive = false) }.getOrNull() ?: return
-        val asIcon = android.graphics.drawable.Icon.createWithBitmap(head)
-        b.addExtras(android.os.Bundle().apply {
-            putParcelable("android.ongoingActivityNoti.chipIcon", asIcon)
-            putParcelable("android.ongoingActivityNoti.nowbarIcon", asIcon)
-        })
-    }
-
-    /**
-     * Whether to ask One UI for its live treatment (Now Bar, status bar
-     * chip). It comes with a moving glow round the card, which Samsung draws
-     * and the app cannot change, and which the owner found heavy on the
-     * phone. Off, the card is an ordinary ongoing notification there.
-     */
-    const val PREF_SAMSUNG_LIVE = "live.samsung"
-    val onSamsung get() = Build.MANUFACTURER.equals("samsung", true)
-    fun samsungLive(ctx: Context) = ctx.getSharedPreferences("crundi", Context.MODE_PRIVATE).getBoolean(PREF_SAMSUNG_LIVE, true)
-
-    /** Draw every card again, as it now should be: a setting that changes how they look was changed. */
-    @Synchronized
-    fun refresh(ctx: Context) {
-        val map = load(ctx)
-        lastSaid.clear()
-        for ((serverId, project) in map.values.map { it.serverId to it.project }.toSet()) render(ctx, serverId, project, map, justFinished = null)
     }
 
     private val lastSaid = HashMap<Int, String>()
@@ -298,33 +261,21 @@ object LiveCards {
     private fun base(ctx: Context, e: Entry, project: String): NotificationCompat.Builder {
         return NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
-            // No colour of its own. On Samsung the live card is drawn with a
-            // glow, and a bright accent made it a heavy one, on the lock
-            // screen as well. Left uncoloured, the phone uses its plain
-            // outline. The glow itself is Samsung's and not something the
-            // app draws or can switch off.
             // No large picture. That is a SECOND picture, on the right of the
             // card, and what was asked for is the one on the left to change.
             // The one on the left is not the app's to set: a phone draws it
             // from the app's own icon (Samsung) or the small icon (others).
-            // See `samsungIcon` for the one thing that can be tried.
             .setSubText(project.ifEmpty { "Crundi" })
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            // Samsung only. Android promoted this card on the owner's phone
-            // (the log said so) and One UI still showed it as an ordinary
-            // notification: its Now Bar and status bar chip are kept for apps
-            // on Samsung's own list. This extra is reported, by another app's
-            // developers, to let a card that Android has already promoted
-            // through on One UI 8.5 and later. It is undocumented, does
-            // nothing anywhere else, and may stop working. The related
-            // "android.ongoingActivityNoti.style" must NOT be set: it sends
-            // the card down a different path and undoes this.
-            // It also brings One UI's moving glow, so it can be switched off
-            // in App settings.
-            .apply { if (samsungLive(ctx)) addExtras(android.os.Bundle().apply { putBoolean("android.ongoingActivityNoti.automation", true) }) }
+            // Nothing of Samsung's own here. One UI keeps its Now Bar to apps on
+            // its list, and to any app once the person turns on Developer
+            // options, Live notifications for all apps. The undocumented extra android.ongoingActivityNoti.automation
+            // also lets a card in, but that is One UI's lane for Gemini acting
+            // in an app: the card is headed "Gemini Intelligence", with its
+            // logo and glow, whatever automationPackage says. Do not add it back.
     }
 
     private fun open(ctx: Context, e: Entry, code: Int): PendingIntent = PendingIntent.getActivity(

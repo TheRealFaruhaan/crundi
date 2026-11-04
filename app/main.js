@@ -1640,7 +1640,7 @@ function connectNativeHost() {
     appendLog('[nativehost] connected — registering as native host');
     // Tell the server what this build can do, so it does not offer the user a
     // notification channel that an older app would silently drop.
-    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify'] })); }
+    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch'] })); }
     catch (err) { appendLog(`[nativehost] register failed: ${err.message}`); }
   });
   ws.on('message', (raw) => {
@@ -1667,6 +1667,49 @@ function scheduleHostRetry() {
   clearTimeout(hostRetry);
   // The server may simply be restarting; keep trying, but not in a tight loop.
   hostRetry = setTimeout(connectNativeHost, 5000);
+}
+
+// Touch, pointer and mouse listeners on the element under (x, y) and every
+// ancestor up to window — what the page has wired to receive a gesture there.
+// Only DevTools can list listeners, hence CDP rather than page script. Kept
+// identical in app/main.js and src/browser-headless.js.
+async function touchListenersAt(send, x, y) {
+  const GROUP = 'crundi-touch';
+  const TYPES = /^(touch|pointer|mouse|click|dblclick|contextmenu|wheel|gesture|drag)/;
+  try {
+    const arr = await send('Runtime.evaluate', {
+      objectGroup: GROUP, returnByValue: false,
+      expression: `(function(){var a=[],el=document.elementFromPoint(${Math.round(x)},${Math.round(y)});`
+        + 'while(el){a.push(el);el=el.parentElement||(el.getRootNode&&el.getRootNode().host)||null;}'
+        + 'a.push(document,window);return a;})()',
+    });
+    if (!arr?.result?.objectId) return [];
+    const props = await send('Runtime.getProperties', { objectId: arr.result.objectId, ownProperties: true });
+    const items = (props.result || []).filter((p) => /^\d+$/.test(p.name) && p.value?.objectId)
+      .sort((a, b) => a.name - b.name);
+    const out = [];
+    for (const it of items) {
+      const res = await send('DOMDebugger.getEventListeners', { objectId: it.value.objectId });
+      // Not our own probe's listeners (browser-touch.js names them crundiTouch*).
+      const ls = (res.listeners || []).filter((l) => TYPES.test(l.type)
+        && !/crundiTouch/.test(String(l.handler?.description || '')));
+      if (!ls.length) continue;
+      out.push({
+        el: it.value.description || it.value.className || '?',
+        listeners: ls.map((l) => ({
+          type: l.type,
+          ...(l.useCapture ? { capture: true } : {}),
+          ...(l.passive ? { passive: true } : {}),
+          handler: String(l.handler?.description || '').replace(/\s+/g, ' ').slice(0, 120),
+        })),
+      });
+    }
+    return out;
+  } catch (err) {
+    return [{ error: `listeners unavailable: ${err.message}` }];
+  } finally {
+    send('Runtime.releaseObjectGroup', { objectGroup: GROUP }).catch(() => {});
+  }
 }
 
 const browserIpcHandlers = {
@@ -1757,6 +1800,7 @@ const browserIpcHandlers = {
     // Release the per-instance webRequest listeners so closures don't pin the
     // destroyed window's session.
     try { entry.ses.webRequest.onBeforeSendHeaders(null); entry.ses.webRequest.onCompleted(null); entry.ses.webRequest.onErrorOccurred(null); } catch { /* ignore */ }
+    clearTimeout(entry.castTimer);
     try { entry.win.destroy(); } catch { /* ignore */ }
     browserWindows.delete(msg.key);
     return { ok: true };
@@ -1877,6 +1921,47 @@ const browserIpcHandlers = {
       wc.sendInputEvent({ type: 'mouseMove', x: msg.x, y: msg.y });
     }
     return { ok: true };
+  },
+
+  // Replays a gesture planned by the server (browser.js planTouch): a list of
+  // CDP touch events, each followed by a wait. sendInputEvent has no touch
+  // events, so this goes through the debugger, with touch emulation switched
+  // on first so the page sees a touch device.
+  async browserTouch(msg) {
+    const entry = browserWindows.get(msg.key);
+    if (!entry) return { ok: false, error: 'Browser not found' };
+    const wc = entry.win.webContents;
+    _attachDbg(wc);
+    if (!entry.touch) {
+      await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+      entry.touch = true;
+    }
+    // A hidden window produces no frames, so a fling or a scroll-snap stops
+    // dead where the finger lifted and a carousel looks broken when a phone
+    // would snap it. A tiny DevTools screencast makes it render; it runs
+    // through the gesture and a while after, for the server's settle check.
+    if (!entry.castHooked) {
+      entry.castHooked = true;
+      wc.debugger.on('message', (_e, method, params) => {
+        if (method === 'Page.screencastFrame') wc.debugger.sendCommand('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+      });
+    }
+    clearTimeout(entry.castTimer);
+    try { await wc.debugger.sendCommand('Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 40, maxHeight: 80 }); } catch { /* render as before */ }
+    const listeners = msg.listenersAt
+      ? await touchListenersAt((m, p) => wc.debugger.sendCommand(m, p), msg.listenersAt.x, msg.listenersAt.y)
+      : undefined;
+    for (const st of msg.steps || []) {
+      await wc.debugger.sendCommand('Input.dispatchTouchEvent', {
+        type: st.type,
+        touchPoints: (st.points || []).map((pt) => ({ x: pt.x, y: pt.y, id: pt.id })),
+      });
+      if (st.wait > 0) await new Promise((r) => setTimeout(r, st.wait));
+    }
+    entry.castTimer = setTimeout(() => {
+      if (!wc.isDestroyed()) wc.debugger.sendCommand('Page.stopScreencast').catch(() => {});
+    }, 1500);
+    return { ok: true, url: wc.getURL(), listeners };
   },
 
   async browserResize(msg) {
