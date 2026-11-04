@@ -383,8 +383,10 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   vs._reload();
   ok(vs.publicSettings(new Date('2026-11-05T12:00:00Z')).spend.totalUsd === 2, 'spend counted before billing months carries over');
   vs.updateSettings({ billingDay: 20 });
-  ok(vs.publicSettings(new Date('2026-11-25T12:00:00Z')).spend.totalUsd === 0, 'a new billing month starts from zero');
-  vs.updateSettings({ billingDay: 1 });
+  const split = vs.publicSettings(new Date('2026-11-25T12:00:00Z'));
+  ok(split.spend.claudeUsd === 0 && split.spend.deepgramUsd === 0.5, 'Claude restarts on its own billing day; Deepgram keeps its month');
+  ok(split.nextReset === '2026-12-20' && split.deepgramNextReset === '2026-12-01', 'each provider says when it restarts');
+  vs.updateSettings({ billingDay: 1, deepgramBillingDay: 1 });
 }
 
 // ─── access ───

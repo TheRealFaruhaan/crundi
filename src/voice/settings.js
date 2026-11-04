@@ -7,9 +7,11 @@
  * never the key.
  *
  * Spend is counted per billing month, in US dollars, from the usage each
- * Claude response and each Deepgram transcription reports. The month starts
- * on billingDay (the day the API account is billed, 1-31; in a shorter month,
- * its last day) at 00:00 UTC. When the month's spend reaches the limit, the
+ * Claude response and each Deepgram transcription reports. Claude and
+ * Deepgram bill separately, so each has its own month: Claude's starts on
+ * billingDay (the day the Claude API account is billed), Deepgram's on
+ * deepgramBillingDay; 1-31, a shorter month's last day when it lacks the
+ * day, at 00:00 UTC. The limit is on the two together. When the month's spend reaches the limit, the
  * assistant stops answering and says so (D25); a new month starts from zero.
  */
 
@@ -44,9 +46,11 @@ const DEFAULTS = {
   // A Deepgram Aura voice (e.g. aura-2-draco-en), or '' for the device's own.
   ttsVoice: '',
   monthlyLimitUsd: DEFAULT_LIMIT_USD,
-  // The day of the month the API account is billed: the spend month starts then.
+  // The day of the month each account is billed: its spend month starts then.
   billingDay: 1,
-  spend: { month: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },
+  deepgramBillingDay: 1,
+  // month: the Claude month's first day; deepgramMonth: Deepgram's.
+  spend: { month: '', deepgramMonth: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },
 };
 
 const FILE = () => join(config.dataDir, 'voice.json');
@@ -89,17 +93,28 @@ export function billingPeriod(now = new Date(), billingDay = 1) {
 
 const ymd = (d) => d.toISOString().slice(0, 10);
 
-/** The month's spend, reset to zero when a new billing month has begun. */
+/**
+ * Spend counted before billing months was keyed by calendar month ("2026-11"):
+ * it carries over into a period that starts on that month's first day.
+ */
+const carries = (was, key) => !!was && was === key.slice(0, 7) && key.endsWith('-01');
+
+/** The month's spend; each provider's part restarts when its own billing month does. */
 function spendNow(now) {
   const s = load();
-  const key = ymd(billingPeriod(now, s.billingDay).start);
-  if (s.spend.month !== key) {
-    // Spend counted before billing months (a calendar month, "2026-11") carries
-    // over into the period starting that month's first day, so nothing is lost.
-    const carried = s.spend.month === key.slice(0, 7) && key.endsWith('-01');
-    s.spend = carried ? { ...s.spend, month: key } : { month: key, claudeUsd: 0, deepgramUsd: 0, turns: 0 };
+  const sp = s.spend;
+  const legacy = sp.deepgramMonth === undefined || sp.deepgramMonth === '' ? sp.month : sp.deepgramMonth;
+  const ck = ymd(billingPeriod(now, s.billingDay).start);
+  const dk = ymd(billingPeriod(now, s.deepgramBillingDay).start);
+  if (sp.month !== ck) {
+    if (!carries(sp.month, ck)) { sp.claudeUsd = 0; sp.turns = 0; }
+    sp.month = ck;
   }
-  return s.spend;
+  if (sp.deepgramMonth !== dk) {
+    if (!(legacy === dk || carries(legacy, dk))) sp.deepgramUsd = 0;
+    sp.deepgramMonth = dk;
+  }
+  return sp;
 }
 
 /** The whole record, keys included. Server side only. */
@@ -113,11 +128,16 @@ export function publicSettings(now = new Date()) {
   const spend = spendNow(now);
   const total = spend.claudeUsd + spend.deepgramUsd;
   const period = billingPeriod(now, s.billingDay);
+  const dg = billingPeriod(now, s.deepgramBillingDay);
   return {
     model: s.model,
+    // Claude's billing month (periodStart/nextReset), then Deepgram's.
     billingDay: s.billingDay,
     periodStart: ymd(period.start),
     nextReset: ymd(period.next),
+    deepgramBillingDay: s.deepgramBillingDay,
+    deepgramPeriodStart: ymd(dg.start),
+    deepgramNextReset: ymd(dg.next),
     models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
     anthropicKeySet: !!s.anthropicKey,
     deepgramKeySet: !!s.deepgramKey,
@@ -143,10 +163,11 @@ export function updateSettings(patch = {}) {
     if (!Number.isFinite(n) || n < 0 || n > 100000) return { ok: false, error: 'The monthly limit must be a number of dollars from 0 to 100000' };
     s.monthlyLimitUsd = n;
   }
-  if (patch.billingDay !== undefined) {
-    const d = Number(patch.billingDay);
-    if (!Number.isInteger(d) || d < 1 || d > 31) return { ok: false, error: 'The billing day is a day of the month, 1 to 31' };
-    s.billingDay = d;
+  for (const k of ['billingDay', 'deepgramBillingDay']) {
+    if (patch[k] === undefined) continue;
+    const d = Number(patch[k]);
+    if (!Number.isInteger(d) || d < 1 || d > 31) return { ok: false, error: 'A billing day is a day of the month, 1 to 31' };
+    s[k] = d;
   }
   if (patch.ttsVoice !== undefined) {
     const v = String(patch.ttsVoice || '');

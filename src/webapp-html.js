@@ -5429,7 +5429,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const meta = $('#uc-api-meta');
         const turns = Number(sp.turns) || 0;
         meta.textContent = 'Claude ' + fmtUsd(sp.claudeUsd) + ' · Deepgram ' + fmtUsd(sp.deepgramUsd) + ' · ' + turns + (turns === 1 ? ' request' : ' requests')
-          + (d.nextReset ? ' · restarts ' + new Date(d.nextReset + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '');
+          + (d.nextReset ? ' · Claude restarts ' + new Date(d.nextReset + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '');
         if (d.limitReached) {
           const w = document.createElement('span');
           w.className = 'uc-api-warn';

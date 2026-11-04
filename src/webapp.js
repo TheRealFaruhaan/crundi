@@ -4025,7 +4025,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const r = voiceSettings.updateSettings({
         model: body.model, monthlyLimitUsd: body.monthlyLimitUsd,
         anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey,
-        ttsVoice: body.ttsVoice, billingDay: body.billingDay,
+        ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay,
       });
       return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
     }
