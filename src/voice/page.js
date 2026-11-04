@@ -33,8 +33,18 @@ textarea { min-height: 70px; resize: vertical; }
 button { background: var(--accent); color: #0b1220; border: 0; border-radius: 8px; padding: 10px 14px; font: inherit; font-weight: 600; cursor: pointer; }
 button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
 button:disabled { opacity: .5; cursor: default; }
-#hold { flex: 1; min-width: 200px; padding: 16px; font-size: 16px; touch-action: none; user-select: none; }
+#live { flex: 2; min-width: 180px; padding: 16px; font-size: 16px; }
+#live.on { background: var(--bad); color: #fff; }
+#hold { flex: 1; min-width: 120px; padding: 16px; touch-action: none; user-select: none; }
 #hold.on { background: var(--bad); color: #fff; }
+.heard { min-height: 1.5em; margin-top: 10px; font-size: 17px; }
+.heard .interim { color: var(--muted); }
+.voices { display: grid; gap: 6px; margin-top: 10px; max-height: 360px; overflow: auto; }
+.voice { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.voice.chosen { border-color: var(--accent); }
+.voice .meta { flex: 1; min-width: 0; }
+.voice .meta small { color: var(--muted); display: block; }
+.voice button { padding: 6px 10px; }
 .spend { color: var(--muted); font-size: 13px; margin-top: 10px; }
 .msg { border-top: 1px solid var(--line); padding: 10px 0; }
 .msg:first-child { border-top: 0; }
@@ -45,13 +55,15 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 </style></head>
 <body><main>
 <h1>Crundi Voice</h1>
-<p class="sub">Talk to your voice assistant. Phase 1: it can look at everything and change nothing.</p>
+<p class="sub">Talk to your voice assistant. Phase 1: it can look at everything and change nothing. "Start listening" transcribes live and answers each time you stop talking.</p>
 
 <section class="card">
   <h2>Talk</h2>
   <div class="row">
-    <button id="hold">Hold to talk</button>
+    <button id="live">Start listening</button>
+    <button class="ghost" id="hold">Hold to talk</button>
   </div>
+  <div id="heard" class="heard"></div>
   <label for="text">Or type</label>
   <textarea id="text" placeholder="How much usage do I have left this week?"></textarea>
   <div class="row">
@@ -60,6 +72,19 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     <label style="display:flex;align-items:center;gap:6px;margin:0 0 0 auto"><input type="checkbox" id="mute" style="width:auto"> Don't speak replies</label>
   </div>
   <div id="log" style="margin-top:12px"></div>
+</section>
+
+<section class="card">
+  <h2>Voice</h2>
+  <div class="spend" id="voiceNow"></div>
+  <label for="sample">Preview line</label>
+  <input id="sample" value="Yes, Master. Your weekly usage is at forty two percent, and all four services are running.">
+  <div class="row">
+    <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="britOnly" style="width:auto" checked> British only</label>
+    <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="maleOnly" style="width:auto"> Male only</label>
+    <button class="ghost" id="useDevice" style="margin-left:auto">Use this device's voice</button>
+  </div>
+  <div class="voices" id="voices"></div>
 </section>
 
 <section class="card">
@@ -85,6 +110,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     if (res.status === 401) throw new Error('Not signed in here. Open Crundi in this browser, sign in, then reload this page.');
     return res.json();
   }
+  const warm = () => api('/api/voice/warm', { method: 'POST' }).catch(() => {});
   const esc = (s) => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   function add(who, html) {
@@ -102,14 +128,43 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       || vs.find(v => /en-GB/i.test(v.lang)) || null;
   }
   if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-  function say(text) {
-    if (!text || $('mute').checked || !('speechSynthesis' in window)) return;
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    if (voice) u.voice = voice;
-    u.lang = 'en-GB';
-    u.rate = 1.02;
-    speechSynthesis.speak(u);
+  let ttsVoice = '';
+  let player = null;
+  function browserSay(text) {
+    return new Promise((done) => {
+      if (!('speechSynthesis' in window)) return done();
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      if (voice) u.voice = voice;
+      u.lang = 'en-GB';
+      u.rate = 1.02;
+      u.onend = u.onerror = () => done();
+      speechSynthesis.speak(u);
+    });
+  }
+  async function deepgramSay(text, model) {
+    const res = await fetch('/api/voice/speak', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+      body: JSON.stringify({ text, voice: model }),
+    });
+    if (!res.ok) { let e = 'Could not speak'; try { e = (await res.json()).error || e; } catch {} throw new Error(e); }
+    const url = URL.createObjectURL(await res.blob());
+    if (player) { player.pause(); }
+    player = new Audio(url);
+    await new Promise((done) => { player.onended = player.onerror = done; player.play().catch(done); });
+    URL.revokeObjectURL(url);
+  }
+  /** Speak, pausing live listening so Crundi doesn't hear itself. */
+  async function say(text, model = ttsVoice) {
+    if (!text || $('mute').checked) return;
+    pauseLive(true);
+    try {
+      if (model) await deepgramSay(text, model);
+      else await browserSay(text);
+    } catch (e) {
+      add('Crundi', '<div class="err">' + esc(e.message) + " — using this device's voice.</div>");
+      await browserSay(text);
+    } finally { pauseLive(false); }
   }
 
   function showAnswer(r) {
@@ -139,7 +194,6 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 
   // ─── hold to talk ───
   let rec = null, chunks = [], stream = null;
-  const warm = () => api('/api/voice/warm', { method: 'POST' }).catch(() => {});
   async function start(e) {
     e.preventDefault();
     if (rec) return;
@@ -178,6 +232,91 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   $('hold').addEventListener('pointerleave', stop);
   $('hold').addEventListener('pointercancel', stop);
 
+
+  // ─── live listening (Deepgram streaming) ───
+  let liveWs = null, liveRec = null, liveStream = null, answering = false;
+  function pauseLive(on) {
+    if (liveWs && liveWs.readyState === 1) liveWs.send(JSON.stringify({ type: on ? 'pause' : 'resume' }));
+  }
+  function showHeard(text, interim) {
+    $('heard').innerHTML = text ? (interim ? '<span class="interim">' + esc(text) + '</span>' : esc(text)) : '';
+  }
+  async function answer(text) {
+    if (answering) return;
+    answering = true;
+    add('Master', '<div>' + esc(text) + '</div>');
+    showHeard('');
+    try { showAnswer(await api('/api/voice/turn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, where: 'the voice test page' }) })); }
+    catch (e) { add('Crundi', '<div class="err">' + esc(e.message) + '</div>'); }
+    finally { answering = false; }
+  }
+  function stopLive() {
+    if (liveRec && liveRec.state !== 'inactive') liveRec.stop();
+    if (liveStream) liveStream.getTracks().forEach(t => t.stop());
+    if (liveWs && liveWs.readyState === 1) liveWs.send(JSON.stringify({ type: 'stop' }));
+    liveWs = liveRec = liveStream = null;
+    $('live').classList.remove('on');
+    $('live').textContent = 'Start listening';
+  }
+  async function startLive() {
+    warm();
+    try { liveStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+    catch (err) { add('Crundi', '<div class="err">Microphone not available: ' + esc(err.message) + '</div>'); return; }
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    liveWs = new WebSocket(proto + '://' + location.host + '/api/voice/listen?token=' + encodeURIComponent(token()));
+    liveWs.binaryType = 'arraybuffer';
+    $('live').classList.add('on');
+    $('live').textContent = 'Connecting…';
+    liveWs.onmessage = (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === 'ready') { $('live').textContent = 'Listening — tap to stop'; }
+      else if (m.type === 'speech') { if (player) player.pause(); if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+      else if (m.type === 'interim') showHeard(m.text, true);
+      else if (m.type === 'utterance') { showHeard(m.text); answer(m.text); }
+      else if (m.type === 'error') add('Crundi', '<div class="err">' + esc(m.error) + '</div>');
+    };
+    liveWs.onclose = () => { if (liveWs) stopLive(); };
+    liveRec = new MediaRecorder(liveStream);
+    liveRec.ondataavailable = (ev) => { if (ev.data.size && liveWs && liveWs.readyState === 1) liveWs.send(ev.data); };
+    liveWs.onopen = () => liveRec.start(250);
+  }
+  $('live').onclick = () => (liveWs ? stopLive() : startLive());
+
+  // ─── voice picker (Deepgram Aura) ───
+  let allVoices = [];
+  function drawVoices() {
+    const brit = $('britOnly').checked, male = $('maleOnly').checked;
+    const list = allVoices.filter(v => (!brit || /brit|uk|england/i.test(v.accent) || !v.accent) && (!male || v.gender === 'male' || !v.gender));
+    $('voiceNow').innerHTML = 'Replies are spoken with: <b>' + esc(ttsVoice ? (allVoices.find(v => v.model === ttsVoice) || { name: ttsVoice }).name + ' (Deepgram)' : "this device's voice") + '</b>';
+    $('voices').innerHTML = list.length ? list.map(v =>
+      '<div class="voice' + (v.model === ttsVoice ? ' chosen' : '') + '"><div class="meta"><b>' + esc(v.name) + '</b>'
+      + '<small>' + esc([v.accent || 'accent not listed', v.gender, (v.tags || []).filter(t => !/^(masculine|feminine|male|female)$/i.test(t)).slice(0, 3).join(', '), v.aura2 ? 'Aura-2' : 'Aura'].filter(Boolean).join(' · ')) + '</small></div>'
+      + '<button class="ghost" data-play="' + esc(v.model) + '">▶</button>'
+      + '<button data-use="' + esc(v.model) + '">' + (v.model === ttsVoice ? 'In use' : 'Use') + '</button></div>'
+    ).join('') : '<div class="spend">No voices match. Untick the filters.</div>';
+  }
+  async function loadVoices() {
+    try {
+      const r = await api('/api/voice/voices');
+      if (!r.ok) { $('voices').innerHTML = '<div class="spend">' + esc(r.error) + '</div>'; return; }
+      allVoices = r.voices;
+      if (!r.fromDeepgram) add('Crundi', '<div class="spend">Deepgram&#39;s voice list could not be fetched; showing known Aura-2 voices, accents unknown.</div>');
+      drawVoices();
+    } catch (e) { $('voices').innerHTML = '<div class="spend err">' + esc(e.message) + '</div>'; }
+  }
+  async function setVoice(model) {
+    const r = await api('/api/voice/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ttsVoice: model }) });
+    if (r.ok) { ttsVoice = r.ttsVoice || ''; drawVoices(); }
+    else add('Crundi', '<div class="err">' + esc(r.error) + '</div>');
+  }
+  $('voices').addEventListener('click', (e) => {
+    const play = e.target.closest('[data-play]'), use = e.target.closest('[data-use]');
+    if (play) say($('sample').value, play.dataset.play);
+    if (use) setVoice(use.dataset.use);
+  });
+  $('britOnly').onchange = $('maleOnly').onchange = drawVoices;
+  $('useDevice').onclick = () => setVoice('');
+
   // ─── settings ───
   async function loadSettings() {
     try {
@@ -185,6 +324,9 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       if (!s.ok) throw new Error(s.error || 'Could not load settings');
       $('model').innerHTML = s.models.map(m => '<option value="' + m.id + '"' + (m.id === s.model ? ' selected' : '') + '>' + esc(m.label) + '</option>').join('');
       if (document.activeElement !== $('limit')) $('limit').value = s.monthlyLimitUsd;
+      if (ttsVoice !== (s.ttsVoice || '')) { ttsVoice = s.ttsVoice || ''; drawVoices(); }
+      if (s.deepgramKeySet && !allVoices.length) loadVoices();
+      if (!s.deepgramKeySet) $('voices').innerHTML = '<div class="spend">Add a Deepgram key below to hear its voices.</div>';
       $('akeyState').innerHTML = s.anthropicKeySet ? '<span class="ok">· set</span>' : '<span class="err">· not set</span>';
       $('dkeyState').innerHTML = s.deepgramKeySet ? '<span class="ok">· set</span>' : '<span class="err">· not set</span>';
       const sp = s.spend;

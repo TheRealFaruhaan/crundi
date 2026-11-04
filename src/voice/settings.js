@@ -28,11 +28,15 @@ export const DEFAULT_LIMIT_USD = 50;
 
 /** Deepgram Nova-3 streaming + keyterms, US$ per minute (approximate; D37). */
 export const DEEPGRAM_USD_PER_MIN = 0.0077 + 0.0013;
+/** Deepgram Aura-2 text-to-speech, US$ per 1,000 characters (approximate). */
+export const DEEPGRAM_TTS_USD_PER_1K_CHARS = 0.030;
 
 const DEFAULTS = {
   model: DEFAULT_MODEL,
   anthropicKey: '',
   deepgramKey: '',
+  // A Deepgram Aura voice (e.g. aura-2-draco-en), or '' for the device's own.
+  ttsVoice: '',
   monthlyLimitUsd: DEFAULT_LIMIT_USD,
   spend: { month: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },
 };
@@ -79,6 +83,7 @@ export function publicSettings(now = new Date()) {
     models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
     anthropicKeySet: !!s.anthropicKey,
     deepgramKeySet: !!s.deepgramKey,
+    ttsVoice: s.ttsVoice || '',
     monthlyLimitUsd: s.monthlyLimitUsd,
     spend: { ...spend, totalUsd: round(total), claudeUsd: round(spend.claudeUsd), deepgramUsd: round(spend.deepgramUsd) },
     limitReached: total >= s.monthlyLimitUsd,
@@ -99,6 +104,11 @@ export function updateSettings(patch = {}) {
     const n = Number(patch.monthlyLimitUsd);
     if (!Number.isFinite(n) || n < 0 || n > 100000) return { ok: false, error: 'The monthly limit must be a number of dollars from 0 to 100000' };
     s.monthlyLimitUsd = n;
+  }
+  if (patch.ttsVoice !== undefined) {
+    const v = String(patch.ttsVoice || '');
+    if (v && !/^aura(-2)?-[a-z0-9]+-[a-z]{2}$/.test(v)) return { ok: false, error: `Not a Deepgram voice: ${v}` };
+    s.ttsVoice = v;
   }
   for (const k of ['anthropicKey', 'deepgramKey']) {
     if (patch[k] !== undefined) s[k] = String(patch[k]).trim();
@@ -131,6 +141,12 @@ export function countTurn(now = new Date()) {
 export function addDeepgramSpend(seconds, now = new Date()) {
   const spend = spendNow(now);
   spend.deepgramUsd += (Math.max(0, seconds) / 60) * DEEPGRAM_USD_PER_MIN;
+  save();
+}
+
+export function addDeepgramTtsSpend(chars, now = new Date()) {
+  const spend = spendNow(now);
+  spend.deepgramUsd += (Math.max(0, chars) / 1000) * DEEPGRAM_TTS_USD_PER_1K_CHARS;
   save();
 }
 

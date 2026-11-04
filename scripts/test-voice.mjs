@@ -28,6 +28,9 @@ const stt = await import('../src/voice/stt.js');
 const vt = await import('../src/voice/tools.js');
 const { createVoiceAgent, splitReply, SYSTEM_PROMPT } = await import('../src/voice/agent.js');
 const { mayAccess, ROLE_COLLABORATOR, ROLE_OWNER } = await import('../src/access-policy.js');
+const vstream = await import('../src/voice/stream.js');
+const vtts = await import('../src/voice/tts.js');
+const { EventEmitter } = await import('node:events');
 
 let failed = 0;
 const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
@@ -220,6 +223,94 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   vs.updateSettings({ monthlyLimitUsd: 50, anthropicKey: '' });
   const nokey = await createVoiceAgent({ tools, client: fakeClient }).turn('x');
   ok(!nokey.ok && /No Claude API key/.test(nokey.error), 'no key, a clear message');
+}
+
+
+// ─── live streaming ───
+{
+  const u = new URL(vstream.streamUrl(['kanban']));
+  ok(u.protocol === 'wss:' && u.searchParams.get('interim_results') === 'true' && u.searchParams.get('utterance_end_ms') && u.searchParams.get('endpointing'), 'stream URL: live words, end of speech detected');
+  ok(u.searchParams.getAll('keyterm').includes('kanban'), 'stream URL carries keyterms');
+
+  const a = vstream.createAssembler();
+  const R = (text, f = {}) => ({ type: 'Results', start: f.start || 0, duration: f.duration || 1, is_final: !!f.final, speech_final: !!f.sf, channel: { alternatives: [{ transcript: text }] } });
+  ok(a.push({ type: 'SpeechStarted' }).type === 'speech', 'speech started is passed on');
+  ok(a.push(R('add the')).text === 'add the', 'interim words shown as they come');
+  ok(a.push(R('add the UI overhaul', { final: true })).text === 'add the UI overhaul', 'a finished phrase is kept');
+  ok(a.push(R('of the home', {})).text === 'add the UI overhaul of the home', 'later words added to it');
+  const done = a.push(R('of the home screen as a kanban task', { final: true, sf: true, start: 2, duration: 2.5 }));
+  ok(done.type === 'utterance' && done.text === 'add the UI overhaul of the home screen as a kanban task', 'the utterance completes at speech_final');
+  ok(a.push({ type: 'UtteranceEnd' }) === null, 'nothing left to send twice');
+  a.push(R('and one more', { final: true }));
+  ok(a.push({ type: 'UtteranceEnd' }).text === 'and one more', 'UtteranceEnd completes one too');
+  ok(a.seconds === 4.5, 'audio seconds tracked for the spend');
+
+  class FakeWs extends EventEmitter {
+    constructor(url, opts) { super(); this.url = url; this.opts = opts; this.sent = []; this.readyState = 0; FakeWs.last = this; }
+    send(d) { this.sent.push(d); }
+    close() { this.readyState = 3; this.emit('close'); }
+  }
+  const client = new EventEmitter();
+  client.readyState = 1; client.out = [];
+  client.send = (m) => client.out.push(JSON.parse(m));
+  client.close = () => { client.readyState = 3; };
+  vs.updateSettings({ deepgramKey: 'dg-secret' });
+  const spentBefore = vs.publicSettings().spend.deepgramUsd;
+  vstream.relay(client, { projects: ['crundi'], WebSocketImpl: FakeWs });
+  const dg = FakeWs.last;
+  ok(dg.opts.headers.Authorization === 'Token dg-secret', 'the key goes to Deepgram from the server');
+  client.emit('message', Buffer.from('a1'), true);
+  ok(dg.sent.length === 0, 'audio before Deepgram is ready is held');
+  dg.readyState = 1; dg.emit('open');
+  ok(dg.sent.length === 1 && client.out.some(m => m.type === 'ready'), 'then sent, and the client told it is listening');
+  client.emit('message', JSON.stringify({ type: 'pause' }), false);
+  client.emit('message', Buffer.from('a2'), true);
+  ok(dg.sent.length === 1, 'paused while Crundi talks: no audio forwarded');
+  client.emit('message', JSON.stringify({ type: 'resume' }), false);
+  client.emit('message', Buffer.from('a3'), true);
+  ok(dg.sent.length === 2, 'resumed');
+  dg.emit('message', JSON.stringify(R('how much usage do I have left', { final: true, sf: true, duration: 3 })));
+  ok(client.out.some(m => m.type === 'utterance' && m.text === 'how much usage do I have left'), 'the utterance reaches the client');
+  client.emit('message', JSON.stringify({ type: 'stop' }), false);
+  ok(dg.sent.some(d => typeof d === 'string' && JSON.parse(d).type === 'CloseStream'), 'stop closes the Deepgram stream');
+  ok(vs.publicSettings().spend.deepgramUsd > spentBefore, 'the streamed seconds are added to the spend');
+
+  vs.updateSettings({ deepgramKey: '' });
+  const c2 = new EventEmitter(); c2.readyState = 1; c2.out = []; c2.send = (m) => c2.out.push(JSON.parse(m)); c2.close = () => {};
+  vstream.relay(c2, { WebSocketImpl: FakeWs });
+  ok(c2.out[0]?.type === 'error' && /No Deepgram key/.test(c2.out[0].error), 'no key: a clear error, no connection');
+  vs.updateSettings({ deepgramKey: 'dg-secret' });
+}
+
+// ─── Deepgram voices ───
+{
+  const list = vtts.parseVoices({ tts: [
+    { name: 'thalia', canonical_name: 'aura-2-thalia-en', languages: ['en', 'en-US'], metadata: { accent: 'American', tags: ['feminine'] } },
+    { name: 'draco', canonical_name: 'aura-2-draco-en', languages: ['en', 'en-GB'], metadata: { accent: 'British', tags: ['masculine', 'warm'], sample: 'https://x/s.mp3' } },
+    { name: 'helios', canonical_name: 'aura-helios-en', languages: ['en'], metadata: { accent: 'British', tags: ['masculine'] } },
+    { name: 'nestor', canonical_name: 'aura-2-nestor-es', languages: ['es'], metadata: { accent: 'Spanish' } },
+    { name: 'bad', canonical_name: '../../etc', languages: ['en'] },
+  ] });
+  ok(list.map(v => v.model).join() === 'aura-2-draco-en,aura-2-thalia-en,aura-helios-en', 'English only, Aura-2 first, British first');
+  ok(list[0].gender === 'male' && list[0].accent === 'British' && list[0].name === 'Draco', 'accent and gender read from Deepgram');
+  ok(vtts.isVoiceModel('aura-2-draco-en') && !vtts.isVoiceModel('aura-2-draco-en&x=1') && !vtts.isVoiceModel(''), 'voice names are checked');
+  ok(!vs.updateSettings({ ttsVoice: 'evil?x' }).ok && vs.updateSettings({ ttsVoice: 'aura-2-draco-en' }).ok, 'only a real voice name can be chosen');
+  ok(vs.publicSettings().ttsVoice === 'aura-2-draco-en', 'the chosen voice is a setting');
+
+  vtts._clearCache();
+  const fromDg = await vtts.listVoices({ fetchImpl: async () => ({ ok: true, json: async () => ({ tts: [{ canonical_name: 'aura-2-draco-en', languages: ['en'] }] }) }) });
+  ok(fromDg.ok && fromDg.fromDeepgram && fromDg.voices.length === 1, 'the list comes from Deepgram');
+  vtts._clearCache();
+  const down = await vtts.listVoices({ fetchImpl: async () => { throw new Error('offline'); } });
+  ok(down.ok && !down.fromDeepgram && down.voices.length > 5, 'Deepgram unreachable: known voices offered');
+
+  let req = null;
+  const audio = Buffer.from('ID3fake');
+  const spoke = await vtts.speak('Yes, Master.', '', { fetchImpl: async (url, init) => { req = { url, init }; return { ok: true, headers: { get: () => 'audio/mpeg' }, arrayBuffer: async () => audio }; } });
+  ok(spoke.ok && spoke.audio.equals(audio) && spoke.mime === 'audio/mpeg', 'speech comes back as audio');
+  ok(new URL(req.url).searchParams.get('model') === 'aura-2-draco-en' && JSON.parse(req.init.body).text === 'Yes, Master.', 'the chosen voice is used');
+  ok(!(await vtts.speak('hi', 'not-a-voice', { fetchImpl: async () => ({ ok: true }) })).ok, 'a bad voice name is never sent');
+  vs.updateSettings({ ttsVoice: '' });
 }
 
 // ─── access ───

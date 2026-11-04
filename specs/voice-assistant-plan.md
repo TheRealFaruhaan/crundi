@@ -72,6 +72,13 @@ As built (`src/voice/`, `scripts/test-voice.mjs`, page at `/voice`):
   message, fixed model/effort. `POST /api/voice/warm` (called when a voice
   session opens) re-sends the last request with `max_tokens: 0` to refresh
   the cache while Master speaks. Each answer reports tokens read from cache.
+- Live speech to text: WebSocket `/api/voice/listen` (owner only) relays the
+  microphone to Deepgram's streaming API (interim words, end of speech by
+  endpointing + utterance end); audio is paused while Crundi talks. The
+  `/voice` page's "Start listening" uses it.
+- Deepgram Aura voices: `GET /api/voice/voices` (Deepgram's own list, with
+  accent and gender; known Aura-2 names if unreachable), `POST
+  /api/voice/speak` (mp3). Setting `ttsVoice`; empty = the device's voice.
 - `/voice` test page: settings (model, limit, keys), type or hold-to-talk
   (browser recording → Deepgram on the server → Claude), reply spoken with the
   browser's en-GB voice, detail shown.

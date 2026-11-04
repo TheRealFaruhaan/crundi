@@ -97,6 +97,8 @@ import { makeTools as makeVoiceTools } from './voice/tools.js';
 import { createVoiceAgent } from './voice/agent.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { getVoicePageHtml } from './voice/page.js';
+import { relay as voiceRelay } from './voice/stream.js';
+import { listVoices as voiceListVoices, speak as voiceSpeak } from './voice/tts.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
 
@@ -298,6 +300,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   let server = null;
   let acmeServer = null;
   let wss = null;
+  let voiceWss = null;
   let port = null;
   // Plain-HTTP loopback listener, only when TLS has taken the main port.
   let localPort = null;
@@ -4022,6 +4025,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const r = voiceSettings.updateSettings({
         model: body.model, monthlyLimitUsd: body.monthlyLimitUsd,
         anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey,
+        ttsVoice: body.ttsVoice,
       });
       return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
     }
@@ -4030,6 +4034,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
       const r = await voiceAgent.turn(String(body.text || ''), { where: String(body.where || '').slice(0, 200) });
       return json(res, r, r.ok ? 200 : (r.limitReached ? 402 : 400));
+    }
+    // Deepgram's voices, for the picker.
+    if (path === '/api/voice/voices' && req.method === 'GET') {
+      return json(res, await voiceListVoices({ force: url.searchParams.get('force') === '1' }));
+    }
+    // Text in, speech out (audio/mpeg), with the chosen voice or ?voice=.
+    if (path === '/api/voice/speak' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const r = await voiceSpeak(body.text, body.voice ? String(body.voice) : '');
+      if (!r.ok) return json(res, r, 400);
+      res.writeHead(200, { 'Content-Type': r.mime, 'Content-Length': r.audio.length, 'Cache-Control': 'no-store' });
+      return res.end(r.audio);
     }
     // A voice session just opened: warm the prompt cache while Master speaks.
     if (path === '/api/voice/warm' && req.method === 'POST') {
@@ -6971,6 +6988,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   function setupWebSocket() {
     wss = new WebSocketServer({ noServer: true });
+    voiceWss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 
     server.on('upgrade', (req, socket, head) => {
       // A forward's own WebSocket — hot reload, dev tooling, whatever the app
@@ -6991,6 +7009,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
 
       const url = new URL(req.url, 'http://localhost');
+      // Live speech to text (voice/stream.js): the owner only.
+      if (url.pathname === '/api/voice/listen') {
+        const who = validateToken(req);
+        if (!who || isConfined(who)) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        voiceWss.handleUpgrade(req, socket, head, (ws) => {
+          voiceRelay(ws, {
+            projects: allProjects().flatMap(p => [p.alias, p.name]),
+            services: getAllServiceStatus().map(sv => sv.name),
+          });
+        });
+        return;
+      }
       if (url.pathname !== '/ws') {
         socket.destroy();
         return;
