@@ -29,6 +29,7 @@ settings and usage.
 | D17 | **Critical settings** (voice can't change them): login (Telegram, password, authenticator), tunnel and forwards, collaborators and access policy, secrets, backup and restore, updates, skills, MCP permissions. Voice may change its own voice settings and background listening (D4–D7). | 2026-11-04 |
 | D18 | **Turn end when Crundi isn't open:** notification that opens where it was asked (full-screen if permitted); may speak the result; a spoken reply needs background listening on. | 2026-11-04 |
 | D19 | **Voice: a calm, British, butler-style AI voice**, in the spirit of Jarvis but not a copy (see §2.4). | 2026-11-04 |
+| D20 | **The user is "Master."** When Crundi addresses the user it says "Master" ("Yes, Master."). It doesn't have to on every reply; a plain "Yes." or "On it." is fine. | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -189,7 +190,9 @@ Candidates, cheapest first:
 
 Plan: start with on-phone Android TTS (free, works offline), make the voice
 selectable in Voice assistant settings, and add one cloud voice as an option.
-Persona in the system prompt: concise, dry wit, addresses the person politely.
+Persona in the system prompt: concise, dry wit, polite. Addresses the user as
+"Master" when it addresses them at all (D20), e.g. "Yes, Master." Short
+acknowledgements like "Yes." or "On it." are fine without it.
 
 ## 3. Wake word on a Samsung without root
 
