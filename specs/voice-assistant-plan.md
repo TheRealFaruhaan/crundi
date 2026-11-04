@@ -54,6 +54,7 @@ Results go back into the design doc.
 | 0.2 | **Conflict found:** once Crundi is the default digital assistant, "Hey Google" no longer works — the hotword belongs to whichever app is the default assistant. D1 (side key via default assistant) and D2 (Gemini) can't both hold. Needs a decision. |
 | 0.3 | Google TTS has 13 en-GB voices (6 on-device, 6 network, 1 default). **Rejected: not close enough to the wanted voice.** A premium cloud voice is needed. |
 | 0.4 | On-device recognition is fast (2–8 ms after speech) but **inaccurate**: "Add the UI overhaul of the home screen as a kanban task" came out as "Mdua of the home screen as a compound task". The default (network) recogniser was no better ("…as a company"); errors 7 (no match) and 11 (server disconnected) also seen. Gemini gets the same sentence right. **D27 needs revisiting.** |
+| 0.4b | **Hints don't fix it.** Same sentence, language en-US, Android 13+ word hints on: on-device gave "At DUI overhaul of the home screen as a company task"; default gave "at the UI overhaul of the home screen as the compound task" (best, 0.86). "kanban" never came through in 20+ guesses; on-device gives no confidence scores. Frequent error 11 (server disconnected) on the first try after the previous recogniser was destroyed; a reused recogniser should avoid it. |
 | 0.5 | Not run yet. |
 
 ## Phase 1 — server brain, typed (no Android yet)
