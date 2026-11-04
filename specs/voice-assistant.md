@@ -17,6 +17,11 @@ settings and usage.
 | D5 | **Background listening turned on by voice always has a time limit.** The agent's tool requires a duration; the service stops itself when it runs out. | 2026-11-04 |
 | D6 | **Durations:** 15 min, 30 min, 45 min, 1 h, 2 h. Default **30 min**. When the voice agent turns background listening on, it must pick one of these (2 h is the maximum); no duration given means 30 min. | 2026-11-04 |
 | D7 | **Settings toggle offers both:** "Until I turn it off" or a time limit from the D6 list. | 2026-11-04 |
+| D8 | **Model is switchable** in Settings → Voice assistant. Default **Claude Haiku 5.5** (`claude-haiku-5-5`). | 2026-11-04 |
+| D9 | **Reads everything:** all Crundi settings, services (status, logs), notes, kanban, mindmap, schedules, usage, projects and their folders and files. | 2026-11-04 |
+| D10 | **Edits nothing directly:** no file edits, no critical settings. | 2026-11-04 |
+| D11 | **Panels:** sees the open panels (chats, terminals), reads their latest output, and can send input to them. | 2026-11-04 |
+| D12 | **Turn-end callback:** the voice agent can set itself to be triggered when a turn ends, and Crundi opens on the place where it was asked. | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -33,6 +38,45 @@ settings and usage.
   notification shows the time left and a Stop button.
 - If Android or Samsung kills the service it can't restart itself from the
   background. Post a notification ("Hey Crundi stopped — tap to resume").
+
+### Access (D9–D11) — notes
+
+- Secrets vault stays out of "reads everything": it is PIN-gated today, and a
+  spoken answer would read a secret aloud. Proposed: voice can list secret
+  names, never values. (To confirm.)
+- **Input to panels is a back door around D10.** Typing into a terminal can
+  run any command, and a message to a Claude Code chat can ask it to edit
+  files. Options to discuss:
+  1. read back the exact text and wait for a spoken or tapped "yes" before
+     sending;
+  2. allow chats only, not raw terminals;
+  3. allow both, but only while unlocked.
+- "Critical settings" needs a list. Proposed: login (Telegram, password,
+  authenticator), tunnel and forwards, collaborators and access policy,
+  secrets, backup/restore, updates, skills, MCP permissions. Everything else is
+  read-only too under D10 unless we name settings voice may change (e.g. its
+  own voice settings, background listening per D4–D7).
+
+### Turn-end callback (D12) — how it fits
+
+- Server side already exists: `onTurnEnd` in `src/claude-ui.js:2169` and the
+  `turn-end` trigger in `src/chat-schedule.js`. A voice watch is one more
+  listener: `{ chatId | terminalId, project, askedFrom }`.
+- On the phone, Android blocks apps from opening themselves from the
+  background (Android 10+). Ways to "open where it was asked":
+  - **Screen on and unlocked, Crundi in front:** navigate there and speak
+    directly.
+  - **Otherwise:** a high-priority push (existing `src/mobile-push.js` /
+    `PushService`) shows a notification; tapping it opens the asked-from
+    screen with the voice session. With the opt-in full-screen-intent
+    permission (already used by urgent alerts) it can take over the screen
+    like an alarm.
+  - **Speaking the result without a tap:** possible from the push with
+    text-to-speech, but listening for a reply then needs background listening
+    to be on (D4), because the microphone can't be started from the
+    background.
+- "Where it was asked" = the screen and panel the voice session was opened
+  from, saved with the watch.
 
 ### Lock screen
 
@@ -103,10 +147,12 @@ The Claude call runs on the server because:
 
 ### 2.2 Model and latency
 
-- Default: Claude Opus 5.5 (`claude-opus-5-5`) at `output_config.effort: "low"`,
-  with a system line "Latency-sensitive; begin your visible answer immediately".
-- Cheaper option to evaluate: Claude Haiku 5.5 (`claude-haiku-5-5`),
-  $0.10/$0.50 per MTok against $4/$20 — likely enough for routing. Owner's call.
+- Default (D8): Claude Haiku 5.5 (`claude-haiku-5-5`), $0.10/$0.50 per MTok.
+  Switchable in settings, e.g. to Claude Sonnet 5.5 or Claude Opus 5.5 at
+  `output_config.effort: "low"`. System line: "Latency-sensitive; begin your
+  visible answer immediately".
+- Haiku 5.5 has no server-side refusal fallback; handle `stop_reason:
+  "refusal"` by saying so.
 - Cache the system prompt and tool list (stable prefix), so repeat turns are
   cheaper and faster. Keep timestamps and per-turn state after the breakpoint.
 - Stream the reply so TTS can start on the first sentence.
@@ -281,8 +327,6 @@ have left" with no Crundi screen at all. Caveats:
 
 ## 6. Open questions
 
-- Opus 5.5 at low effort vs Haiku 5.5 for the voice brain — measure latency
-  and cost on real commands.
 - Does being the default assistant exempt the mic service from the
   background-start rule on One UI? Test on device.
 - False-accept rate of sherpa-onnx on "crundi" in a noisy room; switch to a
