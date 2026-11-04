@@ -1,0 +1,36 @@
+<div class="wna a-btc">
+  <div class="phone">
+    <div class="page">
+      <div class="card c1"></div><div class="card c2"></div><div class="card c3"></div><div class="card c4"></div>
+    </div>
+    <div class="finger"></div>
+  </div>
+  <div class="report">
+    <div class="r">swipe up</div>
+    <div class="r ok">scrolled 220px</div>
+    <div class="r">tap "Buy"</div>
+    <div class="r warn">taken by .cookie-banner</div>
+  </div>
+  <style>
+    .a-btc{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-btc .phone{position:absolute;left:150px;top:24px;width:180px;height:352px;border-radius:26px;border:2px solid var(--border);background:var(--bg-secondary);overflow:hidden}
+    .a-btc .page{position:absolute;left:12px;right:12px;top:14px;display:flex;flex-direction:column;gap:12px;animation:abtc-scroll 10s ease infinite}
+    .a-btc .card{height:90px;border-radius:12px;background:var(--bg-card);border:1px solid var(--border)}
+    .a-btc .c2{background:var(--accent-dim);border-color:var(--accent)}
+    .a-btc .finger{position:absolute;left:78px;top:250px;width:30px;height:30px;border-radius:50%;background:var(--accent-hover);opacity:0;animation:abtc-finger 10s ease infinite}
+    .a-btc .report{position:absolute;left:370px;top:110px;display:flex;flex-direction:column;gap:10px;font-family:var(--mono);font-size:12.5px}
+    .a-btc .r{padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card);color:var(--text-secondary);opacity:0}
+    .a-btc .r:nth-child(1){animation:abtc-r1 10s ease infinite}
+    .a-btc .r:nth-child(2){animation:abtc-r2 10s ease infinite}
+    .a-btc .r:nth-child(3){animation:abtc-r3 10s ease infinite}
+    .a-btc .r:nth-child(4){animation:abtc-r4 10s ease infinite}
+    .a-btc .ok{color:var(--green)}
+    .a-btc .warn{color:var(--yellow);background:var(--yellow-dim)}
+    @keyframes abtc-scroll{0%,12%{transform:none}30%,90%{transform:translateY(-110px)}100%{transform:none}}
+    @keyframes abtc-finger{0%,6%{opacity:0;transform:none}10%{opacity:.6;transform:none}28%{opacity:.6;transform:translateY(-130px)}32%,50%{opacity:0;transform:translateY(-130px)}54%{opacity:0;transform:translate(0,-60px)}58%{opacity:.7;transform:translate(0,-60px) scale(1)}62%{opacity:.3;transform:translate(0,-60px) scale(1.5)}66%,100%{opacity:0}}
+    @keyframes abtc-r1{0%,10%{opacity:0}14%,92%{opacity:1}98%,100%{opacity:0}}
+    @keyframes abtc-r2{0%,28%{opacity:0}32%,92%{opacity:1}98%,100%{opacity:0}}
+    @keyframes abtc-r3{0%,56%{opacity:0}60%,92%{opacity:1}98%,100%{opacity:0}}
+    @keyframes abtc-r4{0%,64%{opacity:0}68%,92%{opacity:1}98%,100%{opacity:0}}
+  </style>
+</div>

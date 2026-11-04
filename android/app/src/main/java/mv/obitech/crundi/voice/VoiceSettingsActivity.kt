@@ -81,6 +81,7 @@ data class VoiceSettingsUi(
     val device: List<DeviceVoice> = emptyList(),
     val deviceChosen: String = "",
     val limitText: String = "",
+    val dayText: String = "",
     val busy: Boolean = false,
     val note: String = "",
 )
@@ -96,6 +97,8 @@ class VoiceSettingsEvents(
     val onModel: (String) -> Unit = {},
     val onLimitText: (String) -> Unit = {},
     val onSaveLimit: () -> Unit = {},
+    val onDayText: (String) -> Unit = {},
+    val onSaveDay: () -> Unit = {},
     val onReset: () -> Unit = {},
     val onTry: () -> Unit = {},
 )
@@ -146,7 +149,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         lifecycleScope.launch {
             try {
                 val s = v.settings()
-                ui = ui.copy(server = s, error = "", limitText = fmtUsd(s.monthlyLimitUsd))
+                ui = ui.copy(server = s, error = "", limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString())
                 runCatching { v.voices() }.getOrNull()?.let { ui = ui.copy(deepgram = it.voices) }
             } catch (e: Exception) {
                 ui = ui.copy(error = if (VoiceApi.unsupported(e)) VoiceApi.UNSUPPORTED else e.message ?: "Could not load the settings")
@@ -154,13 +157,13 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
-    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, note: String = "Saved") {
+    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, note: String = "Saved") {
         val v = voice() ?: return
         ui = ui.copy(busy = true)
         lifecycleScope.launch {
             ui = try {
-                val s = v.save(model, limit, ttsVoice)
-                ui.copy(server = s, busy = false, note = note, limitText = fmtUsd(s.monthlyLimitUsd))
+                val s = v.save(model, limit, ttsVoice, day)
+                ui.copy(server = s, busy = false, note = note, limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString())
             } catch (e: Exception) { ui.copy(busy = false, note = e.message ?: "Could not save") }
         }
     }
@@ -191,6 +194,11 @@ class VoiceSettingsActivity : ComponentActivity() {
         onSaveLimit = {
             val n = ui.limitText.trim().removePrefix("$").toDoubleOrNull()
             if (n == null || n < 0) ui = ui.copy(note = "The limit is a number of dollars") else save(limit = n, note = "Limit saved")
+        },
+        onDayText = { ui = ui.copy(dayText = it) },
+        onSaveDay = {
+            val d = ui.dayText.trim().toIntOrNull()
+            if (d == null || d !in 1..31) ui = ui.copy(note = "The billing day is a day of the month, 1 to 31") else save(day = d, note = "Billing day saved")
         },
         onReset = {
             lifecycleScope.launch { ui = ui.copy(note = runCatching { voice()?.reset(); "Crundi starts a fresh conversation" }.getOrElse { it.message ?: "Could not reset" }) }
@@ -337,16 +345,21 @@ private fun ServerPart(ui: VoiceSettingsUi, s: VoiceSettings, ev: VoiceSettingsE
     CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
         val sp = s.spend
         Row(verticalAlignment = Alignment.Bottom) {
-            Text("This month", style = CrundiType.Heading, modifier = Modifier.weight(1f))
+            Text("This billing month", style = CrundiType.Heading, modifier = Modifier.weight(1f))
             Text("$" + "%.2f".format(Locale.US, sp.totalUsd) + " of $" + fmtUsd(s.monthlyLimitUsd), style = CrundiType.Code.copy(color = if (s.limitReached) CrundiColors.Red else CrundiColors.TextPrimary))
         }
         val frac = if (s.monthlyLimitUsd > 0) (sp.totalUsd / s.monthlyLimitUsd).toFloat().coerceIn(0f, 1f) else 1f
         mv.obitech.crundi.ui.operations.PaceBar(frac, 0f, Modifier.padding(vertical = 8.dp))
         Text("Claude $" + "%.2f".format(Locale.US, sp.claudeUsd) + " · Deepgram $" + "%.2f".format(Locale.US, sp.deepgramUsd) + " · " + sp.turns + " request" + if (sp.turns == 1) "" else "s", style = CrundiType.Meta.copy(color = CrundiColors.TextSecondary))
         if (s.limitReached) Text("The limit is reached: Crundi stops answering until next month or a higher limit.", style = CrundiType.Small.copy(color = CrundiColors.Red), modifier = Modifier.padding(top = 6.dp))
+        if (s.nextReset.isNotEmpty()) Text("Restarts on ${s.nextReset}, the API account's billing day.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp))
         Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CrundiTextField(ui.limitText, ev.onLimitText, Modifier.weight(1f), placeholder = "Monthly limit in dollars", icon = "sliders")
             CrundiButton("Save", ev.onSaveLimit, kind = ButtonKind.Primary, enabled = !ui.busy)
+        }
+        if (s.periodStart.isNotEmpty()) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CrundiTextField(ui.dayText, ev.onDayText, Modifier.weight(1f), placeholder = "Billing day of the month, 1 to 31", icon = "clock")
+            CrundiButton("Save", ev.onSaveDay, enabled = !ui.busy)
         }
     }
 

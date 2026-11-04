@@ -15,7 +15,7 @@
  * Run: node scripts/test-voice.mjs
  */
 
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -360,6 +360,31 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   });
   await lockedAgent.turn('add a kanban task', { locked: true, now: at });
   ok(/phone is locked/.test(seen[0].messages[0].content) && seen[0].system[0].text === SYSTEM_PROMPT, 'locked rides in the user message; the system block is unchanged');
+}
+
+
+// ─── billing month ───
+{
+  const p = (iso, day) => { const r = vs.billingPeriod(new Date(iso), day); return r.start.toISOString().slice(0, 10) + '>' + r.next.toISOString().slice(0, 10); };
+  ok(p('2026-11-05T12:00:00Z', 1) === '2026-11-01>2026-12-01', 'billing day 1 is the calendar month');
+  ok(p('2026-11-05T12:00:00Z', 20) === '2026-10-20>2026-11-20', 'before the billing day: the month began last month');
+  ok(p('2026-11-20T00:00:00Z', 20) === '2026-11-20>2026-12-20', 'on the billing day a new month begins');
+  ok(p('2026-02-15T00:00:00Z', 31) === '2026-01-31>2026-02-28', 'a day the month lacks falls on its last day');
+  ok(p('2026-03-01T00:00:00Z', 31) === '2026-02-28>2026-03-31', 'and the next month uses the 31st again');
+  ok(!vs.updateSettings({ billingDay: 0 }).ok && !vs.updateSettings({ billingDay: 32 }).ok && !vs.updateSettings({ billingDay: 'x' }).ok, 'only 1 to 31 is a billing day');
+  ok(vs.updateSettings({ billingDay: 1 }).ok, 'billing day saved');
+  const ps = vs.publicSettings(new Date('2026-11-05T12:00:00Z'));
+  ok(ps.billingDay === 1 && ps.periodStart === '2026-11-01' && ps.nextReset === '2026-12-01', 'clients see the billing month and when it restarts');
+
+  // A file from before billing months: spend counted for "2026-11".
+  const f = join(process.env.DATA_DIR, 'voice.json');
+  const saved = JSON.parse(readFileSync(f, 'utf-8'));
+  writeFileSync(f, JSON.stringify({ ...saved, billingDay: 1, spend: { month: '2026-11', claudeUsd: 1.5, deepgramUsd: 0.5, turns: 9 } }));
+  vs._reload();
+  ok(vs.publicSettings(new Date('2026-11-05T12:00:00Z')).spend.totalUsd === 2, 'spend counted before billing months carries over');
+  vs.updateSettings({ billingDay: 20 });
+  ok(vs.publicSettings(new Date('2026-11-25T12:00:00Z')).spend.totalUsd === 0, 'a new billing month starts from zero');
+  vs.updateSettings({ billingDay: 1 });
 }
 
 // ─── access ───

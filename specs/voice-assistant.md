@@ -51,6 +51,7 @@ settings and usage.
 | D39 | **Voice on the app, the web and the PC, with parity** (supersedes D29's "phone first, web and desktop later"). One server side; each client gets the same voice screen and settings. The PC client loads the web page, so web and PC share one build. | 2026-11-05 |
 | D40 | **PC: an always-on microphone option, offered only while the PC is on charge.** On battery it is unavailable (or turns itself off). Needs a local wake word on the PC (Phase 6): streaming the microphone to Deepgram all day would cost about $0.55 an hour. | 2026-11-05 |
 | D41 | **The voice assistant's Claude API spend is shown in the usage modal** (web, PC and the app's Usage screen), next to the subscription usage: this month's total against the limit, Claude and Deepgram, number of requests. | 2026-11-05 |
+| D42 | **The spend limit follows the API account's billing month**, not the calendar: a billing day (1–31, the month's last day when it has fewer) set in Voice assistant settings; the month's spend restarts at 00:00 UTC that day. Spend counted before this carries over. Billed separately from the Claude subscription. | 2026-11-05 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 

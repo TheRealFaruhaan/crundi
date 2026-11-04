@@ -93,6 +93,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <select id="model"></select>
   <label for="limit">Monthly limit (US$)</label>
   <input id="limit" type="number" min="0" step="1">
+  <label for="bday">Billing day (the day of the month the API account is billed; the spend restarts then)</label>
+  <input id="bday" type="number" min="1" max="31" step="1">
   <label for="akey">Claude API key <span id="akeyState"></span></label>
   <input id="akey" type="password" autocomplete="off" placeholder="Leave empty to keep the current key">
   <label for="dkey">Deepgram API key <span id="dkeyState"></span></label>
@@ -324,19 +326,20 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       if (!s.ok) throw new Error(s.error || 'Could not load settings');
       $('model').innerHTML = s.models.map(m => '<option value="' + m.id + '"' + (m.id === s.model ? ' selected' : '') + '>' + esc(m.label) + '</option>').join('');
       if (document.activeElement !== $('limit')) $('limit').value = s.monthlyLimitUsd;
+      if (document.activeElement !== $('bday')) $('bday').value = s.billingDay || 1;
       if (ttsVoice !== (s.ttsVoice || '')) { ttsVoice = s.ttsVoice || ''; drawVoices(); }
       if (s.deepgramKeySet && !allVoices.length) loadVoices();
       if (!s.deepgramKeySet) $('voices').innerHTML = '<div class="spend">Add a Deepgram key below to hear its voices.</div>';
       $('akeyState').innerHTML = s.anthropicKeySet ? '<span class="ok">· set</span>' : '<span class="err">· not set</span>';
       $('dkeyState').innerHTML = s.deepgramKeySet ? '<span class="ok">· set</span>' : '<span class="err">· not set</span>';
       const sp = s.spend;
-      $('spend').innerHTML = 'This month (' + esc(sp.month) + '): $' + sp.totalUsd.toFixed(2) + ' of $' + s.monthlyLimitUsd
+      $('spend').innerHTML = 'This billing month (since ' + esc(s.periodStart || sp.month) + ', restarts ' + esc(s.nextReset || '') + '): $' + sp.totalUsd.toFixed(2) + ' of $' + s.monthlyLimitUsd
         + ' · Claude $' + sp.claudeUsd.toFixed(2) + ' · Deepgram $' + sp.deepgramUsd.toFixed(2) + ' · ' + sp.turns + ' requests'
         + (s.limitReached ? ' · <span class="err">limit reached</span>' : '');
     } catch (e) { $('spend').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
   }
   $('save').onclick = async () => {
-    const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value) };
+    const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value), billingDay: Number($('bday').value) || 1 };
     if ($('akey').value.trim()) body.anthropicKey = $('akey').value.trim();
     if ($('dkey').value.trim()) body.deepgramKey = $('dkey').value.trim();
     const r = await api('/api/voice/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

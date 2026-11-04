@@ -22,8 +22,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     suspend fun settings(): VoiceSettings = rpc.read(rpc.get("/api/voice/settings"), null)
 
     /** Change the model, the monthly limit or the Deepgram voice ("" = the phone's own). Null leaves one as it is. */
-    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null): VoiceSettings =
-        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice)), null)
+    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay)), null)
 
     /**
      * One request. [where] is what Master is looking at ("lock screen",
@@ -92,6 +92,11 @@ data class VoiceSettings(
     /** A Deepgram voice, or "" for the phone's own (D34). */
     val ttsVoice: String = "",
     val monthlyLimitUsd: Double = 50.0,
+    /** The day of the month the API account is billed; the spend restarts then. */
+    val billingDay: Int = 1,
+    /** This billing month's first day and the next one ("2026-11-20"); empty from an older server. */
+    val periodStart: String = "",
+    val nextReset: String = "",
     val spend: VoiceSpend = VoiceSpend(),
     val limitReached: Boolean = false,
 )

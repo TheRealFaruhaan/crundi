@@ -5424,11 +5424,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const limit = Number(d.monthlyLimitUsd) || 0;
         const total = Number(sp.totalUsd) || 0;
         const pct = limit > 0 ? Math.min(100, (total / limit) * 100) : (total > 0 ? 100 : 0);
-        $('#uc-api-amount').textContent = fmtUsd(total) + ' of ' + fmtUsd(limit) + ' this month';
+        $('#uc-api-amount').textContent = fmtUsd(total) + ' of ' + fmtUsd(limit) + ' this billing month';
         $('#uc-api-fill').style.width = pct.toFixed(1) + '%';
         const meta = $('#uc-api-meta');
         const turns = Number(sp.turns) || 0;
-        meta.textContent = 'Claude ' + fmtUsd(sp.claudeUsd) + ' · Deepgram ' + fmtUsd(sp.deepgramUsd) + ' · ' + turns + (turns === 1 ? ' request' : ' requests');
+        meta.textContent = 'Claude ' + fmtUsd(sp.claudeUsd) + ' · Deepgram ' + fmtUsd(sp.deepgramUsd) + ' · ' + turns + (turns === 1 ? ' request' : ' requests')
+          + (d.nextReset ? ' · restarts ' + new Date(d.nextReset + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '');
         if (d.limitReached) {
           const w = document.createElement('span');
           w.className = 'uc-api-warn';

@@ -6,10 +6,11 @@
  * or a browser. publicSettings() is what clients see — whether a key is set,
  * never the key.
  *
- * Spend is counted per calendar month (UTC), in US dollars, from the usage
- * each Claude response and each Deepgram transcription reports. When the
- * month's spend reaches the limit, the assistant stops answering and says so
- * (D25); a new month starts from zero.
+ * Spend is counted per billing month, in US dollars, from the usage each
+ * Claude response and each Deepgram transcription reports. The month starts
+ * on billingDay (the day the API account is billed, 1-31; in a shorter month,
+ * its last day) at 00:00 UTC. When the month's spend reaches the limit, the
+ * assistant stops answering and says so (D25); a new month starts from zero.
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -43,6 +44,8 @@ const DEFAULTS = {
   // A Deepgram Aura voice (e.g. aura-2-draco-en), or '' for the device's own.
   ttsVoice: '',
   monthlyLimitUsd: DEFAULT_LIMIT_USD,
+  // The day of the month the API account is billed: the spend month starts then.
+  billingDay: 1,
   spend: { month: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },
 };
 
@@ -65,11 +68,37 @@ export function thisMonth(now = new Date()) {
   return now.toISOString().slice(0, 7);
 }
 
-/** The month's spend, reset to zero when the month has changed. */
+/** `day` of the month y/m (0-based), or the month's last day when it has fewer. */
+function dayIn(y, m, day) {
+  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m, Math.min(day, last)));
+}
+
+/**
+ * The billing month `now` falls in: { start, next } as Dates (00:00 UTC).
+ * With billingDay 1 that is the calendar month.
+ */
+export function billingPeriod(now = new Date(), billingDay = 1) {
+  const day = Math.min(31, Math.max(1, Math.round(Number(billingDay) || 1)));
+  const y = now.getUTCFullYear(), m = now.getUTCMonth();
+  let start = dayIn(y, m, day);
+  if (start > now) start = dayIn(y, m - 1, day);
+  const next = dayIn(start.getUTCFullYear(), start.getUTCMonth() + 1, day);
+  return { start, next };
+}
+
+const ymd = (d) => d.toISOString().slice(0, 10);
+
+/** The month's spend, reset to zero when a new billing month has begun. */
 function spendNow(now) {
   const s = load();
-  const m = thisMonth(now);
-  if (s.spend.month !== m) s.spend = { month: m, claudeUsd: 0, deepgramUsd: 0, turns: 0 };
+  const key = ymd(billingPeriod(now, s.billingDay).start);
+  if (s.spend.month !== key) {
+    // Spend counted before billing months (a calendar month, "2026-11") carries
+    // over into the period starting that month's first day, so nothing is lost.
+    const carried = s.spend.month === key.slice(0, 7) && key.endsWith('-01');
+    s.spend = carried ? { ...s.spend, month: key } : { month: key, claudeUsd: 0, deepgramUsd: 0, turns: 0 };
+  }
   return s.spend;
 }
 
@@ -83,8 +112,12 @@ export function publicSettings(now = new Date()) {
   const s = load();
   const spend = spendNow(now);
   const total = spend.claudeUsd + spend.deepgramUsd;
+  const period = billingPeriod(now, s.billingDay);
   return {
     model: s.model,
+    billingDay: s.billingDay,
+    periodStart: ymd(period.start),
+    nextReset: ymd(period.next),
     models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
     anthropicKeySet: !!s.anthropicKey,
     deepgramKeySet: !!s.deepgramKey,
@@ -109,6 +142,11 @@ export function updateSettings(patch = {}) {
     const n = Number(patch.monthlyLimitUsd);
     if (!Number.isFinite(n) || n < 0 || n > 100000) return { ok: false, error: 'The monthly limit must be a number of dollars from 0 to 100000' };
     s.monthlyLimitUsd = n;
+  }
+  if (patch.billingDay !== undefined) {
+    const d = Number(patch.billingDay);
+    if (!Number.isInteger(d) || d < 1 || d > 31) return { ok: false, error: 'The billing day is a day of the month, 1 to 31' };
+    s.billingDay = d;
   }
   if (patch.ttsVoice !== undefined) {
     const v = String(patch.ttsVoice || '');
