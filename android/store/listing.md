@@ -61,6 +61,21 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.5 (en-US)
+
+Version code 36. Internal track. Since 1.1.3-dev.4 (code 35): billing days for Claude and Deepgram (D42).
+
+```
+<en-US>
+Voice assistant: the spend limit follows your API billing month.
+
+- App settings, Voice assistant: set the days Claude and Deepgram bill you; each part of the spend restarts on its own day.
+- The Usage screen says when the voice spend restarts.
+
+Needs Crundi server 1.21.6-dev.2 or newer for the voice assistant.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.4 (en-US)
 
 Version code 35. Internal track. Since 1.1.3-dev.3 (code 34): the voice

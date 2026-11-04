@@ -189,7 +189,7 @@ private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings) {
             Text(usd(sp.totalUsd), style = CrundiType.Code.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = if (v.limitReached) CrundiColors.Red else levelColor(frac)))
         }
         Meter(frac, color = if (v.limitReached) CrundiColors.Red else CrundiColors.Accent, height = 12.dp)
-        Text("of ${usd(v.monthlyLimitUsd)} this billing month${if (v.nextReset.isNotEmpty()) ", restarts " + v.nextReset else ""} · Claude ${usd(sp.claudeUsd)} · Deepgram ${usd(sp.deepgramUsd)} · ${sp.turns} request${if (sp.turns == 1) "" else "s"}", style = CrundiType.Meta.copy(fontSize = 12.sp))
+        Text("of ${usd(v.monthlyLimitUsd)} this billing month${if (v.nextReset.isNotEmpty()) ", Claude restarts " + v.nextReset else ""} · Claude ${usd(sp.claudeUsd)} · Deepgram ${usd(sp.deepgramUsd)} · ${sp.turns} request${if (sp.turns == 1) "" else "s"}", style = CrundiType.Meta.copy(fontSize = 12.sp))
         if (v.limitReached) StatusBadge("limit reached: voice stops until next month", BadgeKind.Bad)
     }
 }
