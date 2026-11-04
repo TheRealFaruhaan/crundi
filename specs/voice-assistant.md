@@ -29,7 +29,7 @@ settings and usage.
 | D17 | **Critical settings** (voice can't change them): login (Telegram, password, authenticator), tunnel and forwards, collaborators and access policy, secrets, backup and restore, updates, skills, MCP permissions. Voice may change its own voice settings and background listening (D4–D7). | 2026-11-04 |
 | D18 | **Turn end when Crundi isn't open:** notification that opens where it was asked (full-screen if permitted); may speak the result; a spoken reply needs background listening on. | 2026-11-04 |
 | D19 | **Voice: a calm, British, butler-style AI voice**, in the spirit of Jarvis but not a copy (see §2.4). | 2026-11-04 |
-| D20 | **The user is "Master."** When Crundi addresses the user it says "Master" ("Yes, Master."). It doesn't have to on every reply; "Yes.", "On it.", "Roger." or "Affirmative." are fine. Vary them so it sounds cool, not robotic. | 2026-11-04 |
+| D20 | **The user is "Master."** When Crundi addresses the user it says "Master" ("Yes, Master."). It doesn't have to on every reply; examples like "Yes.", "On it.", "Roger." or "Affirmative." are fine. These are examples, not a fixed list: it picks its own words, so it sounds cool, not robotic. | 2026-11-04 |
 | D21 | **Input goes to chats only, never terminals.** Voice can still read terminal output (D11) and open or close terminal panels (D14), but can't type into them. Supersedes the terminal part of D11/D15. | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
@@ -193,8 +193,9 @@ Plan: start with on-phone Android TTS (free, works offline), make the voice
 selectable in Voice assistant settings, and add one cloud voice as an option.
 Persona in the system prompt: concise, dry wit, polite. Addresses the user as
 "Master" when it addresses them at all (D20), e.g. "Yes, Master." Short
-acknowledgements like "Yes.", "On it.", "Roger." or "Affirmative." are fine
-without it. Vary them; never the same one every time. Cool, not robotic.
+acknowledgements are fine without it. "Yes.", "On it.", "Roger.",
+"Affirmative." are examples to set the tone, not a list to choose from: it
+uses its own words. Cool, not robotic.
 
 ## 3. Wake word on a Samsung without root
 
