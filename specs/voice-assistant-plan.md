@@ -114,9 +114,11 @@ Now the agent may change things (exceptions to D10):
   confirmation (D24, D31).
 - Turn-end watch (D12, D18): listener on `onTurnEnd`, push to the phone,
   notification or full-screen opens where it was asked, spoken result.
-- Confirmation flow shared by all of these: spoken "yes" or a tap.
+- Confirmation flow shared by all of these: spoken "yes" or a tap. Also
+  used for every setting change voice makes (D32).
 - Route allowlist for `ROLE_VOICE` grows by exactly these routes.
-- Tests: each confirm-required action refuses without confirmation; terminal
+- Tests: each confirm-required action, and every setting change, refuses
+  without confirmation; terminal
   input refused; voice can't write a project file.
 
 ## Phase 5 — Gemini entry
@@ -131,7 +133,7 @@ Now the agent may change things (exceptions to D10):
 - Background listening: `microphone` foreground service, settings toggle with
   "Until I turn it off" or 15/30/45/60/120 min (D7); voice tool
   `set_background_listening({ minutes })` with the same choices, default 30,
-  never unlimited (D4–D6); notification with time left and Stop; "stopped —
+  never unlimited (D4–D6), confirmed before it turns on (D32); notification with time left and Stop; "stopped —
   tap to resume" if killed.
 
 ## Later

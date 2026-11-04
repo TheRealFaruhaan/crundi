@@ -41,6 +41,7 @@ settings and usage.
 | D29 | **Phone first.** Web UI and desktop later, on the same server side. | 2026-11-04 |
 | D30 | **Memory gets its own searchable store:** keyword search plus local embeddings, as long as it stays light on CPU (§2.5). | 2026-11-04 |
 | D31 | **Voice can close or park/sleep any chat**, both with confirmation. Parked keeps the pane in place with Resume (`src/panes.js`). | 2026-11-04 |
+| D32 | **Every setting change is confirmed with the user first**, including the ones voice is allowed to change (its own voice settings, background listening per D4–D7). One short question, e.g. "Background listening for 30 minutes?" → "yes". Critical settings (D17) stay off-limits either way. | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
