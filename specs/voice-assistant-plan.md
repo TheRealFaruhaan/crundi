@@ -26,7 +26,15 @@ Each phase ends with something usable and testable on its own. Phone first
 
 ## Phase 0 — device checks (half a day, before Android work)
 
-Small throwaway test app or debug build on Master's Samsung:
+Built as **Voice Lab**, a debug-only screen in the Android app
+(`android/app/src/debug/…/voicelab/`; not in release or Play builds). Get it:
+Actions › Android › the run for branch `claude/voice-assistant` › artifact
+`crundi-android-github-debug`. The debug app has the same package name as the
+installed app, so installing it over a release or Play install needs that
+uninstalled first.
+
+On the phone: open **Crundi Voice** from the launcher, grant the microphone,
+run the checks, then **Copy report** and paste it back.
 
 | # | Check | Decides |
 |---|---|---|
@@ -154,6 +162,5 @@ Now the agent may change things (exceptions to D10):
 | 5 Gemini | S |
 | 6 Hey Crundi | M |
 
-Phases 1 and 3 can't overlap much (3 needs 1's route). Phase 0 can run
-alongside 1. Phase 2 can go after 3 if a working phone assistant matters
-sooner than memory.
+Order decided: **0 → 1 → 3 (side key) → 2 (memory) → 4 → 5 → 6.** Phases 1
+and 3 can't overlap much (3 needs 1's route). Phase 0 can run alongside 1.

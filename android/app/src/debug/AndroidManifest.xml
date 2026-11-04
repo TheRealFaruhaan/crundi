@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Voice Lab: the Phase 0 device checks for the voice assistant
+     (specs/voice-assistant-plan.md). Debug builds only: none of this is in a
+     release or Play build. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- Text-to-speech engines and speech recognisers the lab lists (Android 11+
+         package visibility). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
+    <application>
+
+        <activity
+            android:name="mv.obitech.crundi.voicelab.VoiceLabActivity"
+            android:exported="false"
+            android:label="Crundi Voice Lab"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="mv.obitech.crundi.voicelab"
+            android:launchMode="singleTask" />
+
+        <!-- The name Gemini is asked to open: "Hey Google, open Crundi Voice". -->
+        <activity-alias
+            android:name="mv.obitech.crundi.voicelab.CrundiVoice"
+            android:targetActivity="mv.obitech.crundi.voicelab.VoiceLabActivity"
+            android:label="Crundi Voice"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Makes the app selectable as the digital assistant app. -->
+        <service
+            android:name="mv.obitech.crundi.voicelab.LabVoiceService"
+            android:label="Crundi Voice Lab"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voicelab_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="mv.obitech.crundi.voicelab.LabSessionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true" />
+
+        <!-- Android requires an assistant to name a recognition service. This
+             one refuses every request; the lab uses the phone's own. -->
+        <service
+            android:name="mv.obitech.crundi.voicelab.LabRecognitionService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="mv.obitech.crundi.voicelab.LabMicService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+    </application>
+</manifest>
