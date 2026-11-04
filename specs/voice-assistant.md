@@ -22,6 +22,13 @@ settings and usage.
 | D10 | **Edits nothing directly:** no file edits, no critical settings. | 2026-11-04 |
 | D11 | **Panels:** sees the open panels (chats, terminals), reads their latest output, and can send input to them. | 2026-11-04 |
 | D12 | **Turn-end callback:** the voice agent can set itself to be triggered when a turn ends, and Crundi opens on the place where it was asked. | 2026-11-04 |
+| D13 | **Voice may edit notes, kanban and mindmap** (exception to D10). Kanban and mindmap deletes are already soft and recoverable. | 2026-11-04 |
+| D14 | **Voice may create and edit project-scoped panels** (open, close, arrange chats, terminals, Files/Git/Kanban/Mindmap panels in a project). | 2026-11-04 |
+| D15 | **Input to panels:** if the person clearly asked to send or type something, send it without a read-back. If the intent is unclear, read back first. Long prompts are summarised in one line in the read-back, never read in full. | 2026-11-04 |
+| D16 | **Secrets:** voice lists secret names, never values. | 2026-11-04 |
+| D17 | **Critical settings** (voice can't change them): login (Telegram, password, authenticator), tunnel and forwards, collaborators and access policy, secrets, backup and restore, updates, skills, MCP permissions. Voice may change its own voice settings and background listening (D4–D7). | 2026-11-04 |
+| D18 | **Turn end when Crundi isn't open:** notification that opens where it was asked (full-screen if permitted); may speak the result; a spoken reply needs background listening on. | 2026-11-04 |
+| D19 | **Voice: a calm, British, butler-style AI voice**, in the spirit of Jarvis but not a copy (see §2.4). | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -41,21 +48,22 @@ settings and usage.
 
 ### Access (D9–D11) — notes
 
-- Secrets vault stays out of "reads everything": it is PIN-gated today, and a
-  spoken answer would read a secret aloud. Proposed: voice can list secret
-  names, never values. (To confirm.)
-- **Input to panels is a back door around D10.** Typing into a terminal can
-  run any command, and a message to a Claude Code chat can ask it to edit
-  files. Options to discuss:
-  1. read back the exact text and wait for a spoken or tapped "yes" before
-     sending;
-  2. allow chats only, not raw terminals;
-  3. allow both, but only while unlocked.
-- "Critical settings" needs a list. Proposed: login (Telegram, password,
-  authenticator), tunnel and forwards, collaborators and access policy,
-  secrets, backup/restore, updates, skills, MCP permissions. Everything else is
-  read-only too under D10 unless we name settings voice may change (e.g. its
-  own voice settings, background listening per D4–D7).
+- Secrets (D16): names only, never values.
+- **Input to panels (D15).** Typing into a terminal can run any command, and
+  a message to a Claude Code chat can ask it to edit files, so this is where
+  D10 is enforced. Design:
+  - `send_to_panel({ panel, text, intent })` where `intent` is `explicit`
+    (the person said "tell it…", "type…", "send…", "reply…") or `inferred`
+    (the agent decided to send something on its own reading).
+  - `explicit` → send. `inferred` → read back, then send on "yes".
+  - Read-back of a long prompt: one line, e.g. "I'll ask the API chat to
+    refactor the auth middleware and add tests, about 120 words. Send?"
+    The full text is shown on screen.
+  - The model labels `intent` itself, so it's a guide, not a guarantee. Extra
+    server-side guard to consider: always read back for terminals when the
+    text looks destructive (`rm`, `git push --force`, `reset --hard`, `drop`).
+- Critical settings: see D17. Other settings stay read-only under D10 unless
+  added later.
 
 ### Turn-end callback (D12) — how it fits
 
@@ -164,6 +172,24 @@ The Claude call runs on the server because:
   `RECORD_AUDIO` is already in the manifest. Fully offline alternative:
   sherpa-onnx speech recognition models.
 - Text-to-speech: Android `TextToSpeech` (Samsung voices available).
+
+### 2.4 The voice (D19)
+
+Cloning or imitating Paul Bettany's actual voice is off the table (it's a real
+person's voice). A calm, dry, British male "AI butler" voice gets the feel.
+Candidates, cheapest first:
+
+| Option | Where it runs | Notes |
+|---|---|---|
+| Android `TextToSpeech`, Google engine, en-GB male voice | phone, free, offline | Pick the voice by `Voice.name`/locale; quality varies by voice pack. |
+| Samsung TTS, UK English male | phone, free | Availability depends on One UI version. |
+| Google Cloud TTS (en-GB Chirp HD / Neural2 male) | cloud, per character | Very natural; adds a network hop. |
+| Azure Speech (e.g. en-GB-RyanNeural) | cloud, per character | Natural British male; supports speaking styles via SSML. |
+| ElevenLabs library voices ("British butler" style) | cloud, per character | Most characterful; most expensive. Use a stock library voice, not a clone. |
+
+Plan: start with on-phone Android TTS (free, works offline), make the voice
+selectable in Voice assistant settings, and add one cloud voice as an option.
+Persona in the system prompt: concise, dry wit, addresses the person politely.
 
 ## 3. Wake word on a Samsung without root
 
