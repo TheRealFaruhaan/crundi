@@ -15,6 +15,8 @@ settings and usage.
 | D3 | **"Hey Crundi" in the app:** a toggle; when on, Crundi listens for "Hey Crundi" whenever the app is open (foreground only, no foreground service needed). | 2026-11-04 |
 | D4 | **"Hey Crundi" in the background:** off by default, switched on either by a toggle in settings or by the voice agent itself through a tool ("keep listening for the next hour"). Runs as a microphone foreground service. | 2026-11-04 |
 | D5 | **Background listening turned on by voice always has a time limit.** The agent's tool requires a duration; the service stops itself when it runs out. | 2026-11-04 |
+| D6 | **Durations:** 15 min, 30 min, 45 min, 1 h, 2 h. Default **30 min**. When the voice agent turns background listening on, it must pick one of these (2 h is the maximum); no duration given means 30 min. | 2026-11-04 |
+| D7 | **Settings toggle offers both:** "Until I turn it off" or a time limit from the D6 list. | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -23,14 +25,14 @@ settings and usage.
   microphone foreground service. Same for the settings toggle. To verify on
   device: that a side-key `VoiceInteractionSession` window counts as
   foreground for this rule.
-- Tool shape (server → phone): `set_background_listening({ minutes })`,
-  `minutes` required, capped at a maximum. Turning it off needs no duration.
+- Tool shape (server → phone): `set_background_listening({ minutes })`, with
+  `minutes` an enum of 15 | 30 | 45 | 60 | 120 (D6), default 30. "Until
+  turned off" is not available to the voice tool, only to the settings
+  toggle (D7). Turning it off needs no duration.
 - The service keeps its own deadline and stops itself at it; the ongoing
   notification shows the time left and a Stop button.
 - If Android or Samsung kills the service it can't restart itself from the
   background. Post a notification ("Hey Crundi stopped — tap to resume").
-- Open: default and maximum duration; whether the settings toggle also has a
-  time limit or stays on until switched off.
 
 ### Lock screen
 
