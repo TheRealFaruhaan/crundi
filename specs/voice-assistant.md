@@ -180,6 +180,42 @@ Closest options without root:
     ("Hey Google, ask Crundi …") are uncertain since Gemini replaced Assistant.
 - **No-listening triggers** (§3.2): side key, assist gesture, tile.
 
+## 3.5 Using Gemini to wake Crundi ("Hey Google, open Crundi")
+
+The idea: Gemini's own hardware wake word does the sleeping and listening, and
+it hands over to Crundi, which turns on its own listening and goes back to
+sleep when nobody is talking.
+
+**Works today, no special permissions:**
+
+1. "Hey Google, open Crundi" (the wake phrase for Gemini on Android is still
+   "Hey Google"). Gemini opens the app on its low-power wake word; Crundi costs
+   no battery while waiting.
+2. Crundi opens straight to a voice screen. Because the app is now in the
+   foreground, it is allowed to start the microphone foreground service
+   (§1.2's background rule doesn't bite).
+3. Conversation runs on Claude (§2). After N seconds of silence (e.g. 30–60 s)
+   Crundi stops the mic, stops the service and closes: back to sleep.
+
+Ways to land directly on the voice screen, to test on device:
+- an `activity-alias` with its own launcher label, e.g. "Crundi Voice" →
+  "Hey Google, open Crundi Voice";
+- a static app shortcut (`shortcuts.xml`) named "Voice";
+- the same entry Bixby Quick Commands would open (§3.4).
+
+Limits: a locked phone usually has to be unlocked before Gemini opens an app;
+you say Google's wake word first, not "Hey Crundi".
+
+**Later, possibly: AppFunctions (Android 16+).** Apps expose functions (like MCP
+tools) that Gemini can call directly: "Hey Google, ask Crundi how much usage I
+have left" with no Crundi screen at all. Caveats:
+- Gemini's support for third-party AppFunctions was a private preview with
+  trusted testers as of May 2026; not generally available.
+- Gemini becomes the voice and the brain. Crundi's functions could still
+  forward the question to Claude and return the answer, but Gemini decides
+  when to call them and phrases the reply.
+- Worth adding once public, as a second entry point alongside 1–3 above.
+
 ## 4. Security
 
 - Anyone (or a TV) can say "Hey Crundi". Destructive actions — stop service,
@@ -211,6 +247,11 @@ Closest options without root:
   trained openWakeWord model if too high.
 
 ## Sources
+
+- https://developer.android.com/ai/appfunctions
+- https://android-developers.googleblog.com/2026/02/the-intelligent-os-making-ai-agents.html
+- https://9to5google.com/2026/02/25/android-appfunctions-gemini/
+- https://developers.google.com/assistant/app/deployment
 
 - https://community.home-assistant.io/t/fyi-picovoice-confirmed-free-tier-accesskeys-will-stop-working-after-june-30-2026/1012744
 - https://community.home-assistant.io/t/porcupine-free-tier-shutdown-alternatives-for-home-assistant-voice-users/1012382
