@@ -42,6 +42,9 @@ settings and usage.
 | D30 | **Memory gets its own searchable store:** keyword search plus local embeddings, as long as it stays light on CPU (§2.5). | 2026-11-04 |
 | D31 | **Voice can close or park/sleep any chat**, both with confirmation. Parked keeps the pane in place with Resume (`src/panes.js`). | 2026-11-04 |
 | D32 | **Every setting change is confirmed with the user first**, including the ones voice is allowed to change (its own voice settings, background listening per D4–D7). One short question, e.g. "Background listening for 30 minutes?" → "yes". Critical settings (D17) stay off-limits either way. | 2026-11-04 |
+| D33 | **Trigger mode is the user's choice** (supersedes the D1/D2 pairing, which Phase 0 showed can't both hold). **A:** Crundi is the default digital assistant; hold the side key, works locked; no "Hey Google". **B:** Gemini stays default; side key double-press (or "Hey Google, open Crundi Voice") opens Crundi Voice. The app supports both and the Voice assistant settings explain how to set each up. | 2026-11-05 |
+| D34 | **Default voice: Google TTS `en-gb-x-rjs-network`** (British male). Voice names come from the TTS engine, not the phone, but which voices are installed varies by device; fall back to `en-gb-x-rjs-local`, then any en-GB voice. The user can pick any installed voice in Voice assistant settings. A premium cloud voice stays a later option. | 2026-11-05 |
+| D35 | **Speech-to-text: start with Android's on-device recogniser** (D27 kept), improved by vocabulary hints and by sending all alternatives to Claude (§2.3). Whisper on the Crundi server is a later option if it proves quick enough on the user's machine. | 2026-11-05 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -181,8 +184,20 @@ The Claude call runs on the server because:
 
 ### 2.3 Speech on the phone
 
-- Speech-to-text (D27): `SpeechRecognizer.createOnDeviceSpeechRecognizer`
-  (API 31+). `RECORD_AUDIO` is already in the manifest.
+- Speech-to-text (D27, D35): `SpeechRecognizer.createOnDeviceSpeechRecognizer`
+  (API 31+). `RECORD_AUDIO` is already in the manifest. Phase 0 showed it is
+  fast but mishears rare words ("kanban" → "compound"). Mitigations:
+  - **Vocabulary hints:** `RecognizerIntent.EXTRA_BIASING_STRINGS` (Android
+    13+) with Crundi's words: Crundi, kanban, mindmap, project names, service
+    names.
+  - **Send every alternative, not just the top one:** the recogniser returns
+    several guesses with confidence scores. Claude gets them all, plus the
+    same vocabulary, and works out the likely request ("as a compound task" +
+    "kanban" in the vocabulary → a kanban task).
+  - **Show what was heard** on screen; one tap to say it again.
+  - **Later option:** record the audio and transcribe on the Crundi server
+    with Whisper (vocabulary via its prompt). Speed depends on the machine;
+    measure before choosing.
 - Text-to-speech: Android `TextToSpeech` (Samsung voices available).
 
 ### 2.4 The voice (D19)

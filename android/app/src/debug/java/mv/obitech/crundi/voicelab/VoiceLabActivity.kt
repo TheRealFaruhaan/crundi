@@ -136,9 +136,10 @@ class VoiceLabActivity : Activity() {
         // 0.4
         col.addView(heading("0.4 Speech recognition"))
         col.addView(text(recognitionLine()))
-        col.addView(button("Listen (on-device)") { listen(onDevice = true) })
-        col.addView(button("Listen (default recogniser)") { listen(onDevice = false) })
-        heard = text("Say: \"Crundi, how much usage do I have left this week?\"")
+        col.addView(button("Listen (on-device)") { listen(onDevice = true, hints = false) })
+        col.addView(button("Listen (on-device + Crundi words)") { listen(onDevice = true, hints = true) })
+        col.addView(button("Listen (default + Crundi words)") { listen(onDevice = false, hints = true) })
+        heard = text("Say: \"Add the UI overhaul of the home screen as a kanban task\"")
         col.addView(heard)
 
         // 0.5
@@ -246,7 +247,13 @@ class VoiceLabActivity : Activity() {
         return "Recogniser available: $any · On-device available: $onDevice"
     }
 
-    private fun listen(onDevice: Boolean) {
+    /** Words Crundi's recogniser is told to expect (Android 13+). */
+    private val crundiWords = arrayListOf(
+        "Crundi", "kanban", "kanban task", "mindmap", "backlog", "to do", "in progress",
+        "project", "chat", "terminal", "service", "schedule", "usage", "UI overhaul", "home screen",
+    )
+
+    private fun listen(onDevice: Boolean, hints: Boolean) {
         recognizer?.destroy()
         val r = if (onDevice) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
@@ -256,7 +263,7 @@ class VoiceLabActivity : Activity() {
             SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
         } else SpeechRecognizer.createSpeechRecognizer(this)
         recognizer = r
-        val kind = if (onDevice) "on-device" else "default"
+        val kind = (if (onDevice) "on-device" else "default") + if (hints) " + words" else ""
         var startedAt = 0L
         var speechEndedAt = 0L
         r.setRecognitionListener(object : RecognitionListener {
@@ -270,21 +277,35 @@ class VoiceLabActivity : Activity() {
                 LabLog.add(this@VoiceLabActivity, "[0.4] $kind recognition error $error")
             }
             override fun onResults(results: Bundle?) {
-                val best = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: ""
+                val all = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+                val conf = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
+                val best = all.firstOrNull() ?: ""
                 val now = SystemClock.elapsedRealtime()
                 val lag = if (speechEndedAt > 0) now - speechEndedAt else now - startedAt
-                heard.text = "Heard: \"$best\""
-                LabLog.add(this@VoiceLabActivity, "[0.4] $kind heard \"$best\" (${lag} ms after speech ended)")
+                val alts = all.mapIndexed { n, t -> if (conf != null && n < conf.size && conf[n] >= 0f) "\"$t\" (${"%.2f".format(conf[n])})" else "\"$t\"" }
+                heard.text = "Heard: \"$best\"" + if (all.size > 1) "\nAlso: " + all.drop(1).joinToString(" / ") else ""
+                LabLog.add(this@VoiceLabActivity, "[0.4] $kind heard ${alts.joinToString(" | ")} (${lag} ms after speech ended)")
             }
             override fun onPartialResults(partialResults: Bundle?) {
                 partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { heard.text = "… $it" }
             }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
+        val lang = Locale.getDefault().toLanguageTag()
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
+            // A pause mid-sentence shouldn't end it.
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+        if (hints) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                i.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, crundiWords)
+            } else LabLog.add(this, "[0.4] word hints need Android 13; listening without them")
+        }
+        LabLog.add(this, "[0.4] listening: $kind, language $lang")
         r.startListening(i)
     }
 }
