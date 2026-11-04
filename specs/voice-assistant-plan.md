@@ -46,6 +46,16 @@ run the checks, then **Copy report** and paste it back.
 
 Results go back into the design doc.
 
+### Phase 0 results — 2026-11-05, Samsung S24 Ultra (SM-S928B), Android 17 (API 37)
+
+| # | Result |
+|---|---|
+| 0.1 | **Works.** Side key opens the assistant overlay locked and unlocked; a microphone foreground service started from the overlay records real sound in both cases (peaks 4,000–10,500). The lab screen opens over the lock screen. Background-start controls not run. |
+| 0.2 | **Conflict found:** once Crundi is the default digital assistant, "Hey Google" no longer works — the hotword belongs to whichever app is the default assistant. D1 (side key via default assistant) and D2 (Gemini) can't both hold. Needs a decision. |
+| 0.3 | Google TTS has 13 en-GB voices (6 on-device, 6 network, 1 default). **Rejected: not close enough to the wanted voice.** A premium cloud voice is needed. |
+| 0.4 | On-device recognition is fast (2–8 ms after speech) but **inaccurate**: "Add the UI overhaul of the home screen as a kanban task" came out as "Mdua of the home screen as a compound task". The default (network) recogniser was no better ("…as a company"); errors 7 (no match) and 11 (server disconnected) also seen. Gemini gets the same sentence right. **D27 needs revisiting.** |
+| 0.5 | Not run yet. |
+
 ## Phase 1 — server brain, typed (no Android yet)
 
 Goal: talk to Crundi by typing in a test page and get correct, safe answers.
