@@ -68,7 +68,7 @@ class VoiceApiTest {
     }
 
     @Test fun aTransportWithoutStreamsSaysSo() {
-        try { CrundiClient(FakeTransport()).voice.listen(object : SocketListener { override fun onMessage(text: String) {} }); fail() } catch (e: ApiException) {
+        try { CrundiClient(FakeTransport()).voice.listen(object : SocketListener { override fun onMessage(text: String) {}; override fun onClosed(code: Int, reason: String) {} }); fail() } catch (e: ApiException) {
             assertTrue(e.offline)
         }
     }
