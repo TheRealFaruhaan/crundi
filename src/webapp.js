@@ -4032,7 +4032,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/voice/turn' && req.method === 'POST') {
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
-      const r = await voiceAgent.turn(String(body.text || ''), { where: String(body.where || '').slice(0, 200) });
+      // Optional (capability 'voice-assistant'): locked, the phone is on its lock screen.
+      const r = await voiceAgent.turn(String(body.text || ''), { where: String(body.where || '').slice(0, 200), locked: body.locked === true });
       return json(res, r, r.ok ? 200 : (r.limitReached ? 402 : 400));
     }
     // Deepgram's voices, for the picker.
@@ -4065,7 +4066,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         services: getAllServiceStatus().map(sv => sv.name),
       });
       if (!r.ok || url.searchParams.get('turn') !== '1') return json(res, r, r.ok ? 200 : 400);
-      const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200) }) : { ok: false, error: 'Nothing was heard' };
+      const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1' }) : { ok: false, error: 'Nothing was heard' };
       return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok ? 200 : 400);
     }
 

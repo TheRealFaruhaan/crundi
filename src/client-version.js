@@ -146,6 +146,13 @@ export const CAPABILITIES = Object.freeze([
   // label), and an agent `progress` (its model-written status line).
   'chat-recap',
   'chat-aside',
+  // The owner's voice assistant (specs/voice-assistant.md): /api/voice/*
+  // (settings, turn with optional locked, warm, speak, voices, transcribe
+  // with optional ?locked=1) and the WebSocket /api/voice/listen, which takes
+  // optional ?encoding=linear16&sample_rate=N for raw PCM (a browser's WebM
+  // needs neither). An older server has none of it, so a client offers voice
+  // (and its spend in the usage view) only when this is listed.
+  'voice-assistant',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

@@ -3195,6 +3195,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .uc-legend i { width: 15px; height: 9px; border-radius: 3px; display: inline-block; }
     .uc-legend i.dash { height: 0; width: 15px; border-top: 2px dashed; background: none !important; border-radius: 0; }
     .uc-empty { padding: 60px 16px; text-align: center; color: var(--text-muted); font-size: 0.84rem; }
+    .uc-api { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-tertiary); }
+    .uc-api[hidden] { display: none; }
+    .uc-api-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 0.8rem; }
+    .uc-api-head b { font-weight: 600; color: var(--text-primary); }
+    .uc-api-amount { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .uc-api-bar { height: 6px; border-radius: 3px; background: var(--bg-primary); margin: 8px 0 6px; overflow: hidden; }
+    .uc-api-bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
+    .uc-api.over .uc-api-bar i { background: var(--red); }
+    .uc-api-meta { font-size: 0.74rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .uc-api-meta .uc-api-warn { color: var(--red); font-weight: 600; margin-left: 6px; }
 
     /* ─── Scrollbar ─── */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -3830,6 +3840,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
       </div>
       <div class="uc-chart-wrap"><div class="uc-chart" id="uc-chart"></div><div class="uc-tip" id="uc-tip"></div></div>
       <div class="uc-legend" id="uc-legend"></div>
+      <div class="uc-api" id="uc-api" hidden>
+        <div class="uc-api-head"><b>Claude API · voice assistant</b><span class="uc-api-amount" id="uc-api-amount"></span></div>
+        <div class="uc-api-bar"><i id="uc-api-fill"></i></div>
+        <div class="uc-api-meta" id="uc-api-meta"></div>
+      </div>
       <div class="im-buttons"><button id="uc-close">Close</button></div>
     </div>
   </div>
@@ -5387,6 +5402,42 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (userRole === 'collaborator') return;
       $('#usage-modal').classList.add('visible');
       loadUsageChart(usageChartRange);
+      loadApiSpend();
+    }
+    // The voice assistant's spend on the Claude API (and Deepgram), this
+    // month, under the subscription chart. Owner only; hidden on a server
+    // without the voice assistant (404) or on any error.
+    function fmtUsd(n) {
+      const v = Number(n) || 0;
+      return '$' + (v > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2));
+    }
+    async function loadApiSpend() {
+      const box = $('#uc-api');
+      if (!box) return;
+      if (userRole === 'collaborator') { box.hidden = true; return; }
+      try {
+        const r = await apiFetch('/api/voice/settings');
+        if (!r.ok) { box.hidden = true; return; }
+        const d = await r.json();
+        if (!d || !d.ok || !d.spend) { box.hidden = true; return; }
+        const sp = d.spend;
+        const limit = Number(d.monthlyLimitUsd) || 0;
+        const total = Number(sp.totalUsd) || 0;
+        const pct = limit > 0 ? Math.min(100, (total / limit) * 100) : (total > 0 ? 100 : 0);
+        $('#uc-api-amount').textContent = fmtUsd(total) + ' of ' + fmtUsd(limit) + ' this month';
+        $('#uc-api-fill').style.width = pct.toFixed(1) + '%';
+        const meta = $('#uc-api-meta');
+        const turns = Number(sp.turns) || 0;
+        meta.textContent = 'Claude ' + fmtUsd(sp.claudeUsd) + ' · Deepgram ' + fmtUsd(sp.deepgramUsd) + ' · ' + turns + (turns === 1 ? ' request' : ' requests');
+        if (d.limitReached) {
+          const w = document.createElement('span');
+          w.className = 'uc-api-warn';
+          w.textContent = 'Limit reached';
+          meta.appendChild(w);
+        }
+        box.classList.toggle('over', !!d.limitReached);
+        box.hidden = false;
+      } catch { box.hidden = true; }
     }
     function closeUsageModal() { $('#usage-modal').classList.remove('visible'); }
     async function loadUsageChart(range) {

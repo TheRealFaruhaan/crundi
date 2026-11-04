@@ -346,6 +346,22 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(!new URL(vstream.streamUrl(['kanban'])).searchParams.has('encoding'), 'WebM is sent without an encoding');
 }
 
+// ─── the locked phone ───
+{
+  const { contextLine } = await import('../src/voice/agent.js');
+  const at = new Date('2026-11-10T09:00:00Z');
+  ok(/phone is locked/.test(contextLine({ now: at, locked: true })) && !/locked/.test(contextLine({ now: at })), 'a locked phone is said in the context line only when locked');
+  ok(/phone is locked/.test(SYSTEM_PROMPT) && !/phone is locked: answer/.test(SYSTEM_PROMPT), 'the system prompt explains it once, without the changing part');
+  const seen = [];
+  const lockedAgent = createVoiceAgent({
+    tools: [],
+    settings: { DEFAULT_MODEL: 'claude-haiku-5-5', getSettings: () => ({ anthropicKey: 'k', model: 'claude-haiku-5-5', monthlyLimitUsd: 50 }), overLimit: () => false, countTurn: () => {}, claudeCost: () => 0, addClaudeSpend: () => {} },
+    client: () => ({ messages: { create: async (req) => { seen.push(JSON.parse(JSON.stringify(req))); return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Unlock first, Master.' }], usage: {} }; } } }),
+  });
+  await lockedAgent.turn('add a kanban task', { locked: true, now: at });
+  ok(/phone is locked/.test(seen[0].messages[0].content) && seen[0].system[0].text === SYSTEM_PROMPT, 'locked rides in the user message; the system block is unchanged');
+}
+
 // ─── access ───
 {
   const collab = { role: ROLE_COLLABORATOR, projects: ['proj'] };

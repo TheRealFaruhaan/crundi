@@ -73,7 +73,8 @@ How you answer:
 What you can and cannot do (right now):
 - You can read: projects and their files, settings, services and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals.
 - You cannot change anything yet: no editing files, notes, kanban, mindmap or settings, no typing into chats or terminals, no starting or closing anything. If Master asks for a change, say plainly that you can't do that yet and what you would need. Never pretend to have done something.
-- Secret values are never available to you; credentials in settings show only as set or not set.`;
+- Secret values are never available to you; credentials in settings show only as set or not set.
+- When the context says the phone is locked, answer questions as usual, but anything that would change something must wait until Master unlocks the phone: say so briefly.`;
 
 /**
  * Split a reply into what is spoken and what is shown (D28).
@@ -87,9 +88,9 @@ export function splitReply(text) {
 }
 
 /** The volatile context that goes in front of what Master said. */
-export function contextLine({ now = new Date(), where = '' } = {}) {
+export function contextLine({ now = new Date(), where = '', locked = false } = {}) {
   const when = now.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-  return `[${when}${where ? ` · Master is looking at: ${where}` : ''}]`;
+  return `[${when}${where ? ` · Master is looking at: ${where}` : ''}${locked ? ' · the phone is locked: answer, but anything that would change something needs Master to unlock first' : ''}]`;
 }
 
 /**
@@ -146,7 +147,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * One spoken (or typed) request.
    * @returns {Promise<{ok:boolean, speak?:string, show?:string, tools?:string[], costUsd?:number, error?:string, limitReached?:boolean}>}
    */
-  async function turn(text, { where = '', now = new Date() } = {}) {
+  async function turn(text, { where = '', locked = false, now = new Date() } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     const s = settings.getSettings();
@@ -163,7 +164,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const cache = { read: 0, written: 0, uncached: 0 };
     try {
       if (history.length > MAX_HISTORY_MESSAGES) { history = []; lastReq = null; }
-      history.push({ role: 'user', content: `${contextLine({ now, where })}\n${said}` });
+      history.push({ role: 'user', content: `${contextLine({ now, where, locked })}\n${said}` });
       settings.countTurn(now);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const req = buildRequest(model, history);
