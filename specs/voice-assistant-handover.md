@@ -2,6 +2,13 @@
 
 Paste everything below the line into the agent that continues the work.
 
+> **Update 2026-11-05:** the "Not verified yet" list below has been done
+> (all five work; results and fixes in the plan, "Phase 1 verified against
+> the real services"), the keys are saved in Voice assistant settings, and
+> Phase 3 is built in `android/…/voice/` (as built: the plan's Phase 3). Next:
+> the phone test of Phase 3, then the order in the plan. New decisions:
+> D39–D41.
+
 ---
 
 You are continuing development of the **Crundi voice assistant** ("Hey Crundi")
