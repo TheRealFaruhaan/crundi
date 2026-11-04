@@ -147,6 +147,39 @@ Manifest:
 
 Then Settings → Apps → Choose default apps → Digital assistant app → Crundi.
 
+## 3.4 Why it can't sleep and wake like Gemini
+
+Gemini, Google Assistant and Bixby wake from deep sleep through the phone's
+low-power audio chip (DSP). The chip listens for one keyphrase model and wakes
+the main processor only on a match. Android's API for this is
+`AlwaysOnHotwordDetector` (plus `HotwordDetectionService` on Android 11+), but
+it is gated:
+
+- It needs `MANAGE_HOTWORD_DETECTION` / `CAPTURE_AUDIO_HOTWORD`, which only
+  preinstalled privileged apps get. Choosing Crundi as the default assistant
+  does not grant them.
+- The keyphrase model has to be in the chip vendor's own format and enrolled
+  through a system enrolment app. Samsung's models for Bixby and Google's are
+  proprietary.
+- Root (Magisk, `/system/priv-app` + a privapp-permissions allowlist) could
+  grant the permissions. On Samsung it permanently trips Knox, which breaks
+  Samsung Wallet and Secure Folder, and it still gives no way to load a
+  "Crundi" model into the DSP. Not worth it.
+
+Closest options without root:
+
+- **Software wake word in a microphone foreground service** (§3, §3.1). Works
+  with the screen off, but the main processor stays partly awake, so it uses
+  more battery than Gemini, shows the mic dot and an ongoing notification, and
+  must be switched on from the app.
+- **Piggyback on a wake word the phone already has:**
+  - "Hi Bixby" + a Bixby Quick Command (e.g. "Crundi") that opens Crundi's
+    voice screen. Uses the DSP, so no battery cost. Untested: whether a Quick
+    Command can launch a specific activity or deep link, or only open the app.
+  - "Hey Google, open Crundi". Works for any app. Google App Actions
+    ("Hey Google, ask Crundi …") are uncertain since Gemini replaced Assistant.
+- **No-listening triggers** (§3.2): side key, assist gesture, tile.
+
 ## 4. Security
 
 - Anyone (or a TV) can say "Hey Crundi". Destructive actions — stop service,
