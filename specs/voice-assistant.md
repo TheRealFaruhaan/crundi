@@ -33,12 +33,14 @@ settings and usage.
 | D21 | **Input goes to chats only, never terminals.** Voice can still read terminal output (D11) and open or close terminal panels (D14), but can't type into them. Supersedes the terminal part of D11/D15. | 2026-11-04 |
 | D22 | **Voice can create projects.** Same as the app's own "add project": a new folder under the projects folder (or registering an existing one). Only file-system change voice may make (exception to D10). | 2026-11-04 |
 | D23 | **Voice can start chats in any project**, with the project's default model, effort and mode unless told otherwise; the first message follows D15. | 2026-11-04 |
-| D24 | **Voice can close any chat, with confirmation** ("Close the API chat in Crundi? It's idle." → "yes"). Closing works like closing it in the app: the pane is removed (`src/panes.js` forgets it). Open: whether voice should park it instead, so it can be resumed in place. | 2026-11-04 |
-| D25 | **API key kept on the server** (Voice assistant settings), never sent to the phone. **Spending limit, default $50, adjustable**; when reached, voice stops and says so. (Assumed per month; to confirm.) | 2026-11-04 |
+| D24 | **Voice can close any chat, with confirmation** ("Close the API chat in Crundi? It's idle." → "yes"). Closing works like closing it in the app: the pane is removed (`src/panes.js` forgets it). Voice can also park/sleep a chat instead (D31). | 2026-11-04 |
+| D25 | **API key kept on the server** (Voice assistant settings), never sent to the phone. **Spending limit, default $50, adjustable**; when reached, voice stops and says so. Per month. | 2026-11-04 |
 | D26 | **One memory, not per project.** Crundi is a single assistant across everything; it remembers, and compacts while idle (§2.5). | 2026-11-04 |
 | D27 | **Speech-to-text: Android's built-in on-device recognizer.** | 2026-11-04 |
 | D28 | **Long answers** (files, logs, long chat replies): short spoken summary, full text on screen. | 2026-11-04 |
 | D29 | **Phone first.** Web UI and desktop later, on the same server side. | 2026-11-04 |
+| D30 | **Memory gets its own searchable store:** keyword search plus local embeddings, as long as it stays light on CPU (§2.5). | 2026-11-04 |
+| D31 | **Voice can close or park/sleep any chat**, both with confirmation. Parked keeps the pane in place with Resume (`src/panes.js`). | 2026-11-04 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -206,9 +208,8 @@ uses its own words. Cool, not robotic.
 
 ### 2.5 Memory (D26)
 
-One running conversation for the whole assistant, plus a small long-term
-notebook. No vector database: at one person's scale it adds moving parts
-without helping.
+One running conversation for the whole assistant, a long-term notebook, and
+a searchable store over both (D30).
 
 1. **Running conversation.** Every voice turn is appended to one history on
    the server. Recent turns are sent as-is.
@@ -225,6 +226,29 @@ without helping.
    assistant settings.
 4. **Overview.** Because it's one memory, "what have we been working on this
    week?" works across all projects.
+
+5. **Searchable store (D30).** Hybrid search, light on CPU:
+   - **Keyword:** SQLite full-text search (FTS5, BM25 ranking). Practically
+     free on CPU. Node 22 ships `node:sqlite`, so no new native dependency —
+     to verify FTS5 is enabled in the Node build Crundi bundles (Electron/deb).
+   - **Meaning:** a small local embedding model (e.g. all-MiniLM-L6-v2 or
+     bge-small, ~25–35 MB, 384 dimensions) run through ONNX. Roughly 5–20 ms
+     per sentence on a normal CPU, and only when something is written or
+     searched; nothing runs in a loop. Cost: one new dependency (ONNX runtime,
+     tens of MB).
+   - **Vector search without a vector database:** at one person's scale
+     (thousands to tens of thousands of entries) comparing the query against
+     every stored vector takes milliseconds. Vectors live as blobs in the same
+     SQLite file; no extension or server needed.
+   - **Ranking:** merge keyword and meaning results (reciprocal rank fusion).
+   - **What gets indexed:** every turn (before compaction removes it), the
+     compaction summaries, and the notebook. So compacted detail is still
+     findable.
+   - **Tool:** `memory_search({ query, since?, project? })` for the agent.
+   - **Alternative with zero local CPU:** a hosted embeddings API (Anthropic
+     recommends Voyage AI; Anthropic has no embeddings endpoint of its own).
+     Costs a little per call and needs another key and the network. Keep as an
+     option if the local model is too heavy on a given machine.
 
 Cost note: the cached prefix (system prompt + tools + summary) keeps repeat
 turns cheap; compaction keeps the history from growing without limit.
