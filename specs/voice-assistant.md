@@ -46,6 +46,8 @@ settings and usage.
 | D34 | **Default voice: Google TTS `en-gb-x-rjs-network`** (British male). Voice names come from the TTS engine, not the phone, but which voices are installed varies by device; fall back to `en-gb-x-rjs-local`, then any en-GB voice. The user can pick any installed voice in Voice assistant settings. A premium cloud voice stays a later option. | 2026-11-05 |
 | D35 | **Speech-to-text: start with Android's on-device recogniser** (D27 kept), improved by vocabulary hints and by sending all alternatives to Claude (§2.3). Whisper on the Crundi server is a later option if it proves quick enough on the user's machine. | 2026-11-05 |
 | D36 | **No Whisper on the Crundi server.** It runs in the cloud on about 4 shared cores, sometimes fewer: a good Whisper model would take several seconds per command and compete with Claude Code sessions. If on-device + hints + Claude's correction isn't accurate enough, the next step is a cloud speech-to-text API (pay per minute, under a second), key on the server. | 2026-11-05 |
+| D37 | **Speech-to-text: Deepgram** (Nova-3, streaming, keyterm prompting with Crundi's vocabulary). Supersedes D27/D35 after Phase 0 (§1.4b of the plan). Key on the Crundi server (Voice assistant settings), never on the phone. New accounts get a $200 free credit. Android's on-device recogniser stays as an offline fallback. | 2026-11-05 |
+| D38 | **Anthropic has no speech-to-text for the API.** The Messages API takes text, images and PDFs, not audio. Claude Code's voice dictation uses Anthropic's own speech-to-text, but only for claude.ai sign-ins, not API keys, so Crundi can't use it. Re-check when Anthropic adds audio. | 2026-11-05 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -123,8 +125,7 @@ settings and usage.
    background.** The app targets SDK 36 (`android/app/build.gradle.kts`), so
    the listener must be started while Crundi is on screen. If it's killed it
    can't restart itself, and it can't start on boot.
-3. **The Claude API has no speech input or output** as far as official sources
-   show. Speech-to-text and text-to-speech run on the phone (or in another
+3. **The Claude API has no speech input or output** (D38). Speech-to-text and text-to-speech run on the phone (or in another
    engine).
 4. **API credits are a separate bill from the subscription.** Crundi
    deliberately drives the logged-in `claude` CLI rather than the Agent SDK

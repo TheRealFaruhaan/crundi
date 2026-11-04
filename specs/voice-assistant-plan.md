@@ -74,6 +74,11 @@ Goal: talk to Crundi by typing in a test page and get correct, safe answers.
   panels and their latest output (D9, D11).
 - `src/access-policy.js` — `ROLE_VOICE` with its own route allowlist.
   Critical-settings routes (D17) and file writes are absent from it.
+- `src/voice/stt.js` — Deepgram (D37): the phone streams audio over the
+  existing connection, the server relays it to Deepgram's streaming API
+  with keyterms (Crundi, kanban, mindmap, project and service names, read
+  live), and returns partial and final text. Key in Voice assistant
+  settings; Deepgram spend shown next to Claude spend.
 - `src/voice/budget.js` — API key from settings (server only), per-month
   spend from `response.usage` × model price, stop at the limit, default $50
   (D25).
@@ -82,6 +87,10 @@ Goal: talk to Crundi by typing in a test page and get correct, safe answers.
 - Settings page section "Voice assistant" (web UI, for configuration only).
 - Tests: tool allowlist (a voice token can't reach a critical-settings route
   or a file write), budget stop, secrets names-only, persona prompt snapshot.
+
+Phase 1 also gets a typed-or-uploaded test for speech: the Voice Lab
+records the kanban sentence and sends it through `stt.js`, to compare with
+the Phase 0 results.
 
 Exit: typed questions about usage, services, kanban, notes and files get right
 answers; anything outside the allowlist is refused by the server.
@@ -111,7 +120,8 @@ acceptable in all builds, or local embeddings ship as an optional download.
 - `voice/CrundiVoiceService` (`VoiceInteractionService`),
   `CrundiSessionService`, session UI (overlay, works over lock screen),
   `res/xml/voice_interaction_service.xml`, manifest entries.
-- On-device speech-to-text (D27) → `POST /api/voice/turn` → text-to-speech
+- Microphone audio streamed to the server for Deepgram (D37), on-device
+  recogniser as offline fallback → `POST /api/voice/turn` → text-to-speech
   with the chosen voice (D19). Full text shown on screen; long answers spoken
   as a summary (D28).
 - Locked phone: read-only answers; changes ask to unlock.
