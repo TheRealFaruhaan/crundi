@@ -45,6 +45,7 @@ settings and usage.
 | D33 | **Trigger mode is the user's choice** (supersedes the D1/D2 pairing, which Phase 0 showed can't both hold). **A:** Crundi is the default digital assistant; hold the side key, works locked; no "Hey Google". **B:** Gemini stays default; side key double-press (or "Hey Google, open Crundi Voice") opens Crundi Voice. The app supports both and the Voice assistant settings explain how to set each up. | 2026-11-05 |
 | D34 | **Default voice: Google TTS `en-gb-x-rjs-network`** (British male). Voice names come from the TTS engine, not the phone, but which voices are installed varies by device; fall back to `en-gb-x-rjs-local`, then any en-GB voice. The user can pick any installed voice in Voice assistant settings. A premium cloud voice stays a later option. | 2026-11-05 |
 | D35 | **Speech-to-text: start with Android's on-device recogniser** (D27 kept), improved by vocabulary hints and by sending all alternatives to Claude (§2.3). Whisper on the Crundi server is a later option if it proves quick enough on the user's machine. | 2026-11-05 |
+| D36 | **No Whisper on the Crundi server.** It runs in the cloud on about 4 shared cores, sometimes fewer: a good Whisper model would take several seconds per command and compete with Claude Code sessions. If on-device + hints + Claude's correction isn't accurate enough, the next step is a cloud speech-to-text API (pay per minute, under a second), key on the server. | 2026-11-05 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 
@@ -195,9 +196,9 @@ The Claude call runs on the server because:
     same vocabulary, and works out the likely request ("as a compound task" +
     "kanban" in the vocabulary → a kanban task).
   - **Show what was heard** on screen; one tap to say it again.
-  - **Later option:** record the audio and transcribe on the Crundi server
-    with Whisper (vocabulary via its prompt). Speed depends on the machine;
-    measure before choosing.
+  - **If still not good enough:** a cloud speech-to-text API with phrase
+    hints (D36). Whisper on the server is ruled out on a ~4-core shared
+    machine.
 - Text-to-speech: Android `TextToSpeech` (Samsung voices available).
 
 ### 2.4 The voice (D19)
@@ -247,7 +248,7 @@ a searchable store over both (D30).
    - **Keyword:** SQLite full-text search (FTS5, BM25 ranking). Practically
      free on CPU. Node 22 ships `node:sqlite`, so no new native dependency —
      to verify FTS5 is enabled in the Node build Crundi bundles (Electron/deb).
-   - **Meaning:** a small local embedding model (e.g. all-MiniLM-L6-v2 or
+   - **Meaning** (sized for a ~4-core shared server, D36): a small local embedding model (e.g. all-MiniLM-L6-v2 or
      bge-small, ~25–35 MB, 384 dimensions) run through ONNX. Roughly 5–20 ms
      per sentence on a normal CPU, and only when something is written or
      searched; nothing runs in a loop. Cost: one new dependency (ONNX runtime,
