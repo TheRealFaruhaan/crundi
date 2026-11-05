@@ -3542,6 +3542,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       <span class="status-badge disconnected" id="tg-badge" title="Telegram bot" style="display:none">tg: offline</span>
       <button class="topbar-act" id="collab-push" data-action="collab-push" title="Push your branch so the owner can see it"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span>Push</span></button>
       <button class="topbar-act" id="collab-merge" data-action="collab-merge" title="Ask the owner to merge your branch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span>Ask to merge</span></button>
+      <button class="topbar-act" id="voice-btn" data-action="voice-open" title="Talk to Crundi (voice assistant)" aria-label="Talk to Crundi"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg></button>
       <button class="topbar-act" id="approvals-btn" data-action="approvals-toggle" title="Things waiting on you"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12.5"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span class="appr-count" id="approvals-count">0</span></button>
       <span class="status-badge disconnected" id="conn-badge">disconnected</span>
       <div id="reconn-line" aria-hidden="true"><i></i></div>
@@ -3871,6 +3872,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/crundi-factories.js?v=${vendorTag('crundi-factories.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
   <script src="/vendor/crundi-whatsnew.js?v=${vendorTag('crundi-whatsnew.js')}"><\/script>
+  <script src="/vendor/crundi-voice.js?v=${vendorTag('crundi-voice.js')}"><\/script>
   <script src="/vendor/crundi-phone.js?v=${vendorTag('crundi-phone.js')}"><\/script>
   <script>
   (function() {
@@ -5402,6 +5404,24 @@ export function getWebappHtml(botUsername, appVersion = '') {
       },
     };
 
+    // The voice assistant (D39): the same voice screen as the phone, over the
+    // page. Its field shows the projects as cells in their live state.
+    function openVoice() {
+      if (userRole === 'collaborator' || !window.CrundiVoice) return;
+      window.CrundiVoice.open({
+        apiFetch, token: () => token, host: location.host,
+        cells: () => projects.map(p => {
+          const ts = terminals.filter(t => t.project === p.alias && t.status === 'running');
+          const svc = services.filter(sv => sv.alias === p.alias);
+          const kind = ts.some(t => t.agentState === 'needs-input') ? 'needs'
+            : ts.some(t => t.agentState === 'working') ? 'working'
+            : ts.some(t => t.agentState === 'waiting') ? 'waiting'
+            : svc.some(sv => sv.status === 'running') || ts.length ? 'running' : 'idle';
+          return { name: p.name || p.alias, kind, service: svc.length ? svc.some(sv => sv.status === 'running') : null };
+        }),
+        usage: () => usageData ? { week: usageData.week ? (usageData.week.utilization || 0) / 100 : null, five: usageData.fiveHour ? (usageData.fiveHour.utilization || 0) / 100 : null } : null,
+      });
+    }
     function openUsageModal() {
       // The chart is the account's usage history. Collaborators get their own
       // bar and nothing else (the server refuses /api/usage to them as well).
@@ -14238,6 +14258,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
+        case 'voice-open': openVoice(); break;
         case 'approvals-toggle': {
           e.stopPropagation();
           const p = document.getElementById('appr-panel');
