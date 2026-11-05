@@ -80,6 +80,8 @@ class VoiceController(
     private var fallback: FallbackRecognizer? = null
     private var tick: Job? = null
     private var running = false
+    /** This session paused the wake word; it lets it listen again when it ends. */
+    private var holdsMic = false
 
     /** Audio goes to the server (not while Crundi speaks). Read on the recording thread. */
     @Volatile private var streaming = true
@@ -108,6 +110,9 @@ class VoiceController(
         speaker.streams = VoiceApi.TTS_STREAM in caps
         running = true
         streaming = true
+        // One microphone owner: "Hey Crundi" lets go of it before the session takes it.
+        holdsMic = true
+        HeyCrundi.sessionOpened()
         dispatch(VoiceEvent.Opened(isLocked(), now()))
         VoiceMicService.start(ctx)
         scope.launch { voice.warm() }
@@ -207,9 +212,24 @@ class VoiceController(
                     else -> e.message
                 })
             } catch (e: Exception) { VoiceReply(ok = false, error = e.message ?: "Something went wrong") }
+            if (r.ok) phoneActions(r.phoneActions)
             dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock))
             // The spend moved: refresh the arcs.
             runCatching { voice.settings() }.getOrNull()?.let { s -> _ui.update { it.copy(spend = s) } }
+        }
+    }
+
+    /**
+     * What the server asked the phone to do (capability "voice-phone-actions"),
+     * already confirmed by Master (D32). The session is on screen, so Crundi is
+     * in front and may start the microphone service (Android 14's rule); the
+     * wake word itself waits until this session lets go of the microphone.
+     */
+    private fun phoneActions(actions: List<mv.obitech.crundi.api.PhoneAction>) {
+        for (a in actions) when (val c = HeyCrundiPlan.command(a.type, a.minutes)) {
+            is HeyCrundiPlan.Command.Start -> HeyCrundiService.start(ctx, c.minutes)
+            HeyCrundiPlan.Command.Stop -> HeyCrundiService.stop(ctx)
+            null -> Log.i(TAG, "phone action not known here: ${a.type}")
         }
     }
 
@@ -312,6 +332,7 @@ class VoiceController(
         fallback?.pause()
         synchronized(preroll) { preroll.clear() }
         VoiceMicService.stop(ctx)
+        if (holdsMic) { holdsMic = false; HeyCrundi.sessionClosed() }
     }
 
     private fun block(why: String) {

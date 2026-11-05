@@ -34,7 +34,31 @@ import mv.obitech.crundi.ui.theme.CrundiTheme
  * Being the default assistant hands "Hey Google" to Crundi too, which is
  * why mode B exists (VoiceActivity); App settings explains both.
  */
-class CrundiVoiceService : VoiceInteractionService()
+class CrundiVoiceService : VoiceInteractionService() {
+    override fun onReady() {
+        super.onReady()
+        current = this
+    }
+
+    override fun onShutdown() {
+        if (current === this) current = null
+        super.onShutdown()
+    }
+
+    companion object {
+        @Volatile private var current: CrundiVoiceService? = null
+
+        /**
+         * "Hey Crundi" heard in the background (Phase 6): as the phone's
+         * assistant Crundi may show its session as any assistant does on its
+         * hotword. False when Crundi isn't the assistant (mode B).
+         */
+        fun show(): Boolean {
+            val s = current ?: return false
+            return runCatching { s.showSession(Bundle(), 0); true }.getOrDefault(false)
+        }
+    }
+}
 
 class CrundiSessionService : VoiceInteractionSessionService() {
     override fun onNewSession(args: Bundle?): VoiceInteractionSession = CrundiSession(this)

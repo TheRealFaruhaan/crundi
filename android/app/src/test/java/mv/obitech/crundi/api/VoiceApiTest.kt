@@ -72,4 +72,40 @@ class VoiceApiTest {
             assertTrue(e.offline)
         }
     }
+
+    // ─── Phase 6 and the notebook ───
+
+    @Test fun aReplyCarriesPhoneActions() = runBlocking {
+        val t = FakeTransport().on("POST /api/voice/turn", """{"ok":true,"speak":"Listening for an hour, Master.","phoneActions":[{"type":"background-listening","minutes":60},{"type":"something-new","x":1}]}""")
+        val r = CrundiClient(t).voice.turn("keep listening for an hour", "Crundi Voice", false)
+        assertEquals(listOf(PhoneAction("background-listening", 60), PhoneAction("something-new", 0)), r.phoneActions)
+        // An older server sends none.
+        val old = CrundiClient(FakeTransport().on("POST /api/voice/turn", """{"ok":true,"speak":"Yes."}""")).voice.turn("hi", "x", false)
+        assertTrue(old.phoneActions.isEmpty())
+    }
+
+    @Test fun theNotebookIsListedSavedAndSearched() = runBlocking {
+        val t = FakeTransport()
+            .on("GET /api/voice/memory", """{"ok":true,"files":[{"path":"/memories/master.md","text":"Likes tea.","size":10}],"entries":42,"meaning":"ready"}""")
+            .on("POST /api/voice/memory", """{"ok":true}""")
+            .on("GET /api/voice/memory/search", """{"ok":true,"results":[{"kind":"turn","at":"2026-11-05T09:30:00.000Z","project":null,"text":"Master likes tea"},{"kind":"note","at":"2026-11-04T10:00:00.000Z","project":"crundi","text":"x"}],"meaning":true}""")
+        val api = CrundiClient(t).voice
+        val m = api.memory()
+        assertEquals(42, m.entries)
+        assertEquals("ready", m.meaning)
+        assertEquals("/memories/master.md", m.files.single().path)
+        assertEquals("Likes tea.", m.files.single().text)
+        api.saveMemory("/memories/master.md", "")
+        val body = t.requests.last().json.toString()
+        assertTrue(body, body.contains("\"path\":\"/memories/master.md\"") && body.contains("\"text\":\"\""))
+        val hits = api.searchMemory("tea")
+        assertEquals("tea", t.requests.last().query["q"])
+        assertEquals(2, hits.size)
+        assertEquals(null, hits[0].project)
+        assertEquals("crundi", hits[1].project)
+    }
+
+    @Test fun aServerWithoutMemorySaysSo() = runBlocking {
+        try { CrundiClient(FakeTransport()).voice.memory(); fail() } catch (e: ApiException) { assertTrue(VoiceApi.unsupported(e)) }
+    }
 }

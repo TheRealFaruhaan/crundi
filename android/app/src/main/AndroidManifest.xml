@@ -140,6 +140,8 @@
             </intent-filter>
         </service>
         <service android:name=".voice.VoiceMicService" android:exported="false" android:foregroundServiceType="microphone" />
+        <!-- Phase 6: background listening for "Hey Crundi" (D4-D7), started only from the foreground. -->
+        <service android:name=".voice.HeyCrundiService" android:exported="false" android:foregroundServiceType="microphone" />
         <activity android:name=".voice.VoiceSettingsActivity" android:exported="false" android:label="Voice assistant" />
 
         <service android:name=".PushService" android:exported="false">

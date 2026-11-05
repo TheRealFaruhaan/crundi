@@ -52,6 +52,8 @@ class VoiceActivity : ComponentActivity() {
             }
         }
         if (intent?.getBooleanExtra(EXTRA_UNLOCK, false) == true) unlock()
+        // Opened by "Hey Crundi" from the background: its "tap to talk" is done.
+        HeyCrundi.cancelWakeNotification(this)
     }
 
     override fun onStart() {

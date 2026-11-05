@@ -5,3 +5,7 @@
 # by the build, which is what the Play Console asks for.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# "Hey Crundi" (sherpa-onnx): its JNI library reads the config classes' fields
+# and calls back into its Kotlin classes by name.
+-keep class com.k2fsa.sherpa.onnx.** { *; }

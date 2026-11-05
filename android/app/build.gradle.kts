@@ -1,4 +1,7 @@
 import groovy.json.JsonSlurper
+import java.net.URI
+import java.security.MessageDigest
+import javax.inject.Inject
 
 plugins {
     id("com.android.application")
@@ -162,6 +165,106 @@ val exportScreens = tasks.register<Copy>("exportScreens") {
     into(providers.gradleProperty("screensDir").orElse(layout.buildDirectory.dir("screens-export").map { it.asFile.path }))
 }
 
+// ─── "Hey Crundi" (Phase 6): the sherpa-onnx keyword spotter ───
+// The engine (sherpa-onnx, Apache-2.0: its Kotlin classes and its JNI library
+// with ONNX Runtime linked in) and the English keyword model are too big for
+// the repository, so they are fetched from sherpa-onnx's GitHub releases,
+// pinned by version and SHA-256, cached in Gradle's home and unpacked into
+// build/wakeword. Only the int8 model (about 5 MB) and the library for
+// -PwakeWordAbis (default arm64-v8a, about 24 MB) go into the app.
+// The keywords (src/main/assets/kws/keywords.txt) are the model's BPE tokens
+// for "HEY CRUNDI" and "CRUNDI", made with sherpa-onnx's text2token:
+//   python -c "import sherpa_onnx; print(sherpa_onnx.text2token(['HEY CRUNDI'],
+//     tokens='tokens.txt', tokens_type='bpe', bpe_model='bpe.model'))"
+abstract class FetchWakeWord : DefaultTask() {
+    @get:Input abstract val engineUrl: Property<String>
+    @get:Input abstract val engineSha256: Property<String>
+    @get:Input abstract val modelUrl: Property<String>
+    @get:Input abstract val modelSha256: Property<String>
+    @get:Input abstract val abis: ListProperty<String>
+    @get:Internal abstract val cacheDir: Property<String>
+    @get:OutputDirectory abstract val jniDir: DirectoryProperty
+    @get:OutputDirectory abstract val assetsDir: DirectoryProperty
+    @get:OutputFile abstract val classesJar: RegularFileProperty
+    @get:Inject abstract val archives: ArchiveOperations
+    @get:Inject abstract val fs: FileSystemOperations
+
+    private fun sha256(f: File): String = MessageDigest.getInstance("SHA-256").let { md ->
+        f.inputStream().use { inp -> val buf = ByteArray(1 shl 16); while (true) { val n = inp.read(buf); if (n < 0) break; md.update(buf, 0, n) } }
+        md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** The pinned file, from the cache or downloaded, refused unless its SHA-256 matches. */
+    private fun fetch(url: String, sha: String): File {
+        val dir = File(cacheDir.get()).apply { mkdirs() }
+        val f = File(dir, url.substringAfterLast('/'))
+        if (f.isFile && sha256(f) == sha) return f
+        logger.lifecycle("Hey Crundi: downloading $url")
+        val part = File(dir, f.name + ".part")
+        try {
+            URI(url).toURL().openConnection().apply { connectTimeout = 30_000; readTimeout = 120_000 }.getInputStream().use { inp -> part.outputStream().use { inp.copyTo(it) } }
+        } catch (e: Exception) {
+            throw GradleException("Hey Crundi: could not download $url (${e.message}). The build needs it once; it is cached in ${dir.path} after that.", e)
+        }
+        val got = sha256(part)
+        if (got != sha) { part.delete(); throw GradleException("Hey Crundi: $url has SHA-256 $got, expected $sha. Refusing it.") }
+        part.renameTo(f)
+        return f
+    }
+
+    @TaskAction fun run() {
+        val aar = fetch(engineUrl.get(), engineSha256.get())
+        val model = fetch(modelUrl.get(), modelSha256.get())
+        fs.delete { delete(jniDir, assetsDir) }
+        for (abi in abis.get()) fs.copy {
+            from(archives.zipTree(aar)) { include("jni/$abi/*.so") }
+            eachFile { path = "$abi/$name" }
+            includeEmptyDirs = false
+            into(jniDir)
+        }
+        fs.copy {
+            from(archives.zipTree(aar)) { include("classes.jar") }
+            into(classesJar.get().asFile.parentFile)
+            rename { classesJar.get().asFile.name }
+        }
+        // Fixed names, so the app doesn't need to know the model's epoch and chunk sizes.
+        val names = mapOf(
+            "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx" to "encoder.int8.onnx",
+            "decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx" to "decoder.int8.onnx",
+            "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx" to "joiner.int8.onnx",
+            "tokens.txt" to "tokens.txt",
+        )
+        fs.copy {
+            from(archives.tarTree(archives.bzip2(model))) { include(names.keys.map { "*/$it" }) }
+            eachFile { path = "kws/" + names.getValue(name) }
+            includeEmptyDirs = false
+            into(assetsDir)
+        }
+        for (abi in abis.get()) if (!jniDir.get().file("$abi/libsherpa-onnx-jni.so").asFile.isFile) throw GradleException("Hey Crundi: no library for $abi in the engine")
+        for (n in names.values) if (!assetsDir.get().file("kws/$n").asFile.isFile) throw GradleException("Hey Crundi: the model has no $n")
+    }
+}
+
+val wakeWordOut = layout.buildDirectory.dir("wakeword")
+val fetchWakeWord = tasks.register<FetchWakeWord>("fetchWakeWord") {
+    engineUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-static-link-onnxruntime-2.0.1.aar"
+    engineSha256 = "07e042d97f3a6bd5b7fe74d4eef0513dc01a714b16c15a903250095aba43a575"
+    modelUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2"
+    modelSha256 = "f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a"
+    abis = providers.gradleProperty("wakeWordAbis").orElse("arm64-v8a").map { it.split(',').map(String::trim).filter(String::isNotEmpty) }
+    cacheDir = File(gradle.gradleUserHomeDir, "caches/crundi-wakeword").path
+    jniDir = wakeWordOut.map { it.dir("jniLibs") }
+    assetsDir = wakeWordOut.map { it.dir("assets") }
+    classesJar = wakeWordOut.map { it.file("libs/sherpa-onnx.jar") }
+}
+
+android.sourceSets.getByName("main") {
+    jniLibs.srcDir(wakeWordOut.get().dir("jniLibs"))
+    assets.srcDir(wakeWordOut.get().dir("assets"))
+}
+// Every variant's build starts after the fetch.
+tasks.named("preBuild") { dependsOn(fetchWakeWord) }
+
 dependencies {
     // Scanning the pairing picture (ScanActivity): the camera through
     // CameraX, the Crundi code read by our Kotlin port of the server's reader
@@ -206,6 +309,8 @@ dependencies {
     // Draws a project's icon when it is a drawing (.svg): Android itself
     // reads pictures made of dots only, and many a favicon is not one.
     implementation("com.caverock:androidsvg-aar:1.4")
+    // "Hey Crundi": sherpa-onnx's Kotlin API, from the pinned release (fetchWakeWord above).
+    implementation(files(wakeWordOut.map { it.file("libs/sherpa-onnx.jar") }).builtBy(fetchWakeWord))
     testImplementation("junit:junit:4.13.2")
     // Screenshot tests on the JVM (no emulator here): Robolectric draws, Roborazzi saves.
     testImplementation(composeBom)

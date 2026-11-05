@@ -55,6 +55,18 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
 
     suspend fun voices(): VoiceList = rpc.read(rpc.get("/api/voice/voices"), null)
 
+    // ─── memory (capability "voice-memory", D39 parity with /voice) ───
+
+    /** The notebook's files with their text, how many things are remembered, and the meaning search's state. */
+    suspend fun memory(): VoiceMemory = rpc.read(rpc.get("/api/voice/memory"), null)
+
+    /** A notebook file written as [text]; '' deletes it. */
+    suspend fun saveMemory(path: String, text: String) { rpc.post("/api/voice/memory", mapOf("path" to path, "text" to text)) }
+
+    /** What Crundi remembers about [q]: turns, compactions, notes. */
+    suspend fun searchMemory(q: String): List<MemoryHit> =
+        rpc.read<MemorySearch>(rpc.get("/api/voice/memory/search", mapOf("q" to q)), null).results
+
     /** [text] spoken in [voice] (or the chosen one): mp3 bytes. */
     suspend fun speak(text: String, voice: String = ""): ByteArray {
         val r = transport.exchange(ApiRequest("POST", "/api/voice/speak", json = Uploads.toJson(mapOf("text" to text, "voice" to voice.ifEmpty { null })), headers = mapOf("Accept" to "audio/mpeg")))
@@ -87,6 +99,10 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     companion object {
         const val CAPABILITY = "voice-assistant"
         const val TTS_STREAM = "voice-tts-stream"
+        /** The notebook and its search (Phase 2). */
+        const val MEMORY = "voice-memory"
+        /** A turn's reply may carry [VoiceReply.phoneActions] (Phase 6). */
+        const val PHONE_ACTIONS = "voice-phone-actions"
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
         const val STREAM_RATE = 24000
         const val UNSUPPORTED = "This server does not have the voice assistant yet. Update the server to use it."
@@ -159,7 +175,32 @@ data class VoiceReply(
     val pending: List<PendingAction> = emptyList(),
     /** Something needed the phone unlocked; nothing was changed. */
     val needsUnlock: Boolean = false,
+    /** For the phone to do, already confirmed by Master (D32), e.g. background listening. */
+    val phoneActions: List<PhoneAction> = emptyList(),
 )
+
+/** { type: "background-listening", minutes } (0 = off). Unknown types are ignored. */
+@Serializable
+data class PhoneAction(val type: String = "", val minutes: Int = 0)
+
+@Serializable
+data class MemoryFile(val path: String = "", val text: String = "", val size: Long = 0)
+
+@Serializable
+data class VoiceMemory(
+    val ok: Boolean = false,
+    val files: List<MemoryFile> = emptyList(),
+    /** Things remembered in the searchable store. */
+    val entries: Int = 0,
+    /** The meaning search's model: "ready", "not loaded yet", "unavailable: …". */
+    val meaning: String = "",
+)
+
+@Serializable
+data class MemoryHit(val kind: String = "", val at: String = "", val project: String? = null, val text: String = "")
+
+@Serializable
+data class MemorySearch(val ok: Boolean = false, val results: List<MemoryHit> = emptyList(), val meaning: Boolean = false)
 
 @Serializable
 data class PendingAction(val id: String = "", val question: String = "")

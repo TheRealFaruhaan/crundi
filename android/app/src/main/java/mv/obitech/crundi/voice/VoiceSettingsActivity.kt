@@ -1,5 +1,6 @@
 package mv.obitech.crundi.voice
 
+import android.Manifest
 import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Context
@@ -13,6 +14,7 @@ import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,12 +45,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mv.obitech.crundi.AppGraph
+import mv.obitech.crundi.ServerCaps
 import mv.obitech.crundi.Servers
+import mv.obitech.crundi.UrgentAlerts
 import mv.obitech.crundi.api.CrundiClient
 import mv.obitech.crundi.api.DeepgramVoice
+import mv.obitech.crundi.api.MemoryHit
+import mv.obitech.crundi.api.VoiceMemory
 import mv.obitech.crundi.api.VoiceApi
 import mv.obitech.crundi.api.VoiceSettings
 import mv.obitech.crundi.ui.components.BadgeKind
@@ -86,6 +95,39 @@ data class VoiceSettingsUi(
     val dgLimitText: String = "",
     val busy: Boolean = false,
     val note: String = "",
+    /** "Hey Crundi" (Phase 6): this build has the keyword spotter for this phone. */
+    val wake: WakeUi = WakeUi(),
+    /** The notebook (capability "voice-memory"); null when the server has none. */
+    val memory: MemoryUi? = null,
+)
+
+/** The "Hey Crundi" section. */
+data class WakeUi(
+    val supported: Boolean = true,
+    val inApp: Boolean = false,
+    /** Background listening is on. */
+    val background: Boolean = false,
+    /** The settings choice, minutes; 0 = until turned off (D7). */
+    val minutes: Int = HeyCrundiPlan.DEFAULT_MINUTES,
+    /** "24 min left", "Until you turn it off". */
+    val left: String = "",
+    /** Who has the microphone for the wake word now. */
+    val listening: HeyCrundiPlan.Listener = HeyCrundiPlan.Listener.None,
+    /** Full-screen notifications are allowed: heard in the background, the voice screen opens over the lock screen. */
+    val fullScreen: Boolean = true,
+)
+
+/** The notebook: files as the server has them, Master's edits, the search. */
+data class MemoryUi(
+    val loaded: VoiceMemory? = null,
+    val error: String = "",
+    /** path to the text being edited (only files that differ from [loaded]). */
+    val drafts: Map<String, String> = emptyMap(),
+    /** The file whose Delete was tapped once: tap again to delete. */
+    val confirmDelete: String = "",
+    val query: String = "",
+    val hits: List<MemoryHit>? = null,
+    val searching: Boolean = false,
 )
 
 class VoiceSettingsEvents(
@@ -108,6 +150,15 @@ class VoiceSettingsEvents(
     val onSaveDgLimit: () -> Unit = {},
     val onReset: () -> Unit = {},
     val onTry: () -> Unit = {},
+    val onWakeInApp: (Boolean) -> Unit = {},
+    val onWakeBackground: (Boolean) -> Unit = {},
+    val onWakeMinutes: (Int) -> Unit = {},
+    val onFullScreen: () -> Unit = {},
+    val onMemoryText: (String, String) -> Unit = { _, _ -> },
+    val onMemorySave: (String) -> Unit = {},
+    val onMemoryDelete: (String) -> Unit = {},
+    val onMemoryQuery: (String) -> Unit = {},
+    val onMemoryReload: () -> Unit = {},
 )
 
 /**
@@ -121,6 +172,16 @@ class VoiceSettingsActivity : ComponentActivity() {
     private var client: CrundiClient? = null
     private var preview: MediaPlayer? = null
     private var tts: TextToSpeech? = null
+    private var search: Job? = null
+    /** What to do once the microphone (and notifications) are allowed. */
+    private var afterGrant: (() -> Unit)? = null
+    private val askMic = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
+        HeyCrundi.refresh()
+        if (r[Manifest.permission.RECORD_AUDIO] == true || micGranted()) afterGrant?.invoke()
+        else ui = ui.copy(note = "Hey Crundi needs the microphone. Allow it in Android's settings for Crundi.")
+        afterGrant = null
+        wakeRefresh()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,11 +198,41 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
         listDeviceVoices(this) { ui = ui.copy(device = it) }
         load()
+        // "Hey Crundi stopped, tap to resume": the tap is in front, so the microphone may start again.
+        if (intent?.getBooleanExtra(HeyCrundiService.EXTRA_RESUME, false) == true && micGranted()) HeyCrundiService.resume(this)
+        lifecycleScope.launch { HeyCrundi.listening.collect { wakeRefresh() } }
+        // The time left, while the screen is open.
+        lifecycleScope.launch { while (isActive) { wakeRefresh(); delay(15_000) } }
     }
 
     override fun onResume() {
         super.onResume()
         ui = ui.copy(isAssistant = holdsAssistant(this))
+        wakeRefresh()
+    }
+
+    private fun micGranted() = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private fun wakeRefresh() {
+        val on = VoicePrefs.wakeOn(this)
+        ui = ui.copy(wake = WakeUi(
+            supported = WakeWordEngine.supported(this),
+            inApp = VoicePrefs.wakeInApp(this),
+            background = on,
+            minutes = VoicePrefs.wakeMinutes(this),
+            left = if (on) HeyCrundiPlan.timeLeft(System.currentTimeMillis(), VoicePrefs.wakeDeadline(this)) else "",
+            listening = HeyCrundi.listening.value,
+            fullScreen = UrgentAlerts.fullScreenGranted(this),
+        ))
+    }
+
+    /** Run [then] with the microphone allowed, asking first if need be (notifications too, for background listening's). */
+    private fun withMic(then: () -> Unit) {
+        if (micGranted()) { then(); return }
+        afterGrant = then
+        val ask = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33) ask += Manifest.permission.POST_NOTIFICATIONS
+        askMic.launch(ask.toTypedArray())
     }
 
     override fun onDestroy() {
@@ -158,9 +249,58 @@ class VoiceSettingsActivity : ComponentActivity() {
                 val s = v.settings()
                 ui = ui.copy(server = s, error = "", limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString(), dgLimitText = fmtUsd(s.deepgramLimitUsd))
                 runCatching { v.voices() }.getOrNull()?.let { ui = ui.copy(deepgram = it.voices) }
+                loadMemory()
             } catch (e: Exception) {
                 ui = ui.copy(error = if (VoiceApi.unsupported(e)) VoiceApi.UNSUPPORTED else e.message ?: "Could not load the settings")
             }
+        }
+    }
+
+    // ─── memory (D39: the same notebook as /voice) ───
+
+    private fun hasMemory(): Boolean {
+        val server = Servers.current(this) ?: return false
+        return VoiceApi.MEMORY in ServerCaps.get(this, server.id)
+    }
+
+    private fun loadMemory() {
+        val v = voice() ?: return
+        if (!hasMemory()) { ui = ui.copy(memory = null); return }
+        lifecycleScope.launch {
+            val m = ui.memory ?: MemoryUi()
+            ui = try {
+                val got = v.memory()
+                ui.copy(memory = m.copy(loaded = got, error = "", drafts = m.drafts.filter { (p, t) -> got.files.any { it.path == p && it.text != t } }))
+            } catch (e: Exception) {
+                ui.copy(memory = m.copy(error = if (VoiceApi.unsupported(e)) "This server has no voice memory yet. Update the server." else e.message ?: "Could not load the memory"))
+            }
+        }
+    }
+
+    private fun memory(change: (MemoryUi) -> MemoryUi) { ui.memory?.let { ui = ui.copy(memory = change(it)) } }
+
+    private fun saveMemory(path: String, text: String, note: String) {
+        val v = voice() ?: return
+        lifecycleScope.launch {
+            try {
+                v.saveMemory(path, text)
+                memory { it.copy(drafts = it.drafts - path, confirmDelete = "") }
+                ui = ui.copy(note = note)
+                loadMemory()
+            } catch (e: Exception) { ui = ui.copy(note = e.message ?: "Not saved") }
+        }
+    }
+
+    private fun searchMemory(q: String) {
+        memory { it.copy(query = q) }
+        search?.cancel()
+        if (q.isBlank()) { memory { it.copy(hits = null, searching = false) }; return }
+        val v = voice() ?: return
+        search = lifecycleScope.launch {
+            delay(350)
+            memory { it.copy(searching = true) }
+            val hits = runCatching { v.searchMemory(q.trim()) }.getOrElse { e -> ui = ui.copy(note = e.message ?: "Search failed"); emptyList() }
+            memory { it.copy(hits = hits, searching = false) }
         }
     }
 
@@ -222,6 +362,38 @@ class VoiceSettingsActivity : ComponentActivity() {
             lifecycleScope.launch { ui = ui.copy(note = runCatching { voice()?.reset(); "Crundi starts a fresh conversation" }.getOrElse { it.message ?: "Could not reset" }) }
         },
         onTry = { startActivity(Intent(this, VoiceActivity::class.java)) },
+        onWakeInApp = { on ->
+            if (on) withMic { HeyCrundi.setInApp(true); ui = ui.copy(note = "Say \"Hey Crundi\" while Crundi is open"); wakeRefresh() }
+            else { HeyCrundi.setInApp(false); wakeRefresh() }
+        },
+        onWakeBackground = { on ->
+            if (on) withMic {
+                val m = VoicePrefs.wakeMinutes(this)
+                HeyCrundiService.start(this, m)
+                ui = ui.copy(note = if (m == HeyCrundiPlan.UNTIL_OFF) "Listening for \"Hey Crundi\" until you turn it off" else "Listening for \"Hey Crundi\" for ${HeyCrundiPlan.label(m)}")
+                wakeRefresh()
+            } else { HeyCrundiService.stop(this); wakeRefresh() }
+        },
+        onWakeMinutes = { m ->
+            VoicePrefs.setWakeMinutes(this, m)
+            // On already: the new choice starts now.
+            if (VoicePrefs.wakeOn(this) && micGranted()) HeyCrundiService.start(this, m)
+            wakeRefresh()
+        },
+        onFullScreen = {
+            if (Build.VERSION.SDK_INT >= 34) runCatching { startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, android.net.Uri.parse("package:$packageName"))) }
+        },
+        onMemoryText = { path, text ->
+            val orig = ui.memory?.loaded?.files?.firstOrNull { it.path == path }?.text
+            memory { it.copy(drafts = if (text == orig) it.drafts - path else it.drafts + (path to text), confirmDelete = "") }
+        },
+        onMemorySave = { path -> ui.memory?.drafts?.get(path)?.let { saveMemory(path, it, "Saved $path") } },
+        onMemoryDelete = { path ->
+            if (ui.memory?.confirmDelete == path) saveMemory(path, "", "Deleted $path")
+            else memory { it.copy(confirmDelete = path) }
+        },
+        onMemoryQuery = { searchMemory(it) },
+        onMemoryReload = { loadMemory() },
     )
 
     private fun previewDeepgram(model: String) {
@@ -290,6 +462,10 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
                 null,
                 steps = "On Samsung: Advanced features > Side button > Double press > Open app > Crundi Voice.",
             ) { CrundiButton("Try Crundi Voice", ev.onTry, icon = "mic") }
+
+            // ─── "Hey Crundi" (Phase 6, D3–D7) ───
+            Section("Hey Crundi")
+            HeyCrundiPart(ui.wake, ui.isAssistant, ev)
 
             when {
                 ui.error.isNotEmpty() -> CrundiCard(Modifier.fillMaxWidth()) { Text(ui.error, style = CrundiType.Body.copy(color = CrundiColors.Yellow)) }
@@ -405,6 +581,9 @@ private fun ServerPart(ui: VoiceSettingsUi, s: VoiceSettings, ev: VoiceSettingsE
         }
     }
 
+    // ─── Memory (D39: the notebook, as on /voice) ───
+    ui.memory?.let { MemoryPart(it, ev) }
+
     // ─── Keys (D25: never on the phone) ───
     Section("Keys")
     CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
@@ -439,6 +618,95 @@ private fun VoiceRow(title: String, detail: String, selected: Boolean, onPick: (
         }
         Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClickLabel = "Hear it", onClick = onPreview), contentAlignment = Alignment.Center) {
             CrundiIcon("play", size = 16.dp, tint = CrundiColors.TextSecondary)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEvents) {
+    CrundiCard(Modifier.fillMaxWidth(), padding = 4.dp) {
+        if (!w.supported) {
+            Text("This build of Crundi has no wake word for this phone's processor.", style = CrundiType.Small.copy(color = CrundiColors.Yellow), modifier = Modifier.padding(14.dp))
+            return@CrundiCard
+        }
+        CrundiSwitchRow(
+            "In the app", w.inApp, ev.onWakeInApp,
+            detail = "While Crundi is open, say \"Hey Crundi\" to open the voice screen. Heard on the phone; nothing is sent until it opens.",
+        )
+        CrundiSwitchRow(
+            "In the background", w.background, ev.onWakeBackground,
+            detail = if (w.background) "Listening with the screen off. " + w.left + "." else "Listens with the screen off and the app closed, for as long as you choose.",
+        )
+        Column(Modifier.padding(start = Dimens.ScreenPad, end = Dimens.ScreenPad, bottom = 12.dp)) {
+            Text("How long", style = CrundiType.Small, modifier = Modifier.padding(bottom = 6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (m in HeyCrundiPlan.CHOICES) CrundiChip(HeyCrundiPlan.label(m), w.minutes == m, { if (w.minutes != m) ev.onWakeMinutes(m) })
+            }
+            if (w.listening != HeyCrundiPlan.Listener.None) Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                CrundiIcon("mic", size = 14.dp, tint = CrundiColors.Green)
+                Text(if (w.listening == HeyCrundiPlan.Listener.Background) "Listening now, in the background" else "Listening now, while Crundi is open", style = CrundiType.Small.copy(color = CrundiColors.Green), modifier = Modifier.padding(start = 6.dp))
+            }
+            Text(
+                "Listening uses some battery, and Android shows the green microphone dot while it does. On Samsung, add Crundi to Settings > Battery > Background usage limits > Never sleeping apps, or the phone may stop it; if it does, a notification offers to resume. \"Hey Crundi\" can also turn it on for a while: \"keep listening for an hour\".",
+                style = CrundiType.Small, modifier = Modifier.padding(top = 10.dp),
+            )
+            if (!isAssistant && !w.fullScreen) {
+                Text("Heard with the phone locked, Crundi Voice opens over the lock screen only with full-screen notifications allowed; otherwise it shows a notification to tap.", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
+                CrundiButton("Allow full-screen notifications", ev.onFullScreen, icon = "bell")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryPart(m: MemoryUi, ev: VoiceSettingsEvents) {
+    Section("Memory")
+    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
+        val got = m.loaded
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    m.error.isNotEmpty() -> m.error
+                    got == null -> "Loading the memory…"
+                    else -> "${got.entries} thing" + (if (got.entries == 1) "" else "s") + " remembered · meaning search: " + got.meaning.ifEmpty { "off" }
+                },
+                style = CrundiType.Small.copy(color = if (m.error.isNotEmpty()) CrundiColors.Yellow else CrundiColors.TextSecondary),
+                modifier = Modifier.weight(1f),
+            )
+            Box(Modifier.size(36.dp).clip(CircleShape).clickable(onClickLabel = "Reload", onClick = ev.onMemoryReload), contentAlignment = Alignment.Center) {
+                CrundiIcon("refresh", size = 16.dp, tint = CrundiColors.TextSecondary)
+            }
+        }
+        CrundiTextField(m.query, ev.onMemoryQuery, Modifier.fillMaxWidth().padding(top = 10.dp), placeholder = "Search what Crundi remembers", icon = "search")
+        m.hits?.let { hits ->
+            Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (hits.isEmpty() && !m.searching) Text("Nothing found.", style = CrundiType.Small)
+                for (h in hits) Column(Modifier.fillMaxWidth().clip(Dimens.ShapeSm).background(CrundiColors.BgTertiary).padding(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatusBadge(h.kind.ifEmpty { "memory" }, BadgeKind.Neutral)
+                        Text(h.at.take(16).replace('T', ' ') + (h.project?.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""), style = CrundiType.Meta)
+                    }
+                    Text(h.text.take(400), style = CrundiType.Body, modifier = Modifier.padding(top = 4.dp))
+                }
+            }
+        }
+    }
+    val files = m.loaded?.files.orEmpty()
+    if (m.loaded != null && files.isEmpty()) Text("Nothing in the notebook yet. Crundi writes in it as it learns about you.", style = CrundiType.Small, modifier = Modifier.padding(horizontal = 2.dp))
+    for (f in files) {
+        val draft = m.drafts[f.path]
+        CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CrundiIcon("file-text", size = 14.dp, tint = CrundiColors.TextMuted)
+                Text(f.path, style = CrundiType.Code, modifier = Modifier.weight(1f).padding(start = 6.dp))
+                Text(if (f.size < 1024) "${f.size} B" else "%.1f KB".format(Locale.US, f.size / 1024.0), style = CrundiType.Meta)
+            }
+            CrundiTextField(draft ?: f.text, { ev.onMemoryText(f.path, it) }, Modifier.fillMaxWidth().padding(top = 8.dp), mono = true, singleLine = false, minLines = 3, maxLines = 14)
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CrundiButton("Save", { ev.onMemorySave(f.path) }, kind = ButtonKind.Primary, icon = "check", enabled = draft != null)
+                CrundiButton(if (m.confirmDelete == f.path) "Delete for good?" else "Delete", { ev.onMemoryDelete(f.path) }, kind = ButtonKind.Danger, icon = "trash")
+            }
         }
     }
 }

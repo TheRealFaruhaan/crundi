@@ -146,4 +146,24 @@ object VoicePrefs {
 
     /** Seconds of quiet before the voice screen goes back to sleep. */
     fun silenceSeconds(ctx: Context) = p(ctx).getInt("voice.silence", 30)
+
+    // ─── "Hey Crundi" (Phase 6) ───
+
+    /** D3: listen for "Hey Crundi" while the app is in front. Off by default. */
+    fun wakeInApp(ctx: Context) = p(ctx).getBoolean("voice.wake.inApp", false)
+    fun setWakeInApp(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.wake.inApp", on).apply()
+
+    /** D7: the settings toggle's duration, minutes; [HeyCrundiPlan.UNTIL_OFF] = until turned off. Default 30. */
+    fun wakeMinutes(ctx: Context) = HeyCrundiPlan.choice(p(ctx).getInt("voice.wake.minutes", HeyCrundiPlan.DEFAULT_MINUTES))
+    fun setWakeMinutes(ctx: Context, minutes: Int) = p(ctx).edit().putInt("voice.wake.minutes", HeyCrundiPlan.choice(minutes)).apply()
+
+    /** Background listening is meant to be on (the service may have been stopped by Android). */
+    fun wakeOn(ctx: Context) = p(ctx).getBoolean("voice.wake.on", false)
+
+    /** When background listening ends, epoch ms; null = until turned off (or not on). */
+    fun wakeDeadline(ctx: Context): Long? = p(ctx).getLong("voice.wake.deadline", -1L).takeIf { it > 0 }
+
+    fun setWakeOn(ctx: Context, on: Boolean, deadline: Long?) {
+        p(ctx).edit().putBoolean("voice.wake.on", on).putLong("voice.wake.deadline", if (on) deadline ?: -1L else -1L).commit()
+    }
 }
