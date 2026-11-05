@@ -37,9 +37,12 @@ export const ACTION_TOOL_NAMES = [
   'create_project',
   'list_chat_schedules', 'add_chat_schedule', 'delete_chat_schedule',
   'add_schedule', 'update_schedule', 'set_schedule_enabled', 'delete_schedule',
-  'set_voice_setting',
+  'set_voice_setting', 'set_background_listening',
   'confirm_action', 'cancel_action',
 ];
+
+/** D6: how long background "Hey Crundi" listening may be turned on for by voice (minutes). */
+export const LISTEN_MINUTES = [15, 30, 45, 60, 120];
 
 /** Settings voice may change (each confirmed, D32). Keys and critical settings are not among them (D17). */
 export const VOICE_SETTINGS = ['model', 'ttsVoice', 'monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay'];
@@ -367,6 +370,18 @@ export function makeActionTools(deps, ctx) {
         const r = deps.voiceSettings.updateSettings({ [i.setting]: v });
         if (r.ok) deps.onSettingsChanged?.();
         return r;
+      },
+    },
+    // ─── "Hey Crundi" in the background (Phase 6, D4–D7, D32) ───
+    {
+      name: 'set_background_listening',
+      description: 'Turn background listening for "Hey Crundi" on the phone on for a while (15, 30, 45, 60 or 120 minutes; 30 if Master named no time; never unlimited), or off (minutes 0). Always asks Master first. The phone does it when this answer reaches it.',
+      input_schema: obj({ minutes: { type: 'integer', enum: [0, ...LISTEN_MINUTES], description: 'How long; 0 turns it off' } }, []),
+      confirm: (i) => { const m = i.minutes === undefined ? 30 : i.minutes; return m === 0 ? 'Turn off background listening?' : `Background listening for ${m >= 60 ? (m / 60) + (m === 60 ? ' hour' : ' hours') : m + ' minutes'}?`; },
+      run: (i) => {
+        const m = i.minutes === undefined ? 30 : Number(i.minutes);
+        if (m !== 0 && !LISTEN_MINUTES.includes(m)) return { ok: false, error: 'Choose 15, 30, 45, 60 or 120 minutes' };
+        return { ok: true, phoneAction: { type: 'background-listening', minutes: m }, say: m ? `The phone will listen for "Hey Crundi" for ${m} minutes.` : 'The phone will stop listening.' };
       },
     },
   ];

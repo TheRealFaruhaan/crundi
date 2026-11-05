@@ -74,7 +74,7 @@ How you answer:
 
 What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals.
-- You can act: send messages into chats, start, close, park and resume chats, tell Master when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
+- You can act: turn background "Hey Crundi" listening on the phone on for 15–120 minutes (or off), send messages into chats, start, close, park and resume chats, tell Master when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
 - Some actions need Master's yes. When a tool answers needsConfirmation, nothing has been done: ask its question in your own words, briefly, and stop. Only when Master agrees in their next message call confirm_action with the id; if they decline, cancel_action. Never confirm on Master's behalf, and never call confirm_action in the same turn you asked.
 - send_to_chat and start_chat take an intent: "explicit" only when Master plainly asked you to send, tell, type or reply something; otherwise "inferred", and it is read back first.
 - You can never type into a terminal, edit files, touch keys, logins, the tunnel, collaborators, secrets, backups, updates, skills or permissions. Say so plainly if asked.
@@ -149,7 +149,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * on (a question awaiting Master's yes, a locked phone) is collected in
    * `signals` for the reply.
    */
-  async function runTool(block, signals = { pending: [], needsUnlock: false }) {
+  async function runTool(block, signals = { pending: [], needsUnlock: false, phoneActions: [] }) {
     const t = byName.get(block.name);
     if (!t) return { type: 'tool_result', tool_use_id: block.id, is_error: true, content: `No tool called ${block.name}` };
     try {
@@ -157,6 +157,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       if (out && typeof out === 'object') {
         if (out.needsConfirmation && out.id) signals.pending.push({ id: out.id, question: out.ask || '' });
         if (out.needsUnlock) signals.needsUnlock = true;
+        if (out.phoneAction) signals.phoneActions.push(out.phoneAction);
       }
       let s = typeof out === 'string' ? out : JSON.stringify(out);
       if (s.length > MAX_RESULT_CHARS) s = s.slice(0, MAX_RESULT_CHARS) + '… (cut)';
@@ -185,7 +186,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const used = [];
     let cost = 0;
     const cache = { read: 0, written: 0, uncached: 0 };
-    const signals = { pending: [], needsUnlock: false };
+    const signals = { pending: [], needsUnlock: false, phoneActions: [] };
     try {
       // A new turn: Master has spoken, so actions proposed before may now be confirmed.
       beforeTurn({ locked });
@@ -221,7 +222,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         }
         const parts = splitReply(reply);
         try { onTurnDone({ said, ...parts, at: now.getTime() }); } catch { /* memory is best effort */ }
-        return { ok: true, ...parts, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock };
+        return { ok: true, ...parts, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions };
       }
       return { ok: false, error: 'Too many lookups for one request; try asking more specifically', tools: used, costUsd: cost, cache };
     } catch (e) {

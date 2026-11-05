@@ -481,6 +481,12 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   let bad = null; try { await T.set_voice_setting.run({ setting: 'anthropicKey', value: 'x' }); } catch (e) { bad = e; }
   ok(bad && /not one voice may change/.test(bad.message), 'keys are not settings voice may change (D17)');
   ok((await T.add_schedule.run({ project: 'proj', name: 'n', kind: 'chat', prompt: 'p', mode: 'recurring', time: '09:00' })).needsConfirmation, 'creating a schedule asks first (D45)');
+  const bl = await T.set_background_listening.run({});
+  ok(bl.needsConfirmation && /30 minutes/.test(bl.ask), 'background listening asks first, 30 minutes when no time is named (D6, D32)');
+  pending.newTurn();
+  const blDone = await T.confirm_action.run({ id: bl.id });
+  ok(blDone.phoneAction?.type === 'background-listening' && blDone.phoneAction.minutes === 30, 'and then tells the phone to listen');
+  ok(!A.LISTEN_MINUTES.includes(0) && Math.max(...A.LISTEN_MINUTES) === 120, 'never unlimited by voice; two hours at most (D5, D6)');
   ok((await T.delete_kanban_task.run({ project: 'proj', taskId: 't1' })).needsConfirmation, 'deleting a card asks first');
   ok((await T.move_kanban_task.run({ project: 'proj', taskId: 't1', status: 'todo' })).needsConfirmation, 'moving a card to To do (a factory run) asks first');
   ok((await T.move_kanban_task.run({ project: 'proj', taskId: 't1', status: 'done' })).ok, 'other moves just happen');

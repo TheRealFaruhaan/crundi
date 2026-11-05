@@ -165,6 +165,9 @@ export const CAPABILITIES = Object.freeze([
   // The voice assistant's memory (Phase 2): GET/POST /api/voice/memory (the
   // notebook's files), GET /api/voice/memory/search?q=.
   'voice-memory',
+  // Phase 6: a turn's reply may carry phoneActions, e.g.
+  // { type: 'background-listening', minutes } (0 = off), for the phone to do.
+  'voice-phone-actions',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));
