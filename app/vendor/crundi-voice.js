@@ -62,6 +62,11 @@
     '.cv-bot{width:100%;max-width:680px;display:flex;align-items:center;justify-content:center;gap:16px;padding:8px 24px 22px;box-sizing:border-box}' +
     '.cv-type{flex:1;min-width:0;background:#1a1a28;border:1px solid ' + C.border + ';border-radius:20px;color:' + C.text + ';padding:10px 14px;font-size:14px;outline:none}.cv-type:focus{border-color:' + C.accent + '}' +
     '.cv-mic{width:112px;height:112px;flex:none;cursor:pointer;position:relative}.cv-mic canvas{position:absolute;left:-80px;top:-20px;width:272px;height:152px;pointer-events:none}' +
+    '.cv-ptt{display:none;font-size:11px;color:' + C.muted + ';text-align:center;padding-bottom:6px}' +
+    // A wide screen (a PC): a dropdown under the top bar's mic button, the work in view around it.
+    '@media (min-width:900px){.cv-ov{left:auto;right:var(--cv-right,14px);top:var(--cv-top,52px);bottom:auto;width:400px;height:min(600px,calc(100vh - 70px));border:1px solid ' + C.border + ';border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.6);animation:cvdrop .18s ease-out}.cv-field{min-height:230px}.cv-reply{font-size:16px;line-height:23px}.cv-heard{font-size:14px}.cv-top{padding:12px 14px 0}.cv-bot{padding:4px 14px 12px}.cv-ptt{display:block}}' +
+    '@keyframes cvdrop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}' +
+
     '.cv-mic svg{position:absolute;left:44px;top:44px;width:24px;height:24px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}';
 
   var S = null;   // the open session
@@ -77,10 +82,17 @@
       '<button class="cv-x" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
       '<div class="cv-field"><canvas></canvas></div><div class="cv-leg"></div>' +
       '<div class="cv-words"><div class="cv-heard"></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden>Say yes or no</div><div class="cv-note" hidden></div></div>' +
+      '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div>' +
       '<div class="cv-bot"><input class="cv-type" placeholder="Or type to Crundi…" aria-label="Type to Crundi">' +
       '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></div></div>';
     document.body.appendChild(ov);
     var q = function (s) { return ov.querySelector(s); };
+    // Under the button that opened it (a wide screen).
+    var rc = opts.anchor && opts.anchor.getBoundingClientRect ? opts.anchor.getBoundingClientRect() : null;
+    if (rc && rc.width) {
+      ov.style.setProperty('--cv-top', Math.round(rc.bottom + 8) + 'px');
+      ov.style.setProperty('--cv-right', Math.max(8, Math.round(window.innerWidth - rc.right - 8)) + 'px');
+    }
     S = {
       opts: opts, ov: ov, phase: 'start', heard: '', asked: '', reply: '', detail: '', notice: '', question: '', pending: '',
       lastSaid: '', saidUntil: 0, quietSince: Date.now(), streaming: true, speaking: false,
@@ -88,7 +100,12 @@
       liq: { m: 0, mv: 0, lv: 0, peak: 0.1, hist: new Float32Array(64), drops: [], ripples: [], until: 0, lastDrop: 0, lastT: 0 },
       noise: 0.01, echo: 0.6, loudFor: 0, spokeFor: 0, recent: [0, 0, 0, 0], settings: null, caps: {},
       cells: [], usage: {}, raf: 0, timer: 0,
+      // How it was opened: 'click' (stays), 'hover' (goes when the pointer leaves, if idle), 'ptt' (push to talk).
+      how: opts.how || 'click', ptt: opts.how === 'ptt',
     };
+    ov.addEventListener('mouseenter', function () { if (S) clearTimeout(S.leaveTimer); });
+    ov.addEventListener('mouseleave', function () { if (S) maybeLeave(); });
+    ov.addEventListener('pointerdown', function () { if (S && S.how === 'hover') S.how = 'click'; });
     q('.cv-x').onclick = close;
     q('.cv-mic').onclick = tapMic;
     // Keys go to the voice screen first while it is open (window, capture):
@@ -96,6 +113,9 @@
     // don't fire underneath.
     S.onKey = function (e) {
       if (!S) return;
+      // Docked beside the page (a wide screen), keys elsewhere are the page's.
+      var docked = window.innerWidth >= 900, inside = S.ov.contains(e.target);
+      if (docked && !inside) return;
       if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); return; }
       var inp = S.ov.querySelector('.cv-type');
       if (e.target === inp) {
@@ -109,6 +129,28 @@
     S.timer = setInterval(function () { refreshData(); tick(); }, 1000);
     S.raf = requestAnimationFrame(frame);
     start();
+  }
+
+  /** Opened by hovering: close again once the pointer has gone, unless Master is talking or it is busy. */
+  function maybeLeave() {
+    if (!S || S.how !== 'hover') return;
+    clearTimeout(S.leaveTimer);
+    S.leaveTimer = setTimeout(function () {
+      if (!S || S.how !== 'hover') return;
+      var busy = S.phase === 'think' || S.phase === 'speak' || S.heard || S.ov.querySelector('.cv-type').value;
+      if (!busy) close();
+    }, 700);
+  }
+
+  /** Push to talk: the key was let go. Send what was heard now, without waiting for a pause. */
+  function pttRelease() {
+    if (!S || !S.ptt) return;
+    S.ptt = false; S.how = 'click';
+    setTimeout(function () {
+      if (!S) return;
+      if (S.phase === 'listen' && S.heard && !S.pttSent) utter(S.heard, false);
+      S.pttSent = false;
+    }, 700);
   }
 
   function close() {
@@ -191,7 +233,7 @@
     if (!S) return;
     if (e.type === 'ready') { if (S.phase === 'start') { S.phase = 'listen'; S.quietSince = Date.now(); } }
     else if (e.type === 'interim') { if (echo(e.text)) return; if (S.phase === 'listen' || S.phase === 'start') { S.phase = 'listen'; S.heard = e.text; S.quietSince = Date.now(); } else if (S.phase === 'think') { S.heard = (S.pending + ' ' + e.text).trim(); } }
-    else if (e.type === 'utterance') { utter(e.text, false); }
+    else if (e.type === 'utterance') { if (S.phase === 'listen') S.pttSent = true; utter(e.text, false); }
     else if (e.type === 'error') { S.notice = e.error; }
     render();
   }
@@ -484,5 +526,62 @@
     Lq.drops.forEach(function (d) { var a = (ms - d.b) / 1000; g.fillStyle = 'rgba(125,211,252,' + (0.8 * (1 - a)) + ')'; g.beginPath(); g.arc(cx + d.x * R + d.vx * a, cy - R * 0.4 + d.vy * a + 260 * a * a, 2.4 * (1 - a * 0.5), 0, 7); g.fill(); });
   }
 
-  window.CrundiVoice = { open: open, close: close, get isOpen() { return !!S; } };
+  /**
+   * Wire a top-bar button on a wide screen: click toggles (and keeps it open),
+   * hovering opens it (and it goes again when left idle), and holding
+   * Ctrl+Space anywhere is push to talk.
+   */
+  function attach(button, getOpts) {
+    if (!button || button._cvAttached) return;
+    button._cvAttached = true;
+    var hoverTimer = null;
+    var openWith = function (how) { var o = getOpts() || {}; o.anchor = button; o.how = how; open(o); };
+    button.addEventListener('click', function (e) { e.stopPropagation(); clearTimeout(hoverTimer); if (S) { if (S.how === 'hover') S.how = 'click'; else close(); } else openWith('click'); });
+    button.addEventListener('mouseenter', function () { if (window.innerWidth < 900 || S) return; hoverTimer = setTimeout(function () { if (!S) openWith('hover'); }, 350); });
+    button.addEventListener('mouseleave', function () { clearTimeout(hoverTimer); if (S) maybeLeave(); });
+    var held = false;
+    window.addEventListener('keydown', function (e) {
+      if (recording || held || e.repeat) return;
+      var k = shortcut();
+      if (!matches(e, k)) return;
+      e.preventDefault(); held = true;
+      if (!S) openWith('ptt'); else { S.ptt = true; if (S.phase === 'speak') bargeIn(); }
+    }, true);
+    window.addEventListener('keyup', function (e) {
+      if (!held) return;
+      var k = shortcut();
+      // Let go of the key, or of any modifier the shortcut needs.
+      if (e.code === k.code || (k.ctrl && e.key === 'Control') || (k.alt && e.key === 'Alt') || (k.shift && e.key === 'Shift') || (k.meta && e.key === 'Meta')) { held = false; pttRelease(); }
+    }, true);
+  }
+
+  // ─── the push-to-talk shortcut: bindable, kept per device (Settings › Voice assistant) ───
+  var SHORTCUT_KEY = 'crundi_voice_ptt';
+  var DEFAULT_SHORTCUT = { ctrl: true, alt: false, shift: false, meta: false, code: 'Space' };
+  var recording = false;
+  function shortcut() { try { var k = JSON.parse(localStorage.getItem(SHORTCUT_KEY) || 'null'); if (k && k.code) return k; } catch (e) { /* default */ } return DEFAULT_SHORTCUT; }
+  function matches(e, k) { return e.code === k.code && !!e.ctrlKey === !!k.ctrl && !!e.altKey === !!k.alt && !!e.shiftKey === !!k.shift && !!e.metaKey === !!k.meta; }
+  function label(k) {
+    k = k || shortcut();
+    var key = k.code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Arrow/, '').replace(/^Numpad/, 'Num ');
+    return [k.ctrl && 'Ctrl', k.alt && 'Alt', k.shift && 'Shift', k.meta && (navigator.platform.indexOf('Mac') >= 0 ? 'Cmd' : 'Win'), key].filter(Boolean).join('+');
+  }
+  /** Wait for the next key combination and save it as the shortcut. done(label) when set; Escape cancels. */
+  function recordShortcut(done) {
+    recording = true;
+    var on = function (e) {
+      if (['Control', 'Alt', 'Shift', 'Meta'].indexOf(e.key) >= 0) return;   // a modifier alone is not a shortcut
+      e.preventDefault(); e.stopPropagation();
+      window.removeEventListener('keydown', on, true);
+      recording = false;
+      if (e.key === 'Escape') { done && done(null); return; }
+      var k = { ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey, code: e.code };
+      try { localStorage.setItem(SHORTCUT_KEY, JSON.stringify(k)); } catch (x) { /* not kept */ }
+      done && done(label(k));
+    };
+    window.addEventListener('keydown', on, true);
+  }
+  function resetShortcut() { try { localStorage.removeItem(SHORTCUT_KEY); } catch (e) { /* none */ } return label(DEFAULT_SHORTCUT); }
+
+  window.CrundiVoice = { open: open, close: close, attach: attach, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
 })();

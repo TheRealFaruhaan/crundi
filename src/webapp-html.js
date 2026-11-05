@@ -5408,7 +5408,21 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // page. Its field shows the projects as cells in their live state.
     function openVoice() {
       if (userRole === 'collaborator' || !window.CrundiVoice) return;
-      window.CrundiVoice.open({
+      window.CrundiVoice.open(voiceOpts());
+    }
+    // On a wide screen the mic button is a dropdown: click, hover, or hold
+    // Ctrl+Space (push to talk). Attached once the page knows the role.
+    let voiceAttached = false;
+    function attachVoice() {
+      if (voiceAttached || userRole === 'collaborator' || !window.CrundiVoice || !window.CrundiVoice.attach) return;
+      const b = document.getElementById('voice-btn');
+      if (!b) return;
+      b.classList.add('on');   // top-bar buttons show only when switched on; the owner's alone
+      window.CrundiVoice.attach(b, voiceOpts);
+      voiceAttached = true;
+    }
+    function voiceOpts() {
+      return ({
         apiFetch, token: () => token, host: location.host,
         cells: () => projects.map(p => {
           const ts = terminals.filter(t => t.project === p.alias && t.status === 'running');
@@ -5755,6 +5769,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function showApp() {
       hideBoot();
       appReady = true;
+      // The voice assistant's mic button: only once signed in, the owner's alone.
+      setTimeout(attachVoice, 0);
       // Arrived from a factory link (the phone's chat page): open that run.
       const fxRun = (location.hash.match(/^#factory-run=([A-Za-z0-9_-]+)$/) || [])[1];
       if (fxRun) {
@@ -9068,6 +9084,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function applyRoleToUi() {
       const collab = userRole === 'collaborator';
       document.body.classList.toggle('is-collab', collab);
+      { const vb = document.getElementById('voice-btn'); if (vb && collab) vb.classList.remove('on'); }
       for (const b of $$('.tab-btn')) {
         const hide = collab && COLLAB_HIDDEN_TABS.indexOf(b.dataset.tab) >= 0;
         b.classList.toggle('collab-hide', hide);
@@ -13647,6 +13664,17 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<button data-action="sysprompt-save" style="' + btnStyle + '">Save prompts</button>'
           + '<span id="sysprompt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div></div>'
+          // The voice assistant on this device: the push-to-talk shortcut (kept
+          // per device), and where its server settings live.
+          + (window.CrundiVoice ? '<div class="info-section"><h4>Voice assistant</h4>'
+          + '<p style="' + hintStyle + ';margin-bottom:12px;">Click the mic in the top bar, hover over it, or hold the shortcut anywhere to talk to Crundi. Its keys, voice, model and limits are on the <a href="/voice" target="_blank" rel="noopener">voice page</a>.</p>'
+          + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+          + '<span style="' + labelStyle + ';margin:0;">Push to talk</span>'
+          + '<kbd id="voice-ptt-key" style="font-family:var(--mono);font-size:0.8rem;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);">' + escHtml(window.CrundiVoice.shortcutLabel()) + '</kbd>'
+          + '<button data-action="voice-ptt-change" style="' + btnStyle + '">Change</button>'
+          + '<button data-action="voice-ptt-reset" style="' + btnStyle + '">Reset</button>'
+          + '<span id="voice-ptt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
+          + '</div></div>' : '')
           // Sign-in methods. At least one must stay on; the server refuses to
           // disable the last, so these toggles can fail and say why.
           + '<div class="info-section"><h4>Sign-in</h4>'
@@ -14258,7 +14286,21 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
-        case 'voice-open': openVoice(); break;
+        case 'voice-ptt-change': {
+          const st = document.getElementById('voice-ptt-status');
+          if (st) st.textContent = 'Press the keys you want (Esc to cancel)';
+          window.CrundiVoice && window.CrundiVoice.recordShortcut((lbl) => {
+            if (lbl) { const k = document.getElementById('voice-ptt-key'); if (k) k.textContent = lbl; }
+            if (st) st.textContent = lbl ? 'Saved on this device' : '';
+          });
+          break;
+        }
+        case 'voice-ptt-reset': {
+          const lbl = window.CrundiVoice && window.CrundiVoice.resetShortcut();
+          const k = document.getElementById('voice-ptt-key'); if (k && lbl) k.textContent = lbl;
+          break;
+        }
+        case 'voice-open': if (!(window.CrundiVoice && window.CrundiVoice.attach && voiceAttached)) openVoice(); break;
         case 'approvals-toggle': {
           e.stopPropagation();
           const p = document.getElementById('appr-panel');
