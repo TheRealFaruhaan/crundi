@@ -97,6 +97,7 @@ import * as voiceSettings from './voice/settings.js';
 import { makeTools as makeVoiceTools } from './voice/tools.js';
 import { createVoiceAgent } from './voice/agent.js';
 import { makeActionTools as makeVoiceActionTools, createPending as createVoicePending } from './voice/actions.js';
+import { createVoiceMemory } from './voice/memory.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { getVoicePageHtml } from './voice/page.js';
 import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
@@ -2633,10 +2634,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       else broadcastState();
     },
   }, voiceCtx);
+  // One memory (Phase 2): the conversation on disk, the notebook, search.
+  const voiceMemory = createVoiceMemory({ dataDir: config.dataDir });
   const voiceAgent = createVoiceAgent({
-    tools: [...voiceTools, ...voiceActions],
+    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool],
     beforeTurn: ({ locked }) => { voiceCtx.locked = () => !!locked; voicePending.newTurn(); },
+    store: voiceMemory.store,
+    onTurnDone: (t) => voiceMemory.remember(t),
+    onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
   });
+  // Compaction while idle: ten quiet minutes, at most once a minute's check.
+  setInterval(() => {
+    if (Date.now() - voiceAgent.lastActivity > 10 * 60 * 1000) voiceAgent.compact().catch(() => {});
+  }, 60 * 1000).unref();
 
   function readBodyBuffer(req, max) {
     return new Promise((resolve, reject) => {
@@ -4088,6 +4098,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // (needs an Admin API key; capability 'voice-account-usage').
     if (path === '/api/voice/account-usage' && req.method === 'GET') {
       return json(res, await voiceAccountUsage({ force: url.searchParams.get('force') === '1' }));
+    }
+    // The voice assistant's notebook (Phase 2): read and edited by Master on /voice.
+    if (path === '/api/voice/memory' && req.method === 'GET') {
+      return json(res, { ok: true, files: voiceMemory.notebook.list(), entries: voiceMemory.index.count(), meaning: voiceMemory.index.embedder });
+    }
+    if (path === '/api/voice/memory' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      try { return json(res, voiceMemory.notebook.save(String(body.path || ''), body.text)); }
+      catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    }
+    if (path === '/api/voice/memory/search' && req.method === 'GET') {
+      return json(res, { ok: true, ...(await voiceMemory.index.search(String(url.searchParams.get('q') || ''))) });
     }
     // Deepgram's voices, for the picker.
     if (path === '/api/voice/voices' && req.method === 'GET') {

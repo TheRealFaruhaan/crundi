@@ -513,6 +513,70 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(rep.ok && rep.pending.length === 1 && /Close the "API work" chat/.test(rep.pending[0].question) && closed.length === 0, 'the reply carries the question awaiting a yes, and nothing was closed');
 }
 
+// ─── memory (Phase 2) ───
+{
+  const { createNotebook } = await import('../src/voice/notebook.js');
+  const { createMemoryIndex, createEmbedder, fuse, ftsQuery } = await import('../src/voice/memory-index.js');
+  const { createVoiceMemory } = await import('../src/voice/memory.js');
+  const mdir = join(dir, 'mem');
+  const changes = [];
+  const nb = createNotebook(join(mdir, 'memories'), { onChange: (p, t) => changes.push([p, t]) });
+  const run = (i) => nb.tool.run(i);
+  ok(run({ command: 'create', path: '/memories/master.md', file_text: 'Master prefers short answers.\nThe API project is called crundi.' }).startsWith('File created'), 'the notebook keeps a file');
+  ok(/prefers short answers/.test(run({ command: 'view', path: '/memories/master.md' })), 'and reads it back');
+  run({ command: 'str_replace', path: '/memories/master.md', old_str: 'short answers', new_str: 'very short answers' });
+  ok(nb.list()[0].text.includes('very short answers') && changes.length === 2, 'edits are saved and reported for the index');
+  let e1 = null; try { run({ command: 'view', path: '/memories/../../etc/passwd' }); } catch (e) { e1 = e; }
+  ok(e1 && /outside/.test(e1.message), 'paths cannot leave /memories');
+  let e2 = null; try { run({ command: 'create', path: '/memories/k.md', file_text: 'key: sk-ant-api03-abcdefghijklmnop' }); } catch (e) { e2 = e; }
+  ok(e2 && /Secrets are never kept/.test(e2.message), 'a key is refused: secrets never go in memory (D16)');
+  ok(nb.tool.def.type === 'memory_20250818', 'it is Anthropic\'s memory tool');
+
+  ok(ftsQuery('the kanban card, please!') === '"the"* OR "kanban"* OR "card"* OR "please"*', 'free text becomes a keyword query');
+  ok(JSON.stringify(fuse([[1, 2, 3], [3, 1]])) === '[1,3,2]', 'keyword and meaning rankings are merged (RRF)');
+
+  // A stand-in embedder: words become a bag-of-topics vector, so "page" finds "screen".
+  const topics = { screen: 0, page: 0, home: 0, ui: 0, card: 1, task: 1, kanban: 1, weather: 2, london: 2 };
+  const fakeEmb = createEmbedder({ load: async () => async (texts) => texts.map(t => {
+    const v = new Array(384).fill(0);
+    for (const w of t.toLowerCase().split(/\W+/)) if (w in topics) v[topics[w]] += 1;
+    const n = Math.hypot(...v) || 1; return v.map(x => x / n);
+  }) });
+  const ix = createMemoryIndex({ dir: mdir, embedder: fakeEmb });
+  ix.add('turn', 'Master: add the UI overhaul of the home screen as a kanban task\nCrundi: Done, in the backlog.', { project: 'crundi' });
+  ix.add('turn', 'Master: how is the weather in London', {});
+  ix.add('summary', 'We moved three cards to done in dhivo.', { project: 'dhivo' });
+  await ix.settle();
+  const byWord = await ix.search('kanban');
+  ok(byWord.results[0]?.text.includes('home screen'), 'found by keyword');
+  const byMeaning = await ix.search('redesign of the main page');
+  ok(byMeaning.meaning && byMeaning.results[0]?.text.includes('home screen'), 'found by meaning, with none of the same words');
+  const scoped = await ix.search('cards', { project: 'crundi' });
+  ok(!scoped.results.some(r => r.project === 'dhivo'), 'a project search leaves other projects out');
+  const noModel = createMemoryIndex({ dir: join(dir, 'mem2'), embedder: createEmbedder({ load: async () => { throw new Error('no model'); } }) });
+  noModel.add('turn', 'the kanban card'); await noModel.settle();
+  const kw = await noModel.search('kanban');
+  ok(kw.results.length === 1 && !kw.meaning, 'without the model, search is keyword only and still works');
+
+  // The conversation is kept, and compaction starts a new one from a summary.
+  const vm = createVoiceMemory({ dataDir: join(dir, 'vm'), index: ix });
+  const { createVoiceAgent: mkA } = await import('../src/voice/agent.js');
+  const fakeS = { DEFAULT_MODEL: 'claude-haiku-5-5', getSettings: () => ({ anthropicKey: 'k' }), overLimit: () => false, countTurn() {}, claudeCost: () => 0, addClaudeSpend() {} };
+  let summarised = '';
+  const fakeClient = () => ({ messages: { create: async (req) => req.tools
+    ? { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Yes, Master.' }], usage: {} }
+    : { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Master asked about usage several times; all fine.' }], usage: {} } } });
+  const a1 = mkA({ tools: [vm.notebook.tool, vm.searchTool], settings: fakeS, client: fakeClient, store: vm.store, onTurnDone: (t) => vm.remember(t), onCompacted: (sum) => { summarised = sum; vm.rememberSummary(sum); } });
+  for (let i = 0; i < 9; i++) await a1.turn('how much usage is left ' + i);
+  const a2 = mkA({ tools: [], settings: fakeS, client: fakeClient, store: vm.store });
+  ok(a2.history.length === 18, 'the conversation survives a restart (kept on disk)');
+  const c = await a1.compact();
+  ok(c.ok && a1.history.length === 2 && /summarised/.test(a1.history[0].content) && a1.history[1].role === 'assistant', 'compaction starts a new conversation from the summary');
+  ok(summarised && (await ix.search('usage several times')).results.some(r => r.kind === 'summary'), 'the summary is searchable');
+  ok((await ix.search('usage is left')).results.some(r => r.kind === 'turn'), 'and so are the turns before it');
+  ok(a1.toolNames.includes('memory') && a1.toolNames.includes('memory_search'), 'the notebook and search are tools');
+}
+
 // ─── access ───
 {
   const collab = { role: ROLE_COLLABORATOR, projects: ['proj'] };

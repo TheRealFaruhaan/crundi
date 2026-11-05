@@ -21,9 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY package.json package-lock.json* ./
+COPY scripts/prune-voice-deps.mjs ./scripts/
 # --omit=dev leaves out electron and electron-builder, which are ~200MB and
 # meaningless here: this image never renders anything.
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && node scripts/prune-voice-deps.mjs
 
 # node-screenshots is deliberately left without its Linux binding. It needs
 # libdbus/X11 to load and a display to be of any use, and this image has

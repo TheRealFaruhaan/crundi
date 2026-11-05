@@ -129,5 +129,8 @@
   "author": {
     "name": "Obitech",
     "email": "TheRealFaruhaan@users.noreply.github.com"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.8.1"
   }
 }

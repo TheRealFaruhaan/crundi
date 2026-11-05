@@ -117,6 +117,8 @@ jobs:
           echo "bundled Chrome ${CHROME_VER} for Windows"
           cd staging/crundi-server
           npm ci --omit=dev --ignore-scripts=false
+          # The voice assistant's embeddings runtime: this platform's CPU library only (D47).
+          node scripts/prune-voice-deps.mjs
           cd ..
           cp ../docker/README.md crundi-server/DOCKER.md || true
 
@@ -193,6 +195,8 @@ jobs:
           cp docker/.env.example staging/crundi/.env.example
           cd staging/crundi
           npm ci --omit=dev --no-audit --no-fund
+          # The voice assistant's embeddings runtime: this platform's CPU library only (D47).
+          node scripts/prune-voice-deps.mjs
           # Native code is tied to Node's ABI, so record which one these were
           # built against. install.sh compares it and rebuilds if it differs
           # rather than shipping modules that will not load.

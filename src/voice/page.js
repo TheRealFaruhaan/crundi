@@ -110,6 +110,15 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <div class="row"><button id="save">Save</button><span id="saved"></span></div>
   <div class="spend" id="spend"></div>
 </section>
+<section class="card">
+  <h2>Memory</h2>
+  <div class="spend" id="memInfo"></div>
+  <label for="memQ">Search what was said before</label>
+  <input id="memQ" placeholder="e.g. the kanban card about the home screen">
+  <div id="memHits"></div>
+  <label>Notebook (what Crundi keeps for good; edit or empty a file to change it)</label>
+  <div id="memFiles"></div>
+</section>
 </main>
 <script>
 (() => {
@@ -362,6 +371,37 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     loadSettings();
   };
   loadSettings();
+  // ─── memory (Phase 2): the notebook and search ───
+  async function loadMemory() {
+    try {
+      const r = await api('/api/voice/memory');
+      if (!r.ok) { $('memInfo').textContent = r.error || 'Memory is not available on this server.'; return; }
+      $('memInfo').textContent = r.entries + ' things remembered · meaning search: ' + r.meaning;
+      $('memFiles').innerHTML = r.files.length ? '' : '<div class="spend">Nothing in the notebook yet.</div>';
+      for (const f of r.files) {
+        const box = document.createElement('div');
+        box.innerHTML = '<div class="spend">' + esc(f.path) + '</div><textarea rows="5" style="width:100%"></textarea><button>Save</button>';
+        box.querySelector('textarea').value = f.text;
+        box.querySelector('button').onclick = async () => {
+          const s = await api('/api/voice/memory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: f.path, text: box.querySelector('textarea').value }) });
+          box.querySelector('button').textContent = s.ok ? 'Saved' : (s.error || 'Not saved');
+          if (s.ok) setTimeout(loadMemory, 600);
+        };
+        $('memFiles').appendChild(box);
+      }
+    } catch (e) { $('memInfo').textContent = e.message; }
+  }
+  let memTimer = null;
+  $('memQ').addEventListener('input', () => {
+    clearTimeout(memTimer);
+    memTimer = setTimeout(async () => {
+      const q = $('memQ').value.trim();
+      if (!q) { $('memHits').innerHTML = ''; return; }
+      const r = await api('/api/voice/memory/search?q=' + encodeURIComponent(q));
+      $('memHits').innerHTML = (r.results || []).map(h => '<div class="spend"><b>' + esc(h.kind) + '</b> ' + esc(h.at.slice(0, 16).replace('T', ' ')) + '<br>' + esc(h.text).slice(0, 400) + '</div>').join('') || '<div class="spend">Nothing found.</div>';
+    }, 350);
+  });
+  loadMemory();
   warm();
   $('text').addEventListener('focus', warm);
 })();

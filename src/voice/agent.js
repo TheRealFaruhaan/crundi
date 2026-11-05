@@ -49,6 +49,8 @@ import * as voiceSettings from './settings.js';
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_HISTORY_MESSAGES = 80;
+/** Compaction while idle starts once the conversation has at least this many messages. */
+const COMPACT_MIN_MESSAGES = 16;
 const MAX_RESULT_CHARS = 30000;
 /** Opus and Sonnet 5.5 take the server-side refusal fallback; Haiku 5.5 has none. */
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
@@ -78,6 +80,10 @@ What you can and cannot do:
 - You can never type into a terminal, edit files, touch keys, logins, the tunnel, collaborators, secrets, backups, updates, skills or permissions. Say so plainly if asked.
 - Never pretend to have done something: say what happened, from the tool's answer.
 - Secret values are never available to you; credentials in settings show only as set or not set.
+
+Memory:
+- You are one assistant with one memory. Your notebook (the memory tool, files under /memories) is for what should last: Master's preferences, standing facts about their projects, threads in progress. Keep it short and current; never put secrets in it. Look at it when a conversation starts or when something you may have noted comes up.
+- memory_search finds anything said before, across every conversation, including ones that have been summarised.
 - When the context says the phone is locked, answer questions as usual, but anything that would change something must wait until Master unlocks the phone: say so briefly.`;
 
 /**
@@ -103,12 +109,16 @@ export function contextLine({ now = new Date(), where = '', locked = false } = {
  * @param {Function} [opts.client]  (apiKey) => Anthropic-like client; tests pass a fake
  * @param {object}  [opts.settings] the settings module; tests pass a fake
  */
-export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {} } = {}) {
+export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {} } = {}) {
   const byName = new Map(tools.map(t => [t.name, t]));
+  // A tool with `def` is one of Anthropic's own (the memory tool): sent as is.
   const toolDefs = tools
-    .map(({ name, description, input_schema }) => ({ name, description, input_schema }))
+    .map((t) => t.def || { name: t.name, description: t.description, input_schema: t.input_schema })
     .sort((a, b) => a.name.localeCompare(b.name));
-  let history = [];
+  // The running conversation (D26): from disk when there is one (Phase 2).
+  let history = store ? store.load() : [];
+  let lastActivity = Date.now();
+  const save = () => { if (store) { try { store.save(history); } catch { /* the next save tries again */ } } };
   let busy = false;
   // The last request sent, for warm(), and when.
   let lastReq = null;
@@ -179,7 +189,8 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     try {
       // A new turn: Master has spoken, so actions proposed before may now be confirmed.
       beforeTurn({ locked });
-      if (history.length > MAX_HISTORY_MESSAGES) { history = []; lastReq = null; }
+      // Too long for one conversation: compact it now rather than lose it.
+      if (history.length > MAX_HISTORY_MESSAGES) { busy = false; const c = await compact({ force: true }); busy = true; if (!c.ok) { history = []; lastReq = null; } }
       history.push({ role: 'user', content: `${contextLine({ now, where, locked })}\n${said}` });
       settings.countTurn(now);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -208,7 +219,9 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         if (res.stop_reason === 'max_tokens' && !reply) {
           return { ok: false, error: 'The answer ran out of room before it was finished', tools: used, costUsd: cost, cache };
         }
-        return { ok: true, ...splitReply(reply), tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock };
+        const parts = splitReply(reply);
+        try { onTurnDone({ said, ...parts, at: now.getTime() }); } catch { /* memory is best effort */ }
+        return { ok: true, ...parts, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock };
       }
       return { ok: false, error: 'Too many lookups for one request; try asking more specifically', tools: used, costUsd: cost, cache };
     } catch (e) {
@@ -218,6 +231,60 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       return { ok: false, error: String(e.message || e) };
     } finally {
       busy = false;
+      lastActivity = Date.now();
+      save();
+    }
+  }
+
+  /** The conversation as plain text, for the summary (thinking and raw tool data left out). */
+  function transcript(msgs) {
+    const out = [];
+    for (const m of msgs) {
+      if (typeof m.content === 'string') { out.push(`${m.role === 'user' ? 'Master' : 'Crundi'}: ${m.content}`); continue; }
+      for (const b of m.content || []) {
+        if (b.type === 'text' && b.text) out.push(`${m.role === 'user' ? 'Master' : 'Crundi'}: ${b.text}`);
+        else if (b.type === 'tool_use') out.push(`(Crundi used ${b.name} ${JSON.stringify(b.input).slice(0, 200)})`);
+        else if (b.type === 'tool_result') out.push(`(result: ${String(typeof b.content === 'string' ? b.content : JSON.stringify(b.content)).slice(0, 300)})`);
+      }
+    }
+    return out.join('\n').slice(-60000);
+  }
+
+  /**
+   * Compaction while idle (§2.5.2): the conversation so far becomes a short
+   * summary, and a NEW conversation starts from it. Earlier turns are never
+   * edited (the models refuse edited history); the old ones stay findable
+   * through memory_search, which indexed every turn as it happened.
+   */
+  async function compact({ force = false, now = new Date() } = {}) {
+    if (busy) return { ok: false, skipped: 'busy' };
+    if (!force && history.length < COMPACT_MIN_MESSAGES) return { ok: false, skipped: 'short' };
+    const s = settings.getSettings();
+    if (!s.anthropicKey || settings.overLimit(now)) return { ok: false, skipped: 'no key or over the limit' };
+    busy = true;
+    try {
+      const model = s.model || settings.DEFAULT_MODEL;
+      const res = await client(s.anthropicKey).messages.create({
+        model, max_tokens: 1500, output_config: { effort: 'low' },
+        system: 'You summarise a voice assistant\'s conversation with its user (called Master) so it can carry on from the summary. Keep what matters for later: decisions, requests in progress, actions taken (what, where), what is waiting on someone, facts learnt about Master\'s projects and preferences. Plain prose and short lists, no preamble, under 400 words.',
+        messages: [{ role: 'user', content: `The conversation so far:\n\n${transcript(history)}\n\nWrite the summary.` }],
+      });
+      settings.addClaudeSpend(model, res.usage, now);
+      const summary = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      if (!summary) return { ok: false, skipped: 'empty summary' };
+      const when = now.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      history = [
+        { role: 'user', content: `[What we have been doing until ${when}, summarised. Earlier detail is in memory_search.]\n${summary}` },
+        { role: 'assistant', content: [{ type: 'text', text: 'Understood, Master.' }] },
+      ];
+      lastReq = null;
+      try { onCompacted(summary, now.getTime()); } catch { /* best effort */ }
+      return { ok: true, summary };
+    } catch (e) {
+      return { ok: false, skipped: String(e.message || e) };
+    } finally {
+      busy = false;
+      save();
     }
   }
 
@@ -252,7 +319,10 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     turn,
     warm,
     /** Start a fresh conversation. */
-    reset() { history = []; lastReq = null; },
+    compact,
+    /** Quiet since (ms epoch), for compaction while idle. */
+    get lastActivity() { return lastActivity; },
+    reset() { history = []; lastReq = null; save(); },
     /** Tests and diagnostics. */
     get history() { return history; },
     get toolNames() { return toolDefs.map(t => t.name); },

@@ -70,7 +70,10 @@ const actionTools = actions.makeActionTools({
   kanban, notes, mindmap, chatSchedule: { list: () => [], add: () => ({ ok: true }), remove: () => ({ ok: true }) },
   schedules: schedule, services: () => [], voiceSettings: { updateSettings: () => ({ ok: true }) },
 }, ctx);
-const agent = createVoiceAgent({ tools: [...tools, ...actionTools], settings, beforeTurn: () => pending.newTurn() });
+// Memory too, kept in the copy's data folder (DATA_DIR/voice-memory).
+const { createVoiceMemory } = await import('../src/voice/memory.js');
+const memory = createVoiceMemory({ dataDir: process.env.DATA_DIR });
+const agent = createVoiceAgent({ tools: [...tools, ...actionTools, memory.notebook.tool, memory.searchTool], settings, beforeTurn: () => pending.newTurn(), store: memory.store, onTurnDone: (t) => memory.remember(t) });
 const pct = (c) => { const all = c.read + c.written + c.uncached; return all ? Math.round(100 * c.read / all) : 0; };
 
 const w = await agent.warm();

@@ -162,6 +162,9 @@ export const CAPABILITIES = Object.freeze([
   // has cost this billing month (an Admin API key in Voice assistant
   // settings); clients show it only when this is listed.
   'voice-account-usage',
+  // The voice assistant's memory (Phase 2): GET/POST /api/voice/memory (the
+  // notebook's files), GET /api/voice/memory/search?q=.
+  'voice-memory',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));
