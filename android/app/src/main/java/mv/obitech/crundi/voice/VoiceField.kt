@@ -167,10 +167,13 @@ fun VoiceField(
         }
 
         // Tendrils from the centre's membrane to each cell, sparks on busy ones.
-        val r0 = L * 1.38f + (5f + CONTOURS * 3.2f) * density + 30f * density
+        // Strands grow out of the visualizer: they start just inside its outer contours.
+        val r0 = L * 1.38f + (5f + CONTOURS * 3.2f) * density - 4f * density
         for (p in placed) {
-            val dx = cos(p.ang); val dy = sin(p.ang); val px = -dy; val py = dx
+            // Towards where the cell really is (they sit on an oval, not a circle).
             val dist = hypot(p.x - c.x, p.y - c.y)
+            if (dist < 1f) continue
+            val dx = (p.x - c.x) / dist; val dy = (p.y - c.y) / dist; val px = -dy; val py = dx
             val p0 = Offset(c.x + dx * r0, c.y + dy * r0)
             val p3 = Offset(c.x + dx * (dist - p.r), c.y + dy * (dist - p.r))
             if (dist - p.r <= r0) continue
