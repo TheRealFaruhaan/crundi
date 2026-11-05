@@ -250,7 +250,24 @@ fun VoiceField(
         drawCircle(Brush.radialGradient(listOf(a.copy(alpha = 0.35f + 0.4f * lvl), Color.Transparent), c, disc * 1.6f), disc * 1.6f, c)
         drawCircle(Color(0xFF05050A), disc, c)
         rotate(spin, c) { drawCircle(sweep, disc, c, style = Stroke((2f + 1.5f * lvl) * density)) }
-        val sz = L * 1.7f * (1f + 0.08f * lvl)
+
+        // ─── usage arcs inside the disc, round the head ───
+        // Week, 5 hours, Claude and Deepgram spend, in the legend's colours,
+        // each from the top, clockwise, a full turn being 100%.
+        val arcs = listOfNotNull(
+            usage.week?.let { it to CrundiColors.AccentHover },
+            usage.fiveHour?.let { it to CrundiColors.Sky },
+            usage.api?.let { it to CrundiColors.Ask },
+            usage.deepgram?.let { it to CrundiColors.Green },
+        )
+        arcs.forEachIndexed { k, (v, col) ->
+            val rad = disc - (6f + k * 4.5f) * density
+            val tl = Offset(c.x - rad, c.y - rad); val sz2 = Size(rad * 2, rad * 2)
+            drawArc(CrundiColors.Border.copy(alpha = 0.6f), -90f, 360f, false, tl, sz2, style = Stroke(2.2f * density))
+            drawArc(col, -90f, max(3f, 360f * v.coerceIn(0f, 1f)), false, tl, sz2, style = Stroke(2.6f * density, cap = StrokeCap.Round))
+        }
+        // The head, sized to sit inside the usage arcs.
+        val sz = L * 1.45f * (1f + 0.06f * lvl)
         translate(c.x - sz / 2f, c.y - sz / 2f - 2f * density) { with(logo) { draw(Size(sz, sz)) } }
     }
 }
