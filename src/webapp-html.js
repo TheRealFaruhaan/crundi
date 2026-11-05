@@ -3846,6 +3846,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="uc-api-meta" id="uc-api-meta"></div>
         <div class="uc-api-meta" id="uc-api-account" hidden></div>
       </div>
+      <div class="uc-api" id="uc-dg" hidden>
+        <div class="uc-api-head"><b>Deepgram · voice assistant</b><span class="uc-api-amount" id="uc-dg-amount"></span></div>
+        <div class="uc-api-bar"><i id="uc-dg-fill"></i></div>
+        <div class="uc-api-meta" id="uc-dg-meta"></div>
+      </div>
       <div class="im-buttons"><button id="uc-close">Close</button></div>
     </div>
   </div>
@@ -5422,20 +5427,29 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const d = await r.json();
         if (!d || !d.ok || !d.spend) { box.hidden = true; return; }
         const sp = d.spend;
-        const limit = Number(d.monthlyLimitUsd) || 0;
-        const total = Number(sp.totalUsd) || 0;
-        const pct = limit > 0 ? Math.min(100, (total / limit) * 100) : (total > 0 ? 100 : 0);
-        $('#uc-api-amount').textContent = fmtUsd(total) + ' of ' + fmtUsd(limit) + ' this billing month';
-        $('#uc-api-fill').style.width = pct.toFixed(1) + '%';
-        const meta = $('#uc-api-meta');
+        const day = (iso) => iso ? new Date(iso + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '';
+        // Claude and Deepgram bill apart: each its own month, bar and limit (D46).
+        const bar = (fillId, used, limit) => { const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : (used > 0 ? 100 : 0); $(fillId).style.width = pct.toFixed(1) + '%'; };
+        const climit = Number(d.monthlyLimitUsd) || 0, cused = Number(sp.claudeUsd) || 0;
+        const dlimit = Number(d.deepgramLimitUsd) || 0, dused = Number(sp.deepgramUsd) || 0;
         const turns = Number(sp.turns) || 0;
-        meta.textContent = 'Claude ' + fmtUsd(sp.claudeUsd) + ' · Deepgram ' + fmtUsd(sp.deepgramUsd) + ' · ' + turns + (turns === 1 ? ' request' : ' requests')
-          + (d.nextReset ? ' · Claude restarts ' + new Date(d.nextReset + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '');
+        $('#uc-api-amount').textContent = fmtUsd(cused) + ' of ' + fmtUsd(climit);
+        bar('#uc-api-fill', cused, climit);
+        const meta = $('#uc-api-meta');
+        meta.textContent = turns + (turns === 1 ? ' request' : ' requests') + (d.nextReset ? ' · restarts ' + day(d.nextReset) : '');
         if (d.limitReached) {
           const w = document.createElement('span');
           w.className = 'uc-api-warn';
           w.textContent = 'Limit reached';
           meta.appendChild(w);
+        }
+        const dg = $('#uc-dg');
+        if (dg) {
+          $('#uc-dg-amount').textContent = fmtUsd(dused) + ' of ' + fmtUsd(dlimit);
+          bar('#uc-dg-fill', dused, dlimit);
+          $('#uc-dg-meta').textContent = 'Listening and speaking' + (d.deepgramNextReset ? ' · restarts ' + day(d.deepgramNextReset) : '') + (d.deepgramLimitReached ? ' · limit reached: the phone voice takes over' : '');
+          dg.classList.toggle('over', !!d.deepgramLimitReached);
+          dg.hidden = false;
         }
         box.classList.toggle('over', !!d.limitReached);
         box.hidden = false;

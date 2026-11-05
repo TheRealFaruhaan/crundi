@@ -91,8 +91,10 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <h2>Settings</h2>
   <label for="model">Model</label>
   <select id="model"></select>
-  <label for="limit">Monthly limit (US$)</label>
+  <label for="limit">Claude API monthly limit (US$)</label>
   <input id="limit" type="number" min="0" step="1">
+  <label for="dlimit">Deepgram monthly limit (US$; at it, the phone's own voice and recogniser take over)</label>
+  <input id="dlimit" type="number" min="0" step="1">
   <label for="bday">Claude API billing day (the day of the month the Claude API is billed; its spend restarts then)</label>
   <input id="bday" type="number" min="1" max="31" step="1">
   <label for="dday">Deepgram billing day</label>
@@ -332,6 +334,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       if (!s.ok) throw new Error(s.error || 'Could not load settings');
       $('model').innerHTML = s.models.map(m => '<option value="' + m.id + '"' + (m.id === s.model ? ' selected' : '') + '>' + esc(m.label) + '</option>').join('');
       if (document.activeElement !== $('limit')) $('limit').value = s.monthlyLimitUsd;
+      if (document.activeElement !== $('dlimit')) $('dlimit').value = s.deepgramLimitUsd;
       if (document.activeElement !== $('bday')) $('bday').value = s.billingDay || 1;
       if (document.activeElement !== $('dday')) $('dday').value = s.deepgramBillingDay || 1;
       if (document.activeElement !== $('pause')) $('pause').value = (s.pauseMs || 2000) / 1000;
@@ -342,13 +345,14 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       $('xkeyState').innerHTML = s.anthropicAdminKeySet ? '<span class="ok">· set</span>' : '<span>· not set</span>';
       $('dkeyState').innerHTML = s.deepgramKeySet ? '<span class="ok">· set</span>' : '<span class="err">· not set</span>';
       const sp = s.spend;
-      $('spend').innerHTML = 'This billing month (Claude restarts ' + esc(s.nextReset || '') + ', Deepgram ' + esc(s.deepgramNextReset || '') + '): $' + sp.totalUsd.toFixed(2) + ' of $' + s.monthlyLimitUsd
-        + ' · Claude $' + sp.claudeUsd.toFixed(2) + ' · Deepgram $' + sp.deepgramUsd.toFixed(2) + ' · ' + sp.turns + ' requests'
-        + (s.limitReached ? ' · <span class="err">limit reached</span>' : '');
+      $('spend').innerHTML = 'Claude API: $' + sp.claudeUsd.toFixed(2) + ' of $' + s.monthlyLimitUsd + ' (restarts ' + esc(s.nextReset || '') + ', ' + sp.turns + ' requests)'
+        + (s.limitReached ? ' <span class="err">limit reached</span>' : '')
+        + '<br>Deepgram: $' + sp.deepgramUsd.toFixed(2) + ' of $' + s.deepgramLimitUsd + ' (restarts ' + esc(s.deepgramNextReset || '') + ')'
+        + (s.deepgramLimitReached ? ' <span class="err">limit reached</span>' : '');
     } catch (e) { $('spend').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
   }
   $('save').onclick = async () => {
-    const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value), billingDay: Number($('bday').value) || 1, deepgramBillingDay: Number($('dday').value) || 1, pauseMs: Math.round((Number($('pause').value) || 2) * 1000) };
+    const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value), deepgramLimitUsd: Number($('dlimit').value), billingDay: Number($('bday').value) || 1, deepgramBillingDay: Number($('dday').value) || 1, pauseMs: Math.round((Number($('pause').value) || 2) * 1000) };
     if ($('akey').value.trim()) body.anthropicKey = $('akey').value.trim();
     if ($('dkey').value.trim()) body.deepgramKey = $('dkey').value.trim();
     if ($('xkey').value.trim()) body.anthropicAdminKey = $('xkey').value.trim();

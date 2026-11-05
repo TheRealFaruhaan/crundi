@@ -11,7 +11,7 @@
  * Live streaming, for Phase 3, uses the same keyterms and the same key.
  */
 
-import { getSettings, addDeepgramSpend } from './settings.js';
+import { getSettings, addDeepgramSpend, deepgramOverLimit } from './settings.js';
 
 const LISTEN_URL = 'https://api.deepgram.com/v1/listen';
 const MODEL = 'nova-3';
@@ -64,6 +64,7 @@ export async function transcribe(audio, mime, { projects = [], services = [], fe
   const key = getSettings().deepgramKey;
   if (!key) return { ok: false, error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' };
   if (!audio || !audio.length) return { ok: false, error: 'No audio' };
+  if (deepgramOverLimit()) return { ok: false, limitReached: true, error: 'This month\'s Deepgram spend has reached its limit. Raise it in Settings › Voice assistant.' };
   let res;
   try {
     res = await fetchImpl(listenUrl(keyterms({ projects, services })), {

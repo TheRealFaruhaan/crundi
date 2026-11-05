@@ -161,7 +161,8 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
 // ─── agent ───
 {
   ok(/Master/.test(SYSTEM_PROMPT) && /---/.test(SYSTEM_PROMPT) && /begin your visible answer immediately/.test(SYSTEM_PROMPT), 'system prompt: Master, the spoken/shown split, low latency');
-  ok(/cannot change anything yet/.test(SYSTEM_PROMPT), 'system prompt says it is read only');
+  ok(/needsConfirmation/.test(SYSTEM_PROMPT) && /never call confirm_action in the same turn/i.test(SYSTEM_PROMPT), 'system prompt: ask first, never confirm for Master');
+  ok(/never type into a terminal/.test(SYSTEM_PROMPT), 'system prompt: never a terminal (D21)');
   const sp = splitReply('Three tasks in to do, Master.\n---\n- A\n- B\n- C');
   ok(sp.speak === 'Three tasks in to do, Master.' && sp.show === '- A\n- B\n- C', 'reply split into spoken and shown');
   ok(splitReply('Just this.').show === '', 'no detail, nothing shown');
@@ -428,6 +429,88 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   const bad = await au.accountUsage({ fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({ error: { message: 'invalid x-api-key' } }) }) });
   ok(!bad.ok && /Admin API key/.test(bad.error), 'an ordinary key is refused with a clear reason');
   vs.updateSettings({ anthropicAdminKey: '', billingDay: 1 });
+}
+
+// ─── actions (Phase 4): the gate, the confirmation rules ───
+{
+  const A = await import('../src/voice/actions.js');
+  let t = 1000;
+  const pending = A.createPending({ now: () => t });
+  let locked = false;
+  const sent = [], closed = [], added = [];
+  const deps = {
+    chats: () => [{ id: 'c1', title: 'API work', project: 'proj', status: 'idle' }],
+    sendMessage: (id, text) => { sent.push({ id, text }); return { ok: true }; },
+    createChat: async () => ({ ok: true, id: 'c2' }),
+    closeChat: async (id) => { closed.push(id); return { ok: true }; },
+    parkChat: () => ({ ok: true }), resumeChat: async () => ({ ok: true }), watch: () => {},
+    listProjects: () => [{ alias: 'proj', name: 'Proj', path: '/tmp/proj' }],
+    projectsDir: () => '/tmp/projects', registerProject: () => ({ ok: true }),
+    kanban: { addTask: (a, d) => { added.push(d); return { ok: true }; }, moveTask: () => ({ ok: true }), getTask: () => ({ ok: true, task: { title: 'Card' } }), deleteTask: () => ({ ok: true }), updateTask: () => ({ ok: true }), addTodo: () => ({ ok: true }), updateTodo: () => ({ ok: true }) },
+    notes: { createPage: () => ({ ok: true }), getPage: () => null, savePage: () => ({ ok: true }), deletePage: () => ({ ok: true }) },
+    mindmap: { addNode: () => ({ ok: true }), updateNode: () => ({ ok: true }), getNode: () => ({ text: 'n' }), deleteNode: () => ({ ok: true }) },
+    chatSchedule: { list: () => [], add: () => ({ ok: true }), remove: () => ({ ok: true }) },
+    schedules: { addSchedule: (d) => ({ ok: true, d }), getSchedule: () => ({ id: 's1', name: 'Nightly', when: {}, action: { kind: 'chat' } }), updateSchedule: () => ({ ok: true }), setEnabled: () => ({ ok: true }), deleteSchedule: () => ({ ok: true }) },
+    services: () => [{ key: 'web', name: 'web' }],
+    voiceSettings: { updateSettings: (p) => ({ ok: true, p }) },
+  };
+  const tools = A.makeActionTools(deps, { pending, locked: () => locked });
+  const T = Object.fromEntries(tools.map(x => [x.name, x]));
+  ok(JSON.stringify(tools.map(x => x.name)) === JSON.stringify(A.ACTION_TOOL_NAMES), 'the action tools are exactly the pinned list');
+  ok(!tools.some(x => /terminal|secret|key|password|tunnel|collaborator|backup|update_server|skill/i.test(x.name)), 'no action reaches terminals, secrets, keys or critical settings (D17, D21)');
+
+  pending.newTurn();
+  const ex = await T.send_to_chat.run({ chat: 'API work', text: 'run the tests', intent: 'explicit' });
+  ok(ex.ok && sent.length === 1 && sent[0].id === 'c1', 'Master clearly asked: sent at once (D15)');
+  const inf = await T.send_to_chat.run({ chat: 'API work', text: 'maybe refactor the auth middleware', intent: 'inferred' });
+  ok(inf.needsConfirmation && sent.length === 1 && /Send "maybe refactor/.test(inf.ask), 'the model decided to send it: read back first, nothing sent (D15)');
+  const long = A.readBack('word '.repeat(200));
+  ok(/about 200 words/.test(long) && long.length < 160, 'a long message is read back as one line');
+  const tooSoon = await T.confirm_action.run({ id: inf.id });
+  ok(!tooSoon.ok && /not answered/.test(tooSoon.error) && sent.length === 1, 'the model cannot confirm in the turn it asked');
+  pending.newTurn();
+  const yes = await T.confirm_action.run({ id: inf.id });
+  ok(yes.ok && sent.length === 2, 'after Master answers, the confirmed action runs');
+  ok(!(await T.confirm_action.run({ id: inf.id })).ok, 'and only once');
+
+  const close = await T.close_chat.run({ chat: 'c1' });
+  ok(close.needsConfirmation && closed.length === 0 && /It is idle/.test(close.ask), 'closing a chat always asks first (D24)');
+  ok((await T.park_chat.run({ chat: 'c1' })).needsConfirmation, 'parking asks first (D31)');
+  ok((await T.create_project.run({ alias: 'new-thing' })).needsConfirmation, 'creating a project asks first (D22)');
+  ok((await T.set_voice_setting.run({ setting: 'monthlyLimitUsd', value: '80' })).needsConfirmation, 'a setting change asks first (D32)');
+  let bad = null; try { await T.set_voice_setting.run({ setting: 'anthropicKey', value: 'x' }); } catch (e) { bad = e; }
+  ok(bad && /not one voice may change/.test(bad.message), 'keys are not settings voice may change (D17)');
+  ok((await T.add_schedule.run({ project: 'proj', name: 'n', kind: 'chat', prompt: 'p', mode: 'recurring', time: '09:00' })).needsConfirmation, 'creating a schedule asks first (D45)');
+  ok((await T.delete_kanban_task.run({ project: 'proj', taskId: 't1' })).needsConfirmation, 'deleting a card asks first');
+  ok((await T.move_kanban_task.run({ project: 'proj', taskId: 't1', status: 'todo' })).needsConfirmation, 'moving a card to To do (a factory run) asks first');
+  ok((await T.move_kanban_task.run({ project: 'proj', taskId: 't1', status: 'done' })).ok, 'other moves just happen');
+  await T.add_kanban_task.run({ project: 'proj', title: 'New card' });
+  ok(added.at(-1).status === 'backlog', 'a new card goes to Backlog, never To do');
+
+  locked = true;
+  const lk = await T.send_to_chat.run({ chat: 'c1', text: 'hi', intent: 'explicit' });
+  ok(lk.needsUnlock && sent.length === 2, 'a locked phone changes nothing and asks to unlock');
+  const lr = await T.list_chat_schedules.run({ project: 'proj' });
+  ok(Array.isArray(lr), 'reading still works while locked');
+  locked = false;
+
+  pending.newTurn();
+  const old = pending.propose('send_to_chat', {}, 'q');
+  t += 11 * 60 * 1000; pending.newTurn();
+  ok(!!pending.take(old).error, 'an unanswered question expires after ten minutes');
+
+  // The agent passes the question to the client, so the phone can show Yes / No.
+  const { createVoiceAgent: mk } = await import('../src/voice/agent.js');
+  const fakeSettings = { DEFAULT_MODEL: 'claude-haiku-5-5', getSettings: () => ({ anthropicKey: 'k' }), overLimit: () => false, countTurn() {}, claudeCost: () => 0, addClaudeSpend() {} };
+  let round = 0;
+  const agent2 = mk({
+    tools, settings: fakeSettings, beforeTurn: () => pending.newTurn(),
+    client: () => ({ messages: { create: async () => (round++ === 0
+      ? { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'x1', name: 'close_chat', input: { chat: 'c1' } }], usage: {} }
+      : { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Close the API chat, Master? It is idle.' }], usage: {} }) } }),
+  });
+  const rep = await agent2.turn('close the API chat');
+  ok(rep.ok && rep.pending.length === 1 && /Close the "API work" chat/.test(rep.pending[0].question) && closed.length === 0, 'the reply carries the question awaiting a yes, and nothing was closed');
 }
 
 // ─── access ───

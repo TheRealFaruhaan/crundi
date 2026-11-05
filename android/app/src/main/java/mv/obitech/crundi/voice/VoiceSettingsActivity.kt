@@ -83,6 +83,7 @@ data class VoiceSettingsUi(
     val limitText: String = "",
     val dayText: String = "",
     val dgDayText: String = "",
+    val dgLimitText: String = "",
     val busy: Boolean = false,
     val note: String = "",
 )
@@ -103,6 +104,8 @@ class VoiceSettingsEvents(
     val onDgDayText: (String) -> Unit = {},
     val onSaveDgDay: () -> Unit = {},
     val onPause: (Int) -> Unit = {},
+    val onDgLimitText: (String) -> Unit = {},
+    val onSaveDgLimit: () -> Unit = {},
     val onReset: () -> Unit = {},
     val onTry: () -> Unit = {},
 )
@@ -153,7 +156,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         lifecycleScope.launch {
             try {
                 val s = v.settings()
-                ui = ui.copy(server = s, error = "", limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString())
+                ui = ui.copy(server = s, error = "", limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString(), dgLimitText = fmtUsd(s.deepgramLimitUsd))
                 runCatching { v.voices() }.getOrNull()?.let { ui = ui.copy(deepgram = it.voices) }
             } catch (e: Exception) {
                 ui = ui.copy(error = if (VoiceApi.unsupported(e)) VoiceApi.UNSUPPORTED else e.message ?: "Could not load the settings")
@@ -161,13 +164,13 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
-    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, pause: Int? = null, note: String = "Saved") {
+    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, pause: Int? = null, dgLimit: Double? = null, note: String = "Saved") {
         val v = voice() ?: return
         ui = ui.copy(busy = true)
         lifecycleScope.launch {
             ui = try {
-                val s = v.save(model, limit, ttsVoice, day, dgDay, pause)
-                ui.copy(server = s, busy = false, note = note, limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString())
+                val s = v.save(model, limit, ttsVoice, day, dgDay, pause, dgLimit)
+                ui.copy(server = s, busy = false, note = note, limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString(), dgLimitText = fmtUsd(s.deepgramLimitUsd))
             } catch (e: Exception) { ui.copy(busy = false, note = e.message ?: "Could not save") }
         }
     }
@@ -208,6 +211,11 @@ class VoiceSettingsActivity : ComponentActivity() {
         onSaveDgDay = {
             val d = ui.dgDayText.trim().toIntOrNull()
             if (d == null || d !in 1..31) ui = ui.copy(note = "The billing day is a day of the month, 1 to 31") else save(dgDay = d, note = "Deepgram billing day saved")
+        },
+        onDgLimitText = { ui = ui.copy(dgLimitText = it) },
+        onSaveDgLimit = {
+            val n = ui.dgLimitText.trim().removePrefix("$").toDoubleOrNull()
+            if (n == null || n < 0) ui = ui.copy(note = "The limit is a number of dollars") else save(dgLimit = n, note = "Deepgram limit saved")
         },
         onPause = { ms -> save(pause = ms, note = "Crundi waits ${ms / 1000.0} s of quiet before sending") },
         onReset = {
@@ -365,17 +373,27 @@ private fun ServerPart(ui: VoiceSettingsUi, s: VoiceSettings, ev: VoiceSettingsE
     CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
         val sp = s.spend
         Row(verticalAlignment = Alignment.Bottom) {
-            Text("This billing month", style = CrundiType.Heading, modifier = Modifier.weight(1f))
-            Text("$" + "%.2f".format(Locale.US, sp.totalUsd) + " of $" + fmtUsd(s.monthlyLimitUsd), style = CrundiType.Code.copy(color = if (s.limitReached) CrundiColors.Red else CrundiColors.TextPrimary))
+            Text("Claude API", style = CrundiType.Heading, modifier = Modifier.weight(1f))
+            Text("$" + "%.2f".format(Locale.US, sp.claudeUsd) + " of $" + fmtUsd(s.monthlyLimitUsd), style = CrundiType.Code.copy(color = if (s.limitReached) CrundiColors.Red else CrundiColors.TextPrimary))
         }
-        val frac = if (s.monthlyLimitUsd > 0) (sp.totalUsd / s.monthlyLimitUsd).toFloat().coerceIn(0f, 1f) else 1f
+        val frac = if (s.monthlyLimitUsd > 0) (sp.claudeUsd / s.monthlyLimitUsd).toFloat().coerceIn(0f, 1f) else 1f
         mv.obitech.crundi.ui.operations.PaceBar(frac, 0f, Modifier.padding(vertical = 8.dp))
-        Text("Claude $" + "%.2f".format(Locale.US, sp.claudeUsd) + " · Deepgram $" + "%.2f".format(Locale.US, sp.deepgramUsd) + " · " + sp.turns + " request" + if (sp.turns == 1) "" else "s", style = CrundiType.Meta.copy(color = CrundiColors.TextSecondary))
+        Text(sp.turns.toString() + " request" + (if (sp.turns == 1) "" else "s") + " this billing month", style = CrundiType.Meta.copy(color = CrundiColors.TextSecondary))
         if (s.limitReached) Text("The limit is reached: Crundi stops answering until next month or a higher limit.", style = CrundiType.Small.copy(color = CrundiColors.Red), modifier = Modifier.padding(top = 6.dp))
         if (s.nextReset.isNotEmpty()) Text("Claude restarts on ${s.nextReset}" + (if (s.deepgramNextReset.isNotEmpty()) ", Deepgram on ${s.deepgramNextReset}" else "") + ": each on its own billing day.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp))
         Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CrundiTextField(ui.limitText, ev.onLimitText, Modifier.weight(1f), placeholder = "Monthly limit in dollars", icon = "sliders")
             CrundiButton("Save", ev.onSaveLimit, kind = ButtonKind.Primary, enabled = !ui.busy)
+        }
+        // Deepgram: its own spend and limit (D46).
+        Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.Bottom) {
+            Text("Deepgram", style = CrundiType.Heading, modifier = Modifier.weight(1f))
+            Text("$" + "%.2f".format(Locale.US, sp.deepgramUsd) + " of $" + fmtUsd(s.deepgramLimitUsd), style = CrundiType.Code.copy(color = if (s.deepgramLimitReached) CrundiColors.Red else CrundiColors.TextPrimary))
+        }
+        mv.obitech.crundi.ui.operations.PaceBar(if (s.deepgramLimitUsd > 0) (sp.deepgramUsd / s.deepgramLimitUsd).toFloat().coerceIn(0f, 1f) else 1f, 0f, Modifier.padding(vertical = 8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CrundiTextField(ui.dgLimitText, ev.onDgLimitText, Modifier.weight(1f), placeholder = "Deepgram limit in dollars", icon = "sliders")
+            CrundiButton("Save", ev.onSaveDgLimit, enabled = !ui.busy)
         }
         if (s.periodStart.isNotEmpty()) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CrundiTextField(ui.dayText, ev.onDayText, Modifier.weight(1f), placeholder = "Claude API billing day, 1 to 31", icon = "clock")

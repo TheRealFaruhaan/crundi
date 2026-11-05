@@ -126,6 +126,9 @@ class VoiceController(
         }
     }
 
+    /** Yes or No tapped on a question (or anything typed): sent as if said. */
+    fun answer(text: String) = dispatch(VoiceEvent.Typed(text, now()))
+
     /** The phone has been unlocked since the session opened. */
     fun unlocked() = dispatch(VoiceEvent.Unlocked(now()))
 
@@ -204,7 +207,7 @@ class VoiceController(
                     else -> e.message
                 })
             } catch (e: Exception) { VoiceReply(ok = false, error = e.message ?: "Something went wrong") }
-            dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now()))
+            dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock))
             // The spend moved: refresh the arcs.
             runCatching { voice.settings() }.getOrNull()?.let { s -> _ui.update { it.copy(spend = s) } }
         }

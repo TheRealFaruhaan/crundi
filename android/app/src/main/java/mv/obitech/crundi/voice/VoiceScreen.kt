@@ -87,6 +87,8 @@ fun VoiceScreen(
     onUnlock: (() -> Unit)? = null,
     onAllowMic: () -> Unit = {},
     shell: mv.obitech.crundi.ui.shell.ShellData? = null,
+    /** Yes / No on a question awaiting Master's answer. */
+    onAnswer: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val s = ui.state
@@ -96,8 +98,10 @@ fun VoiceScreen(
         UsageArcs(
             week = shell?.usage?.weekUsed,
             fiveHour = shell?.usage?.fiveHourUsed,
-            api = sp?.let { if (it.monthlyLimitUsd > 0) (it.spend.totalUsd / it.monthlyLimitUsd).toFloat() else 1f },
-            apiLabel = sp?.let { "API $" + "%.2f".format(java.util.Locale.US, it.spend.totalUsd) + " / $" + fmtUsd(it.monthlyLimitUsd) }.orEmpty(),
+            api = sp?.let { if (it.monthlyLimitUsd > 0) (it.spend.claudeUsd / it.monthlyLimitUsd).toFloat() else 1f },
+            apiLabel = sp?.let { "Claude $" + "%.2f".format(java.util.Locale.US, it.spend.claudeUsd) + " / $" + fmtUsd(it.monthlyLimitUsd) }.orEmpty(),
+            deepgram = sp?.let { if (it.deepgramLimitUsd > 0) (it.spend.deepgramUsd / it.deepgramLimitUsd).toFloat() else 1f },
+            deepgramLabel = sp?.let { "Deepgram $" + "%.2f".format(java.util.Locale.US, it.spend.deepgramUsd) + " / $" + fmtUsd(it.deepgramLimitUsd) }.orEmpty(),
         )
     }
     val phase = if (ui.blocked.isNotEmpty() || ui.needsMic) Phase.Ended else s.phase
@@ -116,21 +120,26 @@ fun VoiceScreen(
             )
             UsageLegend(arcs)
             Words(ui, phase, onAllowMic, Modifier.weight(1f, fill = true))
+            // A question awaiting Master's yes: answered by voice (Phase 4), no buttons.
+            if (s.question.isNotEmpty() && phase != Phase.Thinking) Text("Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
+            if (s.needsUnlock && onUnlock != null) CrundiButton("Unlock the phone", onUnlock, kind = ButtonKind.Primary, icon = "lock", modifier = Modifier.padding(top = 6.dp))
             BottomRow(ui, phase, ca, onMic, onClose, onUnlock)
         }
     }
 }
 
-/** Usage under the field, in the arcs' colours: week, 5 hours, the API spend. */
+/** Usage under the field, in the arcs' colours: week, 5 hours, Claude and Deepgram spend. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun UsageLegend(u: UsageArcs) {
     val items = listOfNotNull(
         u.week?.let { CrundiColors.AccentHover to "wk ${(it * 100).toInt()}%" },
         u.fiveHour?.let { CrundiColors.Sky to "5h ${(it * 100).toInt()}%" },
         u.api?.let { CrundiColors.Ask to u.apiLabel },
+        u.deepgram?.let { CrundiColors.Green to u.deepgramLabel },
     )
     if (items.isEmpty()) return
-    Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+    androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for ((col, label) in items) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             Box(Modifier.size(7.dp).clip(CircleShape).background(col))
             Text(label, style = CrundiType.Meta.copy(fontSize = 11.sp, color = col.copy(alpha = 0.9f)))

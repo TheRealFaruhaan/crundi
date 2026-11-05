@@ -1,0 +1,21 @@
+<div class="wna a-vtu">
+  <div class="win">
+    <div class="card c1"><div class="row"><b>Claude API · voice</b><span>$0.42 of $50</span></div><div class="bar"><i class="f1"></i></div><div class="m">restarts 11 Nov · Anthropic, whole account: $38.20</div></div>
+    <div class="card c2"><div class="row"><b>Deepgram · voice</b><span>$1.10 of $200</span></div><div class="bar"><i class="f2"></i></div><div class="m">restarts 1 Dec</div></div>
+  </div>
+  <style>
+    .a-vtu{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-vtu .win{position:absolute;left:90px;right:90px;top:60px;display:flex;flex-direction:column;gap:16px}
+    .a-vtu .card{padding:14px 16px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);opacity:0}
+    .a-vtu .c1{animation:avtu-in 10s ease infinite}.a-vtu .c2{animation:avtu-in2 10s ease infinite}
+    .a-vtu .row{display:flex;justify-content:space-between;font-size:13px}.a-vtu .row span{font-family:var(--mono);color:var(--text-secondary)}
+    .a-vtu .bar{height:8px;border-radius:4px;background:var(--bg-secondary);margin:10px 0 8px;overflow:hidden}
+    .a-vtu .bar i{display:block;height:100%;width:0;border-radius:4px}
+    .a-vtu .f1{background:var(--accent);animation:avtu-f1 10s ease infinite}.a-vtu .f2{background:var(--green);animation:avtu-f2 10s ease infinite}
+    .a-vtu .m{font-size:11.5px;color:var(--text-muted);font-family:var(--mono)}
+    @keyframes avtu-in{0%,8%{opacity:0;transform:translateY(8px)}16%,90%{opacity:1;transform:none}96%,100%{opacity:0}}
+    @keyframes avtu-in2{0%,22%{opacity:0;transform:translateY(8px)}30%,90%{opacity:1;transform:none}96%,100%{opacity:0}}
+    @keyframes avtu-f1{0%,16%{width:0}40%,90%{width:12%}96%,100%{width:0}}
+    @keyframes avtu-f2{0%,30%{width:0}54%,90%{width:6%}96%,100%{width:0}}
+  </style>
+</div>

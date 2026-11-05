@@ -55,6 +55,7 @@ settings and usage.
 | D43 | **Actions before memory:** Phase 4 (actions, with the confirmation rules) is built next, then the remaining phases in order (2 memory, 5 Gemini entry, 6 "Hey Crundi"), through to the end. Supersedes the order 3 → 2 → 4. | 2026-11-05 |
 | D44 | **Speak slowly, with pauses:** what Master says is sent only after a real pause, 2 s by default, adjustable 1–5 s (Voice assistant settings, the app and `/voice`). Deepgram's end of utterance decides it; its short end-of-phrase signal no longer sends. | 2026-11-05 |
 | D45 | **Voice manages schedules:** it can create, change and delete chat schedules (a message sent into a chat at a time) and scheduled tasks, each confirmed first (D32 rule). Also, two usages are shown: what Anthropic reports for the whole account (Admin API key, optional, on the server) and Crundi's own voice count against its limit. | 2026-11-05 |
+| D46 | **Claude and Deepgram are shown and limited apart:** each its own billing month, card and limit (Claude $50: past it voice stops; Deepgram $200: past it the phone's own voice and recogniser take over). Yes/no to Crundi's questions by voice (no buttons). | 2026-11-05 |
 
 ### Background listening (D4, D5) — how it fits Android's rules
 

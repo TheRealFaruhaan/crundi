@@ -70,9 +70,13 @@ How you answer:
 - Speech recognition may mishear Crundi's words: "compound task" or "come on task" is probably "kanban task", "mind map" is "mindmap", project names may come out as similar-sounding words. Work out what Master most likely meant from the tools and context; if two readings are both plausible and the difference matters, ask a short question.
 - Use the tools to look things up rather than guessing. Call several at once when they're independent.
 
-What you can and cannot do (right now):
+What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals.
-- You cannot change anything yet: no editing files, notes, kanban, mindmap or settings, no typing into chats or terminals, no starting or closing anything. If Master asks for a change, say plainly that you can't do that yet and what you would need. Never pretend to have done something.
+- You can act: send messages into chats, start, close, park and resume chats, tell Master when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
+- Some actions need Master's yes. When a tool answers needsConfirmation, nothing has been done: ask its question in your own words, briefly, and stop. Only when Master agrees in their next message call confirm_action with the id; if they decline, cancel_action. Never confirm on Master's behalf, and never call confirm_action in the same turn you asked.
+- send_to_chat and start_chat take an intent: "explicit" only when Master plainly asked you to send, tell, type or reply something; otherwise "inferred", and it is read back first.
+- You can never type into a terminal, edit files, touch keys, logins, the tunnel, collaborators, secrets, backups, updates, skills or permissions. Say so plainly if asked.
+- Never pretend to have done something: say what happened, from the tool's answer.
 - Secret values are never available to you; credentials in settings show only as set or not set.
 - When the context says the phone is locked, answer questions as usual, but anything that would change something must wait until Master unlocks the phone: say so briefly.`;
 
@@ -99,7 +103,7 @@ export function contextLine({ now = new Date(), where = '', locked = false } = {
  * @param {Function} [opts.client]  (apiKey) => Anthropic-like client; tests pass a fake
  * @param {object}  [opts.settings] the settings module; tests pass a fake
  */
-export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings } = {}) {
+export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {} } = {}) {
   const byName = new Map(tools.map(t => [t.name, t]));
   const toolDefs = tools
     .map(({ name, description, input_schema }) => ({ name, description, input_schema }))
@@ -130,11 +134,20 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       : api.messages.create(req);
   }
 
-  async function runTool(block) {
+  /**
+   * Run one tool call. What an action reports back that the client must act
+   * on (a question awaiting Master's yes, a locked phone) is collected in
+   * `signals` for the reply.
+   */
+  async function runTool(block, signals = { pending: [], needsUnlock: false }) {
     const t = byName.get(block.name);
     if (!t) return { type: 'tool_result', tool_use_id: block.id, is_error: true, content: `No tool called ${block.name}` };
     try {
       const out = await t.run(block.input || {});
+      if (out && typeof out === 'object') {
+        if (out.needsConfirmation && out.id) signals.pending.push({ id: out.id, question: out.ask || '' });
+        if (out.needsUnlock) signals.needsUnlock = true;
+      }
       let s = typeof out === 'string' ? out : JSON.stringify(out);
       if (s.length > MAX_RESULT_CHARS) s = s.slice(0, MAX_RESULT_CHARS) + '… (cut)';
       return { type: 'tool_result', tool_use_id: block.id, content: s };
@@ -153,7 +166,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const s = settings.getSettings();
     if (!s.anthropicKey) return { ok: false, error: 'No Claude API key is set. Add one in Settings › Voice assistant.' };
     if (settings.overLimit(now)) {
-      return { ok: false, limitReached: true, error: `This month's voice spend has reached the $${s.monthlyLimitUsd} limit. Raise it in Settings › Voice assistant, or wait for next month.` };
+      return { ok: false, limitReached: true, error: `This month's Claude API spend has reached the $${s.monthlyLimitUsd} limit. Raise it in Settings › Voice assistant, or wait for next month.` };
     }
     if (busy) return { ok: false, error: 'Still answering the last request' };
     busy = true;
@@ -162,7 +175,10 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const used = [];
     let cost = 0;
     const cache = { read: 0, written: 0, uncached: 0 };
+    const signals = { pending: [], needsUnlock: false };
     try {
+      // A new turn: Master has spoken, so actions proposed before may now be confirmed.
+      beforeTurn({ locked });
       if (history.length > MAX_HISTORY_MESSAGES) { history = []; lastReq = null; }
       history.push({ role: 'user', content: `${contextLine({ now, where, locked })}\n${said}` });
       settings.countTurn(now);
@@ -184,7 +200,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         if (res.stop_reason === 'tool_use') {
           const calls = res.content.filter(b => b.type === 'tool_use');
           used.push(...calls.map(c => c.name));
-          const results = await Promise.all(calls.map(runTool));
+          const results = await Promise.all(calls.map(c => runTool(c, signals)));
           history.push({ role: 'user', content: results });
           continue;
         }
@@ -192,7 +208,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         if (res.stop_reason === 'max_tokens' && !reply) {
           return { ok: false, error: 'The answer ran out of room before it was finished', tools: used, costUsd: cost, cache };
         }
-        return { ok: true, ...splitReply(reply), tools: used, costUsd: cost, cache };
+        return { ok: true, ...splitReply(reply), tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock };
       }
       return { ok: false, error: 'Too many lookups for one request; try asking more specifically', tools: used, costUsd: cost, cache };
     } catch (e) {

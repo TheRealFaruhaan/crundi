@@ -177,24 +177,19 @@ private fun WindowCard(title: String, tag: String, w: UsageWindow?, windowMs: Lo
     }
 }
 
-/** The voice assistant's metered Claude API spend this month (separate from the subscription above). */
+/**
+ * The voice assistant's metered spend, separate from the subscription above:
+ * Claude and Deepgram bill apart, so each has its own card, month and limit
+ * (D46). Under Claude, what Anthropic reports for the whole account.
+ */
 @Composable
 private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings, account: mv.obitech.crundi.api.AccountUsage? = null) {
     val sp = v.spend
-    val frac = if (v.monthlyLimitUsd > 0) (sp.totalUsd / v.monthlyLimitUsd).toFloat().coerceIn(0f, 1f) else 1f
-    val usd = { d: Double -> "$" + "%.2f".format(java.util.Locale.US, d) }
-    Column(
-        Modifier.fillMaxWidth().clip(Dimens.Shape).background(CrundiColors.BgCard).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    SpendCard(
+        "Claude API · voice assistant", sp.claudeUsd, v.monthlyLimitUsd, v.limitReached,
+        "${sp.turns} request${if (sp.turns == 1) "" else "s"}" + (if (v.nextReset.isNotEmpty()) " · restarts ${v.nextReset}" else ""),
+        "limit reached: voice stops until it restarts",
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text("Claude API · voice assistant", style = CrundiType.Heading, modifier = Modifier.weight(1f))
-            Text(usd(sp.totalUsd), style = CrundiType.Code.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = if (v.limitReached) CrundiColors.Red else levelColor(frac)))
-        }
-        Meter(frac, color = if (v.limitReached) CrundiColors.Red else CrundiColors.Accent, height = 12.dp)
-        Text("of ${usd(v.monthlyLimitUsd)} this billing month${if (v.nextReset.isNotEmpty()) ", Claude restarts " + v.nextReset else ""} · Claude ${usd(sp.claudeUsd)} · Deepgram ${usd(sp.deepgramUsd)} · ${sp.turns} request${if (sp.turns == 1) "" else "s"}", style = CrundiType.Meta.copy(fontSize = 12.sp))
-        if (v.limitReached) StatusBadge("limit reached: voice stops until next month", BadgeKind.Bad)
-        // Anthropic's own figure for the whole account: every key, not only voice.
         account?.let { a ->
             val line = when {
                 a.ok -> "Anthropic, whole account: ${usd(a.totalUsd)} since ${a.since.take(10)}"
@@ -203,6 +198,31 @@ private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings, account: mv.obi
             }
             Text(line, style = CrundiType.Small.copy(color = if (a.ok) CrundiColors.TextPrimary else CrundiColors.TextMuted))
         }
+    }
+    SpendCard(
+        "Deepgram · voice assistant", sp.deepgramUsd, v.deepgramLimitUsd, v.deepgramLimitReached,
+        "listening and speaking" + (if (v.deepgramNextReset.isNotEmpty()) " · restarts ${v.deepgramNextReset}" else ""),
+        "limit reached: the phone's own voice and recogniser take over",
+    )
+}
+
+private fun usd(d: Double) = "$" + "%.2f".format(java.util.Locale.US, d)
+
+@Composable
+private fun SpendCard(title: String, used: Double, limit: Double, reached: Boolean, meta: String, warn: String, extra: @Composable () -> Unit = {}) {
+    val frac = if (limit > 0) (used / limit).toFloat().coerceIn(0f, 1f) else 1f
+    Column(
+        Modifier.fillMaxWidth().clip(Dimens.Shape).background(CrundiColors.BgCard).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(title, style = CrundiType.Heading, modifier = Modifier.weight(1f))
+            Text(usd(used), style = CrundiType.Code.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = if (reached) CrundiColors.Red else levelColor(frac)))
+        }
+        Meter(frac, color = if (reached) CrundiColors.Red else CrundiColors.Accent, height = 12.dp)
+        Text("of ${usd(limit)} this billing month · $meta", style = CrundiType.Meta.copy(fontSize = 12.sp))
+        if (reached) StatusBadge(warn, BadgeKind.Bad)
+        extra()
     }
 }
 

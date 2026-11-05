@@ -63,16 +63,18 @@ app has been run on one.
 
 ## Release notes, 1.1.3-dev.7 (en-US)
 
-Version code 38. Internal track. Since 1.1.3-dev.6 (code 37): pause before sending (D44), screen fixes.
+Version code 38. Internal track. Since 1.1.3-dev.6 (code 37): actions (Phase 4), the visualizer, pause before sending (D44), Claude and Deepgram apart (D46), screen fixes.
 
 ```
 <en-US>
-Voice screen fixes.
+Crundi can act, and a new voice visualizer.
 
-- Speak slowly: Crundi waits for a real pause (2 seconds by default) before sending what you said. Change it in App settings, Voice assistant.
-- The screen is solid, no longer see-through.
-- Long answers scroll instead of being cut off.
-- Usage sits under the field; stopped services are dim, not red.
+- Ask by voice: send to a chat, start, close or park chats, add cards and notes, schedule messages and tasks. Weighty things it asks first; answer yes or no out loud.
+- The Crundi head in a live visualizer that follows your voice and Crundi's.
+- Speak slowly: it waits for a real pause before sending.
+- Claude and Deepgram spend shown apart. The screen stays on.
+
+Needs Crundi server 1.21.6-dev.7.
 </en-US>
 ```
 

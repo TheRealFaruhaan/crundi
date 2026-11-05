@@ -33,6 +33,7 @@ import mv.obitech.crundi.ui.shell.FactoryMark
 import mv.obitech.crundi.ui.shell.ProjectSummary
 import mv.obitech.crundi.ui.theme.CrundiColors
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -69,7 +70,7 @@ fun cellsOf(projects: List<ProjectSummary>, max: Int = 12): List<Cell> {
 }
 
 /** What the usage arcs show, 0..1 each; null leaves an arc out. */
-data class UsageArcs(val week: Float?, val fiveHour: Float?, val api: Float?, val apiLabel: String = "")
+data class UsageArcs(val week: Float?, val fiveHour: Float?, val api: Float?, val apiLabel: String = "", val deepgram: Float? = null, val deepgramLabel: String = "")
 
 /**
  * The voice screen's field: the Crundi head glowing at the centre, voice
@@ -97,6 +98,11 @@ fun VoiceField(
     val monoStyle = remember { TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace) }
     val labels = remember { HashMap<String, TextLayoutResult>() }
     val smooth = remember { FloatArray(1) }
+    /** The voice's recent loudness, newest first: the rings take their shape from it. */
+    val wave = remember { FloatArray(WAVE) }
+    /** The loudest of late (slowly forgotten): quiet voices still fill the rings. */
+    val peak = remember { floatArrayOf(0.12f) }
+    val lastShift = remember { longArrayOf(0L) }
     var frame by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(phase) {
@@ -110,7 +116,16 @@ fun VoiceField(
                     Phase.Starting -> 0.05f
                     Phase.Ended -> 0.02f
                 }.coerceIn(0f, 1f)
-                smooth[0] += (target - smooth[0]) * (if (target > smooth[0]) 0.3f else 0.1f)
+                // Auto gain: what was heard relative to the loudest of late.
+                peak[0] = max(peak[0] * 0.996f, max(0.08f, target))
+                val norm = if (phase == Phase.Listening || phase == Phase.Speaking) (target / peak[0]).coerceIn(0f, 1f) else target
+                smooth[0] += (norm - smooth[0]) * (if (norm > smooth[0]) 0.45f else 0.15f)
+                // One new sample of the wave every ~16 ms, the older ones moving round.
+                if (now - lastShift[0] > 16_000_000L) {
+                    System.arraycopy(wave, 0, wave, 1, WAVE - 1)
+                    wave[0] = smooth[0]
+                    lastShift[0] = now
+                }
                 frame = now
             }
         }
@@ -152,7 +167,7 @@ fun VoiceField(
         }
 
         // Tendrils from the centre's membrane to each cell, sparks on busy ones.
-        val r0 = L * 2.85f
+        val r0 = L * 1.38f + (5f + CONTOURS * 3.2f) * density + 30f * density
         for (p in placed) {
             val dx = cos(p.ang); val dy = sin(p.ang); val px = -dy; val py = dx
             val dist = hypot(p.x - c.x, p.y - c.y)
@@ -196,46 +211,50 @@ fun VoiceField(
             drawText(lay, topLeft = Offset(p.x - lay.size.width / 2f, p.y + r + 3f * density))
         }
 
-        // ─── usage arcs round the centre ───
-        val arcs = listOfNotNull(
-            usage.week?.let { Triple(L * 2.05f, it, CrundiColors.AccentHover to "wk ${(it * 100).toInt()}%") },
-            usage.fiveHour?.let { Triple(L * 2.29f, it, CrundiColors.Sky to "5h ${(it * 100).toInt()}%") },
-            usage.api?.let { Triple(L * 2.53f, it, CrundiColors.Ask to usage.apiLabel) },
-        )
-        for ((rad, v, look) in arcs) {
-            val (col, label) = look
-            val tl = Offset(c.x - rad, c.y - rad); val sz = Size(rad * 2, rad * 2)
-            drawArc(CrundiColors.Border.copy(alpha = 0.9f), -90f, 270f, false, tl, sz, style = Stroke(3f * density, cap = StrokeCap.Round))
-            drawArc(col.copy(alpha = 0.35f), -90f, max(2f, 270f * v.coerceIn(0f, 1f)), false, tl, sz, style = Stroke(7f * density, cap = StrokeCap.Round))
-            drawArc(col, -90f, max(2f, 270f * v.coerceIn(0f, 1f)), false, tl, sz, style = Stroke(3f * density, cap = StrokeCap.Round))
-        }
-
-        // ─── voice lines round the head ───
-        for (k in 0 until 5) {
-            val base = L + (8f + k * 6f + (t * 14f) % 6f) * density
-            val amp = (2f + lvl * 12f) * (1f - k * 0.16f) * density
-            val m = 5 + k
-            val path = Path()
-            for (s in 0..96) {
-                val an = s / 96f * (2 * PI).toFloat()
-                val rr = base + amp * sin(an * m + t * (3 + k) + k) * sin(an * 2 + t * 1.7f)
-                val x = c.x + cos(an) * rr; val y = c.y + sin(an) * rr
-                if (s == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        // ─── the visualizer: fine contour lines round a dark disc ───
+        // Smooth next to the disc, more and more organic further out, cyan to
+        // blue to magenta round the circle. Their swell is the voice: the
+        // loudness of the last moments, mapped round from the top both ways,
+        // so every word pushes out through them and silence lets them settle.
+        val disc = L * 1.38f
+        val lines = CONTOURS
+        val gap = 3.2f * density
+        val sweep = Brush.sweepGradient(listOf(CrundiColors.Sky, CrundiColors.Accent, CrundiColors.Ask, CrundiColors.Wait, CrundiColors.Ask, CrundiColors.Accent, CrundiColors.Sky), c)
+        val spin = if (phase == Phase.Thinking) t * 60f else t * 6f
+        val swell = (8f + 38f * lvl) * density
+        rotate(spin, c) {
+            for (i in 0 until lines) {
+                val f = (i + 1f) / lines                       // 0 next to the disc, 1 outermost
+                val base = disc + 5f * density + i * gap
+                val amp = swell * f * f + 2.5f * density * f
+                val path = Path()
+                for (s in 0..POINTS) {
+                    val an = s / POINTS.toFloat() * (2 * PI).toFloat()
+                    val frac = abs((s / POINTS.toFloat()) * 2f - 1f)
+                    val v = wave[(((1f - frac) * (WAVE - 1 - 24)).toInt() + (i / 3)).coerceIn(0, WAVE - 1)]
+                    // A slow organic shape (three drifting lobes), pushed by the voice.
+                    val shape = 0.55f * sin(an * 3f + t * 0.6f + f * 1.2f) + 0.30f * sin(an * 5f - t * 0.45f + f * 2.1f) + 0.15f * sin(an * 2f + t * 0.8f)
+                    val rr = base + amp * (0.35f + 0.65f * v) * (0.6f + 0.4f * shape) + amp * 0.5f * shape
+                    val x = c.x + cos(an - (PI / 2).toFloat()) * rr; val y = c.y + sin(an - (PI / 2).toFloat()) * rr
+                    if (s == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                drawPath(path, sweep, alpha = ((1f - f * 0.7f) * (0.7f + 0.3f * lvl)).coerceIn(0.12f, 1f), style = Stroke(1.0f * density))
             }
-            drawPath(path, (if (k % 2 == 1) b else a).copy(alpha = ((0.65f - k * 0.11f) * (0.35f + lvl * 1.1f)).coerceIn(0f, 1f)), style = Stroke(1.4f * density))
         }
 
-        // Thinking: a comet round the head.
-        if (phase == Phase.Thinking) rotate(t * 170f, c) {
-            for (s in 0 until 20) drawArc(a.copy(alpha = s / 20f), s * 6.9f, 7f, false, Offset(c.x - L - 20f * density, c.y - L - 20f * density), Size((L + 20f * density) * 2, (L + 20f * density) * 2), style = Stroke(2.4f * density, cap = StrokeCap.Round))
-        }
-
-        // The glow and the head.
-        drawCircle(Brush.radialGradient(listOf(a.copy(alpha = (0.55f + 0.35f * lvl).coerceAtMost(1f)), b.copy(alpha = 0.18f), Color.Transparent), c, L * 1.9f), L * 1.9f, c)
-        val sz = L * 2f * (1f + 0.07f * lvl)
+        // The disc, its bright rim, and the head.
+        drawCircle(Brush.radialGradient(listOf(a.copy(alpha = 0.35f + 0.4f * lvl), Color.Transparent), c, disc * 1.6f), disc * 1.6f, c)
+        drawCircle(Color(0xFF05050A), disc, c)
+        rotate(spin, c) { drawCircle(sweep, disc, c, style = Stroke((2f + 1.5f * lvl) * density)) }
+        val sz = L * 1.7f * (1f + 0.08f * lvl)
         translate(c.x - sz / 2f, c.y - sz / 2f - 2f * density) { with(logo) { draw(Size(sz, sz)) } }
     }
 }
+
+private const val WAVE = 96
+private const val CONTOURS = 22
+private const val POINTS = 144
 
 /** A cell's membrane: a circle that breathes, smoothed through its midpoints. */
 private fun blob(x: Float, y: Float, r: Float, t: Float, seed: Float, wob: Float): Path {

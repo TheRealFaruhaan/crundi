@@ -31,6 +31,8 @@ class VoiceActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // The screen stays on while the voice screen is open.
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         controller = VoiceController(this, "Crundi Voice", ::locked) { finish() }
         setContent {
             CrundiTheme {
@@ -44,6 +46,7 @@ class VoiceActivity : ComponentActivity() {
                     onClose = { finish() },
                     onUnlock = { unlock() },
                     shell = shell,
+                    onAnswer = { controller.answer(it) },
                     onAllowMic = { askMic.launch(Manifest.permission.RECORD_AUDIO) },
                 )
             }

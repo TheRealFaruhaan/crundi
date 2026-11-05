@@ -11,6 +11,7 @@
  * using it, not for a timer — so this reports, and applies only when asked.
  */
 
+import { userInfo } from 'node:os';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { spawn } from 'child_process';
@@ -136,7 +137,10 @@ export function updateBlocker(latest) {
     writeFileSync(probe, 'x');
     try { unlinkSync(probe); } catch { /* leaving it is harmless */ }
   } catch {
-    return `${ROOT} is not writable by this process.`;
+    // Usually an install (or a repair) run as root left the files root's.
+    const who = (() => { try { return userInfo().username; } catch { return ''; } })();
+    return `${ROOT} is not writable by this process${who ? ` (running as ${who})` : ''}. `
+      + `An install run as root probably left it owned by root. Fix it with: sudo chown -R ${who || '$USER'}: ${ROOT}`;
   }
   if (latest && !latest.asset) {
     // Almost always a race rather than a broken release: the main workflow

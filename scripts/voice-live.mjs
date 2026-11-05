@@ -56,7 +56,21 @@ const tools = makeTools({
   chatHistory: () => null, terminalScrollback: () => '',
 });
 
-const agent = createVoiceAgent({ tools, settings });
+// The actions too (on the copy), with no live chats: kanban, notes, mindmap,
+// schedules act on the copied data; the confirmation gate is the real one.
+const actions = await import('../src/voice/actions.js');
+const pending = actions.createPending();
+const ctx = { pending, locked: () => false };
+const actionTools = actions.makeActionTools({
+  chats: () => [], sendMessage: () => ({ ok: false, error: 'no chats in voice-live' }),
+  createChat: async () => ({ ok: false, error: 'no chats in voice-live' }), closeChat: async () => ({ ok: true }),
+  parkChat: () => ({ ok: true }), resumeChat: async () => ({ ok: true }), watch: () => {},
+  listProjects: () => Object.values(listProjects()).map(p => ({ alias: p.alias, name: p.name || p.alias, path: p.path })),
+  projectsDir: () => '', registerProject: () => ({ ok: false, error: 'not in voice-live' }),
+  kanban, notes, mindmap, chatSchedule: { list: () => [], add: () => ({ ok: true }), remove: () => ({ ok: true }) },
+  schedules: schedule, services: () => [], voiceSettings: { updateSettings: () => ({ ok: true }) },
+}, ctx);
+const agent = createVoiceAgent({ tools: [...tools, ...actionTools], settings, beforeTurn: () => pending.newTurn() });
 const pct = (c) => { const all = c.read + c.written + c.uncached; return all ? Math.round(100 * c.read / all) : 0; };
 
 const w = await agent.warm();
@@ -69,6 +83,7 @@ for (const said of process.argv.slice(2)) {
   if (!r.ok) { console.log('  ERROR:', r.error); continue; }
   console.log(`  speak: ${r.speak}`);
   if (r.show) console.log(`  show:  ${r.show.replace(/\n/g, '\n         ')}`);
+  if (r.pending?.length) console.log(`  awaiting yes: ${r.pending.map(p => p.question).join(' | ')}`);
   console.log(`  tools: ${r.tools.join(', ') || 'none'} · ${Date.now() - t0} ms · $${r.costUsd.toFixed(5)}`);
   console.log(`  cache: read ${r.cache.read}, written ${r.cache.written}, uncached ${r.cache.uncached} → ${pct(r.cache)}% from cache`);
 }

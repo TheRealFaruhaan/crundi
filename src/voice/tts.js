@@ -10,7 +10,7 @@
  * voice (the phone's text-to-speech, or the browser's).
  */
 
-import { getSettings, addDeepgramTtsSpend } from './settings.js';
+import { getSettings, addDeepgramTtsSpend, deepgramOverLimit } from './settings.js';
 
 const MODELS_URL = 'https://api.deepgram.com/v1/models';
 const SPEAK_URL = 'https://api.deepgram.com/v1/speak';
@@ -84,6 +84,7 @@ export async function speak(text, voice, { fetchImpl = fetch } = {}) {
   if (!key) return { ok: false, error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' };
   const model = voice || getSettings().ttsVoice;
   if (!isVoiceModel(model)) return { ok: false, error: 'Choose a Deepgram voice first' };
+  if (deepgramOverLimit()) return { ok: false, limitReached: true, error: 'This month\'s Deepgram spend has reached its limit' };
   const t = String(text || '').trim().slice(0, MAX_CHARS);
   if (!t) return { ok: false, error: 'Nothing to say' };
   let res;
@@ -119,6 +120,7 @@ export async function speakStream(text, voice, { fetchImpl = fetch } = {}) {
   if (!key) return { ok: false, error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' };
   const model = voice || getSettings().ttsVoice;
   if (!isVoiceModel(model)) return { ok: false, error: 'Choose a Deepgram voice first' };
+  if (deepgramOverLimit()) return { ok: false, limitReached: true, error: 'This month\'s Deepgram spend has reached its limit' };
   const t = String(text || '').trim().slice(0, MAX_CHARS);
   if (!t) return { ok: false, error: 'Nothing to say' };
   let res;

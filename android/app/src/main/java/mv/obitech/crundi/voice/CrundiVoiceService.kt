@@ -62,6 +62,8 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
             setViewTreeSavedStateRegistryOwner(owner)
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setBackgroundColor(Color.TRANSPARENT)
+            // The screen stays on while Crundi is open: no sleeping mid-conversation.
+            keepScreenOn = true
         }
         view = v
         return v
@@ -83,6 +85,7 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
                     onClose = { hide() },
                     onUnlock = { openActivity(unlock = true) },
                     shell = shell,
+                    onAnswer = { c.answer(it) },
                     onAllowMic = { openActivity(unlock = false) },
                 )
             }

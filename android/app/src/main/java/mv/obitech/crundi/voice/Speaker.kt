@@ -67,6 +67,9 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     val measured: Boolean get() = viz != null || track != null
 
     @Volatile private var track: AudioTrack? = null
+    /** (first frame, level) of each 20 ms block written to [track], oldest first. */
+    private val levels = java.util.ArrayDeque<Pair<Long, Float>>()
+    private fun lvl(sum: Double, n: Int) = (kotlin.math.sqrt(kotlin.math.sqrt(sum / n) / 32768.0) * 1.4).toFloat().coerceIn(0f, 1f)
 
     /** Say [text]; [onDone] runs once when it has all been said (not after [stop]). */
     fun say(text: String, onDone: () -> Unit) {
@@ -134,6 +137,18 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         }.getOrNull() ?: return false
         track = t
         var frames = 0L
+        synchronized(levels) { levels.clear() }
+        // The level of what is being heard now: the block at the play head.
+        val ticker = scope.launch {
+            while (track === t) {
+                val head = runCatching { t.playbackHeadPosition.toLong() }.getOrDefault(0L)
+                synchronized(levels) {
+                    while (levels.size > 1 && levels.elementAt(1).first <= head) levels.removeFirst()
+                    _level.value = levels.firstOrNull()?.takeIf { head >= it.first }?.second ?: 0f
+                }
+                delay(16)
+            }
+        }
         var odd: Int = -1
         val sink = object : java.io.OutputStream() {
             override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
@@ -144,10 +159,16 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
                 if (odd >= 0) { t.write(byteArrayOf(odd.toByte(), b[off]), 0, 2); start++; n--; odd = -1; frames++ }
                 if (n % 2 == 1) { odd = b[start + n - 1].toInt() and 0xff; n-- }
                 if (n <= 0) return
-                var sum = 0.0
+                // The level of each 20 ms of what is written, keyed by its frame:
+                // the screen reads the one being played now (see the ticker below).
                 var i = start
-                while (i + 1 < start + n) { val x = ((b[i + 1].toInt() shl 8) or (b[i].toInt() and 0xff)).toShort().toInt(); sum += x.toDouble() * x; i += 2 }
-                _level.value = (kotlin.math.sqrt(kotlin.math.sqrt(sum / (n / 2)) / 32768.0) * 1.4).toFloat().coerceIn(0f, 1f)
+                var sum = 0.0; var cnt = 0; var blockStart = frames
+                while (i + 1 < start + n) {
+                    val x = ((b[i + 1].toInt() shl 8) or (b[i].toInt() and 0xff)).toShort().toInt()
+                    sum += x.toDouble() * x; cnt++; i += 2
+                    if (cnt == BLOCK) { val e = blockStart to lvl(sum, cnt); synchronized(levels) { levels.addLast(e) }; blockStart += cnt; sum = 0.0; cnt = 0 }
+                }
+                if (cnt > 0) { val e = blockStart to lvl(sum, cnt); synchronized(levels) { levels.addLast(e) } }
                 if (t.playState != AudioTrack.PLAYSTATE_PLAYING) t.play()
                 t.write(b, start, n)
                 frames += n / 2
@@ -166,6 +187,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
             Log.w(TAG, "streamed voice: ${e.message}")
             if (frames > 0) true else false
         } finally {
+            ticker.cancel()
             if (track === t) releaseTrack()
         }
     }
@@ -285,7 +307,11 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         _level.value = 0f
     }
 
-    companion object { private const val TAG = "CrundiSpeaker" }
+    companion object {
+        private const val TAG = "CrundiSpeaker"
+        /** 20 ms at the streamed rate. */
+        private const val BLOCK = VoiceApi.STREAM_RATE / 50
+    }
 }
 
 /** The phone's own voices, for the picker (D34). Calls back once, on the main thread. */

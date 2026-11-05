@@ -33,6 +33,8 @@ export const MODELS = {
 };
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
 export const DEFAULT_LIMIT_USD = 50;
+/** Deepgram's own monthly limit (D46). */
+export const DEFAULT_DEEPGRAM_LIMIT_USD = 200;
 
 /** Deepgram Nova-3 streaming + keyterms, US$ per minute (approximate; D37). */
 export const DEEPGRAM_USD_PER_MIN = 0.0077 + 0.0013;
@@ -47,7 +49,10 @@ const DEFAULTS = {
   anthropicAdminKey: '',
   // A Deepgram Aura voice (e.g. aura-2-draco-en), or '' for the device's own.
   ttsVoice: '',
+  // Claude's monthly limit (the voice assistant stops answering at it).
   monthlyLimitUsd: DEFAULT_LIMIT_USD,
+  // Deepgram's own (at it, listening and speaking fall back to the phone's own).
+  deepgramLimitUsd: DEFAULT_DEEPGRAM_LIMIT_USD,
   // The day of the month each account is billed: its spend month starts then.
   billingDay: 1,
   deepgramBillingDay: 1,
@@ -150,7 +155,10 @@ export function publicSettings(now = new Date()) {
     ttsVoice: s.ttsVoice || '',
     monthlyLimitUsd: s.monthlyLimitUsd,
     spend: { ...spend, totalUsd: round(total), claudeUsd: round(spend.claudeUsd), deepgramUsd: round(spend.deepgramUsd) },
-    limitReached: total >= s.monthlyLimitUsd,
+    // Each provider has its own month and limit (D46); limitReached is Claude's.
+    deepgramLimitUsd: s.deepgramLimitUsd,
+    limitReached: spend.claudeUsd >= s.monthlyLimitUsd,
+    deepgramLimitReached: spend.deepgramUsd >= s.deepgramLimitUsd,
   };
 }
 
@@ -163,6 +171,11 @@ export function updateSettings(patch = {}) {
   if (patch.model !== undefined) {
     if (!MODELS[patch.model]) return { ok: false, error: `Unknown model: ${patch.model}` };
     s.model = patch.model;
+  }
+  if (patch.deepgramLimitUsd !== undefined) {
+    const n = Number(patch.deepgramLimitUsd);
+    if (!Number.isFinite(n) || n < 0 || n > 100000) return { ok: false, error: 'The Deepgram limit must be a number of dollars from 0 to 100000' };
+    s.deepgramLimitUsd = n;
   }
   if (patch.monthlyLimitUsd !== undefined) {
     const n = Number(patch.monthlyLimitUsd);
@@ -229,11 +242,17 @@ export function addDeepgramTtsSpend(chars, now = new Date()) {
   save();
 }
 
-/** Has this month's spend reached the limit? */
+/** Has Deepgram's spend this month reached its own limit? */
+export function deepgramOverLimit(now = new Date()) {
+  const s = load();
+  return spendNow(now).deepgramUsd >= s.deepgramLimitUsd;
+}
+
+/** Has Claude's spend this month reached the limit? */
 export function overLimit(now = new Date()) {
   const s = load();
   const spend = spendNow(now);
-  return spend.claudeUsd + spend.deepgramUsd >= s.monthlyLimitUsd;
+  return spend.claudeUsd >= s.monthlyLimitUsd;
 }
 
 /** Tests only: forget the in-memory copy so the file is read again. */

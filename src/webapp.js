@@ -96,6 +96,7 @@ import * as chatMedia from './chat-media.js';
 import * as voiceSettings from './voice/settings.js';
 import { makeTools as makeVoiceTools } from './voice/tools.js';
 import { createVoiceAgent } from './voice/agent.js';
+import { makeActionTools as makeVoiceActionTools, createPending as createVoicePending } from './voice/actions.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { getVoicePageHtml } from './voice/page.js';
 import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
@@ -2597,7 +2598,45 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     },
     terminalScrollback: (id) => (claudeTerminals && claudeTerminals.getScrollback ? claudeTerminals.getScrollback(id) : ''),
   });
-  const voiceAgent = createVoiceAgent({ tools: voiceTools });
+  // What voice may change (Phase 4, voice/actions.js): every action behind the
+  // same gate: a locked phone waits for an unlock; anything that needs Master's
+  // yes is parked until their next message.
+  const voicePending = createVoicePending();
+  const voiceCtx = { pending: voicePending, locked: () => false };
+  const voiceWatches = new Map();   // chat id -> { title, project }
+  if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
+    const w = voiceWatches.get(id);
+    if (!w) return;
+    voiceWatches.delete(id);
+    mobilePush.send(`${w.title || 'The chat'} in ${w.project} has finished.`, { title: 'Crundi', url: `/chat/${id}`, tag: `voice-watch-${id}` }).catch(() => {});
+  });
+  const voiceActions = makeVoiceActionTools({
+    chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
+    sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
+    createChat: (alias, opts) => claudeUi.create(alias, opts),
+    closeChat: (id) => claudeUi.close(id),
+    parkChat: (id) => { const r = panes.park(id, 'manual'); broadcastState(); return r; },
+    resumeChat: async (id) => { const r = await panes.resume(id, {}); broadcastState(); return r; },
+    watch: (id, title, project) => voiceWatches.set(id, { title, project }),
+    listProjects: allProjects,
+    projectsDir: () => getProjectMode().projectsDir || '',
+    registerProject: (alias, path, name) => { const r = registerProject(alias, path, name, { create: true }); broadcastState(); return r; },
+    kanban, notes, mindmap, chatSchedule,
+    schedules: schedule,
+    services: () => getAllServiceStatus().map(sv => ({ key: sv.key, name: sv.name })),
+    voiceSettings,
+    broadcast: (tool, input = {}) => {
+      if (/kanban/.test(tool)) broadcastKanban(input.project);
+      else if (/note/.test(tool)) broadcastNotes(input.project, {});
+      else if (/mindmap/.test(tool)) broadcastMindmap();
+      else if (/schedule/.test(tool)) broadcastSSE('schedule', {});
+      else broadcastState();
+    },
+  }, voiceCtx);
+  const voiceAgent = createVoiceAgent({
+    tools: [...voiceTools, ...voiceActions],
+    beforeTurn: ({ locked }) => { voiceCtx.locked = () => !!locked; voicePending.newTurn(); },
+  });
 
   function readBodyBuffer(req, max) {
     return new Promise((resolve, reject) => {
@@ -4032,7 +4071,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
       const r = voiceSettings.updateSettings({
-        model: body.model, monthlyLimitUsd: body.monthlyLimitUsd,
+        model: body.model, monthlyLimitUsd: body.monthlyLimitUsd, deepgramLimitUsd: body.deepgramLimitUsd,
         anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey, anthropicAdminKey: body.anthropicAdminKey,
         ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay, pauseMs: body.pauseMs,
       });

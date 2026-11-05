@@ -22,8 +22,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     suspend fun settings(): VoiceSettings = rpc.read(rpc.get("/api/voice/settings"), null)
 
     /** Change the model, the monthly limit or the Deepgram voice ("" = the phone's own). Null leaves one as it is. */
-    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null): VoiceSettings =
-        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs)), null)
+    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd)), null)
 
     /**
      * One request. [where] is what Master is looking at ("lock screen",
@@ -125,7 +125,11 @@ data class VoiceSettings(
     val deepgramKeySet: Boolean = false,
     /** A Deepgram voice, or "" for the phone's own (D34). */
     val ttsVoice: String = "",
+    /** Claude's monthly limit. */
     val monthlyLimitUsd: Double = 50.0,
+    /** Deepgram's own (D46); past it the phone's voice and recogniser take over. */
+    val deepgramLimitUsd: Double = 200.0,
+    val deepgramLimitReached: Boolean = false,
     /** The day of the month the API account is billed; the spend restarts then. */
     val billingDay: Int = 1,
     /** This billing month's first day and the next one ("2026-11-20"); empty from an older server. */
@@ -151,7 +155,14 @@ data class VoiceReply(
     val costUsd: Double = 0.0,
     val error: String = "",
     val limitReached: Boolean = false,
+    /** Actions waiting for Master's yes (Phase 4): the screen shows Yes / No. */
+    val pending: List<PendingAction> = emptyList(),
+    /** Something needed the phone unlocked; nothing was changed. */
+    val needsUnlock: Boolean = false,
 )
+
+@Serializable
+data class PendingAction(val id: String = "", val question: String = "")
 
 @Serializable
 data class DeepgramVoice(

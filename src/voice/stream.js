@@ -24,7 +24,7 @@
  */
 
 import WebSocket from 'ws';
-import { getSettings, addDeepgramSpend } from './settings.js';
+import { getSettings, addDeepgramSpend, deepgramOverLimit } from './settings.js';
 import { keyterms } from './stt.js';
 
 const STREAM_URL = 'wss://api.deepgram.com/v1/listen';
@@ -119,6 +119,12 @@ export function relay(client, { projects = [], services = [], audio = null, paus
   const key = getSettings().deepgramKey;
   if (!key) {
     send({ type: 'error', error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' });
+    client.close();
+    return;
+  }
+  if (deepgramOverLimit()) {
+    // The phone then listens with its own recogniser (D46).
+    send({ type: 'error', error: 'This month\'s Deepgram spend has reached its limit' });
     client.close();
     return;
   }

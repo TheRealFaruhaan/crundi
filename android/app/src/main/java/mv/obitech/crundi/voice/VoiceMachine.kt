@@ -42,6 +42,10 @@ data class VoiceState(
     /** What Crundi last said aloud, and when it stopped: heard again just after, it is an echo. */
     val lastSaid: String = "",
     val saidUntil: Long = 0,
+    /** A question waiting for Master's yes (Phase 4): the screen shows Yes / No. */
+    val question: String = "",
+    /** The last answer needed the phone unlocked. */
+    val needsUnlock: Boolean = false,
 )
 
 sealed interface VoiceEvent {
@@ -50,7 +54,9 @@ sealed interface VoiceEvent {
     data class Interim(val text: String, val now: Long) : VoiceEvent
     data class Utterance(val text: String, val now: Long) : VoiceEvent
     /** Claude's answer, or why there is none. */
-    data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long) : VoiceEvent
+    data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long, val question: String = "", val needsUnlock: Boolean = false) : VoiceEvent
+    /** Master tapped Yes or No (or typed): asked like something said. */
+    data class Typed(val text: String, val now: Long) : VoiceEvent
     data class SpeechDone(val now: Long) : VoiceEvent
     /** Master talked over Crundi. */
     data class BargeIn(val now: Long) : VoiceEvent
@@ -102,9 +108,18 @@ class VoiceMachine(
             is VoiceEvent.Reply -> {
                 if (s.phase != Phase.Thinking) return s to emptyList()
                 val say = if (e.ok) e.speak.trim() else e.error.trim()
-                val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) "" else e.error.trim(), quietSince = e.now)
+                val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, question = e.question, needsUnlock = e.needsUnlock)
                 if (say.isEmpty()) afterSpeech(next, e.now)
                 else next.copy(phase = Phase.Speaking, lastSaid = say) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(say))
+            }
+            is VoiceEvent.Typed -> when (s.phase) {
+                Phase.Ended -> s to emptyList()
+                Phase.Thinking -> s.copy(pending = join(s.pending, e.text)) to emptyList()
+                Phase.Speaking -> {
+                    val (n, fx) = ask(s.copy(phase = Phase.Listening), e.text, e.now)
+                    n to (listOf<VoiceEffect>(VoiceEffect.StopSaying, VoiceEffect.ResumeStream) + fx)
+                }
+                else -> ask(s, e.text, e.now)
             }
             is VoiceEvent.SpeechDone -> if (s.phase == Phase.Speaking) afterSpeech(s, e.now) else s to emptyList()
             is VoiceEvent.BargeIn -> if (s.phase == Phase.Speaking) {
@@ -126,7 +141,7 @@ class VoiceMachine(
     }
 
     private fun ask(s: VoiceState, text: String, now: Long): Pair<VoiceState, List<VoiceEffect>> =
-        s.copy(phase = Phase.Thinking, asked = text, heard = text, reply = "", detail = "", notice = if (s.offline) s.notice else "", quietSince = now) to listOf<VoiceEffect>(VoiceEffect.Ask(text))
+        s.copy(phase = Phase.Thinking, asked = text, heard = text, reply = "", detail = "", notice = if (s.offline) s.notice else "", quietSince = now, question = "", needsUnlock = false) to listOf<VoiceEffect>(VoiceEffect.Ask(text))
 
     /** The answer has been said: listen again, or send what was said meanwhile. */
     private fun afterSpeech(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> {

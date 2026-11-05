@@ -426,6 +426,26 @@ if [ -n "$SERVICE_USER" ]; then
   [ -d "${TARGET_HOME}/.claude/skills" ] && chown -R "${SERVICE_USER}:${SERVICE_USER}" "${TARGET_HOME}/.claude"
 fi
 
+# Run as root with an explicit --prefix inside someone's home (no service
+# user): the files would stay root's, and the in-app updater, which runs as
+# that user, could then never replace them ("not writable by this process").
+# Hand the prefix, and any folder this made on the way to it, to the home's owner.
+if [ -z "$SERVICE_USER" ] && [ "$(id -u)" -eq 0 ]; then
+  HOME_OWNER=""
+  case "$PREFIX" in
+    /home/*/*) HOME_OWNER="$(stat -c %U "$(printf '%s' "$PREFIX" | cut -d/ -f1-3)" 2>/dev/null || true)" ;;
+  esac
+  if [ -n "$HOME_OWNER" ] && [ "$HOME_OWNER" != root ]; then
+    say "Handing ${PREFIX} to ${HOME_OWNER}, whose home it is in"
+    chown -R "${HOME_OWNER}:" "$PREFIX"
+    d="$(dirname "$PREFIX")"
+    while [ "$d" != "/" ] && [ "$d" != "/home" ]; do
+      [ "$(stat -c %U "$d")" = root ] && chown "${HOME_OWNER}:" "$d"
+      d="$(dirname "$d")"
+    done
+  fi
+fi
+
 # Nobody but the user running Crundi may read its config and data folders:
 # folders 0700, files 0600 (go-rwx keeps the owner's own bits, so the browser
 # downloaded into data/chrome still runs).
