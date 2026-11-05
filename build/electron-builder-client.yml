@@ -51,6 +51,10 @@ files:
   - app/main.js
   - app/preload.js
   - app/index.html
+  # "Hey Crundi" while charging (D40); its engine and model are downloaded on
+  # first use, not shipped. Unpacked so its utility process loads from disk.
+  - app/voice-wake/**/*
+  - "!app/voice-wake/test-*.mjs"
   - package.json
   - "!**/.env"
   # node_modules is an ALLOWLIST. The client speaks to a server over a websocket
@@ -98,6 +102,7 @@ electronLanguages:
 
 asarUnpack:
   - node_modules/**/*
+  - app/voice-wake/**/*
   - package.json
 
 extraResources:

@@ -8,8 +8,8 @@
  *   4. Setup wizard for first-time .env configuration
  */
 
-import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell } from 'electron';
-import { fileURLToPath } from 'url';
+import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell, powerMonitor, utilityProcess, session, net } from 'electron';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { spawn, execFileSync } from 'child_process';
@@ -305,6 +305,7 @@ function updateTrayMenu() {
       click: () => stopBot(),
     },
     { type: 'separator' },
+    ...voiceWakeTrayItems(),
     updateState.downloaded
       ? { label: 'Restart to Install Update', click: () => confirmAndInstall() }
       : { label: 'Check for Updates…', click: () => checkForUpdates(true) },
@@ -379,10 +380,16 @@ function readClientConfig() {
   } catch { return fallback; }
 }
 
+function readClientConfigRaw() {
+  try { const d = JSON.parse(readFileSync(clientConfigFile(), 'utf8')); return d && typeof d === 'object' ? d : {}; } catch { return {}; }
+}
+
 function writeClientConfig(cfg) {
   try {
     mkdirSync(dataDir, { recursive: true });
+    // Other settings live in the same file (voiceWake): keep them.
     writeFileSync(clientConfigFile(), JSON.stringify({
+      ...readClientConfigRaw(),
       mode: cfg.mode === 'remote' ? 'remote' : 'local',
       serverUrl: String(cfg.serverUrl || '').replace(/\/+$/, ''),
     }, null, 2));
@@ -646,6 +653,7 @@ async function gracefulShutdownAndExit() {
   quitting = true;
   app.isQuitting = true;
   appendLog('[lifecycle] Quitting — stopping services, terminals, and tunnels...');
+  try { voiceWake?.stop(); } catch { /* ignore */ }
   try { await stopServerProcess(); } catch { /* ignore */ }
   app.exit(0);
 }
@@ -1160,6 +1168,80 @@ function showSetupWizard(oldConfig) {
     });
   }
 }
+
+// ─── "Hey Crundi" while charging (D40) ───
+//
+// An always-on microphone option for the PC, off by default and kept in
+// client.json as voiceWake. It listens only on AC power, only while the voice
+// screen is closed, and on the PC alone: a local keyword spotter
+// (sherpa-onnx, WebAssembly) in a hidden window and a utility process, its
+// files fetched on first use into <userData>/voice-wake. All of it lives in
+// app/voice-wake/; loaded with import() so a build without that folder still
+// starts, just without the option.
+let voiceWake = null;
+let voiceWakeStatus = { enabled: false, state: 'unavailable', onBattery: false, installed: false, error: '', lastHeard: null };
+const voiceWakeModuleDir = join(appRoot, 'app', 'voice-wake');
+
+function readVoiceWakeSetting() { return readClientConfigRaw().voiceWake === true; }
+function saveVoiceWakeSetting(on) {
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(clientConfigFile(), JSON.stringify({ ...readClientConfigRaw(), voiceWake: !!on }, null, 2));
+    return true;
+  } catch (err) {
+    appendLog(`[voice-wake] Could not save the setting: ${err.message}`);
+    return false;
+  }
+}
+
+async function startVoiceWake() {
+  try {
+    const { createVoiceWake } = await import(pathToFileURL(join(voiceWakeModuleDir, 'controller.js')).href);
+    voiceWake = createVoiceWake({
+      electron: { BrowserWindow, utilityProcess, powerMonitor, session, net, ipcMain },
+      moduleDir: voiceWakeModuleDir,
+      dataDir: join(app.getPath('userData'), 'voice-wake'),
+      getEnabled: readVoiceWakeSetting,
+      saveEnabled: saveVoiceWakeSetting,
+      getMainWindow: () => mainWindow,
+      bringToFront: () => bringToFront(),
+      log: appendLog,
+      onStatus: (s) => {
+        voiceWakeStatus = s;
+        updateTrayMenu();
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('voice-wake:status', s);
+      },
+    });
+    voiceWakeStatus = voiceWake.status();
+    updateTrayMenu();
+  } catch (err) {
+    appendLog(`[voice-wake] Not available: ${err?.stack || err}`);
+  }
+}
+
+const VOICE_WAKE_NOTE = {
+  installing: 'Downloading the wake word model…',
+  'on-battery': 'Paused: on battery',
+  'voice-open': 'Paused: voice screen open',
+  paused: 'Paused: screen locked',
+  starting: 'Starting…',
+  listening: 'Listening',
+};
+
+function voiceWakeTrayItems() {
+  if (!voiceWake) return [];
+  const s = voiceWakeStatus;
+  const note = s.enabled ? (s.state === 'error' ? 'Not listening: ' + String(s.error || 'error').slice(0, 80) : VOICE_WAKE_NOTE[s.state] || '') : '';
+  return [
+    { label: 'Listen for "Hey Crundi" while charging', type: 'checkbox', checked: !!s.enabled, click: (item) => { voiceWake?.set(item.checked); } },
+    ...(note ? [{ label: '    ' + note, enabled: false }] : []),
+    { type: 'separator' },
+  ];
+}
+
+ipcMain.handle('voice-wake:get', () => !!(voiceWake ? voiceWake.get() : readVoiceWakeSetting()));
+ipcMain.handle('voice-wake:set', (_e, on) => voiceWake ? voiceWake.set(!!on) : { ...voiceWakeStatus, error: 'Not available in this build' });
+ipcMain.handle('voice-wake:status', () => voiceWake ? voiceWake.status() : voiceWakeStatus);
 
 // ─── IPC Handlers ───
 
@@ -2150,6 +2232,7 @@ app.whenReady().then(() => {
   } catch (err) {
     appendLog(`[lifecycle] Window error: ${err.message}`);
   }
+  startVoiceWake();
   try {
     startBot();
     appendLog('[lifecycle] startBot() called');

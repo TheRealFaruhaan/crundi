@@ -51,6 +51,18 @@ contextBridge.exposeInMainWorld('api', {
   setStartup: (enabled) => ipcRenderer.invoke('startup:set', !!enabled),
   onUpdateStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('update:status', h); return () => ipcRenderer.removeListener('update:status', h); },
 
+  // "Hey Crundi" while charging (D40), the PC's own wake word. get() is the
+  // setting; set(on) saves it and returns the status; status() is
+  // { enabled, state, onBattery, installed, error, lastHeard } with state one
+  // of off | installing | starting | listening | on-battery | voice-open |
+  // paused | error | unavailable.
+  voiceWake: {
+    get: () => ipcRenderer.invoke('voice-wake:get'),
+    set: (on) => ipcRenderer.invoke('voice-wake:set', !!on),
+    status: () => ipcRenderer.invoke('voice-wake:status'),
+    onStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('voice-wake:status', h); return () => ipcRenderer.removeListener('voice-wake:status', h); },
+  },
+
   // Interactive browser panel — WebContentsView managed in the main process.
   wbrowser: {
     open: (id, url) => ipcRenderer.invoke('wbrowser:open', id, url),

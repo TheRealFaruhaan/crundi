@@ -55,6 +55,7 @@
     "asarUnpack": [
       "src/**/*",
       "app/vendor/**/*",
+      "app/voice-wake/**/*",
       "scripts/**/*",
       "node_modules/**/*",
       "package.json"
@@ -64,7 +65,8 @@
       "src/**/*",
       "scripts/**/*",
       "package.json",
-      "!**/.env"
+      "!**/.env",
+      "!app/voice-wake/test-*.mjs"
     ],
     "extraResources": [
       {
