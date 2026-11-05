@@ -95,6 +95,9 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
+        // The screen stays on while the overlay is open: on the window itself,
+        // which Android honours for an assistant's window (the view's flag alone is not enough).
+        runCatching { window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
         owner.resume()
         val c = controller ?: VoiceController(context, "side key", ::locked) { hide() }.also { controller = it }
         view?.setContent {

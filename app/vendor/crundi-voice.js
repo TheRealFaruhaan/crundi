@@ -128,6 +128,7 @@
     refreshData();
     S.timer = setInterval(function () { refreshData(); tick(); }, 1000);
     S.raf = requestAnimationFrame(frame);
+    keepAwake();
     start();
   }
 
@@ -153,9 +154,18 @@
     }, 700);
   }
 
+  /** The screen stays on while voice is open (Screen Wake Lock), and again after the page comes back. */
+  function keepAwake() {
+    if (!S || !navigator.wakeLock || !navigator.wakeLock.request) return;
+    navigator.wakeLock.request('screen').then(function (l) { if (S) S.wake = l; else l.release(); }).catch(function () { /* not allowed here */ });
+    if (!S.onVis) { S.onVis = function () { if (S && document.visibilityState === 'visible' && (!S.wake || S.wake.released)) keepAwake(); }; document.addEventListener('visibilitychange', S.onVis); }
+  }
+
   function close() {
     if (!S) return;
     var s = S; S = null;
+    try { if (s.wake) s.wake.release(); } catch (e) { /* gone */ }
+    if (s.onVis) document.removeEventListener('visibilitychange', s.onVis);
     cancelAnimationFrame(s.raf); clearInterval(s.timer);
     window.removeEventListener('keydown', s.onKey, true);
     stopSpeaking(s);
