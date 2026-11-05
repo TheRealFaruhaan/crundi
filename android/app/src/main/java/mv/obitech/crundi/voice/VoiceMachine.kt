@@ -39,6 +39,9 @@ data class VoiceState(
     val locked: Boolean = false,
     /** When things last happened, for the silence timeout. */
     val quietSince: Long = 0,
+    /** What Crundi last said aloud, and when it stopped: heard again just after, it is an echo. */
+    val lastSaid: String = "",
+    val saidUntil: Long = 0,
 )
 
 sealed interface VoiceEvent {
@@ -73,13 +76,15 @@ class VoiceMachine(
     val silenceMs: Long = 30_000,
     /** Starting this long without the stream: try the phone's recogniser. */
     val startMs: Long = 8_000,
+    /** How long after Crundi speaks its own words heard back count as an echo. */
+    val echoMs: Long = 5_000,
 ) {
     fun on(s: VoiceState, e: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
         if (s.phase == Phase.Ended) return s to emptyList()
         return when (e) {
             is VoiceEvent.Opened -> s.copy(phase = Phase.Starting, locked = e.locked, quietSince = e.now) to emptyList()
             is VoiceEvent.Ready -> if (s.phase == Phase.Starting) s.copy(phase = Phase.Listening, quietSince = e.now) to emptyList() else s to emptyList()
-            is VoiceEvent.Interim -> when (s.phase) {
+            is VoiceEvent.Interim -> if (echoOf(s, e.text, e.now)) s to emptyList() else when (s.phase) {
                 Phase.Starting, Phase.Listening -> s.copy(phase = Phase.Listening, heard = e.text, quietSince = e.now) to emptyList()
                 Phase.Thinking -> s.copy(heard = join(s.pending, e.text), quietSince = e.now) to emptyList()
                 else -> s to emptyList()
@@ -88,6 +93,7 @@ class VoiceMachine(
                 val t = e.text.trim()
                 when {
                     t.isEmpty() -> s to emptyList()
+                    echoOf(s, t, e.now) -> s.copy(heard = "") to emptyList()
                     s.phase == Phase.Thinking -> s.copy(pending = join(s.pending, t), heard = join(s.pending, t), quietSince = e.now) to emptyList()
                     s.phase == Phase.Speaking -> s to emptyList()
                     else -> ask(s, t, e.now)
@@ -98,11 +104,11 @@ class VoiceMachine(
                 val say = if (e.ok) e.speak.trim() else e.error.trim()
                 val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) "" else e.error.trim(), quietSince = e.now)
                 if (say.isEmpty()) afterSpeech(next, e.now)
-                else next.copy(phase = Phase.Speaking) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(say))
+                else next.copy(phase = Phase.Speaking, lastSaid = say) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(say))
             }
             is VoiceEvent.SpeechDone -> if (s.phase == Phase.Speaking) afterSpeech(s, e.now) else s to emptyList()
             is VoiceEvent.BargeIn -> if (s.phase == Phase.Speaking) {
-                s.copy(phase = Phase.Listening, heard = "", quietSince = e.now) to listOf(VoiceEffect.StopSaying, VoiceEffect.ResumeStream)
+                s.copy(phase = Phase.Listening, heard = "", quietSince = e.now, saidUntil = e.now) to listOf(VoiceEffect.StopSaying, VoiceEffect.ResumeStream)
             } else s to emptyList()
             is VoiceEvent.StreamLost -> if (s.offline) s to emptyList() else {
                 s.copy(offline = true, notice = "Live speech recognition is unavailable (${e.why}). Using the phone's recogniser.", phase = if (s.phase == Phase.Starting) Phase.Listening else s.phase, quietSince = e.now) to listOf(VoiceEffect.UseFallback)
@@ -124,17 +130,34 @@ class VoiceMachine(
 
     /** The answer has been said: listen again, or send what was said meanwhile. */
     private fun afterSpeech(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> {
-        val resumed = s.copy(phase = Phase.Listening, heard = "", quietSince = now)
+        val resumed = s.copy(phase = Phase.Listening, heard = "", quietSince = now, saidUntil = now)
         if (s.pending.isBlank()) return resumed to listOf(VoiceEffect.ResumeStream)
         val (next, fx) = ask(resumed.copy(pending = ""), s.pending, now)
         return next to (listOf<VoiceEffect>(VoiceEffect.ResumeStream) + fx)
     }
+
+    /** Heard within [echoMs] of Crundi speaking, and mostly Crundi's own words. */
+    private fun echoOf(s: VoiceState, heard: String, now: Long) =
+        s.lastSaid.isNotEmpty() && now - s.saidUntil <= echoMs && Speech.isEcho(heard, s.lastSaid)
 
     private fun join(a: String, b: String) = listOf(a.trim(), b.trim()).filter { it.isNotEmpty() }.joinToString(" ")
 }
 
 /** Text helpers for speaking a reply. */
 object Speech {
+    private fun words(t: String) = t.lowercase().split(Regex("[^\\p{L}\\p{N}']+")).filter { it.isNotEmpty() }
+
+    /**
+     * [heard] is Crundi's own [said] picked up by the microphone: at least
+     * two words, and most of them (60%) words of what was said.
+     */
+    fun isEcho(heard: String, said: String): Boolean {
+        val h = words(heard)
+        if (h.size < 2) return h.size == 1 && words(said).contains(h[0]) && words(said).size <= 3
+        val s = words(said).toSet()
+        return h.count { it in s }.toFloat() / h.size >= 0.6f
+    }
+
     /**
      * A reply in pieces to speak one after another, so the first can play
      * while the next is fetched. Split after . ! ? and before a new line;
@@ -178,30 +201,59 @@ object DeviceVoices {
 
 /**
  * Hears Master talking over Crundi from the microphone level alone, while the
- * stream to the server is paused. The level is measured with the phone's echo
- * cancelling on, so Crundi's own voice mostly doesn't count; on top of that it
- * must be well above the room's noise (learnt while listening) for [holdMs].
+ * stream to the server is paused.
+ *
+ * Crundi's own voice comes back through the microphone loudly: the phone's
+ * echo cancelling only works on call audio, and Crundi plays as speech on the
+ * speaker. So for the first moments of each answer the detector learns how
+ * much of Crundi's voice ([hear]'s `voice`, its playback level) reaches the
+ * microphone, and from then on counts only what is well above that echo, the
+ * room's noise and a floor, for [holdMs]. When the playback level can't be
+ * measured (the phone's own voice), only a loud voice counts.
  */
 class BargeInDetector(
-    private val holdMs: Long = 280,
+    private val holdMs: Long = 400,
     /** Never quieter than this (0..1 of full scale) counts, however still the room. */
-    private val floorMin: Float = 0.02f,
+    private val floorMin: Float = 0.03f,
     private val overNoise: Float = 3.2f,
+    /** Master must be this many times louder than Crundi's own echo. */
+    private val overEcho: Float = 2.2f,
+    /** The start of each answer: learning the echo, never an interruption. */
+    private val calibrateMs: Long = 700,
+    /** The bar when Crundi's level is unknown. */
+    private val unknownGate: Float = 0.45f,
 ) {
     private var noise = 0.01f
     private var loudFor = 0L
+    private var spokeFor = 0L
+    /** Microphone level per unit of Crundi's playback level. Kept between answers. */
+    private var echo = 0.6f
+    private val recent = FloatArray(4)
+    private var ri = 0
 
     /** While listening: learn how loud the room is. */
     fun learn(level: Float) {
         noise = (noise * 0.95f + level * 0.05f).coerceIn(0.002f, 0.2f)
     }
 
-    /** While speaking: true once Master has been talking for [holdMs]. */
-    fun hear(level: Float, ms: Long): Boolean {
-        val gate = maxOf(floorMin, noise * overNoise)
+    /** Crundi starts an answer. */
+    fun reset() { loudFor = 0L; spokeFor = 0L; recent.fill(0f) }
+
+    /**
+     * While speaking: true once Master has been talking over Crundi for
+     * [holdMs]. [voice] is Crundi's playback level, or null when unknown.
+     */
+    fun hear(level: Float, voice: Float?, ms: Long): Boolean {
+        spokeFor += ms
+        val gate = if (voice == null) maxOf(unknownGate, noise * overNoise) else {
+            recent[ri] = voice; ri = (ri + 1) % recent.size
+            // The playback and the microphone are not in step: use the loudest of the last few.
+            val peak = recent.max()
+            if (spokeFor <= calibrateMs && peak > 0.05f) echo = maxOf(echo * 0.85f, level / peak).coerceIn(0.05f, 3f)
+            maxOf(floorMin, noise * overNoise, echo * peak * overEcho + 0.04f)
+        }
+        if (spokeFor <= calibrateMs) { loudFor = 0L; return false }
         loudFor = if (level >= gate) loudFor + ms else 0L
         return loudFor >= holdMs
     }
-
-    fun reset() { loudFor = 0L }
 }

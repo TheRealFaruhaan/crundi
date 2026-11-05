@@ -58,6 +58,9 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
 
     val speaking: Boolean get() = job?.isActive == true
 
+    /** [level] is measured from the actual playback (Deepgram's voice), not drawn. */
+    val measured: Boolean get() = viz != null
+
     /** Say [text]; [onDone] runs once when it has all been said (not after [stop]). */
     fun say(text: String, onDone: () -> Unit) {
         stop()

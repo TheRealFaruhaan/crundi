@@ -140,26 +140,64 @@ class DeviceVoicesTest {
 }
 
 class BargeInDetectorTest {
-    @Test fun talkingOverCrundiIsHeardAfterAMoment() {
-        val d = BargeInDetector(holdMs = 280)
-        repeat(50) { d.learn(0.01f) }
-        assertFalse(d.hear(0.3f, 100))
-        assertFalse(d.hear(0.3f, 100))
-        assertTrue(d.hear(0.3f, 100))
+    private fun d() = BargeInDetector(holdMs = 400, calibrateMs = 700).also { x -> repeat(50) { x.learn(0.01f) } }
+
+    @Test fun crundisOwnVoiceThroughTheMicIsNotAnInterruption() {
+        val x = d()
+        // Crundi loud on the speaker, its echo at 0.4 of that in the microphone, for 3 s.
+        repeat(30) { i -> val v = if (i % 3 == 0) 0.3f else 0.6f; assertFalse("at ${i * 100} ms", x.hear(v * 0.4f, v, 100)) }
     }
 
-    @Test fun aQuietRoomOrABlipIsNot() {
-        val d = BargeInDetector(holdMs = 280)
-        repeat(50) { d.learn(0.01f) }
-        repeat(10) { assertFalse(d.hear(0.015f, 100)) }
-        assertFalse(d.hear(0.3f, 100)); assertFalse(d.hear(0.01f, 100)); assertFalse(d.hear(0.3f, 100))
+    @Test fun masterTalkingOverItIs() {
+        val x = d()
+        repeat(8) { x.hear(0.2f, 0.5f, 100) }          // learning the echo (0.4)
+        assertFalse(x.hear(0.7f, 0.5f, 100))
+        assertFalse(x.hear(0.7f, 0.5f, 100))
+        assertFalse(x.hear(0.7f, 0.5f, 100))
+        assertTrue(x.hear(0.7f, 0.5f, 100))
     }
 
-    @Test fun aNoisyRoomRaisesTheBar() {
-        val d = BargeInDetector(holdMs = 200)
-        repeat(200) { d.learn(0.1f) }
-        repeat(5) { assertFalse(d.hear(0.2f, 100)) }
-        d.reset()
-        assertFalse(d.hear(0.5f, 100)); assertTrue(d.hear(0.5f, 100))
+    @Test fun neverInTheFirstMomentOfAnAnswer() {
+        val x = d()
+        repeat(7) { assertFalse(x.hear(0.9f, 0.5f, 100)) }
+    }
+
+    @Test fun withThePhonesVoiceOnlyALoudVoiceCounts() {
+        val x = d()
+        repeat(20) { assertFalse(x.hear(0.3f, null, 100)) }
+        x.reset(); repeat(7) { x.hear(0.6f, null, 100) }
+        assertFalse(x.hear(0.6f, null, 100)); assertFalse(x.hear(0.6f, null, 100)); assertFalse(x.hear(0.6f, null, 100))
+        assertTrue(x.hear(0.6f, null, 100))
+    }
+}
+
+class EchoTest {
+    private val m = VoiceMachine()
+    private val said = "Crundi has the most kanban tasks, Master, with thirty-one, all of them done."
+
+    private fun afterAnswer(): VoiceState {
+        var s = VoiceState()
+        for (e in listOf(VoiceEvent.Opened(false, 0), VoiceEvent.Ready(1), VoiceEvent.Utterance("which project has the most tasks", 2),
+            VoiceEvent.Reply(true, said, "", "", 3), VoiceEvent.SpeechDone(1_000))) s = m.on(s, e).first
+        return s
+    }
+
+    @Test fun crundisOwnWordsHeardBackAreNotAsked() {
+        val (s, fx) = m.on(afterAnswer(), VoiceEvent.Utterance("all of them done", 1_400))
+        assertEquals(Phase.Listening, s.phase)
+        assertTrue(fx.isEmpty())
+        assertTrue(Speech.isEcho("with thirty-one, all of them", said))
+    }
+
+    @Test fun masterSpeakingRightAfterIsAsked() {
+        val (s, fx) = m.on(afterAnswer(), VoiceEvent.Utterance("and the done column?", 1_400))
+        assertEquals(Phase.Thinking, s.phase)
+        assertEquals(VoiceEffect.Ask("and the done column?"), fx.last())
+        assertFalse(Speech.isEcho("what is in the backlog of dhivo", said))
+    }
+
+    @Test fun theSameWordsLaterAreNotAnEcho() {
+        val (s, _) = m.on(afterAnswer(), VoiceEvent.Utterance("all of them done", 9_000))
+        assertEquals(Phase.Thinking, s.phase)
     }
 }

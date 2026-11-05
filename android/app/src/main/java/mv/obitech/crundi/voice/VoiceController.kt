@@ -160,15 +160,26 @@ class VoiceController(
                 fallback?.pause()
             }
             VoiceEffect.ResumeStream -> {
-                val s = socket
-                if (s != null) {
-                    s.send("""{"type":"resume"}""")
-                    if (sendPreroll) synchronized(preroll) { for (b in preroll) s.send(b) }
-                }
-                synchronized(preroll) { preroll.clear() }
+                val bargedIn = sendPreroll
                 sendPreroll = false
-                streaming = true
-                fallback?.start()
+                val resume = {
+                    val s = socket
+                    if (s != null) {
+                        s.send("""{"type":"resume"}""")
+                        // Talked over: Master's first words are in the last moment held back.
+                        if (bargedIn) synchronized(preroll) { for (b in preroll.takeLast(3)) s.send(b) }
+                    }
+                    synchronized(preroll) { preroll.clear() }
+                    streaming = true
+                    fallback?.start()
+                }
+                // After an answer, wait for the speaker and the room to go quiet,
+                // or the end of Crundi's own voice is heard as Master's words.
+                if (bargedIn) resume() else scope.launch {
+                    delay(RESUME_AFTER_SPEECH_MS)
+                    val p = _ui.value.state.phase
+                    if (running && (p == Phase.Listening || p == Phase.Thinking)) resume()
+                }
             }
             VoiceEffect.UseFallback -> useFallback()
             VoiceEffect.Finish -> { stopAll(); onFinish() }
@@ -257,7 +268,8 @@ class VoiceController(
         val m = MicStream { bytes, level ->
             _mic.value = level
             if (speakingNow) {
-                if (barge.hear(level, 100)) { speakingNow = false; scope.launch { if (_ui.value.state.phase == Phase.Speaking) bargeIn() } }
+                val voice = if (speaker.measured) speaker.level.value else null
+                if (barge.hear(level, voice, 100)) { speakingNow = false; scope.launch { if (_ui.value.state.phase == Phase.Speaking) bargeIn() } }
             } else barge.learn(level)
             val s = socket
             synchronized(preroll) {
@@ -300,6 +312,8 @@ class VoiceController(
 
     companion object {
         private const val TAG = "CrundiVoice"
+        /** Quiet after Crundi finishes before listening again: the speaker's tail and the room's echo. */
+        private const val RESUME_AFTER_SPEECH_MS = 450L
 
         /** Words the phone's own recogniser is hinted with (the server sends Deepgram more). */
         val VOCABULARY = listOf(
