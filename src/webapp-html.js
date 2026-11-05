@@ -5421,6 +5421,17 @@ export function getWebappHtml(botUsername, appVersion = '') {
       window.CrundiVoice.attach(b, voiceOpts);
       voiceAttached = true;
     }
+    // The PC's wake word opens voice through this (app/voice-wake/controller.js).
+    window.crundiOpenVoice = () => { if (window.CrundiVoice && !window.CrundiVoice.isOpen) openVoice(); };
+    async function showVoiceWake() {
+      const box = document.getElementById('voice-wake-on'), st = document.getElementById('voice-wake-status');
+      if (!box || !window.api || !window.api.voiceWake) return;
+      try {
+        box.checked = !!(await window.api.voiceWake.get());
+        const s = await window.api.voiceWake.status();
+        if (st) st.textContent = typeof s === 'string' ? s : (s && (s.label || s.state)) || '';
+      } catch { /* an older client */ }
+    }
     function voiceOpts() {
       return ({
         apiFetch, token: () => token, host: location.host,
@@ -13674,7 +13685,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<button data-action="voice-ptt-change" style="' + btnStyle + '">Change</button>'
           + '<button data-action="voice-ptt-reset" style="' + btnStyle + '">Reset</button>'
           + '<span id="voice-ptt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
-          + '</div></div>' : '')
+          + '</div>'
+          // The PC client only (D40): its wake word, while the PC is on charge.
+          + (window.api && window.api.voiceWake ? '<div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">'
+            + '<label style="' + labelStyle + ';margin:0;display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="checkbox" id="voice-wake-on" data-action="voice-wake-toggle"> Listen for “Hey Crundi” while charging</label>'
+            + '<span id="voice-wake-status" style="font-size:0.78rem;color:var(--text-muted);"></span></div>' : '')
+          + '</div>' : '')
           // Sign-in methods. At least one must stay on; the server refuses to
           // disable the last, so these toggles can fail and say why.
           + '<div class="info-section"><h4>Sign-in</h4>'
@@ -13837,6 +13853,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '</div>';
 
         panel.innerHTML = html;
+        showVoiceWake();
         const pushHost = document.getElementById('phone-push');
         if (pushHost && window.CrundiPhone) window.CrundiPhone.renderPush(pushHost, { apiFetch, toast });
         renderSkillsSection();
@@ -14293,6 +14310,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
             if (lbl) { const k = document.getElementById('voice-ptt-key'); if (k) k.textContent = lbl; }
             if (st) st.textContent = lbl ? 'Saved on this device' : '';
           });
+          break;
+        }
+        case 'voice-wake-toggle': {
+          const on = !!(document.getElementById('voice-wake-on') || {}).checked;
+          if (window.api && window.api.voiceWake) window.api.voiceWake.set(on).then(() => showVoiceWake());
           break;
         }
         case 'voice-ptt-reset': {
