@@ -61,6 +61,22 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.6 (en-US)
+
+Version code 37. Internal track. Since 1.1.3-dev.5 (code 36): the voice screen as a field of projects, streamed speech, the echo fix.
+
+```
+<en-US>
+A new voice screen, and Crundi stops hearing itself.
+
+- The Crundi head at the centre, voice lines that move as it listens and talks, your usage as arcs, and every project as a living cell showing its real state.
+- Speech streams: Crundi starts talking almost at once.
+- Crundi no longer takes its own voice for yours; talk over it to interrupt.
+
+Needs Crundi server 1.21.6-dev.5 or newer for streamed speech.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.5 (en-US)
 
 Version code 36. Internal track. Since 1.1.3-dev.4 (code 35): billing days for Claude and Deepgram (D42).

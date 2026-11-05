@@ -57,6 +57,19 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     }
 
     /**
+     * [text] spoken as it is made (capability "voice-tts-stream"): raw 16-bit
+     * mono PCM at [STREAM_RATE] written to [sink] as it arrives, so playback
+     * can start after the first bytes. Only call it on a server that lists
+     * the capability: an older one sends a whole mp3 instead.
+     */
+    suspend fun speakStream(text: String, voice: String, sink: java.io.OutputStream) {
+        transport.download(
+            ApiRequest("POST", "/api/voice/speak", query = mapOf("stream" to "1"), json = Uploads.toJson(mapOf("text" to text, "voice" to voice.ifEmpty { null })), headers = mapOf("Accept" to "audio/L16"), slow = true),
+            sink,
+        )
+    }
+
+    /**
      * The live microphone stream. The phone sends 16-bit mono PCM at
      * [sampleRate] as binary frames, and { type: pause | resume | stop };
      * the server sends [ListenEvent]s. Blocking (it may sign in first).
@@ -66,6 +79,9 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
 
     companion object {
         const val CAPABILITY = "voice-assistant"
+        const val TTS_STREAM = "voice-tts-stream"
+        /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
+        const val STREAM_RATE = 24000
         const val UNSUPPORTED = "This server does not have the voice assistant yet. Update the server to use it."
         fun unsupported(e: Throwable) = e is ApiException && e.status == 404
     }

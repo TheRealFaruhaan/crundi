@@ -9,6 +9,7 @@
  * It's the primary user interface — Telegram is only for login + notifications.
  */
 
+import { Readable } from 'node:stream';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import * as tls from './tls.js';
@@ -98,7 +99,7 @@ import { createVoiceAgent } from './voice/agent.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { getVoicePageHtml } from './voice/page.js';
 import { relay as voiceRelay } from './voice/stream.js';
-import { listVoices as voiceListVoices, speak as voiceSpeak } from './voice/tts.js';
+import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
 
@@ -4044,6 +4045,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/voice/speak' && req.method === 'POST') {
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      // ?stream=1 (capability 'voice-tts-stream'): raw PCM piped as Deepgram
+      // makes it, so the phone starts playing after the first bytes.
+      if (url.searchParams.get('stream') === '1') {
+        const st = await voiceSpeakStream(body.text, body.voice ? String(body.voice) : '');
+        if (!st.ok) return json(res, st, 400);
+        res.writeHead(200, { 'Content-Type': `audio/L16; rate=${st.rate}; channels=1`, 'Cache-Control': 'no-store', 'X-Sample-Rate': String(st.rate) });
+        const src = Readable.fromWeb(st.body);
+        src.on('error', () => { try { res.end(); } catch { /* gone */ } });
+        req.on('close', () => { try { src.destroy(); } catch { /* done */ } });
+        src.pipe(res);
+        return;
+      }
       const r = await voiceSpeak(body.text, body.voice ? String(body.voice) : '');
       if (!r.ok) return json(res, r, 400);
       res.writeHead(200, { 'Content-Type': r.mime, 'Content-Length': r.audio.length, 'Cache-Control': 'no-store' });

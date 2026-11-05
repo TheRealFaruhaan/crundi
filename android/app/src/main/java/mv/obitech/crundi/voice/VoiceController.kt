@@ -35,6 +35,8 @@ data class VoiceUi(
     val needsMic: Boolean = false,
     /** The server's host, for "Crundi on dev.example.com". */
     val server: String = "",
+    /** The voice settings and this month's spend, for the screen's usage arcs. */
+    val spend: mv.obitech.crundi.api.VoiceSettings? = null,
 )
 
 /**
@@ -70,6 +72,9 @@ class VoiceController(
     val voiceLevel: StateFlow<Float> = speaker.level
 
     private var api: VoiceApi? = null
+
+    /** The app's live picture of the server (projects, their state, usage) for the field; null without a paired server. */
+    val shell: StateFlow<mv.obitech.crundi.ui.shell.ShellData>? = Servers.current(ctx)?.let { AppGraph.forServer(ctx, it).shell.state }
     @Volatile private var socket: DataSocket? = null
     private var mic: MicStream? = null
     private var fallback: FallbackRecognizer? = null
@@ -100,6 +105,7 @@ class VoiceController(
         val voice = AppGraph.forServer(ctx, server).api.voice
         api = voice
         speaker.api = voice
+        speaker.streams = VoiceApi.TTS_STREAM in caps
         running = true
         streaming = true
         dispatch(VoiceEvent.Opened(isLocked(), now()))
@@ -199,6 +205,8 @@ class VoiceController(
                 })
             } catch (e: Exception) { VoiceReply(ok = false, error = e.message ?: "Something went wrong") }
             dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now()))
+            // The spend moved: refresh the arcs.
+            runCatching { voice.settings() }.getOrNull()?.let { s -> _ui.update { it.copy(spend = s) } }
         }
     }
 
@@ -213,6 +221,7 @@ class VoiceController(
         try {
             val s = voice.settings()
             speaker.deepgramVoice = s.ttsVoice
+            _ui.update { it.copy(spend = s) }
             if (!s.anthropicKeySet) block("There is no Claude API key on $host yet. Add one in its Voice assistant settings ($host/voice).")
         } catch (e: ApiException) {
             if (VoiceApi.unsupported(e)) block(VoiceApi.UNSUPPORTED)

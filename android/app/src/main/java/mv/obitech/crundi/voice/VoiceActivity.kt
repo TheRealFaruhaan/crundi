@@ -35,6 +35,7 @@ class VoiceActivity : ComponentActivity() {
         setContent {
             CrundiTheme {
                 val ui by controller.ui.collectAsStateWithLifecycle()
+                val shell = controller.shell?.collectAsStateWithLifecycle()?.value
                 VoiceScreen(
                     ui,
                     mic = { controller.micLevel.value },
@@ -42,6 +43,7 @@ class VoiceActivity : ComponentActivity() {
                     onMic = { controller.tapMic() },
                     onClose = { finish() },
                     onUnlock = { unlock() },
+                    shell = shell,
                     onAllowMic = { askMic.launch(Manifest.permission.RECORD_AUDIO) },
                 )
             }

@@ -389,6 +389,20 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   vs.updateSettings({ billingDay: 1, deepgramBillingDay: 1 });
 }
 
+// ─── streamed speech ───
+{
+  vs.updateSettings({ deepgramKey: 'dg-test', ttsVoice: 'aura-2-draco-en' });
+  let asked = null;
+  const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 0, 2, 0])); c.close(); } });
+  const r = await vtts.speakStream('Yes, Master.', '', { fetchImpl: async (url) => { asked = new URL(url); return { ok: true, body }; } });
+  ok(r.ok && r.rate === 24000 && r.body === body, 'speech is streamed as raw PCM');
+  ok(asked.searchParams.get('encoding') === 'linear16' && asked.searchParams.get('container') === 'none' && asked.searchParams.get('sample_rate') === '24000', 'Deepgram is asked for raw 16-bit PCM');
+  ok(!(await vtts.speakStream('hi', 'not-a-voice', { fetchImpl: async () => ({ ok: true }) })).ok, 'a bad voice name is never streamed');
+  const { CAPABILITIES } = await import('../src/client-version.js');
+  ok(CAPABILITIES.includes('voice-tts-stream') && CAPABILITIES.includes('voice-assistant'), 'clients can tell the server streams speech');
+  vs.updateSettings({ deepgramKey: '', ttsVoice: '' });
+}
+
 // ─── access ───
 {
   const collab = { role: ROLE_COLLABORATOR, projects: ['proj'] };

@@ -153,6 +153,11 @@ export const CAPABILITIES = Object.freeze([
   // needs neither). An older server has none of it, so a client offers voice
   // (and its spend in the usage view) only when this is listed.
   'voice-assistant',
+  // Speech streamed as it is made: POST /api/voice/speak?stream=1 answers
+  // raw 16-bit mono PCM (audio/L16, rate in X-Sample-Rate) piped from
+  // Deepgram. An older server ignores ?stream and sends a whole mp3, so a
+  // client streams only when this is listed.
+  'voice-tts-stream',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

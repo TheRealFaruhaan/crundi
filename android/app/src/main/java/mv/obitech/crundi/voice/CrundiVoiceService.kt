@@ -74,6 +74,7 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
         view?.setContent {
             CrundiTheme {
                 val ui by c.ui.collectAsStateWithLifecycle()
+                val shell = c.shell?.collectAsStateWithLifecycle()?.value
                 VoiceScreen(
                     ui,
                     mic = { c.micLevel.value },
@@ -81,6 +82,7 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
                     onMic = { c.tapMic() },
                     onClose = { hide() },
                     onUnlock = { openActivity(unlock = true) },
+                    shell = shell,
                     onAllowMic = { openActivity(unlock = false) },
                 )
             }

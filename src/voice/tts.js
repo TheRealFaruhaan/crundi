@@ -105,5 +105,40 @@ export async function speak(text, voice, { fetchImpl = fetch } = {}) {
   return { ok: true, audio: Buffer.from(await res.arrayBuffer()), mime: res.headers?.get?.('content-type') || 'audio/mpeg' };
 }
 
+/** Raw speech for streaming: 16-bit mono PCM at this rate, no container. */
+export const STREAM_RATE = 24000;
+
+/**
+ * Speak `text` as it is made: Deepgram's answer body, raw PCM (linear16,
+ * STREAM_RATE, mono), to pipe to the client while it arrives, so playback
+ * starts after the first bytes rather than the whole sentence.
+ * @returns {Promise<{ok:true, body:ReadableStream, rate:number} | {ok:false, error:string}>}
+ */
+export async function speakStream(text, voice, { fetchImpl = fetch } = {}) {
+  const key = getSettings().deepgramKey;
+  if (!key) return { ok: false, error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' };
+  const model = voice || getSettings().ttsVoice;
+  if (!isVoiceModel(model)) return { ok: false, error: 'Choose a Deepgram voice first' };
+  const t = String(text || '').trim().slice(0, MAX_CHARS);
+  if (!t) return { ok: false, error: 'Nothing to say' };
+  let res;
+  try {
+    res = await fetchImpl(`${SPEAK_URL}?${new URLSearchParams({ model, encoding: 'linear16', sample_rate: String(STREAM_RATE), container: 'none' })}`, {
+      method: 'POST',
+      headers: { Authorization: `Token ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: t }),
+    });
+  } catch (e) {
+    return { ok: false, error: `Couldn't reach Deepgram: ${e.message}` };
+  }
+  if (!res.ok || !res.body) {
+    let why = '';
+    try { const b = await res.json(); why = b.err_msg || b.message || b.reason || ''; } catch { /* not JSON */ }
+    return { ok: false, error: `Deepgram couldn't speak that (${res.status})${why ? `: ${why}` : ''}` };
+  }
+  addDeepgramTtsSpend(t.length);
+  return { ok: true, body: res.body, rate: STREAM_RATE };
+}
+
 /** Tests only. */
 export function _clearCache() { cached = { at: 0, voices: null }; }

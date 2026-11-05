@@ -2,6 +2,8 @@ package mv.obitech.crundi.voice
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.media.MediaPlayer
 import android.media.audiofx.Visualizer
 import android.os.Bundle
@@ -16,6 +18,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -43,6 +46,8 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     var api: VoiceApi? = null
     /** A Deepgram voice name, or "" for the phone's own. */
     var deepgramVoice: String = ""
+    /** The server streams speech as it is made (capability "voice-tts-stream"). */
+    var streams: Boolean = false
 
     private val _level = MutableStateFlow(0f)
     val level: StateFlow<Float> = _level
@@ -59,7 +64,9 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     val speaking: Boolean get() = job?.isActive == true
 
     /** [level] is measured from the actual playback (Deepgram's voice), not drawn. */
-    val measured: Boolean get() = viz != null
+    val measured: Boolean get() = viz != null || track != null
+
+    @Volatile private var track: AudioTrack? = null
 
     /** Say [text]; [onDone] runs once when it has all been said (not after [stop]). */
     fun say(text: String, onDone: () -> Unit) {
@@ -68,6 +75,14 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         if (parts.isEmpty()) { onDone(); return }
         job = scope.launch {
             var cloud = deepgramVoice.isNotEmpty() && api != null
+            // Streamed: the whole answer in one go, playing from its first bytes.
+            if (cloud && streams) {
+                when (stream(text)) {
+                    true -> { if (!isActive) return@launch; _level.value = 0f; job = null; onDone(); return@launch }
+                    false -> {}            // nothing played: try the other ways
+                    null -> return@launch  // stopped
+                }
+            }
             var next: Deferred<ByteArray?>? = if (cloud) fetch(parts[0]) else null
             for ((i, part) in parts.withIndex()) {
                 if (cloud) {
@@ -89,6 +104,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     /** Stop at once (Master talked over it, or the session closed). */
     fun stop() {
         job?.cancel(); job = null
+        releaseTrack()
         releasePlayer()
         tts?.stop()
         ttsDone?.invoke(false); ttsDone = null
@@ -98,6 +114,67 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     fun release() {
         stop()
         tts?.shutdown(); tts = null; ttsReady = null
+    }
+
+    /**
+     * Plays [text] streamed from the server: PCM into an AudioTrack as it
+     * arrives. True when it was played to the end, false when nothing could
+     * be played (try the other ways), null when it was stopped.
+     */
+    private suspend fun stream(text: String): Boolean? {
+        val v = api ?: return false
+        val rate = VoiceApi.STREAM_RATE
+        val t = runCatching {
+            AudioTrack.Builder()
+                .setAudioAttributes(attrs)
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(maxOf(AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT), rate / 5 * 2))
+                .build()
+        }.getOrNull() ?: return false
+        track = t
+        var frames = 0L
+        var odd: Int = -1
+        val sink = object : java.io.OutputStream() {
+            override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                if (track !== t || len <= 0) return
+                // Keep whole samples: a chunk may end half way through one.
+                var start = off; var n = len
+                if (odd >= 0) { t.write(byteArrayOf(odd.toByte(), b[off]), 0, 2); start++; n--; odd = -1; frames++ }
+                if (n % 2 == 1) { odd = b[start + n - 1].toInt() and 0xff; n-- }
+                if (n <= 0) return
+                var sum = 0.0
+                var i = start
+                while (i + 1 < start + n) { val x = ((b[i + 1].toInt() shl 8) or (b[i].toInt() and 0xff)).toShort().toInt(); sum += x.toDouble() * x; i += 2 }
+                _level.value = (kotlin.math.sqrt(kotlin.math.sqrt(sum / (n / 2)) / 32768.0) * 1.4).toFloat().coerceIn(0f, 1f)
+                if (t.playState != AudioTrack.PLAYSTATE_PLAYING) t.play()
+                t.write(b, start, n)
+                frames += n / 2
+            }
+        }
+        return try {
+            withContext(Dispatchers.IO) {
+                v.speakStream(text, deepgramVoice, sink)
+                // Let what is buffered play out.
+                while (track === t && t.playbackHeadPosition < frames) { delay(30) }
+            }
+            if (track !== t) null else true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            null
+        } catch (e: Exception) {
+            Log.w(TAG, "streamed voice: ${e.message}")
+            if (frames > 0) true else false
+        } finally {
+            if (track === t) releaseTrack()
+        }
+    }
+
+    private fun releaseTrack() {
+        val t = track ?: return
+        track = null
+        runCatching { t.pause(); t.flush() }
+        runCatching { t.release() }
     }
 
     private fun fetch(text: String): Deferred<ByteArray?> = scope.async {

@@ -65,16 +65,17 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-private const val BARS = 48
 
 /**
- * The voice assistant's screen, over the lock screen or the app: a live orb
- * that moves with Master's voice while listening and with Crundi's while it
- * speaks, what was heard as it is heard, the spoken answer, and the detail
+ * The voice assistant's screen, over the lock screen or the app: the Crundi
+ * head at the centre of a field of the projects (VoiceField), its voice lines
+ * moving with Master's voice while listening and with Crundi's while it
+ * speaks; what was heard as it is heard, the spoken answer, and the detail
  * that is only shown (D28).
  *
- * [mic] and [voice] are read every frame, not as state, so the orb runs at
- * the display's rate without recomposing the screen.
+ * [shell] is the app's live picture of the server (projects and their state,
+ * usage); null shows the head alone. [mic] and [voice] are read every frame,
+ * not as state, so the field runs at the display's rate without recomposing.
  */
 @Composable
 fun VoiceScreen(
@@ -85,9 +86,20 @@ fun VoiceScreen(
     onClose: () -> Unit,
     onUnlock: (() -> Unit)? = null,
     onAllowMic: () -> Unit = {},
+    shell: mv.obitech.crundi.ui.shell.ShellData? = null,
     modifier: Modifier = Modifier,
 ) {
     val s = ui.state
+    val cells = remember(shell?.projects) { cellsOf(shell?.projects.orEmpty()) }
+    val arcs = remember(shell?.usage, ui.spend) {
+        val sp = ui.spend
+        UsageArcs(
+            week = shell?.usage?.weekUsed,
+            fiveHour = shell?.usage?.fiveHourUsed,
+            api = sp?.let { if (it.monthlyLimitUsd > 0) (it.spend.totalUsd / it.monthlyLimitUsd).toFloat() else 1f },
+            apiLabel = sp?.let { "API $" + "%.2f".format(java.util.Locale.US, it.spend.totalUsd) + " / $" + fmtUsd(it.monthlyLimitUsd) }.orEmpty(),
+        )
+    }
     val phase = if (ui.blocked.isNotEmpty() || ui.needsMic) Phase.Ended else s.phase
     val (a, b) = palette(phase)
     val ca by animateColorAsState(a, tween(450), label = "orbA")
@@ -96,16 +108,13 @@ fun VoiceScreen(
     Box(
         modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xE60A0A0F), Color(0xF70A0A0F), Color(0xFF0A0A0F)))),
     ) {
-        // The orb's glow lights the whole screen a little.
-        Canvas(Modifier.fillMaxSize()) {
-            drawCircle(Brush.radialGradient(listOf(ca.copy(alpha = 0.22f), Color.Transparent), center = Offset(size.width / 2, size.height * 0.34f), radius = size.width * 0.9f))
-        }
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             TopRow(ui, phase, onClose)
-            Spacer(Modifier.weight(0.4f))
-            Orb(phase, ca, cb, mic, voice, Modifier.size(240.dp).semantics { contentDescription = statusText(ui, phase) })
-            Spacer(Modifier.weight(0.25f))
-            Words(ui, phase, onAllowMic, Modifier.weight(1.6f, fill = true))
+            VoiceField(
+                phase, ca, cb, mic, voice, cells, arcs,
+                Modifier.fillMaxWidth().weight(1.5f).padding(top = 8.dp).semantics { contentDescription = statusText(ui, phase) },
+            )
+            Words(ui, phase, onAllowMic, Modifier.weight(1f, fill = true))
             BottomRow(ui, phase, ca, onMic, onClose, onUnlock)
         }
     }
@@ -133,89 +142,6 @@ private fun StatusPill(text: String, phase: Phase) {
         Canvas(Modifier.size(7.dp)) { drawCircle(a.copy(alpha = if (phase == Phase.Ended) 0.6f else pulse.value)) }
         Text(text, style = CrundiType.Small.copy(color = lerp(a, Color.White, 0.35f), fontWeight = FontWeight.Medium))
     }
-}
-
-/**
- * The live orb. A ring of bars carries the voice level outward from the top
- * of the circle on both sides, so speech is seen to flow round it; the core
- * swells with the level. Thinking turns a comet round the ring.
- */
-@Composable
-fun Orb(phase: Phase, a: Color, b: Color, mic: () -> Float, voice: () -> Float, modifier: Modifier = Modifier) {
-    val bars = remember { FloatArray(BARS) }
-    val smooth = remember { FloatArray(1) }
-    var frame by remember { mutableLongStateOf(0L) }
-    val spin = rememberInfiniteTransition(label = "spin").animateFloat(0f, 360f, infiniteRepeatable(tween(1800, easing = LinearEasing)), label = "angle")
-    val breathe = rememberInfiniteTransition(label = "breathe").animateFloat(0f, 1f, infiniteRepeatable(tween(2600), RepeatMode.Reverse), label = "b")
-    val stroke = with(LocalDensity.current) { 3.dp.toPx() }
-
-    LaunchedEffect(phase) {
-        var last = 0L
-        while (true) {
-            androidx.compose.runtime.withFrameNanos { now ->
-                val target = when (phase) {
-                    Phase.Listening -> mic()
-                    Phase.Speaking -> voice()
-                    Phase.Thinking -> 0.10f + 0.06f * breathe.value
-                    Phase.Starting -> 0.06f + 0.05f * breathe.value
-                    Phase.Ended -> 0.02f
-                }.coerceIn(0f, 1f)
-                smooth[0] += (target - smooth[0]) * (if (target > smooth[0]) 0.35f else 0.12f)
-                // Move the wave one bar outward every ~30 ms.
-                if (now - last > 30_000_000L) {
-                    for (i in BARS - 1 downTo 1) bars[i] = bars[i - 1] * 0.97f
-                    bars[0] = smooth[0]
-                    last = now
-                }
-                frame = now
-            }
-        }
-    }
-
-    Canvas(modifier) {
-        if (frame == -1L) return@Canvas // reading it redraws every frame
-        val c = center
-        val r = size.minDimension / 2f
-        val level = smooth[0]
-
-        // Halo
-        drawCircle(Brush.radialGradient(listOf(a.copy(alpha = 0.40f + 0.35f * level), b.copy(alpha = 0.10f), Color.Transparent), c, r * (1.05f + 0.25f * level)), r * (1.05f + 0.25f * level), c)
-
-        // The ring of bars, mirrored left and right from the top.
-        val inner = r * 0.62f
-        for (i in 0 until BARS) {
-            val v = bars[i]
-            val len = r * (0.035f + 0.30f * v)
-            val t = (i + 0.5f) / BARS
-            for (side in intArrayOf(-1, 1)) {
-                val ang = (-PI / 2 + side * t * PI).toFloat()
-                val dx = cos(ang); val dy = sin(ang)
-                val col = lerp(b, a, (0.35f + v * 1.3f).coerceIn(0f, 1f)).copy(alpha = 0.45f + 0.55f * (1f - t * 0.5f))
-                drawLine(col, Offset(c.x + dx * inner, c.y + dy * inner), Offset(c.x + dx * (inner + len), c.y + dy * (inner + len)), stroke, StrokeCap.Round)
-            }
-        }
-
-        // The core
-        val core = r * (0.40f + 0.12f * level + 0.02f * breathe.value)
-        drawCircle(Brush.radialGradient(listOf(lerp(a, Color.White, 0.25f + 0.25f * level), a, b), Offset(c.x - core * 0.25f, c.y - core * 0.3f), core * 1.5f), core, c)
-        drawCircle(Color.White.copy(alpha = 0.10f + 0.15f * level), core, c, style = Stroke(stroke * 0.6f))
-
-        if (phase == Phase.Thinking) comet(c, inner - stroke * 2.5f, spin.value, a, stroke)
-        if (phase == Phase.Starting) drawCircle(a.copy(alpha = 0.25f + 0.3f * breathe.value), inner - stroke * 2.5f, c, style = Stroke(stroke * 0.7f))
-    }
-}
-
-private fun DrawScope.comet(c: Offset, radius: Float, angle: Float, color: Color, stroke: Float) {
-    val brush = Brush.sweepGradient(listOf(Color.Transparent, color.copy(alpha = 0.15f), color, Color.White), c)
-    rotateAround(angle, c) {
-        drawArc(brush, startAngle = 0f, sweepAngle = 300f, useCenter = false, topLeft = Offset(c.x - radius, c.y - radius), size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2), style = Stroke(stroke * 1.3f, cap = StrokeCap.Round))
-    }
-}
-
-private inline fun DrawScope.rotateAround(deg: Float, pivot: Offset, block: DrawScope.() -> Unit) {
-    drawContext.transform.rotate(deg, pivot)
-    block()
-    drawContext.transform.rotate(-deg, pivot)
 }
 
 @Composable
