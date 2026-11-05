@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "id": "voice-memory",
+      "tag": "Voice",
+      "title": "Crundi remembers",
+      "body": "One memory across everything: the conversation carries on after a restart, a notebook keeps your preferences and standing facts, and Crundi can find anything said before, by keyword or by meaning. Read and edit the notebook on the voice page.",
+      "keys": [ { "keys": ["Remember that…"], "text": "keeps it in the notebook" } ],
+      "art": "voice-memory.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "voice-topbar",
+      "tag": "Voice",
+      "title": "Talk to Crundi from the top bar",
+      "body": "The mic in the top bar opens Crundi under it: click to keep it open, hover to peek, or hold the push-to-talk shortcut anywhere and let go to send. Change the shortcut in Settings, Voice assistant.",
+      "keys": [ { "keys": ["Ctrl", "Space"], "text": "hold to talk (bindable)" } ],
+      "art": "voice-topbar.html",
+      "artTitle": "Workbench"
+    },
+    {
+      "id": "voice-wake-pc",
+      "tag": "Voice",
+      "title": "\"Hey Crundi\" on the PC",
+      "body": "On the desktop app, Crundi can listen for \"Hey Crundi\" while the PC is on charge, entirely on the PC: nothing is sent anywhere until you speak to it. Turn it on from the tray or Settings, Voice assistant.",
+      "art": "voice-wake-pc.html",
+      "artTitle": "Desktop"
+    }
+  ]
+}

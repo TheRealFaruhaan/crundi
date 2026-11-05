@@ -63,18 +63,19 @@ app has been run on one.
 
 ## Release notes, 1.1.3-dev.7 (en-US)
 
-Version code 38. Internal track. Since 1.1.3-dev.6 (code 37): actions (Phase 4), the visualizer, pause before sending (D44), Claude and Deepgram apart (D46), screen fixes.
+Version code 38. Internal track. Since 1.1.3-dev.6 (code 37): Hey Crundi (Phase 6), actions (Phase 4), memory (Phase 2), the Voice shortcut (Phase 5), the visualizer and liquid mic, pause before sending (D44), Claude and Deepgram apart (D46).
 
 ```
 <en-US>
-Crundi can act, and a new voice visualizer.
+Crundi's voice assistant, complete for testing.
 
-- Ask by voice: send to a chat, start, close or park chats, add cards and notes, schedule messages and tasks. Weighty things it asks first; answer yes or no out loud.
-- The Crundi head in a live visualizer that follows your voice and Crundi's.
-- Speak slowly: it waits for a real pause before sending.
-- Claude and Deepgram spend shown apart. The screen stays on.
+- "Hey Crundi": listen in the app, or in the background for 15 minutes to 2 hours.
+- It acts: chats, cards, notes, schedules; asks first for weighty things, answer yes or no aloud.
+- It remembers: a notebook, and anything said before.
+- A live visualizer round the Crundi head; a liquid mic; your projects as cells.
+- Speak slowly, it waits. Claude and Deepgram spend apart.
 
-Needs Crundi server 1.21.6-dev.7.
+Needs Crundi server 1.21.6-dev.8.
 </en-US>
 ```
 

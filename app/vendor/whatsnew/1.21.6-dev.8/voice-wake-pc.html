@@ -1,0 +1,16 @@
+<div class="wna a-vwp">
+  <div class="lap"><div class="scr"><div class="disc"></div></div><div class="base"></div></div>
+  <div class="plug">on charge</div>
+  <div class="say">"Hey Crundi"</div>
+  <style>
+    .a-vwp{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-vwp .lap{position:absolute;left:190px;top:60px;width:260px}
+    .a-vwp .scr{height:160px;border-radius:12px 12px 4px 4px;border:2px solid var(--border);background:var(--bg-secondary);position:relative;overflow:hidden}
+    .a-vwp .base{height:12px;margin:0 -20px;border-radius:0 0 10px 10px;background:var(--bg-card);border:1px solid var(--border)}
+    .a-vwp .disc{position:absolute;left:90px;top:40px;width:80px;height:80px;border-radius:50%;background:#05050a;box-shadow:0 0 0 2px var(--accent),0 0 0 9px var(--accent-dim);opacity:0;transform:scale(.6);animation:avwp-d 10s ease infinite}
+    .a-vwp .plug{position:absolute;left:190px;top:250px;font:12px var(--mono);color:var(--green)}
+    .a-vwp .say{position:absolute;left:0;right:0;top:300px;text-align:center;font-size:18px;color:var(--text-secondary);opacity:0;animation:avwp-s 10s ease infinite}
+    @keyframes avwp-s{0%,15%{opacity:0}22%,45%{opacity:1}52%,100%{opacity:0}}
+    @keyframes avwp-d{0%,40%{opacity:0;transform:scale(.6)}48%,88%{opacity:1;transform:none}94%,100%{opacity:0}}
+  </style>
+</div>
