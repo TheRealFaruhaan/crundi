@@ -158,6 +158,10 @@ export const CAPABILITIES = Object.freeze([
   // Deepgram. An older server ignores ?stream and sends a whole mp3, so a
   // client streams only when this is listed.
   'voice-tts-stream',
+  // GET /api/voice/account-usage: what Anthropic reports the whole account
+  // has cost this billing month (an Admin API key in Voice assistant
+  // settings); clients show it only when this is listed.
+  'voice-account-usage',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

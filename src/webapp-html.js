@@ -3844,6 +3844,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="uc-api-head"><b>Claude API · voice assistant</b><span class="uc-api-amount" id="uc-api-amount"></span></div>
         <div class="uc-api-bar"><i id="uc-api-fill"></i></div>
         <div class="uc-api-meta" id="uc-api-meta"></div>
+        <div class="uc-api-meta" id="uc-api-account" hidden></div>
       </div>
       <div class="im-buttons"><button id="uc-close">Close</button></div>
     </div>
@@ -5438,7 +5439,30 @@ export function getWebappHtml(botUsername, appVersion = '') {
         }
         box.classList.toggle('over', !!d.limitReached);
         box.hidden = false;
+        loadAccountUsage(d);
       } catch { box.hidden = true; }
+    }
+    // What Anthropic itself reports the whole account has cost this billing
+    // month (every key, not only the voice assistant). Needs an Admin API key;
+    // without one, a hint where to add it.
+    async function loadAccountUsage(d) {
+      const el = $('#uc-api-account');
+      if (!el) return;
+      el.hidden = true;
+      try {
+        const r = await apiFetch('/api/voice/account-usage');
+        if (!r.ok) return;
+        const a = await r.json();
+        if (a && a.ok) {
+          const since = new Date(a.since).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+          el.textContent = 'Anthropic, whole account: ' + fmtUsd(a.totalUsd) + ' since ' + since;
+        } else if (a && a.needsKey) {
+          el.textContent = 'To see the whole account as Anthropic reports it, add an Admin API key on the voice page (/voice).';
+        } else {
+          el.textContent = 'Anthropic account usage: ' + ((a && a.error) || 'unavailable');
+        }
+        el.hidden = false;
+      } catch { /* leave it hidden */ }
     }
     function closeUsageModal() { $('#usage-modal').classList.remove('visible'); }
     async function loadUsageChart(range) {

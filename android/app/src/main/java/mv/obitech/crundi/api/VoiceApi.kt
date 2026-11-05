@@ -46,6 +46,13 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     /** Start a fresh conversation. */
     suspend fun reset() { rpc.post("/api/voice/reset") }
 
+    /** What Anthropic reports the whole account has cost this billing month (capability "voice-account-usage"). */
+    suspend fun accountUsage(): AccountUsage {
+        val r = transport.exchange(ApiRequest("GET", "/api/voice/account-usage"))
+        if (r.status == 404) throw ApiException(404, UNSUPPORTED)
+        return CrundiJson.decodeFromJsonElement(AccountUsage.serializer(), CrundiJson.parseToJsonElement(r.text))
+    }
+
     suspend fun voices(): VoiceList = rpc.read(rpc.get("/api/voice/voices"), null)
 
     /** [text] spoken in [voice] (or the chosen one): mp3 bytes. */
@@ -86,6 +93,17 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         fun unsupported(e: Throwable) = e is ApiException && e.status == 404
     }
 }
+
+@Serializable
+data class AccountUsage(
+    val ok: Boolean = false,
+    val totalUsd: Double = 0.0,
+    /** The billing month's start (ISO). */
+    val since: String = "",
+    /** No Admin API key on the server yet. */
+    val needsKey: Boolean = false,
+    val error: String = "",
+)
 
 @Serializable
 data class VoiceModel(val id: String = "", val label: String = "")

@@ -43,6 +43,8 @@ const DEFAULTS = {
   model: DEFAULT_MODEL,
   anthropicKey: '',
   deepgramKey: '',
+  // Optional: an Anthropic Admin API key, only to read the account's own usage report.
+  anthropicAdminKey: '',
   // A Deepgram Aura voice (e.g. aura-2-draco-en), or '' for the device's own.
   ttsVoice: '',
   monthlyLimitUsd: DEFAULT_LIMIT_USD,
@@ -144,6 +146,7 @@ export function publicSettings(now = new Date()) {
     models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
     anthropicKeySet: !!s.anthropicKey,
     deepgramKeySet: !!s.deepgramKey,
+    anthropicAdminKeySet: !!s.anthropicAdminKey,
     ttsVoice: s.ttsVoice || '',
     monthlyLimitUsd: s.monthlyLimitUsd,
     spend: { ...spend, totalUsd: round(total), claudeUsd: round(spend.claudeUsd), deepgramUsd: round(spend.deepgramUsd) },
@@ -182,7 +185,7 @@ export function updateSettings(patch = {}) {
     if (v && !/^aura(-2)?-[a-z0-9]+-[a-z]{2}$/.test(v)) return { ok: false, error: `Not a Deepgram voice: ${v}` };
     s.ttsVoice = v;
   }
-  for (const k of ['anthropicKey', 'deepgramKey']) {
+  for (const k of ['anthropicKey', 'deepgramKey', 'anthropicAdminKey']) {
     if (patch[k] !== undefined) s[k] = String(patch[k]).trim();
   }
   save();

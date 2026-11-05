@@ -411,6 +411,25 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   vs.updateSettings({ deepgramKey: '', ttsVoice: '' });
 }
 
+// ─── the account's own usage (Anthropic Admin API) ───
+{
+  const au = await import('../src/voice/account-usage.js');
+  ok(au.sumCost({ data: [{ results: [{ amount: '123.78912', currency: 'USD' }, { amount: '76.21088', currency: 'USD' }] }, { results: [] }] }) === 2, 'the cost report is summed in dollars (amounts are cents)');
+  au._clearCache();
+  ok((await au.accountUsage({ fetchImpl: async () => { throw new Error('no'); } })).needsKey, 'without an Admin key: says one is needed, asks nothing');
+  vs.updateSettings({ anthropicAdminKey: 'sk-ant-admin-test', billingDay: 11 });
+  ok(!JSON.stringify(vs.publicSettings()).includes('sk-ant-admin-test') && vs.publicSettings().anthropicAdminKeySet, 'the Admin key never reaches a client');
+  const calls = [];
+  const pages = [{ data: [{ results: [{ amount: '1000' }] }], has_more: true, next_page: 'p2' }, { data: [{ results: [{ amount: '250' }] }], has_more: false }];
+  const r = await au.accountUsage({ now: new Date('2026-11-05T12:00:00Z'), fetchImpl: async (url, init) => { calls.push({ url: new URL(url), init }); return { ok: true, json: async () => pages[calls.length - 1] }; } });
+  ok(r.ok && r.totalUsd === 12.5 && calls.length === 2 && calls[1].url.searchParams.get('page') === 'p2', 'every page is read and added up');
+  ok(calls[0].url.searchParams.get('starting_at') === '2026-10-11T00:00:00.000Z' && calls[0].init.headers['x-api-key'] === 'sk-ant-admin-test', 'from the Claude billing day, with the Admin key');
+  au._clearCache();
+  const bad = await au.accountUsage({ fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({ error: { message: 'invalid x-api-key' } }) }) });
+  ok(!bad.ok && /Admin API key/.test(bad.error), 'an ordinary key is refused with a clear reason');
+  vs.updateSettings({ anthropicAdminKey: '', billingDay: 1 });
+}
+
 // ─── access ───
 {
   const collab = { role: ROLE_COLLABORATOR, projects: ['proj'] };

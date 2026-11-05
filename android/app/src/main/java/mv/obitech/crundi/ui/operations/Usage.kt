@@ -65,6 +65,8 @@ data class UsageState(
     val now: Long = System.currentTimeMillis(),
     /** The voice assistant's Claude API spend; null hides it (a server without it, a collaborator). */
     val api: mv.obitech.crundi.api.VoiceSettings? = null,
+    /** What Anthropic reports the whole account has cost; null hides the line. */
+    val account: mv.obitech.crundi.api.AccountUsage? = null,
 )
 
 class UsageEvents(
@@ -104,11 +106,12 @@ fun UsageRoute() {
     // The voice assistant's API spend, as the web's usage modal shows it. Hidden when
     // the server has no assistant (404) or says no: never an error on this screen.
     val voice = rememberLoad { runCatching { api.voice.settings() }.getOrNull() }
+    val account = rememberLoad { runCatching { api.voice.accountUsage() }.getOrNull() }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
     val usage: Load<Usage?> = live?.let { Load.Ready(it) } ?: first.value
     UsageScreen(
-        UsageState(usage, history.value, range, week, five, now, api = voice.value.valueOrNull),
-        UsageEvents(onRange = { range = it }, onShowWeek = { week = it }, onShowFive = { five = it }, onRefresh = { first.reload(); history.reload(); voice.reload() }, onBack = { nav.back() }),
+        UsageState(usage, history.value, range, week, five, now, api = voice.value.valueOrNull, account = account.value.valueOrNull),
+        UsageEvents(onRange = { range = it }, onShowWeek = { week = it }, onShowFive = { five = it }, onRefresh = { first.reload(); history.reload(); voice.reload(); account.reload() }, onBack = { nav.back() }),
     )
 }
 
@@ -135,7 +138,7 @@ fun UsageScreen(state: UsageState, events: UsageEvents = UsageEvents()) {
                     WindowCard("5-hour", "5h", usage.fiveHour, FIVE_HOURS, state.now)
                     usage.weekOpus?.let { WindowCard("Weekly · Opus", "opus", it, WEEK, state.now, compact = true) }
                     usage.weekSonnet?.let { WindowCard("Weekly · Sonnet", "sonnet", it, WEEK, state.now, compact = true) }
-                    state.api?.let { ApiSpendCard(it) }
+                    state.api?.let { ApiSpendCard(it, state.account) }
                     HistoryCard(state, events)
                 }
             }
@@ -176,7 +179,7 @@ private fun WindowCard(title: String, tag: String, w: UsageWindow?, windowMs: Lo
 
 /** The voice assistant's metered Claude API spend this month (separate from the subscription above). */
 @Composable
-private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings) {
+private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings, account: mv.obitech.crundi.api.AccountUsage? = null) {
     val sp = v.spend
     val frac = if (v.monthlyLimitUsd > 0) (sp.totalUsd / v.monthlyLimitUsd).toFloat().coerceIn(0f, 1f) else 1f
     val usd = { d: Double -> "$" + "%.2f".format(java.util.Locale.US, d) }
@@ -191,6 +194,15 @@ private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings) {
         Meter(frac, color = if (v.limitReached) CrundiColors.Red else CrundiColors.Accent, height = 12.dp)
         Text("of ${usd(v.monthlyLimitUsd)} this billing month${if (v.nextReset.isNotEmpty()) ", Claude restarts " + v.nextReset else ""} · Claude ${usd(sp.claudeUsd)} · Deepgram ${usd(sp.deepgramUsd)} · ${sp.turns} request${if (sp.turns == 1) "" else "s"}", style = CrundiType.Meta.copy(fontSize = 12.sp))
         if (v.limitReached) StatusBadge("limit reached: voice stops until next month", BadgeKind.Bad)
+        // Anthropic's own figure for the whole account: every key, not only voice.
+        account?.let { a ->
+            val line = when {
+                a.ok -> "Anthropic, whole account: ${usd(a.totalUsd)} since ${a.since.take(10)}"
+                a.needsKey -> "To see the whole account as Anthropic reports it, add an Admin API key on the server's /voice page."
+                else -> "Anthropic account usage: ${a.error.ifEmpty { "unavailable" }}"
+            }
+            Text(line, style = CrundiType.Small.copy(color = if (a.ok) CrundiColors.TextPrimary else CrundiColors.TextMuted))
+        }
     }
 }
 

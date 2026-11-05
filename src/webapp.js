@@ -98,6 +98,7 @@ import { makeTools as makeVoiceTools } from './voice/tools.js';
 import { createVoiceAgent } from './voice/agent.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { getVoicePageHtml } from './voice/page.js';
+import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
 import { relay as voiceRelay } from './voice/stream.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
@@ -2578,7 +2579,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     serviceLogs: (key, lines) => getServiceLogs(key, lines),
     notes, kanban, mindmap,
     schedules: (project) => schedule.listSchedules(project),
-    usage: () => usage.getUsage(),
+    // Live when it can be had; otherwise the last good reading (what the top
+    // bar shows), so a rate-limited usage API never leaves voice with nothing.
+    usage: async () => {
+      const live = await usage.getUsage();
+      if (live && live.ok) return live;
+      const last = usage.getLatestStored();
+      return last.ok ? { ...last, note: `The live usage could not be read (${live?.error || 'unavailable'}); these are the last figures, from ${last.fetchedAt}.` } : live;
+    },
     secrets: () => secrets.listSecrets(),
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
     terminals: () => (claudeTerminals ? claudeTerminals.list() : []),
@@ -4025,7 +4033,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
       const r = voiceSettings.updateSettings({
         model: body.model, monthlyLimitUsd: body.monthlyLimitUsd,
-        anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey,
+        anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey, anthropicAdminKey: body.anthropicAdminKey,
         ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay, pauseMs: body.pauseMs,
       });
       return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
@@ -4036,6 +4044,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Optional (capability 'voice-assistant'): locked, the phone is on its lock screen.
       const r = await voiceAgent.turn(String(body.text || ''), { where: String(body.where || '').slice(0, 200), locked: body.locked === true });
       return json(res, r, r.ok ? 200 : (r.limitReached ? 402 : 400));
+    }
+    // What Anthropic reports the whole account has cost this billing month
+    // (needs an Admin API key; capability 'voice-account-usage').
+    if (path === '/api/voice/account-usage' && req.method === 'GET') {
+      return json(res, await voiceAccountUsage({ force: url.searchParams.get('force') === '1' }));
     }
     // Deepgram's voices, for the picker.
     if (path === '/api/voice/voices' && req.method === 'GET') {

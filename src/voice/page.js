@@ -101,6 +101,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <input id="pause" type="number" min="1" max="5" step="0.5">
   <label for="akey">Claude API key <span id="akeyState"></span></label>
   <input id="akey" type="password" autocomplete="off" placeholder="Leave empty to keep the current key">
+  <label for="xkey">Anthropic Admin API key, optional: to show the whole account's usage <span id="xkeyState"></span></label>
+  <input id="xkey" type="password" autocomplete="off" placeholder="sk-ant-admin… Leave empty to keep the current key">
   <label for="dkey">Deepgram API key <span id="dkeyState"></span></label>
   <input id="dkey" type="password" autocomplete="off" placeholder="Leave empty to keep the current key">
   <div class="row"><button id="save">Save</button><span id="saved"></span></div>
@@ -337,6 +339,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       if (s.deepgramKeySet && !allVoices.length) loadVoices();
       if (!s.deepgramKeySet) $('voices').innerHTML = '<div class="spend">Add a Deepgram key below to hear its voices.</div>';
       $('akeyState').innerHTML = s.anthropicKeySet ? '<span class="ok">· set</span>' : '<span class="err">· not set</span>';
+      $('xkeyState').innerHTML = s.anthropicAdminKeySet ? '<span class="ok">· set</span>' : '<span>· not set</span>';
       $('dkeyState').innerHTML = s.deepgramKeySet ? '<span class="ok">· set</span>' : '<span class="err">· not set</span>';
       const sp = s.spend;
       $('spend').innerHTML = 'This billing month (Claude restarts ' + esc(s.nextReset || '') + ', Deepgram ' + esc(s.deepgramNextReset || '') + '): $' + sp.totalUsd.toFixed(2) + ' of $' + s.monthlyLimitUsd
@@ -348,9 +351,10 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value), billingDay: Number($('bday').value) || 1, deepgramBillingDay: Number($('dday').value) || 1, pauseMs: Math.round((Number($('pause').value) || 2) * 1000) };
     if ($('akey').value.trim()) body.anthropicKey = $('akey').value.trim();
     if ($('dkey').value.trim()) body.deepgramKey = $('dkey').value.trim();
+    if ($('xkey').value.trim()) body.anthropicAdminKey = $('xkey').value.trim();
     const r = await api('/api/voice/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     $('saved').innerHTML = r.ok ? '<span class="ok">Saved</span>' : '<span class="err">' + esc(r.error) + '</span>';
-    $('akey').value = ''; $('dkey').value = '';
+    $('akey').value = ''; $('dkey').value = ''; $('xkey').value = '';
     loadSettings();
   };
   loadSettings();
