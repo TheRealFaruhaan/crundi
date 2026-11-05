@@ -296,6 +296,19 @@ Now the agent may change things (exceptions to D10):
   never unlimited (D4–D6), confirmed before it turns on (D32); notification with time left and Stop; "stopped —
   tap to resume" if killed.
 
+## Web and PC voice (D39) — BUILT 2026-11-05
+
+As built (`app/vendor/crundi-voice.js`, hooked into the web page): the same
+voice screen as the phone (contour visualizer round the Crundi head, usage
+arcs in the disc, projects as cells in their live state, the liquid mic,
+yes/no by voice, a box to type). Phone-sized screens: full screen. Wide
+screens (the PC client loads the same page): a dropdown under the top-bar
+mic, opened by click (stays), hover (goes when left idle) or holding the
+push-to-talk shortcut (sends on release), bindable in Settings > Voice
+assistant (default Ctrl+Space, kept per device). Microphone as 16 kHz PCM to
+`/api/voice/listen`; speech streamed in the Deepgram voice (or the
+browser's en-GB). Checked in a browser: typed questions answered and spoken.
+
 ## Later
 
 - Web UI and desktop voice on the same server side (D29).
