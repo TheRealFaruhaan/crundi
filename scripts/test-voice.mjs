@@ -581,6 +581,8 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(summarised && (await ix.search('usage several times')).results.some(r => r.kind === 'summary'), 'the summary is searchable');
   ok((await ix.search('usage is left')).results.some(r => r.kind === 'turn'), 'and so are the turns before it');
   ok(a1.toolNames.includes('memory') && a1.toolNames.includes('memory_search'), 'the notebook and search are tools');
+  // Windows cannot delete an open database: close them before the temp folder goes.
+  ix.close(); noModel.close();
 }
 
 // ─── access ───
@@ -590,6 +592,6 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(mayAccess({ role: ROLE_OWNER }, 'POST', '/api/voice/turn'), 'the owner can');
 }
 
-rmSync(dir, { recursive: true, force: true });
+try { rmSync(dir, { recursive: true, force: true }); } catch { /* a locked temp file is not a failed test */ }
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);
