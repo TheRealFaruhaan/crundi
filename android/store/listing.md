@@ -61,6 +61,21 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.7 (en-US)
+
+Version code 38. Internal track. Since 1.1.3-dev.6 (code 37): pause before sending (D44), screen fixes.
+
+```
+<en-US>
+Voice screen fixes.
+
+- Speak slowly: Crundi waits for a real pause (2 seconds by default) before sending what you said. Change it in App settings, Voice assistant.
+- The screen is solid, no longer see-through.
+- Long answers scroll instead of being cut off.
+- Usage sits under the field; stopped services are dim, not red.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.6 (en-US)
 
 Version code 37. Internal track. Since 1.1.3-dev.5 (code 36): the voice screen as a field of projects, streamed speech, the echo fix.

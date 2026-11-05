@@ -106,7 +106,7 @@ fun VoiceScreen(
     val cb by animateColorAsState(b, tween(450), label = "orbB")
 
     Box(
-        modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xE60A0A0F), Color(0xF70A0A0F), Color(0xFF0A0A0F)))),
+        modifier.fillMaxSize().background(CrundiColors.BgPrimary),
     ) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             TopRow(ui, phase, onClose)
@@ -114,8 +114,26 @@ fun VoiceScreen(
                 phase, ca, cb, mic, voice, cells, arcs,
                 Modifier.fillMaxWidth().weight(1.5f).padding(top = 8.dp).semantics { contentDescription = statusText(ui, phase) },
             )
+            UsageLegend(arcs)
             Words(ui, phase, onAllowMic, Modifier.weight(1f, fill = true))
             BottomRow(ui, phase, ca, onMic, onClose, onUnlock)
+        }
+    }
+}
+
+/** Usage under the field, in the arcs' colours: week, 5 hours, the API spend. */
+@Composable
+private fun UsageLegend(u: UsageArcs) {
+    val items = listOfNotNull(
+        u.week?.let { CrundiColors.AccentHover to "wk ${(it * 100).toInt()}%" },
+        u.fiveHour?.let { CrundiColors.Sky to "5h ${(it * 100).toInt()}%" },
+        u.api?.let { CrundiColors.Ask to u.apiLabel },
+    )
+    if (items.isEmpty()) return
+    Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        for ((col, label) in items) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Box(Modifier.size(7.dp).clip(CircleShape).background(col))
+            Text(label, style = CrundiType.Meta.copy(fontSize = 11.sp, color = col.copy(alpha = 0.9f)))
         }
     }
 }
@@ -147,7 +165,8 @@ private fun StatusPill(text: String, phase: Phase) {
 @Composable
 private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, modifier: Modifier) {
     val s = ui.state
-    Column(modifier.fillMaxWidth().animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    // Scrolls: a long answer is never cut off.
+    Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = 10.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when {
             ui.needsMic -> Problem("mic", "Crundi needs the microphone to hear you.") {
                 CrundiButton("Allow the microphone", onAllowMic, kind = ButtonKind.Primary, icon = "mic")
@@ -167,13 +186,13 @@ private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, modifier: M
                     Text(if (s.locked) "Ask anything. Changes wait for an unlock." else "Ask me anything, Master.", style = CrundiType.Body.copy(fontSize = 16.sp, color = CrundiColors.TextMuted), textAlign = TextAlign.Center)
                 }
                 AnimatedVisibility(s.reply.isNotEmpty(), enter = fadeIn(tween(300)), exit = fadeOut()) {
-                    Text(s.reply, style = CrundiType.Title.copy(fontSize = 21.sp, lineHeight = 29.sp, fontWeight = FontWeight.Medium), textAlign = TextAlign.Center)
+                    Text(s.reply, style = CrundiType.Title.copy(fontSize = 18.sp, lineHeight = 25.sp, fontWeight = FontWeight.Medium), textAlign = TextAlign.Center)
                 }
                 if (s.detail.isNotEmpty()) {
                     Box(
-                        Modifier.fillMaxWidth().heightIn(max = 280.dp).clip(RoundedCornerShape(14.dp))
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                             .background(CrundiColors.BgSecondary.copy(alpha = 0.85f)).border(1.dp, CrundiColors.Border, RoundedCornerShape(14.dp))
-                            .verticalScroll(rememberScrollState()).padding(14.dp),
+                            .padding(14.dp),
                     ) { MarkdownText(s.detail, compact = true) }
                 }
                 if (s.notice.isNotEmpty()) Text(s.notice, style = CrundiType.Small.copy(color = CrundiColors.Yellow), textAlign = TextAlign.Center)

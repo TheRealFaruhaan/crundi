@@ -124,7 +124,9 @@ fun VoiceField(
         val L = 38f * density * min(1f, min(size.width, size.height * 0.8f) / (390f * density) * 1.05f)
 
         // Light from the centre.
-        drawRect(Brush.radialGradient(listOf(a.copy(alpha = 0.16f + 0.12f * lvl), Color.Transparent), c, max(size.width, size.height) * 0.75f))
+        // A glow that has faded to nothing well inside the field, so it shows no edge.
+        val glowR = min(size.width, size.height) * 0.5f
+        drawCircle(Brush.radialGradient(0f to a.copy(alpha = 0.16f + 0.12f * lvl), 0.7f to a.copy(alpha = 0.04f), 1f to Color.Transparent, center = c, radius = glowR), glowR, c)
 
         // ─── cells: positions on an ellipse round the centre, slowly drifting ───
         val n = cells.size
@@ -187,7 +189,7 @@ fun VoiceField(
             drawCircle(col.copy(alpha = 0.95f), r * 0.28f, Offset(p.x + sin(t * 0.7f + p.i) * 2f * density, p.y + cos(t * 0.6f + p.i) * 2f * density))
             p.cell.service?.let { up ->
                 val aa = t * 1.2f + p.i
-                drawCircle(if (up) CrundiColors.Green else CrundiColors.Red, 2.2f * density, Offset(p.x + cos(aa) * r * 0.62f, p.y + sin(aa) * r * 0.62f))
+                drawCircle(if (up) CrundiColors.Green else CrundiColors.TextMuted, 2.2f * density, Offset(p.x + cos(aa) * r * 0.62f, p.y + sin(aa) * r * 0.62f))
             }
             val name = if (p.cell.name.length > 14) p.cell.name.take(13) + "…" else p.cell.name
             val lay = labels.getOrPut(name + idle) { measurer.measure(name, labelStyle.copy(color = if (idle) CrundiColors.TextMuted else Color(0xFFB8B8D0))) }
@@ -206,8 +208,6 @@ fun VoiceField(
             drawArc(CrundiColors.Border.copy(alpha = 0.9f), -90f, 270f, false, tl, sz, style = Stroke(3f * density, cap = StrokeCap.Round))
             drawArc(col.copy(alpha = 0.35f), -90f, max(2f, 270f * v.coerceIn(0f, 1f)), false, tl, sz, style = Stroke(7f * density, cap = StrokeCap.Round))
             drawArc(col, -90f, max(2f, 270f * v.coerceIn(0f, 1f)), false, tl, sz, style = Stroke(3f * density, cap = StrokeCap.Round))
-            val lay = labels.getOrPut("u:$label") { measurer.measure(label, monoStyle.copy(color = col.copy(alpha = 0.85f))) }
-            drawText(lay, topLeft = Offset(c.x - 6f * density - lay.size.width, c.y - rad - lay.size.height / 2f))
         }
 
         // ─── voice lines round the head ───

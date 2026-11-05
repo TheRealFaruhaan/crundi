@@ -97,6 +97,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <input id="bday" type="number" min="1" max="31" step="1">
   <label for="dday">Deepgram billing day</label>
   <input id="dday" type="number" min="1" max="31" step="1">
+  <label for="pause">Pause before sending (seconds; how long you may pause before what you said is sent)</label>
+  <input id="pause" type="number" min="1" max="5" step="0.5">
   <label for="akey">Claude API key <span id="akeyState"></span></label>
   <input id="akey" type="password" autocomplete="off" placeholder="Leave empty to keep the current key">
   <label for="dkey">Deepgram API key <span id="dkeyState"></span></label>
@@ -330,6 +332,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       if (document.activeElement !== $('limit')) $('limit').value = s.monthlyLimitUsd;
       if (document.activeElement !== $('bday')) $('bday').value = s.billingDay || 1;
       if (document.activeElement !== $('dday')) $('dday').value = s.deepgramBillingDay || 1;
+      if (document.activeElement !== $('pause')) $('pause').value = (s.pauseMs || 2000) / 1000;
       if (ttsVoice !== (s.ttsVoice || '')) { ttsVoice = s.ttsVoice || ''; drawVoices(); }
       if (s.deepgramKeySet && !allVoices.length) loadVoices();
       if (!s.deepgramKeySet) $('voices').innerHTML = '<div class="spend">Add a Deepgram key below to hear its voices.</div>';
@@ -342,7 +345,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     } catch (e) { $('spend').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
   }
   $('save').onclick = async () => {
-    const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value), billingDay: Number($('bday').value) || 1, deepgramBillingDay: Number($('dday').value) || 1 };
+    const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value), billingDay: Number($('bday').value) || 1, deepgramBillingDay: Number($('dday').value) || 1, pauseMs: Math.round((Number($('pause').value) || 2) * 1000) };
     if ($('akey').value.trim()) body.anthropicKey = $('akey').value.trim();
     if ($('dkey').value.trim()) body.deepgramKey = $('dkey').value.trim();
     const r = await api('/api/voice/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

@@ -49,6 +49,8 @@ const DEFAULTS = {
   // The day of the month each account is billed: its spend month starts then.
   billingDay: 1,
   deepgramBillingDay: 1,
+  // How long Master may pause before what they said is sent (D44), ms.
+  pauseMs: 2000,
   // month: the Claude month's first day; deepgramMonth: Deepgram's.
   spend: { month: '', deepgramMonth: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },
 };
@@ -136,6 +138,7 @@ export function publicSettings(now = new Date()) {
     periodStart: ymd(period.start),
     nextReset: ymd(period.next),
     deepgramBillingDay: s.deepgramBillingDay,
+    pauseMs: s.pauseMs,
     deepgramPeriodStart: ymd(dg.start),
     deepgramNextReset: ymd(dg.next),
     models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
@@ -168,6 +171,11 @@ export function updateSettings(patch = {}) {
     const d = Number(patch[k]);
     if (!Number.isInteger(d) || d < 1 || d > 31) return { ok: false, error: 'A billing day is a day of the month, 1 to 31' };
     s[k] = d;
+  }
+  if (patch.pauseMs !== undefined) {
+    const n = Number(patch.pauseMs);
+    if (!Number.isFinite(n) || n < 1000 || n > 5000) return { ok: false, error: 'The pause before sending is 1 to 5 seconds' };
+    s.pauseMs = Math.round(n);
   }
   if (patch.ttsVoice !== undefined) {
     const v = String(patch.ttsVoice || '');

@@ -47,14 +47,22 @@ export function rawAudio({ encoding, sample_rate: rate } = {}) {
   return { encoding: String(encoding), sample_rate: n };
 }
 
-/** The streaming URL: Nova-3, words as they're heard, end of speech detected. */
-export function streamUrl(terms, { language = 'en', audio = null } = {}) {
+/** How long Master may pause before what they said is sent (D44): settings.pauseMs, within these. */
+export const PAUSE_MS = { min: 1000, max: 5000, default: 2000 };
+
+/**
+ * The streaming URL: Nova-3, words as they're heard, end of speech detected.
+ * What Master says is complete only after `pauseMs` without a word
+ * (UtteranceEnd), so a slow speaker with pauses isn't cut off mid-sentence.
+ */
+export function streamUrl(terms, { language = 'en', audio = null, pauseMs = PAUSE_MS.default } = {}) {
+  const pause = Math.min(PAUSE_MS.max, Math.max(PAUSE_MS.min, Math.round(Number(pauseMs) || PAUSE_MS.default)));
   const q = new URLSearchParams({
     model: 'nova-3', language,
     smart_format: 'true', punctuate: 'true',
     interim_results: 'true',      // words while still speaking
-    endpointing: '400',           // a 400 ms pause ends a phrase
-    utterance_end_ms: '1200',     // 1.2 s with no words ends the utterance
+    endpointing: '500',           // a short pause finalises a phrase (not the utterance)
+    utterance_end_ms: String(pause), // this long with no words ends the utterance
     vad_events: 'true',           // "speech started"
   });
   if (audio) { q.set('encoding', audio.encoding); q.set('sample_rate', String(audio.sample_rate)); q.set('channels', '1'); }
@@ -65,7 +73,8 @@ export function streamUrl(terms, { language = 'en', audio = null } = {}) {
 /**
  * Turns Deepgram's messages into utterances. Pure, so it can be tested.
  * Finished phrases (is_final) are joined; the utterance is complete at
- * speech_final or UtteranceEnd.
+ * UtteranceEnd only: speech_final comes after a short pause, and Master may
+ * pause mid-sentence (D44).
  */
 export function createAssembler() {
   let parts = [];
@@ -82,7 +91,6 @@ export function createAssembler() {
       const text = String(msg.channel?.alternatives?.[0]?.transcript || '').trim();
       if (msg.is_final) {
         if (text) parts.push(text);
-        if (msg.speech_final) return flush();
         return parts.length ? { type: 'interim', text: parts.join(' ') } : null;
       }
       if (!text) return null;
@@ -106,7 +114,7 @@ export function createAssembler() {
  * @param opts.audio  { encoding, sample_rate } for raw PCM (see rawAudio), or null
  * @param opts.WebSocketImpl  tests pass a fake
  */
-export function relay(client, { projects = [], services = [], audio = null, WebSocketImpl = WebSocket } = {}) {
+export function relay(client, { projects = [], services = [], audio = null, pauseMs = PAUSE_MS.default, WebSocketImpl = WebSocket } = {}) {
   const send = (m) => { if (client.readyState === 1) client.send(JSON.stringify(m)); };
   const key = getSettings().deepgramKey;
   if (!key) {
@@ -114,7 +122,7 @@ export function relay(client, { projects = [], services = [], audio = null, WebS
     client.close();
     return;
   }
-  const dg = new WebSocketImpl(streamUrl(keyterms({ projects, services }), { audio: rawAudio(audio || {}) }), { headers: { Authorization: `Token ${key}` } });
+  const dg = new WebSocketImpl(streamUrl(keyterms({ projects, services }), { audio: rawAudio(audio || {}), pauseMs }), { headers: { Authorization: `Token ${key}` } });
   const asm = createAssembler();
   const queue = [];
   let open = false;

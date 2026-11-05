@@ -4026,7 +4026,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const r = voiceSettings.updateSettings({
         model: body.model, monthlyLimitUsd: body.monthlyLimitUsd,
         anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey,
-        ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay,
+        ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay, pauseMs: body.pauseMs,
       });
       return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
     }
@@ -7037,6 +7037,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             services: getAllServiceStatus().map(sv => sv.name),
             // The phone streams raw 16-bit PCM and says so; a browser sends WebM.
             audio: { encoding: url.searchParams.get('encoding'), sample_rate: url.searchParams.get('sample_rate') },
+            pauseMs: voiceSettings.getSettings().pauseMs,
           });
         });
         return;

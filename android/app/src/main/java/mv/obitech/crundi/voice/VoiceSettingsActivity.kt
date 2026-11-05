@@ -102,6 +102,7 @@ class VoiceSettingsEvents(
     val onSaveDay: () -> Unit = {},
     val onDgDayText: (String) -> Unit = {},
     val onSaveDgDay: () -> Unit = {},
+    val onPause: (Int) -> Unit = {},
     val onReset: () -> Unit = {},
     val onTry: () -> Unit = {},
 )
@@ -160,12 +161,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
-    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, note: String = "Saved") {
+    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, pause: Int? = null, note: String = "Saved") {
         val v = voice() ?: return
         ui = ui.copy(busy = true)
         lifecycleScope.launch {
             ui = try {
-                val s = v.save(model, limit, ttsVoice, day, dgDay)
+                val s = v.save(model, limit, ttsVoice, day, dgDay, pause)
                 ui.copy(server = s, busy = false, note = note, limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString())
             } catch (e: Exception) { ui.copy(busy = false, note = e.message ?: "Could not save") }
         }
@@ -208,6 +209,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             val d = ui.dgDayText.trim().toIntOrNull()
             if (d == null || d !in 1..31) ui = ui.copy(note = "The billing day is a day of the month, 1 to 31") else save(dgDay = d, note = "Deepgram billing day saved")
         },
+        onPause = { ms -> save(pause = ms, note = "Crundi waits ${ms / 1000.0} s of quiet before sending") },
         onReset = {
             lifecycleScope.launch { ui = ui.copy(note = runCatching { voice()?.reset(); "Crundi starts a fresh conversation" }.getOrElse { it.message ?: "Could not reset" }) }
         },
@@ -336,6 +338,16 @@ private fun ServerPart(ui: VoiceSettingsUi, s: VoiceSettings, ev: VoiceSettingsE
                 s.ttsVoice.isEmpty() && v.name == picked,
                 onPick = { ev.onPickDevice(v.name) }, onPreview = { ev.onPreviewDevice(v.name) },
             )
+        }
+    }
+
+    // ─── Pause before sending (D44) ───
+    Section("Listening")
+    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
+        Text("Pause before sending", style = CrundiType.Heading)
+        Text("How long you can pause before what you said is sent. Longer lets you speak slowly, with pauses.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (ms in listOf(1500, 2000, 2500, 3000, 4000)) CrundiChip("${ms / 1000.0} s".replace(".0 s", " s"), s.pauseMs == ms, { if (s.pauseMs != ms) ev.onPause(ms) })
         }
     }
 

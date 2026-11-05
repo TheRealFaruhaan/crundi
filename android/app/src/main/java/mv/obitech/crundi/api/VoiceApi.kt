@@ -22,8 +22,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     suspend fun settings(): VoiceSettings = rpc.read(rpc.get("/api/voice/settings"), null)
 
     /** Change the model, the monthly limit or the Deepgram voice ("" = the phone's own). Null leaves one as it is. */
-    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null): VoiceSettings =
-        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay)), null)
+    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs)), null)
 
     /**
      * One request. [where] is what Master is looking at ("lock screen",
@@ -116,6 +116,8 @@ data class VoiceSettings(
     /** Deepgram bills on its own day: its part of the spend restarts then. */
     val deepgramBillingDay: Int = 1,
     val deepgramNextReset: String = "",
+    /** How long Master may pause before what they said is sent, ms (D44). */
+    val pauseMs: Int = 2000,
     val spend: VoiceSpend = VoiceSpend(),
     val limitReached: Boolean = false,
 )
