@@ -123,7 +123,7 @@ fun VoiceScreen(
             // A question awaiting Master's yes: answered by voice (Phase 4), no buttons.
             if (s.question.isNotEmpty() && phase != Phase.Thinking) Text("Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             if (s.needsUnlock && onUnlock != null) CrundiButton("Unlock the phone", onUnlock, kind = ButtonKind.Primary, icon = "lock", modifier = Modifier.padding(top = 6.dp))
-            BottomRow(ui, phase, ca, onMic, onClose, onUnlock)
+            BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock)
         }
     }
 }
@@ -220,7 +220,7 @@ private fun Problem(icon: String, text: String, action: @Composable () -> Unit =
 }
 
 @Composable
-private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, onMic: () -> Unit, onClose: () -> Unit, onUnlock: (() -> Unit)?) {
+private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float, onMic: () -> Unit, onClose: () -> Unit, onUnlock: (() -> Unit)?) {
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f)) {
             if (ui.state.locked && onUnlock != null) {
@@ -236,20 +236,7 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, onMic: () -> Uni
         val icon = if (phase == Phase.Speaking) "stop" else "mic"
         val label = when (phase) { Phase.Speaking -> "Stop talking"; Phase.Ended -> "Talk again"; else -> "Listening" }
         val ring = rememberInfiniteTransition(label = "ring").animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "r")
-        Box(Modifier.size(84.dp), contentAlignment = Alignment.Center) {
-            if (phase == Phase.Listening) Canvas(Modifier.fillMaxSize()) {
-                val p = ring.value
-                drawCircle(accent.copy(alpha = 0.35f * (1f - p)), size.minDimension / 2f * (0.78f + 0.22f * p), style = Stroke(2.dp.toPx()))
-            }
-            Box(
-                Modifier.size(64.dp).clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(accent, lerp(accent, CrundiColors.AccentDeep, 0.6f))))
-                    .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
-                    .clickable(onClickLabel = label, onClick = onMic)
-                    .semantics { contentDescription = label },
-                contentAlignment = Alignment.Center,
-            ) { CrundiIcon(icon, size = 26.dp, tint = Color.White) }
-        }
+        FluidMic(phase, accent, mic, icon, label, onMic)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
             Box(
                 Modifier.size(44.dp).clip(CircleShape).background(CrundiColors.BgTertiary.copy(alpha = 0.8f)).clickable(onClickLabel = "Close", onClick = onClose).semantics { contentDescription = "Close" },
