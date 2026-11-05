@@ -92,6 +92,10 @@ class HeyCrundiPlanTest {
         assertEquals(Listener.None, HeyCrundiPlan.listener(none.copy(inAppOn = true, appInFront = true, sessionOpen = true)))
         assertEquals(Listener.None, HeyCrundiPlan.listener(none.copy(backgroundOn = true, handingOver = true)))
         assertEquals(Listener.None, HeyCrundiPlan.listener(none.copy(backgroundOn = true, micAllowed = false)))
+        // The voice screen asleep listens with both settings off, and is woken in place.
+        assertEquals(Listener.Screen, HeyCrundiPlan.listener(none.copy(screenWaiting = true, appInFront = true)))
+        assertEquals(Listener.None, HeyCrundiPlan.listener(none.copy(screenWaiting = true, sessionOpen = true)))
+        assertEquals(HeyCrundiPlan.Wake.WakeScreen, HeyCrundiPlan.onHeard(none.copy(screenWaiting = true, appInFront = true, backgroundOn = true)))
         assertEquals(Listener.None, HeyCrundiPlan.listener(none.copy(backgroundOn = true, engineReady = false)))
     }
 

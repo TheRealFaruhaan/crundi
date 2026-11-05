@@ -13,7 +13,10 @@ package mv.obitech.crundi.voice
  *   transcribes Crundi's own voice. The phone still listens locally: Master
  *   talking over it (BargeIn) stops the speech and resumes the stream.
  * - What Master says while Crundi is thinking is kept and sent next.
- * - Quiet for [silenceMs] while listening ends the session: back to sleep.
+ * - The microphone stays on for [silenceMs] after the last thing that
+ *   happened (something said and sent, an answer, a tap), then the session
+ *   ends: back to sleep. Words heard meanwhile (a television, a room) don't
+ *   keep it on; only a sentence still being spoken holds it for [graceMs].
  * - A stream that can't open or drops moves to the phone's own recogniser
  *   (offline fallback, D37); everything else works the same.
  */
@@ -37,8 +40,10 @@ data class VoiceState(
     val offline: Boolean = false,
     /** The phone is locked: answers are read-only (spec §4). */
     val locked: Boolean = false,
-    /** When things last happened, for the silence timeout. */
+    /** When words were last heard (or anything happened). */
     val quietSince: Long = 0,
+    /** When Master or Crundi last did something (said and sent, answered, tapped), for the microphone's timeout. */
+    val activeSince: Long = 0,
     /** What Crundi last said aloud, and when it stopped: heard again just after, it is an echo. */
     val lastSaid: String = "",
     val saidUntil: Long = 0,
@@ -78,8 +83,10 @@ sealed interface VoiceEffect {
 }
 
 class VoiceMachine(
-    /** Quiet this long while listening, and the session ends. */
+    /** The microphone stays on this long after the last thing that happened. */
     val silenceMs: Long = 30_000,
+    /** Words heard this recently hold the timeout: Master may be mid-sentence. */
+    val graceMs: Long = 3_000,
     /** Starting this long without the stream: try the phone's recogniser. */
     val startMs: Long = 8_000,
     /** How long after Crundi speaks its own words heard back count as an echo. */
@@ -88,8 +95,8 @@ class VoiceMachine(
     fun on(s: VoiceState, e: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
         if (s.phase == Phase.Ended) return s to emptyList()
         return when (e) {
-            is VoiceEvent.Opened -> s.copy(phase = Phase.Starting, locked = e.locked, quietSince = e.now) to emptyList()
-            is VoiceEvent.Ready -> if (s.phase == Phase.Starting) s.copy(phase = Phase.Listening, quietSince = e.now) to emptyList() else s to emptyList()
+            is VoiceEvent.Opened -> s.copy(phase = Phase.Starting, locked = e.locked, quietSince = e.now, activeSince = e.now) to emptyList()
+            is VoiceEvent.Ready -> if (s.phase == Phase.Starting) s.copy(phase = Phase.Listening, quietSince = e.now, activeSince = e.now) to emptyList() else s to emptyList()
             is VoiceEvent.Interim -> if (echoOf(s, e.text, e.now)) s to emptyList() else when (s.phase) {
                 Phase.Starting, Phase.Listening -> s.copy(phase = Phase.Listening, heard = e.text, quietSince = e.now) to emptyList()
                 Phase.Thinking -> s.copy(heard = join(s.pending, e.text), quietSince = e.now) to emptyList()
@@ -108,7 +115,7 @@ class VoiceMachine(
             is VoiceEvent.Reply -> {
                 if (s.phase != Phase.Thinking) return s to emptyList()
                 val say = if (e.ok) e.speak.trim() else e.error.trim()
-                val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, question = e.question, needsUnlock = e.needsUnlock)
+                val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, activeSince = e.now, question = e.question, needsUnlock = e.needsUnlock)
                 if (say.isEmpty()) afterSpeech(next, e.now)
                 else next.copy(phase = Phase.Speaking, lastSaid = say) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(say))
             }
@@ -123,16 +130,16 @@ class VoiceMachine(
             }
             is VoiceEvent.SpeechDone -> if (s.phase == Phase.Speaking) afterSpeech(s, e.now) else s to emptyList()
             is VoiceEvent.BargeIn -> if (s.phase == Phase.Speaking) {
-                s.copy(phase = Phase.Listening, heard = "", quietSince = e.now, saidUntil = e.now) to listOf(VoiceEffect.StopSaying, VoiceEffect.ResumeStream)
+                s.copy(phase = Phase.Listening, heard = "", quietSince = e.now, activeSince = e.now, saidUntil = e.now) to listOf(VoiceEffect.StopSaying, VoiceEffect.ResumeStream)
             } else s to emptyList()
             is VoiceEvent.StreamLost -> if (s.offline) s to emptyList() else {
                 s.copy(offline = true, notice = "Live speech recognition is unavailable (${e.why}). Using the phone's recogniser.", phase = if (s.phase == Phase.Starting) Phase.Listening else s.phase, quietSince = e.now) to listOf(VoiceEffect.UseFallback)
             }
-            is VoiceEvent.Unlocked -> s.copy(locked = false, notice = "", quietSince = e.now) to emptyList()
+            is VoiceEvent.Unlocked -> s.copy(locked = false, notice = "", quietSince = e.now, activeSince = e.now) to emptyList()
             is VoiceEvent.Tick -> when {
                 s.phase == Phase.Starting && !s.offline && e.now - s.quietSince >= startMs ->
                     on(s, VoiceEvent.StreamLost("no answer from the server", e.now))
-                s.phase == Phase.Listening && s.pending.isEmpty() && e.now - s.quietSince >= silenceMs ->
+                s.phase == Phase.Listening && s.pending.isEmpty() && e.now - s.activeSince >= silenceMs && e.now - s.quietSince >= graceMs ->
                     s.copy(phase = Phase.Ended) to listOf(VoiceEffect.Finish)
                 else -> s to emptyList()
             }
@@ -141,11 +148,11 @@ class VoiceMachine(
     }
 
     private fun ask(s: VoiceState, text: String, now: Long): Pair<VoiceState, List<VoiceEffect>> =
-        s.copy(phase = Phase.Thinking, asked = text, heard = text, reply = "", detail = "", notice = if (s.offline) s.notice else "", quietSince = now, question = "", needsUnlock = false) to listOf<VoiceEffect>(VoiceEffect.Ask(text))
+        s.copy(phase = Phase.Thinking, asked = text, heard = text, reply = "", detail = "", notice = if (s.offline) s.notice else "", quietSince = now, activeSince = now, question = "", needsUnlock = false) to listOf<VoiceEffect>(VoiceEffect.Ask(text))
 
     /** The answer has been said: listen again, or send what was said meanwhile. */
     private fun afterSpeech(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> {
-        val resumed = s.copy(phase = Phase.Listening, heard = "", quietSince = now, saidUntil = now)
+        val resumed = s.copy(phase = Phase.Listening, heard = "", quietSince = now, activeSince = now, saidUntil = now)
         if (s.pending.isBlank()) return resumed to listOf(VoiceEffect.ResumeStream)
         val (next, fx) = ask(resumed.copy(pending = ""), s.pending, now)
         return next to (listOf<VoiceEffect>(VoiceEffect.ResumeStream) + fx)

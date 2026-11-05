@@ -144,8 +144,13 @@ object VoicePrefs {
     fun deviceVoice(ctx: Context) = p(ctx).getString("voice.deviceVoice", "") ?: ""
     fun setDeviceVoice(ctx: Context, name: String) = p(ctx).edit().putString("voice.deviceVoice", name).apply()
 
-    /** Seconds of quiet before the voice screen goes back to sleep. */
+    /** How long the microphone stays on after the last thing that happened, seconds. */
     fun silenceSeconds(ctx: Context) = p(ctx).getInt("voice.silence", 30)
+    fun setSilenceSeconds(ctx: Context, s: Int) = p(ctx).edit().putInt("voice.silence", s).apply()
+
+    /** The voice screen asleep keeps the screen on this long, minutes, listening for "Hey Crundi"; then the phone may sleep. */
+    fun screenAwakeMinutes(ctx: Context) = p(ctx).getInt("voice.screenAwake", 2)
+    fun setScreenAwakeMinutes(ctx: Context, m: Int) = p(ctx).edit().putInt("voice.screenAwake", m).apply()
 
     // ─── "Hey Crundi" (Phase 6) ───
 

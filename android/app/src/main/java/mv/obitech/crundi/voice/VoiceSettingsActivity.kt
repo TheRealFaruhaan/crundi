@@ -115,6 +115,10 @@ data class WakeUi(
     val listening: HeyCrundiPlan.Listener = HeyCrundiPlan.Listener.None,
     /** Full-screen notifications are allowed: heard in the background, the voice screen opens over the lock screen. */
     val fullScreen: Boolean = true,
+    /** The microphone's time after the last thing said or answered, seconds. */
+    val micSeconds: Int = 30,
+    /** Then the screen stays on, listening for "Hey Crundi", this many minutes. */
+    val screenMinutes: Int = 2,
 )
 
 /** The notebook: files as the server has them, Master's edits, the search. */
@@ -153,6 +157,8 @@ class VoiceSettingsEvents(
     val onWakeInApp: (Boolean) -> Unit = {},
     val onWakeBackground: (Boolean) -> Unit = {},
     val onWakeMinutes: (Int) -> Unit = {},
+    val onMicSeconds: (Int) -> Unit = {},
+    val onScreenMinutes: (Int) -> Unit = {},
     val onFullScreen: () -> Unit = {},
     val onMemoryText: (String, String) -> Unit = { _, _ -> },
     val onMemorySave: (String) -> Unit = {},
@@ -223,6 +229,8 @@ class VoiceSettingsActivity : ComponentActivity() {
             left = if (on) HeyCrundiPlan.timeLeft(System.currentTimeMillis(), VoicePrefs.wakeDeadline(this)) else "",
             listening = HeyCrundi.listening.value,
             fullScreen = UrgentAlerts.fullScreenGranted(this),
+            micSeconds = VoicePrefs.silenceSeconds(this),
+            screenMinutes = VoicePrefs.screenAwakeMinutes(this),
         ))
     }
 
@@ -362,6 +370,8 @@ class VoiceSettingsActivity : ComponentActivity() {
             lifecycleScope.launch { ui = ui.copy(note = runCatching { voice()?.reset(); "Crundi starts a fresh conversation" }.getOrElse { it.message ?: "Could not reset" }) }
         },
         onTry = { startActivity(Intent(this, VoiceActivity::class.java)) },
+        onMicSeconds = { v -> VoicePrefs.setSilenceSeconds(this, v); wakeRefresh() },
+        onScreenMinutes = { v -> VoicePrefs.setScreenAwakeMinutes(this, v); wakeRefresh() },
         onWakeInApp = { on ->
             if (on) withMic { HeyCrundi.setInApp(true); ui = ui.copy(note = "Say \"Hey Crundi\" while Crundi is open"); wakeRefresh() }
             else { HeyCrundi.setInApp(false); wakeRefresh() }
@@ -462,6 +472,10 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
                 null,
                 steps = "On Samsung: Advanced features > Side button > Double press > Open app > Crundi Voice.",
             ) { CrundiButton("Try Crundi Voice", ev.onTry, icon = "mic") }
+
+            // ─── Winding down: the microphone, then "Hey Crundi", then sleep ───
+            Section("On the voice screen")
+            ScreenTimes(ui.wake, ev)
 
             // ─── "Hey Crundi" (Phase 6, D3–D7) ───
             Section("Hey Crundi")
@@ -624,6 +638,27 @@ private fun VoiceRow(title: String, detail: String, selected: Boolean, onPick: (
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+private fun ScreenTimes(w: WakeUi, ev: VoiceSettingsEvents) {
+    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
+        Text("Microphone stays on", style = CrundiType.Heading)
+        Text("After the last thing you said or Crundi answered, then it stops recording. Noise in the room doesn't keep it on.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (v in listOf(15, 30, 60, 120, 300)) CrundiChip(if (v < 60) "$v s" else "${v / 60} min", w.micSeconds == v, { if (w.micSeconds != v) ev.onMicSeconds(v) })
+        }
+        Text("Then the screen stays on", style = CrundiType.Heading, modifier = Modifier.padding(top = 16.dp))
+        Text(
+            (if (w.supported) "Listening on the phone only for \"Hey Crundi\", which starts again where you left off. Nothing is sent meanwhile, and the Hey Crundi settings below needn't be on. " else "") +
+                "After this the phone may sleep as usual, and the voice screen closes.",
+            style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (v in listOf(1, 2, 5, 10)) CrundiChip("$v min", w.screenMinutes == v, { if (w.screenMinutes != v) ev.onScreenMinutes(v) })
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEvents) {
     CrundiCard(Modifier.fillMaxWidth(), padding = 4.dp) {
         if (!w.supported) {
@@ -645,7 +680,7 @@ private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEven
             }
             if (w.listening != HeyCrundiPlan.Listener.None) Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 CrundiIcon("mic", size = 14.dp, tint = CrundiColors.Green)
-                Text(if (w.listening == HeyCrundiPlan.Listener.Background) "Listening now, in the background" else "Listening now, while Crundi is open", style = CrundiType.Small.copy(color = CrundiColors.Green), modifier = Modifier.padding(start = 6.dp))
+                Text(when (w.listening) { HeyCrundiPlan.Listener.Background -> "Listening now, in the background"; HeyCrundiPlan.Listener.Screen -> "Listening now, on the voice screen"; else -> "Listening now, while Crundi is open" }, style = CrundiType.Small.copy(color = CrundiColors.Green), modifier = Modifier.padding(start = 6.dp))
             }
             Text(
                 "Listening uses some battery, and Android shows the green microphone dot while it does. On Samsung, add Crundi to Settings > Battery > Background usage limits > Never sleeping apps, or the phone may stop it; if it does, a notification offers to resume. \"Hey Crundi\" can also turn it on for a while: \"keep listening for an hour\".",

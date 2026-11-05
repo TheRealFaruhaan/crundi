@@ -182,6 +182,18 @@ object HeyCrundi {
 
     fun sessionClosed() = update { it.copy(sessionOpen = false) }
 
+    private var screenWake: (() -> Unit)? = null
+
+    /**
+     * The voice screen is open and asleep: listen for "Hey Crundi" while it
+     * is, even with both settings off, and call [onWake] on hearing it. Null
+     * when it wakes or goes away.
+     */
+    fun screenWaiting(onWake: (() -> Unit)?) {
+        screenWake = onWake
+        update { it.copy(screenWaiting = onWake != null, handingOver = false) }
+    }
+
     /** The microphone permission may have changed. */
     fun refresh() = update { it }
 
@@ -253,6 +265,7 @@ object HeyCrundi {
         when (HeyCrundiPlan.onHeard(situation)) {
             HeyCrundiPlan.Wake.OpenScreen -> openScreen()
             HeyCrundiPlan.Wake.FromBackground -> fromBackground()
+            HeyCrundiPlan.Wake.WakeScreen -> screenWake?.invoke()
         }
     }
 

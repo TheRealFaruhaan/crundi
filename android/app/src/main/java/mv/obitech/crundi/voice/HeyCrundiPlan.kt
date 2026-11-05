@@ -82,13 +82,15 @@ object HeyCrundiPlan {
 
     // ─── who listens ───
 
-    enum class Listener { None, InApp, Background }
+    enum class Listener { None, InApp, Background, Screen }
 
     /**
      * What decides who holds the microphone for the wake word. One owner at
      * a time: an open voice session has it; otherwise background listening
      * (which also covers the app being in front); otherwise in-app
-     * listening while the app is in front (D3).
+     * listening while the app is in front (D3). The voice screen left open
+     * and asleep listens too, whatever the settings say: Master is looking
+     * at it.
      */
     data class Situation(
         val inAppOn: Boolean = false,
@@ -97,6 +99,8 @@ object HeyCrundiPlan {
         val backgroundOn: Boolean = false,
         /** A voice session (side key overlay or the voice screen) has the microphone. */
         val sessionOpen: Boolean = false,
+        /** The voice screen is open, its session asleep: "Hey Crundi" wakes it where it is. */
+        val screenWaiting: Boolean = false,
         /** Just heard: waiting for the voice screen to open, so the microphone is free for it. */
         val handingOver: Boolean = false,
         val micAllowed: Boolean = true,
@@ -106,15 +110,20 @@ object HeyCrundiPlan {
 
     fun listener(s: Situation): Listener = when {
         !s.micAllowed || !s.engineReady || s.sessionOpen || s.handingOver -> Listener.None
+        s.screenWaiting -> Listener.Screen
         s.backgroundOn -> Listener.Background
         s.inAppOn && s.appInFront -> Listener.InApp
         else -> Listener.None
     }
 
     /** What to do on hearing the wake word: open the voice screen directly when Crundi is in front, otherwise ask Android. */
-    enum class Wake { OpenScreen, FromBackground }
+    enum class Wake { OpenScreen, FromBackground, WakeScreen }
 
-    fun onHeard(s: Situation): Wake = if (s.appInFront) Wake.OpenScreen else Wake.FromBackground
+    fun onHeard(s: Situation): Wake = when {
+        s.screenWaiting -> Wake.WakeScreen
+        s.appInFront -> Wake.OpenScreen
+        else -> Wake.FromBackground
+    }
 
     /** How long a hand-over waits for the voice session before the wake word listens again. */
     const val HANDOVER_MS = 12_000L

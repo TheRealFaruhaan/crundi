@@ -67,6 +67,22 @@ class VoiceMachineTest {
         assertEquals(listOf(VoiceEffect.Finish), fx)
     }
 
+    @Test fun wordsFromTheRoomDoNotKeepTheMicrophoneOn() {
+        // A television: words keep coming, nothing is ever sent.
+        val noise = (1..29).map { VoiceEvent.Interim("and now the news", it * 1_000L) }.toTypedArray()
+        val (s1, _) = run(*listening(), *noise, VoiceEvent.Tick(30_500))
+        assertEquals(Phase.Listening, s1.phase) // mid-sentence, perhaps: the grace holds it
+        val (s2, fx) = run(*listening(), *noise, VoiceEvent.Tick(32_100))
+        assertEquals(Phase.Ended, s2.phase)
+        assertEquals(listOf(VoiceEffect.Finish), fx)
+    }
+
+    @Test fun anAnswerStartsTheMicrophonesTimeAgain() {
+        val (s, _) = run(*listening(), VoiceEvent.Utterance("hi", 20_000), VoiceEvent.Reply(true, "Yes, Master.", "", "", 21_000), VoiceEvent.SpeechDone(22_000), VoiceEvent.Tick(45_000))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals(Phase.Ended, m.on(s, VoiceEvent.Tick(52_100)).first.phase)
+    }
+
     @Test fun speakingIsNeverCutOffByTheTimeout() {
         val (s, _) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Reply(true, "A long answer.", "", "", 40), VoiceEvent.Tick(90_000))
         assertEquals(Phase.Speaking, s.phase)

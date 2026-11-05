@@ -89,6 +89,8 @@ fun VoiceScreen(
     shell: mv.obitech.crundi.ui.shell.ShellData? = null,
     /** Yes / No on a question awaiting Master's answer. */
     onAnswer: (String) -> Unit = {},
+    /** Asleep, listening on the phone for the wake word: says so. */
+    waitingHint: String = "",
     modifier: Modifier = Modifier,
 ) {
     val s = ui.state
@@ -120,6 +122,7 @@ fun VoiceScreen(
             )
             UsageLegend(arcs)
             Words(ui, phase, onAllowMic, Modifier.weight(1f, fill = true))
+            if (waitingHint.isNotEmpty() && phase == Phase.Ended && ui.blocked.isEmpty()) Text(waitingHint, style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             // A question awaiting Master's yes: answered by voice (Phase 4), no buttons.
             if (s.question.isNotEmpty() && phase != Phase.Thinking) Text("Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             if (s.needsUnlock && onUnlock != null) CrundiButton("Unlock the phone", onUnlock, kind = ButtonKind.Primary, icon = "lock", modifier = Modifier.padding(top = 6.dp))

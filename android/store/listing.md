@@ -63,13 +63,16 @@ app has been run on one.
 
 ## Release notes, 1.1.3-dev.8 (en-US)
 
-Version code 39. Internal track. Since 1.1.3-dev.7 (code 38): the mic in the top bar.
+Version code 39. Internal track. Since 1.1.3-dev.7 (code 38): the mic in the top bar, the voice screen's microphone timeout, Hey Crundi on the sleeping voice screen, and the screen kept awake.
 
 ```
 <en-US>
-A mic in the top bar.
+A mic in the top bar, and the voice screen winds down gently.
 
 - Tap the mic next to the usage badge to talk to Crundi from anywhere in the app.
+- The microphone turns off after a set time; noise in the room no longer keeps it on.
+- Then the voice screen stays open, listening only for "Hey Crundi" to start again, before letting the phone sleep.
+- Both times are in Voice assistant settings, under On the voice screen.
 </en-US>
 ```
 
