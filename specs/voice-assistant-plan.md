@@ -157,7 +157,26 @@ the Phase 0 results.
 Exit: typed questions about usage, services, kanban, notes and files get right
 answers; anything outside the allowlist is refused by the server.
 
-## Phase 2 — memory
+## Phase 2 — memory — BUILT 2026-11-05 (server; app notebook view to come)
+
+As built (D47): `src/voice/memory.js`, `notebook.js`, `memory-index.js`.
+- The conversation is kept on disk (`<dataDir>/voice-memory/conversation.json`)
+  and survives restarts. After 10 quiet minutes (and at 80 messages) it is
+  compacted: a summary starts a NEW conversation (earlier turns are never
+  edited; the models refuse edited history).
+- Notebook: Claude's memory tool (`memory_20250818`), files under
+  `voice-memory/memories` (0600; paths kept inside; keys refused). Shown and
+  editable on `/voice`.
+- Search (`memory_search`): SQLite FTS5 (BM25) + all-MiniLM-L6-v2 embeddings
+  (local, optional dependency, ~10–15 ms a sentence here), merged by RRF;
+  keyword only if the model can't load. Every turn, summary and note indexed.
+- Release builds prune the runtime (`scripts/prune-voice-deps.mjs`):
+  707 MB → ~120 MB installed.
+- Real-model check: "remember I like very short answers" → notebook file;
+  recalled in the next turn; 98–99% from cache.
+
+Original plan:
+
 
 - `src/voice/memory.js` — one running conversation (D26), stored on disk.
 - Idle compaction: after ~10 min quiet, summarise older turns into a block
@@ -230,7 +249,20 @@ Original plan:
 
 Exit: hold the side key, ask "how much usage do I have left", hear the answer.
 
-## Phase 4 — actions
+## Phase 4 — actions — BUILT 2026-11-05
+
+As built (`src/voice/actions.js`, D43, D45): send into chats (intent
+explicit → at once, inferred → read back; never terminals), start, close,
+park, resume and watch chats; kanban (new cards to Backlog; moving to To do
+asks), notes, mindmap; create projects; chat schedules and scheduled tasks
+(chat jobs and service start/stop only, no shell commands); the voice's own
+settings. One gate for all: a locked phone changes nothing; anything that
+needs a yes is parked with an id and runs only through `confirm_action` in a
+later turn (Master must have spoken). Yes/no by voice (D46). Real-model
+check: add a card, ask before deleting it, delete after "yes".
+
+Original plan:
+
 
 Now the agent may change things (exceptions to D10):
 
@@ -263,6 +295,19 @@ Now the agent may change things (exceptions to D10):
   `set_background_listening({ minutes })` with the same choices, default 30,
   never unlimited (D4–D6), confirmed before it turns on (D32); notification with time left and Stop; "stopped —
   tap to resume" if killed.
+
+## Web and PC voice (D39) — BUILT 2026-11-05
+
+As built (`app/vendor/crundi-voice.js`, hooked into the web page): the same
+voice screen as the phone (contour visualizer round the Crundi head, usage
+arcs in the disc, projects as cells in their live state, the liquid mic,
+yes/no by voice, a box to type). Phone-sized screens: full screen. Wide
+screens (the PC client loads the same page): a dropdown under the top-bar
+mic, opened by click (stays), hover (goes when left idle) or holding the
+push-to-talk shortcut (sends on release), bindable in Settings > Voice
+assistant (default Ctrl+Space, kept per device). Microphone as 16 kHz PCM to
+`/api/voice/listen`; speech streamed in the Deepgram voice (or the
+browser's en-GB). Checked in a browser: typed questions answered and spoken.
 
 ## Later
 
