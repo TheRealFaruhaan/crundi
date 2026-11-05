@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.8 (en-US)
+
+Version code 39. Internal track. Since 1.1.3-dev.7 (code 38): the mic in the top bar.
+
+```
+<en-US>
+A mic in the top bar.
+
+- Tap the mic next to the usage badge to talk to Crundi from anywhere in the app.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.7 (en-US)
 
 Version code 38. Internal track. Since 1.1.3-dev.6 (code 37): Hey Crundi (Phase 6), actions (Phase 4), memory (Phase 2), the Voice shortcut (Phase 5), the visualizer and liquid mic, pause before sending (D44), Claude and Deepgram apart (D46).

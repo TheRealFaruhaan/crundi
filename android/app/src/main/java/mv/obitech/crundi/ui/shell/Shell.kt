@@ -92,6 +92,8 @@ class ShellCallbacks(
     val onProject: (String) -> Unit = {},
     val onApprovals: () -> Unit = {},
     val onUsage: () -> Unit = {},
+    /** The mic: the voice assistant's screen. Null hides it (a server without the assistant). */
+    val onVoice: (() -> Unit)? = null,
     val onPanels: () -> Unit = {},
     val onAddProject: () -> Unit = {},
     val onAppSettings: () -> Unit = {},
@@ -219,6 +221,14 @@ private fun TopBarRight(data: ShellData, callbacks: ShellCallbacks, compact: Boo
                 CrundiIcon("bar-chart", size = 13.dp, tint = CrundiColors.TextSecondary)
                 if (!compact) Text(fmtAgo(u.fetchedAt), style = CrundiType.Badge.copy(fontSize = 11.sp), maxLines = 1)
             }
+        }
+        // The voice assistant, one tap away (as the web's top-bar mic).
+        callbacks.onVoice?.let { open ->
+            Box(
+                Modifier.size(30.dp).clip(Dimens.ShapeSm).border(Dimens.Hairline, CrundiColors.Accent.copy(alpha = 0.6f), Dimens.ShapeSm)
+                    .background(CrundiColors.AccentDim).clickable(onClickLabel = "Talk to Crundi", onClick = open),
+                contentAlignment = Alignment.Center,
+            ) { CrundiIcon("mic", size = 15.dp, tint = CrundiColors.AccentHover, contentDescription = "Talk to Crundi") }
         }
         if (data.panels > 0) TopBarAct("panel", "Panels", data.panels.toString(), false, callbacks.onPanels)
         if (data.approvals > 0) TopBarAct("shield-alert", "Things waiting on you", data.approvals.toString(), true, callbacks.onApprovals, Modifier.miniTarget("top", "bell"))

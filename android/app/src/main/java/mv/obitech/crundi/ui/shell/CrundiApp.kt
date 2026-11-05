@@ -114,6 +114,10 @@ fun CrundiApp(
                 onProject = { services.shell.selectProject(it); navigator.area(Area.Workbench) },
                 onApprovals = { drawer = false; approvalsOpen = !approvalsOpen },
                 onUsage = { navigator.to(Area.Usage.key) },
+                // Shown when the server has the voice assistant (or before its capabilities are known).
+                onVoice = if (data.capabilities.isEmpty() || mv.obitech.crundi.api.VoiceApi.CAPABILITY in data.capabilities) {
+                    { ctx.startActivity(android.content.Intent(ctx, mv.obitech.crundi.voice.VoiceActivity::class.java)) }
+                } else null,
                 onPanels = { drawer = false; panelsOpen = true },
                 onAddProject = { addingProject = true },
                 onAppSettings = host::openAppSettings,
