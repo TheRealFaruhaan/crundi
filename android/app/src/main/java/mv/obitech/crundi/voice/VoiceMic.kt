@@ -16,6 +16,8 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -28,44 +30,60 @@ import androidx.compose.ui.unit.dp
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.theme.CrundiColors
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.sign
 import kotlin.math.sin
+import kotlin.random.Random
 
 /**
- * The mic button as a drop of liquid. While Master talks it flattens like
- * water under the voice, ripples running round its surface and rings
- * spreading out; when they stop, a spring pulls it back into a circle,
- * overshooting a little as liquid does. While Crundi speaks or thinks it is
- * a calm, softly moving circle.
+ * The mic button as liquid. Quiet, it is a glossy sphere of layered liquid
+ * (cyan, indigo, violet, blended). When Master talks it spreads into a water
+ * surface whose top edge is the voice itself (its loudness of the last
+ * moments, newest in the middle), with droplets flying off the peaks and
+ * ripples running over it; when they stop, surface tension pulls it back
+ * into the sphere, with a wobble.
  *
- * [mic] is read every frame (Master's level, 0..1).
+ * [mic] is read every frame (Master's level, 0..1). It draws wider than its
+ * touch area while spread, on purpose.
  */
 @Composable
 fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     var frame by remember { mutableLongStateOf(0L) }
-    // The drop's state: how flat (spring), its speed, the smoothed level, and the ripples.
-    val st = remember { FloatArray(4) }                  // flat, velocity, level, peak
-    val rings = remember { ArrayDeque<Pair<Long, Float>>() } // (born, strength)
-    val lastRing = remember { longArrayOf(0L) }
-    val lastT = remember { longArrayOf(0L) }
+    val st = remember { FloatArray(4) }                  // morph (0 sphere .. 1 water), its velocity, level, peak
+    val hist = remember { FloatArray(HIST) }
+    val drops = remember { ArrayList<Drop>() }
+    val ripples = remember { ArrayList<Pair<Float, Long>>() }  // (x offset as a share of the width, born)
+    val clock = remember { LongArray(3) }                 // last frame, talking until, last drop
 
     LaunchedEffect(phase) {
         while (true) withFrameNanos { now ->
-            val dt = if (lastT[0] == 0L) 0.016f else ((now - lastT[0]) / 1e9f).coerceIn(0.001f, 0.05f)
-            lastT[0] = now
+            val dt = if (clock[0] == 0L) 0.016f else ((now - clock[0]) / 1e9f).coerceIn(0.001f, 0.05f)
+            clock[0] = now
             val raw = if (phase == Phase.Listening) mic().coerceIn(0f, 1f) else 0f
             st[3] = max(st[3] * 0.995f, max(0.1f, raw))
             val level = (raw / st[3]).coerceIn(0f, 1f)
-            st[2] += (level - st[2]) * (if (level > st[2]) 0.4f else 0.12f)
-            // A damped spring towards flatness = loudness: liquid, with a little overshoot.
-            val target = st[2]
-            val k = 70f; val damp = 7f
+            st[2] += (level - st[2]) * (if (level > st[2]) 0.45f else 0.12f)
+            System.arraycopy(hist, 0, hist, 1, HIST - 1)
+            hist[0] = st[2]
+            if (level > 0.22f) clock[1] = now + 450_000_000L
+            val talking = phase == Phase.Listening && now < clock[1]
+            // Spread out while talking; surface tension pulls it back, with a wobble.
+            val target = if (talking) 1f else 0f
+            val k = if (talking) 28f else 42f
+            val damp = if (talking) 9f else 5.5f
             st[1] += ((target - st[0]) * k - st[1] * damp) * dt
             st[0] += st[1] * dt
-            // A ripple ring every so often while Master is talking.
-            if (st[2] > 0.25f && now - lastRing[0] > 260_000_000L) { rings.addLast(now to st[2]); lastRing[0] = now }
-            while (rings.isNotEmpty() && now - rings.first().first > 1_100_000_000L) rings.removeFirst()
+            if (talking && st[2] > 0.55f && now - clock[2] > 140_000_000L) {
+                drops += Drop((Random.nextFloat() - 0.5f) * 3f, (Random.nextFloat() - 0.5f) * 60f, -(90f + st[2] * 120f), now)
+                clock[2] = now
+            }
+            if (talking && st[2] > 0.3f && Random.nextFloat() < 0.08f) ripples += ((Random.nextFloat() - 0.5f) * 2.6f) to now
+            drops.removeAll { now - it.born > 900_000_000L }
+            ripples.removeAll { now - it.second > 900_000_000L }
             frame = now
         }
     }
@@ -79,42 +97,73 @@ fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String, label:
         Canvas(Modifier.fillMaxSize()) {
             val t = frame / 1e9f
             val c = center
-            val r = 32.dp.toPx()
-            val flat = st[0]
-            // Rings spreading out over the "water".
-            for ((born, strength) in rings) {
-                val age = ((frame - born) / 1.1e9f).coerceIn(0f, 1f)
-                val rr = r * (1.05f + 0.75f * age)
-                drawOval(
-                    accent.copy(alpha = (0.45f * strength * (1f - age)).coerceIn(0f, 1f)),
-                    topLeft = Offset(c.x - rr * (1f + 0.35f * flat), c.y - rr * (1f - 0.35f * flat)),
-                    size = androidx.compose.ui.geometry.Size(rr * 2 * (1f + 0.35f * flat), rr * 2 * (1f - 0.35f * flat)),
-                    style = Stroke(1.6.dp.toPx() * (1f - age * 0.6f)),
-                )
+            val r = 30.dp.toPx()
+            val m = st[0]
+            val lv = st[2]
+            val px = density   // the preview was drawn in CSS pixels: dp here
+
+            drawCircle(Brush.radialGradient(listOf(CrundiColors.Sky.copy(alpha = 0.18f + 0.2f * lv), Color.Transparent), c, r * 3f), r * 3f, c)
+
+            // Ripples on the surface.
+            for ((x, born) in ripples) {
+                val a = ((frame - born) / 9e8f).coerceIn(0f, 1f)
+                val w = (6f + 40f * a) * px
+                drawOval(lerp(CrundiColors.Sky, Color.White, 0.3f).copy(alpha = (0.5f * (1f - a) * m).coerceIn(0f, 1f)), Offset(c.x + x * r - w, c.y - r * (1f - 0.62f * m) * 0.35f - w * 0.22f), Size(w * 2, w * 0.44f), style = Stroke(1.2f * px))
             }
-            if (phase == Phase.Listening && rings.isEmpty()) {
-                // Waiting for a voice: a slow breath round the drop.
-                val p = (t % 1.6f) / 1.6f
-                drawCircle(accent.copy(alpha = 0.3f * (1f - p)), r * (1.02f + 0.3f * p), c, style = Stroke(1.5.dp.toPx()))
+
+            // The liquid: three translucent layers, blended so they glow where they overlap.
+            val layers = listOf(CrundiColors.Sky, CrundiColors.Accent, CrundiColors.Ask).map { it to lerp(it, Color.Black, 0.55f) }
+            layers.forEachIndexed { l, (top, deep) ->
+                val path = shape(c, r, m, t + l * 0.7f, l * 1.3f, hist)
+                drawPath(path, Brush.linearGradient(listOf(top, deep), Offset(c.x - r * 2, c.y - r), Offset(c.x + r * 2, c.y + r)), alpha = 0.55f, blendMode = BlendMode.Plus)
             }
-            // The drop: squashed wider and lower as it flattens, its surface rippling.
-            val path = Path()
-            val n = 72
-            for (i in 0..n) {
-                val a = i / n.toFloat() * (2 * PI).toFloat()
-                val surface = r * (0.07f * flat * sin(a * 7f + t * 11f) + 0.035f * (0.3f + flat) * sin(a * 3f - t * 5f) + 0.012f * sin(a * 4f + t * 2.2f))
-                val rx = (r + surface) * (1f + 0.34f * flat)
-                val ry = (r + surface) * (1f - 0.40f * flat.coerceAtLeast(-0.3f))
-                val x = c.x + cos(a) * rx
-                val y = c.y + sin(a) * ry + r * 0.18f * flat     // settles downward as it flattens
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            drawPath(shape(c, r, m, t, 0f, hist), Color.White.copy(alpha = 0.22f), style = Stroke(1f * px))
+
+            // The highlight slides with the liquid.
+            val hw = r * (0.34f + 0.5f * m); val hh = r * (0.13f - 0.06f * m)
+            drawOval(Color.White.copy(alpha = 0.22f * (1f - 0.5f * m)), Offset(c.x - r * 0.25f * (1f - m) - r * 0.6f * m - hw, c.y - r * 0.55f * (1f - m) - r * 0.38f * m - hh), Size(hw * 2, hh * 2))
+
+            // Droplets thrown off the peaks.
+            for (d in drops) {
+                val a = (frame - d.born) / 1e9f
+                val x = c.x + d.x * r + d.vx * a * px
+                val y = c.y - r * 0.4f + (d.vy * a + 260f * a * a) * px
+                drawCircle(lerp(CrundiColors.Sky, Color.White, 0.3f).copy(alpha = (0.8f * (1f - a)).coerceIn(0f, 1f)), 2.4f * px * (1f - a * 0.5f), Offset(x, y))
             }
-            path.close()
-            drawPath(path, Brush.linearGradient(listOf(lerp(accent, Color.White, 0.15f), accent, lerp(accent, CrundiColors.AccentDeep, 0.6f)), Offset(c.x - r, c.y - r), Offset(c.x + r, c.y + r)))
-            drawPath(path, Color.White.copy(alpha = 0.18f), style = Stroke(1.dp.toPx()))
-            // A highlight, as on a drop.
-            drawOval(Color.White.copy(alpha = 0.16f * (1f - 0.6f * flat.coerceIn(0f, 1f))), topLeft = Offset(c.x - r * 0.55f, c.y - r * (0.72f - 0.3f * flat)), size = androidx.compose.ui.geometry.Size(r * 0.7f, r * 0.32f))
         }
-        CrundiIcon(icon, size = 26.dp, tint = Color.White)
+        CrundiIcon(icon, size = 24.dp, tint = Color.White)
     }
+}
+
+private const val HIST = 64
+
+private class Drop(val x: Float, val vx: Float, val vy: Float, val born: Long)
+
+/**
+ * The liquid's outline: a wobbling sphere at [m] 0, a water surface at 1
+ * (wide and low, its top edge the voice from [hist], newest in the middle),
+ * each point moving straight between the two.
+ */
+private fun shape(c: Offset, r: Float, m: Float, t: Float, layer: Float, hist: FloatArray): Path {
+    val path = Path()
+    val n = 120
+    val halfW = r * (1f + 1.9f * m)
+    val band = r * (1f - 0.62f * m)
+    for (i in 0..n) {
+        val a = i / n.toFloat() * (2 * PI).toFloat()
+        val wob = r * (0.03f * sin(a * 3 + t * 2 + layer) + 0.02f * sin(a * 5 - t * 3 + layer * 2)) * (1 - m) + r * 0.06f * (1 - m) * sin(a * 2 + t * 1.3f)
+        val sx = cos(a) * (r + wob)
+        val sy = sin(a) * (r + wob)
+        val u = cos(a)
+        val k = ((u * 0.5f + 0.5f) * 63).toInt()
+        val wave = hist[min(HIST - 1, abs(k - 32))] * r * 0.9f
+        val surf = -band * 0.35f - wave * (0.6f + 0.4f * sin(u * 9 + t * 8 + layer)) - r * 0.05f * sin(u * 14 - t * 10 + layer)
+        val bx = u * halfW
+        val by = if (sin(a) < 0) surf * (1 - abs(u).pow(6)) else band * 0.55f * (1 - abs(u).pow(4)) * (if (sin(a) == 0f) 1f else sign(sin(a)))
+        val x = c.x + sx + (bx - sx) * m
+        val y = c.y + sy + (by - sy) * m
+        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    path.close()
+    return path
 }
