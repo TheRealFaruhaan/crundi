@@ -86,7 +86,11 @@ class VoiceMachineTest {
     @Test fun heyCruWhileAwakeIsAnsweredAtOnceWithoutClaude() {
         val (s, fx) = run(*listening(), VoiceEvent.Utterance("Hey crew.", 30))
         assertEquals(Phase.Speaking, s.phase)
-        assertEquals(listOf(VoiceEffect.PauseStream, VoiceEffect.Say(Speech.HERE)), fx)
+        assertEquals(VoiceEffect.PauseStream, fx.first())
+        assertTrue((fx.last() as VoiceEffect.Say).text in Speech.HERE)
+        val pick = Speech.hereLine(kotlin.random.Random(7))
+        val lines = (1..30).map { pick() }
+        assertTrue(lines.zipWithNext().none { (a, b) -> a == b } && lines.toSet().size > 3)
         assertTrue(fx.none { it is VoiceEffect.Ask })
         assertTrue(Speech.isCalling("Cru") && Speech.isCalling("hey Kru!") && Speech.isCalling("crew crew"))
         assertFalse(Speech.isCalling("hey crew what's running") || Speech.isCalling("the crew") || Speech.isCalling("hey"))

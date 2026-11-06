@@ -91,6 +91,8 @@ class VoiceMachine(
     val startMs: Long = 8_000,
     /** How long after Crundi speaks its own words heard back count as an echo. */
     val echoMs: Long = 5_000,
+    /** What to say when called while already listening: one of [Speech.HERE], never the same twice running. */
+    val here: () -> String = Speech.hereLine(),
 ) {
     fun on(s: VoiceState, e: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
         if (s.phase == Phase.Ended) return s to emptyList()
@@ -110,7 +112,7 @@ class VoiceMachine(
                     s.phase == Phase.Thinking -> s.copy(pending = join(s.pending, t), heard = join(s.pending, t), quietSince = e.now) to emptyList()
                     s.phase == Phase.Speaking -> s to emptyList()
                     // "Hey Cru" while already awake: here at once, without asking Claude.
-                    Speech.isCalling(t) -> s.copy(phase = Phase.Speaking, heard = "", asked = t, reply = Speech.HERE, detail = "", notice = "", lastSaid = Speech.HERE, quietSince = e.now, activeSince = e.now) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(Speech.HERE))
+                    Speech.isCalling(t) -> here().let { h -> s.copy(phase = Phase.Speaking, heard = "", asked = t, reply = h, detail = "", notice = "", lastSaid = h, quietSince = e.now, activeSince = e.now) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(h)) }
                     else -> ask(s, t, e.now)
                 }
             }
@@ -171,8 +173,14 @@ class VoiceMachine(
 object Speech {
     private fun words(t: String) = t.lowercase().split(Regex("[^\\p{L}\\p{N}']+")).filter { it.isNotEmpty() }
 
-    /** What Cru says when called while it is already listening. */
-    const val HERE = "Yes, Sir? I'm here."
+    /** What Cru says when called while it is already listening, one at random. */
+    val HERE = listOf("Sir?", "Yes?", "Yes, Sir?", "I'm here, Sir.", "Listening, Sir.", "Here, Sir.", "At your service, Sir.", "Yes, Sir. I'm listening.", "Go ahead, Sir.")
+
+    /** A picker over [HERE] that never says the same line twice in a row. */
+    fun hereLine(random: kotlin.random.Random = kotlin.random.Random.Default): () -> String {
+        var last = ""
+        return { HERE.filter { it != last }.random(random).also { last = it } }
+    }
     /** Cru's name as speech recognition writes it. */
     private val NAMES = setOf("cru", "crew", "kru", "krew", "crue", "crews")
 

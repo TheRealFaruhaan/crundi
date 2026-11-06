@@ -2643,6 +2643,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     store: voiceMemory.store,
     onTurnDone: (t) => voiceMemory.remember(t),
     onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
+    persona: () => (voiceMemory.notebook.list().find(f => f.path === '/memories/persona.md') || {}).text || '',
   });
   // Compaction while idle: ten quiet minutes, at most once a minute's check.
   setInterval(() => {

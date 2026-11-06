@@ -205,6 +205,21 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
     beta: { messages: { create: async (req) => { calls.push({ beta: true, ...req }); return { stop_reason: 'end_turn', usage: {}, content: [{ type: 'text', text: 'Yes.' }] }; } } },
   });
   const agent = createVoiceAgent({ tools, client: fakeClient });
+  {
+    // The persona the owner shapes: in the conversation's first message, never the system prompt,
+    // so editing it never changes the cached system + tools prefix or anything already sent.
+    let persona = '- Short answers.';
+    const seen = [];
+    const pc = () => ({ messages: { create: async (req) => { seen.push(JSON.parse(JSON.stringify(req))); return { stop_reason: 'end_turn', usage: {}, content: [{ type: 'text', text: 'Yes, Sir.' }] }; } } });
+    const pa = createVoiceAgent({ tools, client: pc, persona: () => persona });
+    await pa.turn('hello', { now: new Date('2026-11-10T09:00:00Z') });
+    persona = '- Short answers.\n- Never say Roger.';
+    await pa.turn('and again', { now: new Date('2026-11-10T09:01:00Z') });
+    ok(/Short answers/.test(seen[0].messages[0].content) && /persona\.md/.test(seen[0].messages[0].content), 'the persona opens the conversation');
+    ok(JSON.stringify(seen[0].system) === JSON.stringify(seen[1].system) && !/Short answers/.test(JSON.stringify(seen[1].system)), 'the system prompt never carries it, so the cache holds');
+    ok(seen[1].messages[0].content === seen[0].messages[0].content && !/Roger/.test(JSON.stringify(seen[1].messages)), 'an edit mid-conversation changes nothing already sent');
+    ok(/never over|never changes what you may/i.test(SYSTEM_PROMPT) && /persona\.md/.test(SYSTEM_PROMPT), 'the prompt: the owner shapes the manner, not the rules');
+  }
   const r = await agent.turn('what is on the kanban', { where: 'workbench', now: new Date('2026-11-10T09:00:00Z') });
   ok(r.ok && r.speak === 'One project, Sir, and the board is empty.' && r.show === 'proj: no tasks', 'a turn with two tool calls answers');
   ok(r.tools.join() === 'list_projects,get_kanban', 'both tools ran (in parallel, one round)');

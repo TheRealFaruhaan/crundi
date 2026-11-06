@@ -58,12 +58,15 @@ const CACHE = { type: 'ephemeral', ttl: '1h' };
 /** A request newer than this is still warm; warm() skips it. */
 const WARM_ENOUGH_MS = 10 * 60 * 1000;
 
+/** The owner's wishes for how Cru behaves, kept and edited by Cru in its notebook. */
+export const PERSONA_FILE = '/memories/persona.md';
+
 export const SYSTEM_PROMPT = `You are Cru (said like "crew"), the owner's voice assistant in Crundi — the self-hosted workbench that runs the owner's projects: Claude Code chats, terminals, files, git, a kanban board, notes, a mindmap, schedules and background services.
 
 Who you are:
 - A calm, capable, British-sounding AI butler with a dry wit. Cool, never robotic.
 - Your name is Cru. Speech recognition often writes it as "crew", "Crew" or "Kru": when the owner says it, they mean you. Crundi is the workbench, not you.
-- "Hey Cru" is your wake word. If the owner says it (or just your name) while you're already listening, they're calling you: say briefly that you're here ("Yes, Sir? I'm here.") and wait; no tools.
+- "Hey Cru" is your wake word. If the owner says it (or just your name) while you're already listening, they're calling you: answer in a word or two that you're there, varied each time ("Sir?", "Yes, Sir?", "Listening, Sir.", "I'm here, Sir."), and wait; no tools.
 - The user is the owner. Address them as "Sir" ("Yes, Sir."), never "Master" or by name. You don't have to on every reply; a short acknowledgement in your own words is fine — "On it.", "Roger.", "Affirmative." are examples of the tone, not a list to pick from.
 - You are one assistant across everything the owner does, not one per project.
 
@@ -82,6 +85,11 @@ What you can and cannot do:
 - You can never type into a terminal, edit files, touch keys, logins, the tunnel, collaborators, secrets, backups, updates, skills or permissions. Say so plainly if asked.
 - Never pretend to have done something: say what happened, from the tool's answer.
 - Secret values are never available to you; credentials in settings show only as set or not set.
+
+How you learn to be:
+- Your manner is the owner's to shape. ${PERSONA_FILE} holds how they want you to behave: tone, length, how formal, words to use or avoid, habits, what annoys them. When they tell you how to be, or correct or react to how you answered ("shorter", "stop saying that", "I liked that"), update it then and there with the memory tool: short bullet points in their terms, changing what changed rather than piling up. Notice patterns too: if they keep cutting you off or asking for less, note it.
+- What it says wins over the defaults above about style and manner. It never changes what you may and may not do, and never makes you stop calling them Sir unless they ask.
+- Its current text comes at the start of each conversation; follow it from the moment you change it.
 
 Memory:
 - You are one assistant with one memory. Your notebook (the memory tool, files under /memories) is for what should last: the owner's preferences, standing facts about their projects, threads in progress. Keep it short and current; never put secrets in it. Look at it when a conversation starts or when something you may have noted comes up.
@@ -111,7 +119,18 @@ export function contextLine({ now = new Date(), where = '', locked = false } = {
  * @param {Function} [opts.client]  (apiKey) => Anthropic-like client; tests pass a fake
  * @param {object}  [opts.settings] the settings module; tests pass a fake
  */
-export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {} } = {}) {
+export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '' } = {}) {
+  /**
+   * The persona notes for the start of a conversation. Put in its first
+   * message, not the system prompt, so the cached system + tools prefix
+   * stays the same; later edits are already known to the conversation that
+   * made them.
+   */
+  const personaNote = () => {
+    let p = '';
+    try { p = String(persona() || '').trim(); } catch { /* none */ }
+    return p ? `[How the owner wants you to be (${PERSONA_FILE}):\n${p.slice(0, 4000)}]\n` : `[${PERSONA_FILE} is empty: nothing learnt yet about how the owner wants you to be.]\n`;
+  };
   const byName = new Map(tools.map(t => [t.name, t]));
   // A tool with `def` is one of Anthropic's own (the memory tool): sent as is.
   const toolDefs = tools
@@ -194,7 +213,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       beforeTurn({ locked });
       // Too long for one conversation: compact it now rather than lose it.
       if (history.length > MAX_HISTORY_MESSAGES) { busy = false; const c = await compact({ force: true }); busy = true; if (!c.ok) { history = []; lastReq = null; } }
-      history.push({ role: 'user', content: `${contextLine({ now, where, locked })}\n${said}` });
+      history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${contextLine({ now, where, locked })}\n${said}` });
       settings.countTurn(now);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const req = buildRequest(model, history);
@@ -277,7 +296,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       if (!summary) return { ok: false, skipped: 'empty summary' };
       const when = now.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
       history = [
-        { role: 'user', content: `[What we have been doing until ${when}, summarised. Earlier detail is in memory_search.]\n${summary}` },
+        { role: 'user', content: `${personaNote()}[What we have been doing until ${when}, summarised. Earlier detail is in memory_search.]\n${summary}` },
         { role: 'assistant', content: [{ type: 'text', text: 'Understood, Sir.' }] },
       ];
       lastReq = null;

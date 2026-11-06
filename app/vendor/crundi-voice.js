@@ -258,12 +258,14 @@
     if (S.phase === 'speak') { if (!typed) return; stopSpeaking(S); }
     if (S.phase === 'ended' && !typed) return;
     // "Hey Cru" while already awake: here at once, without asking Claude.
-    if (isCalling(t)) { S.asked = t; S.heard = ''; S.reply = HERE; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); speak(HERE); render(); return; }
+    if (isCalling(t)) { var h = hereLine(); S.asked = t; S.heard = ''; S.reply = h; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); speak(h); render(); return; }
     ask(t);
   }
 
-  /** What Cru says when called while it is already listening (as the phone's Speech.HERE). */
-  var HERE = "Yes, Sir? I'm here.";
+  /** What Cru says when called while it is already listening, one at random, never the same twice running (as the phone's Speech.HERE). */
+  var HERE = ['Sir?', 'Yes?', 'Yes, Sir?', "I'm here, Sir.", 'Listening, Sir.', 'Here, Sir.', 'At your service, Sir.', "Yes, Sir. I'm listening.", 'Go ahead, Sir.'];
+  var lastHere = '';
+  function hereLine() { var c = HERE.filter(function (x) { return x !== lastHere; }); lastHere = c[Math.floor(Math.random() * c.length)]; return lastHere; }
   /** Just "Hey Cru", or the name alone (the phone's Speech.isCalling). */
   function isCalling(t) {
     var w = String(t).toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
