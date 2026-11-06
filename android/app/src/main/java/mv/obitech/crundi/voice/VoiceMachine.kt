@@ -109,6 +109,8 @@ class VoiceMachine(
                     echoOf(s, t, e.now) -> s.copy(heard = "") to emptyList()
                     s.phase == Phase.Thinking -> s.copy(pending = join(s.pending, t), heard = join(s.pending, t), quietSince = e.now) to emptyList()
                     s.phase == Phase.Speaking -> s to emptyList()
+                    // "Hey Cru" while already awake: here at once, without asking Claude.
+                    Speech.isCalling(t) -> s.copy(phase = Phase.Speaking, heard = "", asked = t, reply = Speech.HERE, detail = "", notice = "", lastSaid = Speech.HERE, quietSince = e.now, activeSince = e.now) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(Speech.HERE))
                     else -> ask(s, t, e.now)
                 }
             }
@@ -168,6 +170,17 @@ class VoiceMachine(
 /** Text helpers for speaking a reply. */
 object Speech {
     private fun words(t: String) = t.lowercase().split(Regex("[^\\p{L}\\p{N}']+")).filter { it.isNotEmpty() }
+
+    /** What Cru says when called while it is already listening. */
+    const val HERE = "Yes, Sir? I'm here."
+    /** Cru's name as speech recognition writes it. */
+    private val NAMES = setOf("cru", "crew", "kru", "krew", "crue", "crews")
+
+    /** Just "Hey Cru" (or the name alone, said once or twice): the owner is calling, not asking anything. */
+    fun isCalling(text: String): Boolean {
+        val w = words(text).dropWhile { it in setOf("hey", "hi", "hello", "ok", "okay", "oi", "yo") }
+        return w.isNotEmpty() && w.size <= 2 && w.all { it in NAMES }
+    }
 
     /**
      * [heard] is Crundi's own [said] picked up by the microphone: at least

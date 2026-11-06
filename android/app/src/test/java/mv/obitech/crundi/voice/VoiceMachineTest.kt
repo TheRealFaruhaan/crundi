@@ -83,6 +83,15 @@ class VoiceMachineTest {
         assertEquals(Phase.Ended, m.on(s, VoiceEvent.Tick(52_100)).first.phase)
     }
 
+    @Test fun heyCruWhileAwakeIsAnsweredAtOnceWithoutClaude() {
+        val (s, fx) = run(*listening(), VoiceEvent.Utterance("Hey crew.", 30))
+        assertEquals(Phase.Speaking, s.phase)
+        assertEquals(listOf(VoiceEffect.PauseStream, VoiceEffect.Say(Speech.HERE)), fx)
+        assertTrue(fx.none { it is VoiceEffect.Ask })
+        assertTrue(Speech.isCalling("Cru") && Speech.isCalling("hey Kru!") && Speech.isCalling("crew crew"))
+        assertFalse(Speech.isCalling("hey crew what's running") || Speech.isCalling("the crew") || Speech.isCalling("hey"))
+    }
+
     @Test fun speakingIsNeverCutOffByTheTimeout() {
         val (s, _) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Reply(true, "A long answer.", "", "", 40), VoiceEvent.Tick(90_000))
         assertEquals(Phase.Speaking, s.phase)

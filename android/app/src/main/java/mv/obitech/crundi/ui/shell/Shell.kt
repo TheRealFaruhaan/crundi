@@ -48,6 +48,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -224,11 +226,12 @@ private fun TopBarRight(data: ShellData, callbacks: ShellCallbacks, compact: Boo
         }
         // The voice assistant, one tap away (as the web's top-bar mic).
         callbacks.onVoice?.let { open ->
+            // Cru's mark, bare: no outline, no background.
             Box(
-                Modifier.size(30.dp).clip(Dimens.ShapeSm).border(Dimens.Hairline, CrundiColors.Accent.copy(alpha = 0.6f), Dimens.ShapeSm)
-                    .background(CrundiColors.AccentDim).clickable(onClickLabel = "Talk to Cru", onClick = open),
+                Modifier.size(32.dp).clip(Dimens.ShapeSm).clickable(onClickLabel = "Talk to Cru", onClick = open)
+                    .semantics { contentDescription = "Talk to Cru" },
                 contentAlignment = Alignment.Center,
-            ) { CrundiIcon("mic", size = 15.dp, tint = CrundiColors.AccentHover, contentDescription = "Talk to Cru") }
+            ) { mv.obitech.crundi.voice.CruIcon(26.dp) }
         }
         if (data.panels > 0) TopBarAct("panel", "Panels", data.panels.toString(), false, callbacks.onPanels)
         if (data.approvals > 0) TopBarAct("shield-alert", "Things waiting on you", data.approvals.toString(), true, callbacks.onApprovals, Modifier.miniTarget("top", "bell"))

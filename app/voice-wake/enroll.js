@@ -1,0 +1,273 @@
+/**
+ * "Hey Cru", set up from the owner's own voice. Plain JavaScript with no
+ * dependencies: the PC's spotter process uses it, scripts/test-enroll.mjs
+ * checks it on recorded speech, and the phone has the same rules in Kotlin
+ * (android/.../voice/WakeProfile.kt), checked against numbers made here
+ * (scripts/wake-fixture.mjs).
+ *
+ * The keyword model itself can't be retrained on a phone or a PC. Training
+ * here means two things, both from five recordings of the owner saying it:
+ *
+ *  1. Tuning. The spotter is run over each recording at stricter and
+ *     stricter trigger thresholds; the profile keeps two steps looser than
+ *     the strictest that still hears all five: it hears this voice said a
+ *     little differently too, and the voice match keeps out the rest.
+ *  2. A voice match. Each recording is kept as a template (MFCCs, 10 ms
+ *     frames). When the spotter fires, the last two seconds are compared
+ *     with the templates (dynamic time warping); unlike all of them, the
+ *     wake is ignored. The limit comes from how far the recordings are from
+ *     each other, with room to spare.
+ *
+ * It is not a speaker check: someone else saying "Hey Cru" the same way may
+ * pass. It does keep out "crew" on the television and the near misses.
+ */
+
+export const RATE = 16000;
+export const SAMPLES_NEEDED = 5;
+/** The wake phrase, as the model's BPE tokens (bpe.model: "HEY CRU" -> ▁HE Y ▁C RU). */
+export const KEYWORD = '▁HE Y ▁C RU @HEY_CRU';
+/** Trigger thresholds tried, strictest first. */
+export const THRESHOLDS = [0.35, 0.3, 0.25, 0.2, 0.15, 0.1];
+export const KEYWORDS_SCORE = 1.5;
+/** How much further than the recordings are from each other a wake may be. */
+const LIMIT_MARGIN = 1.6;
+/** What the verifier looks at when the spotter fires. */
+export const VERIFY_SECONDS = 2.0;
+
+// ─── features ───
+
+const FRAME = 400, HOP = 160, NFFT = 512, MELS = 26, CEPS = 12;
+
+let melBank = null, hamming = null, dctM = null;
+function tables() {
+  if (melBank) return;
+  hamming = new Float64Array(FRAME);
+  for (let i = 0; i < FRAME; i++) hamming[i] = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (FRAME - 1));
+  const mel = (f) => 2595 * Math.log10(1 + f / 700), hz = (m) => 700 * (Math.pow(10, m / 2595) - 1);
+  const lo = mel(20), hi = mel(7600), bins = [];
+  for (let i = 0; i < MELS + 2; i++) bins.push(Math.floor((NFFT + 1) * hz(lo + (hi - lo) * i / (MELS + 1)) / RATE));
+  melBank = [];
+  for (let m = 1; m <= MELS; m++) {
+    const row = new Float64Array(NFFT / 2 + 1);
+    for (let k = bins[m - 1]; k < bins[m]; k++) row[k] = (k - bins[m - 1]) / Math.max(1, bins[m] - bins[m - 1]);
+    for (let k = bins[m]; k < bins[m + 1]; k++) row[k] = (bins[m + 1] - k) / Math.max(1, bins[m + 1] - bins[m]);
+    melBank.push(row);
+  }
+  dctM = [];
+  for (let c = 1; c <= CEPS; c++) {
+    const row = new Float64Array(MELS);
+    for (let m = 0; m < MELS; m++) row[m] = Math.sqrt(2 / MELS) * Math.cos(Math.PI * c * (m + 0.5) / MELS);
+    dctM.push(row);
+  }
+}
+
+/** In-place radix-2 FFT of (re, im), length a power of two. */
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const a = -2 * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const ur = re[i + k], ui = im[i + k];
+        const vr = re[i + k + len / 2] * cr - im[i + k + len / 2] * ci;
+        const vi = re[i + k + len / 2] * ci + im[i + k + len / 2] * cr;
+        re[i + k] = ur + vr; im[i + k] = ui + vi;
+        re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+
+/**
+ * 12 MFCCs per 10 ms frame (25 ms window, 26 mel bands, 20-7600 Hz), with
+ * the clip's mean taken away so the microphone and the room matter less.
+ * @returns {Float64Array[]}
+ */
+export function mfcc(samples) {
+  tables();
+  const out = [], mels = [];
+  const re = new Float64Array(NFFT), im = new Float64Array(NFFT);
+  let loudest = 0;
+  for (let start = 0; start + FRAME <= samples.length; start += HOP) {
+    re.fill(0); im.fill(0);
+    let prev = start > 0 ? samples[start - 1] : 0;
+    for (let i = 0; i < FRAME; i++) { const x = samples[start + i]; re[i] = (x - 0.97 * prev) * hamming[i]; prev = x; }
+    fft(re, im);
+    const e = new Float64Array(MELS);
+    for (let m = 0; m < MELS; m++) {
+      let s = 0; const row = melBank[m];
+      for (let k = 0; k <= NFFT / 2; k++) if (row[k]) s += row[k] * (re[k] * re[k] + im[k] * im[k]) / NFFT;
+      e[m] = s; if (s > loudest) loudest = s;
+    }
+    mels.push(e);
+  }
+  // Anything 30 dB under the clip's loudest band counts as the same quiet,
+  // so a hum or a fan under the words changes little.
+  const floor = Math.max(loudest * 1e-3, 1e-10);
+  for (const e of mels) {
+    const c = new Float64Array(CEPS);
+    for (let j = 0; j < CEPS; j++) { let s = 0; const row = dctM[j]; for (let m = 0; m < MELS; m++) s += row[m] * Math.log(Math.max(e[m], floor)); c[j] = s; }
+    out.push(c);
+  }
+  if (out.length) {
+    const mean = new Float64Array(CEPS);
+    for (const f of out) for (let j = 0; j < CEPS; j++) mean[j] += f[j] / out.length;
+    for (const f of out) for (let j = 0; j < CEPS; j++) f[j] -= mean[j];
+  }
+  return out;
+}
+
+/**
+ * The spoken part of a recording: from a little before the first loud 10 ms
+ * to a little after the last. Null when nothing in it stands out from its
+ * own quiet (nothing was said, or the microphone is off).
+ */
+export function trim(samples, padMs = 100) {
+  const step = RATE / 100, n = Math.floor(samples.length / step);
+  if (n < 5) return null;
+  const rms = new Float64Array(n);
+  for (let i = 0; i < n; i++) { let s = 0; for (let k = 0; k < step; k++) { const x = samples[i * step + k]; s += x * x; } rms[i] = Math.sqrt(s / step); }
+  const sorted = Array.from(rms).sort((a, b) => a - b);
+  const floor = sorted[Math.floor(n * 0.1)], peak = sorted[n - 1];
+  if (peak < 0.01 || peak < floor * 4) return null;
+  const thr = Math.max(peak * 0.12, floor * 2.5);
+  let a = 0, b = n - 1;
+  while (a < n && rms[a] < thr) a++;
+  while (b > a && rms[b] < thr) b--;
+  const pad = Math.round(padMs / 10);
+  const from = Math.max(0, a - pad) * step, to = Math.min(n, b + 1 + pad) * step;
+  return samples.subarray(from, to);
+}
+
+/**
+ * How unlike [clip] is to [template]: dynamic time warping, the template
+ * matched against the best stretch of the clip (it may hold more than the
+ * phrase), as the mean distance per step. Lower is closer.
+ */
+export function distance(template, clip) {
+  const m = template.length, n = clip.length;
+  if (!m || !n) return Infinity;
+  const d = (a, b) => { let s = 0; for (let j = 0; j < a.length; j++) { const t = a[j] - b[j]; s += t * t; } return Math.sqrt(s); };
+  // cost and steps so far, two rows; the clip's start is free (row 0 is zero).
+  let pc = new Float64Array(n + 1), pl = new Float64Array(n + 1);
+  let cc = new Float64Array(n + 1), cl = new Float64Array(n + 1);
+  for (let i = 1; i <= m; i++) {
+    cc[0] = Infinity; cl[0] = 0;
+    for (let j = 1; j <= n; j++) {
+      const x = d(template[i - 1], clip[j - 1]);
+      // diagonal, along the clip, along the template
+      let best = pc[j - 1], len = pl[j - 1];
+      if (cc[j - 1] < best) { best = cc[j - 1]; len = cl[j - 1]; }
+      if (pc[j] < best) { best = pc[j]; len = pl[j]; }
+      cc[j] = best + x; cl[j] = len + 1;
+    }
+    [pc, cc] = [cc, pc]; [pl, cl] = [cl, pl];
+  }
+  let best = Infinity;
+  for (let j = 1; j <= n; j++) if (pl[j] > 0) best = Math.min(best, pc[j] / Math.max(pl[j], m));
+  return best;
+}
+
+// ─── training ───
+
+/**
+ * Check one recording as it is made: something was said, and it is long
+ * enough to be "Hey Cru" and short enough not to be a sentence.
+ * @returns {{ ok: boolean, why?: string, clip?: Float32Array }}
+ */
+export function checkSample(samples) {
+  const clip = trim(samples);
+  if (!clip) return { ok: false, why: 'Nothing was heard. Speak a little closer.' };
+  const ms = clip.length / RATE * 1000;
+  if (ms < 350) return { ok: false, why: 'That was too short. Say the whole of "Hey Cru".' };
+  if (ms > 2200) return { ok: false, why: 'That was too long. Say just "Hey Cru".' };
+  return { ok: true, clip };
+}
+
+/** Would the spotter (made with [makeSpotter]({ keywordsThreshold })) hear this clip? */
+function heard(spot, clip) {
+  spot.reset();
+  const padded = new Float32Array(RATE * 0.3 + clip.length + RATE);
+  padded.set(clip, RATE * 0.3);
+  let hit = false;
+  for (let i = 0; i < padded.length; i += 1600) if (spot.accept(padded.subarray(i, i + 1600))) hit = true;
+  return hit;
+}
+
+/**
+ * The profile from the owner's recordings.
+ * @param {Float32Array[]} recordings  SAMPLES_NEEDED of them, 16 kHz mono
+ * @param {(tuning: {keywords, keywordsScore, keywordsThreshold}) => {accept, reset, free}} makeSpotter
+ * @returns {{ ok: true, profile } | { ok: false, why: string, redo: number[] }}
+ */
+export function train(recordings, makeSpotter) {
+  const clips = [], redo = [];
+  recordings.forEach((r, i) => { const c = checkSample(r); if (c.ok) clips.push(c.clip); else { clips.push(null); redo.push(i); } });
+  if (redo.length) return { ok: false, why: 'Some recordings had nothing clear in them.', redo };
+
+  // 1. Tuning: strictest threshold that hears every one.
+  let strictest = -1, missed = [];
+  for (let t = 0; t < THRESHOLDS.length; t++) {
+    const spot = makeSpotter({ keywords: KEYWORD, keywordsScore: KEYWORDS_SCORE, keywordsThreshold: THRESHOLDS[t], gate: false });
+    try {
+      const miss = clips.map((c, i) => heard(spot, c) ? -1 : i).filter(i => i >= 0);
+      if (!miss.length) { strictest = t; break; }
+      if (t === THRESHOLDS.length - 1) missed = miss;
+    } finally { spot.free(); }
+  }
+  if (strictest < 0) {
+    return { ok: false, why: missed.length === clips.length
+      ? 'It could not hear "Hey Cru" in any of them. Say it clearly, with a small pause between "Hey" and "Cru".'
+      : 'It could not hear "Hey Cru" in some of them. Say those again.', redo: missed };
+  }
+  // Two steps looser than the strictest: the voice match keeps out what that lets in.
+  const threshold = THRESHOLDS[Math.min(THRESHOLDS.length - 1, strictest + 2)];
+
+  // 2. The voice match: templates, and how far apart they are.
+  const templates = clips.map(c => mfcc(c));
+  const nearest = templates.map((t, i) => Math.min(...templates.map((u, j) => j === i ? Infinity : distance(u, t))));
+  const sorted = [...nearest].sort((a, b) => a - b), median = sorted[Math.floor(sorted.length / 2)];
+  const odd = nearest.map((d, i) => d > median * 2 ? i : -1).filter(i => i >= 0);
+  if (odd.length && odd.length < templates.length / 2) {
+    return { ok: false, why: 'One recording sounds unlike the others. Say it again the way you normally would.', redo: odd };
+  }
+  const limit = Math.max(...nearest) * LIMIT_MARGIN;
+  return {
+    ok: true,
+    profile: {
+      version: 1,
+      keyword: KEYWORD,
+      keywordsScore: KEYWORDS_SCORE,
+      keywordsThreshold: threshold,
+      limit: Math.round(limit * 1000) / 1000,
+      templates: templates.map(t => t.map(f => Array.from(f, x => Math.round(x * 1000) / 1000))),
+      trainedAt: new Date().toISOString(),
+    },
+  };
+}
+
+/**
+ * The spotter fired: is it the owner's "Hey Cru"? [recent] is the last
+ * VERIFY_SECONDS of audio, ending now.
+ * @returns {{ ok: boolean, score: number }}
+ */
+export function verify(profile, recent) {
+  const clip = trim(recent, 60) || recent;
+  const feats = mfcc(clip);
+  let best = Infinity;
+  for (const t of profile.templates) best = Math.min(best, distance(t, feats));
+  return { ok: best <= profile.limit, score: Math.round(best * 1000) / 1000 };
+}
+
+/** A stored profile that this code can use. */
+export function validProfile(p) {
+  return !!(p && p.version === 1 && Array.isArray(p.templates) && p.templates.length >= 3 && p.limit > 0 && p.keywordsThreshold > 0 && typeof p.keyword === 'string');
+}

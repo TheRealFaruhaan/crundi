@@ -257,7 +257,18 @@
     if (S.phase === 'think') { S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; render(); return; }
     if (S.phase === 'speak') { if (!typed) return; stopSpeaking(S); }
     if (S.phase === 'ended' && !typed) return;
+    // "Hey Cru" while already awake: here at once, without asking Claude.
+    if (isCalling(t)) { S.asked = t; S.heard = ''; S.reply = HERE; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); speak(HERE); render(); return; }
     ask(t);
+  }
+
+  /** What Cru says when called while it is already listening (as the phone's Speech.HERE). */
+  var HERE = "Yes, Sir? I'm here.";
+  /** Just "Hey Cru", or the name alone (the phone's Speech.isCalling). */
+  function isCalling(t) {
+    var w = String(t).toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+    while (w.length && /^(hey|hi|hello|ok|okay|oi|yo)$/.test(w[0])) w.shift();
+    return w.length > 0 && w.length <= 2 && w.every(function (x) { return /^(cru|crew|kru|krew|crue|crews)$/.test(x); });
   }
 
   function ask(t) {
@@ -541,9 +552,41 @@
    * hovering opens it (and it goes again when left idle), and holding
    * Ctrl+Space anywhere is push to talk.
    */
+  /**
+   * Cru's mark: the voice screen's contours (the same formula as the field,
+   * frozen at one moment of speech), fourteen hairlines round a dark centre,
+   * sky to violet to pink. An SVG string; [px] sets its size.
+   */
+  var iconSeq = 0;
+  function cruIcon(px) {
+    var id = 'cru-g' + (++iconSeq), P = 96, lines = 14, disc = 2.6, gap = 0.5, swell = 2.4, seed = 1.9, out = '';
+    for (var i = 0; i < lines; i++) {
+      var f = (i + 1) / lines, base = disc + 0.5 + i * gap, amp = swell * f * f + 0.35 * f, d = '';
+      for (var k = 0; k <= P; k++) {
+        var an = k / P * Math.PI * 2, frac = Math.abs(k / P * 2 - 1);
+        var v = 0.5 + 0.5 * Math.sin((1 - frac) * 7 + seed) * Math.cos((1 - frac) * 3.1);
+        var sh = 0.55 * Math.sin(an * 3 + seed + f * 1.2) + 0.30 * Math.sin(an * 5 - seed * 0.7 + f * 2.1) + 0.15 * Math.sin(an * 2 + seed * 1.3);
+        var rr = base + amp * (0.35 + 0.65 * v) * (0.6 + 0.4 * sh) + amp * 0.5 * sh;
+        d += (k ? 'L' : 'M') + (12 + Math.cos(an - Math.PI / 2) * rr).toFixed(2) + ' ' + (12 + Math.sin(an - Math.PI / 2) * rr).toFixed(2);
+      }
+      out += '<path d="' + d + 'Z" stroke="url(#' + id + ')" opacity="' + Math.max(0.15, 1 - f * 0.7).toFixed(2) + '"/>';
+    }
+    return '<svg class="cru-ic" viewBox="0 0 24 24" width="' + px + '" height="' + px + '" fill="none" stroke-width="0.32" stroke-linejoin="round" aria-hidden="true">' +
+      '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38bdf8"/><stop offset=".45" stop-color="#6366f1"/><stop offset=".75" stop-color="#a78bfa"/><stop offset="1" stop-color="#e879f9"/></linearGradient></defs>' +
+      out + '<circle cx="12" cy="12" r="2.6" fill="#05050a" stroke="url(#' + id + ')" stroke-width="0.58"/></svg>';
+  }
+
   function attach(button, getOpts) {
     if (!button || button._cvAttached) return;
     button._cvAttached = true;
+    // The top-bar button wears Cru's mark: no outline, no background.
+    if (!document.getElementById('cru-btn-css')) {
+      var bs = el('style'); bs.id = 'cru-btn-css';
+      bs.textContent = '.cru-btn,.cru-btn:hover{border:none!important;background:transparent!important;padding:2px!important}.cru-btn .cru-ic{display:block;transition:transform .2s}.cru-btn:hover .cru-ic{transform:scale(1.12)}';
+      document.head.appendChild(bs);
+    }
+    button.classList.add('cru-btn');
+    button.innerHTML = cruIcon(26);
     var hoverTimer = null;
     var openWith = function (how) { var o = getOpts() || {}; o.anchor = button; o.how = how; open(o); };
     button.addEventListener('click', function (e) { e.stopPropagation(); clearTimeout(hoverTimer); if (S) { if (S.how === 'hover') S.how = 'click'; else close(); } else openWith('click'); });
@@ -593,5 +636,5 @@
   }
   function resetShortcut() { try { localStorage.removeItem(SHORTCUT_KEY); } catch (e) { /* none */ } return label(DEFAULT_SHORTCUT); }
 
-  window.CrundiVoice = { open: open, close: close, attach: attach, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
+  window.CrundiVoice = { open: open, close: close, attach: attach, icon: cruIcon, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
 })();
