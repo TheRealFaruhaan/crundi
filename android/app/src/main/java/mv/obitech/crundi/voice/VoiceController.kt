@@ -216,7 +216,8 @@ class VoiceController(
             // After the reply, so a note about it (untrained) isn't cleared by the reply's own.
             if (r.ok) phoneActions(r.phoneActions)
             // The spend moved: refresh the arcs.
-            runCatching { voice.settings() }.getOrNull()?.let { s -> _ui.update { it.copy(spend = s) } }
+            // (and the voice: Cru may just have changed its own speed or voice)
+            runCatching { voice.settings() }.getOrNull()?.let { s -> speaker.rate = s.speechRate.toFloat(); speaker.deepgramVoice = s.ttsVoice; _ui.update { it.copy(spend = s) } }
         }
     }
 
@@ -247,6 +248,7 @@ class VoiceController(
         try {
             val s = voice.settings()
             speaker.deepgramVoice = s.ttsVoice
+            speaker.rate = s.speechRate.toFloat()
             _ui.update { it.copy(spend = s) }
             if (!s.anthropicKeySet) block("There is no Claude API key on $host yet. Add one in its Voice assistant settings ($host/voice).")
         } catch (e: ApiException) {

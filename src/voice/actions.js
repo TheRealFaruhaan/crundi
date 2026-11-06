@@ -45,7 +45,7 @@ export const ACTION_TOOL_NAMES = [
 export const LISTEN_MINUTES = [15, 30, 45, 60, 120];
 
 /** Settings voice may change (each confirmed, D32). Keys and critical settings are not among them (D17). */
-export const VOICE_SETTINGS = ['model', 'ttsVoice', 'monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay'];
+export const VOICE_SETTINGS = ['model', 'ttsVoice', 'speechRate', 'monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay'];
 
 const PENDING_MS = 10 * 60 * 1000;
 const STATUSES = ['backlog', 'todo', 'in_progress', 'done'];
@@ -366,7 +366,7 @@ export function makeActionTools(deps, ctx) {
       check: (i) => { if (!VOICE_SETTINGS.includes(i.setting)) throw new Error('That setting is not one voice may change'); },
       confirm: (i) => `Change ${i.setting} to ${i.value}?`,
       run: (i) => {
-        const v = ['monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay'].includes(i.setting) ? Number(i.value) : String(i.value);
+        const v = ['monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay', 'speechRate'].includes(i.setting) ? Number(i.value) : String(i.value);
         const r = deps.voiceSettings.updateSettings({ [i.setting]: v });
         if (r.ok) deps.onSettingsChanged?.();
         return r;

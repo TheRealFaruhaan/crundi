@@ -46,6 +46,8 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     var api: VoiceApi? = null
     /** A Deepgram voice name, or "" for the phone's own. */
     var deepgramVoice: String = ""
+    /** How fast Cru talks (the server's speechRate): Deepgram applies it; the phone's own voice is set to it here. */
+    var rate: Float = 1f
     /** The server streams speech as it is made (capability "voice-tts-stream"). */
     var streams: Boolean = false
 
@@ -262,6 +264,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         return suspendCancellableCoroutine { cont ->
             ttsDone = { ok -> ttsDone = null; if (cont.isActive) cont.resume(ok) }
             val id = "s" + System.nanoTime()
+            t.setSpeechRate(rate)
             if (t.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), id) != TextToSpeech.SUCCESS) { ttsDone = null; cont.resume(true); return@suspendCancellableCoroutine }
             pulseWhile { ttsDone != null }
         }

@@ -343,6 +343,7 @@
     var vs = speechSynthesis.getVoices();
     u.voice = vs.find(function (v) { return /en-GB/i.test(v.lang) && /male|daniel|george|arthur|ryan/i.test(v.name); }) || vs.find(function (v) { return /en-GB/i.test(v.lang); }) || null;
     u.lang = 'en-GB';
+    u.rate = (S && S.settings && S.settings.speechRate) || 1;   // the talking speed, as Deepgram's
     u.onboundary = function () { if (S) S.voiceBump = 0.6 + Math.random() * 0.35; };
     u.onend = function () { if (S && S.speaking) afterSpeech(); };
     speechSynthesis.cancel(); speechSynthesis.speak(u);

@@ -58,6 +58,9 @@ const DEFAULTS = {
   deepgramBillingDay: 1,
   // How long the owner may pause before what they said is sent (D44), ms.
   pauseMs: 2000,
+  // How fast Cru talks: Deepgram Aura-2's speed (0.7 to 1.5), and the phone's
+  // or browser's own voice at the same rate.
+  speechRate: 1,
   // month: the Claude month's first day; deepgramMonth: Deepgram's.
   spend: { month: '', deepgramMonth: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },
 };
@@ -146,6 +149,7 @@ export function publicSettings(now = new Date()) {
     nextReset: ymd(period.next),
     deepgramBillingDay: s.deepgramBillingDay,
     pauseMs: s.pauseMs,
+    speechRate: s.speechRate || 1,
     deepgramPeriodStart: ymd(dg.start),
     deepgramNextReset: ymd(dg.next),
     models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
@@ -192,6 +196,11 @@ export function updateSettings(patch = {}) {
     const n = Number(patch.pauseMs);
     if (!Number.isFinite(n) || n < 1000 || n > 5000) return { ok: false, error: 'The pause before sending is 1 to 5 seconds' };
     s.pauseMs = Math.round(n);
+  }
+  if (patch.speechRate !== undefined) {
+    const n = Number(patch.speechRate);
+    if (!Number.isFinite(n) || n < 0.7 || n > 1.5) return { ok: false, error: 'Talking speed is 0.7 to 1.5 (1 is normal)' };
+    s.speechRate = Math.round(n * 20) / 20;
   }
   if (patch.ttsVoice !== undefined) {
     const v = String(patch.ttsVoice || '');

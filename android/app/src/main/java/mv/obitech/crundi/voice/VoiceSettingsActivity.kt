@@ -154,6 +154,7 @@ class VoiceSettingsEvents(
     val onDgDayText: (String) -> Unit = {},
     val onSaveDgDay: () -> Unit = {},
     val onPause: (Int) -> Unit = {},
+    val onRate: (Double) -> Unit = {},
     val onDgLimitText: (String) -> Unit = {},
     val onSaveDgLimit: () -> Unit = {},
     val onReset: () -> Unit = {},
@@ -320,12 +321,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
-    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, pause: Int? = null, dgLimit: Double? = null, note: String = "Saved") {
+    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, pause: Int? = null, dgLimit: Double? = null, rate: Double? = null, note: String = "Saved") {
         val v = voice() ?: return
         ui = ui.copy(busy = true)
         lifecycleScope.launch {
             ui = try {
-                val s = v.save(model, limit, ttsVoice, day, dgDay, pause, dgLimit)
+                val s = v.save(model, limit, ttsVoice, day, dgDay, pause, dgLimit, rate)
                 ui.copy(server = s, busy = false, note = note, limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString(), dgLimitText = fmtUsd(s.deepgramLimitUsd))
             } catch (e: Exception) { ui.copy(busy = false, note = e.message ?: "Could not save") }
         }
@@ -373,7 +374,8 @@ class VoiceSettingsActivity : ComponentActivity() {
             val n = ui.dgLimitText.trim().removePrefix("$").toDoubleOrNull()
             if (n == null || n < 0) ui = ui.copy(note = "The limit is a number of dollars") else save(dgLimit = n, note = "Deepgram limit saved")
         },
-        onPause = { ms -> save(pause = ms, note = "Crundi waits ${ms / 1000.0} s of quiet before sending") },
+        onPause = { ms -> save(pause = ms, note = "Cru waits ${ms / 1000.0} s of quiet before sending") },
+        onRate = { r -> save(rate = r, note = "Cru talks at ${rateLabel(r)}") },
         onReset = {
             lifecycleScope.launch { ui = ui.copy(note = runCatching { voice()?.reset(); "Crundi starts a fresh conversation" }.getOrElse { it.message ?: "Could not reset" }) }
         },
@@ -554,6 +556,17 @@ private fun ServerPart(ui: VoiceSettingsUi, s: VoiceSettings, ev: VoiceSettingsE
                 onPick = { ev.onPickDevice(v.name) }, onPreview = { ev.onPreviewDevice(v.name) },
             )
         }
+    }
+
+    // ─── Talking speed (Deepgram's speed; the phone's voice follows) ───
+    Section("Talking speed")
+    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
+        Text("How fast Cru talks", style = CrundiType.Heading)
+        Text("The pace of its voice, not how much it says. You can also ask Cru: \"talk faster\".", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (r in listOf(0.85, 1.0, 1.15, 1.3, 1.5)) CrundiChip(rateLabel(r), kotlin.math.abs(s.speechRate - r) < 0.01, { if (kotlin.math.abs(s.speechRate - r) >= 0.01) ev.onRate(r) })
+        }
+        if (listOf(0.85, 1.0, 1.15, 1.3, 1.5).none { kotlin.math.abs(s.speechRate - it) < 0.01 }) Text("Now ${rateLabel(s.speechRate)}", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp))
     }
 
     // ─── Pause before sending (D44) ───
@@ -777,3 +790,6 @@ private fun MemoryPart(m: MemoryUi, ev: VoiceSettingsEvents) {
         }
     }
 }
+
+/** A talking speed as shown: "Normal", "1.15×". */
+fun rateLabel(r: Double): String = if (kotlin.math.abs(r - 1.0) < 0.01) "Normal" else ("%.2f".format(java.util.Locale.US, r).trimEnd('0').trimEnd('.') + "×")
