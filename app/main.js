@@ -1355,6 +1355,8 @@ ipcMain.handle('bot:stop', () => stopBot());
 ipcMain.handle('bot:restart', () => { stopBot(); setTimeout(startBot, 2000); });
 
 ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+// Cru has a question for the owner (a chat waits on them): to the front, as Hey Cru does.
+ipcMain.handle('window:show', () => showWindow());
 ipcMain.handle('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
   else mainWindow?.maximize();

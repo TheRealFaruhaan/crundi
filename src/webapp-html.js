@@ -9214,6 +9214,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // The PC app: Cru has news (a watched chat finished or waits on the
         // owner) and no voice screen is open, so it opens and says it.
         if (msg.type === 'voice-report' && window.api && window.CrundiVoice && window.CrundiVoice.report && userRole !== 'collaborator') {
+          // Only a question or a permission comes to the front (as Hey Cru does); a finished turn is just said.
+          if (msg.needsOwner && window.api.showWindow) window.api.showWindow();
           window.CrundiVoice.report(String(msg.speak || ''), String(msg.show || ''), voiceOpts());
         }
         if (typeof msg.type === 'string' && msg.type.indexOf('docker-') === 0 && window.CrundiDocker) {

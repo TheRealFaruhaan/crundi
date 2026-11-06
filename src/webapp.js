@@ -2624,7 +2624,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    */
   // Only when a watched chat finishes its turn or needs the owner, never at
   // every step, so Cru doesn't chatter.
-  async function voiceReport(id, w, what) {
+  async function voiceReport(id, w, what, { needsOwner = false } = {}) {
     const name = `the "${w.title || 'untitled'}" chat in ${w.project}`;
     const last = lastSaidBy(id);
     const open = [...voiceListeners].filter(ws => ws.readyState === 1);
@@ -2635,7 +2635,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const msg = JSON.stringify({ type: 'report', speak: r.speak || '', show: r.show || '', chat: id });
         if (open.length) { for (const ws of open) { try { ws.send(msg); } catch { /* gone */ } } return; }
         // No voice screen open: the PC says it (its connection stays open)…
-        const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: id });
+        // A question or a permission brings the PC window forward; a finished turn doesn't.
+        const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: id, needsOwner });
         for (const ws of pcs) { try { ws.send(pcMsg); } catch { /* gone */ } }
       }
     }
@@ -2660,7 +2661,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (!fresh.length) return;
     for (const p of fresh) w.told.add(p.id);
     const what = fresh.map(p => p.kind === 'question' ? 'a question' : `permission for ${p.displayName || p.toolName || 'a tool'}`).join(' and ');
-    voiceReport(id, w, `is waiting on the owner: ${what}`).catch(() => {});
+    voiceReport(id, w, `is waiting on the owner: ${what}`, { needsOwner: true }).catch(() => {});
   });
   const voiceActions = makeVoiceActionTools({
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
