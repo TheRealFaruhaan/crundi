@@ -5,18 +5,26 @@
  * (android/.../voice/WakeProfile.kt), checked against numbers made here
  * (scripts/wake-fixture.mjs).
  *
- * The keyword model itself can't be retrained on a phone or a PC. Training
- * here means two things, both from five recordings of the owner saying it:
+ * The keyword model itself can't be retrained on a phone or a PC, and it
+ * may not hear "Hey Cru" the way the owner says it at all. So the five
+ * recordings are what the wake word is learnt from, two ways:
  *
- *  1. Tuning. The spotter is run over each recording at stricter and
- *     stricter trigger thresholds; the profile keeps two steps looser than
- *     the strictest that still hears all five: it hears this voice said a
- *     little differently too, and the voice match keeps out the rest.
- *  2. A voice match. Each recording is kept as a template (MFCCs, 10 ms
- *     frames). When the spotter fires, the last two seconds are compared
- *     with the templates (dynamic time warping); unlike all of them, the
- *     wake is ignored. The limit comes from how far the recordings are from
- *     each other, with room to spare.
+ *  1. The owner's own phrase. Each recording is kept as a template (MFCCs,
+ *     10 ms frames). Every short burst of speech on its own (a pause before
+ *     and after, 0.35 to 2.2 s) is compared with them (dynamic time
+ *     warping): close to them, it wakes, whatever the model makes of it.
+ *     This holds to a strict limit, from how near the recordings are to
+ *     each other.
+ *  2. The model, tuned. The spotter, with "Hey Cru" spelt the ways it may
+ *     hear it (Cru, Kru, Crew), is run over each recording at stricter and
+ *     stricter thresholds; the profile keeps two steps looser than the
+ *     strictest that hears as many as it can. When it fires (in the middle
+ *     of a sentence, say), the last two seconds are compared with the
+ *     templates at a looser limit.
+ *
+ * No recording is refused because the model didn't hear it: that is what
+ * the first way is for. One is asked again only when it is empty, too short
+ * or long, or sounds unlike the other four.
  *
  * It is not a speaker check: someone else saying "Hey Cru" the same way may
  * pass. It does keep out "crew" on the television and the near misses.
@@ -24,13 +32,24 @@
 
 export const RATE = 16000;
 export const SAMPLES_NEEDED = 5;
-/** The wake phrase, as the model's BPE tokens (bpe.model: "HEY CRU" -> ▁HE Y ▁C RU). */
-export const KEYWORD = '▁HE Y ▁C RU @HEY_CRU';
+/**
+ * The wake phrase as the model's BPE tokens, spelt the ways it may hear it
+ * (bpe.model: "HEY CRU" -> ▁HE Y ▁C RU, "HEY KRU", "HEY CREW").
+ */
+export const SPELLINGS = ['▁HE Y ▁C RU', '▁HE Y ▁K RU', '▁HE Y ▁C RE W'];
+/** The plain line (no tuning), for the shipped keywords file. */
+export const KEYWORD = SPELLINGS[0] + ' @HEY_CRU';
 /** Trigger thresholds tried, strictest first. */
-export const THRESHOLDS = [0.35, 0.3, 0.25, 0.2, 0.15, 0.1];
+export const THRESHOLDS = [0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.06];
 export const KEYWORDS_SCORE = 1.5;
-/** How much further than the recordings are from each other a wake may be. */
+/** The keyword lines for a threshold: every spelling, each with its boost and threshold. */
+export function keywordLines(threshold, score = KEYWORDS_SCORE) {
+  return SPELLINGS.map(sp => `${sp} :${score} #${threshold} @HEY_CRU`).join('\n');
+}
+/** How much further than the recordings are from each other a wake the model heard may be. */
 const LIMIT_MARGIN = 1.6;
+/** ...and one from the owner's phrase alone, which nothing else vouches for. */
+const STRICT_MARGIN = 1.25;
 /** What the verifier looks at when the spotter fires. */
 export const VERIFY_SECONDS = 2.0;
 
@@ -213,25 +232,7 @@ export function train(recordings, makeSpotter) {
   recordings.forEach((r, i) => { const c = checkSample(r); if (c.ok) clips.push(c.clip); else { clips.push(null); redo.push(i); } });
   if (redo.length) return { ok: false, why: 'Some recordings had nothing clear in them.', redo };
 
-  // 1. Tuning: strictest threshold that hears every one.
-  let strictest = -1, missed = [];
-  for (let t = 0; t < THRESHOLDS.length; t++) {
-    const spot = makeSpotter({ keywords: KEYWORD, keywordsScore: KEYWORDS_SCORE, keywordsThreshold: THRESHOLDS[t], gate: false });
-    try {
-      const miss = clips.map((c, i) => heard(spot, c) ? -1 : i).filter(i => i >= 0);
-      if (!miss.length) { strictest = t; break; }
-      if (t === THRESHOLDS.length - 1) missed = miss;
-    } finally { spot.free(); }
-  }
-  if (strictest < 0) {
-    return { ok: false, why: missed.length === clips.length
-      ? 'It could not hear "Hey Cru" in any of them. Say it clearly, with a small pause between "Hey" and "Cru".'
-      : 'It could not hear "Hey Cru" in some of them. Say those again.', redo: missed };
-  }
-  // Two steps looser than the strictest: the voice match keeps out what that lets in.
-  const threshold = THRESHOLDS[Math.min(THRESHOLDS.length - 1, strictest + 2)];
-
-  // 2. The voice match: templates, and how far apart they are.
+  // The voice match: templates, and how far apart they are.
   const templates = clips.map(c => mfcc(c));
   const nearest = templates.map((t, i) => Math.min(...templates.map((u, j) => j === i ? Infinity : distance(u, t))));
   const sorted = [...nearest].sort((a, b) => a - b), median = sorted[Math.floor(sorted.length / 2)];
@@ -239,15 +240,31 @@ export function train(recordings, makeSpotter) {
   if (odd.length && odd.length < templates.length / 2) {
     return { ok: false, why: 'One recording sounds unlike the others. Say it again the way you normally would.', redo: odd };
   }
-  const limit = Math.max(...nearest) * LIMIT_MARGIN;
+  const spread = Math.max(...nearest);
+
+  // The model, tuned: the strictest threshold that hears as many takes as
+  // any does, two steps looser. Takes it never hears are fine: the owner's
+  // phrase (the templates) wakes for those.
+  let best = THRESHOLDS.length - 1, most = 0;
+  for (let t = 0; t < THRESHOLDS.length; t++) {
+    const spot = makeSpotter({ keywords: keywordLines(THRESHOLDS[t]), keywordsScore: KEYWORDS_SCORE, keywordsThreshold: THRESHOLDS[t], gate: false });
+    let n = 0;
+    try { n = clips.filter(c => heard(spot, c)).length; } finally { spot.free(); }
+    if (n > most) { most = n; best = t; }
+    if (n === clips.length) break;
+  }
+  const threshold = THRESHOLDS[Math.min(THRESHOLDS.length - 1, best + 2)];
   return {
     ok: true,
     profile: {
-      version: 1,
-      keyword: KEYWORD,
+      version: 2,
+      keyword: keywordLines(threshold),
       keywordsScore: KEYWORDS_SCORE,
       keywordsThreshold: threshold,
-      limit: Math.round(limit * 1000) / 1000,
+      limit: Math.round(spread * LIMIT_MARGIN * 1000) / 1000,
+      strictLimit: Math.round(spread * STRICT_MARGIN * 1000) / 1000,
+      /** How many takes the model itself heard (the rest wake by the phrase alone). */
+      modelHeard: most,
       templates: templates.map(t => t.map(f => Array.from(f, x => Math.round(x * 1000) / 1000))),
       trainedAt: new Date().toISOString(),
     },
@@ -267,7 +284,63 @@ export function verify(profile, recent) {
   return { ok: best <= profile.limit, score: Math.round(best * 1000) / 1000 };
 }
 
+/**
+ * A burst of speech on its own (see createSegmenter): the owner's "Hey
+ * Cru", by the templates alone, at the strict limit?
+ * @returns {{ ok: boolean, score: number }}
+ */
+export function matchPhrase(profile, segment) {
+  const c = checkSample(segment);
+  if (!c.ok) return { ok: false, score: Infinity };
+  const feats = mfcc(c.clip);
+  let best = Infinity;
+  for (const t of profile.templates) best = Math.min(best, distance(t, feats));
+  return { ok: best <= strictLimit(profile), score: Math.round(best * 1000) / 1000 };
+}
+
+/** A version 1 profile (before the phrase match) had no strict limit: the same margin, from its limit. */
+export function strictLimit(p) { return p.strictLimit > 0 ? p.strictLimit : p.limit / LIMIT_MARGIN * STRICT_MARGIN; }
+
+/**
+ * Bursts of speech with a pause either side, as they end: feed it the
+ * microphone in pieces (any size); it returns the burst's audio (with a
+ * little before) once 0.3 s of quiet follows it, else null. Bursts longer
+ * than 2.5 s (talk, not a call) are dropped. The quiet level follows the
+ * room, as the spotter's gate does.
+ */
+export function createSegmenter() {
+  let floor = 0.002, active = false, long = false, quietMs = 0, loudMs = 0;
+  let parts = [], pre = null;
+  const MIN_RMS = 0.006, END_QUIET_MS = 300, MAX_MS = 2500;
+  return {
+    accept(samples) {
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+      const rms = Math.sqrt(sum / (samples.length || 1));
+      const ms = samples.length / RATE * 1000;
+      const loud = rms > Math.max(MIN_RMS, floor * 3);
+      if (!loud) floor = rms < floor ? floor * 0.7 + rms * 0.3 : floor * 0.995 + rms * 0.005;
+      if (!active) {
+        if (loud) { active = true; long = false; quietMs = 0; loudMs = ms; parts = pre ? [pre, samples.slice()] : [samples.slice()]; }
+        else pre = samples.slice();
+        return null;
+      }
+      parts.push(samples.slice());
+      if (loud) { quietMs = 0; loudMs += ms; } else quietMs += ms;
+      if (loudMs + quietMs > MAX_MS) { long = true; parts = []; }
+      if (quietMs < END_QUIET_MS) return null;
+      active = false; pre = null;
+      if (long) return null;
+      const n = parts.reduce((a, p) => a + p.length, 0), out = new Float32Array(n);
+      let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+      parts = [];
+      return out;
+    },
+    reset() { active = false; long = false; quietMs = 0; loudMs = 0; parts = []; pre = null; },
+  };
+}
+
 /** A stored profile that this code can use. */
 export function validProfile(p) {
-  return !!(p && p.version === 1 && Array.isArray(p.templates) && p.templates.length >= 3 && p.limit > 0 && p.keywordsThreshold > 0 && typeof p.keyword === 'string');
+  return !!(p && (p.version === 1 || p.version === 2) && Array.isArray(p.templates) && p.templates.length >= 3 && p.limit > 0 && p.keywordsThreshold > 0 && typeof p.keyword === 'string');
 }

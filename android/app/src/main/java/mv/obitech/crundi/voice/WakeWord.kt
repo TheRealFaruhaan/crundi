@@ -265,6 +265,8 @@ object HeyCrundi {
             val ring = FloatArray(keep)
             var at = 0
             var filled = 0
+            // The owner's own phrase: each burst of speech on its own, matched against the recordings.
+            val bursts = CruWake.Segmenter()
             try {
                 rec.startRecording()
                 while (running) {
@@ -275,7 +277,11 @@ object HeyCrundi {
                     for (i in 0 until got) chunk[i] = shorts[i] / 32768f
                     for (i in 0 until got) { ring[at] = chunk[i]; at = (at + 1) % keep }
                     filled = minOf(keep, filled + got)
-                    if (kws.feed(chunk) && running) {
+                    val spotted = kws.feed(chunk)
+                    val burst = bursts.accept(chunk)
+                    val phrase = burst?.let { profile.matchPhrase(it) }
+                    if (phrase?.ok == true && running) { Log.i(TAG, "Hey Cru: the owner's phrase (${phrase.score})"); main.post { heard() } }
+                    else if (spotted && running) {
                         val recent = FloatArray(filled) { ring[(at - filled + it + keep) % keep] }
                         val v = profile.verify(recent)
                         if (v.ok) main.post { heard() } else Log.i(TAG, "Hey Cru heard, but not like the owner's (${v.score} > ${profile.limit}): ignored")

@@ -184,8 +184,15 @@ class WakeTrainActivity : ComponentActivity() {
             val audio = withContext(Dispatchers.IO) { capture(5.0, stopOnQuiet = false) }
             level = 0f
             if (audio == null) { ui = ui.copy(trying = false, tryResult = "The microphone could not be opened.", tryGood = false); return@launch }
-            // As when listening: the spotter first, then the voice match on what was said.
-            val verdict = withContext(Dispatchers.Default) { if (engine.hears(profile.keywordLine(), CruWake.padded(audio))) profile.verify(audio) else null }
+            // As when listening: the owner's phrase on its own, or the model's hit checked against the recordings.
+            val verdict = withContext(Dispatchers.Default) {
+                val phrase = CruWake.trim(audio)?.let { profile.matchPhrase(it) }
+                when {
+                    phrase?.ok == true -> phrase
+                    engine.hears(profile.keywordLine(), CruWake.padded(audio)) -> profile.verify(audio)
+                    else -> null
+                }
+            }
             ui = when {
                 verdict == null -> ui.copy(trying = false, tryResult = "It didn't hear \"Hey Cru\". Try again, or train again if it keeps missing.", tryGood = false)
                 verdict.ok -> ui.copy(trying = false, tryResult = "Heard you. That would wake Cru.", tryGood = true)

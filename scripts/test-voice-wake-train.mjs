@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { createWake, trainIn } from '../app/voice-wake/worker.js';
-import { checkSample, validProfile, SAMPLES_NEEDED } from '../app/voice-wake/enroll.js';
+import { checkSample, validProfile, SAMPLES_NEEDED, train, keywordLines } from '../app/voice-wake/enroll.js';
 import { ENGINE, MODEL } from '../app/voice-wake/manifest.js';
 
 const wavDir = process.argv[2] || process.env.VW_TRAIN_DIR || '/tmp/cru-train';
@@ -59,7 +59,7 @@ const profile = JSON.parse(JSON.stringify(r.profile));
 // the same wake the spotter process uses. A fake clock keeps the cooldown
 // to one file.
 let clock = 0;
-const wake = createWake(dir, profile, { now: () => clock });
+let wake = createWake(dir, profile, { now: () => clock });
 function run(file) {
   const a = readWav(join(wavDir, file));
   const all = new Float32Array(16000 + a.length + 16000);
@@ -70,7 +70,7 @@ function run(file) {
   for (let i = 0; i < all.length; i += 1600) {
     clock += 100;
     const hit = wake.accept(all.subarray(i, i + 1600));
-    if (hit) out.push((hit.ok ? 'WAKE ' : 'rejected ') + hit.score);
+    if (hit) out.push((hit.ok ? 'WAKE ' + hit.via + ' ' : 'rejected ') + hit.score);
   }
   return out;
 }
@@ -79,15 +79,30 @@ function run(file) {
 // at the trained threshold, so it is shown, not failed.
 const KNOWN_MISS = /sentence/;
 const files = readdirSync(wavDir).filter((f) => f.endsWith('.wav') && !f.startsWith('train')).sort();
-for (const f of files) {
-  const out = run(f), woke = out.some((x) => x.startsWith('WAKE'));
-  const shown = f.padEnd(26) + (out.join(', ') || '-');
-  if (f.startsWith('pos-') && KNOWN_MISS.test(f) && !woke) console.log('note known miss   ' + shown);
-  else if (f.startsWith('pos-')) check(woke, 'wakes      ' + shown);
-  else if (/heycrew/.test(f)) console.log('note ' + 'sounds the same ' + shown);
-  else if (f.startsWith('other-') || f.startsWith('neg-')) check(!woke, 'no wake    ' + shown);
+function all(label) {
+  console.log('--- ' + label);
+  for (const f of files) {
+    const out = run(f), woke = out.some((x) => x.startsWith('WAKE'));
+    const shown = f.padEnd(26) + (out.join(', ') || '-');
+    if (f.startsWith('pos-') && KNOWN_MISS.test(f) && !woke) console.log('note known miss   ' + shown);
+    else if (f.startsWith('pos-')) check(woke, 'wakes      ' + shown);
+    else if (/heycrew/.test(f)) console.log('note ' + 'sounds the same ' + shown);
+    else if (f.startsWith('other-') || f.startsWith('neg-')) check(!woke, 'no wake    ' + shown);
+  }
 }
+all('the model and the owner\'s phrase');
 wake.free();
+
+// An accent the model never hears: training still succeeds (no take is
+// refused for it), and the owner's phrase alone wakes.
+const deaf = train(recs, () => ({ accept: () => null, reset() {}, free() {} }));
+check(deaf.ok && deaf.profile.modelHeard === 0, 'a voice the model never hears still trains (' + (deaf.ok ? 'strict limit ' + deaf.profile.strictLimit : deaf.why) + ')');
+if (deaf.ok) {
+  const p = { ...deaf.profile, keyword: keywordLines(0.99), keywordsThreshold: 0.99 };
+  wake = createWake(dir, p, { now: () => clock });
+  all('the owner\'s phrase alone (the model deaf to it)');
+  wake.free();
+}
 
 console.log(failed ? failed + ' failed' : 'all passed');
 process.exit(failed ? 1 : 0);

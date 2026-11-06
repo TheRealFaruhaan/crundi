@@ -61,6 +61,20 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.11 (en-US)
+
+Version code 42. Internal track. Since 1.1.3-dev.10 (code 41): Hey Cru learns from the owner's recordings (phrase match), never refuses a take the model missed.
+
+```
+<en-US>
+"Hey Cru" learns your voice properly.
+
+- Training no longer refuses a take because the built-in model didn't hear it: your five recordings are what it learns from.
+- Said on its own, "Hey Cru" wakes when it matches your recordings, whatever your accent.
+- Train again after updating.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.10 (en-US)
 
 Version code 41. Internal track. Since 1.1.3-dev.9 (code 40): Cru (rename, Sir, its name, persona, Docker), Cru's mark in the top bar, Hey Cru trained on the owner's voice.

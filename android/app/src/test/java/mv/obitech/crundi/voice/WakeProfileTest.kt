@@ -75,12 +75,34 @@ class WakeProfileTest {
         assertFalse("a very different voice does not", p.verify(signal(31, 260.0, 0.7)).ok)
     }
 
-    @Test fun takesThatCantBeHeardAreAskedAgain() {
-        val takes = (1..5).map { signal(10 + it) }
+    @Test fun onlyEmptyTakesAreAskedAgainNeverOnesTheModelMissed() {
+        val takes = (1..5).map { signal(10 + it, 140.0 + it, 0.95 + it * 0.02) }
         val silent = takes.toMutableList().also { it[2] = FloatArray(16000) }
         val r1 = CruWake.train(silent, "") { _, _ -> true }
         assertTrue(r1 is CruWake.Trained.Redo && (r1 as CruWake.Trained.Redo).which == listOf(2))
+        // A voice the model never hears still trains: the owner's phrase wakes for it.
         val r2 = CruWake.train(takes, "") { _, _ -> false }
-        assertTrue(r2 is CruWake.Trained.Redo && (r2 as CruWake.Trained.Redo).which.size == 5)
+        assertTrue(r2 is CruWake.Trained.Ok)
+        val p = (r2 as CruWake.Trained.Ok).profile
+        assertEquals(0, p.modelHeard)
+        assertTrue("the owner's take, on its own, wakes", p.matchPhrase(signal(30, 143.0, 1.0)).ok)
+        assertFalse("a very different voice does not", p.matchPhrase(signal(31, 260.0, 0.7)).ok)
+    }
+
+    @Test fun burstsOfSpeechAreFoundWithAPauseEitherSide() {
+        val seg = CruWake.Segmenter()
+        val quiet = FloatArray(1600) { ((it * 7919) % 13 - 6) * 0.0002f }
+        val word = signal(5)
+        val found = ArrayList<FloatArray>()
+        fun feed(a: FloatArray) { var i = 0; while (i < a.size) { seg.accept(a.copyOfRange(i, minOf(a.size, i + 1600)))?.let { found += it }; i += 1600 } }
+        repeat(10) { feed(quiet) }
+        feed(word)
+        repeat(6) { feed(quiet) }
+        assertEquals(1, found.size)
+        assertTrue(CruWake.checkSample(found[0]) is CruWake.Sample.Ok)
+        // Talk that runs on (over 2.5 s) is not a call.
+        feed(FloatArray(16000 * 4) { (sin(it * 0.07) * 0.2).toFloat() })
+        repeat(6) { feed(quiet) }
+        assertEquals(1, found.size)
     }
 }
