@@ -4186,7 +4186,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
       // Optional (capability 'voice-assistant'): locked, the phone is on its lock screen.
       const r = await voiceAgent.turn(String(body.text || ''), { where: String(body.where || '').slice(0, 200), locked: body.locked === true });
-      return json(res, r, r.ok ? 200 : (r.limitReached ? 402 : 400));
+      return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
     }
     // What Anthropic reports the whole account has cost this billing month
     // (needs an Admin API key; capability 'voice-account-usage').
@@ -4247,6 +4247,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/voice/brain-stats' && req.method === 'GET') {
       return json(res, { ok: true, brain: voiceAgent.which, stats: voiceAgent.stats({ since: Date.parse(url.searchParams.get('since') || '') || 0 }) });
     }
+    // The owner cancelled what they said ("scratch that", the x): the turn in
+    // progress stops, unanswered; what it already did is listed (acted).
+    if (path === '/api/voice/cancel' && req.method === 'POST') {
+      return json(res, voiceAgent.cancel());
+    }
     if (path === '/api/voice/warm' && req.method === 'POST') {
       return json(res, await voiceAgent.warm());
     }
@@ -4264,7 +4269,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       });
       if (!r.ok || url.searchParams.get('turn') !== '1') return json(res, r, r.ok ? 200 : 400);
       const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1' }) : { ok: false, error: 'Nothing was heard' };
-      return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok ? 200 : 400);
+      return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok || answer.cancelled ? 200 : 400);
     }
 
     if (path === '/api/usage' && req.method === 'GET') {

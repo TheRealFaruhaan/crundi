@@ -113,6 +113,7 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
                     onUnlock = { openActivity(unlock = true) },
                     shell = shell,
                     onAnswer = { c.answer(it) },
+                    onCancel = { c.cancelWords() },
                     onAllowMic = { openActivity(unlock = false) },
                 )
             }

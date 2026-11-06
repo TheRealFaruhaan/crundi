@@ -61,6 +61,17 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         return CrundiJson.decodeFromJsonElement(VoiceReply.serializer(), obj)
     }
 
+    /**
+     * Cancel the turn in progress (capability "voice-cancel"): what it had
+     * already done comes back in [CancelReply.acted]. Null from an older server.
+     */
+    suspend fun cancel(): CancelReply? {
+        val r = transport.exchange(ApiRequest("POST", "/api/voice/cancel", json = Uploads.toJson(emptyMap<String, Any?>())))
+        if (r.status == 404) return null
+        if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(CancelReply.serializer(), CrundiJson.parseToJsonElement(r.text))
+    }
+
     /** A voice session just opened: warm the server's prompt cache while the owner speaks. Best effort. */
     suspend fun warm() { runCatching { rpc.post("/api/voice/warm") } }
 
@@ -146,6 +157,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val MEMORY = "voice-memory"
         /** A turn's reply may carry [VoiceReply.phoneActions] (Phase 6). */
         const val PHONE_ACTIONS = "voice-phone-actions"
+        /** POST /api/voice/cancel, { type: 'discard' } both ways on the stream. */
+        const val CANCEL = "voice-cancel"
         /** GET /api/voice/cues and its clips. */
         const val CUES = "voice-cues"
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
@@ -262,7 +275,17 @@ data class VoiceReply(
     val phoneActions: List<PhoneAction> = emptyList(),
     /** The owner said they were done: close the voice screen once [speak] has been said. */
     val close: Boolean = false,
+    /** The turn was cancelled (POST /api/voice/cancel): neither said nor shown; [acted] is what it had already done. */
+    val cancelled: Boolean = false,
+    val acted: List<Acted> = emptyList(),
 )
+
+/** Something a cancelled turn had already done, which can't be undone. */
+@Serializable
+data class Acted(val tool: String = "", val what: String = "")
+
+@Serializable
+data class CancelReply(val ok: Boolean = false, val cancelled: Boolean = false, val acted: List<Acted> = emptyList())
 
 /** { type: "background-listening", minutes } (0 = off). Unknown types are ignored. */
 @Serializable
@@ -317,6 +340,8 @@ sealed interface ListenEvent {
     data class Failed(val error: String) : ListenEvent
     /** Cru has news, unasked (a watched chat finished or waits on the owner): say it. */
     data class Report(val speak: String, val show: String) : ListenEvent
+    /** The server dropped what the owner said ("scratch that"). */
+    data class Discard(val text: String) : ListenEvent
 
     companion object {
         /** One message off the socket, or null for one this app does not know. */
@@ -327,6 +352,7 @@ sealed interface ListenEvent {
                 "ready" -> Ready((o["echoFilter"] as? JsonPrimitive)?.contentOrNull == "true")
                 "speech" -> Speech
                 "interim" -> Interim(t)
+                "discard" -> Discard(t)
                 "utterance" -> if (t.isBlank()) null else Utterance(t)
                 "error" -> Failed((o["error"] as? JsonPrimitive)?.contentOrNull ?: "The stream stopped")
                 "report" -> (o["speak"] as? JsonPrimitive)?.contentOrNull.orEmpty().let { sp -> val sh = (o["show"] as? JsonPrimitive)?.contentOrNull.orEmpty(); if (sp.isBlank() && sh.isBlank()) null else Report(sp, sh) }

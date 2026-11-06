@@ -51,6 +51,8 @@ function fakeClaude(answer) {
       while ((i = buf.indexOf('\n')) >= 0) {
         const msg = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
         p.sent.push(msg);
+        // An interrupt ends the turn in progress (its result still comes, as with the real one).
+        if (msg.type === 'control_request') { p.emit('interrupt'); continue; }
         const sid = (args.includes('--resume') ? args[args.indexOf('--resume') + 1] : `sess-${n}`);
         if (p.sent.length === 1) p.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: sid }) + '\n');
         const out = await answer(msg.message.content, p);
@@ -148,6 +150,26 @@ const make = (fake, extra = {}) => createCliVoiceAgent({
   await agent.turn('new topic');
   const last = fake3.procs[fake3.procs.length - 1];
   ok(!last.args.includes('--resume') && /We talked about the API chat/.test(last.sent[0].message.content) && /Short answers/.test(last.sent[0].message.content), 'the new conversation opens with the persona and the summary');
+}
+
+// ─── cancel ───
+{
+  let hold = null;
+  const fake = fakeClaude(async (content, p) => {
+    if (/slow/.test(content)) { await new Promise(r => { hold = r; p.once('interrupt', r); }); return { text: 'Too late, Sir.' }; }
+    return { text: 'Yes, Sir.' };
+  });
+  const ag = make(fake);
+  const pr = ag.turn('something slow');
+  await new Promise(r => setTimeout(r, 30));
+  const c = ag.cancel();
+  const r = await pr;
+  const sent = fake.procs[0].sent.map(m => m.type === 'control_request' ? m.request.subtype : m.type);
+  ok(c.cancelled && r.cancelled && !r.speak && sent.includes('interrupt'), 'cancel interrupts Claude Code; the turn ends unanswered');
+  const next = await ag.turn('hello');
+  ok(next.ok && next.speak === 'Yes, Sir.', 'the interrupted turn\'s late result is not taken as the next answer');
+  const told = fake.procs[0].sent.filter(m => m.type === 'user').at(-1).message.content;
+  ok(/cancelled the last request/.test(told), 'and Claude Code is told the cancelled request is not to be carried out');
 }
 
 // ─── idle ───

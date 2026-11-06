@@ -81,6 +81,17 @@
     var fresh = h.filter(function (w) { return !s[w]; });
     return (h.length >= (min || 2) && fresh.length > 0) || fresh.some(function (w) { return STOP_WORDS[w]; });
   }
+  /** Only, or ending with, "scratch that" / "never mind" / "ignore that" (not "cancel": that answers Cru's questions). The phone's Speech.isDiscard. */
+  var DISCARD = [['scratch', 'that'], ['never', 'mind'], ['nevermind'], ['ignore', 'that']];
+  function isDiscard(t) {
+    var w = words(t);
+    return DISCARD.some(function (p) { return w.length >= p.length && p.every(function (x, i) { return w[w.length - p.length + i] === x; }); });
+  }
+  /** What a cancelled turn says: [acted] what it had already done ([{ what }] or strings). */
+  function cancelledNotice(acted) {
+    var a = (acted || []).map(function (x) { return typeof x === 'string' ? x : (x && x.what) || ''; }).filter(Boolean);
+    return a.length ? 'Cancelled. Already done: ' + a.join('; ') + '.' : 'Cancelled.';
+  }
   /** The cues when the server has none to offer (an older server): said with the browser's voice only. */
   var CUE_TEXTS = ['One moment, Sir.', 'Let me check.', 'On it, Sir.', 'Just a moment.', 'Looking now, Sir.', 'Right away, Sir.', 'Bear with me, Sir.', 'Let me see.'];
   /** One of [n] at random, never [last] (when there is a choice). */
@@ -246,7 +257,9 @@
     '.cv-field{position:relative;width:100%;max-width:820px;flex:1.5;min-height:300px}.cv-field canvas{position:absolute;inset:0;width:100%;height:100%}' +
     '.cv-leg{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 14px;font:11px ui-monospace,monospace;padding:4px 16px}.cv-leg span:before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:currentColor}' +
     '.cv-words{width:100%;max-width:680px;flex:1;overflow:auto;text-align:center;padding:10px 24px;box-sizing:border-box}' +
-    '.cv-heard{color:' + C.text2 + ';font-size:16px;line-height:23px;min-height:23px}.cv-reply{font-size:19px;line-height:27px;font-weight:500;margin-top:12px}' +
+    '.cv-heard{color:' + C.text2 + ';font-size:16px;line-height:23px;min-height:23px;display:flex;align-items:center;justify-content:center;gap:6px}' +
+    '.cv-cx{flex:none;width:26px;height:26px;border-radius:50%;border:0;background:#1a1a28;color:' + C.text2 + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-cx:hover{color:' + C.text + ';background:#24243a}.cv-cx[hidden]{display:none}' +
+    '.cv-ht{min-width:0}.cv-reply{font-size:19px;line-height:27px;font-weight:500;margin-top:12px}' +
     '.cv-detail{margin-top:12px;text-align:left;background:' + C.card + ';border:1px solid ' + C.border + ';border-radius:14px;padding:12px 14px;font-size:14px;line-height:20px;white-space:pre-wrap}' +
     '.cv-note{margin-top:10px;font-size:13px;color:' + C.yellow + '}.cv-yesno{margin-top:6px;font-size:13px;color:' + C.hover + '}' +
     '.cv-bot{width:100%;max-width:680px;display:flex;align-items:center;justify-content:center;gap:16px;padding:8px 24px 22px;box-sizing:border-box}' +
@@ -271,7 +284,7 @@
       '<div class="cv-pill"><i></i><span class="cv-st">Waking</span></div>' +
       '<button class="cv-x" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
       '<div class="cv-field"><canvas></canvas></div><div class="cv-leg"></div>' +
-      '<div class="cv-words"><div class="cv-heard"></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden>Say yes or no</div><div class="cv-note" hidden></div></div>' +
+      '<div class="cv-words"><div class="cv-heard"><span class="cv-ht"></span><button class="cv-cx" hidden title="Cancel what I said" aria-label="Cancel what I said"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden>Say yes or no</div><div class="cv-note" hidden></div></div>' +
       '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div>' +
       '<div class="cv-bot"><input class="cv-type" placeholder="Or type to Cru…" aria-label="Type to Cru">' +
       '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></div></div>';
@@ -287,6 +300,8 @@
       opts: opts, ov: ov, phase: 'start', heard: '', asked: '', reply: '', detail: '', notice: '', question: '', pending: '', reports: [],
       lastSaid: '', saidUntil: 0, quietSince: Date.now(), streaming: true, speaking: false,
       // live: the server drops Crundi's own words, so the stream stays on while it speaks (barge-in).
+      // cancellable: the × by his words (the server's 'voice-cancel'; this page comes from that server). turn: numbers each question.
+      cancellable: !(opts.capabilities && opts.capabilities.indexOf && opts.capabilities.indexOf('voice-cancel') < 0), turn: 0,
       live: false, hintAt: 0, cues: [], cueDevice: false, cueLast: -1, cue: null,
       // held: Crundi is talking (or just was): the mic goes to the local gate and the pre-roll, not the server.
       held: false, gate: createGate(), preroll: createPreroll(PREROLL_MS), ring: new Float32Array(VOICE_WINDOW), ringAt: 0, unknownVoice: false, route: 'direct',
@@ -301,6 +316,7 @@
     ov.addEventListener('mouseleave', function () { if (S) maybeLeave(); });
     ov.addEventListener('pointerdown', function () { if (S && S.how === 'hover') S.how = 'click'; });
     q('.cv-x').onclick = close;
+    q('.cv-cx').onclick = function (e) { e.stopPropagation(); cancelWords(); };
     q('.cv-mic').onclick = tapMic;
     // Keys go to the voice screen first while it is open (window, capture):
     // Enter sends what was typed, Escape closes, and the page's own shortcuts
@@ -451,6 +467,8 @@
     if (!S) return;
     if (e.type === 'ready') { S.live = !!e.echoFilter; if (S.phase === 'start') { S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
     else if (e.type === 'report') tell(e.speak || '', e.show || '');
+    // The server dropped what he said ("scratch that"): clear it, or cancel the turn it started.
+    else if (e.type === 'discard') takeBack(true);
     else if (e.type === 'interim') {
       // Talking over Crundi: cut it off the moment his words come.
       if (S.phase === 'speak') { if (S.live && talksOver(e.text, S.lastSaid, Date.now() - S.hintAt <= HINT_MS ? 1 : 2)) { cutIn(); S.heard = e.text; } else return; }
@@ -470,6 +488,8 @@
     var t = String(text || '').trim();
     if (!t || !S) return;
     if (!typed && echo(t)) { S.heard = ''; render(); return; }
+    // "Scratch that" alone (an older server passes it on): take back, never ask it.
+    if (!typed && isDiscard(t)) { if (S.phase === 'speak') { if (S.live) cutIn(); } else takeBack(true); render(); return; }
     if (S.phase === 'think') { S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; render(); return; }
     // Said over Crundi (the stream stayed on): cut it off and ask that now.
     if (S.phase === 'speak') { if (!typed && !(S.live && talksOver(t, S.lastSaid, 1))) return; cutIn(); }
@@ -502,10 +522,15 @@
   /** [keep]: the last answer stays on screen (it was cut short by what the owner said meanwhile). */
   function ask(t, keep) {
     S.phase = 'think'; S.asked = t; S.heard = t; if (!keep) { S.reply = ''; S.detail = ''; } S.question = ''; S.notice = ''; S.quietSince = Date.now();
+    var turn = ++S.turn;
     playCue();
     render();
     post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false }).then(function (r) {
       if (!S) return;
+      // Cancelled: never said or shown as an error, just what it had already done.
+      if (r && r.cancelled) { if (S.phase === 'listen' && !S.heard) { S.notice = cancelledNotice(r.acted); render(); } return; }
+      // Taken back meanwhile (or a newer question): not this answer's place.
+      if (S.turn !== turn || S.phase !== 'think') return;
       var ok = r && r.ok;
       S.reply = ok ? (r.speak || '') : ''; S.detail = ok ? (r.show || '') : ''; S.notice = ok ? '' : (r && r.error || 'Something went wrong');
       S.question = ok && r.pending && r.pending.length ? r.pending[0].question : '';
@@ -518,7 +543,35 @@
       if (S.pending) { var p = S.pending; S.pending = ''; S.closing = false; stopCue(); ask(p, true); render(); return; }
       if (say) speak(say); else { stopCue(); afterSpeech(); }
       render();
-    }).catch(function (e) { if (!S) return; S.notice = e.message || 'Could not reach the server'; afterSpeech(); render(); });
+    }).catch(function (e) { if (!S || S.turn !== turn || S.phase !== 'think') return; S.notice = e.message || 'Could not reach the server'; afterSpeech(); render(); });
+  }
+
+  // ─── taking back what was said ───
+  /** The × by his words: until the answer comes, while there are words to take back. */
+  function canCancel(s) { return !!(s && s.cancellable && s.heard && (s.phase === 'listen' || s.phase === 'think')); }
+
+  function cancelWords() { if (canCancel(S)) { takeBack(false); render(); } }
+
+  /**
+   * Take back what the owner said. Listening: the words go (the stream is
+   * told, unless it was the server that dropped them). Thinking: the turn is
+   * cancelled on the server, with what he said meanwhile; its cue stops and
+   * its answer is neither said nor shown.
+   */
+  function takeBack(fromServer) {
+    if (!S) return;
+    if (!fromServer) wsSend({ type: 'discard' });
+    if (S.phase === 'listen' || S.phase === 'start') { S.heard = ''; S.quietSince = Date.now(); render(); return; }
+    if (S.phase !== 'think') return;
+    S.turn++; S.phase = 'listen'; S.heard = ''; S.pending = ''; S.notice = 'Cancelled.'; S.quietSince = Date.now();
+    stopCue();
+    var s = S;
+    post('/api/voice/cancel', {}).then(function (r) {
+      if (S !== s) return;
+      if (r && r.ok === false && /HTTP 404/.test(r.error || '')) { s.cancellable = false; return; }
+      if (r && r.acted && r.acted.length && s.phase === 'listen' && !s.heard) { s.notice = cancelledNotice(r.acted); render(); }
+    }).catch(function () { /* the answer will say */ });
+    render();
   }
 
   function afterSpeech() {
@@ -809,7 +862,8 @@
     q('.cv-st').textContent = ph === 'listen' ? 'Listening' : ph === 'think' ? 'Thinking' : ph === 'speak' ? 'Speaking' : ph === 'start' ? 'Waking' : 'Asleep';
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
     var h = (ph === 'listen' || ph === 'think') ? S.heard : S.asked;
-    q('.cv-heard').textContent = h ? '“' + h + '”' : (ph === 'listen' && !S.reply ? 'Ask me anything, Sir.' : '');
+    q('.cv-ht').textContent = h ? '“' + h + '”' : (ph === 'listen' && !S.reply ? 'Ask me anything, Sir.' : '');
+    q('.cv-cx').hidden = !canCancel(S);
     q('.cv-reply').textContent = S.reply;
     var d = q('.cv-detail'); d.hidden = !S.detail; d.textContent = S.detail;
     q('.cv-yesno').hidden = !(S.question && ph !== 'think');
@@ -1058,5 +1112,5 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
 })();

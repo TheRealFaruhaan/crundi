@@ -408,3 +408,100 @@ class BargeInTest {
         assertTrue(Speech.CUES.size in 6..8)
     }
 }
+
+/** Taking back what was said: the ×, "scratch that", and a cancelled turn. */
+class CancelTest {
+    private val m = VoiceMachine(silenceMs = 30_000)
+
+    private fun run(s0: VoiceState, vararg events: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
+        var s = s0
+        val fx = ArrayList<VoiceEffect>()
+        for (e in events) { val (n, f) = m.on(s, e); s = n; fx += f }
+        return s to fx
+    }
+
+    private fun listening(cancellable: Boolean = true) = run(VoiceState(), VoiceEvent.Opened(false, 0, cancellable), VoiceEvent.Ready(10, live = true)).first
+    private fun thinking() = run(listening(), VoiceEvent.Utterance("open the dhivo board", 20), VoiceEvent.CueStarted("One moment, Sir.", 21)).first
+
+    @Test fun theCrossShowsFromTheFirstWordsUntilTheAnswer() {
+        val l = listening()
+        assertFalse(l.canCancel)
+        val (heard, _) = m.on(l, VoiceEvent.Interim("open the", 15))
+        assertTrue(heard.canCancel)
+        assertTrue(thinking().canCancel)
+        val (answered, _) = m.on(thinking(), VoiceEvent.Reply(true, "Done, Sir.", "", "", 30))
+        assertFalse(answered.canCancel)
+        // An older server: no ×.
+        assertFalse(m.on(listening(cancellable = false), VoiceEvent.Interim("open the", 15)).first.canCancel)
+    }
+
+    @Test fun whileListeningItClearsTheWordsAndTellsTheStream() {
+        val (s, fx) = run(listening(), VoiceEvent.Interim("open dhivo", 15), VoiceEvent.CancelTapped(16))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("", s.heard)
+        assertEquals(listOf(VoiceEffect.DiscardStream), fx)
+    }
+
+    @Test fun whileThinkingItCancelsTheTurnAndStopsTheCue() {
+        val (s, fx) = m.on(thinking(), VoiceEvent.CancelTapped(25))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("", s.heard)
+        assertEquals("Cancelled.", s.notice)
+        assertTrue(VoiceEffect.CancelTurn in fx && VoiceEffect.StopCue in fx && VoiceEffect.DiscardStream in fx)
+        assertTrue(fx.none { it is VoiceEffect.Say || it == VoiceEffect.Cue })
+        // What was already done comes back from the cancel.
+        val (s2, _) = m.on(s, VoiceEvent.Cancelled(listOf("sent \"hi\" to the API chat"), 30))
+        assertEquals("Cancelled. Already done: sent \"hi\" to the API chat.", s2.notice)
+    }
+
+    @Test fun theCancelledAnswerIsNeitherSaidNorShown() {
+        val (s0, _) = m.on(thinking(), VoiceEvent.CancelTapped(25))
+        val (s, fx) = m.on(s0, VoiceEvent.Reply(false, "", "", "", 40, turn = 1, cancelled = true))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("", s.reply)
+        assertEquals("Cancelled.", s.notice)
+        assertTrue(fx.isEmpty())
+        // Cancelled too late, the old answer still arrives: not said, even with a new question in flight.
+        val (asked, _) = m.on(s0, VoiceEvent.Utterance("open crundi", 50))
+        assertEquals(Phase.Thinking, asked.phase)
+        val (s3, fx3) = m.on(asked, VoiceEvent.Reply(true, "Dhivo is open.", "", "", 60, turn = 1))
+        assertEquals(Phase.Thinking, s3.phase)
+        assertTrue(fx3.isEmpty())
+        val (s4, fx4) = m.on(asked, VoiceEvent.Reply(true, "Crundi is open.", "", "", 70, turn = asked.turn))
+        assertEquals(Phase.Speaking, s4.phase)
+        assertTrue(VoiceEffect.Say("Crundi is open.") in fx4)
+    }
+
+    @Test fun theServersDiscardClearsTheWordsOrCancelsTheTurn() {
+        val (s1, fx1) = run(listening(), VoiceEvent.Interim("open dhivo scratch", 15), VoiceEvent.Discard(16))
+        assertEquals("", s1.heard)
+        assertTrue(fx1.isEmpty())   // the server already dropped them
+        val (s2, fx2) = m.on(thinking(), VoiceEvent.Discard(25))
+        assertEquals(Phase.Listening, s2.phase)
+        assertTrue(VoiceEffect.CancelTurn in fx2 && VoiceEffect.StopCue in fx2)
+        assertTrue(VoiceEffect.DiscardStream !in fx2)
+    }
+
+    @Test fun scratchThatWhileThinkingCancelsAndIsNeverQueued() {
+        val (s, fx) = run(thinking(), VoiceEvent.Utterance("and also the backlog", 22), VoiceEvent.Utterance("Never mind.", 24))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("", s.pending)
+        assertTrue(VoiceEffect.CancelTurn in fx)
+        assertTrue(fx.none { it == VoiceEffect.Ask("Never mind.") })
+        // Listening, it is simply not asked.
+        val (l, lfx) = m.on(listening(), VoiceEvent.Utterance("Scratch that!", 30))
+        assertEquals(Phase.Listening, l.phase)
+        assertTrue(lfx.none { it is VoiceEffect.Ask })
+    }
+
+    @Test fun discardPhrases() {
+        assertTrue(Speech.isDiscard("Scratch that."))
+        assertTrue(Speech.isDiscard("open dhivo, never mind"))
+        assertTrue(Speech.isDiscard("ignore that"))
+        assertTrue(Speech.isDiscard("Nevermind!"))
+        assertFalse(Speech.isDiscard("cancel"))                // answers Cru's questions
+        assertFalse(Speech.isDiscard("scratch that itch on the board"))
+        assertFalse(Speech.isDiscard("let me check"))
+    }
+}
+

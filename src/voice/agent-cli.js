@@ -102,6 +102,13 @@ export function createCliVoiceAgent({
   let lastActivity = Date.now();
   let idleTimer = null;
   let signals = null;       // the turn in progress's, filled by callTool
+  // A cancelled turn's result is still to come from Claude Code: the next
+  // turn waits for it (briefly), or it would be taken as the next answer.
+  let draining = false;
+  let drainTimer = null;
+  // Claude Code keeps a cancelled request in its conversation: the next
+  // message says it was cancelled, so it is not carried out later.
+  let cancelledNote = '';
 
   const personaNote = () => {
     let p = '';
@@ -133,6 +140,12 @@ export function createCliVoiceAgent({
   function onLine(line) {
     let m;
     try { m = JSON.parse(line); } catch { return; }
+    if (draining && !current && m.type === 'result') {
+      draining = false; clearTimeout(drainTimer);
+      const p = proc || {};
+      p.costSoFar = Number(m.total_cost_usd) || 0; p.apiMsSoFar = Number(m.duration_api_ms) || 0;
+      return;
+    }
     if (m.type === 'system' && m.subtype === 'init' && m.session_id) {
       if (state.sessionId !== m.session_id) { state.sessionId = m.session_id; saveState(); }
       return;
@@ -227,17 +240,23 @@ export function createCliVoiceAgent({
     busy = true;
     const s = settings.getSettings();
     const model = s.model || settings.DEFAULT_MODEL;
-    signals = { pending: [], needsUnlock: false, phoneActions: [], close: false };
+    signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, acted: [] };
+    const turnSignals = signals;
     const t0 = Date.now();
+    // The last turn was cancelled and its end has not come yet: wait a moment, else start afresh (resumed).
+    for (let i = 0; i < 50 && draining; i++) await new Promise(ok => setTimeout(ok, 100));
+    if (draining) { draining = false; clearTimeout(drainTimer); stop(); }
     try {
       if (!report) beforeTurn({ locked });
       const first = !state.sessionId;
       const lead = first ? `${personaNote()}${state.summary ? `[What we have been doing, summarised. Earlier detail is in memory_search.]\n${state.summary}\n` : ''}` : '';
       settings.countTurn(now);
       let r;
-      try { r = await ask(model, `${lead}${contextLine({ now, where, locked })}\n${said}`); }
+      const note = cancelledNote; cancelledNote = '';
+      try { r = await ask(model, `${lead}${note}${contextLine({ now, where, locked })}\n${said}`); }
       catch (e) { return { ok: false, error: String(e.message || e) }; }
       const tools = r.tools;
+      if (r.cancelled) return { ok: false, cancelled: true, acted: turnSignals.acted, tools };
       if (!r.ok) return { ok: false, error: r.error || `Claude Code: ${String(r.result?.result || r.result?.subtype || 'error').slice(0, 300)}`, tools };
       if (first && state.summary) { state.summary = ''; }
       state.turns += 1; saveState();
@@ -258,6 +277,20 @@ export function createCliVoiceAgent({
       lastActivity = Date.now();
       armIdle();
     }
+  }
+
+  /** The owner cancelled what they said: interrupt Claude Code; the turn ends now, unanswered. */
+  function cancel() {
+    if (!busy || !current || !proc) return { ok: true, cancelled: false, acted: [] };
+    const acted = (signals && signals.acted ? signals.acted : []).slice();
+    try { proc.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'cancel-' + Date.now(), request: { subtype: 'interrupt' } }) + '\n'); } catch { /* it ends anyway */ }
+    draining = true;
+    clearTimeout(drainTimer);
+    drainTimer = setTimeout(() => { if (draining) { draining = false; stop(); } }, 5000);
+    drainTimer.unref?.();
+    finish({ ok: false, cancelled: true });
+    cancelledNote = `[The owner cancelled the last request before it was answered: leave it, and don't carry it out${acted.length ? `. Already done before the cancel: ${acted.map(x => x.what).join('; ')}` : ''}.]\n`;
+    return { ok: true, cancelled: true, acted };
   }
 
   async function report(note, { now = new Date() } = {}) {
@@ -296,6 +329,7 @@ export function createCliVoiceAgent({
   return {
     turn,
     report,
+    cancel,
     /** A voice screen opened: have the process (and its tools) ready before the owner finishes speaking. */
     async warm() {
       if (busy) return { ok: true, skipped: 'busy' };

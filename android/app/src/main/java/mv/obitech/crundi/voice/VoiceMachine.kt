@@ -20,6 +20,14 @@ package mv.obitech.crundi.voice
  *   server gets the same pause, with the older level detector.
  * - What the owner says while Crundi is thinking is kept and sent the moment
  *   the answer comes (the answer is shown, not said: he has moved on).
+ * - What the owner said can be taken back until the answer comes: the ×
+ *   by his words ([VoiceEvent.CancelTapped]) or "scratch that" / "never mind"
+ *   / "ignore that" ([VoiceEvent.Discard], from the server or [Speech.isDiscard]).
+ *   Listening, the words are dropped ([VoiceEffect.DiscardStream]); thinking,
+ *   the turn is cancelled on the server ([VoiceEffect.CancelTurn]), its cue
+ *   stops, and its answer, when it comes, is neither said nor shown: only
+ *   "Cancelled." (and what was already done). Turns are numbered
+ *   ([VoiceState.turn]) so a late answer never lands on the next question.
  * - The moment something is asked, a short cue ("One moment, Sir.") plays
  *   ([VoiceEffect.Cue]), not for "I'm here" or reports.
  * - The microphone stays on for [silenceMs] after the last thing that
@@ -68,16 +76,31 @@ data class VoiceState(
     val live: Boolean = false,
     /** The cue playing now ("One moment, Sir."), or "". */
     val cue: String = "",
+    /** The server can cancel a turn (capability "voice-cancel"): the × is offered. */
+    val cancellable: Boolean = false,
+    /** The number of the turn asked last: an answer to another one is not this one's. */
+    val turn: Int = 0,
 )
 
+/** The × by the owner's words: while they can still be taken back. */
+val VoiceState.canCancel: Boolean get() = cancellable && heard.isNotBlank() && (phase == Phase.Listening || phase == Phase.Thinking)
+
 sealed interface VoiceEvent {
-    data class Opened(val locked: Boolean, val now: Long) : VoiceEvent
+    /** [cancellable]: the server has "voice-cancel". */
+    data class Opened(val locked: Boolean, val now: Long, val cancellable: Boolean = false) : VoiceEvent
     /** [live]: the server drops Cru's own words (barge-in with the stream on). */
     data class Ready(val now: Long, val live: Boolean = false) : VoiceEvent
     data class Interim(val text: String, val now: Long) : VoiceEvent
     data class Utterance(val text: String, val now: Long) : VoiceEvent
     /** Claude's answer, or why there is none. */
-    data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long, val question: String = "", val needsUnlock: Boolean = false, val close: Boolean = false) : VoiceEvent
+    /** [turn]: which turn it answers (-1: the one in progress); [cancelled]: it was cancelled, [acted] what it had already done. */
+    data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long, val question: String = "", val needsUnlock: Boolean = false, val close: Boolean = false, val turn: Int = -1, val cancelled: Boolean = false, val acted: List<String> = emptyList()) : VoiceEvent
+    /** The owner tapped the × by his words. */
+    data class CancelTapped(val now: Long) : VoiceEvent
+    /** The server dropped what he said ("scratch that"): { type: 'discard' }. */
+    data class Discard(val now: Long) : VoiceEvent
+    /** POST /api/voice/cancel answered: what the cancelled turn had already done. */
+    data class Cancelled(val acted: List<String>, val now: Long) : VoiceEvent
     /** The owner tapped Yes or No (or typed): asked like something said. */
     data class Typed(val text: String, val now: Long) : VoiceEvent
     data class SpeechDone(val now: Long) : VoiceEvent
@@ -109,6 +132,10 @@ sealed interface VoiceEffect {
     /** Play a short "one moment" cue now, unless one is playing. */
     data object Cue : VoiceEffect
     data object StopCue : VoiceEffect
+    /** Tell the stream to drop what it has heard so far ({ type: 'discard' }). */
+    data object DiscardStream : VoiceEffect
+    /** POST /api/voice/cancel: the turn in progress. */
+    data object CancelTurn : VoiceEffect
     /** The stream is gone: listen with the phone's own recogniser from here on. */
     data object UseFallback : VoiceEffect
     data object Finish : VoiceEffect
@@ -131,7 +158,10 @@ class VoiceMachine(
     fun on(s: VoiceState, e: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
         if (s.phase == Phase.Ended) return s to emptyList()
         return when (e) {
-            is VoiceEvent.Opened -> s.copy(phase = Phase.Starting, locked = e.locked, quietSince = e.now, activeSince = e.now) to emptyList()
+            is VoiceEvent.Opened -> s.copy(phase = Phase.Starting, locked = e.locked, quietSince = e.now, activeSince = e.now, cancellable = e.cancellable) to emptyList()
+            is VoiceEvent.CancelTapped -> takeBack(s, e.now, fromServer = false)
+            is VoiceEvent.Discard -> takeBack(s, e.now, fromServer = true)
+            is VoiceEvent.Cancelled -> if (s.phase == Phase.Listening && s.heard.isEmpty()) s.copy(notice = cancelledNotice(e.acted)) to emptyList() else s to emptyList()
             is VoiceEvent.Ready -> if (s.phase != Phase.Starting) s.copy(live = e.live && !s.offline) to emptyList() else {
                 val ready = s.copy(phase = Phase.Listening, quietSince = e.now, activeSince = e.now, live = e.live && !s.offline)
                 // News that came while it was starting: said now.
@@ -158,6 +188,10 @@ class VoiceMachine(
                 when {
                     t.isEmpty() -> s to emptyList()
                     echoOf(s, t, e.now) -> s.copy(heard = "") to emptyList()
+                    // "Scratch that" alone (an older server passes it on): take back, never ask it.
+                    Speech.isDiscard(t) && (s.phase == Phase.Listening || s.phase == Phase.Thinking || s.phase == Phase.Starting) -> takeBack(s, e.now, fromServer = true)
+                    // Over Cru: it stops, and nothing is asked.
+                    Speech.isDiscard(t) && s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(t, s.lastSaid, 1)) cutIn(s, e.now) else s to emptyList()
                     s.phase == Phase.Thinking -> s.copy(pending = join(s.pending, t), heard = join(s.pending, t), quietSince = e.now) to emptyList()
                     // Said over Crundi (the stream stayed on): cut it off and ask that now.
                     s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(t, s.lastSaid, 1)) {
@@ -171,7 +205,9 @@ class VoiceMachine(
                 }
             }
             is VoiceEvent.Reply -> {
-                if (s.phase != Phase.Thinking) return s to emptyList()
+                // Cancelled: never said or shown as an error; just what had already been done.
+                if (e.cancelled) return (if (s.phase == Phase.Listening && s.heard.isEmpty()) s.copy(notice = cancelledNotice(e.acted)) else s) to emptyList()
+                if (s.phase != Phase.Thinking || (e.turn >= 0 && e.turn != s.turn)) return s to emptyList()
                 val say = if (e.ok) e.speak.trim() else e.error.trim()
                 val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, activeSince = e.now, question = e.question, needsUnlock = e.needsUnlock, closing = e.ok && e.close, cue = "")
                 // The owner spoke again while Crundi thought: that goes now; the answer stays on screen, unsaid.
@@ -225,9 +261,30 @@ class VoiceMachine(
         }
     }
 
+    /**
+     * The owner takes back what he said: listening, the words go (the stream
+     * is told, unless it was the server that dropped them); thinking, the turn
+     * is cancelled, with what he said meanwhile, and its cue stops.
+     */
+    private fun takeBack(s: VoiceState, now: Long, fromServer: Boolean): Pair<VoiceState, List<VoiceEffect>> = when (s.phase) {
+        Phase.Starting, Phase.Listening -> s.copy(heard = "", quietSince = now, activeSince = now) to (if (fromServer) emptyList() else listOf(VoiceEffect.DiscardStream))
+        Phase.Thinking -> {
+            val fx = ArrayList<VoiceEffect>()
+            if (!fromServer) fx += VoiceEffect.DiscardStream
+            if (s.cue.isNotEmpty()) { fx += VoiceEffect.StopCue; fx += doneFx(s) }
+            fx += VoiceEffect.CancelTurn
+            // The turn's number moves on: its answer, if it still comes, is not the next one's.
+            s.copy(phase = Phase.Listening, heard = "", pending = "", cue = "", notice = "Cancelled.", turn = s.turn + 1, quietSince = now, activeSince = now) to fx
+        }
+        else -> s to emptyList()
+    }
+
+    private fun cancelledNotice(acted: List<String>) =
+        if (acted.isEmpty()) "Cancelled." else "Cancelled. Already done: " + acted.joinToString("; ") + "."
+
     /** [keepReply]: the last answer stays on screen (cut short by what the owner said meanwhile). */
     private fun ask(s: VoiceState, text: String, now: Long, keepReply: Boolean = false): Pair<VoiceState, List<VoiceEffect>> =
-        s.copy(phase = Phase.Thinking, asked = text, heard = text, reply = if (keepReply) s.reply else "", detail = if (keepReply) s.detail else "", notice = if (s.offline) s.notice else "", quietSince = now, activeSince = now, question = "", needsUnlock = false) to listOf(VoiceEffect.Ask(text), VoiceEffect.Cue)
+        s.copy(phase = Phase.Thinking, turn = s.turn + 1, asked = text, heard = text, reply = if (keepReply) s.reply else "", detail = if (keepReply) s.detail else "", notice = if (s.offline) s.notice else "", quietSince = now, activeSince = now, question = "", needsUnlock = false) to listOf(VoiceEffect.Ask(text), VoiceEffect.Cue)
 
     /** Called by name while already awake: "Yes, Sir?" at once, no Claude, no cue. */
     private fun calledHere(s: VoiceState, t: String, now: Long): Pair<VoiceState, List<VoiceEffect>> = here().let { h ->
@@ -293,6 +350,15 @@ object Speech {
         var last = ""
         return { HERE.filter { it != last }.random(random).also { last = it } }
     }
+    /** Phrases that take back what was just said (the server's list, src/voice/stream.js). Not "cancel": that answers Cru's questions. */
+    private val DISCARD = listOf(listOf("scratch", "that"), listOf("never", "mind"), listOf("nevermind"), listOf("ignore", "that"))
+
+    /** [text] is only, or ends with, "scratch that" / "never mind" / "ignore that" (case and punctuation aside). */
+    fun isDiscard(text: String): Boolean {
+        val w = words(text)
+        return DISCARD.any { p -> w.size >= p.size && w.takeLast(p.size) == p }
+    }
+
     /** Cru's name as speech recognition writes it. */
     private val NAMES = setOf("cru", "crew", "kru", "krew", "crue", "crews")
 

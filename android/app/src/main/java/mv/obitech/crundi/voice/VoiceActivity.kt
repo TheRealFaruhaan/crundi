@@ -92,6 +92,7 @@ class VoiceActivity : ComponentActivity() {
                     onUnlock = { unlock() },
                     shell = shell,
                     onAnswer = { controller.answer(it) },
+                    onCancel = { controller.cancelWords() },
                     onAllowMic = { askMic.launch(Manifest.permission.RECORD_AUDIO) },
                 )
             }

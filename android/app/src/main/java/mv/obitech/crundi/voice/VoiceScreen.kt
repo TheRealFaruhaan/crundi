@@ -91,6 +91,8 @@ fun VoiceScreen(
     onAnswer: (String) -> Unit = {},
     /** Asleep, listening on the phone for the wake word: says so. */
     waitingHint: String = "",
+    /** The × by the owner's words: take back what he said, until the answer comes. */
+    onCancel: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val s = ui.state
@@ -121,7 +123,7 @@ fun VoiceScreen(
                 Modifier.fillMaxWidth().weight(1.5f).padding(top = 8.dp).semantics { contentDescription = statusText(ui, phase) },
             )
             UsageLegend(arcs)
-            Words(ui, phase, onAllowMic, Modifier.weight(1f, fill = true))
+            Words(ui, phase, onAllowMic, onCancel, Modifier.weight(1f, fill = true))
             if (waitingHint.isNotEmpty() && phase == Phase.Ended && ui.blocked.isEmpty()) Text(waitingHint, style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             // A question awaiting the owner's yes: answered by voice (Phase 4), no buttons.
             if (s.question.isNotEmpty() && phase != Phase.Thinking) Text("Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
@@ -175,7 +177,7 @@ private fun StatusPill(text: String, phase: Phase) {
 }
 
 @Composable
-private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, modifier: Modifier) {
+private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, onCancel: () -> Unit, modifier: Modifier) {
     val s = ui.state
     // Scrolls: a long answer is never cut off.
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = 10.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -188,11 +190,23 @@ private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, modifier: M
                 // What the owner said: live while listening, then what was asked.
                 val heard = if (phase == Phase.Listening || phase == Phase.Thinking) s.heard else s.asked
                 AnimatedVisibility(heard.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
-                    Text(
-                        "“" + heard + "”",
-                        style = CrundiType.Body.copy(fontSize = 17.sp, lineHeight = 24.sp, color = CrundiColors.TextSecondary),
-                        textAlign = TextAlign.Center, maxLines = 4,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "“" + heard + "”",
+                            style = CrundiType.Body.copy(fontSize = 17.sp, lineHeight = 24.sp, color = CrundiColors.TextSecondary),
+                            textAlign = TextAlign.Center, maxLines = 4,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        // Until the answer comes, what he said can be taken back.
+                        if (ui.blocked.isEmpty() && s.canCancel) {
+                            Box(
+                                Modifier.padding(start = 6.dp).size(32.dp).clip(CircleShape).background(CrundiColors.BgSecondary)
+                                    .clickable(onClickLabel = "Cancel what I said", onClick = onCancel)
+                                    .semantics { contentDescription = "Cancel what I said" },
+                                contentAlignment = Alignment.Center,
+                            ) { CrundiIcon("x", size = 15.dp, tint = CrundiColors.TextSecondary) }
+                        }
+                    }
                 }
                 if (heard.isEmpty() && s.reply.isEmpty() && phase == Phase.Listening) {
                     Text(if (s.locked) "Ask anything. Changes wait for an unlock." else "Ask me anything, Sir.", style = CrundiType.Body.copy(fontSize = 16.sp, color = CrundiColors.TextMuted), textAlign = TextAlign.Center)

@@ -80,6 +80,23 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
     ok(c.push({ type: 'UtteranceEnd' }).text === 'Right away', 'and once Cru\'s last words are seconds old, the same words are the owner\'s');
   }
 
+  {
+    // Taking it back: "scratch that" / "never mind" / "ignore that" (never plain "cancel").
+    const e = vstream.createAssembler();
+    e.push(R('open the dhivo chat, scratch that, open crundi', { final: true }));
+    ok(e.push({ type: 'UtteranceEnd' }).text === 'open crundi', 'mid-sentence "scratch that": only what came after is the request');
+    e.push(R('send it to the API chat. Never mind.', { final: true }));
+    const dd = e.push({ type: 'UtteranceEnd' });
+    ok(dd.type === 'discard', 'ending with "never mind": nothing is sent, the client is told to discard');
+    e.push(R('cancel', { final: true }));
+    ok(e.push({ type: 'UtteranceEnd' }).text === 'cancel', 'plain "cancel" is the owner answering a question, sent as ever');
+    e.push(R('open the board', { final: true }));
+    e.discard();
+    e.push(R('open notes', { final: true }));
+    ok(e.push({ type: 'UtteranceEnd' }).text === 'open notes', 'the x drops what was heard so far');
+    ok(vstream.applyDiscard('what is never mindful').text === 'what is never mindful', 'only the whole phrase counts');
+  }
+
   class FakeWs extends EventEmitter {
     constructor(url, opts) { super(); this.sent = []; this.readyState = 0; FakeWs.last = this; }
     send(d) { this.sent.push(d); }
@@ -163,6 +180,13 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
   ok(!repeat, 'a cue is never the same as the one before, and always one of them');
   ok(T.pickCue(1, 0, Math.random) === 0 && T.pickCue(0, -1, Math.random) === -1, 'one cue: that one; none: none');
   ok(T.CUE_TEXTS.join('|') === cues.CUES.join('|'), 'the web client\'s fallback phrases match the server\'s');
+
+  // ─── taking back what was said ───
+  ok(T.isDiscard('Scratch that.') && T.isDiscard('open dhivo, never mind') && T.isDiscard('Nevermind!') && T.isDiscard('ignore that'), 'web: "scratch that", "never mind", "ignore that" take back what was said');
+  ok(!T.isDiscard('cancel') && !T.isDiscard('scratch that itch') && !T.isDiscard('let me check'), 'web: plain "cancel" (it answers Cru\'s questions) and other words do not');
+  ok(T.cancelledNotice([]) === 'Cancelled.' && T.cancelledNotice([{ tool: 'send_to_chat', what: 'sent "hi" to the API chat' }]) === 'Cancelled. Already done: sent "hi" to the API chat.', 'web: a cancelled turn says what it had already done');
+  ok(T.canCancel({ cancellable: true, heard: 'open dhivo', phase: 'listen' }) && T.canCancel({ cancellable: true, heard: 'open dhivo', phase: 'think' }), 'web: the × shows while listening and thinking');
+  ok(!T.canCancel({ cancellable: true, heard: '', phase: 'listen' }) && !T.canCancel({ cancellable: true, heard: 'x', phase: 'speak' }) && !T.canCancel({ cancellable: false, heard: 'x', phase: 'think' }), 'web: not without words, not once the answer is being said, not on an older server');
 
   // ─── the local gate: Cru's own voice decided on the device ───
   const voicedClip = () => { const c = new Float32Array(6400); for (let i = 0; i < c.length; i++) { const t = i / 16000; c[i] = 0.5 * Math.sin(2 * Math.PI * 140 * t) + 0.25 * Math.sin(2 * Math.PI * 280 * t) + 0.1 * Math.sin(2 * Math.PI * 420 * t); } return c; };

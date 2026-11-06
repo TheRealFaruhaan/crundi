@@ -133,6 +133,27 @@ export function soundsLike(h, s, min = 0.6) {
   return false;
 }
 
+/**
+ * The owner taking back what they said: "scratch that", "never mind",
+ * "ignore that". Not plain "cancel": that answers Cru's yes/no questions.
+ */
+const DISCARD = /\b(?:scratch that|never\s*mind|ignore that)\b[\s.,!?;:]*/gi;
+
+/**
+ * An utterance with the owner's own correction applied: everything up to the
+ * last "scratch that" (etc.) is dropped. { discard: true } when nothing is
+ * left: the whole thing was taken back.
+ */
+export function applyDiscard(text) {
+  const t = String(text || '');
+  let last = -1, end = 0, m;
+  DISCARD.lastIndex = 0;
+  while ((m = DISCARD.exec(t))) { last = m.index; end = m.index + m[0].length; }
+  if (last < 0) return { text: t.trim(), discard: false };
+  const rest = t.slice(end).trim();
+  return rest ? { text: rest, discard: false } : { text: '', discard: true };
+}
+
 /** The whole utterance is one of the cues ("One moment, Sir."), however it was heard. */
 export function isCue(heard) {
   const h = words(heard);
@@ -196,11 +217,17 @@ export function createAssembler({ now = () => Date.now() } = {}) {
     said() { const t = now(); for (const r of recent) if (r.saidAt === null) r.saidAt = t; },
     /** Whatever was heard but not yet sent (the stream is ending). */
     flush,
+    /** The owner threw away what they had said so far (the x). */
+    discard() { parts = []; },
     get seconds() { return audioEnd; },
   };
   function flush() {
-    const text = parts.join(' ').trim();
+    const heard = parts.join(' ').trim();
     parts = [];
+    // "…scratch that": nothing, or only what came after it, is the request.
+    const d = applyDiscard(heard);
+    if (d.discard) return { type: 'discard', text: heard };
+    const text = d.text;
     return text ? { type: 'utterance', text } : null;
   }
 }
@@ -281,6 +308,7 @@ export function relay(client, { projects = [], services = [], audio = null, paus
       else if (m?.type === 'resume') paused = false;
       // Barge-in: audio keeps flowing while Cru talks; its own words are dropped.
       else if (m?.type === 'saying') { paused = false; asm.saying(m.text); }
+      else if (m?.type === 'discard') asm.discard();
       else if (m?.type === 'said') asm.said();
       return;
     }

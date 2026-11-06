@@ -127,7 +127,7 @@ class VoiceController(
         // One microphone owner: "Hey Cru" lets go of it before the session takes it.
         holdsMic = true
         HeyCrundi.sessionOpened()
-        dispatch(VoiceEvent.Opened(isLocked(), now()))
+        dispatch(VoiceEvent.Opened(isLocked(), now(), cancellable = VoiceApi.CANCEL in caps))
         VoiceMicService.start(ctx)
         scope.launch { voice.warm() }
         scope.launch { checkServer(voice, server.host) }
@@ -221,12 +221,24 @@ class VoiceController(
             VoiceEffect.UseFallback -> useFallback()
             VoiceEffect.Finish -> { stopAll(); onFinish() }
             VoiceEffect.Dismiss -> { stopAll(); onDismiss() }
+            VoiceEffect.DiscardStream -> socket?.send("""{"type":"discard"}""")
+            VoiceEffect.CancelTurn -> api?.let { v ->
+                scope.launch {
+                    val r = runCatching { v.cancel() }.onFailure { Log.i(TAG, "cancel: ${it.message}") }.getOrNull()
+                    if (r != null) dispatch(VoiceEvent.Cancelled(r.acted.map { it.what }.filter { it.isNotBlank() }, now()))
+                }
+            }
         }
     }
+
+    /** The × by the owner's words: take back what he said (or cancel the turn it started). */
+    fun cancelWords() = dispatch(VoiceEvent.CancelTapped(now()))
 
     private fun ask(text: String) {
         val voice = api ?: return
         val locked = _ui.value.state.locked
+        // The machine numbered this turn: its answer is matched to it.
+        val turn = _ui.value.state.turn
         val where = if (locked) "$source, phone locked" else source
         scope.launch {
             val r = try { voice.turn(text, where, locked) } catch (e: ApiException) {
@@ -236,9 +248,9 @@ class VoiceController(
                     else -> e.message
                 })
             } catch (e: Exception) { VoiceReply(ok = false, error = e.message ?: "Something went wrong") }
-            dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close))
+            dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close, turn = turn, cancelled = r.cancelled, acted = r.acted.map { it.what }.filter { it.isNotBlank() }))
             // After the reply, so a note about it (untrained) isn't cleared by the reply's own.
-            if (r.ok) phoneActions(r.phoneActions)
+            if (r.ok && !r.cancelled) phoneActions(r.phoneActions)
             // The spend moved: refresh the arcs.
             // (and the voice: Cru may just have changed its own speed or voice)
             runCatching { voice.settings() }.getOrNull()?.let { s ->
@@ -385,6 +397,7 @@ class VoiceController(
             is ListenEvent.Utterance -> dispatch(VoiceEvent.Utterance(ev.text, now()))
             is ListenEvent.Failed -> if (fallback != null) block("No speech recognition: ${ev.error}.") else lost(ev.error)
             is ListenEvent.Report -> dispatch(VoiceEvent.Report(ev.speak, ev.show, now()))
+            is ListenEvent.Discard -> dispatch(VoiceEvent.Discard(now()))
         }
     }
 

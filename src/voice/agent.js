@@ -46,6 +46,19 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import * as voiceSettings from './settings.js';
+import { READ_ONLY_TOOL_NAMES } from './tools.js';
+
+/** Tools whose running changes nothing the owner would need told about when a request is cancelled. */
+const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice']);
+
+/** What an action did, in a few words, for "Cancelled. Already done: …". */
+export function describeAct(name, input = {}) {
+  const q = (t) => `"${String(t || '').slice(0, 60)}"`;
+  if (name === 'send_to_chat') return `sent ${q(input.text)} to the chat`;
+  if (name === 'start_chat') return `started a chat in ${input.project || 'a project'}`;
+  if (name === 'confirm_action') return 'carried out the action you agreed to';
+  return String(name).replace(/_/g, ' ');
+}
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_HISTORY_MESSAGES = 80;
@@ -153,6 +166,8 @@ export async function runVoiceTool(t, name, input, signals) {
       return { content: blocks.length ? blocks : '(nothing)' };
     }
     if (out && typeof out === 'object' && signals) {
+      // Done (not merely asked): something a cancel cannot take back.
+      if (!QUIET_TOOLS.has(name) && !out.needsConfirmation && !out.needsUnlock && out.ok !== false && !out.error && signals.acted) signals.acted.push({ tool: name, what: describeAct(name, input) });
       if (out.needsConfirmation && out.id) signals.pending.push({ id: out.id, question: out.ask || '' });
       if (out.needsUnlock) signals.needsUnlock = true;
       if (out.phoneAction) signals.phoneActions.push(out.phoneAction);
@@ -212,10 +227,26 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     };
   }
 
-  function send(api, model, req) {
+  function send(api, model, req, signal) {
+    const opts = signal ? { signal } : undefined;
     return model !== 'claude-haiku-5-5'
-      ? api.beta.messages.create({ ...req, betas: [FALLBACK_BETA], fallbacks: 'default' })
-      : api.messages.create(req);
+      ? api.beta.messages.create({ ...req, betas: [FALLBACK_BETA], fallbacks: 'default' }, opts)
+      : api.messages.create(req, opts);
+  }
+
+  // The turn in progress, so the owner can cancel it (cancel()).
+  let inFlight = null;
+  /**
+   * The conversation after a cancelled turn: as if it was never asked, or,
+   * when an action was already done, a short record of that (the model must
+   * know a message went, or it would offer to send it again).
+   */
+  function dropTurn(start, said, acted) {
+    history.length = start;
+    if (acted.length) {
+      history.push({ role: 'user', content: `[The owner cancelled this request while it was being answered] ${said}` });
+      history.push({ role: 'assistant', content: [{ type: 'text', text: `Cancelled. Already done: ${acted.map(a => a.what).join('; ')}.` }] });
+    }
   }
 
   /**
@@ -247,21 +278,30 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const used = [];
     let cost = 0;
     const cache = { read: 0, written: 0, uncached: 0 };
-    const signals = { pending: [], needsUnlock: false, phoneActions: [], close: false };
+    const signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, acted: [] };
+    const me = { abort: new AbortController(), cancelled: false, signals };
+    inFlight = me;
+    let start = history.length;
+    const cancelledReply = () => { dropTurn(start, said, signals.acted); return { ok: false, cancelled: true, acted: signals.acted, tools: used, costUsd: cost, cache }; };
     try {
       // A new turn: the owner has spoken, so actions proposed before may now be
       // confirmed. Not for a report: the owner said nothing, so nothing is agreed.
       if (!report) beforeTurn({ locked });
       // Too long for one conversation: compact it now rather than lose it.
       if (history.length > MAX_HISTORY_MESSAGES) { busy = false; const c = await compact({ force: true }); busy = true; if (!c.ok) { history = []; lastReq = null; } }
+      start = history.length;
       history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${contextLine({ now, where, locked })}\n${said}` });
       settings.countTurn(now);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const req = buildRequest(model, history);
         lastReq = { model, messages: [...history] };
         lastAt = Date.now();
-        const res = await send(api, model, req);
+        if (me.cancelled) return cancelledReply();
+        let res;
+        try { res = await send(api, model, req, me.abort.signal); }
+        catch (e) { if (me.cancelled) return cancelledReply(); throw e; }
         settings.addClaudeSpend(model, res.usage, now);
+        if (me.cancelled) return cancelledReply();
         cost += settings.claudeCost(model, res.usage);
         cache.read += res.usage?.cache_read_input_tokens || 0;
         cache.written += res.usage?.cache_creation_input_tokens || 0;
@@ -276,6 +316,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
           used.push(...calls.map(c => c.name));
           const results = await Promise.all(calls.map(c => runTool(c, signals)));
           history.push({ role: 'user', content: results });
+          if (me.cancelled) return cancelledReply();
           continue;
         }
         const reply = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
@@ -288,15 +329,30 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       }
       return { ok: false, error: 'Too many lookups for one request; try asking more specifically', tools: used, costUsd: cost, cache };
     } catch (e) {
+      if (me.cancelled) return cancelledReply();
       if (e instanceof Anthropic.AuthenticationError) return { ok: false, error: 'The Claude API key was refused. Check it in Settings › Voice assistant.' };
       if (e instanceof Anthropic.RateLimitError) return { ok: false, error: 'The Claude API is rate-limiting; try again in a moment.' };
       if (e instanceof Anthropic.APIError) return { ok: false, error: `Claude API error ${e.status || ''}: ${e.message}` };
       return { ok: false, error: String(e.message || e) };
     } finally {
+      if (inFlight === me) inFlight = null;
       busy = false;
       lastActivity = Date.now();
       save();
     }
+  }
+
+  /**
+   * The owner cancelled what they said ("scratch that", the x): the request
+   * stops where it is, and is not answered.
+   * @returns {{ok:true, cancelled:boolean, acted:Array}}
+   */
+  function cancel() {
+    const me = inFlight;
+    if (!me || me.cancelled) return { ok: true, cancelled: false, acted: [] };
+    me.cancelled = true;
+    try { me.abort.abort(); } catch { /* already done */ }
+    return { ok: true, cancelled: true, acted: me.signals.acted.slice() };
   }
 
   /** The conversation as plain text, for the summary (thinking and raw tool data left out). */
@@ -392,6 +448,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
   return {
     turn,
     report,
+    cancel,
     warm,
     /** Start a fresh conversation. */
     compact,

@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.18 (en-US)
+
+Version code 49. Internal track. Since 1.1.3-dev.17 (code 48): cancel (voice-cancel): the x and the discard phrases; /api/voice/cancel while thinking.
+
+```
+<en-US>
+Take back what you said.
+
+- End with "scratch that" or "never mind", or tap the x by your words, and nothing is asked.
+- Right after you have spoken it still works: Cru stops before answering, and tells you if it had already done something.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.17 (en-US)
 
 Version code 48. Internal track. Since 1.1.3-dev.16 (code 47): local own-voice gate (OwnerGate.kt) with pre-roll; Cru plays as speakerphone call audio (CallAudio.kt) so the AEC removes it; nothing is streamed while Cru speaks until the gate opens.

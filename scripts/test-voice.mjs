@@ -266,6 +266,28 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
     ok(wr.ok && result.type === 'tool_result' && Array.isArray(result.content) && result.content.some(b => b.type === 'image'), 'and the model is sent the picture');
     ok(/view_widget/.test(SYSTEM_PROMPT), 'the prompt: Cru can look at widgets');
   }
+  {
+    // Cancel: the request stops where it is and is not answered; as if never asked,
+    // unless something was already done, which is kept on record and reported.
+    let release;
+    const slow = () => ({ messages: { create: (req, opts) => new Promise((ok, no) => { release = ok; opts?.signal?.addEventListener('abort', () => no(Object.assign(new Error('aborted'), { name: 'AbortError' }))); }) } });
+    const ca = createVoiceAgent({ tools, client: slow });
+    const p1 = ca.turn('open the wrong chat');
+    await new Promise(r => setTimeout(r, 10));
+    const c1 = ca.cancel();
+    const r1 = await p1;
+    ok(c1.cancelled && r1.cancelled && !r1.ok && !r1.speak, 'a cancelled request ends at once, unanswered');
+    ok(ca.history.length === 0, 'and the conversation is as if it was never asked');
+    ok(!ca.cancel().cancelled, 'nothing running: nothing to cancel');
+    const sendTool = { name: 'send_to_chat', description: 'x', input_schema: { type: 'object', properties: {}, additionalProperties: false }, run: () => ({ ok: true, sent: true }) };
+    const steps = [{ stop_reason: 'tool_use', usage: {}, content: [{ type: 'tool_use', id: 's1', name: 'send_to_chat', input: { text: 'run the tests' } }] }];
+    let ca2;
+    const acting = () => ({ messages: { create: (req, opts) => steps.length ? Promise.resolve(steps.shift()) : new Promise((ok, no) => { setTimeout(() => ca2.cancel(), 5); opts?.signal?.addEventListener('abort', () => no(Object.assign(new Error('aborted'), { name: 'AbortError' }))); }) } });
+    ca2 = createVoiceAgent({ tools: [...tools, sendTool], client: acting });
+    const r2 = await ca2.turn('tell the API chat to run the tests');
+    ok(r2.cancelled && r2.acted.length === 1 && /sent "run the tests"/.test(r2.acted[0].what), 'what was already done is reported');
+    ok(ca2.history.length === 2 && /cancelled/.test(ca2.history[0].content) && /Already done/.test(ca2.history[1].content[0].text), 'and kept on record, so Cru does not offer to do it again');
+  }
   const r = await agent.turn('what is on the kanban', { where: 'workbench', now: new Date('2026-11-10T09:00:00Z') });
   ok(r.ok && r.speak === 'One project, Sir, and the board is empty.' && r.show === 'proj: no tasks', 'a turn with two tool calls answers');
   ok(r.tools.join() === 'list_projects,get_kanban', 'both tools ran (in parallel, one round)');

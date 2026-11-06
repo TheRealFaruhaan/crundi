@@ -177,6 +177,12 @@ export const CAPABILITIES = Object.freeze([
   // and GET /api/voice/cues/clip. An older server has neither: a client
   // plays no cue, or says it with the device's own voice.
   'voice-cues',
+  // POST /api/voice/cancel stops the turn in progress (the owner's "scratch
+  // that" or the x); a cancelled /api/voice/turn answers { ok: false,
+  // cancelled: true, acted } with 200. The listen socket sends
+  // { type: 'discard' } for a phrase the owner cancelled, and takes
+  // { type: 'discard' } to drop what it has heard so far.
+  'voice-cancel',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

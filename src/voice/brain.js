@@ -57,6 +57,12 @@ export function createVoiceBrain({ api, cli, settings = voiceSettings, logFile =
     get which() { return which(); },
     turn: (text, opts = {}) => timed(() => pick().turn(text, opts), { said: text }),
     report: (note, opts = {}) => timed(() => pick().report(note, opts), { report: true, said: note }),
+    /** The owner cancelled what they said: whichever brain is answering stops. */
+    cancel: () => {
+      const a = api && api.cancel ? api.cancel() : { cancelled: false, acted: [] };
+      const c = cli && cli.cancel ? cli.cancel() : { cancelled: false, acted: [] };
+      return { ok: true, cancelled: !!(a.cancelled || c.cancelled), acted: [...(a.acted || []), ...(c.acted || [])] };
+    },
     warm: (opts) => pick().warm(opts),
     compact: (opts) => pick().compact(opts),
     reset: () => pick().reset(),
