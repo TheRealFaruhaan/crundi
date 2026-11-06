@@ -16,13 +16,13 @@ import mv.obitech.crundi.ui.theme.CrundiTheme
 
 /**
  * Trigger mode B (D33): Gemini stays the phone's assistant, and this screen
- * is opened by double-pressing the side key (set to open "Crundi Voice") or
- * "Hey Google, open Crundi Voice". The launcher entry "Crundi Voice" is an
+ * is opened by double-pressing the side key (set to open "Cru") or
+ * "Hey Google, open Cru". The launcher entry "Cru" is an
  * alias of it. Shows over the lock screen.
  *
  * Left alone it winds down in three steps: the microphone stays on for the
  * chosen time after the last thing said or answered; then the screen stays
- * open, listening on the phone only for "Hey Crundi" (whatever the wake
+ * open, listening on the phone only for "Hey Cru" (whatever the wake
  * settings say), which wakes it where it is; after a few more minutes
  * without a word the screen may sleep, and once it does the screen closes.
  *
@@ -34,7 +34,7 @@ class VoiceActivity : ComponentActivity() {
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { controller.open() }
 
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
-    /** The session is asleep and the screen open: listening for "Hey Crundi" only. */
+    /** The session is asleep and the screen open: listening for "Hey Cru" only. */
     private var waiting by mutableStateOf(false)
     private var inFront = false
     private val letSleep = Runnable { keepOn(false) }
@@ -53,7 +53,7 @@ class VoiceActivity : ComponentActivity() {
         handler.postDelayed(letSleep, VoicePrefs.screenAwakeMinutes(this) * 60_000L)
     }
 
-    /** "Hey Crundi", or the mic tapped: listening again. */
+    /** "Hey Cru", or the mic tapped: listening again. */
     private fun wake() {
         handler.removeCallbacks(letSleep)
         keepOn(true)
@@ -69,7 +69,7 @@ class VoiceActivity : ComponentActivity() {
         enableEdgeToEdge()
         // The screen stays on while the voice screen is open.
         keepOn(true)
-        controller = VoiceController(this, "Crundi Voice", ::locked) { asleep() }
+        controller = VoiceController(this, "Cru", ::locked) { asleep() }
         setContent {
             CrundiTheme {
                 val ui by controller.ui.collectAsStateWithLifecycle()
@@ -80,7 +80,7 @@ class VoiceActivity : ComponentActivity() {
                     mic = { controller.micLevel.value },
                     voice = { controller.voiceLevel.value },
                     onMic = { if (waiting) wake() else controller.tapMic() },
-                    waitingHint = if (waiting && wake == HeyCrundiPlan.Listener.Screen) "Say \"Hey Crundi\" to talk again" else "",
+                    waitingHint = if (waiting && wake == HeyCrundiPlan.Listener.Screen) "Say \"Hey Cru\" to talk again" else "",
                     onClose = { finish() },
                     onUnlock = { unlock() },
                     shell = shell,
@@ -90,7 +90,7 @@ class VoiceActivity : ComponentActivity() {
             }
         }
         if (intent?.getBooleanExtra(EXTRA_UNLOCK, false) == true) unlock()
-        // Opened by "Hey Crundi" from the background: its "tap to talk" is done.
+        // Opened by "Hey Cru" from the background: its "tap to talk" is done.
         HeyCrundi.cancelWakeNotification(this)
     }
 
@@ -105,7 +105,7 @@ class VoiceActivity : ComponentActivity() {
 
     override fun onStop() {
         // Off screen: stop listening; coming back wakes it again. Asleep, and the
-        // screen went off (or Master left): it's done.
+        // screen went off (or the owner left): it's done.
         inFront = false
         val wasWaiting = waiting
         handler.removeCallbacks(letSleep)

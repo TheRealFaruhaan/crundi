@@ -56,7 +56,7 @@ const DEFAULTS = {
   // The day of the month each account is billed: its spend month starts then.
   billingDay: 1,
   deepgramBillingDay: 1,
-  // How long Master may pause before what they said is sent (D44), ms.
+  // How long the owner may pause before what they said is sent (D44), ms.
   pauseMs: 2000,
   // month: the Claude month's first day; deepgramMonth: Deepgram's.
   spend: { month: '', deepgramMonth: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },

@@ -5,7 +5,7 @@
  * Paid from the Claude API key in Voice assistant settings — metered API
  * credits, separate from the subscription Crundi's chats run on.
  *
- * Shape of a turn: Master's words go in; Claude may call tools any number of
+ * Shape of a turn: The owner\'s words go in; Claude may call tools any number of
  * times (bounded); the final text comes back split in two, because a phone
  * speaks one part and shows the other (D28):
  *
@@ -28,7 +28,7 @@
  *   - the conversation is append-only, and top-level automatic caching (also
  *     1 hour) moves a second breakpoint to its end on every request, so each
  *     round and each turn reads everything before it;
- *   - anything that varies (the time, where Master is) rides in the new user
+ *   - anything that varies (the time, where the owner is) rides in the new user
  *     message, after every cached block;
  *   - model, effort and thinking settings are the same on every request
  *     (changing them invalidates the messages cache).
@@ -38,7 +38,7 @@
  * means paying to write the whole conversation again.
  *
  * warm(): sent when a voice session opens (the side key, the test page),
- * while Master is still speaking. It re-sends the last request with
+ * while the owner is still speaking. It re-sends the last request with
  * max_tokens 0 — a cheap cache read that refreshes the entries' timers, or a
  * write of the system + tools prefix when there is no conversation yet — so
  * the real request starts warm.
@@ -58,33 +58,34 @@ const CACHE = { type: 'ephemeral', ttl: '1h' };
 /** A request newer than this is still warm; warm() skips it. */
 const WARM_ENOUGH_MS = 10 * 60 * 1000;
 
-export const SYSTEM_PROMPT = `You are Crundi, Master's voice assistant for Crundi — the self-hosted workbench that runs Master's projects: Claude Code chats, terminals, files, git, a kanban board, notes, a mindmap, schedules and background services.
+export const SYSTEM_PROMPT = `You are Cru (said like "crew"), the owner's voice assistant in Crundi — the self-hosted workbench that runs the owner's projects: Claude Code chats, terminals, files, git, a kanban board, notes, a mindmap, schedules and background services.
 
 Who you are:
 - A calm, capable, British-sounding AI butler with a dry wit. Cool, never robotic.
-- The user is Master. When you address the user, call them "Master" ("Yes, Master."). You don't have to on every reply; a short acknowledgement in your own words is fine — "On it.", "Roger.", "Affirmative." are examples of the tone, not a list to pick from.
-- You are one assistant across everything Master does, not one per project.
+- Your name is Cru. Speech recognition often writes it as "crew", "Crew" or "Kru": when the owner says it, they mean you. Crundi is the workbench, not you.
+- The user is the owner. Address them as "Sir" ("Yes, Sir."), never "Master" or by name. You don't have to on every reply; a short acknowledgement in your own words is fine — "On it.", "Roger.", "Affirmative." are examples of the tone, not a list to pick from.
+- You are one assistant across everything the owner does, not one per project.
 
 How you answer:
 - Latency-sensitive: begin your visible answer immediately.
 - Your reply is spoken aloud. Keep the spoken part to one to three short sentences, in plain speech: no markdown, no bullet points, no code, no URLs, no file paths read out character by character. Round numbers the way a person would say them.
 - When there is detail worth seeing (a list, a file excerpt, log lines, a long chat reply), say a one-line summary aloud, then put the detail after a line containing only three dashes (---). The part after --- is shown on screen and never spoken.
-- Speech recognition may mishear Crundi's words: "compound task" or "come on task" is probably "kanban task", "mind map" is "mindmap", project names may come out as similar-sounding words. Work out what Master most likely meant from the tools and context; if two readings are both plausible and the difference matters, ask a short question.
+- Speech recognition may mishear Crundi's own words: "compound task" or "come on task" is probably "kanban task", "mind map" is "mindmap", project names may come out as similar-sounding words. Work out what the owner most likely meant from the tools and context; if two readings are both plausible and the difference matters, ask a short question.
 - Use the tools to look things up rather than guessing. Call several at once when they're independent.
 
 What you can and cannot do:
-- You can read: projects and their files, settings, services and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals.
-- You can act: turn background "Hey Crundi" listening on the phone on for 15–120 minutes (or off), send messages into chats, start, close, park and resume chats, tell Master when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
-- Some actions need Master's yes. When a tool answers needsConfirmation, nothing has been done: ask its question in your own words, briefly, and stop. Only when Master agrees in their next message call confirm_action with the id; if they decline, cancel_action. Never confirm on Master's behalf, and never call confirm_action in the same turn you asked.
-- send_to_chat and start_chat take an intent: "explicit" only when Master plainly asked you to send, tell, type or reply something; otherwise "inferred", and it is read back first.
+- You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals.
+- You can act: turn background "Hey Cru" listening on the phone on for 15–120 minutes (or off), send messages into chats, start, close, park and resume chats, tell the owner when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
+- Some actions need the owner's yes. When a tool answers needsConfirmation, nothing has been done: ask its question in your own words, briefly, and stop. Only when the owner agrees in their next message call confirm_action with the id; if they decline, cancel_action. Never confirm on the owner's behalf, and never call confirm_action in the same turn you asked.
+- send_to_chat and start_chat take an intent: "explicit" only when the owner plainly asked you to send, tell, type or reply something; otherwise "inferred", and it is read back first.
 - You can never type into a terminal, edit files, touch keys, logins, the tunnel, collaborators, secrets, backups, updates, skills or permissions. Say so plainly if asked.
 - Never pretend to have done something: say what happened, from the tool's answer.
 - Secret values are never available to you; credentials in settings show only as set or not set.
 
 Memory:
-- You are one assistant with one memory. Your notebook (the memory tool, files under /memories) is for what should last: Master's preferences, standing facts about their projects, threads in progress. Keep it short and current; never put secrets in it. Look at it when a conversation starts or when something you may have noted comes up.
+- You are one assistant with one memory. Your notebook (the memory tool, files under /memories) is for what should last: the owner's preferences, standing facts about their projects, threads in progress. Keep it short and current; never put secrets in it. Look at it when a conversation starts or when something you may have noted comes up.
 - memory_search finds anything said before, across every conversation, including ones that have been summarised.
-- When the context says the phone is locked, answer questions as usual, but anything that would change something must wait until Master unlocks the phone: say so briefly.`;
+- When the context says the phone is locked, answer questions as usual, but anything that would change something must wait until the owner unlocks the phone: say so briefly.`;
 
 /**
  * Split a reply into what is spoken and what is shown (D28).
@@ -97,10 +98,10 @@ export function splitReply(text) {
   return { speak: m[1].trim(), show: m[2].trim() };
 }
 
-/** The volatile context that goes in front of what Master said. */
+/** The volatile context that goes in front of what the owner said. */
 export function contextLine({ now = new Date(), where = '', locked = false } = {}) {
   const when = now.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-  return `[${when}${where ? ` · Master is looking at: ${where}` : ''}${locked ? ' · the phone is locked: answer, but anything that would change something needs Master to unlock first' : ''}]`;
+  return `[${when}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the phone is locked: answer, but anything that would change something needs the owner to unlock first' : ''}]`;
 }
 
 /**
@@ -146,7 +147,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
 
   /**
    * Run one tool call. What an action reports back that the client must act
-   * on (a question awaiting Master's yes, a locked phone) is collected in
+   * on (a question awaiting the owner's yes, a locked phone) is collected in
    * `signals` for the reply.
    */
   async function runTool(block, signals = { pending: [], needsUnlock: false, phoneActions: [] }) {
@@ -188,7 +189,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const cache = { read: 0, written: 0, uncached: 0 };
     const signals = { pending: [], needsUnlock: false, phoneActions: [] };
     try {
-      // A new turn: Master has spoken, so actions proposed before may now be confirmed.
+      // A new turn: The owner has spoken, so actions proposed before may now be confirmed.
       beforeTurn({ locked });
       // Too long for one conversation: compact it now rather than lose it.
       if (history.length > MAX_HISTORY_MESSAGES) { busy = false; const c = await compact({ force: true }); busy = true; if (!c.ok) { history = []; lastReq = null; } }
@@ -207,7 +208,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         history.push({ role: 'assistant', content: res.content });
 
         if (res.stop_reason === 'refusal') {
-          return { ok: true, speak: "I'm afraid I can't help with that one, Master.", show: '', tools: used, costUsd: cost, cache };
+          return { ok: true, speak: "I'm afraid I can't help with that one, Sir.", show: '', tools: used, costUsd: cost, cache };
         }
         if (res.stop_reason === 'tool_use') {
           const calls = res.content.filter(b => b.type === 'tool_use');
@@ -241,10 +242,10 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
   function transcript(msgs) {
     const out = [];
     for (const m of msgs) {
-      if (typeof m.content === 'string') { out.push(`${m.role === 'user' ? 'Master' : 'Crundi'}: ${m.content}`); continue; }
+      if (typeof m.content === 'string') { out.push(`${m.role === 'user' ? 'Owner' : 'Cru'}: ${m.content}`); continue; }
       for (const b of m.content || []) {
-        if (b.type === 'text' && b.text) out.push(`${m.role === 'user' ? 'Master' : 'Crundi'}: ${b.text}`);
-        else if (b.type === 'tool_use') out.push(`(Crundi used ${b.name} ${JSON.stringify(b.input).slice(0, 200)})`);
+        if (b.type === 'text' && b.text) out.push(`${m.role === 'user' ? 'Owner' : 'Cru'}: ${b.text}`);
+        else if (b.type === 'tool_use') out.push(`(Cru used ${b.name} ${JSON.stringify(b.input).slice(0, 200)})`);
         else if (b.type === 'tool_result') out.push(`(result: ${String(typeof b.content === 'string' ? b.content : JSON.stringify(b.content)).slice(0, 300)})`);
       }
     }
@@ -267,7 +268,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       const model = s.model || settings.DEFAULT_MODEL;
       const res = await client(s.anthropicKey).messages.create({
         model, max_tokens: 1500, output_config: { effort: 'low' },
-        system: 'You summarise a voice assistant\'s conversation with its user (called Master) so it can carry on from the summary. Keep what matters for later: decisions, requests in progress, actions taken (what, where), what is waiting on someone, facts learnt about Master\'s projects and preferences. Plain prose and short lists, no preamble, under 400 words.',
+        system: 'You summarise a voice assistant\'s conversation with its user (the owner, addressed as Sir) so it can carry on from the summary. Keep what matters for later: decisions, requests in progress, actions taken (what, where), what is waiting on someone, facts learnt about the owner\'s projects and preferences. Plain prose and short lists, no preamble, under 400 words.',
         messages: [{ role: 'user', content: `The conversation so far:\n\n${transcript(history)}\n\nWrite the summary.` }],
       });
       settings.addClaudeSpend(model, res.usage, now);
@@ -276,7 +277,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       const when = now.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
       history = [
         { role: 'user', content: `[What we have been doing until ${when}, summarised. Earlier detail is in memory_search.]\n${summary}` },
-        { role: 'assistant', content: [{ type: 'text', text: 'Understood, Master.' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Understood, Sir.' }] },
       ];
       lastReq = null;
       try { onCompacted(summary, now.getTime()); } catch { /* best effort */ }

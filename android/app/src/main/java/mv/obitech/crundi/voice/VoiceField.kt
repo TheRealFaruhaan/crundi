@@ -74,7 +74,7 @@ data class UsageArcs(val week: Float?, val fiveHour: Float?, val api: Float?, va
 
 /**
  * The voice screen's field: the Crundi head glowing at the centre, voice
- * lines rippling round it (Master's voice while listening, Crundi's while it
+ * lines rippling round it (The owner\'s voice while listening, Crundi's while it
  * speaks), the usage arcs, and every project as a living cell joined to the
  * centre by a tendril, its colour its real state. Sparks run down the
  * tendrils of projects where Claude is busy or waiting.

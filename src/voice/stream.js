@@ -1,6 +1,6 @@
 /**
  * voice/stream.js — live speech to text: the client's microphone, relayed to
- * Deepgram's streaming API while Master speaks.
+ * Deepgram's streaming API while the owner speaks.
  *
  *   client ──audio chunks──▶ /api/voice/listen ──▶ Deepgram /v1/listen (WebSocket)
  *   client ◀──words as they're heard, then each finished utterance──┘
@@ -10,8 +10,8 @@
  *
  *   { type: 'ready' }                         Deepgram is listening
  *   { type: 'interim', text }                 words so far, may still change
- *   { type: 'utterance', text }               Master finished a sentence
- *   { type: 'speech' }                        Master started speaking
+ *   { type: 'utterance', text }               the owner finished a sentence
+ *   { type: 'speech' }                        the owner started speaking
  *   { type: 'error', error }                  and the socket closes
  *
  * A client text message { type: 'stop' } ends the stream; { type: 'pause' } /
@@ -47,12 +47,12 @@ export function rawAudio({ encoding, sample_rate: rate } = {}) {
   return { encoding: String(encoding), sample_rate: n };
 }
 
-/** How long Master may pause before what they said is sent (D44): settings.pauseMs, within these. */
+/** How long the owner may pause before what they said is sent (D44): settings.pauseMs, within these. */
 export const PAUSE_MS = { min: 1000, max: 5000, default: 2000 };
 
 /**
  * The streaming URL: Nova-3, words as they're heard, end of speech detected.
- * What Master says is complete only after `pauseMs` without a word
+ * What the owner says is complete only after `pauseMs` without a word
  * (UtteranceEnd), so a slow speaker with pauses isn't cut off mid-sentence.
  */
 export function streamUrl(terms, { language = 'en', audio = null, pauseMs = PAUSE_MS.default } = {}) {
@@ -73,7 +73,7 @@ export function streamUrl(terms, { language = 'en', audio = null, pauseMs = PAUS
 /**
  * Turns Deepgram's messages into utterances. Pure, so it can be tested.
  * Finished phrases (is_final) are joined; the utterance is complete at
- * UtteranceEnd only: speech_final comes after a short pause, and Master may
+ * UtteranceEnd only: speech_final comes after a short pause, and the owner may
  * pause mid-sentence (D44).
  */
 export function createAssembler() {

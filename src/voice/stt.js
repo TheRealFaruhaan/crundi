@@ -20,7 +20,7 @@ const MAX_KEYTERMS = 100;
 
 /** Words any Crundi request may use. */
 export const CRUNDI_VOCABULARY = [
-  'Crundi', 'Hey Crundi', 'kanban', 'kanban task', 'mindmap', 'backlog', 'to do', 'in progress', 'done',
+  'Cru', 'Hey Cru', 'Crundi', 'kanban', 'kanban task', 'mindmap', 'backlog', 'to do', 'in progress', 'done',
   'subtask', 'todo', 'project', 'chat', 'terminal', 'service', 'schedule', 'usage', 'workbench',
   'panel', 'notes', 'park', 'resume', 'Claude', 'Opus', 'Sonnet', 'Haiku',
 ];

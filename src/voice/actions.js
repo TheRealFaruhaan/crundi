@@ -4,15 +4,15 @@
  * Every tool here changes something, so every one goes through the same gate
  * (gated()):
  *
- *   - the phone is locked: nothing runs; Master is asked to unlock (spec §4);
+ *   - the phone is locked: nothing runs; the owner is asked to unlock (spec §4);
  *   - the action needs a yes (the rules below): it is not run. It is parked
  *     with an id and the question, and the model is told to ask. It runs only
- *     through confirm_action, and only once Master has said something since
+ *     through confirm_action, and only once the owner has said something since
  *     (a later turn), so the model can never approve its own action;
  *   - otherwise it runs.
  *
  * Which need a yes:
- *   D15  a message into a chat: sent at once when Master clearly asked for it
+ *   D15  a message into a chat: sent at once when the owner clearly asked for it
  *        (intent 'explicit'); read back first when the model decided to send
  *        it itself (intent 'inferred'). A long message is read back as one line.
  *   D24  closing a chat; D31 parking one.
@@ -41,7 +41,7 @@ export const ACTION_TOOL_NAMES = [
   'confirm_action', 'cancel_action',
 ];
 
-/** D6: how long background "Hey Crundi" listening may be turned on for by voice (minutes). */
+/** D6: how long background "Hey Cru" listening may be turned on for by voice (minutes). */
 export const LISTEN_MINUTES = [15, 30, 45, 60, 120];
 
 /** Settings voice may change (each confirmed, D32). Keys and critical settings are not among them (D17). */
@@ -51,7 +51,7 @@ const PENDING_MS = 10 * 60 * 1000;
 const STATUSES = ['backlog', 'todo', 'in_progress', 'done'];
 
 /**
- * Actions waiting for Master's yes. Pure apart from the clock, so it can be
+ * Actions waiting for the owner's yes. Pure apart from the clock, so it can be
  * tested: an action proposed in turn N can only be taken in turn N+1 or later.
  */
 export function createPending({ now = () => Date.now() } = {}) {
@@ -60,7 +60,7 @@ export function createPending({ now = () => Date.now() } = {}) {
   let seq = 0;
   const sweep = () => { for (const [id, p] of items) if (now() - p.at > PENDING_MS) items.delete(id); };
   return {
-    /** Master has said something: a new turn begins. */
+    /** The owner has said something: a new turn begins. */
     newTurn() { turn++; sweep(); },
     get turn() { return turn; },
     propose(tool, input, question) {
@@ -69,12 +69,12 @@ export function createPending({ now = () => Date.now() } = {}) {
       items.set(id, { id, tool, input, question, turn, at: now() });
       return id;
     },
-    /** The action, if Master has spoken since it was proposed; else why not. */
+    /** The action, if the owner has spoken since it was proposed; else why not. */
     take(id) {
       sweep();
       const p = items.get(String(id || ''));
-      if (!p) return { error: 'No action is waiting with that id (it may have expired). Ask Master again.' };
-      if (p.turn >= turn) return { error: 'Master has not answered yet. Ask the question and wait for their reply; never confirm on their behalf.' };
+      if (!p) return { error: 'No action is waiting with that id (it may have expired). Ask the owner again.' };
+      if (p.turn >= turn) return { error: 'The owner has not answered yet. Ask the question and wait for their reply; never confirm on their behalf.' };
       items.delete(p.id);
       return { action: p };
     },
@@ -126,7 +126,7 @@ export function makeActionTools(deps, ctx) {
   const defs = [
     {
       name: 'send_to_chat',
-      description: 'Send a message into an open Claude Code chat, as Master typing it. intent: "explicit" when Master clearly asked you to send, tell, type or reply something; "inferred" when you decided to send it on your own reading (it is then read back to Master first). Chats only: you can never type into a terminal.',
+      description: 'Send a message into an open Claude Code chat, as the owner typing it. intent: "explicit" when the owner clearly asked you to send, tell, type or reply something; "inferred" when you decided to send it on your own reading (it is then read back to the owner first). Chats only: you can never type into a terminal.',
       input_schema: obj({ chat: str('The chat: its id or title (see list_panels)'), text: str('The message, exactly as it should be sent'), intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }) }, ['chat', 'text', 'intent']),
       check: (i) => { chat(i.chat); if (!String(i.text || '').trim()) throw new Error('Nothing to send'); },
       confirm: (i) => i.intent === 'explicit' ? null : `Send ${readBack(i.text)} to ${chatName(chat(i.chat))}?`,
@@ -134,8 +134,8 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'start_chat',
-      description: 'Start a new Claude Code chat in a project, with the project\'s default model and mode unless Master said otherwise, optionally with a first message (D15 rules apply to it, as send_to_chat).',
-      input_schema: obj({ project: str('Project alias'), title: str('Optional title'), message: str('Optional first message'), intent: str('explicit or inferred, for the first message', { enum: ['explicit', 'inferred'] }), model: str('Optional model, only if Master named one') }, ['project']),
+      description: 'Start a new Claude Code chat in a project, with the project\'s default model and mode unless the owner said otherwise, optionally with a first message (D15 rules apply to it, as send_to_chat).',
+      input_schema: obj({ project: str('Project alias'), title: str('Optional title'), message: str('Optional first message'), intent: str('explicit or inferred, for the first message', { enum: ['explicit', 'inferred'] }), model: str('Optional model, only if the owner named one') }, ['project']),
       check: (i) => project(i.project),
       confirm: (i) => i.message && i.intent !== 'explicit' ? `Start a chat in ${project(i.project).alias} with ${readBack(i.message)}?` : null,
       run: async (i) => {
@@ -148,7 +148,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'close_chat',
-      description: 'Close an open chat, as closing it in the app (its pane goes). Always asks Master first.',
+      description: 'Close an open chat, as closing it in the app (its pane goes). Always asks the owner first.',
       input_schema: obj({ chat: str('The chat: its id or title') }, ['chat']),
       check: (i) => chat(i.chat),
       confirm: (i) => { const c = chat(i.chat); return `Close ${chatName(c)}? It is ${c.status || 'open'}.`; },
@@ -156,7 +156,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'park_chat',
-      description: 'Park (sleep) an open chat: it stops, and keeps its place with a Resume button. Always asks Master first.',
+      description: 'Park (sleep) an open chat: it stops, and keeps its place with a Resume button. Always asks the owner first.',
       input_schema: obj({ chat: str('The chat: its id or title') }, ['chat']),
       check: (i) => chat(i.chat),
       confirm: (i) => `Park ${chatName(chat(i.chat))}?`,
@@ -170,7 +170,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'watch_chat',
-      description: 'Tell Master (a notification on the phone) when a chat finishes its current turn.',
+      description: 'Tell the owner (a notification on the phone) when a chat finishes its current turn.',
       input_schema: obj({ chat: str('The chat: its id or title') }, ['chat']),
       check: (i) => chat(i.chat),
       run: (i) => { const c = chat(i.chat); deps.watch(c.id, c.title, c.project); return { ok: true, watching: c.title }; },
@@ -193,7 +193,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'move_kanban_task',
-      description: 'Move a card to another column: backlog, todo, in_progress or done. Moving to todo starts a factory run, so that asks Master first.',
+      description: 'Move a card to another column: backlog, todo, in_progress or done. Moving to todo starts a factory run, so that asks the owner first.',
       input_schema: obj({ project: str('Project alias'), taskId: str('Card id'), status: str('Column', { enum: STATUSES }) }, ['project', 'taskId', 'status']),
       check: (i) => { project(i.project); if (!STATUSES.includes(i.status)) throw new Error('Unknown column'); },
       confirm: (i) => i.status === 'todo' ? `Moving it to To do starts a factory run on it. Move it?` : null,
@@ -201,7 +201,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'delete_kanban_task',
-      description: 'Delete a card (it can be restored). Asks Master first.',
+      description: 'Delete a card (it can be restored). Asks the owner first.',
       input_schema: obj({ project: str('Project alias'), taskId: str('Card id') }, ['project', 'taskId']),
       check: (i) => { const t = deps.kanban.getTask(project(i.project).alias, String(i.taskId)); if (!t || t.ok === false) throw new Error('No such card'); },
       confirm: (i) => { const t = deps.kanban.getTask(project(i.project).alias, String(i.taskId)); return `Delete the card "${t?.task?.title || t?.title || i.taskId}"?`; },
@@ -243,7 +243,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'delete_note',
-      description: 'Delete a note page (it can be restored). Asks Master first.',
+      description: 'Delete a note page (it can be restored). Asks the owner first.',
       input_schema: obj({ project: str('Project alias'), id: str('Page id') }, ['project', 'id']),
       check: (i) => { if (!deps.notes.getPage(project(i.project).alias, String(i.id))) throw new Error('No such page'); },
       confirm: (i) => `Delete the note "${deps.notes.getPage(project(i.project).alias, String(i.id))?.title || i.id}"?`,
@@ -265,7 +265,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'delete_mindmap_node',
-      description: 'Delete a mindmap node and what is under it (it can be restored). Asks Master first.',
+      description: 'Delete a mindmap node and what is under it (it can be restored). Asks the owner first.',
       input_schema: obj({ id: str('Node id') }, ['id']),
       check: (i) => { if (!deps.mindmap.getNode(String(i.id))) throw new Error('No such node'); },
       confirm: (i) => `Delete the mindmap node "${deps.mindmap.getNode(String(i.id))?.text || i.id}" and what is under it?`,
@@ -275,7 +275,7 @@ export function makeActionTools(deps, ctx) {
     // ─── projects (D22) ───
     {
       name: 'create_project',
-      description: 'Create a new project: a new folder in the projects folder, registered in Crundi. Asks Master first.',
+      description: 'Create a new project: a new folder in the projects folder, registered in Crundi. Asks the owner first.',
       input_schema: obj({ alias: str('Short name: lowercase letters, digits and dashes'), name: str('Optional display name') }, ['alias']),
       check: (i) => {
         if (!/^[a-z0-9][a-z0-9-]{0,40}$/.test(String(i.alias || ''))) throw new Error('The name must be lowercase letters, digits and dashes');
@@ -296,7 +296,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'add_chat_schedule',
-      description: 'Schedule a message to be sent into a chat: at a time (ISO date-time, Master\'s local time unless they said otherwise), or when the chat\'s current turn ends ("turn-end"), or when the usage limit resets ("limit-reset"). Asks Master first.',
+      description: 'Schedule a message to be sent into a chat: at a time (ISO date-time, the owner\'s local time unless they said otherwise), or when the chat\'s current turn ends ("turn-end"), or when the usage limit resets ("limit-reset"). Asks the owner first.',
       input_schema: obj({ project: str('Project alias'), chat: str('Optional chat id or title; without one, a new chat'), text: str('The message'), trigger: str('time, turn-end or limit-reset', { enum: ['time', 'turn-end', 'limit-reset'] }), at: str('For time: the ISO date-time') }, ['project', 'text', 'trigger']),
       check: (i) => { project(i.project); if (i.chat) chat(i.chat); if (i.trigger === 'time' && !Date.parse(i.at)) throw new Error('A time is needed, as an ISO date-time'); },
       confirm: (i) => {
@@ -307,7 +307,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'delete_chat_schedule',
-      description: 'Cancel a scheduled chat message. Asks Master first.',
+      description: 'Cancel a scheduled chat message. Asks the owner first.',
       input_schema: obj({ id: str('Its id (list_chat_schedules)') }, ['id']),
       confirm: (i) => `Cancel the scheduled message ${i.id}?`,
       run: (i) => deps.chatSchedule.remove(String(i.id)),
@@ -316,7 +316,7 @@ export function makeActionTools(deps, ctx) {
     // ─── scheduled tasks (D45): chat jobs and service start/stop only ───
     {
       name: 'add_schedule',
-      description: 'Create a scheduled task in a project: a chat job (a prompt run in a new or resumed chat) or a service start/stop. when: once at date+time, or recurring at time on days (0=Sunday..6=Saturday; empty = every day). No shell commands. Asks Master first.',
+      description: 'Create a scheduled task in a project: a chat job (a prompt run in a new or resumed chat) or a service start/stop. when: once at date+time, or recurring at time on days (0=Sunday..6=Saturday; empty = every day). No shell commands. Asks the owner first.',
       input_schema: obj({
         project: str('Project alias'), name: str('A short name'),
         kind: str('chat or service', { enum: ['chat', 'service'] }),
@@ -330,7 +330,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'update_schedule',
-      description: 'Change a scheduled task: its name, prompt, or when it runs. Asks Master first.',
+      description: 'Change a scheduled task: its name, prompt, or when it runs. Asks the owner first.',
       input_schema: obj({ id: str('The schedule id (list_schedules)'), name: str('New name'), prompt: str('New prompt (chat jobs)'), mode: str('once or recurring', { enum: ['once', 'recurring'] }), time: str('HH:MM'), date: str('YYYY-MM-DD'), days: { type: 'array', items: { type: 'integer', minimum: 0, maximum: 6 } } }, ['id']),
       check: (i) => { const s = deps.schedules.getSchedule(String(i.id)); if (!s) throw new Error('No such schedule'); if (s.action?.kind === 'command') throw new Error('Shell-command schedules can only be changed in the app'); },
       confirm: (i) => `Change the scheduled task "${deps.schedules.getSchedule(String(i.id))?.name}"?`,
@@ -343,7 +343,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'set_schedule_enabled',
-      description: 'Turn a scheduled task on or off. Asks Master first.',
+      description: 'Turn a scheduled task on or off. Asks the owner first.',
       input_schema: obj({ id: str('The schedule id'), enabled: bool('On or off') }, ['id', 'enabled']),
       check: (i) => { if (!deps.schedules.getSchedule(String(i.id))) throw new Error('No such schedule'); },
       confirm: (i) => `Turn ${i.enabled ? 'on' : 'off'} the scheduled task "${deps.schedules.getSchedule(String(i.id))?.name}"?`,
@@ -351,7 +351,7 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'delete_schedule',
-      description: 'Delete a scheduled task. Asks Master first.',
+      description: 'Delete a scheduled task. Asks the owner first.',
       input_schema: obj({ id: str('The schedule id') }, ['id']),
       check: (i) => { if (!deps.schedules.getSchedule(String(i.id))) throw new Error('No such schedule'); },
       confirm: (i) => `Delete the scheduled task "${deps.schedules.getSchedule(String(i.id))?.name}"?`,
@@ -361,7 +361,7 @@ export function makeActionTools(deps, ctx) {
     // ─── the voice's own settings (D32: always asked) ───
     {
       name: 'set_voice_setting',
-      description: `Change one of the voice assistant's own settings: ${VOICE_SETTINGS.join(', ')}. Always asks Master first. Keys and every other setting are out of reach.`,
+      description: `Change one of the voice assistant's own settings: ${VOICE_SETTINGS.join(', ')}. Always asks the owner first. Keys and every other setting are out of reach.`,
       input_schema: obj({ setting: str('Which', { enum: VOICE_SETTINGS }), value: str('The new value, as text (numbers as digits)') }, ['setting', 'value']),
       check: (i) => { if (!VOICE_SETTINGS.includes(i.setting)) throw new Error('That setting is not one voice may change'); },
       confirm: (i) => `Change ${i.setting} to ${i.value}?`,
@@ -375,13 +375,13 @@ export function makeActionTools(deps, ctx) {
     // ─── "Hey Crundi" in the background (Phase 6, D4–D7, D32) ───
     {
       name: 'set_background_listening',
-      description: 'Turn background listening for "Hey Crundi" on the phone on for a while (15, 30, 45, 60 or 120 minutes; 30 if Master named no time; never unlimited), or off (minutes 0). Always asks Master first. The phone does it when this answer reaches it.',
+      description: 'Turn background listening for "Hey Cru" on the phone on for a while (15, 30, 45, 60 or 120 minutes; 30 if the owner named no time; never unlimited), or off (minutes 0). Always asks the owner first. The phone does it when this answer reaches it.',
       input_schema: obj({ minutes: { type: 'integer', enum: [0, ...LISTEN_MINUTES], description: 'How long; 0 turns it off' } }, []),
       confirm: (i) => { const m = i.minutes === undefined ? 30 : i.minutes; return m === 0 ? 'Turn off background listening?' : `Background listening for ${m >= 60 ? (m / 60) + (m === 60 ? ' hour' : ' hours') : m + ' minutes'}?`; },
       run: (i) => {
         const m = i.minutes === undefined ? 30 : Number(i.minutes);
         if (m !== 0 && !LISTEN_MINUTES.includes(m)) return { ok: false, error: 'Choose 15, 30, 45, 60 or 120 minutes' };
-        return { ok: true, phoneAction: { type: 'background-listening', minutes: m }, say: m ? `The phone will listen for "Hey Crundi" for ${m} minutes.` : 'The phone will stop listening.' };
+        return { ok: true, phoneAction: { type: 'background-listening', minutes: m }, say: m ? `The phone will listen for "Hey Cru" for ${m} minutes.` : 'The phone will stop listening.' };
       },
     },
   ];
@@ -390,12 +390,12 @@ export function makeActionTools(deps, ctx) {
 
   async function gated(def, input) {
     if (def.read) return def.run(input);
-    if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask Master to unlock it for this; nothing was changed.' };
+    if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask the owner to unlock it for this; nothing was changed.' };
     if (def.check) def.check(input);
     const q = def.confirm ? def.confirm(input) : null;
     if (q) {
       const id = ctx.pending.propose(def.name, input, q);
-      return { done: false, needsConfirmation: true, id, ask: q, rule: 'Nothing has been done. Ask Master this, in your own words, and stop. Only if Master agrees in their next message, call confirm_action with this id; if they decline, call cancel_action.' };
+      return { done: false, needsConfirmation: true, id, ask: q, rule: 'Nothing has been done. Ask the owner this, in your own words, and stop. Only if the owner agrees in their next message, call confirm_action with this id; if they decline, call cancel_action.' };
     }
     const r = await def.run(input);
     if (r && r.ok !== false) deps.broadcast?.(def.name, input);
@@ -405,10 +405,10 @@ export function makeActionTools(deps, ctx) {
   const tools = defs.map(d => ({ name: d.name, description: d.description, input_schema: d.input_schema, run: (input) => gated(d, input || {}) }));
   tools.push({
     name: 'confirm_action',
-    description: 'Carry out an action Master has agreed to in their latest message. Only after asking and hearing yes; never on your own.',
+    description: 'Carry out an action the owner has agreed to in their latest message. Only after asking and hearing yes; never on your own.',
     input_schema: obj({ id: str('The id the action gave') }, ['id']),
     run: async ({ id }) => {
-      if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask Master to unlock it; nothing was changed.' };
+      if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask the owner to unlock it; nothing was changed.' };
       const t = ctx.pending.take(id);
       if (t.error) return { done: false, error: t.error };
       const def = byName.get(t.action.tool);
@@ -419,7 +419,7 @@ export function makeActionTools(deps, ctx) {
   });
   tools.push({
     name: 'cancel_action',
-    description: 'Drop an action Master declined.',
+    description: 'Drop an action the owner declined.',
     input_schema: obj({ id: str('The id the action gave') }, ['id']),
     run: ({ id }) => ({ ok: true, cancelled: ctx.pending.cancel(id) }),
   });

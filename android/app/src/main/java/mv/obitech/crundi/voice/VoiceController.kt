@@ -40,19 +40,19 @@ data class VoiceUi(
 )
 
 /**
- * One voice session: the side-key overlay (CrundiSession) or the Crundi Voice
+ * One voice session: the side-key overlay (CrundiSession) or the Cru
  * screen (VoiceActivity). Runs [VoiceMachine]'s effects:
  *
  *   microphone ──PCM──▶ /api/voice/listen (Deepgram, through the server)
  *        └─ utterance ──▶ /api/voice/turn (Claude) ──▶ Speaker
  *
  * and calls /api/voice/warm the moment it opens, so Claude's cache is warm
- * by the time Master has finished the sentence. Main thread only, except the
+ * by the time the owner has finished the sentence. Main thread only, except the
  * microphone callback.
  */
 class VoiceController(
     private val ctx: Context,
-    /** Where Master is, for Claude ("side key", "Crundi Voice"). */
+    /** Where the owner is, for Claude ("side key", "Cru"). */
     private val source: String,
     private val isLocked: () -> Boolean,
     /** The session is over (quiet for a while, or closed): the host hides itself. */
@@ -66,7 +66,7 @@ class VoiceController(
     private val _ui = MutableStateFlow(VoiceUi())
     val ui: StateFlow<VoiceUi> = _ui
     private val _mic = MutableStateFlow(0f)
-    /** Master's voice, 0..1, while listening. */
+    /** The owner\'s voice, 0..1, while listening. */
     val micLevel: StateFlow<Float> = _mic
     /** Crundi's voice, 0..1, while it speaks. */
     val voiceLevel: StateFlow<Float> = speaker.level
@@ -86,7 +86,7 @@ class VoiceController(
     /** Audio goes to the server (not while Crundi speaks). Read on the recording thread. */
     @Volatile private var streaming = true
     @Volatile private var speakingNow = false
-    /** The last half second of microphone while paused: Master's first word when they talk over Crundi. */
+    /** The last half second of microphone while paused: The owner\'s first word when they talk over Crundi. */
     private val preroll = ArrayDeque<ByteArray>()
     private var sendPreroll = false
 
@@ -110,7 +110,7 @@ class VoiceController(
         speaker.streams = VoiceApi.TTS_STREAM in caps
         running = true
         streaming = true
-        // One microphone owner: "Hey Crundi" lets go of it before the session takes it.
+        // One microphone owner: "Hey Cru" lets go of it before the session takes it.
         holdsMic = true
         HeyCrundi.sessionOpened()
         dispatch(VoiceEvent.Opened(isLocked(), now()))
@@ -180,7 +180,7 @@ class VoiceController(
                     val s = socket
                     if (s != null) {
                         s.send("""{"type":"resume"}""")
-                        // Talked over: Master's first words are in the last moment held back.
+                        // Talked over: The owner\'s first words are in the last moment held back.
                         if (bargedIn) synchronized(preroll) { for (b in preroll.takeLast(3)) s.send(b) }
                     }
                     synchronized(preroll) { preroll.clear() }
@@ -188,7 +188,7 @@ class VoiceController(
                     fallback?.start()
                 }
                 // After an answer, wait for the speaker and the room to go quiet,
-                // or the end of Crundi's own voice is heard as Master's words.
+                // or the end of Crundi's own voice is heard as the owner's words.
                 if (bargedIn) resume() else scope.launch {
                     delay(RESUME_AFTER_SPEECH_MS)
                     val p = _ui.value.state.phase
@@ -207,7 +207,7 @@ class VoiceController(
         scope.launch {
             val r = try { voice.turn(text, where, locked) } catch (e: ApiException) {
                 VoiceReply(ok = false, error = when {
-                    e.offline -> "I can't reach the server, Master."
+                    e.offline -> "I can't reach the server, Sir."
                     VoiceApi.unsupported(e) -> VoiceApi.UNSUPPORTED
                     else -> e.message
                 })
@@ -221,7 +221,7 @@ class VoiceController(
 
     /**
      * What the server asked the phone to do (capability "voice-phone-actions"),
-     * already confirmed by Master (D32). The session is on screen, so Crundi is
+     * already confirmed by the owner (D32). The session is on screen, so Crundi is
      * in front and may start the microphone service (Android 14's rule); the
      * wake word itself waits until this session lets go of the microphone.
      */

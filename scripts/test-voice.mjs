@@ -125,6 +125,28 @@ const deps = {
   terminalScrollback: () => '\x1b[1mnpm test\x1b[0m\r\n\x1b]0;title\x07passing 12\n',
 };
 const tools = vt.makeTools(deps);
+{
+  // Docker, read only and on demand: a container list with usage measured twice for CPU.
+  let calls = 0;
+  const dt = vt.makeTools({ ...deps, docker: {
+    status: async () => ({ ok: true, installed: true, reachable: true }),
+    listContainers: async ({ stats }) => { calls++; return { ok: true, containers: [
+      { name: 'db', image: 'postgres', state: 'running', status: 'Up 2 days', running: true, ports: [{ public: 5433, private: 5432 }], ...(stats ? { stats: { cpuPct: calls > 1 ? 2.34 : null, memory: 18 * 1048576, memoryLimit: 0, pids: 6 } } : {}) },
+      { name: 'old', image: 'node', state: 'exited', status: 'Exited (0)', running: false, ports: [] },
+    ] }; },
+    containerLogs: async (id, n) => ({ ok: true, name: id, text: '\x1b[32mready\x1b[0m\nlistening\n' }),
+  } });
+  const DT = Object.fromEntries(dt.map(t => [t.name, t]));
+  const plain = await DT.list_containers.run({});
+  ok(plain.total === 2 && plain.running === 1 && plain.containers[0].ports[0] === '5433->5432' && !('cpuPct' in plain.containers[0]), 'list_containers: state and ports, no usage unless asked');
+  calls = 0;
+  const used = await DT.list_containers.run({ usage: true, all: false });
+  ok(calls === 2 && used.total === 1 && used.containers[0].cpuPct === 2.3 && used.containers[0].memoryMB === 18, 'list_containers usage: measured twice for CPU, running only');
+  const logs = await DT.get_container_logs.run({ name: 'db', lines: 5 });
+  ok(logs.lines.join('|') === 'ready|listening', 'container logs without colour codes');
+  const none = await vt.makeTools(deps).find(t => t.name === 'list_containers').run({});
+  ok(/not available/.test(none.error), 'no Docker: says so');
+}
 const T = Object.fromEntries(tools.map(t => [t.name, t]));
 {
   ok(tools.map(t => t.name).join() === vt.READ_ONLY_TOOL_NAMES.join(), 'the tool list is exactly the pinned read-only list');
@@ -154,17 +176,17 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   const term = T.read_terminal.run({ id: 't1' }).lines;
   ok(term.join('|') === 'npm test|passing 12', 'terminal output without escapes');
   const chat = T.read_chat.run({ id: 'c1' });
-  ok(chat.messages.length === 3 && chat.messages[0].from === 'Master' && chat.messages[2].from === 'Claude', 'read_chat summarises the conversation');
+  ok(chat.messages.length === 3 && chat.messages[0].from === 'Owner' && chat.messages[2].from === 'Claude', 'read_chat summarises the conversation');
   ok(throwsWith(() => T.read_chat.run({ id: 'zzz' }), /No open chat/), 'an unknown chat is refused');
 }
 
 // ─── agent ───
 {
-  ok(/Master/.test(SYSTEM_PROMPT) && /---/.test(SYSTEM_PROMPT) && /begin your visible answer immediately/.test(SYSTEM_PROMPT), 'system prompt: Master, the spoken/shown split, low latency');
-  ok(/needsConfirmation/.test(SYSTEM_PROMPT) && /never call confirm_action in the same turn/i.test(SYSTEM_PROMPT), 'system prompt: ask first, never confirm for Master');
+  ok(/the owner/.test(SYSTEM_PROMPT) && /---/.test(SYSTEM_PROMPT) && /begin your visible answer immediately/.test(SYSTEM_PROMPT), 'system prompt: The owner, the spoken/shown split, low latency');
+  ok(/needsConfirmation/.test(SYSTEM_PROMPT) && /never call confirm_action in the same turn/i.test(SYSTEM_PROMPT), 'system prompt: ask first, never confirm for the owner');
   ok(/never type into a terminal/.test(SYSTEM_PROMPT), 'system prompt: never a terminal (D21)');
-  const sp = splitReply('Three tasks in to do, Master.\n---\n- A\n- B\n- C');
-  ok(sp.speak === 'Three tasks in to do, Master.' && sp.show === '- A\n- B\n- C', 'reply split into spoken and shown');
+  const sp = splitReply('Three tasks in to do, Sir.\n---\n- A\n- B\n- C');
+  ok(sp.speak === 'Three tasks in to do, Sir.' && sp.show === '- A\n- B\n- C', 'reply split into spoken and shown');
   ok(splitReply('Just this.').show === '', 'no detail, nothing shown');
 
   const calls = [];
@@ -175,7 +197,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
       { type: 'tool_use', id: 'tu2', name: 'get_kanban', input: { project: 'proj' } },
     ] },
     { stop_reason: 'end_turn', usage: { input_tokens: 1200, output_tokens: 40 }, content: [
-      { type: 'text', text: 'One project, Master, and the board is empty.\n---\nproj: no tasks' },
+      { type: 'text', text: 'One project, Sir, and the board is empty.\n---\nproj: no tasks' },
     ] },
   ];
   const fakeClient = () => ({
@@ -184,7 +206,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   });
   const agent = createVoiceAgent({ tools, client: fakeClient });
   const r = await agent.turn('what is on the kanban', { where: 'workbench', now: new Date('2026-11-10T09:00:00Z') });
-  ok(r.ok && r.speak === 'One project, Master, and the board is empty.' && r.show === 'proj: no tasks', 'a turn with two tool calls answers');
+  ok(r.ok && r.speak === 'One project, Sir, and the board is empty.' && r.show === 'proj: no tasks', 'a turn with two tool calls answers');
   ok(r.tools.join() === 'list_projects,get_kanban', 'both tools ran (in parallel, one round)');
   const h = agent.history;
   ok(h.length === 4 && h[1].content[0].type === 'thinking' && h[1].content[0].signature === 'sig', 'assistant content appended whole, thinking unchanged');
@@ -234,8 +256,8 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   const u = new URL(vstream.streamUrl(['kanban']));
   ok(u.protocol === 'wss:' && u.searchParams.get('interim_results') === 'true' && u.searchParams.get('utterance_end_ms') && u.searchParams.get('endpointing'), 'stream URL: live words, end of speech detected');
   ok(u.searchParams.getAll('keyterm').includes('kanban'), 'stream URL carries keyterms');
-  ok(u.searchParams.get('utterance_end_ms') === '2000', 'by default, two seconds of quiet end what Master says');
-  ok(new URL(vstream.streamUrl([], { pauseMs: 3500 })).searchParams.get('utterance_end_ms') === '3500' && new URL(vstream.streamUrl([], { pauseMs: 99999 })).searchParams.get('utterance_end_ms') === '5000', 'the pause is Master\'s setting, within 1 to 5 s');
+  ok(u.searchParams.get('utterance_end_ms') === '2000', 'by default, two seconds of quiet end what the owner says');
+  ok(new URL(vstream.streamUrl([], { pauseMs: 3500 })).searchParams.get('utterance_end_ms') === '3500' && new URL(vstream.streamUrl([], { pauseMs: 99999 })).searchParams.get('utterance_end_ms') === '5000', 'the pause is the owner\'s setting, within 1 to 5 s');
   ok(!vs.updateSettings({ pauseMs: 500 }).ok && vs.updateSettings({ pauseMs: 2500 }).ok && vs.publicSettings().pauseMs === 2500, 'the pause before sending is a setting');
   vs.updateSettings({ pauseMs: 2000 });
 
@@ -246,10 +268,10 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(a.push(R('add the UI overhaul', { final: true })).text === 'add the UI overhaul', 'a finished phrase is kept');
   ok(a.push(R('of the home', {})).text === 'add the UI overhaul of the home', 'later words added to it');
   const mid = a.push(R('of the home screen', { final: true, sf: true, start: 2, duration: 1.5 }));
-  ok(mid.type === 'interim' && mid.text === 'add the UI overhaul of the home screen', 'a short pause (speech_final) does not send: Master may be pausing mid-sentence');
+  ok(mid.type === 'interim' && mid.text === 'add the UI overhaul of the home screen', 'a short pause (speech_final) does not send: The owner may be pausing mid-sentence');
   a.push(R('as a kanban task', { final: true, sf: true, start: 3.5, duration: 1 }));
   const done = a.push({ type: 'UtteranceEnd' });
-  ok(done.type === 'utterance' && done.text === 'add the UI overhaul of the home screen as a kanban task', 'the utterance completes at UtteranceEnd, the pause Master chose');
+  ok(done.type === 'utterance' && done.text === 'add the UI overhaul of the home screen as a kanban task', 'the utterance completes at UtteranceEnd, the pause the owner chose');
   ok(a.push({ type: 'UtteranceEnd' }) === null, 'nothing left to send twice');
   a.push(R('and one more', { final: true }));
   ok(a.push({ type: 'UtteranceEnd' }).text === 'and one more', 'UtteranceEnd completes one too');
@@ -317,9 +339,9 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
 
   let req = null;
   const audio = Buffer.from('ID3fake');
-  const spoke = await vtts.speak('Yes, Master.', '', { fetchImpl: async (url, init) => { req = { url, init }; return { ok: true, headers: { get: () => 'audio/mpeg' }, arrayBuffer: async () => audio }; } });
+  const spoke = await vtts.speak('Yes, Sir.', '', { fetchImpl: async (url, init) => { req = { url, init }; return { ok: true, headers: { get: () => 'audio/mpeg' }, arrayBuffer: async () => audio }; } });
   ok(spoke.ok && spoke.audio.equals(audio) && spoke.mime === 'audio/mpeg', 'speech comes back as audio');
-  ok(new URL(req.url).searchParams.get('model') === 'aura-2-draco-en' && JSON.parse(req.init.body).text === 'Yes, Master.', 'the chosen voice is used');
+  ok(new URL(req.url).searchParams.get('model') === 'aura-2-draco-en' && JSON.parse(req.init.body).text === 'Yes, Sir.', 'the chosen voice is used');
   ok(!(await vtts.speak('hi', 'not-a-voice', { fetchImpl: async () => ({ ok: true }) })).ok, 'a bad voice name is never sent');
   vs.updateSettings({ ttsVoice: '' });
 }
@@ -365,7 +387,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   const lockedAgent = createVoiceAgent({
     tools: [],
     settings: { DEFAULT_MODEL: 'claude-haiku-5-5', getSettings: () => ({ anthropicKey: 'k', model: 'claude-haiku-5-5', monthlyLimitUsd: 50 }), overLimit: () => false, countTurn: () => {}, claudeCost: () => 0, addClaudeSpend: () => {} },
-    client: () => ({ messages: { create: async (req) => { seen.push(JSON.parse(JSON.stringify(req))); return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Unlock first, Master.' }], usage: {} }; } } }),
+    client: () => ({ messages: { create: async (req) => { seen.push(JSON.parse(JSON.stringify(req))); return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Unlock first, Sir.' }], usage: {} }; } } }),
   });
   await lockedAgent.turn('add a kanban task', { locked: true, now: at });
   ok(/phone is locked/.test(seen[0].messages[0].content) && seen[0].system[0].text === SYSTEM_PROMPT, 'locked rides in the user message; the system block is unchanged');
@@ -403,7 +425,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   vs.updateSettings({ deepgramKey: 'dg-test', ttsVoice: 'aura-2-draco-en' });
   let asked = null;
   const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 0, 2, 0])); c.close(); } });
-  const r = await vtts.speakStream('Yes, Master.', '', { fetchImpl: async (url) => { asked = new URL(url); return { ok: true, body }; } });
+  const r = await vtts.speakStream('Yes, Sir.', '', { fetchImpl: async (url) => { asked = new URL(url); return { ok: true, body }; } });
   ok(r.ok && r.rate === 24000 && r.body === body, 'speech is streamed as raw PCM');
   ok(asked.searchParams.get('encoding') === 'linear16' && asked.searchParams.get('container') === 'none' && asked.searchParams.get('sample_rate') === '24000', 'Deepgram is asked for raw 16-bit PCM');
   ok(!(await vtts.speakStream('hi', 'not-a-voice', { fetchImpl: async () => ({ ok: true }) })).ok, 'a bad voice name is never streamed');
@@ -461,7 +483,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
 
   pending.newTurn();
   const ex = await T.send_to_chat.run({ chat: 'API work', text: 'run the tests', intent: 'explicit' });
-  ok(ex.ok && sent.length === 1 && sent[0].id === 'c1', 'Master clearly asked: sent at once (D15)');
+  ok(ex.ok && sent.length === 1 && sent[0].id === 'c1', 'The owner clearly asked: sent at once (D15)');
   const inf = await T.send_to_chat.run({ chat: 'API work', text: 'maybe refactor the auth middleware', intent: 'inferred' });
   ok(inf.needsConfirmation && sent.length === 1 && /Send "maybe refactor/.test(inf.ask), 'the model decided to send it: read back first, nothing sent (D15)');
   const long = A.readBack('word '.repeat(200));
@@ -470,7 +492,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(!tooSoon.ok && /not answered/.test(tooSoon.error) && sent.length === 1, 'the model cannot confirm in the turn it asked');
   pending.newTurn();
   const yes = await T.confirm_action.run({ id: inf.id });
-  ok(yes.ok && sent.length === 2, 'after Master answers, the confirmed action runs');
+  ok(yes.ok && sent.length === 2, 'after the owner answers, the confirmed action runs');
   ok(!(await T.confirm_action.run({ id: inf.id })).ok, 'and only once');
 
   const close = await T.close_chat.run({ chat: 'c1' });
@@ -513,7 +535,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
     tools, settings: fakeSettings, beforeTurn: () => pending.newTurn(),
     client: () => ({ messages: { create: async () => (round++ === 0
       ? { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'x1', name: 'close_chat', input: { chat: 'c1' } }], usage: {} }
-      : { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Close the API chat, Master? It is idle.' }], usage: {} }) } }),
+      : { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Close the API chat, Sir? It is idle.' }], usage: {} }) } }),
   });
   const rep = await agent2.turn('close the API chat');
   ok(rep.ok && rep.pending.length === 1 && /Close the "API work" chat/.test(rep.pending[0].question) && closed.length === 0, 'the reply carries the question awaiting a yes, and nothing was closed');
@@ -528,7 +550,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   const changes = [];
   const nb = createNotebook(join(mdir, 'memories'), { onChange: (p, t) => changes.push([p, t]) });
   const run = (i) => nb.tool.run(i);
-  ok(run({ command: 'create', path: '/memories/master.md', file_text: 'Master prefers short answers.\nThe API project is called crundi.' }).startsWith('File created'), 'the notebook keeps a file');
+  ok(run({ command: 'create', path: '/memories/master.md', file_text: 'The owner prefers short answers.\nThe API project is called crundi.' }).startsWith('File created'), 'the notebook keeps a file');
   ok(/prefers short answers/.test(run({ command: 'view', path: '/memories/master.md' })), 'and reads it back');
   run({ command: 'str_replace', path: '/memories/master.md', old_str: 'short answers', new_str: 'very short answers' });
   ok(nb.list()[0].text.includes('very short answers') && changes.length === 2, 'edits are saved and reported for the index');
@@ -549,8 +571,8 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
     const n = Math.hypot(...v) || 1; return v.map(x => x / n);
   }) });
   const ix = createMemoryIndex({ dir: mdir, embedder: fakeEmb });
-  ix.add('turn', 'Master: add the UI overhaul of the home screen as a kanban task\nCrundi: Done, in the backlog.', { project: 'crundi' });
-  ix.add('turn', 'Master: how is the weather in London', {});
+  ix.add('turn', 'The owner: add the UI overhaul of the home screen as a kanban task\nCrundi: Done, in the backlog.', { project: 'crundi' });
+  ix.add('turn', 'The owner: how is the weather in London', {});
   ix.add('summary', 'We moved three cards to done in dhivo.', { project: 'dhivo' });
   await ix.settle();
   const byWord = await ix.search('kanban');
@@ -570,8 +592,8 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   const fakeS = { DEFAULT_MODEL: 'claude-haiku-5-5', getSettings: () => ({ anthropicKey: 'k' }), overLimit: () => false, countTurn() {}, claudeCost: () => 0, addClaudeSpend() {} };
   let summarised = '';
   const fakeClient = () => ({ messages: { create: async (req) => req.tools
-    ? { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Yes, Master.' }], usage: {} }
-    : { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Master asked about usage several times; all fine.' }], usage: {} } } });
+    ? { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Yes, Sir.' }], usage: {} }
+    : { stop_reason: 'end_turn', content: [{ type: 'text', text: 'The owner asked about usage several times; all fine.' }], usage: {} } } });
   const a1 = mkA({ tools: [vm.notebook.tool, vm.searchTool], settings: fakeS, client: fakeClient, store: vm.store, onTurnDone: (t) => vm.remember(t), onCompacted: (sum) => { summarised = sum; vm.rememberSummary(sum); } });
   for (let i = 0; i < 9; i++) await a1.turn('how much usage is left ' + i);
   const a2 = mkA({ tools: [], settings: fakeS, client: fakeClient, store: vm.store });

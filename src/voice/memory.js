@@ -42,7 +42,7 @@ export function createVoiceMemory({ dataDir, index: givenIndex } = {}) {
 
   const searchTool = {
     name: 'memory_search',
-    description: 'Search everything said before, across every conversation (compacted ones too), and the notebook: by keywords and by meaning. Use it when Master refers to something from earlier ("what did we decide about…", "that card from yesterday").',
+    description: 'Search everything said before, across every conversation (compacted ones too), and the notebook: by keywords and by meaning. Use it when the owner refers to something from earlier ("what did we decide about…", "that card from yesterday").',
     input_schema: {
       type: 'object', additionalProperties: false,
       properties: {
@@ -62,7 +62,7 @@ export function createVoiceMemory({ dataDir, index: givenIndex } = {}) {
     store, notebook, index, searchTool,
     /** A finished turn, for later search. */
     remember({ said, speak = '', show = '', at = Date.now() }) {
-      index.add('turn', `Master: ${said}\nCrundi: ${speak}${show ? '\n' + show : ''}`, { at });
+      index.add('turn', `Owner: ${said}\nCru: ${speak}${show ? '\n' + show : ''}`, { at });
     },
     rememberSummary(text, at = Date.now()) { index.add('summary', text, { at }); },
   };

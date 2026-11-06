@@ -26,7 +26,7 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd)), null)
 
     /**
-     * One request. [where] is what Master is looking at ("lock screen",
+     * One request. [where] is what the owner is looking at ("lock screen",
      * "side key"); [locked] tells Claude the phone is locked, so anything
      * that would change something waits for an unlock (spec §4).
      */
@@ -40,7 +40,7 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         return CrundiJson.decodeFromJsonElement(VoiceReply.serializer(), obj)
     }
 
-    /** A voice session just opened: warm the server's prompt cache while Master speaks. Best effort. */
+    /** A voice session just opened: warm the server's prompt cache while the owner speaks. Best effort. */
     suspend fun warm() { runCatching { rpc.post("/api/voice/warm") } }
 
     /** Start a fresh conversation. */
@@ -154,7 +154,7 @@ data class VoiceSettings(
     /** Deepgram bills on its own day: its part of the spend restarts then. */
     val deepgramBillingDay: Int = 1,
     val deepgramNextReset: String = "",
-    /** How long Master may pause before what they said is sent, ms (D44). */
+    /** How long the owner may pause before what they said is sent, ms (D44). */
     val pauseMs: Int = 2000,
     val spend: VoiceSpend = VoiceSpend(),
     val limitReached: Boolean = false,
@@ -171,11 +171,11 @@ data class VoiceReply(
     val costUsd: Double = 0.0,
     val error: String = "",
     val limitReached: Boolean = false,
-    /** Actions waiting for Master's yes (Phase 4): the screen shows Yes / No. */
+    /** Actions waiting for the owner's yes (Phase 4): the screen shows Yes / No. */
     val pending: List<PendingAction> = emptyList(),
     /** Something needed the phone unlocked; nothing was changed. */
     val needsUnlock: Boolean = false,
-    /** For the phone to do, already confirmed by Master (D32), e.g. background listening. */
+    /** For the phone to do, already confirmed by the owner (D32), e.g. background listening. */
     val phoneActions: List<PhoneAction> = emptyList(),
 )
 
@@ -222,7 +222,7 @@ data class VoiceList(val voices: List<DeepgramVoice> = emptyList(), val fromDeep
 /** What /api/voice/listen sends (src/voice/stream.js). */
 sealed interface ListenEvent {
     data object Ready : ListenEvent
-    /** Master started speaking. */
+    /** The owner started speaking. */
     data object Speech : ListenEvent
     /** Words so far; may still change. */
     data class Interim(val text: String) : ListenEvent

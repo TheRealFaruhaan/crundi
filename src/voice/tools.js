@@ -31,6 +31,7 @@ export const READ_ONLY_TOOL_NAMES = [
   'mindmap_overview', 'mindmap_search',
   'list_schedules', 'get_usage', 'list_secrets',
   'list_panels', 'read_chat', 'read_terminal',
+  'list_containers', 'get_container_logs',
 ];
 
 const MAX_FILE_CHARS = 20000;
@@ -126,6 +127,7 @@ const num = (description) => ({ type: 'number', description });
  *   chats(): object[]       terminals(): object[]
  *   chatHistory(id): {messages:[]}|null
  *   terminalScrollback(id): string
+ *   docker?: { status(), listContainers({stats}), containerLogs(id, tail) }   (src/docker.js)
  * }
  */
 export function makeTools(deps) {
@@ -281,7 +283,7 @@ export function makeTools(deps) {
     },
     {
       name: 'get_usage',
-      description: 'Master\'s Claude subscription usage: the 5-hour and weekly windows as percentages, with reset times.',
+      description: 'The owner\'s Claude subscription usage: the 5-hour and weekly windows as percentages, with reset times.',
       input_schema: obj(),
       run: () => deps.usage(),
     },
@@ -302,7 +304,7 @@ export function makeTools(deps) {
     },
     {
       name: 'read_chat',
-      description: 'The latest messages of an open chat: what Master asked and what Claude answered, with tool use summarised.',
+      description: 'The latest messages of an open chat: what the owner asked and what Claude answered, with tool use summarised.',
       input_schema: obj({ id: str('Chat id from list_panels'), messages: num('How many recent messages (default 12, max 40)') }, ['id']),
       run: ({ id, messages = 12 }) => {
         const h = deps.chatHistory(String(id));
@@ -310,7 +312,7 @@ export function makeTools(deps) {
         const n = Math.min(40, Math.max(1, Number(messages) || 12));
         const out = [];
         for (const m of (h.messages || []).slice(-n * 3)) {
-          if (m.kind === 'user') out.push({ from: 'Master', text: clip(m.text) });
+          if (m.kind === 'user') out.push({ from: 'Owner', text: clip(m.text) });
           else if (m.kind === 'assistant-text') out.push({ from: 'Claude', text: clip(m.text) });
           else if (m.kind === 'tool') out.push({ tool: m.name || m.tool || 'tool' });
           else if (m.kind === 'error') out.push({ error: clip(m.text || m.message) });
@@ -326,6 +328,45 @@ export function makeTools(deps) {
         const n = Math.min(200, Math.max(1, Number(lines) || 40));
         const text = stripAnsi(deps.terminalScrollback(String(id)));
         return { id, lines: text.split('\n').filter(l => l.trim()).slice(-n) };
+      },
+    },
+    // Docker, read only and on demand: nothing is polled; a call reads Docker once.
+    {
+      name: 'list_containers',
+      description: 'Docker containers on this server: name, image, state, health, compose project, published ports. With usage: true, also CPU %, memory and processes of each running one (takes a second or two; only when asked about load or usage). Read only.',
+      input_schema: obj({ usage: { type: 'boolean', description: 'Also measure CPU and memory of running containers' }, all: { type: 'boolean', description: 'Include stopped containers (default true)' } }),
+      run: async ({ usage = false, all = true } = {}) => {
+        if (!deps.docker) return { error: 'Docker is not available here.' };
+        const st = await deps.docker.status();
+        if (!st || !st.installed) return { available: false, error: 'Docker is not installed on this server.' };
+        if (!st.reachable) return { available: false, error: 'Docker is installed but not reachable: ' + (st.error || 'no answer') };
+        let r = await deps.docker.listContainers({ stats: !!usage });
+        // CPU needs two readings: the first only sets the baseline.
+        if (usage && r.ok && r.containers.some(c => c.running && c.stats && c.stats.cpuPct == null)) {
+          await new Promise(ok => setTimeout(ok, 1200));
+          r = await deps.docker.listContainers({ stats: true });
+        }
+        if (!r.ok) return { error: r.error || 'Docker could not be read.' };
+        const mb = (b) => b ? Math.round(b / 1048576) : 0;
+        const list = r.containers.filter(c => all || c.running).map(c => ({
+          name: c.name, image: c.image, state: c.state, status: c.status, health: c.health || undefined,
+          project: c.project || undefined, service: c.service || undefined,
+          ports: (c.ports || []).map(p => p.public ? `${p.public}->${p.private}` : String(p.private || '')).filter(Boolean),
+          ...(c.stats ? { cpuPct: c.stats.cpuPct == null ? null : Math.round(c.stats.cpuPct * 10) / 10, memoryMB: mb(c.stats.memory), memoryLimitMB: mb(c.stats.memoryLimit), pids: c.stats.pids } : {}),
+        }));
+        return { running: list.filter(c => c.state === 'running').length, total: list.length, containers: list };
+      },
+    },
+    {
+      name: 'get_container_logs',
+      description: 'The latest log lines of a Docker container. Read only.',
+      input_schema: obj({ name: str('Container name or id, from list_containers'), lines: num('How many lines (default 30, max 200)') }, ['name']),
+      run: async ({ name, lines = 30 }) => {
+        if (!deps.docker) return { error: 'Docker is not available here.' };
+        const n = Math.min(200, Math.max(1, Number(lines) || 30));
+        const r = await deps.docker.containerLogs(String(name), n);
+        if (!r.ok) return { error: r.error || 'No such container.' };
+        return { name: r.name, lines: stripAnsi(r.text).split('\n').filter(l => l.trim()).slice(-n) };
       },
     },
   ];

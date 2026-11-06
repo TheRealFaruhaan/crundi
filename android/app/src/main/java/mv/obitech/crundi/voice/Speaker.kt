@@ -104,7 +104,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         }
     }
 
-    /** Stop at once (Master talked over it, or the session closed). */
+    /** Stop at once (The owner talked over it, or the session closed). */
     fun stop() {
         job?.cancel(); job = null
         releaseTrack()

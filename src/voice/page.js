@@ -16,7 +16,7 @@ export function getVoicePageHtml() {
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Crundi Voice</title>
+<title>Cru, the voice assistant</title>
 <style>
 :root { --bg:#0f1317; --card:#171c22; --line:#2a323b; --text:#e8edf2; --muted:#93a1af; --accent:#8ab4f8; --bad:#f28b82; --good:#81c995; }
 :root[data-theme="light"] { --bg:#f6f7f9; --card:#fff; --line:#dde2e8; --text:#1b2027; --muted:#5b6672; --accent:#1a5fd0; --bad:#b3261e; --good:#1e7d3a; }
@@ -54,7 +54,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .err { color: var(--bad); } .ok { color: var(--good); }
 </style></head>
 <body><main>
-<h1>Crundi Voice</h1>
+<h1>Cru</h1>
 <p class="sub">Talk to your voice assistant. Phase 1: it can look at everything and change nothing. "Start listening" transcribes live and answers each time you stop talking.</p>
 
 <section class="card">
@@ -78,7 +78,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <h2>Voice</h2>
   <div class="spend" id="voiceNow"></div>
   <label for="sample">Preview line</label>
-  <input id="sample" value="Yes, Master. Your weekly usage is at forty two percent, and all four services are running.">
+  <input id="sample" value="Yes, Sir. Your weekly usage is at forty two percent, and all four services are running.">
   <div class="row">
     <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="britOnly" style="width:auto" checked> British only</label>
     <label style="display:flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="maleOnly" style="width:auto"> Male only</label>
@@ -116,7 +116,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <label for="memQ">Search what was said before</label>
   <input id="memQ" placeholder="e.g. the kanban card about the home screen">
   <div id="memHits"></div>
-  <label>Notebook (what Crundi keeps for good; edit or empty a file to change it)</label>
+  <label>Notebook (what Cru keeps for good; edit or empty a file to change it)</label>
   <div id="memFiles"></div>
 </section>
 </main>
@@ -173,7 +173,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     await new Promise((done) => { player.onended = player.onerror = done; player.play().catch(done); });
     URL.revokeObjectURL(url);
   }
-  /** Speak, pausing live listening so Crundi doesn't hear itself. */
+  /** Speak, pausing live listening so Cru doesn't hear itself. */
   async function say(text, model = ttsVoice) {
     if (!text || $('mute').checked) return;
     pauseLive(true);
@@ -181,17 +181,17 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       if (model) await deepgramSay(text, model);
       else await browserSay(text);
     } catch (e) {
-      add('Crundi', '<div class="err">' + esc(e.message) + " — using this device's voice.</div>");
+      add('Cru', '<div class="err">' + esc(e.message) + " — using this device's voice.</div>");
       await browserSay(text);
     } finally { pauseLive(false); }
   }
 
   function showAnswer(r) {
     if (r.heard !== undefined) add('Heard', '<div>' + esc(r.heard || '(nothing)') + '</div>');
-    if (!r.ok) { add('Crundi', '<div class="err">' + esc(r.error) + '</div>'); return; }
+    if (!r.ok) { add('Cru', '<div class="err">' + esc(r.error) + '</div>'); return; }
     const c = r.cache || {};
     const hit = (c.read + c.written + c.uncached) ? Math.round(100 * c.read / (c.read + c.written + c.uncached)) : 0;
-    add('Crundi' + (r.tools && r.tools.length ? ' · looked at ' + r.tools.join(', ') : '') + (r.costUsd ? ' · $' + r.costUsd.toFixed(4) : '') + (c.read !== undefined ? ' · ' + hit + '% from cache' : ''),
+    add('Cru' + (r.tools && r.tools.length ? ' · looked at ' + r.tools.join(', ') : '') + (r.costUsd ? ' · $' + r.costUsd.toFixed(4) : '') + (c.read !== undefined ? ' · ' + hit + '% from cache' : ''),
       '<div class="speak">' + esc(r.speak) + '</div>' + (r.show ? '<pre>' + esc(r.show) + '</pre>' : ''));
     say(r.speak);
     loadSettings();
@@ -201,10 +201,10 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     const text = $('text').value.trim();
     if (!text) return;
     $('send').disabled = true;
-    add('Master', '<div>' + esc(text) + '</div>');
+    add('You', '<div>' + esc(text) + '</div>');
     $('text').value = '';
     try { showAnswer(await api('/api/voice/turn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, where: 'the voice test page' }) })); }
-    catch (e) { add('Crundi', '<div class="err">' + esc(e.message) + '</div>'); }
+    catch (e) { add('Cru', '<div class="err">' + esc(e.message) + '</div>'); }
     finally { $('send').disabled = false; }
   }
   $('send').onclick = send;
@@ -218,7 +218,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     if (rec) return;
     warm();
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    catch (err) { add('Crundi', '<div class="err">Microphone not available: ' + esc(err.message) + '</div>'); return; }
+    catch (err) { add('Cru', '<div class="err">Microphone not available: ' + esc(err.message) + '</div>'); return; }
     chunks = [];
     rec = new MediaRecorder(stream);
     rec.ondataavailable = (ev) => { if (ev.data.size) chunks.push(ev.data); };
@@ -233,7 +233,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
         showAnswer(await api('/api/voice/transcribe?turn=1&where=' + encodeURIComponent('the voice test page'), {
           method: 'POST', headers: { 'Content-Type': type.split(';')[0] }, body: blob,
         }));
-      } catch (err) { add('Crundi', '<div class="err">' + esc(err.message) + '</div>'); }
+      } catch (err) { add('Cru', '<div class="err">' + esc(err.message) + '</div>'); }
       $('hold').textContent = 'Hold to talk';
     };
     rec.start();
@@ -263,10 +263,10 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   async function answer(text) {
     if (answering) return;
     answering = true;
-    add('Master', '<div>' + esc(text) + '</div>');
+    add('You', '<div>' + esc(text) + '</div>');
     showHeard('');
     try { showAnswer(await api('/api/voice/turn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, where: 'the voice test page' }) })); }
-    catch (e) { add('Crundi', '<div class="err">' + esc(e.message) + '</div>'); }
+    catch (e) { add('Cru', '<div class="err">' + esc(e.message) + '</div>'); }
     finally { answering = false; }
   }
   function stopLive() {
@@ -280,7 +280,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   async function startLive() {
     warm();
     try { liveStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-    catch (err) { add('Crundi', '<div class="err">Microphone not available: ' + esc(err.message) + '</div>'); return; }
+    catch (err) { add('Cru', '<div class="err">Microphone not available: ' + esc(err.message) + '</div>'); return; }
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     liveWs = new WebSocket(proto + '://' + location.host + '/api/voice/listen?token=' + encodeURIComponent(token()));
     liveWs.binaryType = 'arraybuffer';
@@ -292,7 +292,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       else if (m.type === 'speech') { if (player) player.pause(); if ('speechSynthesis' in window) speechSynthesis.cancel(); }
       else if (m.type === 'interim') showHeard(m.text, true);
       else if (m.type === 'utterance') { showHeard(m.text); answer(m.text); }
-      else if (m.type === 'error') add('Crundi', '<div class="err">' + esc(m.error) + '</div>');
+      else if (m.type === 'error') add('Cru', '<div class="err">' + esc(m.error) + '</div>');
     };
     liveWs.onclose = () => { if (liveWs) stopLive(); };
     liveRec = new MediaRecorder(liveStream);
@@ -319,14 +319,14 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       const r = await api('/api/voice/voices');
       if (!r.ok) { $('voices').innerHTML = '<div class="spend">' + esc(r.error) + '</div>'; return; }
       allVoices = r.voices;
-      if (!r.fromDeepgram) add('Crundi', '<div class="spend">Deepgram&#39;s voice list could not be fetched; showing known Aura-2 voices, accents unknown.</div>');
+      if (!r.fromDeepgram) add('Cru', '<div class="spend">Deepgram&#39;s voice list could not be fetched; showing known Aura-2 voices, accents unknown.</div>');
       drawVoices();
     } catch (e) { $('voices').innerHTML = '<div class="spend err">' + esc(e.message) + '</div>'; }
   }
   async function setVoice(model) {
     const r = await api('/api/voice/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ttsVoice: model }) });
     if (r.ok) { ttsVoice = r.ttsVoice || ''; drawVoices(); }
-    else add('Crundi', '<div class="err">' + esc(r.error) + '</div>');
+    else add('Cru', '<div class="err">' + esc(r.error) + '</div>');
   }
   $('voices').addEventListener('click', (e) => {
     const play = e.target.closest('[data-play]'), use = e.target.closest('[data-use]');

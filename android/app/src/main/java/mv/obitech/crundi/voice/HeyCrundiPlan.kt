@@ -4,7 +4,7 @@ import java.util.Calendar
 import java.util.Locale
 
 /**
- * The rules of "Hey Crundi" (Phase 6, D3–D7), with no Android in them:
+ * The rules of "Hey Cru" (Phase 6, D3–D7), with no Android in them:
  * which durations there are, when background listening ends, what the
  * notification says about the time left, who may hold the microphone, and
  * what a voice command or a restart turns into. [HeyCrundi] and
@@ -89,7 +89,7 @@ object HeyCrundiPlan {
      * a time: an open voice session has it; otherwise background listening
      * (which also covers the app being in front); otherwise in-app
      * listening while the app is in front (D3). The voice screen left open
-     * and asleep listens too, whatever the settings say: Master is looking
+     * and asleep listens too, whatever the settings say: The owner is looking
      * at it.
      */
     data class Situation(
@@ -99,7 +99,7 @@ object HeyCrundiPlan {
         val backgroundOn: Boolean = false,
         /** A voice session (side key overlay or the voice screen) has the microphone. */
         val sessionOpen: Boolean = false,
-        /** The voice screen is open, its session asleep: "Hey Crundi" wakes it where it is. */
+        /** The voice screen is open, its session asleep: "Hey Cru" wakes it where it is. */
         val screenWaiting: Boolean = false,
         /** Just heard: waiting for the voice screen to open, so the microphone is free for it. */
         val handingOver: Boolean = false,
@@ -127,7 +127,7 @@ object HeyCrundiPlan {
 
     /** How long a hand-over waits for the voice session before the wake word listens again. */
     const val HANDOVER_MS = 12_000L
-    /** After a hit, ignore the wake word this long (the end of "Hey Crundi" heard twice). */
+    /** After a hit, ignore the wake word this long (the end of "Hey Cru" heard twice). */
     const val COOLDOWN_MS = 2_000L
 
     // ─── the voice command (capability "voice-phone-actions") ───
@@ -155,7 +155,7 @@ object HeyCrundiPlan {
     /**
      * The service was started again without Crundi asking (Android restarted
      * it after killing it, or the process came back). It can't take the
-     * microphone from the background, so it tells Master instead.
+     * microphone from the background, so it tells the owner instead.
      */
     fun afterRestart(wasOn: Boolean, now: Long, deadline: Long?): Restart =
         if (wasOn && !expired(now, deadline)) Restart.NotifyStopped else Restart.Clear

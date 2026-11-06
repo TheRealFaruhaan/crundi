@@ -213,8 +213,8 @@ class SettingsActivity : ComponentActivity() {
             val state = when {
                 missing -> "The open server does not have the voice assistant yet. Update the server to use it."
                 !on -> "Off."
-                assistant -> "On. Hold the side key to talk to Crundi, on the lock screen too."
-                else -> "On. Open Crundi Voice, or make Crundi the digital assistant to use the side key."
+                assistant -> "On. Hold the side key to talk to Cru, on the lock screen too."
+                else -> "On. Open Cru, or make Crundi the digital assistant to use the side key."
             }
             out += SettingSection("Voice assistant", listOf(
                 SettingItem.Line("Voice assistant", state, if (missing) false else if (on) true else null, "Open") {

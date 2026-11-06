@@ -25,7 +25,7 @@ import kotlin.math.sqrt
 /**
  * The microphone, as 16-bit mono PCM at [rate] in 100 ms chunks, with the
  * phone's echo cancelling on so Crundi's own voice is mostly taken out
- * (that is what lets the phone notice Master talking over it).
+ * (that is what lets the phone notice the owner talking over it).
  *
  * [onChunk] is called on the recording thread with the bytes (little-endian,
  * what Deepgram's linear16 expects) and the chunk's level, 0..1.
@@ -93,7 +93,7 @@ class MicStream(private val rate: Int = RATE, private val onChunk: (bytes: ByteA
  * Holds the microphone in the foreground while a voice session is open, so
  * Android lets the app record with the screen locked (Phase 0: started from
  * the side-key overlay it records locked and unlocked). Shows the ongoing
- * "Crundi is listening" notification; does nothing else.
+ * "Cru is listening" notification; does nothing else.
  */
 class VoiceMicService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -103,7 +103,7 @@ class VoiceMicService : Service() {
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Voice assistant listening", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
         val n: Notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle("Crundi is listening")
+            .setContentTitle("Cru is listening")
             .setContentText("While the voice assistant is open")
             .setOngoing(true)
             .setSilent(true)
@@ -148,13 +148,13 @@ object VoicePrefs {
     fun silenceSeconds(ctx: Context) = p(ctx).getInt("voice.silence", 30)
     fun setSilenceSeconds(ctx: Context, s: Int) = p(ctx).edit().putInt("voice.silence", s).apply()
 
-    /** The voice screen asleep keeps the screen on this long, minutes, listening for "Hey Crundi"; then the phone may sleep. */
+    /** The voice screen asleep keeps the screen on this long, minutes, listening for "Hey Cru"; then the phone may sleep. */
     fun screenAwakeMinutes(ctx: Context) = p(ctx).getInt("voice.screenAwake", 2)
     fun setScreenAwakeMinutes(ctx: Context, m: Int) = p(ctx).edit().putInt("voice.screenAwake", m).apply()
 
-    // ─── "Hey Crundi" (Phase 6) ───
+    // ─── "Hey Cru" (Phase 6) ───
 
-    /** D3: listen for "Hey Crundi" while the app is in front. Off by default. */
+    /** D3: listen for "Hey Cru" while the app is in front. Off by default. */
     fun wakeInApp(ctx: Context) = p(ctx).getBoolean("voice.wake.inApp", false)
     fun setWakeInApp(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.wake.inApp", on).apply()
 

@@ -49,7 +49,7 @@ class CrundiVoiceService : VoiceInteractionService() {
         @Volatile private var current: CrundiVoiceService? = null
 
         /**
-         * "Hey Crundi" heard in the background (Phase 6): as the phone's
+         * "Hey Cru" heard in the background (Phase 6): as the phone's
          * assistant Crundi may show its session as any assistant does on its
          * hotword. False when Crundi isn't the assistant (mode B).
          */

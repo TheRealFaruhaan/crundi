@@ -41,13 +41,13 @@ import kotlin.random.Random
 
 /**
  * The mic button as liquid. Quiet, it is a glossy sphere of layered liquid
- * (cyan, indigo, violet, blended). When Master talks it spreads into a water
+ * (cyan, indigo, violet, blended). When the owner talks it spreads into a water
  * surface whose top edge is the voice itself (its loudness of the last
  * moments, newest in the middle), with droplets flying off the peaks and
  * ripples running over it; when they stop, surface tension pulls it back
  * into the sphere, with a wobble.
  *
- * [mic] is read every frame (Master's level, 0..1). It draws wider than its
+ * [mic] is read every frame (The owner\'s level, 0..1). It draws wider than its
  * touch area while spread, on purpose.
  */
 @Composable

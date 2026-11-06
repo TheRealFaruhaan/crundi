@@ -69,7 +69,7 @@ import kotlin.math.sin
 /**
  * The voice assistant's screen, over the lock screen or the app: the Crundi
  * head at the centre of a field of the projects (VoiceField), its voice lines
- * moving with Master's voice while listening and with Crundi's while it
+ * moving with the owner's voice while listening and with Crundi's while it
  * speaks; what was heard as it is heard, the spoken answer, and the detail
  * that is only shown (D28).
  *
@@ -87,7 +87,7 @@ fun VoiceScreen(
     onUnlock: (() -> Unit)? = null,
     onAllowMic: () -> Unit = {},
     shell: mv.obitech.crundi.ui.shell.ShellData? = null,
-    /** Yes / No on a question awaiting Master's answer. */
+    /** Yes / No on a question awaiting the owner's answer. */
     onAnswer: (String) -> Unit = {},
     /** Asleep, listening on the phone for the wake word: says so. */
     waitingHint: String = "",
@@ -123,7 +123,7 @@ fun VoiceScreen(
             UsageLegend(arcs)
             Words(ui, phase, onAllowMic, Modifier.weight(1f, fill = true))
             if (waitingHint.isNotEmpty() && phase == Phase.Ended && ui.blocked.isEmpty()) Text(waitingHint, style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
-            // A question awaiting Master's yes: answered by voice (Phase 4), no buttons.
+            // A question awaiting the owner's yes: answered by voice (Phase 4), no buttons.
             if (s.question.isNotEmpty() && phase != Phase.Thinking) Text("Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             if (s.needsUnlock && onUnlock != null) CrundiButton("Unlock the phone", onUnlock, kind = ButtonKind.Primary, icon = "lock", modifier = Modifier.padding(top = 6.dp))
             BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock)
@@ -180,12 +180,12 @@ private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, modifier: M
     // Scrolls: a long answer is never cut off.
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = 10.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when {
-            ui.needsMic -> Problem("mic", "Crundi needs the microphone to hear you.") {
+            ui.needsMic -> Problem("mic", "Cru needs the microphone to hear you.") {
                 CrundiButton("Allow the microphone", onAllowMic, kind = ButtonKind.Primary, icon = "mic")
             }
             ui.blocked.isNotEmpty() -> Problem("alert-triangle", ui.blocked)
             else -> {
-                // What Master said: live while listening, then what was asked.
+                // What the owner said: live while listening, then what was asked.
                 val heard = if (phase == Phase.Listening || phase == Phase.Thinking) s.heard else s.asked
                 AnimatedVisibility(heard.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
                     Text(
@@ -195,7 +195,7 @@ private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, modifier: M
                     )
                 }
                 if (heard.isEmpty() && s.reply.isEmpty() && phase == Phase.Listening) {
-                    Text(if (s.locked) "Ask anything. Changes wait for an unlock." else "Ask me anything, Master.", style = CrundiType.Body.copy(fontSize = 16.sp, color = CrundiColors.TextMuted), textAlign = TextAlign.Center)
+                    Text(if (s.locked) "Ask anything. Changes wait for an unlock." else "Ask me anything, Sir.", style = CrundiType.Body.copy(fontSize = 16.sp, color = CrundiColors.TextMuted), textAlign = TextAlign.Center)
                 }
                 AnimatedVisibility(s.reply.isNotEmpty(), enter = fadeIn(tween(300)), exit = fadeOut()) {
                     Text(s.reply, style = CrundiType.Title.copy(fontSize = 18.sp, lineHeight = 25.sp, fontWeight = FontWeight.Medium), textAlign = TextAlign.Center)

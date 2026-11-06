@@ -98,7 +98,7 @@
         <activity
             android:name=".voice.VoiceActivity"
             android:exported="false"
-            android:label="Crundi Voice"
+            android:label="Cru"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:taskAffinity="mv.obitech.crundi.voice"
@@ -110,7 +110,7 @@
         <activity-alias
             android:name=".voice.CrundiVoice"
             android:targetActivity=".voice.VoiceActivity"
-            android:label="Crundi Voice"
+            android:label="Cru"
             android:icon="@mipmap/ic_launcher"
             android:exported="true">
             <intent-filter>
@@ -140,7 +140,7 @@
             </intent-filter>
         </service>
         <service android:name=".voice.VoiceMicService" android:exported="false" android:foregroundServiceType="microphone" />
-        <!-- Phase 6: background listening for "Hey Crundi" (D4-D7), started only from the foreground. -->
+        <!-- Phase 6: background listening for "Hey Cru" (D4-D7), started only from the foreground. -->
         <service android:name=".voice.HeyCrundiService" android:exported="false" android:foregroundServiceType="microphone" />
         <activity android:name=".voice.VoiceSettingsActivity" android:exported="false" android:label="Voice assistant" />
 

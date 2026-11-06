@@ -37,7 +37,7 @@ import mv.obitech.crundi.R
 import mv.obitech.crundi.UrgentAlerts
 
 /**
- * The on-phone keyword spotter for "Hey Crundi" (sherpa-onnx, Apache-2.0):
+ * The on-phone keyword spotter for "Hey Cru" (sherpa-onnx, Apache-2.0):
  * a 3.3M-parameter streaming zipformer trained on GigaSpeech, open
  * vocabulary, with the keywords in assets/kws/keywords.txt. Nothing leaves
  * the phone: the microphone goes to the server only once a voice session
@@ -46,7 +46,7 @@ import mv.obitech.crundi.UrgentAlerts
  * The model and the native library are not in the repository: the build
  * fetches them from sherpa-onnx's GitHub releases, pinned by SHA-256
  * (app/build.gradle.kts, fetchWakeWord). On a phone whose processor the
- * library wasn't built for, [load] returns null and "Hey Crundi" says it
+ * library wasn't built for, [load] returns null and "Hey Cru" says it
  * isn't available.
  */
 class WakeWordEngine private constructor(private val kws: KeywordSpotter) {
@@ -91,7 +91,7 @@ class WakeWordEngine private constructor(private val kws: KeywordSpotter) {
                 ),
                 maxActivePaths = 4,
                 keywordsFile = "$DIR/keywords.txt",
-                // Checked on the server with synthetic voices: hears "Hey Crundi" and
+                // Checked on the server with synthetic voices: hears "Hey Cru" and
                 // "Crundi", and none of "Hey Siri", "Hey Google", "Grundy", "Hey Candy".
                 keywordsScore = 1.5f,
                 keywordsThreshold = 0.2f,
@@ -115,7 +115,7 @@ class WakeWordEngine private constructor(private val kws: KeywordSpotter) {
 }
 
 /**
- * Who listens for "Hey Crundi", for the whole app. One microphone owner at
+ * Who listens for "Hey Cru", for the whole app. One microphone owner at
  * a time ([HeyCrundiPlan.listener]): a voice session pauses the wake word
  * ([sessionOpened] / [sessionClosed]); background listening
  * ([HeyCrundiService]) covers the screen being off; in-app listening covers
@@ -185,7 +185,7 @@ object HeyCrundi {
     private var screenWake: (() -> Unit)? = null
 
     /**
-     * The voice screen is open and asleep: listen for "Hey Crundi" while it
+     * The voice screen is open and asleep: listen for "Hey Cru" while it
      * is, even with both settings off, and call [onWake] on hearing it. Null
      * when it wakes or goes away.
      */
@@ -243,7 +243,7 @@ object HeyCrundi {
                 rec.release()
             }
         }, "crundi-wake").apply { start() }
-        Log.i(TAG, "listening for Hey Crundi")
+        Log.i(TAG, "listening for Hey Cru")
     }
 
     /** Stops and waits for the recording to let go, so the next owner gets a free microphone. */
@@ -258,7 +258,7 @@ object HeyCrundi {
         val now = System.currentTimeMillis()
         if (now - lastHit < HeyCrundiPlan.COOLDOWN_MS || HeyCrundiPlan.listener(situation) == HeyCrundiPlan.Listener.None) return
         lastHit = now
-        Log.i(TAG, "heard Hey Crundi")
+        Log.i(TAG, "heard Hey Cru")
         // Free the microphone for the voice session; listen again if none opens.
         update { it.copy(handingOver = true) }
         main.postDelayed(endHandOver, HeyCrundiPlan.HANDOVER_MS)
@@ -278,18 +278,18 @@ object HeyCrundi {
      * Android doesn't let an app open a screen from the background. Crundi as
      * the phone's assistant (mode A) may show its session, as any assistant
      * does on its hotword. Otherwise a full-screen notification opens the
-     * voice screen over the lock screen (when Master allowed full-screen
-     * notifications), or shows "Hey Crundi heard, tap to talk".
+     * voice screen over the lock screen (when the owner allowed full-screen
+     * notifications), or shows "Hey Cru heard, tap to talk".
      */
     private fun fromBackground() {
         if (CrundiVoiceService.show()) return
         val nm = app.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(WAKE_CHANNEL, "Hey Crundi heard", NotificationManager.IMPORTANCE_HIGH).apply { setShowBadge(false) })
+        nm.createNotificationChannel(NotificationChannel(WAKE_CHANNEL, "Hey Cru heard", NotificationManager.IMPORTANCE_HIGH).apply { setShowBadge(false) })
         val open = PendingIntent.getActivity(app, 1, Intent(app, VoiceActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(app, WAKE_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle("Yes, Master?")
-            .setContentText("Tap to talk to Crundi")
+            .setContentTitle("Yes, Sir?")
+            .setContentText("Tap to talk to Cru")
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
@@ -311,12 +311,12 @@ object HeyCrundi {
 
 /**
  * Background listening (D4–D7): holds the microphone in the foreground so
- * "Hey Crundi" is heard with the screen off. Started only while Crundi is in
+ * "Hey Cru" is heard with the screen off. Started only while Crundi is in
  * front (the settings toggle, a voice session's command, a tap on "tap to
  * resume"), as Android 14 requires for the microphone. Keeps its own
  * deadline and stops itself at it; the ongoing notification counts down and
  * has Stop. If Android kills it, it can't take the microphone back from the
- * background: it says "Hey Crundi stopped, tap to resume" instead.
+ * background: it says "Hey Cru stopped, tap to resume" instead.
  */
 class HeyCrundiService : Service() {
     private val handler = Handler(Looper.getMainLooper())
@@ -370,7 +370,7 @@ class HeyCrundiService : Service() {
         val settings = PendingIntent.getActivity(this, 3, Intent(this, VoiceSettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
-            .setContentTitle("Listening for \"Hey Crundi\"")
+            .setContentTitle("Listening for \"Hey Cru\"")
             .setContentText(HeyCrundiPlan.timeLeft(now, d) + (d?.let { ", " + HeyCrundiPlan.until(it) } ?: ""))
             .setOngoing(true)
             .setSilent(true)
@@ -422,8 +422,8 @@ class HeyCrundiService : Service() {
 
         private fun channels(ctx: Context) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(NotificationChannel(CHANNEL, "Hey Crundi listening", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
-            nm.createNotificationChannel(NotificationChannel(STOPPED_CHANNEL, "Hey Crundi stopped", NotificationManager.IMPORTANCE_DEFAULT))
+            nm.createNotificationChannel(NotificationChannel(CHANNEL, "Hey Cru listening", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
+            nm.createNotificationChannel(NotificationChannel(STOPPED_CHANNEL, "Hey Cru stopped", NotificationManager.IMPORTANCE_DEFAULT))
         }
 
         /**
@@ -463,7 +463,7 @@ class HeyCrundiService : Service() {
             val open = PendingIntent.getActivity(ctx, 4, Intent(ctx, VoiceSettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(EXTRA_RESUME, true), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val n = NotificationCompat.Builder(ctx, STOPPED_CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat)
-                .setContentTitle("Hey Crundi stopped")
+                .setContentTitle("Hey Cru stopped")
                 .setContentText("The phone stopped background listening. Tap to resume.")
                 .setAutoCancel(true)
                 .setContentIntent(open)

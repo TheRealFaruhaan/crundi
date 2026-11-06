@@ -3,9 +3,9 @@
  * §2.5.3): Claude's memory tool (memory_20250818), with its files kept on
  * this server in <dataDir>/voice-memory/memories, private to this user.
  *
- * The model writes what is worth keeping across conversations: Master's
+ * The model writes what is worth keeping across conversations: The owner\'s
  * preferences, standing facts ("the API project is called…"), threads in
- * progress. It survives compaction, and Master can read and edit it on the
+ * progress. It survives compaction, and the owner can read and edit it on the
  * /voice page.
  *
  * Paths are always under /memories; anything that climbs out is refused.
@@ -131,7 +131,7 @@ export function createNotebook(dir, { onChange = () => {} } = {}) {
       walk(root);
       return out.sort((a, b) => a.path.localeCompare(b.path));
     },
-    /** Master edits a file on the /voice page ('' text deletes it). */
+    /** The owner edits a file on the /voice page ('' text deletes it). */
     save(path, text) {
       ensure();
       const f = file(path);

@@ -95,13 +95,13 @@ data class VoiceSettingsUi(
     val dgLimitText: String = "",
     val busy: Boolean = false,
     val note: String = "",
-    /** "Hey Crundi" (Phase 6): this build has the keyword spotter for this phone. */
+    /** "Hey Cru" (Phase 6): this build has the keyword spotter for this phone. */
     val wake: WakeUi = WakeUi(),
     /** The notebook (capability "voice-memory"); null when the server has none. */
     val memory: MemoryUi? = null,
 )
 
-/** The "Hey Crundi" section. */
+/** The "Hey Cru" section. */
 data class WakeUi(
     val supported: Boolean = true,
     val inApp: Boolean = false,
@@ -117,11 +117,11 @@ data class WakeUi(
     val fullScreen: Boolean = true,
     /** The microphone's time after the last thing said or answered, seconds. */
     val micSeconds: Int = 30,
-    /** Then the screen stays on, listening for "Hey Crundi", this many minutes. */
+    /** Then the screen stays on, listening for "Hey Cru", this many minutes. */
     val screenMinutes: Int = 2,
 )
 
-/** The notebook: files as the server has them, Master's edits, the search. */
+/** The notebook: files as the server has them, the owner's edits, the search. */
 data class MemoryUi(
     val loaded: VoiceMemory? = null,
     val error: String = "",
@@ -184,7 +184,7 @@ class VoiceSettingsActivity : ComponentActivity() {
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
         HeyCrundi.refresh()
         if (r[Manifest.permission.RECORD_AUDIO] == true || micGranted()) afterGrant?.invoke()
-        else ui = ui.copy(note = "Hey Crundi needs the microphone. Allow it in Android's settings for Crundi.")
+        else ui = ui.copy(note = "Hey Cru needs the microphone. Allow it in Android's settings for Crundi.")
         afterGrant = null
         wakeRefresh()
     }
@@ -204,7 +204,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
         listDeviceVoices(this) { ui = ui.copy(device = it) }
         load()
-        // "Hey Crundi stopped, tap to resume": the tap is in front, so the microphone may start again.
+        // "Hey Cru stopped, tap to resume": the tap is in front, so the microphone may start again.
         if (intent?.getBooleanExtra(HeyCrundiService.EXTRA_RESUME, false) == true && micGranted()) HeyCrundiService.resume(this)
         lifecycleScope.launch { HeyCrundi.listening.collect { wakeRefresh() } }
         // The time left, while the screen is open.
@@ -327,7 +327,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         onBack = { finish() },
         onEnabled = { on ->
             VoicePrefs.setEnabled(this, on)
-            // The "Crundi Voice" launcher entry comes and goes with it.
+            // The "Cru" launcher entry comes and goes with it.
             packageManager.setComponentEnabledSetting(
                 ComponentName(this, "$packageName.voice.CrundiVoice"),
                 if (on) PackageManager.COMPONENT_ENABLED_STATE_DEFAULT else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
@@ -336,11 +336,11 @@ class VoiceSettingsActivity : ComponentActivity() {
             ui = ui.copy(enabled = on)
         },
         onAssistantSettings = { openAssistantSettings() },
-        onPickDeepgram = { save(ttsVoice = it, note = "Crundi will speak with this voice") },
+        onPickDeepgram = { save(ttsVoice = it, note = "Cru will speak with this voice") },
         onPickDevice = { name ->
             VoicePrefs.setDeviceVoice(this, name)
             ui = ui.copy(deviceChosen = name)
-            if (ui.server?.ttsVoice?.isNotEmpty() == true) save(ttsVoice = "", note = "Crundi will speak with the phone's voice") else ui = ui.copy(note = "Crundi will speak with the phone's voice")
+            if (ui.server?.ttsVoice?.isNotEmpty() == true) save(ttsVoice = "", note = "Cru will speak with the phone's voice") else ui = ui.copy(note = "Cru will speak with the phone's voice")
         },
         onPreviewDeepgram = { previewDeepgram(it) },
         onPreviewDevice = { previewDevice(it) },
@@ -373,14 +373,14 @@ class VoiceSettingsActivity : ComponentActivity() {
         onMicSeconds = { v -> VoicePrefs.setSilenceSeconds(this, v); wakeRefresh() },
         onScreenMinutes = { v -> VoicePrefs.setScreenAwakeMinutes(this, v); wakeRefresh() },
         onWakeInApp = { on ->
-            if (on) withMic { HeyCrundi.setInApp(true); ui = ui.copy(note = "Say \"Hey Crundi\" while Crundi is open"); wakeRefresh() }
+            if (on) withMic { HeyCrundi.setInApp(true); ui = ui.copy(note = "Say \"Hey Cru\" while Crundi is open"); wakeRefresh() }
             else { HeyCrundi.setInApp(false); wakeRefresh() }
         },
         onWakeBackground = { on ->
             if (on) withMic {
                 val m = VoicePrefs.wakeMinutes(this)
                 HeyCrundiService.start(this, m)
-                ui = ui.copy(note = if (m == HeyCrundiPlan.UNTIL_OFF) "Listening for \"Hey Crundi\" until you turn it off" else "Listening for \"Hey Crundi\" for ${HeyCrundiPlan.label(m)}")
+                ui = ui.copy(note = if (m == HeyCrundiPlan.UNTIL_OFF) "Listening for \"Hey Cru\" until you turn it off" else "Listening for \"Hey Cru\" for ${HeyCrundiPlan.label(m)}")
                 wakeRefresh()
             } else { HeyCrundiService.stop(this); wakeRefresh() }
         },
@@ -434,7 +434,7 @@ class VoiceSettingsActivity : ComponentActivity() {
     }
 
     companion object {
-        const val SAMPLE = "Good evening, Master. Everything is running smoothly, and the kanban board is in order."
+        const val SAMPLE = "Good evening, Sir. Everything is running smoothly, and the kanban board is in order."
         const val RECOMMENDED = "aura-2-draco-en"
 
         fun holdsAssistant(ctx: Context): Boolean =
@@ -452,7 +452,7 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
         TopBar("Voice assistant", onBack = ev.onBack, subtitle = ui.host.takeIf { it.isNotEmpty() }?.let { "Crundi on $it" })
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Dimens.ScreenPad), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             CrundiCard(Modifier.fillMaxWidth(), padding = 4.dp) {
-                CrundiSwitchRow("Voice assistant", ui.enabled, ev.onEnabled, detail = if (ui.enabled) "On. Ask Crundi anything about your projects, by voice." else "Off. The side key and Crundi Voice do nothing.")
+                CrundiSwitchRow("Voice assistant", ui.enabled, ev.onEnabled, detail = if (ui.enabled) "On. Ask Cru anything about your projects, by voice." else "Off. The side key and Cru do nothing.")
             }
             if (ui.note.isNotEmpty()) StatusBadge(ui.note, BadgeKind.Info)
 
@@ -467,18 +467,18 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
             ) { CrundiButton("Choose the digital assistant", ev.onAssistantSettings, icon = "settings") }
             Mode(
                 "B. Keep Gemini, double-press the side key",
-                "Gemini stays the assistant and \"Hey Google\" keeps working. Crundi Voice opens on a double press, or when you say \"Hey Google, open Crundi Voice\". Works after unlocking.",
+                "Gemini stays the assistant and \"Hey Google\" keeps working. Cru opens on a double press, or when you say \"Hey Google, open Cru\". Works after unlocking.",
                 if (ui.isAssistant) "Gemini is not the assistant now" else "Available",
                 null,
-                steps = "On Samsung: Advanced features > Side button > Double press > Open app > Crundi Voice.",
-            ) { CrundiButton("Try Crundi Voice", ev.onTry, icon = "mic") }
+                steps = "On Samsung: Advanced features > Side button > Double press > Open app > Cru.",
+            ) { CrundiButton("Try Cru", ev.onTry, icon = "mic") }
 
-            // ─── Winding down: the microphone, then "Hey Crundi", then sleep ───
+            // ─── Winding down: the microphone, then "Hey Cru", then sleep ───
             Section("On the voice screen")
             ScreenTimes(ui.wake, ev)
 
-            // ─── "Hey Crundi" (Phase 6, D3–D7) ───
-            Section("Hey Crundi")
+            // ─── "Hey Cru" (Phase 6, D3–D7) ───
+            Section("Hey Cru")
             HeyCrundiPart(ui.wake, ui.isAssistant, ev)
 
             when {
@@ -647,7 +647,7 @@ private fun ScreenTimes(w: WakeUi, ev: VoiceSettingsEvents) {
         }
         Text("Then the screen stays on", style = CrundiType.Heading, modifier = Modifier.padding(top = 16.dp))
         Text(
-            (if (w.supported) "Listening on the phone only for \"Hey Crundi\", which starts again where you left off. Nothing is sent meanwhile, and the Hey Crundi settings below needn't be on. " else "") +
+            (if (w.supported) "Listening on the phone only for \"Hey Cru\", which starts again where you left off. Nothing is sent meanwhile, and the Hey Cru settings below needn't be on. " else "") +
                 "After this the phone may sleep as usual, and the voice screen closes.",
             style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
         )
@@ -667,7 +667,7 @@ private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEven
         }
         CrundiSwitchRow(
             "In the app", w.inApp, ev.onWakeInApp,
-            detail = "While Crundi is open, say \"Hey Crundi\" to open the voice screen. Heard on the phone; nothing is sent until it opens.",
+            detail = "While Crundi is open, say \"Hey Cru\" to open the voice screen. Heard on the phone; nothing is sent until it opens.",
         )
         CrundiSwitchRow(
             "In the background", w.background, ev.onWakeBackground,
@@ -683,11 +683,11 @@ private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEven
                 Text(when (w.listening) { HeyCrundiPlan.Listener.Background -> "Listening now, in the background"; HeyCrundiPlan.Listener.Screen -> "Listening now, on the voice screen"; else -> "Listening now, while Crundi is open" }, style = CrundiType.Small.copy(color = CrundiColors.Green), modifier = Modifier.padding(start = 6.dp))
             }
             Text(
-                "Listening uses some battery, and Android shows the green microphone dot while it does. On Samsung, add Crundi to Settings > Battery > Background usage limits > Never sleeping apps, or the phone may stop it; if it does, a notification offers to resume. \"Hey Crundi\" can also turn it on for a while: \"keep listening for an hour\".",
+                "Listening uses some battery, and Android shows the green microphone dot while it does. On Samsung, add Crundi to Settings > Battery > Background usage limits > Never sleeping apps, or the phone may stop it; if it does, a notification offers to resume. \"Hey Cru\" can also turn it on for a while: \"keep listening for an hour\".",
                 style = CrundiType.Small, modifier = Modifier.padding(top = 10.dp),
             )
             if (!isAssistant && !w.fullScreen) {
-                Text("Heard with the phone locked, Crundi Voice opens over the lock screen only with full-screen notifications allowed; otherwise it shows a notification to tap.", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
+                Text("Heard with the phone locked, Cru opens over the lock screen only with full-screen notifications allowed; otherwise it shows a notification to tap.", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
                 CrundiButton("Allow full-screen notifications", ev.onFullScreen, icon = "bell")
             }
         }

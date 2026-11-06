@@ -83,7 +83,7 @@
       '<div class="cv-field"><canvas></canvas></div><div class="cv-leg"></div>' +
       '<div class="cv-words"><div class="cv-heard"></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden>Say yes or no</div><div class="cv-note" hidden></div></div>' +
       '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div>' +
-      '<div class="cv-bot"><input class="cv-type" placeholder="Or type to Crundi…" aria-label="Type to Crundi">' +
+      '<div class="cv-bot"><input class="cv-type" placeholder="Or type to Cru…" aria-label="Type to Cru">' +
       '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></div></div>';
     document.body.appendChild(ov);
     var q = function (s) { return ov.querySelector(s); };
@@ -132,7 +132,7 @@
     start();
   }
 
-  /** Opened by hovering: close again once the pointer has gone, unless Master is talking or it is busy. */
+  /** Opened by hovering: close again once the pointer has gone, unless the owner is talking or it is busy. */
   function maybeLeave() {
     if (!S || S.how !== 'hover') return;
     clearTimeout(S.leaveTimer);
@@ -382,7 +382,7 @@
     q('.cv-st').textContent = ph === 'listen' ? 'Listening' : ph === 'think' ? 'Thinking' : ph === 'speak' ? 'Speaking' : ph === 'start' ? 'Waking' : 'Asleep';
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
     var h = (ph === 'listen' || ph === 'think') ? S.heard : S.asked;
-    q('.cv-heard').textContent = h ? '“' + h + '”' : (ph === 'listen' && !S.reply ? 'Ask me anything, Master.' : '');
+    q('.cv-heard').textContent = h ? '“' + h + '”' : (ph === 'listen' && !S.reply ? 'Ask me anything, Sir.' : '');
     q('.cv-reply').textContent = S.reply;
     var d = q('.cv-detail'); d.hidden = !S.detail; d.textContent = S.detail;
     q('.cv-yesno').hidden = !(S.question && ph !== 'think');
@@ -496,7 +496,7 @@
     if (S.logo.complete) g.drawImage(S.logo, cx - sz / 2, cy - sz / 2 - 2, sz, sz);
   }
 
-  /** The liquid mic (as the phone's FluidMic): a sphere that spreads into water while Master talks. */
+  /** The liquid mic (as the phone's FluidMic): a sphere that spreads into water while the owner talks. */
   function drawMic(t, ms, ph) {
     var f = fit(S.ov.querySelector('.cv-mic canvas')), g = f.g, W = f.w, H = f.h, Lq = S.liq;
     var dt = Lq.lastT ? Math.min(0.05, (ms - Lq.lastT) / 1000) : 0.016; Lq.lastT = ms;

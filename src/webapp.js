@@ -2598,9 +2598,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return claudeUi.history(id);
     },
     terminalScrollback: (id) => (claudeTerminals && claudeTerminals.getScrollback ? claudeTerminals.getScrollback(id) : ''),
+    docker: dockerMod,
   });
   // What voice may change (Phase 4, voice/actions.js): every action behind the
-  // same gate: a locked phone waits for an unlock; anything that needs Master's
+  // same gate: a locked phone waits for an unlock; anything that needs the owner's
   // yes is parked until their next message.
   const voicePending = createVoicePending();
   const voiceCtx = { pending: voicePending, locked: () => false };
@@ -4099,7 +4100,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/voice/account-usage' && req.method === 'GET') {
       return json(res, await voiceAccountUsage({ force: url.searchParams.get('force') === '1' }));
     }
-    // The voice assistant's notebook (Phase 2): read and edited by Master on /voice.
+    // The voice assistant's notebook (Phase 2): read and edited by the owner on /voice.
     if (path === '/api/voice/memory' && req.method === 'GET') {
       return json(res, { ok: true, files: voiceMemory.notebook.list(), entries: voiceMemory.index.count(), meaning: voiceMemory.index.embedder });
     }
@@ -4137,7 +4138,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       res.writeHead(200, { 'Content-Type': r.mime, 'Content-Length': r.audio.length, 'Cache-Control': 'no-store' });
       return res.end(r.audio);
     }
-    // A voice session just opened: warm the prompt cache while Master speaks.
+    // A voice session just opened: warm the prompt cache while the owner speaks.
     if (path === '/api/voice/warm' && req.method === 'POST') {
       return json(res, await voiceAgent.warm());
     }

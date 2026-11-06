@@ -10,9 +10,9 @@ package mv.obitech.crundi.voice
  *                          └──────── SpeechDone / BargeIn ◀─────────────┘
  *
  * - While Crundi speaks, the microphone stream is paused, so Deepgram never
- *   transcribes Crundi's own voice. The phone still listens locally: Master
+ *   transcribes Crundi's own voice. The phone still listens locally: The owner
  *   talking over it (BargeIn) stops the speech and resumes the stream.
- * - What Master says while Crundi is thinking is kept and sent next.
+ * - What the owner says while Crundi is thinking is kept and sent next.
  * - The microphone stays on for [silenceMs] after the last thing that
  *   happened (something said and sent, an answer, a tap), then the session
  *   ends: back to sleep. Words heard meanwhile (a television, a room) don't
@@ -42,12 +42,12 @@ data class VoiceState(
     val locked: Boolean = false,
     /** When words were last heard (or anything happened). */
     val quietSince: Long = 0,
-    /** When Master or Crundi last did something (said and sent, answered, tapped), for the microphone's timeout. */
+    /** When the owner or Crundi last did something (said and sent, answered, tapped), for the microphone's timeout. */
     val activeSince: Long = 0,
     /** What Crundi last said aloud, and when it stopped: heard again just after, it is an echo. */
     val lastSaid: String = "",
     val saidUntil: Long = 0,
-    /** A question waiting for Master's yes (Phase 4): the screen shows Yes / No. */
+    /** A question waiting for the owner's yes (Phase 4): the screen shows Yes / No. */
     val question: String = "",
     /** The last answer needed the phone unlocked. */
     val needsUnlock: Boolean = false,
@@ -60,10 +60,10 @@ sealed interface VoiceEvent {
     data class Utterance(val text: String, val now: Long) : VoiceEvent
     /** Claude's answer, or why there is none. */
     data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long, val question: String = "", val needsUnlock: Boolean = false) : VoiceEvent
-    /** Master tapped Yes or No (or typed): asked like something said. */
+    /** The owner tapped Yes or No (or typed): asked like something said. */
     data class Typed(val text: String, val now: Long) : VoiceEvent
     data class SpeechDone(val now: Long) : VoiceEvent
-    /** Master talked over Crundi. */
+    /** The owner talked over Crundi. */
     data class BargeIn(val now: Long) : VoiceEvent
     data class StreamLost(val why: String, val now: Long) : VoiceEvent
     data class Unlocked(val now: Long) : VoiceEvent
@@ -85,7 +85,7 @@ sealed interface VoiceEffect {
 class VoiceMachine(
     /** The microphone stays on this long after the last thing that happened. */
     val silenceMs: Long = 30_000,
-    /** Words heard this recently hold the timeout: Master may be mid-sentence. */
+    /** Words heard this recently hold the timeout: The owner may be mid-sentence. */
     val graceMs: Long = 3_000,
     /** Starting this long without the stream: try the phone's recogniser. */
     val startMs: Long = 8_000,
@@ -207,7 +207,7 @@ object DeviceVoices {
     const val PREFERRED_LOCAL = "en-gb-x-rjs-local"
 
     /**
-     * The voice to use: the one Master chose if the phone still has it, else
+     * The voice to use: the one the owner chose if the phone still has it, else
      * en-gb-x-rjs-network, then en-gb-x-rjs-local, then any British English
      * voice (on-device first), else null (the engine's own default).
      */
@@ -222,7 +222,7 @@ object DeviceVoices {
 }
 
 /**
- * Hears Master talking over Crundi from the microphone level alone, while the
+ * Hears the owner talking over Crundi from the microphone level alone, while the
  * stream to the server is paused.
  *
  * Crundi's own voice comes back through the microphone loudly: the phone's
@@ -238,7 +238,7 @@ class BargeInDetector(
     /** Never quieter than this (0..1 of full scale) counts, however still the room. */
     private val floorMin: Float = 0.03f,
     private val overNoise: Float = 3.2f,
-    /** Master must be this many times louder than Crundi's own echo. */
+    /** The owner must be this many times louder than Crundi's own echo. */
     private val overEcho: Float = 2.2f,
     /** The start of each answer: learning the echo, never an interruption. */
     private val calibrateMs: Long = 700,
@@ -262,7 +262,7 @@ class BargeInDetector(
     fun reset() { loudFor = 0L; spokeFor = 0L; recent.fill(0f) }
 
     /**
-     * While speaking: true once Master has been talking over Crundi for
+     * While speaking: true once the owner has been talking over Crundi for
      * [holdMs]. [voice] is Crundi's playback level, or null when unknown.
      */
     fun hear(level: Float, voice: Float?, ms: Long): Boolean {
