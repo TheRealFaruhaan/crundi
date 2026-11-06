@@ -148,8 +148,8 @@ data class ChatUi(
     val stopArmed: Boolean = false,
     /** Mid-turn sends not yet echoed by the server. */
     val localPending: List<PendingInjection> = emptyList(),
-    /** How many log entries there were when each local one was sent (by its text), to tell when Claude took it. */
-    val localSentAt: Map<String, Int> = emptyMap(),
+    /** For each mid-turn send, the ids of your messages with that text already in the log when it went. */
+    val localSentAt: Map<String, Set<String>> = emptyMap(),
     /** Folded things the person opened (tool ids; "!id" closes a live thought). */
     val open: Set<String> = emptySet(),
     /** Cards whose answer is on its way. */
@@ -692,9 +692,10 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         if (chat.state != AgentState.Working) { ui = ui.copy(localPending = emptyList(), localSentAt = emptyMap()); return@LaunchedEffect }
         if (ui.localPending.isEmpty()) return@LaunchedEffect
         val left = ui.localPending.filter { p ->
-            val from = ui.localSentAt[p.text] ?: return@filter true
-            val msgs = chat.messages
-            (from until msgs.size).none { i -> msgs[i].kind == "user" && msgs[i].text.trim() == p.text.trim() }
+            // By id, not position: a long chat keeps only its newest entries, so the
+            // log's length stops growing and a position never moves past the send.
+            val seen = ui.localSentAt[p.text] ?: return@filter true
+            chat.messages.none { m -> m.kind == "user" && m.text.trim() == p.text.trim() && m.id !in seen }
         }
         if (left.size != ui.localPending.size) ui = ui.copy(localPending = left, localSentAt = ui.localSentAt.filterKeys { k -> left.any { it.text == k } })
     }
@@ -805,6 +806,8 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
             // Asleep: wake it, then send. The text stays in the box meanwhile.
             if (view.asleep) { wakeChat("resume", text, known = true); return }
             val wasBusy = view.busy
+            // Taken before the send: Claude can read it before the send has even answered.
+            val seenBefore = chat.messages.filter { it.kind == "user" && it.text.trim() == text.trim() }.mapTo(HashSet()) { it.id }
             // The recap goes as a message does (the server clears it too, and says so a moment later).
             ui = ui.copy(draft = "", stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion, retiredRecap = chat.recap?.key ?: ui.retiredRecap)
             scope.launch {
@@ -812,7 +815,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
                     val r = api.chats.send(chatId, text)
                     if (r.injected || wasBusy) ui = ui.copy(
                         localPending = ui.localPending + PendingInjection(text, r.uuid, if (r.uuid.isNotEmpty()) "queued" else "sent"),
-                        localSentAt = ui.localSentAt + (text to chat.messages.size),
+                        localSentAt = ui.localSentAt + (text to seenBefore),
                     )
                 } catch (e: Exception) {
                     ui = ui.copy(draft = text)

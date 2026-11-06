@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.9 (en-US)
+
+Version code 40. Internal track. Since 1.1.3-dev.8 (code 39): a mid-turn message's card leaves when Claude reads it, in long chats too.
+
+```
+<en-US>
+A fix for messages sent while Claude is working.
+
+- In a long chat, a message Claude had already read stayed under the box as "Sending, not read yet" until the turn ended. It now leaves as soon as Claude reads it.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.8 (en-US)
 
 Version code 39. Internal track. Since 1.1.3-dev.7 (code 38): the mic in the top bar, the voice screen's microphone timeout, Hey Crundi on the sleeping voice screen, and the screen kept awake.
