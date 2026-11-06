@@ -61,6 +61,21 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.10 (en-US)
+
+Version code 41. Internal track. Since 1.1.3-dev.9 (code 40): Cru (rename, Sir, its name, persona, Docker), Cru's mark in the top bar, Hey Cru trained on the owner's voice.
+
+```
+<en-US>
+Meet Cru, and train "Hey Cru" on your voice.
+
+- The voice assistant is Cru (said like "crew") and calls you Sir. Say "Hey Cru" while it listens and it answers at once.
+- Cru's mark replaces the mic in the top bar.
+- "Hey Cru" listens only after you train it: say it five times in Voice assistant settings, then Try it.
+- Cru learns how you like it to behave, and can see Docker containers.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.9 (en-US)
 
 Version code 40. Internal track. Since 1.1.3-dev.8 (code 39): a mid-turn message's card leaves when Claude reads it, in long chats too.
