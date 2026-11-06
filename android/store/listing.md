@@ -61,6 +61,20 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.12 (en-US)
+
+Version code 43. Internal track. Since 1.1.3-dev.11 (code 42): call-mode microphone for Hey Cru (AEC, NS, AGC), noise subtraction, voicing and length checks, the model's second opinion; Try it judges like listening.
+
+```
+<en-US>
+"Hey Cru" hears you, not the room.
+
+- Training and listening record like a phone call: the phone's echo cancelling, noise suppression and level control, so how you hold it matters less.
+- Background noise is taken out before your voice is compared, and noises and short words no longer wake it.
+- Train Hey Cru again after updating.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.11 (en-US)
 
 Version code 42. Internal track. Since 1.1.3-dev.10 (code 41): Hey Cru learns from the owner's recordings (phrase match), never refuses a take the model missed.

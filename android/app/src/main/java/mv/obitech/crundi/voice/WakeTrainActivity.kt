@@ -184,15 +184,8 @@ class WakeTrainActivity : ComponentActivity() {
             val audio = withContext(Dispatchers.IO) { capture(5.0, stopOnQuiet = false) }
             level = 0f
             if (audio == null) { ui = ui.copy(trying = false, tryResult = "The microphone could not be opened.", tryGood = false); return@launch }
-            // As when listening: the owner's phrase on its own, or the model's hit checked against the recordings.
-            val verdict = withContext(Dispatchers.Default) {
-                val phrase = CruWake.trim(audio)?.let { profile.matchPhrase(it) }
-                when {
-                    phrase?.ok == true -> phrase
-                    engine.hears(profile.keywordLine(), CruWake.padded(audio)) -> profile.verify(audio)
-                    else -> null
-                }
-            }
+            // Exactly as listening judges it: each burst on its own, then the model.
+            val verdict = withContext(Dispatchers.Default) { profile.judge(audio) { line, clip -> engine.hears(line, clip) } }
             ui = when {
                 verdict == null -> ui.copy(trying = false, tryResult = "It didn't hear \"Hey Cru\". Try again, or train again if it keeps missing.", tryGood = false)
                 verdict.ok -> ui.copy(trying = false, tryResult = "Heard you. That would wake Cru.", tryGood = true)
@@ -205,10 +198,9 @@ class WakeTrainActivity : ComponentActivity() {
     @SuppressLint("MissingPermission")
     private suspend fun capture(seconds: Double, stopOnQuiet: Boolean): FloatArray? {
         val rate = CruWake.RATE
-        val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        if (min <= 0) return null
-        val rec = runCatching { AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, rate)) }.getOrNull() ?: return null
-        if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); return null }
+        // As a phone call hears it, the same as listening (WakeWord.kt CallMic).
+        val mic = CallMic.open(rate) ?: return null
+        val rec = mic.rec
         val out = FloatArray((rate * seconds).toInt())
         var n = 0
         try {
@@ -229,8 +221,7 @@ class WakeTrainActivity : ComponentActivity() {
         } catch (e: Exception) {
             return null
         } finally {
-            runCatching { rec.stop() }
-            rec.release()
+            mic.release()
         }
         return out.copyOf(n)
     }

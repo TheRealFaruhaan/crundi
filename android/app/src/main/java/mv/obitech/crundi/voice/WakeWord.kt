@@ -249,13 +249,9 @@ object HeyCrundi {
         // Never without the owner's voice: "Hey Cru" is trained first.
         val profile = WakeProfiles.get(app) ?: return
         kws.use(profile.keywordLine())
-        val min = AudioRecord.getMinBufferSize(WakeWordEngine.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        if (min <= 0) return
-        // VOICE_RECOGNITION: the raw microphone tuned for speech, no call processing.
-        val rec = try {
-            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, WakeWordEngine.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, WakeWordEngine.RATE))
-        } catch (e: Exception) { Log.w(TAG, "AudioRecord: ${e.message}"); return }
-        if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); return }
+        // As a phone call hears it, the same as training (WakeTrainActivity).
+        val mic = CallMic.open(WakeWordEngine.RATE) ?: run { Log.w(TAG, "the microphone could not be opened"); return }
+        val rec = mic.rec
         running = true
         thread = Thread({
             val shorts = ShortArray(WakeWordEngine.RATE / 10)
@@ -279,7 +275,7 @@ object HeyCrundi {
                     filled = minOf(keep, filled + got)
                     val spotted = kws.feed(chunk)
                     val burst = bursts.accept(chunk)
-                    val phrase = burst?.let { profile.matchPhrase(it) }
+                    val phrase = burst?.let { b -> profile.matchPhrase(b) { clip -> kws.hears(CruWake.lines(CruWake.CONFIRM_THRESHOLD, profile.keywordsScore), CruWake.padded(clip)) } }
                     if (phrase?.ok == true && running) { Log.i(TAG, "Hey Cru: the owner's phrase (${phrase.score})"); main.post { heard() } }
                     else if (spotted && running) {
                         val recent = FloatArray(filled) { ring[(at - filled + it + keep) % keep] }
@@ -291,8 +287,7 @@ object HeyCrundi {
             } catch (e: Exception) {
                 Log.w(TAG, "wake word recording stopped: ${e.message}")
             } finally {
-                runCatching { rec.stop() }
-                rec.release()
+                mic.release()
             }
         }, "crundi-wake").apply { start() }
         Log.i(TAG, "listening for Hey Cru")
@@ -525,6 +520,39 @@ class HeyCrundiService : Service() {
 
         fun cancelStopped(ctx: Context) {
             runCatching { ctx.getSystemService(NotificationManager::class.java).cancel(STOPPED_ID) }
+        }
+    }
+}
+
+/**
+ * The microphone as a phone call hears it, on the phone: Android's voice
+ * call source (the phone's own call processing), with its echo canceller,
+ * noise suppressor and automatic gain control switched on where it has
+ * them. Training and listening both record through this, so only the
+ * voice is learnt and matched, and it sounds the same whether the phone is
+ * near or far, quiet or noisy. (The voice session's MicStream does the same.)
+ */
+@SuppressLint("MissingPermission")
+class CallMic private constructor(val rec: AudioRecord, private val effects: List<android.media.audiofx.AudioEffect>) {
+    fun release() {
+        runCatching { rec.stop() }
+        for (e in effects) runCatching { e.release() }
+        rec.release()
+    }
+
+    companion object {
+        fun open(rate: Int): CallMic? {
+            val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            if (min <= 0) return null
+            val rec = runCatching { AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, rate)) }.getOrNull() ?: return null
+            if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); return null }
+            val id = rec.audioSessionId
+            val effects = listOfNotNull(
+                runCatching { if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) android.media.audiofx.AcousticEchoCanceler.create(id)?.apply { enabled = true } else null }.getOrNull(),
+                runCatching { if (android.media.audiofx.NoiseSuppressor.isAvailable()) android.media.audiofx.NoiseSuppressor.create(id)?.apply { enabled = true } else null }.getOrNull(),
+                runCatching { if (android.media.audiofx.AutomaticGainControl.isAvailable()) android.media.audiofx.AutomaticGainControl.create(id)?.apply { enabled = true } else null }.getOrNull(),
+            )
+            return CallMic(rec, effects)
         }
     }
 }

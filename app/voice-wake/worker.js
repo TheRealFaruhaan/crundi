@@ -19,7 +19,7 @@
 
 import { createSpotter } from './spotter.js';
 import { TUNING, SAMPLE_RATE } from './manifest.js';
-import { train, verify, validProfile, VERIFY_SECONDS, createSegmenter, matchPhrase } from './enroll.js';
+import { train, verify, validProfile, VERIFY_SECONDS, createSegmenter, matchPhrase, keywordLines, CONFIRM_THRESHOLD, RATE } from './enroll.js';
 
 /** What the spotter is made with for this profile. */
 export function profileTuning(profile) {
@@ -38,6 +38,17 @@ export function createWake(dir, profile, opts = {}) {
   const now = opts.now || (() => Date.now());
   const spot = createSpotter(dir, profileTuning(profile));
   const seg = createSegmenter();
+  // The model's second opinion on a burst the phrase matched: its loosest
+  // lines, made the first time it is needed, run on that burst only.
+  let loose = null;
+  const confirm = (clip) => {
+    if (!loose) loose = createSpotter(dir, { keywords: keywordLines(CONFIRM_THRESHOLD), keywordsScore: profile.keywordsScore, keywordsThreshold: CONFIRM_THRESHOLD, gate: false });
+    loose.reset();
+    const pad = new Float32Array(RATE * 0.3 + clip.length + RATE); pad.set(clip, RATE * 0.3);
+    let hit = false;
+    for (let i = 0; i < pad.length; i += 1600) if (loose.accept(pad.subarray(i, i + 1600))) hit = true;
+    return hit;
+  };
   const ring = new Float32Array(Math.round(VERIFY_SECONDS * SAMPLE_RATE));
   let filled = 0, at = 0, lastHit = -Infinity;
 
@@ -64,7 +75,7 @@ export function createWake(dir, profile, opts = {}) {
       if (now() - lastHit <= TUNING.cooldownMs) return null;
       // The owner's own phrase, whatever the model made of it.
       if (burst) {
-        const p = matchPhrase(profile, burst);
+        const p = matchPhrase(profile, burst, confirm);
         if (p.ok) { lastHit = now(); return { ok: true, keyword: 'HEY_CRU', score: p.score, via: 'phrase' }; }
       }
       if (!k) return null;
@@ -75,7 +86,7 @@ export function createWake(dir, profile, opts = {}) {
       return { ok: v.ok, keyword: k, score: v.score, via: 'model' };
     },
     reset() { spot.reset(); seg.reset(); filled = 0; at = 0; },
-    free() { spot.free(); },
+    free() { spot.free(); if (loose) loose.free(); },
   };
 }
 

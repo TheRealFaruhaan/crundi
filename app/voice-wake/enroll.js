@@ -49,7 +49,13 @@ export function keywordLines(threshold, score = KEYWORDS_SCORE) {
 /** How much further than the recordings are from each other a wake the model heard may be. */
 const LIMIT_MARGIN = 1.6;
 /** ...and one from the owner's phrase alone, which nothing else vouches for. */
-const STRICT_MARGIN = 1.25;
+const STRICT_MARGIN = 1.3;
+/** A burst this much shorter or longer than the owner's takes is not their "Hey Cru". */
+const LENGTH_RANGE = [0.65, 1.5];
+/** At least this share of a burst's loud frames must be voiced (vowels have a pitch; noise has none). */
+const MIN_VOICED = 0.3;
+/** Below this many takes heard by the model, the phrase wakes without its second opinion. */
+const MODEL_TRUSTED = 3;
 /** What the verifier looks at when the spotter fires. */
 export const VERIFY_SECONDS = 2.0;
 
@@ -128,20 +134,59 @@ export function mfcc(samples) {
     }
     mels.push(e);
   }
+  // Noise reduction (spectral subtraction): the steady background in each
+  // band (a hum, a fan, the room), from the clip's quietest fifth, is taken
+  // away before anything is compared, in training and listening alike, so
+  // only the voice is learnt and matched.
+  if (mels.length >= 5) {
+    const energy = mels.map((e, i) => [e.reduce((a, b) => a + b, 0), i]).sort((a, b) => a[0] - b[0]);
+    const q = energy.slice(0, Math.max(1, Math.floor(mels.length / 5))).map(x => mels[x[1]]);
+    const noise = new Float64Array(MELS);
+    for (const e of q) for (let m = 0; m < MELS; m++) noise[m] += e[m] / q.length;
+    for (const e of mels) for (let m = 0; m < MELS; m++) e[m] = Math.max(e[m] - 1.5 * noise[m], e[m] * 0.05);
+  }
   // Anything 30 dB under the clip's loudest band counts as the same quiet,
-  // so a hum or a fan under the words changes little.
+  // so what is left of the background under the words changes little.
   const floor = Math.max(loudest * 1e-3, 1e-10);
   for (const e of mels) {
     const c = new Float64Array(CEPS);
     for (let j = 0; j < CEPS; j++) { let s = 0; const row = dctM[j]; for (let m = 0; m < MELS; m++) s += row[m] * Math.log(Math.max(e[m], floor)); c[j] = s; }
     out.push(c);
   }
-  if (out.length) {
-    const mean = new Float64Array(CEPS);
-    for (const f of out) for (let j = 0; j < CEPS; j++) mean[j] += f[j] / out.length;
-    for (const f of out) for (let j = 0; j < CEPS; j++) f[j] -= mean[j];
-  }
-  return out;
+  if (!out.length) return out;
+  const mean = new Float64Array(CEPS);
+  for (const f of out) for (let j = 0; j < CEPS; j++) mean[j] += f[j] / out.length;
+  for (const f of out) for (let j = 0; j < CEPS; j++) f[j] -= mean[j];
+  // How the sound moves (deltas) counts for more than its colour: holding
+  // the phone nearer or further changes the colour, not the movement.
+  return out.map((f, t) => {
+    const a = out[Math.max(0, t - 1)], b = out[Math.min(out.length - 1, t + 1)];
+    const v = new Float64Array(CEPS * 2);
+    for (let j = 0; j < CEPS; j++) { v[j] = STATIC_WEIGHT * f[j]; v[CEPS + j] = DELTA_WEIGHT * (b[j] - a[j]) / 2; }
+    return v;
+  });
+}
+
+const STATIC_WEIGHT = 0.6, DELTA_WEIGHT = 1.8;
+
+/**
+ * The same take as heard another way: muffled and echoing (the phone
+ * further off, on a table, turned away), and brighter (closer, a harder
+ * room). Training keeps these as templates too, so a call heard in a way
+ * the five takes weren't still matches, while the limit stays as strict.
+ */
+export function variants(clip) {
+  const peakOf = (a) => { let p = 0; for (let i = 0; i < a.length; i++) p = Math.max(p, Math.abs(a[i])); return p; };
+  const p0 = peakOf(clip) || 1;
+  const norm = (a) => { const k = p0 / (peakOf(a) || 1); for (let i = 0; i < a.length; i++) a[i] *= k; return a; };
+  const far = new Float32Array(clip.length);
+  let y = 0;
+  for (let i = 0; i < clip.length; i++) { y += 0.45 * (clip[i] - y); far[i] = y; }
+  const echo = new Float32Array(clip.length);
+  for (let i = 0; i < clip.length; i++) echo[i] = far[i] + 0.35 * (far[i - 480] || 0) + 0.2 * (far[i - 1120] || 0) + 0.1 * (far[i - 1900] || 0);
+  const bright = new Float32Array(clip.length);
+  for (let i = 0; i < clip.length; i++) bright[i] = clip[i] - 0.6 * (i ? clip[i - 1] : 0);
+  return [norm(echo), norm(bright)];
 }
 
 /**
@@ -195,6 +240,59 @@ export function distance(template, clip) {
   return best;
 }
 
+/**
+ * Both ends held: DTW of [a] against [b] from start to end, as the mean
+ * distance per step. For a burst that is the whole phrase (the phrase
+ * match), unlike [distance], which lets the clip hold more.
+ */
+export function fullDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (!m || !n) return Infinity;
+  const d = (x, y) => { let s = 0; for (let j = 0; j < x.length; j++) { const t = x[j] - y[j]; s += t * t; } return Math.sqrt(s); };
+  let pc = new Float64Array(n + 1).fill(Infinity), pl = new Float64Array(n + 1);
+  let cc = new Float64Array(n + 1), cl = new Float64Array(n + 1);
+  pc[0] = 0;
+  for (let i = 1; i <= m; i++) {
+    cc[0] = Infinity; cl[0] = 0;
+    for (let j = 1; j <= n; j++) {
+      const x = d(a[i - 1], b[j - 1]);
+      let best = pc[j - 1], len = pl[j - 1];
+      if (cc[j - 1] < best) { best = cc[j - 1]; len = cl[j - 1]; }
+      if (pc[j] < best) { best = pc[j]; len = pl[j]; }
+      cc[j] = best + x; cl[j] = len + 1;
+    }
+    [pc, cc] = [cc, pc]; [pl, cl] = [cl, pl];
+  }
+  return pl[n] > 0 ? pc[n] / pl[n] : Infinity;
+}
+
+/**
+ * The share of a clip's loud 30 ms frames that are voiced: a clear pitch
+ * between 70 and 400 Hz (normalised autocorrelation over 0.45). Speech
+ * has it in its vowels; a fan, a tap or a clatter hardly ever does.
+ */
+export function voicedShare(clip) {
+  const N = 480, H = 240;
+  let peak = 0;
+  for (let i = 0; i + N <= clip.length; i += H) { let e = 0; for (let k = 0; k < N; k++) e += clip[i + k] * clip[i + k]; peak = Math.max(peak, e); }
+  if (!peak) return 0;
+  let loud = 0, voiced = 0;
+  for (let i = 0; i + N <= clip.length; i += H) {
+    let e = 0; for (let k = 0; k < N; k++) e += clip[i + k] * clip[i + k];
+    if (e < peak * 0.05) continue;
+    loud++;
+    let best = 0;
+    for (let lag = 40; lag <= 228; lag++) {
+      let c = 0, e1 = 0, e2 = 0;
+      for (let k = 0; k + lag < N; k++) { const a = clip[i + k], b = clip[i + k + lag]; c += a * b; e1 += a * a; e2 += b * b; }
+      const r = c / Math.sqrt((e1 * e2) || 1);
+      if (r > best) best = r;
+    }
+    if (best > 0.45) voiced++;
+  }
+  return loud ? voiced / loud : 0;
+}
+
 // ─── training ───
 
 /**
@@ -233,6 +331,7 @@ export function train(recordings, makeSpotter) {
   if (redo.length) return { ok: false, why: 'Some recordings had nothing clear in them.', redo };
 
   // The voice match: templates, and how far apart they are.
+  // The takes as said; the checks and limits come from these alone.
   const templates = clips.map(c => mfcc(c));
   const nearest = templates.map((t, i) => Math.min(...templates.map((u, j) => j === i ? Infinity : distance(u, t))));
   const sorted = [...nearest].sort((a, b) => a - b), median = sorted[Math.floor(sorted.length / 2)];
@@ -241,6 +340,11 @@ export function train(recordings, makeSpotter) {
     return { ok: false, why: 'One recording sounds unlike the others. Say it again the way you normally would.', redo: odd };
   }
   const spread = Math.max(...nearest);
+  // For the phrase match: each take against the others, whole to whole, both ways.
+  const near = templates.map((t, i) => Math.min(...templates.map((u, j) => j === i ? Infinity : Math.max(fullDistance(u, t), fullDistance(t, u)))));
+  const nearSorted = [...near].sort((a, b) => a - b);
+  const typical = nearSorted[Math.floor(nearSorted.length / 2)];
+  const frames = templates.map(t => t.length).sort((a, b) => a - b)[Math.floor(templates.length / 2)];
 
   // The model, tuned: the strictest threshold that hears as many takes as
   // any does, two steps looser. Takes it never hears are fine: the owner's
@@ -257,15 +361,19 @@ export function train(recordings, makeSpotter) {
   return {
     ok: true,
     profile: {
-      version: 2,
+      version: 4,
       keyword: keywordLines(threshold),
       keywordsScore: KEYWORDS_SCORE,
       keywordsThreshold: threshold,
       limit: Math.round(spread * LIMIT_MARGIN * 1000) / 1000,
-      strictLimit: Math.round(spread * STRICT_MARGIN * 1000) / 1000,
+      strictLimit: Math.round(typical * STRICT_MARGIN * 1000) / 1000,
+      /** The first [takes] templates are the takes; the rest, the same takes heard other ways ([variants]). */
+      takes: templates.length,
+      /** The owner's takes' usual length, 10 ms frames. */
+      phraseFrames: frames,
       /** How many takes the model itself heard (the rest wake by the phrase alone). */
       modelHeard: most,
-      templates: templates.map(t => t.map(f => Array.from(f, x => Math.round(x * 1000) / 1000))),
+      templates: [...templates, ...clips.flatMap(c => variants(c).map(v => mfcc(v)))].map(t => t.map(f => Array.from(f, x => Math.round(x * 1000) / 1000))),
       trainedAt: new Date().toISOString(),
     },
   };
@@ -289,14 +397,28 @@ export function verify(profile, recent) {
  * Cru", by the templates alone, at the strict limit?
  * @returns {{ ok: boolean, score: number }}
  */
-export function matchPhrase(profile, segment) {
+export function matchPhrase(profile, segment, confirm = null) {
+  const no = (why, score = Infinity) => ({ ok: false, score, why });
+
   const c = checkSample(segment);
-  if (!c.ok) return { ok: false, score: Infinity };
+  if (!c.ok) return no('length');
+  // As long as the owner's takes, and speech (voiced), not a noise.
+  const frames = profile.phraseFrames;
+  const len = (c.clip.length - 400) / 160 + 1;
+  if (len < frames * LENGTH_RANGE[0] || len > frames * LENGTH_RANGE[1]) return no('length');
+  if (voicedShare(c.clip) < MIN_VOICED) return no('not speech');
   const feats = mfcc(c.clip);
   let best = Infinity;
-  for (const t of profile.templates) best = Math.min(best, distance(t, feats));
-  return { ok: best <= strictLimit(profile), score: Math.round(best * 1000) / 1000 };
+  for (const t of profile.templates) best = Math.min(best, Math.max(fullDistance(t, feats), fullDistance(feats, t)));
+  const score = Math.round(best * 1000) / 1000;
+  if (best > strictLimit(profile)) return no('unlike', score);
+  // When the model can hear this voice, it must agree, if only faintly.
+  if (confirm && (profile.modelHeard ?? 0) >= MODEL_TRUSTED && !confirm(c.clip)) return no('model', score);
+  return { ok: true, score };
 }
+
+/** The loosest keyword lines, for the model's second opinion on a burst the phrase matched. */
+export const CONFIRM_THRESHOLD = 0.04;
 
 /** A version 1 profile (before the phrase match) had no strict limit: the same margin, from its limit. */
 export function strictLimit(p) { return p.strictLimit > 0 ? p.strictLimit : p.limit / LIMIT_MARGIN * STRICT_MARGIN; }
@@ -342,5 +464,6 @@ export function createSegmenter() {
 
 /** A stored profile that this code can use. */
 export function validProfile(p) {
-  return !!(p && (p.version === 1 || p.version === 2) && Array.isArray(p.templates) && p.templates.length >= 3 && p.limit > 0 && p.keywordsThreshold > 0 && typeof p.keyword === 'string');
+  // Version 4: deltas in the features; anything older compares unlike things and must be trained again.
+  return !!(p && p.version === 4 && p.phraseFrames > 0 && Array.isArray(p.templates) && p.templates.length >= 3 && p.limit > 0 && p.keywordsThreshold > 0 && typeof p.keyword === 'string');
 }

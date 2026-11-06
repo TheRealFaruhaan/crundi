@@ -70,7 +70,7 @@ class WakeProfileTest {
         assertTrue(r is CruWake.Trained.Ok)
         val p = (r as CruWake.Trained.Ok).profile
         assertEquals(0.15, p.keywordsThreshold, 1e-9) // two steps looser than the strictest that heard all five
-        assertTrue(p.valid() && p.templates.size == 5 && p.keywordLine().contains("#0.15"))
+        assertTrue(p.valid() && p.templates.size == 15 && p.takes == 5 && p.keywordLine().contains("#0.15"))
         assertTrue("the owner's own take wakes", p.verify(signal(30, 143.0, 1.0)).ok)
         assertFalse("a very different voice does not", p.verify(signal(31, 260.0, 0.7)).ok)
     }

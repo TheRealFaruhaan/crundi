@@ -38,7 +38,7 @@ import kotlin.math.sqrt
  */
 @Serializable
 data class WakeProfile(
-    val version: Int = 2,
+    val version: Int = 4,
     val keyword: String = CruWake.KEYWORD,
     val keywordsScore: Double = CruWake.KEYWORDS_SCORE,
     val keywordsThreshold: Double = 0.2,
@@ -47,10 +47,15 @@ data class WakeProfile(
     val strictLimit: Double = 0.0,
     /** How many takes the model itself heard. */
     val modelHeard: Int = -1,
+    /** The owner's takes' usual length, 10 ms frames. */
+    val phraseFrames: Int = 0,
+    /** The first [takes] templates are the takes; the rest, the same takes heard other ways. */
+    val takes: Int = 0,
     val templates: List<List<List<Double>>> = emptyList(),
     val trainedAt: String = "",
 ) {
-    fun valid() = (version == 1 || version == 2) && templates.size >= 3 && limit > 0 && keywordsThreshold > 0 && keyword.isNotBlank()
+    // Version 4: deltas in the features; anything older must be trained again.
+    fun valid() = version == 4 && phraseFrames > 0 && templates.size >= 3 && limit > 0 && keywordsThreshold > 0 && keyword.isNotBlank()
 
     /** The keyword lines with this profile's boost and threshold (sherpa-onnx's "tokens :score #threshold @name"), every spelling. */
     fun keywordLine() = CruWake.lines(keywordsThreshold, keywordsScore)
@@ -58,12 +63,48 @@ data class WakeProfile(
     private val strict get() = if (strictLimit > 0) strictLimit else limit / CruWake.LIMIT_MARGIN * CruWake.STRICT_MARGIN
     private val feats by lazy { templates.map { t -> t.map { it.toDoubleArray() } } }
 
-    /** A burst of speech on its own ([CruWake.Segmenter]): the owner's "Hey Cru", by the recordings alone? */
-    fun matchPhrase(segment: FloatArray): CruWake.Verdict {
-        val c = CruWake.checkSample(segment) as? CruWake.Sample.Ok ?: return CruWake.Verdict(false, Double.POSITIVE_INFINITY)
+    /**
+     * A burst of speech on its own ([CruWake.Segmenter]): the owner's "Hey
+     * Cru"? As long as their takes, voiced (speech, not a noise), close to
+     * them compared whole and both ways, and (when the model can hear this
+     * voice at all) [confirm]ed by the model, if only faintly. As enroll.js's matchPhrase.
+     */
+    fun matchPhrase(segment: FloatArray, confirm: ((FloatArray) -> Boolean)? = null): CruWake.Verdict {
+        val no = CruWake.Verdict(false, Double.POSITIVE_INFINITY)
+        val c = CruWake.checkSample(segment) as? CruWake.Sample.Ok ?: return no
+        val frames = phraseFrames
+        val len = (c.clip.size - 400) / 160.0 + 1
+        if (len < frames * 0.65 || len > frames * 1.5) return no
+        if (CruWake.voicedShare(c.clip) < 0.3) return no
         val f = CruWake.mfcc(c.clip)
-        val t = feats.minOf { CruWake.distance(it, f) }
-        return CruWake.Verdict(t <= strict, (t * 1000).roundToInt() / 1000.0)
+        val t = feats.minOf { maxOf(CruWake.fullDistance(it, f), CruWake.fullDistance(f, it)) }
+        val score = (t * 1000).roundToInt() / 1000.0
+        if (t > strict) return CruWake.Verdict(false, score)
+        if (confirm != null && modelHeard >= 3 && !confirm(c.clip)) return CruWake.Verdict(false, score)
+        return CruWake.Verdict(true, score)
+    }
+
+    /**
+     * A recording judged exactly as listening judges it (Try it): each burst
+     * in it through [matchPhrase], with the model's second opinion from
+     * [hears]; else the model's hit on the whole, checked by [verify]. Null
+     * when neither heard anything like "Hey Cru".
+     */
+    fun judge(audio: FloatArray, hears: (line: String, clip: FloatArray) -> Boolean): CruWake.Verdict? {
+        val seg = CruWake.Segmenter()
+        val all = FloatArray(audio.size + CruWake.RATE).also { audio.copyInto(it) } // a second of quiet after, to end the last burst
+        var closest: CruWake.Verdict? = null
+        var i = 0
+        while (i < all.size) {
+            seg.accept(all.copyOfRange(i, minOf(all.size, i + 1600)))?.let { burst ->
+                val v = matchPhrase(burst) { clip -> hears(CruWake.lines(CruWake.CONFIRM_THRESHOLD, keywordsScore), CruWake.padded(clip)) }
+                if (v.ok) return v
+                if (v.score.isFinite() && (closest == null || v.score < closest!!.score)) closest = v
+            }
+            i += 1600
+        }
+        if (hears(keywordLine(), CruWake.padded(audio))) return verify(audio)
+        return closest
     }
 
     /** The spotter fired: is it the owner's "Hey Cru"? [recent] is the last [CruWake.VERIFY_SECONDS] of audio. */
@@ -85,7 +126,9 @@ object CruWake {
     /** Trigger thresholds tried, strictest first. */
     val THRESHOLDS = listOf(0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.06)
     const val LIMIT_MARGIN = 1.6
-    const val STRICT_MARGIN = 1.25
+    const val STRICT_MARGIN = 1.3
+    /** The loosest keyword lines, for the model's second opinion on a burst the phrase matched. */
+    const val CONFIRM_THRESHOLD = 0.04
     const val VERIFY_SECONDS = 2.0
 
     /** Every spelling, each with its boost and threshold, one per line. */
@@ -168,14 +211,42 @@ object CruWake {
             mels += e
             start += HOP
         }
+        // Noise reduction (spectral subtraction): the steady background in each band, from the
+        // clip's quietest fifth, taken away before anything is compared, in training and listening alike.
+        if (mels.size >= 5) {
+            val q = mels.indices.sortedBy { mels[it].sum() }.take(max(1, mels.size / 5)).map { mels[it] }
+            val noise = DoubleArray(MELS)
+            for (e in q) for (m in 0 until MELS) noise[m] += e[m] / q.size
+            for (e in mels) for (m in 0 until MELS) e[m] = max(e[m] - 1.5 * noise[m], e[m] * 0.05)
+        }
         val fl = max(loudest * 1e-3, 1e-10)
         val out = mels.map { e -> DoubleArray(CEPS) { j -> var s = 0.0; val row = dct[j]; for (m in 0 until MELS) s += row[m] * ln(max(e[m], fl)); s } }
-        if (out.isNotEmpty()) {
-            val mean = DoubleArray(CEPS)
-            for (f in out) for (j in 0 until CEPS) mean[j] += f[j] / out.size
-            for (f in out) for (j in 0 until CEPS) f[j] -= mean[j]
+        if (out.isEmpty()) return out
+        val mean = DoubleArray(CEPS)
+        for (f in out) for (j in 0 until CEPS) mean[j] += f[j] / out.size
+        for (f in out) for (j in 0 until CEPS) f[j] -= mean[j]
+        // How the sound moves (deltas) counts for more than its colour, which the room and the phone change.
+        return out.indices.map { t ->
+            val a = out[max(0, t - 1)]; val b = out[min(out.size - 1, t + 1)]; val f = out[t]
+            DoubleArray(CEPS * 2) { j -> if (j < CEPS) STATIC_WEIGHT * f[j] else DELTA_WEIGHT * (b[j - CEPS] - a[j - CEPS]) / 2 }
         }
-        return out
+    }
+
+    private const val STATIC_WEIGHT = 0.6
+    private const val DELTA_WEIGHT = 1.8
+
+    /** The same take heard another way: muffled and echoing, and brighter (enroll.js variants). */
+    fun variants(clip: FloatArray): List<FloatArray> {
+        fun peakOf(a: FloatArray) = a.maxOfOrNull { abs(it) } ?: 0f
+        val p0 = peakOf(clip).takeIf { it > 0f } ?: 1f
+        fun norm(a: FloatArray): FloatArray { val k = p0 / (peakOf(a).takeIf { it > 0f } ?: 1f); for (i in a.indices) a[i] *= k; return a }
+        val far = FloatArray(clip.size)
+        var y = 0.0
+        for (i in clip.indices) { y += 0.45 * (clip[i] - y); far[i] = y.toFloat() }
+        fun at(a: FloatArray, i: Int) = if (i >= 0) a[i] else 0f
+        val echo = FloatArray(clip.size) { i -> (far[i] + 0.35 * at(far, i - 480) + 0.2 * at(far, i - 1120) + 0.1 * at(far, i - 1900)).toFloat() }
+        val bright = FloatArray(clip.size) { i -> (clip[i] - 0.6 * at(clip, i - 1)).toFloat() }
+        return listOf(norm(echo), norm(bright))
     }
 
     /** The spoken part: a little before the first loud 10 ms to a little after the last; null when nothing stands out. */
@@ -221,6 +292,59 @@ object CruWake {
         return best
     }
 
+    /** DTW of [a] against [b], both ends held, as the mean distance per step (enroll.js fullDistance). */
+    fun fullDistance(a: List<DoubleArray>, b: List<DoubleArray>): Double {
+        val m = a.size; val n = b.size
+        if (m == 0 || n == 0) return Double.POSITIVE_INFINITY
+        var pc = DoubleArray(n + 1) { Double.POSITIVE_INFINITY }; var pl = DoubleArray(n + 1)
+        var cc = DoubleArray(n + 1); var cl = DoubleArray(n + 1)
+        pc[0] = 0.0
+        for (i in 1..m) {
+            cc[0] = Double.POSITIVE_INFINITY; cl[0] = 0.0
+            val t = a[i - 1]
+            for (j in 1..n) {
+                val c = b[j - 1]
+                var s = 0.0; for (k in t.indices) { val d = t[k] - c[k]; s += d * d }
+                val x = sqrt(s)
+                var best = pc[j - 1]; var len = pl[j - 1]
+                if (cc[j - 1] < best) { best = cc[j - 1]; len = cl[j - 1] }
+                if (pc[j] < best) { best = pc[j]; len = pl[j] }
+                cc[j] = best + x; cl[j] = len + 1
+            }
+            val x1 = pc; pc = cc; cc = x1
+            val x2 = pl; pl = cl; cl = x2
+        }
+        return if (pl[n] > 0) pc[n] / pl[n] else Double.POSITIVE_INFINITY
+    }
+
+    /** The share of a clip's loud 30 ms frames with a clear pitch, 70 to 400 Hz (enroll.js voicedShare). */
+    fun voicedShare(clip: FloatArray): Double {
+        val n = 480; val h = 240
+        var peak = 0.0
+        var i = 0
+        while (i + n <= clip.size) { var e = 0.0; for (k in 0 until n) e += clip[i + k].toDouble() * clip[i + k]; peak = max(peak, e); i += h }
+        if (peak == 0.0) return 0.0
+        var loud = 0; var voiced = 0
+        i = 0
+        while (i + n <= clip.size) {
+            var e = 0.0; for (k in 0 until n) e += clip[i + k].toDouble() * clip[i + k]
+            if (e >= peak * 0.05) {
+                loud++
+                var best = 0.0
+                for (lag in 40..228) {
+                    var c = 0.0; var e1 = 0.0; var e2 = 0.0
+                    var k = 0
+                    while (k + lag < n) { val a = clip[i + k].toDouble(); val b = clip[i + k + lag].toDouble(); c += a * b; e1 += a * a; e2 += b * b; k++ }
+                    val r = c / sqrt(if (e1 * e2 == 0.0) 1.0 else e1 * e2)
+                    if (r > best) best = r
+                }
+                if (best > 0.45) voiced++
+            }
+            i += h
+        }
+        return if (loud > 0) voiced.toDouble() / loud else 0.0
+    }
+
     // ─── training ───
 
     sealed interface Sample {
@@ -259,6 +383,10 @@ object CruWake {
         val odd = nearest.indices.filter { nearest[it] > median * 2 }
         if (odd.isNotEmpty() && odd.size < templates.size / 2.0) return Trained.Redo("One recording sounds unlike the others. Say it again the way you normally would.", odd)
         val spread = nearest.max()
+        // For the phrase match: each take against the others, whole to whole, both ways.
+        val near = templates.indices.map { i -> templates.indices.filter { it != i }.minOf { maxOf(fullDistance(templates[it], templates[i]), fullDistance(templates[i], templates[it])) } }
+        val typical = near.sorted()[near.size / 2]
+        val frames = templates.map { it.size }.sorted()[templates.size / 2]
 
         // The model, tuned: the strictest threshold that hears as many takes as any, two steps looser.
         // Takes it never hears are fine: the owner's phrase wakes for those.
@@ -273,9 +401,11 @@ object CruWake {
             keyword = lines(threshold),
             keywordsThreshold = threshold,
             limit = (spread * LIMIT_MARGIN * 1000).roundToInt() / 1000.0,
-            strictLimit = (spread * STRICT_MARGIN * 1000).roundToInt() / 1000.0,
+            strictLimit = (typical * STRICT_MARGIN * 1000).roundToInt() / 1000.0,
             modelHeard = most,
-            templates = templates.map { t -> t.map { f -> f.map { (it * 1000).roundToInt() / 1000.0 } } },
+            phraseFrames = frames,
+            takes = templates.size,
+            templates = (templates + clips.flatMap { c -> variants(c).map { mfcc(it) } }).map { t -> t.map { f -> f.map { (it * 1000).roundToInt() / 1000.0 } } },
             trainedAt = now,
         ))
     }
