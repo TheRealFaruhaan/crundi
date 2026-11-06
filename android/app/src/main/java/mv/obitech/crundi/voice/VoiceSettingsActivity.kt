@@ -83,22 +83,16 @@ data class VoiceSettingsUi(
     /** Crundi holds Android's assistant role (mode A is set up). */
     val isAssistant: Boolean = false,
     val host: String = "",
-    /** Null while loading; [error] says why it isn't there. */
-    val server: VoiceSettings? = null,
-    val error: String = "",
-    val deepgram: List<DeepgramVoice> = emptyList(),
+    /**
+     * The server's voice for Cru (ttsVoice): "" when each device speaks with
+     * its own, a Deepgram voice otherwise; null until the server has said.
+     */
+    val sharedVoice: String? = null,
     val device: List<DeviceVoice> = emptyList(),
     val deviceChosen: String = "",
-    val limitText: String = "",
-    val dayText: String = "",
-    val dgDayText: String = "",
-    val dgLimitText: String = "",
-    val busy: Boolean = false,
     val note: String = "",
     /** "Hey Cru" (Phase 6): this build has the keyword spotter for this phone. */
     val wake: WakeUi = WakeUi(),
-    /** The notebook (capability "voice-memory"); null when the server has none. */
-    val memory: MemoryUi? = null,
 )
 
 /** The "Hey Cru" section. */
@@ -125,39 +119,14 @@ data class WakeUi(
     val confirmForget: Boolean = false,
 )
 
-/** The notebook: files as the server has them, the owner's edits, the search. */
-data class MemoryUi(
-    val loaded: VoiceMemory? = null,
-    val error: String = "",
-    /** path to the text being edited (only files that differ from [loaded]). */
-    val drafts: Map<String, String> = emptyMap(),
-    /** The file whose Delete was tapped once: tap again to delete. */
-    val confirmDelete: String = "",
-    val query: String = "",
-    val hits: List<MemoryHit>? = null,
-    val searching: Boolean = false,
-)
-
 class VoiceSettingsEvents(
     val onBack: () -> Unit = {},
     val onEnabled: (Boolean) -> Unit = {},
     val onAssistantSettings: () -> Unit = {},
-    val onPickDeepgram: (String) -> Unit = {},
+    /** Cru's own settings, on the server: the Settings tab's Voice assistant page. */
+    val onCruSettings: () -> Unit = {},
     val onPickDevice: (String) -> Unit = {},
-    val onPreviewDeepgram: (String) -> Unit = {},
     val onPreviewDevice: (String) -> Unit = {},
-    val onModel: (String) -> Unit = {},
-    val onLimitText: (String) -> Unit = {},
-    val onSaveLimit: () -> Unit = {},
-    val onDayText: (String) -> Unit = {},
-    val onSaveDay: () -> Unit = {},
-    val onDgDayText: (String) -> Unit = {},
-    val onSaveDgDay: () -> Unit = {},
-    val onPause: (Int) -> Unit = {},
-    val onRate: (Double) -> Unit = {},
-    val onDgLimitText: (String) -> Unit = {},
-    val onSaveDgLimit: () -> Unit = {},
-    val onReset: () -> Unit = {},
     val onTry: () -> Unit = {},
     val onWakeInApp: (Boolean) -> Unit = {},
     val onTrain: () -> Unit = {},
@@ -166,27 +135,20 @@ class VoiceSettingsEvents(
     val onWakeMinutes: (Int) -> Unit = {},
     val onMicSeconds: (Int) -> Unit = {},
     val onScreenMinutes: (Int) -> Unit = {},
-    val onScreenClose: (Int) -> Unit = {},
     val onFullScreen: () -> Unit = {},
-    val onMemoryText: (String, String) -> Unit = { _, _ -> },
-    val onMemorySave: (String) -> Unit = {},
-    val onMemoryDelete: (String) -> Unit = {},
-    val onMemoryQuery: (String) -> Unit = {},
-    val onMemoryReload: () -> Unit = {},
 )
 
 /**
- * App settings > Voice assistant: on or off, how to open it (D33's two
- * modes), the voice (the phone's own or a Deepgram voice, D34), the model,
- * the monthly limit and what has been spent. Model, limit and Deepgram voice
- * are the server's settings; on/off and the phone voice are this phone's.
+ * App settings > Voice assistant: what belongs to this phone. On or off, how
+ * to open it (D33's two modes), the microphone and screen times, "Hey Cru",
+ * and the phone's own voice. Cru's settings on the server (brain, model,
+ * Deepgram voice, spending, keys, notebook), shared by every device, are in
+ * the Settings tab's Voice assistant page (CruSettings.kt), linked from here.
  */
 class VoiceSettingsActivity : ComponentActivity() {
     private var ui by mutableStateOf(VoiceSettingsUi())
     private var client: CrundiClient? = null
-    private var preview: MediaPlayer? = null
     private var tts: TextToSpeech? = null
-    private var search: Job? = null
     /** What to do once the microphone (and notifications) are allowed. */
     private var afterGrant: (() -> Unit)? = null
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
@@ -254,83 +216,16 @@ class VoiceSettingsActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        preview?.release(); tts?.shutdown()
+        tts?.shutdown()
         super.onDestroy()
     }
 
     private fun voice(): VoiceApi? = client?.voice
 
+    /** The server's voice for Cru, so the phone's own shows as chosen only when it is the one used. Best effort. */
     private fun load() {
-        val v = voice() ?: run { ui = ui.copy(error = "Pair this phone with a Crundi server first."); return }
-        lifecycleScope.launch {
-            try {
-                val s = v.settings()
-                ui = ui.copy(server = s, error = "", limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString(), dgLimitText = fmtUsd(s.deepgramLimitUsd))
-                runCatching { v.voices() }.getOrNull()?.let { ui = ui.copy(deepgram = it.voices) }
-                loadMemory()
-            } catch (e: Exception) {
-                ui = ui.copy(error = if (VoiceApi.unsupported(e)) VoiceApi.UNSUPPORTED else e.message ?: "Could not load the settings")
-            }
-        }
-    }
-
-    // ─── memory (D39: the same notebook as /voice) ───
-
-    private fun hasMemory(): Boolean {
-        val server = Servers.current(this) ?: return false
-        return VoiceApi.MEMORY in ServerCaps.get(this, server.id)
-    }
-
-    private fun loadMemory() {
         val v = voice() ?: return
-        if (!hasMemory()) { ui = ui.copy(memory = null); return }
-        lifecycleScope.launch {
-            val m = ui.memory ?: MemoryUi()
-            ui = try {
-                val got = v.memory()
-                ui.copy(memory = m.copy(loaded = got, error = "", drafts = m.drafts.filter { (p, t) -> got.files.any { it.path == p && it.text != t } }))
-            } catch (e: Exception) {
-                ui.copy(memory = m.copy(error = if (VoiceApi.unsupported(e)) "This server has no voice memory yet. Update the server." else e.message ?: "Could not load the memory"))
-            }
-        }
-    }
-
-    private fun memory(change: (MemoryUi) -> MemoryUi) { ui.memory?.let { ui = ui.copy(memory = change(it)) } }
-
-    private fun saveMemory(path: String, text: String, note: String) {
-        val v = voice() ?: return
-        lifecycleScope.launch {
-            try {
-                v.saveMemory(path, text)
-                memory { it.copy(drafts = it.drafts - path, confirmDelete = "") }
-                ui = ui.copy(note = note)
-                loadMemory()
-            } catch (e: Exception) { ui = ui.copy(note = e.message ?: "Not saved") }
-        }
-    }
-
-    private fun searchMemory(q: String) {
-        memory { it.copy(query = q) }
-        search?.cancel()
-        if (q.isBlank()) { memory { it.copy(hits = null, searching = false) }; return }
-        val v = voice() ?: return
-        search = lifecycleScope.launch {
-            delay(350)
-            memory { it.copy(searching = true) }
-            val hits = runCatching { v.searchMemory(q.trim()) }.getOrElse { e -> ui = ui.copy(note = e.message ?: "Search failed"); emptyList() }
-            memory { it.copy(hits = hits, searching = false) }
-        }
-    }
-
-    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, pause: Int? = null, dgLimit: Double? = null, rate: Double? = null, screenClose: Int? = null, note: String = "Saved") {
-        val v = voice() ?: return
-        ui = ui.copy(busy = true)
-        lifecycleScope.launch {
-            ui = try {
-                val s = v.save(model, limit, ttsVoice, day, dgDay, pause, dgLimit, rate, screenClose)
-                ui.copy(server = s, busy = false, note = note, limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString(), dgLimitText = fmtUsd(s.deepgramLimitUsd))
-            } catch (e: Exception) { ui.copy(busy = false, note = e.message ?: "Could not save") }
-        }
+        lifecycleScope.launch { runCatching { v.settings() }.getOrNull()?.let { ui = ui.copy(sharedVoice = it.ttsVoice) } }
     }
 
     private fun events() = VoiceSettingsEvents(
@@ -346,44 +241,15 @@ class VoiceSettingsActivity : ComponentActivity() {
             ui = ui.copy(enabled = on)
         },
         onAssistantSettings = { openAssistantSettings() },
-        onPickDeepgram = { save(ttsVoice = it, note = "Cru will speak with this voice") },
+        onCruSettings = { openCruSettings() },
         onPickDevice = { name ->
             VoicePrefs.setDeviceVoice(this, name)
-            ui = ui.copy(deviceChosen = name)
-            if (ui.server?.ttsVoice?.isNotEmpty() == true) save(ttsVoice = "", note = "Cru will speak with the phone's voice") else ui = ui.copy(note = "Cru will speak with the phone's voice")
+            ui = ui.copy(deviceChosen = name, note = if (ui.sharedVoice.isNullOrEmpty()) "Cru will speak with this voice on this phone" else "Saved. Cru speaks with this voice once its settings say each device's own voice.")
         },
-        onPreviewDeepgram = { previewDeepgram(it) },
         onPreviewDevice = { previewDevice(it) },
-        onModel = { save(model = it, note = "Model changed. It applies from the next conversation.") },
-        onLimitText = { ui = ui.copy(limitText = it) },
-        onSaveLimit = {
-            val n = ui.limitText.trim().removePrefix("$").toDoubleOrNull()
-            if (n == null || n < 0) ui = ui.copy(note = "The limit is a number of dollars") else save(limit = n, note = "Limit saved")
-        },
-        onDayText = { ui = ui.copy(dayText = it) },
-        onSaveDay = {
-            val d = ui.dayText.trim().toIntOrNull()
-            if (d == null || d !in 1..31) ui = ui.copy(note = "The billing day is a day of the month, 1 to 31") else save(day = d, note = "Billing day saved")
-        },
-        onDgDayText = { ui = ui.copy(dgDayText = it) },
-        onSaveDgDay = {
-            val d = ui.dgDayText.trim().toIntOrNull()
-            if (d == null || d !in 1..31) ui = ui.copy(note = "The billing day is a day of the month, 1 to 31") else save(dgDay = d, note = "Deepgram billing day saved")
-        },
-        onDgLimitText = { ui = ui.copy(dgLimitText = it) },
-        onSaveDgLimit = {
-            val n = ui.dgLimitText.trim().removePrefix("$").toDoubleOrNull()
-            if (n == null || n < 0) ui = ui.copy(note = "The limit is a number of dollars") else save(dgLimit = n, note = "Deepgram limit saved")
-        },
-        onPause = { ms -> save(pause = ms, note = "Cru waits ${ms / 1000.0} s of quiet before sending") },
-        onRate = { r -> save(rate = r, note = "Cru talks at ${rateLabel(r)}") },
-        onReset = {
-            lifecycleScope.launch { ui = ui.copy(note = runCatching { voice()?.reset(); "Crundi starts a fresh conversation" }.getOrElse { it.message ?: "Could not reset" }) }
-        },
         onTry = { startActivity(Intent(this, VoiceActivity::class.java)) },
         onMicSeconds = { v -> VoicePrefs.setSilenceSeconds(this, v); wakeRefresh() },
         onScreenMinutes = { v -> VoicePrefs.setScreenAwakeMinutes(this, v); wakeRefresh() },
-        onScreenClose = { sec -> save(screenClose = sec, note = "The voice screen closes after ${closeLabel(sec)} of silence") },
         onTrain = { startActivity(Intent(this, WakeTrainActivity::class.java)) },
         onForget = {
             if (!ui.wake.confirmForget) { ui = ui.copy(wake = ui.wake.copy(confirmForget = true)); lifecycleScope.launch { delay(4000); ui = ui.copy(wake = ui.wake.copy(confirmForget = false)) } }
@@ -414,30 +280,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         onFullScreen = {
             if (Build.VERSION.SDK_INT >= 34) runCatching { startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, android.net.Uri.parse("package:$packageName"))) }
         },
-        onMemoryText = { path, text ->
-            val orig = ui.memory?.loaded?.files?.firstOrNull { it.path == path }?.text
-            memory { it.copy(drafts = if (text == orig) it.drafts - path else it.drafts + (path to text), confirmDelete = "") }
-        },
-        onMemorySave = { path -> ui.memory?.drafts?.get(path)?.let { saveMemory(path, it, "Saved $path") } },
-        onMemoryDelete = { path ->
-            if (ui.memory?.confirmDelete == path) saveMemory(path, "", "Deleted $path")
-            else memory { it.copy(confirmDelete = path) }
-        },
-        onMemoryQuery = { searchMemory(it) },
-        onMemoryReload = { loadMemory() },
     )
-
-    private fun previewDeepgram(model: String) {
-        val v = voice() ?: return
-        lifecycleScope.launch {
-            try {
-                val mp3 = v.speak(SAMPLE, model)
-                val f = withContext(Dispatchers.IO) { File(cacheDir, "voice-preview.mp3").apply { writeBytes(mp3) } }
-                preview?.release()
-                preview = MediaPlayer().apply { setDataSource(f.path); setOnPreparedListener { it.start() }; prepareAsync() }
-            } catch (e: Exception) { ui = ui.copy(note = e.message ?: "Could not play it") }
-        }
-    }
 
     private fun previewDevice(name: String) {
         val say = { t: TextToSpeech ->
@@ -447,6 +290,16 @@ class VoiceSettingsActivity : ComponentActivity() {
         tts?.let { say(it); return }
         var made: TextToSpeech? = null
         made = TextToSpeech(this) { st -> if (st == TextToSpeech.SUCCESS) made?.let { tts = it; say(it) } }
+    }
+
+    /** The Settings tab's Voice assistant page, in the main window, on this server. */
+    private fun openCruSettings() {
+        val id = Servers.current(this)?.id.orEmpty()
+        startActivity(
+            Intent(this, mv.obitech.crundi.MainActivity::class.java).setAction("open:$id:/settings/voice")
+                .putExtra(mv.obitech.crundi.Notifier.EXTRA_SERVER, id).putExtra(mv.obitech.crundi.Notifier.EXTRA_PATH, "/settings/voice")
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        )
     }
 
     private fun openAssistantSettings() {
@@ -464,6 +317,7 @@ class VoiceSettingsActivity : ComponentActivity() {
     }
 }
 
+/** Dollars as shown: "50", "12.50". */
 fun fmtUsd(v: Double): String = if (v >= 100 || v == Math.floor(v)) "%.0f".format(Locale.US, v) else "%.2f".format(Locale.US, v)
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -476,6 +330,19 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
                 CrundiSwitchRow("Voice assistant", ui.enabled, ev.onEnabled, detail = if (ui.enabled) "On. Ask Cru anything about your projects, by voice." else "Off. The side key and Cru do nothing.")
             }
             if (ui.note.isNotEmpty()) StatusBadge(ui.note, BadgeKind.Info)
+            Text("These settings are for this phone only.", style = CrundiType.Small, modifier = Modifier.padding(horizontal = 2.dp))
+
+            // ─── Cru's own settings: on the server, the same on every device ───
+            CrundiCard(Modifier.fillMaxWidth(), onClick = ev.onCruSettings, padding = 14.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CrundiIcon("sliders", size = Dimens.Icon, tint = CrundiColors.AccentHover)
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("Cru's settings (shared by every device)", style = CrundiType.Heading)
+                        Text("Brain, model, voice, talking speed, spending, keys and notebook. In Settings > Voice assistant.", style = CrundiType.Small, modifier = Modifier.padding(top = 2.dp))
+                    }
+                    CrundiIcon("chevron-right", size = Dimens.IconSm, tint = CrundiColors.TextMuted)
+                }
+            }
 
             // ─── How to open it (D33) ───
             Section("How to open it")
@@ -496,17 +363,15 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
 
             // ─── Winding down: the microphone, then "Hey Cru", then sleep ───
             Section("On the voice screen")
-            ScreenTimes(ui.wake, ui.server?.screenCloseSeconds?.takeIf { it > 0 }, ev)
+            ScreenTimes(ui.wake, ev)
 
             // ─── "Hey Cru" (Phase 6, D3–D7) ───
             Section("Hey Cru")
             HeyCrundiPart(ui.wake, ui.isAssistant, ev)
 
-            when {
-                ui.error.isNotEmpty() -> CrundiCard(Modifier.fillMaxWidth()) { Text(ui.error, style = CrundiType.Body.copy(color = CrundiColors.Yellow)) }
-                ui.server == null -> Text("Loading the server's voice settings…", style = CrundiType.Small)
-                else -> ui.server?.let { ServerPart(ui, it, ev) }
-            }
+            // ─── The phone's own voice (D34): used when Cru's settings say each device's own ───
+            Section("This phone's voice")
+            PhoneVoices(ui, ev)
         }
     }
 }
@@ -529,24 +394,14 @@ private fun Mode(title: String, body: String, state: String, good: Boolean?, ste
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ServerPart(ui: VoiceSettingsUi, s: VoiceSettings, ev: VoiceSettingsEvents) {
-    // ─── The voice (D19, D34) ───
-    Section("Voice")
+private fun PhoneVoices(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
     CrundiCard(Modifier.fillMaxWidth(), padding = 6.dp) {
-        val british = ui.deepgram.filter { it.accent.contains("Brit", true) }
-        val others = ui.deepgram.filter { !it.accent.contains("Brit", true) }
-        if (ui.deepgram.isEmpty()) Text(if (s.deepgramKeySet) "Loading Deepgram's voices…" else "No Deepgram key on the server: only the phone's voices.", style = CrundiType.Small, modifier = Modifier.padding(8.dp))
-        for (v in british + others.take(12)) {
-            VoiceRow(
-                v.name + if (v.model == VoiceSettingsActivity.RECOMMENDED) "  ·  recommended" else "",
-                listOf(v.accent, v.gender, v.tags.filterNot { it.equals(v.gender, true) || it == "masculine" || it == "feminine" }.take(3).joinToString(", ")).filter { it.isNotEmpty() }.joinToString(" · "),
-                s.ttsVoice == v.model,
-                onPick = { ev.onPickDeepgram(v.model) }, onPreview = { ev.onPreviewDeepgram(v.model) },
-            )
-        }
-        Text("ON THIS PHONE", style = CrundiType.Section, modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp))
+        Text(
+            if (ui.sharedVoice.isNullOrEmpty()) "Cru speaks with the phone's own text-to-speech, in the voice you pick here."
+            else "Cru speaks with a Deepgram voice now. The voice picked here is used when Cru's settings say each device's own voice, or when Deepgram is not available.",
+            style = CrundiType.Small, modifier = Modifier.padding(8.dp),
+        )
         val gb = ui.device.filter { it.locale.equals("en-GB", true) }
         val picked = DeviceVoices.pick(ui.device, ui.deviceChosen)?.name
         if (gb.isEmpty()) Text("The phone's text-to-speech has no British English voice.", style = CrundiType.Small, modifier = Modifier.padding(8.dp))
@@ -554,123 +409,16 @@ private fun ServerPart(ui: VoiceSettingsUi, s: VoiceSettings, ev: VoiceSettingsE
             VoiceRow(
                 v.name + if (v.name == DeviceVoices.PREFERRED) "  ·  default" else "",
                 listOf(v.locale, if (v.needsNetwork) "needs the network" else "on the phone", if (!v.installed) "not downloaded" else "").filter { it.isNotEmpty() }.joinToString(" · "),
-                s.ttsVoice.isEmpty() && v.name == picked,
+                v.name == picked,
                 onPick = { ev.onPickDevice(v.name) }, onPreview = { ev.onPreviewDevice(v.name) },
             )
-        }
-    }
-
-    // ─── Talking speed (Deepgram's speed; the phone's voice follows) ───
-    Section("Talking speed")
-    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
-        Text("How fast Cru talks", style = CrundiType.Heading)
-        Text("The pace of its voice, not how much it says. You can also ask Cru: \"talk faster\".", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (r in listOf(0.85, 1.0, 1.15, 1.3, 1.5)) CrundiChip(rateLabel(r), kotlin.math.abs(s.speechRate - r) < 0.01, { if (kotlin.math.abs(s.speechRate - r) >= 0.01) ev.onRate(r) })
-        }
-        if (listOf(0.85, 1.0, 1.15, 1.3, 1.5).none { kotlin.math.abs(s.speechRate - it) < 0.01 }) Text("Now ${rateLabel(s.speechRate)}", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp))
-    }
-
-    // ─── Pause before sending (D44) ───
-    Section("Listening")
-    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
-        Text("Pause before sending", style = CrundiType.Heading)
-        Text("How long you can pause before what you said is sent. Longer lets you speak slowly, with pauses.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (ms in listOf(1500, 2000, 2500, 3000, 4000)) CrundiChip("${ms / 1000.0} s".replace(".0 s", " s"), s.pauseMs == ms, { if (s.pauseMs != ms) ev.onPause(ms) })
-        }
-    }
-
-    // ─── Model (D8) ───
-    Section("Model")
-    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (m in s.models) CrundiChip(m.label, m.id == s.model, { if (m.id != s.model) ev.onModel(m.id) })
-        }
-        Text("Haiku is the quickest and cheapest. A change starts a fresh conversation's cache.", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp))
-    }
-
-    // ─── Spend and limit (D25) ───
-    Section("Spending")
-    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
-        val sp = s.spend
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text("Claude API", style = CrundiType.Heading, modifier = Modifier.weight(1f))
-            Text("$" + "%.2f".format(Locale.US, sp.claudeUsd) + " of $" + fmtUsd(s.monthlyLimitUsd), style = CrundiType.Code.copy(color = if (s.limitReached) CrundiColors.Red else CrundiColors.TextPrimary))
-        }
-        val frac = if (s.monthlyLimitUsd > 0) (sp.claudeUsd / s.monthlyLimitUsd).toFloat().coerceIn(0f, 1f) else 1f
-        mv.obitech.crundi.ui.operations.PaceBar(frac, 0f, Modifier.padding(vertical = 8.dp))
-        Text(sp.turns.toString() + " request" + (if (sp.turns == 1) "" else "s") + " this billing month", style = CrundiType.Meta.copy(color = CrundiColors.TextSecondary))
-        if (s.limitReached) Text("The limit is reached: Crundi stops answering until next month or a higher limit.", style = CrundiType.Small.copy(color = CrundiColors.Red), modifier = Modifier.padding(top = 6.dp))
-        if (s.nextReset.isNotEmpty()) Text("Claude restarts on ${s.nextReset}" + (if (s.deepgramNextReset.isNotEmpty()) ", Deepgram on ${s.deepgramNextReset}" else "") + ": each on its own billing day.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp))
-        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CrundiTextField(ui.limitText, ev.onLimitText, Modifier.weight(1f), placeholder = "Monthly limit in dollars", icon = "sliders")
-            CrundiButton("Save", ev.onSaveLimit, kind = ButtonKind.Primary, enabled = !ui.busy)
-        }
-        // Deepgram: its own spend and limit (D46).
-        Row(Modifier.padding(top = 14.dp), verticalAlignment = Alignment.Bottom) {
-            Text("Deepgram", style = CrundiType.Heading, modifier = Modifier.weight(1f))
-            Text("$" + "%.2f".format(Locale.US, sp.deepgramUsd) + " of $" + fmtUsd(s.deepgramLimitUsd), style = CrundiType.Code.copy(color = if (s.deepgramLimitReached) CrundiColors.Red else CrundiColors.TextPrimary))
-        }
-        mv.obitech.crundi.ui.operations.PaceBar(if (s.deepgramLimitUsd > 0) (sp.deepgramUsd / s.deepgramLimitUsd).toFloat().coerceIn(0f, 1f) else 1f, 0f, Modifier.padding(vertical = 8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CrundiTextField(ui.dgLimitText, ev.onDgLimitText, Modifier.weight(1f), placeholder = "Deepgram limit in dollars", icon = "sliders")
-            CrundiButton("Save", ev.onSaveDgLimit, enabled = !ui.busy)
-        }
-        if (s.periodStart.isNotEmpty()) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CrundiTextField(ui.dayText, ev.onDayText, Modifier.weight(1f), placeholder = "Claude API billing day, 1 to 31", icon = "clock")
-            CrundiButton("Save", ev.onSaveDay, enabled = !ui.busy)
-        }
-        if (s.deepgramNextReset.isNotEmpty()) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CrundiTextField(ui.dgDayText, ev.onDgDayText, Modifier.weight(1f), placeholder = "Deepgram billing day, 1 to 31", icon = "clock")
-            CrundiButton("Save", ev.onSaveDgDay, enabled = !ui.busy)
-        }
-    }
-
-    // ─── Memory (D39: the notebook, as on /voice) ───
-    ui.memory?.let { MemoryPart(it, ev) }
-
-    // ─── Keys (D25: never on the phone) ───
-    Section("Keys")
-    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
-        KeyLine("Claude API key", s.anthropicKeySet)
-        KeyLine("Deepgram key", s.deepgramKeySet)
-        Text("Keys live on the server and never come to the phone. Set them at ${ui.host}/voice.", style = CrundiType.Small, modifier = Modifier.padding(top = 6.dp))
-    }
-    CrundiButton("Start a fresh conversation", ev.onReset, icon = "refresh", modifier = Modifier.fillMaxWidth())
-}
-
-@Composable
-private fun KeyLine(name: String, set: Boolean) {
-    Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(name, style = CrundiType.Body, modifier = Modifier.weight(1f))
-        StatusBadge(if (set) "set" else "not set", if (set) BadgeKind.Good else BadgeKind.Warn)
-    }
-}
-
-@Composable
-private fun VoiceRow(title: String, detail: String, selected: Boolean, onPick: () -> Unit, onPreview: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(Dimens.ShapeSm).background(if (selected) CrundiColors.AccentDim else androidx.compose.ui.graphics.Color.Transparent)
-            .clickable(onClick = onPick).padding(horizontal = 10.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(18.dp).clip(CircleShape).border(2.dp, if (selected) CrundiColors.AccentHover else CrundiColors.Border, CircleShape), contentAlignment = Alignment.Center) {
-            if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(CrundiColors.AccentHover))
-        }
-        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(title, style = CrundiType.Body.copy(color = if (selected) CrundiColors.AccentHover else CrundiColors.TextPrimary))
-            if (detail.isNotEmpty()) Text(detail, style = CrundiType.Small)
-        }
-        Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClickLabel = "Hear it", onClick = onPreview), contentAlignment = Alignment.Center) {
-            CrundiIcon("play", size = 16.dp, tint = CrundiColors.TextSecondary)
         }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ScreenTimes(w: WakeUi, screenClose: Int?, ev: VoiceSettingsEvents) {
+private fun ScreenTimes(w: WakeUi, ev: VoiceSettingsEvents) {
     CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
         Text("Microphone stays on", style = CrundiType.Heading)
         Text("After the last thing you said or Cru answered, then it stops recording. Noise in the room doesn't keep it on.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
@@ -680,20 +428,11 @@ private fun ScreenTimes(w: WakeUi, screenClose: Int?, ev: VoiceSettingsEvents) {
         Text("Then the screen stays on", style = CrundiType.Heading, modifier = Modifier.padding(top = 16.dp))
         Text(
             (if (w.supported && w.trainedOn.isNotEmpty()) "Listening on the phone only for \"Hey Cru\", which starts again where you left off. Nothing is sent meanwhile, and the Hey Cru switches below needn't be on. " else if (w.supported) "Once Hey Cru is trained (below), it listens for it meanwhile. " else "") +
-                "After this the phone may sleep as usual, and the voice screen closes.",
+                "After this the phone may sleep as usual. When the voice screen closes is one of Cru's settings, the same on every device.",
             style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (v in listOf(1, 2, 5, 10)) CrundiChip("$v min", w.screenMinutes == v, { if (w.screenMinutes != v) ev.onScreenMinutes(v) })
-        }
-        // A server setting (every client), so it shows once the server has answered.
-        if (screenClose != null) {
-            Text("The voice screen closes", style = CrundiType.Heading, modifier = Modifier.padding(top = 16.dp))
-            Text("After this much silence, even when the phone stays awake (plugged in). \"Hey Cru\" opens it again. The same time closes it on the web and the PC.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (v in CLOSE_CHOICES) CrundiChip(closeLabel(v), screenClose == v, { if (screenClose != v) ev.onScreenClose(v) })
-            }
-            if (screenClose !in CLOSE_CHOICES) Text("Now ${closeLabel(screenClose)}", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
@@ -749,61 +488,3 @@ private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEven
         }
     }
 }
-
-@Composable
-private fun MemoryPart(m: MemoryUi, ev: VoiceSettingsEvents) {
-    Section("Memory")
-    CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
-        val got = m.loaded
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                when {
-                    m.error.isNotEmpty() -> m.error
-                    got == null -> "Loading the memory…"
-                    else -> "${got.entries} thing" + (if (got.entries == 1) "" else "s") + " remembered · meaning search: " + got.meaning.ifEmpty { "off" }
-                },
-                style = CrundiType.Small.copy(color = if (m.error.isNotEmpty()) CrundiColors.Yellow else CrundiColors.TextSecondary),
-                modifier = Modifier.weight(1f),
-            )
-            Box(Modifier.size(36.dp).clip(CircleShape).clickable(onClickLabel = "Reload", onClick = ev.onMemoryReload), contentAlignment = Alignment.Center) {
-                CrundiIcon("refresh", size = 16.dp, tint = CrundiColors.TextSecondary)
-            }
-        }
-        CrundiTextField(m.query, ev.onMemoryQuery, Modifier.fillMaxWidth().padding(top = 10.dp), placeholder = "Search what Crundi remembers", icon = "search")
-        m.hits?.let { hits ->
-            Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (hits.isEmpty() && !m.searching) Text("Nothing found.", style = CrundiType.Small)
-                for (h in hits) Column(Modifier.fillMaxWidth().clip(Dimens.ShapeSm).background(CrundiColors.BgTertiary).padding(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        StatusBadge(h.kind.ifEmpty { "memory" }, BadgeKind.Neutral)
-                        Text(h.at.take(16).replace('T', ' ') + (h.project?.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""), style = CrundiType.Meta)
-                    }
-                    Text(h.text.take(400), style = CrundiType.Body, modifier = Modifier.padding(top = 4.dp))
-                }
-            }
-        }
-    }
-    val files = m.loaded?.files.orEmpty()
-    if (m.loaded != null && files.isEmpty()) Text("Nothing in the notebook yet. Crundi writes in it as it learns about you.", style = CrundiType.Small, modifier = Modifier.padding(horizontal = 2.dp))
-    for (f in files) {
-        val draft = m.drafts[f.path]
-        CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CrundiIcon("file-text", size = 14.dp, tint = CrundiColors.TextMuted)
-                Text(f.path, style = CrundiType.Code, modifier = Modifier.weight(1f).padding(start = 6.dp))
-                Text(if (f.size < 1024) "${f.size} B" else "%.1f KB".format(Locale.US, f.size / 1024.0), style = CrundiType.Meta)
-            }
-            CrundiTextField(draft ?: f.text, { ev.onMemoryText(f.path, it) }, Modifier.fillMaxWidth().padding(top = 8.dp), mono = true, singleLine = false, minLines = 3, maxLines = 14)
-            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CrundiButton("Save", { ev.onMemorySave(f.path) }, kind = ButtonKind.Primary, icon = "check", enabled = draft != null)
-                CrundiButton(if (m.confirmDelete == f.path) "Delete for good?" else "Delete", { ev.onMemoryDelete(f.path) }, kind = ButtonKind.Danger, icon = "trash")
-            }
-        }
-    }
-}
-
-/** A talking speed as shown: "Normal", "1.15×". */
-private val CLOSE_CHOICES = listOf(30, 45, 60, 120, 300)
-fun closeLabel(sec: Int): String = if (sec < 60) "$sec s" else if (sec % 60 == 0) "${sec / 60} min" else "${sec / 60} min ${sec % 60} s"
-
-fun rateLabel(r: Double): String = if (kotlin.math.abs(r - 1.0) < 0.01) "Normal" else ("%.2f".format(java.util.Locale.US, r).trimEnd('0').trimEnd('.') + "×")

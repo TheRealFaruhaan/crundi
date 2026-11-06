@@ -108,4 +108,37 @@ class VoiceApiTest {
     @Test fun aServerWithoutMemorySaysSo() = runBlocking {
         try { CrundiClient(FakeTransport()).voice.memory(); fail() } catch (e: ApiException) { assertTrue(VoiceApi.unsupported(e)) }
     }
+
+    @Test fun anOlderServerHasNoBrainNoIdleTimeAndNoAdminKeyFlag() = runBlocking {
+        val s = CrundiClient(FakeTransport().on("GET /api/voice/settings", settingsJson)).voice.settings()
+        assertEquals("", s.brain)
+        assertEquals(0, s.cliIdleMinutes)
+        assertEquals(0, s.screenCloseSeconds)
+        assertEquals(null, s.anthropicAdminKeySet)
+    }
+
+    @Test fun theClaudeCodeIdleTimeIsSavedAndAKeyIsSentAlone() = runBlocking {
+        val t = FakeTransport().on("POST /api/voice/settings", settingsJson.replace("\"ok\":true,", "\"ok\":true,\"brain\":\"claude-code\",\"cliIdleMinutes\":15,\"anthropicAdminKeySet\":true,"))
+        val s = CrundiClient(t).voice.save(cliIdleMinutes = 15)
+        assertEquals("claude-code", s.brain)
+        assertEquals(15, s.cliIdleMinutes)
+        assertEquals(true, s.anthropicAdminKeySet)
+        assertTrue(t.requests.last().json.toString().contains("\"cliIdleMinutes\":15"))
+        CrundiClient(t).voice.saveKey("anthropicAdminKey", "  sk-ant-admin-x  ")
+        assertEquals("{\"anthropicAdminKey\":\"sk-ant-admin-x\"}", t.requests.last().json.toString())
+        try { CrundiClient(t).voice.saveKey("ttsVoice", "x"); fail() } catch (_: IllegalArgumentException) {}
+    }
+
+    @Test fun theBrainsComparedAreRead() = runBlocking {
+        val t = FakeTransport().on("GET /api/voice/brain-stats", """{"ok":true,"brain":"api","stats":[{"brain":"claude-code","model":"claude-haiku-4-5","turns":3,"failed":1,"medianMs":5120,"p90Ms":9800,"costUsd":0.04,"costPerTurnUsd":0.01333,"cacheReadShare":0.91,"toolsPerTurn":1.3}]}""")
+        val st = CrundiClient(t).voice.brainStats()!!
+        assertEquals("api", st.brain)
+        assertEquals(1, st.stats.size)
+        assertEquals(5120.0, st.stats[0].medianMs, 0.0)
+        assertEquals(0.91, st.stats[0].cacheReadShare, 0.0)
+    }
+
+    @Test fun aServerWithoutBrainStatsHasNone() = runBlocking {
+        assertEquals(null, CrundiClient(FakeTransport()).voice.brainStats())
+    }
 }

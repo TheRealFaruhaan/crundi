@@ -22,8 +22,29 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     suspend fun settings(): VoiceSettings = rpc.read(rpc.get("/api/voice/settings"), null)
 
     /** Change the model, the monthly limit or the Deepgram voice ("" = the phone's own). Null leaves one as it is. */
-    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null, speechRate: Double? = null, screenCloseSeconds: Int? = null): VoiceSettings =
-        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds)), null)
+    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null, speechRate: Double? = null, screenCloseSeconds: Int? = null, brain: String? = null, cliIdleMinutes: Int? = null): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds, "brain" to brain, "cliIdleMinutes" to cliIdleMinutes)), null)
+
+    /**
+     * Replace one of the server's keys: [key] is "anthropicKey", "deepgramKey"
+     * or "anthropicAdminKey". Write only: no key ever comes back, only
+     * whether each is set.
+     */
+    suspend fun saveKey(key: String, value: String): VoiceSettings {
+        require(key in KEYS) { "Not a voice key: $key" }
+        return rpc.read(rpc.post("/api/voice/settings", mapOf(key to value.trim())), null)
+    }
+
+    /**
+     * The two brains compared: turns, speed, cost and cache use per brain and
+     * model. Null from a server without the brain experiment (404).
+     */
+    suspend fun brainStats(): BrainStats? {
+        val r = transport.exchange(ApiRequest("GET", "/api/voice/brain-stats"))
+        if (r.status == 404) return null
+        if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(BrainStats.serializer(), CrundiJson.parseToJsonElement(r.text))
+    }
 
     /**
      * One request. [where] is what the owner is looking at ("lock screen",
@@ -55,7 +76,7 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
 
     suspend fun voices(): VoiceList = rpc.read(rpc.get("/api/voice/voices"), null)
 
-    // ─── memory (capability "voice-memory", D39 parity with /voice) ───
+    // ─── memory (capability "voice-memory", D39) ───
 
     /** The notebook's files with their text, how many things are remembered, and the meaning search's state. */
     suspend fun memory(): VoiceMemory = rpc.read(rpc.get("/api/voice/memory"), null)
@@ -105,6 +126,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val PHONE_ACTIONS = "voice-phone-actions"
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
         const val STREAM_RATE = 24000
+        /** The keys [saveKey] may set. */
+        val KEYS = setOf("anthropicKey", "deepgramKey", "anthropicAdminKey")
         const val UNSUPPORTED = "This server does not have the voice assistant yet. Update the server to use it."
         fun unsupported(e: Throwable) = e is ApiException && e.status == 404
     }
@@ -160,11 +183,34 @@ data class VoiceSettings(
     val speechRate: Double = 1.0,
     /** After this many seconds of silence the voice screen closes (every client; "Hey Cru" opens it again). An older server has none: 0, never. */
     val screenCloseSeconds: Int = 0,
-    /** Which brain answers: "api" or "claude-code" (an experiment, set on the server's /voice page). */
-    val brain: String = "api",
+    /** Which brain answers: "api" or "claude-code" (an experiment). An older server has none: "", and the switch is not shown. */
+    val brain: String = "",
+    /** Claude Code (the claude-code brain) stops after this many idle minutes, 1 to 240. An older server has none: 0, and the row is not shown. */
+    val cliIdleMinutes: Int = 0,
+    /** The Admin API key (the whole account's usage) is set. Null from an older server, which does not say. */
+    val anthropicAdminKeySet: Boolean? = null,
     val spend: VoiceSpend = VoiceSpend(),
     val limitReached: Boolean = false,
 )
+
+/** One brain and model's record (src/voice/agent.js stats()). */
+@Serializable
+data class BrainStat(
+    val brain: String = "",
+    val model: String = "",
+    val turns: Int = 0,
+    val failed: Int = 0,
+    val medianMs: Double = 0.0,
+    val p90Ms: Double = 0.0,
+    val costUsd: Double = 0.0,
+    val costPerTurnUsd: Double = 0.0,
+    /** Of the input, the share read from the prompt cache, 0 to 1. */
+    val cacheReadShare: Double = 0.0,
+    val toolsPerTurn: Double = 0.0,
+)
+
+@Serializable
+data class BrainStats(val ok: Boolean = false, val brain: String = "", val stats: List<BrainStat> = emptyList())
 
 @Serializable
 data class VoiceReply(

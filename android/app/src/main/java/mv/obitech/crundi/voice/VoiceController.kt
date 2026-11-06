@@ -253,7 +253,8 @@ class VoiceController(
             speaker.deepgramVoice = s.ttsVoice
             speaker.rate = s.speechRate.toFloat()
             _ui.update { it.copy(spend = s) }
-            if (!s.anthropicKeySet) block("There is no Claude API key on $host yet. Add one in its Voice assistant settings ($host/voice).")
+            // Claude Code answers on the owner's subscription: no API key needed then.
+            if (!s.anthropicKeySet && s.brain != "claude-code") block("There is no Claude API key on $host yet. Add one in Settings > Voice assistant, under Keys.")
         } catch (e: ApiException) {
             if (VoiceApi.unsupported(e)) block(VoiceApi.UNSUPPORTED)
             // Offline or signed out: the stream says so in its own way.

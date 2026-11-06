@@ -61,6 +61,20 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.15 (en-US)
+
+Version code 46. Internal track. Since 1.1.3-dev.14 (code 45): server voice settings moved to Settings > Voice assistant (CruSettings.kt, folded sections); Voice settings keeps device-only things; Settings front page regrouped.
+
+```
+<en-US>
+Cru's settings in one place.
+
+- Settings has a Voice assistant page with everything shared by your devices: brain, model, voice, talking speed, keys, spending and the notebook. Each section is folded until you open it.
+- Voice settings now holds only what belongs to this phone: the side key, how long the microphone stays on, and Hey Cru.
+- Settings is grouped more clearly.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.14 (en-US)
 
 Version code 45. Internal track. Since 1.1.3-dev.13 (code 44): the voice screen closes after the server's screenCloseSeconds of silence (Voice settings chips).

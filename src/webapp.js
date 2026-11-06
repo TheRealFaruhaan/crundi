@@ -101,7 +101,6 @@ import { createVoiceMemory } from './voice/memory.js';
 import { createCliVoiceAgent } from './voice/agent-cli.js';
 import { createVoiceBrain } from './voice/brain.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
-import { getVoicePageHtml } from './voice/page.js';
 import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
 import { relay as voiceRelay } from './voice/stream.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
@@ -2812,10 +2811,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       html(res, chatPageHtml());
       return;
     }
-    // The voice assistant's test page (voice/page.js). Holds nothing private;
-    // every call it makes is signed in like the main page's.
+    // The voice assistant's old test page: its settings are in Settings now.
     if (path === '/voice' && req.method === 'GET') {
-      html(res, getVoicePageHtml());
+      res.writeHead(302, { Location: '/' });
+      res.end();
       return;
     }
 
@@ -4174,7 +4173,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/voice/account-usage' && req.method === 'GET') {
       return json(res, await voiceAccountUsage({ force: url.searchParams.get('force') === '1' }));
     }
-    // The voice assistant's notebook (Phase 2): read and edited by the owner on /voice.
+    // The voice assistant's notebook (Phase 2): read and edited by the owner in Settings.
     if (path === '/api/voice/memory' && req.method === 'GET') {
       return json(res, { ok: true, files: voiceMemory.notebook.list(), entries: voiceMemory.index.count(), meaning: voiceMemory.index.embedder });
     }

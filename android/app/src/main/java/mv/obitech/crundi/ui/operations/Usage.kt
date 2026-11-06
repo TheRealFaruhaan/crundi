@@ -193,7 +193,7 @@ private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings, account: mv.obi
         account?.let { a ->
             val line = when {
                 a.ok -> "Anthropic, whole account: ${usd(a.totalUsd)} since ${a.since.take(10)}"
-                a.needsKey -> "To see the whole account as Anthropic reports it, add an Admin API key on the server's /voice page."
+                a.needsKey -> "To see the whole account as Anthropic reports it, add an Admin API key in Settings > Voice assistant, under Keys."
                 else -> "Anthropic account usage: ${a.error.ifEmpty { "unavailable" }}"
             }
             Text(line, style = CrundiType.Small.copy(color = if (a.ok) CrundiColors.TextPrimary else CrundiColors.TextMuted))

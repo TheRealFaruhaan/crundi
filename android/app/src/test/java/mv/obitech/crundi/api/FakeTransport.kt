@@ -57,7 +57,15 @@ class FakeTransport(override val baseUrl: String = "https://dev.example.com") : 
     /** Off: the event stream connects and ends at once (screens that need no live data). */
     var eventsEnabled = true
 
+    /**
+     * A frame on the event stream. Like the server's, it reaches only a
+     * stream that is connected: with none listening yet it is dropped (see
+     * [eventListeners]).
+     */
     fun pushEvent(event: String, data: String) { sse.tryEmit(SseFrame(event, data)) }
+
+    /** How many event streams are connected and listening now. */
+    val eventListeners: Int get() = sse.subscriptionCount.value
 
     override fun socket(listener: SocketListener): SocketConnection {
         this.listener = listener

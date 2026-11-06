@@ -196,7 +196,8 @@
       if (!S) return;
       if (!s || s.ok === false) { block(s && s.error ? s.error : 'The voice assistant is not available on this server.'); return; }
       S.settings = s; refreshData();
-      if (!s.anthropicKeySet) { block('There is no Claude API key on the server yet. Add one on the /voice page.'); return; }
+      // The Claude Code brain needs no key: it runs on the subscription.
+      if (!s.anthropicKeySet && s.brain !== 'claude-code') { block('There is no Claude API key on the server yet. Add one in Settings, Voice assistant.'); return; }
       openMic();
     }).catch(function (e) { block(e.message || 'Could not reach the server'); });
   }

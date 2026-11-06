@@ -55,12 +55,26 @@ class BubbleSecretPromptTest {
     private fun shows(text: String) = compose.onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty()
     private fun settle() { repeat(20) { compose.mainClock.advanceTimeByFrame(); compose.waitForIdle() } }
 
+    /**
+     * Frames until [done], up to 10 s of real time. The event stream and its
+     * dispatch run on Dispatchers.Default, not on the test's clock, so a
+     * fixed number of frames is not enough on a busy machine.
+     */
+    private fun settleUntil(done: () -> Boolean): Boolean {
+        val end = System.nanoTime() + 10_000_000_000L
+        while (System.nanoTime() < end) {
+            compose.mainClock.advanceTimeByFrame(); compose.waitForIdle()
+            if (done()) return true
+            Thread.sleep(10)
+        }
+        return done()
+    }
+
     @Test fun aRequestAlreadyWaitingShowsWhenTheBubbleOpens() {
         val t = FakeApi.transport()
         t.on("GET /api/secrets", """{"ok":true,"secrets":[],"requests":[${reqJson("r1", chat, "DEPLOY_TOKEN")},${reqJson("r2", "another-chat", "OTHER_TOKEN")}]}""")
         open(t)
-        settle()
-        assertTrue("the waiting request is shown", shows("DEPLOY_TOKEN"))
+        assertTrue("the waiting request is shown", settleUntil { shows("DEPLOY_TOKEN") })
         assertTrue("with Approve", shows("Approve"))
         assertTrue("another chat's request is not", !shows("OTHER_TOKEN"))
     }
@@ -71,9 +85,10 @@ class BubbleSecretPromptTest {
         open(t)
         settle()
         assertTrue("nothing yet", !shows("LIVE_TOKEN"))
+        // As the server's, the event only reaches a stream that is connected: wait for the bubble's.
+        assertTrue("the bubble listens to the event stream", settleUntil { t.eventListeners > 0 })
         t.pushEvent("secret-requests", """{"requests":[${reqJson("r3", chat, "LIVE_TOKEN")}]}""")
-        settle()
-        assertTrue("the request that came in is shown", shows("LIVE_TOKEN"))
+        assertTrue("the request that came in is shown", settleUntil { shows("LIVE_TOKEN") })
     }
 
     @Test fun whichRequestsABubbleShows() {

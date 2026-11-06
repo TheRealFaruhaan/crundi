@@ -53,17 +53,27 @@ import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
 import mv.obitech.crundi.ui.theme.Dimens
 
-/** The settings pages, each a detail route under "settings/". */
-enum class SettingsPage(val route: String, val title: String, val icon: String, val blurb: String) {
-    Server("settings/server", "Server and Claude Code", "server", "Version, updates, release channel, restart"),
-    Notifications("settings/notifications", "Notifications", "bell", "Channels, and which events are worth telling you"),
-    Prompt("settings/prompt", "System prompt", "message-square", "Added to every chat and terminal Crundi starts"),
-    Skills("settings/skills", "Skills", "zap", "Claude skills for every project or one: install, edit, delete"),
-    General("settings/general", "Usage and idle panes", "clock", "Keep the 5-hour window warm, close idle panes"),
-    Config("settings/config", "Configuration", "settings", "Telegram, projects folder, port, tunnel"),
-    Machine("settings/machine", "This machine", "hard-drive", "CPU, memory, disk, and space to reclaim"),
-    Logs("settings/logs", "Server logs", "file-text", "What the server is saying, live"),
-    Sessions("settings/sessions", "Signed-in devices", "smartphone", "Where you are signed in; sign others out"),
+/** The front page's groups, in order. */
+enum class SettingsGroup(val title: String) { Server("Server"), Claude("Claude"), Access("Alerts and access") }
+
+/** The settings pages, each a detail route under "settings/", listed on the front page under [group] in this order. */
+enum class SettingsPage(val route: String, val title: String, val icon: String, val blurb: String, val group: SettingsGroup) {
+    Server("settings/server", "Server and Claude Code", "server", "Version, updates, release channel, restart", SettingsGroup.Server),
+    Config("settings/config", "Configuration", "settings", "Telegram, projects folder, port, tunnel", SettingsGroup.Server),
+    Machine("settings/machine", "This machine", "hard-drive", "CPU, memory, disk, and space to reclaim", SettingsGroup.Server),
+    Logs("settings/logs", "Server logs", "file-text", "What the server is saying, live", SettingsGroup.Server),
+    Prompt("settings/prompt", "System prompt", "message-square", "Added to every chat and terminal Crundi starts", SettingsGroup.Claude),
+    Skills("settings/skills", "Skills", "zap", "Claude skills for every project or one: install, edit, delete", SettingsGroup.Claude),
+    General("settings/general", "Usage and idle panes", "clock", "Keep the 5-hour window warm, close idle panes", SettingsGroup.Claude),
+    Voice("settings/voice", "Voice assistant", "mic", "Cru's brain, model, voice, keys, spending, notebook", SettingsGroup.Claude),
+    Notifications("settings/notifications", "Notifications", "bell", "Channels, and which events are worth telling you", SettingsGroup.Access),
+    Sessions("settings/sessions", "Signed-in devices", "smartphone", "Where you are signed in; sign others out", SettingsGroup.Access),
+    ;
+
+    companion object {
+        /** The page at [route] ("settings/voice"), or null. */
+        fun byRoute(route: String): SettingsPage? = entries.firstOrNull { it.route == route }
+    }
 }
 
 // ─── Front page ───
@@ -94,8 +104,8 @@ fun SettingsScreen(home: SettingsHome, onPage: (SettingsPage) -> Unit = {}, onAp
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 8.dp)) {
             val u = home.update?.update
             if (u != null && u.available) Banner("Version ${u.latest} is available. Open Server and Claude Code to update.", Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 6.dp).fillMaxWidth(), BadgeKind.Accent, "download")
-            Group("Server") {
-                for (p in SettingsPage.entries) {
+            for (g in SettingsGroup.entries) Group(g.title) {
+                for (p in SettingsPage.entries.filter { it.group == g }) {
                     ListRow(
                         p.title, subtitle = if (p == SettingsPage.Server && u != null) "Version ${u.current}" + (if (u.available) " · ${u.latest} is available" else " · up to date") else p.blurb,
                         icon = p.icon, onClick = { onPage(p) },

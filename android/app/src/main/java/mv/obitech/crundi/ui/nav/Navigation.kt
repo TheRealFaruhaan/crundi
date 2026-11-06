@@ -64,6 +64,8 @@ object DeepLinks {
     fun route(path: String?): String? {
         if (path.isNullOrEmpty() || !path.startsWith("/") || path.startsWith("//")) return null
         chat.find(path)?.let { return Routes.chat(it.groupValues[1]) }
+        // "/settings/voice": one of the Settings tab's pages (the phone's Voice settings links to Cru's).
+        mv.obitech.crundi.ui.operations.SettingsPage.byRoute(path.removePrefix("/").removeSuffix("/"))?.let { return it.route }
         // "/?tab=services" and the like: the desktop's own way to point at a tab.
         val tab = path.substringAfter('?', "").split('&').firstOrNull { it.startsWith("tab=") }?.removePrefix("tab=")
         Area.byKey(tab)?.let { return it.key }

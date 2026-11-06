@@ -1726,6 +1726,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
       color: var(--text-muted);
       margin-bottom: 10px;
     }
+    /* Settings: sections in groups, each collapsed until opened. */
+    .set-group { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 18px 2px 6px; }
+    .set-group:first-child { margin-top: 2px; }
+    .info-section.set-fold { padding: 0; }
+    .info-section.set-fold > h4 { display: flex; align-items: center; gap: 8px; margin: 0; padding: 13px 16px; cursor: pointer; user-select: none; color: var(--text-primary); text-transform: none; letter-spacing: 0; font-size: 0.88rem; font-weight: 500; }
+    .info-section.set-fold > h4:hover { color: var(--accent); }
+    .info-section.set-fold > h4 .ic { width: 14px; height: 14px; margin-left: auto; transition: transform 0.15s ease; }
+    .info-section.set-fold.open > h4 .ic { transform: rotate(90deg); }
+    .info-section.set-fold > .set-body { padding: 0 16px 16px; }
+    .info-section.set-fold:not(.open) > .set-body { display: none; }
     .info-row {
       display: flex;
       justify-content: space-between;
@@ -5447,6 +5457,193 @@ export function getWebappHtml(botUsername, appVersion = '') {
         }
       } catch { /* an older client */ }
     }
+    // Cru's settings, shared by every device (the server keeps them): the
+    // brain, model, voice, how it listens, when the screen closes, spending,
+    // keys, the conversation, the notebook, and the two brains compared.
+    // An older server reports fewer fields: those rows are left out.
+    let voiceModels = [];
+    let vsVoices = null, vsPlayer = null;
+    async function vsGet(path) { const r = await apiFetch(path); return r.json(); }
+    async function vsPost(path, body) { const r = await apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); return r.json(); }
+    function vsNote(id, text, bad) { const el = document.getElementById(id); if (el) { el.textContent = text || ''; el.style.color = bad ? 'var(--red)' : 'var(--text-muted)'; } }
+    async function showVoiceServer() {
+      const el = document.getElementById('voice-server-set');
+      if (!el) return;
+      let s;
+      try { s = await vsGet('/api/voice/settings'); } catch { return; }
+      if (!s || !s.ok) { el.innerHTML = ''; return; }
+      voiceModels = s.models || [];
+      const st = vwStyles;
+      const selStyle = 'width:100%;max-width:340px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-primary);';
+      const inStyle = 'width:100%;max-width:340px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);box-sizing:border-box;';
+      const opt = (v, label, cur) => '<option value="' + v + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + escHtml(label) + '</option>';
+      const choices = (list, cur) => { const l = list.slice(); if (cur && !l.some((x) => String(x) === String(cur))) l.push(cur); return l.sort((a, b) => a - b); };
+      const hint = (t) => t ? '<p style="' + st.hint + ';margin:4px 0 0;">' + t + '</p>' : '';
+      const row = (label, id, opts, h) => '<div style="margin-top:10px;"><label for="' + id + '" style="' + st.label + '">' + label + '</label><select id="' + id + '" style="' + selStyle + '">' + opts + '</select>' + hint(h) + '</div>';
+      const field = (label, id, type, value, attrs, h) => '<div style="margin-top:10px;"><label for="' + id + '" style="' + st.label + '">' + label + '</label><input id="' + id + '" type="' + type + '" value="' + escHtml(value == null ? '' : String(value)) + '" ' + (attrs || '') + ' style="' + inStyle + '">' + hint(h) + '</div>';
+      const sub = (t) => '<h5 style="margin:18px 0 2px;font-size:0.82rem;color:var(--text-primary);">' + t + '</h5>';
+      const secLabel = (n) => n < 60 ? n + ' seconds' : (n % 60 ? Math.floor(n / 60) + ' min ' + (n % 60) + ' s' : (n / 60) + (n === 60 ? ' minute' : ' minutes'));
+      const rateLabel = (r) => Math.abs(r - 1) < 0.001 ? 'Normal' : (Math.round(r * 100) / 100) + 'x';
+      const keyState = (on) => on ? '<span style="color:var(--green);">set</span>' : '<span style="color:var(--text-muted);">not set</span>';
+      const sp = s.spend || {};
+      let html = '';
+      // How Cru thinks
+      html += sub('Brain and model');
+      if (s.brain) html += row('Brain', 'vs-brain', opt('api', 'Claude API (the key)', s.brain) + opt('claude-code', 'Claude Code (your subscription)', s.brain), 'An experiment: the same tools, rules and notebook either way. Each keeps its own conversation.');
+      html += row('Model', 'vs-model', voiceModels.map((m) => opt(m.id, m.label, s.model)).join(''), 'Haiku is the quickest and cheapest. A change applies from the next conversation.');
+      if (s.brain) html += row('Stop Claude Code after', 'vs-cidle', choices([5, 10, 15, 30, 60, 120], s.cliIdleMinutes).map((n) => opt(n, n + ' minutes idle', s.cliIdleMinutes)).join(''), 'Your next message starts it again and carries on the same conversation.');
+      // How Cru sounds and listens
+      html += sub('Voice and listening');
+      html += '<div style="margin-top:10px;"><span style="' + st.label + '">Voice</span><div id="vs-voice-now" style="font-size:0.82rem;"></div>'
+        + '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px;font-size:0.78rem;color:var(--text-secondary);"><label><input type="checkbox" id="vs-brit" checked> British only</label><label><input type="checkbox" id="vs-male"> Male only</label><button type="button" class="svc-btn" id="vs-device">Use the device voice</button></div>'
+        + '<div id="vs-voices" style="margin-top:6px;max-height:260px;overflow-y:auto;"></div></div>';
+      html += row('Talking speed', 'vs-rate', choices([0.85, 1, 1.15, 1.3, 1.5], s.speechRate || 1).map((r) => opt(r, rateLabel(r), s.speechRate || 1)).join(''), '');
+      html += row('Pause before sending', 'vs-pause', choices([1500, 2000, 2500, 3000, 4000], s.pauseMs || 2000).map((ms) => opt(ms, (ms / 1000) + ' seconds', s.pauseMs || 2000)).join(''), 'How long you may pause before what you said is sent.');
+      if (s.screenCloseSeconds) html += row('Close the voice screen after', 'vs-sclose', choices([30, 45, 60, 120, 300], s.screenCloseSeconds).map((n) => opt(n, secLabel(n) + ' of silence', s.screenCloseSeconds)).join(''), 'On the phone, the web and the PC. Hey Cru opens it again.');
+      // Spending
+      html += sub('Spending');
+      html += '<p style="' + st.hint + ';margin:4px 0 0;">Claude API: $' + (Number(sp.claudeUsd) || 0).toFixed(2) + ' of $' + s.monthlyLimitUsd + ', ' + (Number(sp.turns) || 0) + ' requests, restarts ' + escHtml(s.nextReset || '') + (s.limitReached ? ' (limit reached)' : '') + '. Deepgram: $' + (Number(sp.deepgramUsd) || 0).toFixed(2) + ' of $' + s.deepgramLimitUsd + ', restarts ' + escHtml(s.deepgramNextReset || '') + (s.deepgramLimitReached ? ' (limit reached)' : '') + '.</p>';
+      html += field('Claude API monthly limit (US$)', 'vs-limit', 'number', s.monthlyLimitUsd, 'min="0" step="1"', 'Cru stops answering through the API at it.');
+      html += field('Claude API billing day', 'vs-bday', 'number', s.billingDay || 1, 'min="1" max="31" step="1"', 'The day of the month the API is billed; its spend restarts then.');
+      html += field('Deepgram monthly limit (US$)', 'vs-dlimit', 'number', s.deepgramLimitUsd, 'min="0" step="1"', 'At it, the device voice and recogniser take over.');
+      html += field('Deepgram billing day', 'vs-dday', 'number', s.deepgramBillingDay || 1, 'min="1" max="31" step="1"', '');
+      html += '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;"><button type="button" class="svc-btn" id="vs-save-spend">Save spending</button><span id="vs-spend-note" style="font-size:0.78rem;"></span></div>';
+      // Keys
+      html += sub('Keys');
+      html += field('Claude API key (' + keyState(s.anthropicKeySet) + ')', 'vs-akey', 'password', '', 'autocomplete="off" placeholder="Leave empty to keep the current key"', '');
+      html += field('Deepgram API key (' + keyState(s.deepgramKeySet) + ')', 'vs-dkey', 'password', '', 'autocomplete="off" placeholder="Leave empty to keep the current key"', 'Listening and speaking.');
+      html += field('Anthropic Admin API key, optional (' + keyState(s.anthropicAdminKeySet) + ')', 'vs-xkey', 'password', '', 'autocomplete="off" placeholder="Leave empty to keep the current key"', 'Only to show the whole account usage.');
+      html += '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;"><button type="button" class="svc-btn" id="vs-save-keys">Save keys</button><span id="vs-keys-note" style="font-size:0.78rem;"></span></div>';
+      // The conversation and the notebook
+      html += sub('Conversation and notebook');
+      html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;"><button type="button" class="svc-btn" id="vs-reset">Start a fresh conversation</button><span id="vs-reset-note" style="font-size:0.78rem;"></span></div>' + hint('Nothing is lost: memory search keeps every earlier turn.');
+      html += '<div id="vs-mem-info" style="' + st.hint + ';margin-top:10px;"></div>';
+      html += field('Search what was said before', 'vs-mem-q', 'text', '', 'placeholder="e.g. the kanban card about the home screen"', '');
+      html += '<div id="vs-mem-hits"></div><div style="margin-top:10px;"><span style="' + st.label + '">Notebook (what Cru keeps for good; edit or empty a file to change it)</span><div id="vs-mem-files"></div></div>';
+      // The experiment
+      if (s.brain) html += sub('Brains compared') + '<div id="vs-stats" style="margin-top:6px;"></div>';
+      html += '<div id="vs-status" style="font-size:0.78rem;color:var(--text-muted);margin-top:8px;"></div>';
+      el.innerHTML = html;
+
+      const save = async (body, note) => {
+        try { const d = await vsPost('/api/voice/settings', body); vsNote('vs-status', d && d.ok ? note : ((d && d.error) || 'Not saved'), !(d && d.ok)); return d; }
+        catch { vsNote('vs-status', 'Not saved', true); return null; }
+      };
+      const on = (id, fn) => { const x = document.getElementById(id); if (x) x.onchange = () => fn(x.value); };
+      on('vs-brain', (v) => save({ brain: v }, v === 'claude-code' ? 'Cru answers through Claude Code now' : 'Cru answers through the Claude API now').then(showVoiceStats));
+      on('vs-model', (v) => save({ model: v }, 'Model saved. It applies from the next conversation.'));
+      on('vs-cidle', (v) => save({ cliIdleMinutes: Number(v) }, 'Saved'));
+      on('vs-rate', (v) => save({ speechRate: Number(v) }, 'Cru talks at ' + rateLabel(Number(v))));
+      on('vs-pause', (v) => save({ pauseMs: Number(v) }, 'Saved'));
+      on('vs-sclose', (v) => save({ screenCloseSeconds: Number(v) }, 'Saved'));
+      const val = (id) => (document.getElementById(id) || {}).value;
+      document.getElementById('vs-save-spend').onclick = async () => {
+        const d = await vsPost('/api/voice/settings', { monthlyLimitUsd: Number(val('vs-limit')), deepgramLimitUsd: Number(val('vs-dlimit')), billingDay: Number(val('vs-bday')) || 1, deepgramBillingDay: Number(val('vs-dday')) || 1 }).catch(() => null);
+        vsNote('vs-spend-note', d && d.ok ? 'Saved' : ((d && d.error) || 'Not saved'), !(d && d.ok));
+      };
+      document.getElementById('vs-save-keys').onclick = async () => {
+        const body = {};
+        for (const [id, k] of [['vs-akey', 'anthropicKey'], ['vs-dkey', 'deepgramKey'], ['vs-xkey', 'anthropicAdminKey']]) { const v = String(val(id) || '').trim(); if (v) body[k] = v; }
+        if (!Object.keys(body).length) { vsNote('vs-keys-note', 'Type a key to change it'); return; }
+        const d = await vsPost('/api/voice/settings', body).catch(() => null);
+        if (d && d.ok) showVoiceServer(); else vsNote('vs-keys-note', (d && d.error) || 'Not saved', true);
+      };
+      document.getElementById('vs-reset').onclick = async () => {
+        const d = await vsPost('/api/voice/reset', {}).catch(() => null);
+        vsNote('vs-reset-note', d && d.ok !== false ? 'Cru starts a fresh conversation' : 'Could not reset', !(d && d.ok !== false));
+      };
+      vsShowVoices(s);
+      vsLoadMemory();
+      let memTimer = null;
+      const q = document.getElementById('vs-mem-q');
+      if (q) q.oninput = () => { clearTimeout(memTimer); memTimer = setTimeout(vsSearchMemory, 350); };
+      if (s.brain) showVoiceStats();
+    }
+    async function vsShowVoices(s) {
+      const box = document.getElementById('vs-voices'), now = document.getElementById('vs-voice-now');
+      if (!box) return;
+      let current = s.ttsVoice || '';
+      if (!s.deepgramKeySet) { box.innerHTML = '<p style="' + vwStyles.hint + '">Add a Deepgram key below to hear its voices.</p>'; }
+      else if (!vsVoices) {
+        box.innerHTML = '<p style="' + vwStyles.hint + '">Loading voices...</p>';
+        try { const r = await vsGet('/api/voice/voices'); vsVoices = r && r.ok ? (r.voices || []) : []; } catch { vsVoices = []; }
+      }
+      const draw = () => {
+        const brit = (document.getElementById('vs-brit') || {}).checked, male = (document.getElementById('vs-male') || {}).checked;
+        const named = (vsVoices || []).find((v) => v.model === current);
+        if (now) now.textContent = 'Spoken with: ' + (current ? (named ? named.name : current) + ' (Deepgram)' : 'the device voice');
+        if (!s.deepgramKeySet) return;
+        const list = (vsVoices || []).filter((v) => (!brit || /brit|uk|england/i.test(v.accent || '') || !v.accent) && (!male || v.gender === 'male' || !v.gender));
+        box.innerHTML = list.length ? list.map((v) => '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);"><div style="flex:1;min-width:0;"><div style="font-size:0.82rem;' + (v.model === current ? 'color:var(--accent);' : '') + '">' + escHtml(v.name) + '</div><div style="' + vwStyles.hint + '">' + escHtml([v.accent || 'accent not listed', v.gender].filter(Boolean).join(', ')) + '</div></div>'
+          + '<button type="button" class="svc-btn" data-vs-play="' + escHtml(v.model) + '">Hear</button><button type="button" class="svc-btn" data-vs-use="' + escHtml(v.model) + '"' + (v.model === current ? ' disabled' : '') + '>' + (v.model === current ? 'In use' : 'Use') + '</button></div>').join('') : '<p style="' + vwStyles.hint + '">No voices match. Untick the filters.</p>';
+      };
+      const use = async (model) => {
+        const d = await vsPost('/api/voice/settings', { ttsVoice: model }).catch(() => null);
+        if (d && d.ok) { current = d.ttsVoice || ''; draw(); vsNote('vs-status', 'Voice saved'); } else vsNote('vs-status', (d && d.error) || 'Not saved', true);
+      };
+      box.onclick = async (e) => {
+        const p = e.target.closest('[data-vs-play]'), u = e.target.closest('[data-vs-use]');
+        if (u) use(u.getAttribute('data-vs-use'));
+        if (p) {
+          try {
+            const r = await apiFetch('/api/voice/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Yes, Sir. Your weekly usage is at forty two percent, and all four services are running.', voice: p.getAttribute('data-vs-play') }) });
+            if (!r.ok) { vsNote('vs-status', 'Could not play that voice', true); return; }
+            const url = URL.createObjectURL(await r.blob());
+            if (vsPlayer) vsPlayer.pause();
+            vsPlayer = new Audio(url);
+            vsPlayer.onended = () => URL.revokeObjectURL(url);
+            vsPlayer.play().catch(() => {});
+          } catch { vsNote('vs-status', 'Could not play that voice', true); }
+        }
+      };
+      const brit = document.getElementById('vs-brit'), male = document.getElementById('vs-male'), dev = document.getElementById('vs-device');
+      if (brit) brit.onchange = draw;
+      if (male) male.onchange = draw;
+      if (dev) dev.onclick = () => use('');
+      draw();
+    }
+    async function vsLoadMemory() {
+      const info = document.getElementById('vs-mem-info'), files = document.getElementById('vs-mem-files');
+      if (!files) return;
+      let r;
+      try { r = await vsGet('/api/voice/memory'); } catch { r = null; }
+      if (!r || !r.ok) { if (info) info.textContent = (r && r.error) || 'The notebook is not available on this server.'; return; }
+      if (info) info.textContent = r.entries + ' things remembered. Meaning search: ' + r.meaning + '.';
+      files.innerHTML = r.files.length ? '' : '<p style="' + vwStyles.hint + '">Nothing in the notebook yet.</p>';
+      for (const f of r.files) {
+        const box = document.createElement('div');
+        box.style.marginTop = '8px';
+        box.innerHTML = '<div style="font-family:var(--mono);font-size:0.75rem;color:var(--text-secondary);">' + escHtml(f.path) + '</div><textarea rows="5" spellcheck="false" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);font-size:0.78rem;"></textarea><div style="display:flex;gap:8px;align-items:center;"><button type="button" class="svc-btn">Save</button><span style="font-size:0.75rem;color:var(--text-muted);"></span></div>';
+        box.querySelector('textarea').value = f.text;
+        box.querySelector('button').onclick = async () => {
+          const d = await vsPost('/api/voice/memory', { path: f.path, text: box.querySelector('textarea').value }).catch(() => null);
+          box.querySelector('span').textContent = d && d.ok ? 'Saved' : ((d && d.error) || 'Not saved');
+          if (d && d.ok) setTimeout(vsLoadMemory, 600);
+        };
+        files.appendChild(box);
+      }
+    }
+    async function vsSearchMemory() {
+      const q = String((document.getElementById('vs-mem-q') || {}).value || '').trim(), out = document.getElementById('vs-mem-hits');
+      if (!out) return;
+      if (!q) { out.innerHTML = ''; return; }
+      let r;
+      try { r = await vsGet('/api/voice/memory/search?q=' + encodeURIComponent(q)); } catch { r = null; }
+      out.innerHTML = (r && r.results || []).map((h) => '<div style="' + vwStyles.hint + ';margin-top:6px;"><b>' + escHtml(h.kind) + '</b> ' + escHtml(String(h.at || '').slice(0, 16).replace('T', ' ')) + '<br>' + escHtml(String(h.text || '').slice(0, 400)) + '</div>').join('') || '<p style="' + vwStyles.hint + '">Nothing found.</p>';
+    }
+    async function showVoiceStats() {
+      const el = document.getElementById('vs-stats');
+      if (!el) return;
+      let r;
+      try { r = await (await apiFetch('/api/voice/brain-stats')).json(); } catch { return; }
+      if (!r || !r.ok || !r.stats || !r.stats.length) { el.innerHTML = '<p style="' + vwStyles.hint + ';margin:0;">The two brains are compared here once Cru has answered with them.</p>'; return; }
+      const sec = (ms) => (ms / 1000).toFixed(1) + ' s';
+      const td = 'padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap;';
+      const name = (id) => ((voiceModels.find((m) => m.id === id) || {}).label || String(id || '')).replace(/^Claude /, '');
+      el.innerHTML = '<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:0.78rem;"><tr><th style="' + td + 'text-align:left;">Brain</th><th style="' + td + '">Turns</th><th style="' + td + '">Time</th><th style="' + td + '">Per turn</th></tr>'
+        + r.stats.map((g) => '<tr><td style="' + td + '">' + (g.brain === 'claude-code' ? 'Claude Code' : 'API') + '<br><span style="color:var(--text-muted);font-size:0.7rem;">' + escHtml(name(g.model)) + '</span></td><td style="' + td + 'text-align:right;">' + g.turns + (g.failed ? '<br><span style="color:var(--text-muted);font-size:0.7rem;">' + g.failed + ' failed</span>' : '') + '</td><td style="' + td + 'text-align:right;">' + sec(g.medianMs) + '<br><span style="color:var(--text-muted);font-size:0.7rem;">up to ' + sec(g.p90Ms) + '</span></td><td style="' + td + 'text-align:right;">$' + g.costPerTurnUsd.toFixed(4) + '<br><span style="color:var(--text-muted);font-size:0.7rem;">' + Math.round(g.cacheReadShare * 100) + '% cached</span></td></tr>').join('')
+        + '</table></div><p style="' + vwStyles.hint + ';margin:4px 0 0;">Time: the median turn, and up to the slowest tenth. Claude Code costs are list prices, for comparison: your subscription pays them, within its usage limits.</p>';
+    }
     function vwApply(s) {
       if (s && typeof s === 'object') vwLast = s;
       s = vwLast || {};
@@ -5706,7 +5903,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           const since = new Date(a.since).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
           el.textContent = 'Anthropic, whole account: ' + fmtUsd(a.totalUsd) + ' since ' + since;
         } else if (a && a.needsKey) {
-          el.textContent = 'To see the whole account as Anthropic reports it, add an Admin API key on the voice page (/voice).';
+          el.textContent = 'To see the whole account as Anthropic reports it, add an Admin API key in Settings, Voice assistant.';
         } else {
           el.textContent = 'Anthropic account usage: ' + ((a && a.error) || 'unavailable');
         }
@@ -13744,6 +13941,61 @@ export function getWebappHtml(botUsername, appVersion = '') {
       try { const d = await (await apiFetch('/api/backup')).json(); if (d.ok) { backupState = Object.assign(backupState || {}, d); drawBackupNotice(); } } catch { /* ignore */ }
     }
 
+    // The Settings page in groups, in this order; each section collapsed
+    // until opened. Which are open is kept while the page is in use, so a
+    // section re-rendered after a save stays open; a fresh visit starts closed.
+    const SETTINGS_GROUPS = [
+      ['Crundi', ['Server', 'Claude Code', 'What\u2019s new']],
+      ['Claude', ['System prompt', 'Skills', 'Usage']],
+      ['Cru', ['Voice assistant']],
+      ['Notifications', ['Notification Channels', 'Notification Settings']],
+      ['Access', ['Sign-in', 'Phone app', 'Session']],
+      ['This server', ['Configuration', 'Terminal', 'Backup & restore']],
+    ];
+    const settingsOpen = new Set();
+    function organizeSettings(panel) {
+      const byTitle = new Map();
+      for (const sec of Array.from(panel.children)) {
+        const h = sec.classList && sec.classList.contains('info-section') ? sec.querySelector(':scope > h4') : null;
+        if (h) byTitle.set(h.textContent.trim(), sec);
+      }
+      const fold = (sec, title) => {
+        const h = sec.querySelector(':scope > h4');
+        const body = document.createElement('div');
+        body.className = 'set-body';
+        while (h.nextSibling) body.appendChild(h.nextSibling);
+        sec.appendChild(body);
+        sec.classList.add('set-fold');
+        h.insertAdjacentHTML('beforeend', ic('chevron-right'));
+        h.setAttribute('role', 'button');
+        h.setAttribute('tabindex', '0');
+        const set = (open) => { sec.classList.toggle('open', open); h.setAttribute('aria-expanded', open ? 'true' : 'false'); if (open) settingsOpen.add(title); else settingsOpen.delete(title); };
+        set(settingsOpen.has(title));
+        h.onclick = () => set(!sec.classList.contains('open'));
+        h.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); h.onclick(); } };
+      };
+      const frag = document.createDocumentFragment();
+      const placed = new Set();
+      for (const [group, titles] of SETTINGS_GROUPS) {
+        const secs = titles.map((t) => [t, byTitle.get(t)]).filter((x) => x[1]);
+        if (!secs.length) continue;
+        const g = document.createElement('div');
+        g.className = 'set-group';
+        g.textContent = group;
+        frag.appendChild(g);
+        for (const [t, sec] of secs) { fold(sec, t); frag.appendChild(sec); placed.add(sec); }
+      }
+      // Anything not listed (a section added later) still shows, at the end.
+      const rest = Array.from(byTitle.entries()).filter((x) => !placed.has(x[1]));
+      if (rest.length) {
+        const g = document.createElement('div');
+        g.className = 'set-group';
+        g.textContent = 'More';
+        frag.appendChild(g);
+        for (const [t, sec] of rest) { fold(sec, t); frag.appendChild(sec); }
+      }
+      panel.appendChild(frag);
+    }
     async function renderSettings() {
       const panel = $('#settings-panel');
       panel.innerHTML = '<div class="info-section"><h4>Loading...</h4></div>';
@@ -13828,7 +14080,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
             + '<p style="' + hintStyle + '">Read last, so it wins where it disagrees with the box above.</p></div>')
           : ('<p style="' + hintStyle + ';margin-bottom:14px;">Open a project to give it its own additional prompt.</p>');
 
-        let html = '<div class="info-section"><h4>Settings</h4>'
+        let html = '<div class="info-section"><h4>Configuration</h4>'
           + '<p style="color:var(--text-muted);font-size:0.78rem;margin-bottom:16px;">Changes are saved to <code style="font-family:var(--mono);font-size:0.72rem;background:var(--bg-tertiary);padding:2px 5px;border-radius:3px;">' + escHtml(data.envPath) + '</code></p>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Bot Token <span style="color:var(--red);">*</span></label>'
           + '<input type="password" id="set-bot-token" style="' + monoStyle + '" value="' + escHtml(s.TELEGRAM_BOT_TOKEN || '') + '" placeholder="123456:ABC-DEF..." />'
@@ -13875,7 +14127,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
           // The voice assistant on this device: the push-to-talk shortcut (kept
           // per device), and where its server settings live.
           + (window.CrundiVoice ? '<div class="info-section"><h4>Voice assistant</h4>'
-          + '<p style="' + hintStyle + ';margin-bottom:12px;">Click the mic in the top bar, hover over it, or hold the shortcut anywhere to talk to Cru, the voice assistant. Its keys, voice, model and limits are on the <a href="/voice" target="_blank" rel="noopener">voice page</a>.</p>'
+          + '<p style="' + hintStyle + ';margin-bottom:12px;">Click the mic in the top bar, hover over it, or hold the shortcut anywhere to talk to Cru, the voice assistant. What follows applies to Cru on every device.</p>'
+          + '<div id="voice-server-set" style="margin-bottom:12px;"></div>'
+          + '<h5 style="margin:18px 0 8px;font-size:0.82rem;color:var(--text-primary);">On this device</h5>'
           + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
           + '<span style="' + labelStyle + ';margin:0;">Push to talk</span>'
           + '<kbd id="voice-ptt-key" style="font-family:var(--mono);font-size:0.8rem;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);">' + escHtml(window.CrundiVoice.shortcutLabel()) + '</kbd>'
@@ -14056,7 +14310,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
         vwStyles = { btn: btnStyle, subtle: btnSubtleStyle, hint: hintStyle, label: labelStyle };
         panel.innerHTML = html;
+        organizeSettings(panel);
         showVoiceWake();
+        showVoiceServer();
         const pushHost = document.getElementById('phone-push');
         if (pushHost && window.CrundiPhone) window.CrundiPhone.renderPush(pushHost, { apiFetch, toast });
         renderSkillsSection();
