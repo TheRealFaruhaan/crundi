@@ -32,6 +32,7 @@ export const READ_ONLY_TOOL_NAMES = [
   'list_schedules', 'get_usage', 'list_secrets',
   'list_panels', 'read_chat', 'read_terminal',
   'list_containers', 'get_container_logs',
+  'list_widgets', 'view_widget',
 ];
 
 const MAX_FILE_CHARS = 20000;
@@ -367,6 +368,29 @@ export function makeTools(deps) {
         const r = await deps.docker.containerLogs(String(name), n);
         if (!r.ok) return { error: r.error || 'No such container.' };
         return { name: r.name, lines: stripAnsi(r.text).split('\n').filter(l => l.trim()).slice(-n) };
+      },
+    },
+    {
+      name: 'list_widgets',
+      description: 'The widgets (live panels Claude built in Crundi: dashboards, progress boards, charts) in every project or one, with their state and any faults Crundi has noticed. Read only.',
+      input_schema: obj({ project: str('Optional project alias; omit for every project') }, []),
+      run: async ({ project: alias } = {}) => {
+        if (!deps.widgets) return { error: 'Widgets are not available here.' };
+        const out = await deps.widgets.list(alias ? project(alias).alias : '');
+        return { widgets: out, count: out.length };
+      },
+    },
+    {
+      name: 'view_widget',
+      description: 'Look at a widget the way Crundi shows it: screenshots on a desktop and a phone, with the checks Crundi runs (script errors, overflow, clipped text, contrast). Use it when the owner asks how a widget looks or whether it works, then say what you see. Read only; it takes a few seconds.',
+      input_schema: obj({ project: str('The widget\'s project alias, from list_widgets'), id: str('Widget id, from list_widgets') }, ['project', 'id']),
+      run: async ({ project: alias, id }) => {
+        if (!deps.widgets) return { error: 'Widgets are not available here.' };
+        const where = /^_?global$/i.test(String(alias || '')) ? '_global' : project(alias).alias;
+        const r = await deps.widgets.view(where, String(id || ''));
+        if (!r || !r.ok) return { error: (r && r.error) || 'The widget could not be shown.' };
+        // Text and pictures, as a tool result can carry them (both brains).
+        return { content: r.content };
       },
     },
   ];

@@ -38,7 +38,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       body: JSON.stringify({ tool: req.params.name, args: req.params.arguments || {} }),
     });
     const out = await r.json();
-    return { content: [{ type: 'text', text: String(out.content ?? out.error ?? '') }], isError: !!out.isError || !r.ok };
+    // Text, or the API's text and image blocks (view_widget), as MCP content.
+    const content = Array.isArray(out.content)
+      ? out.content.map((b) => (b.type === 'image' ? { type: 'image', data: b.source.data, mimeType: b.source.media_type } : { type: 'text', text: String(b.text || '') }))
+      : [{ type: 'text', text: String(out.content ?? out.error ?? '') }];
+    return { content, isError: !!out.isError || !r.ok };
   } catch (e) {
     return { content: [{ type: 'text', text: `Crundi could not be reached: ${e.message || e}` }], isError: true };
   }

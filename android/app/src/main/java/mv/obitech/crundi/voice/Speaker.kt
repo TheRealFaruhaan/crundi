@@ -39,6 +39,11 @@ import kotlin.random.Random
  * one plays, so Crundi starts talking after the first sentence, not the
  * whole answer. [level] (0..1) follows the voice for the screen's visual.
  *
+ * [cue] plays a short "one moment" clip (a file made by the server in the
+ * Deepgram voice, kept on the phone) or says the phrase in the phone's own
+ * voice. An answer takes over from it: a cue within [CUE_FINISH_MS] of its
+ * end is let finish, any other is stopped.
+ *
  * Main thread only.
  */
 class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
@@ -73,12 +78,64 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     private val levels = java.util.ArrayDeque<Pair<Long, Float>>()
     private fun lvl(sum: Double, n: Int) = (kotlin.math.sqrt(kotlin.math.sqrt(sum / n) / 32768.0) * 1.4).toFloat().coerceIn(0f, 1f)
 
+    private var cuePlayer: MediaPlayer? = null
+    private var cueOnDevice = false
+    private var cueDone: (() -> Unit)? = null
+    /** The device voice's utterance now being said for a reply (its "done" is not the cue's). */
+    private var ttsId: String? = null
+
+    /** A cue is playing. */
+    val cueing: Boolean get() = cueDone != null
+
+    /**
+     * Play a cue: [file] (an mp3 on the phone), or [text] in the phone's own
+     * voice when [file] is null. [onDone] runs once, when it ends or is stopped.
+     * False when it could not be played.
+     */
+    fun cue(file: File?, text: String, onDone: () -> Unit): Boolean {
+        stopCue()
+        if (file != null) {
+            val mp = runCatching { MediaPlayer().apply { setAudioAttributes(attrs); setDataSource(file.path); prepare() } }.getOrNull() ?: return false
+            cuePlayer = mp
+            cueDone = onDone
+            mp.setOnCompletionListener { if (cuePlayer === mp) stopCue() }
+            mp.setOnErrorListener { _, _, _ -> if (cuePlayer === mp) stopCue(); true }
+            runCatching { mp.start() }.onFailure { stopCue(); return false }
+            return true
+        }
+        cueOnDevice = true
+        cueDone = onDone
+        scope.launch {
+            val t = engine()
+            if (t == null || !cueOnDevice) { if (cueOnDevice) stopCue(); return@launch }
+            t.setSpeechRate(rate)
+            if (t.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), CUE_ID) != TextToSpeech.SUCCESS) stopCue()
+        }
+        return true
+    }
+
+    /** How long the cue still has to play, ms; 0 when none, or the phone's voice (unknown). */
+    fun cueLeftMs(): Long = cuePlayer?.let { mp -> runCatching { (mp.duration - mp.currentPosition).toLong().coerceAtLeast(0L) }.getOrDefault(0L) } ?: 0L
+
+    fun stopCue() {
+        val done = cueDone ?: return
+        cueDone = null
+        cuePlayer?.let { mp -> runCatching { mp.stop() }; runCatching { mp.release() } }
+        cuePlayer = null
+        if (cueOnDevice) { cueOnDevice = false; if (ttsId == null) tts?.stop() }
+        done()
+    }
+
     /** Say [text]; [onDone] runs once when it has all been said (not after [stop]). */
     fun say(text: String, onDone: () -> Unit) {
-        stop()
+        stopSpeech()
         val parts = Speech.sentences(text)
-        if (parts.isEmpty()) { onDone(); return }
+        if (parts.isEmpty()) { stopCue(); onDone(); return }
         job = scope.launch {
+            // A cue nearly done is let finish; otherwise the answer takes over now.
+            val left = cueLeftMs()
+            if (left in 1..CUE_FINISH_MS) delay(left)
+            stopCue()
             var cloud = deepgramVoice.isNotEmpty() && api != null
             // Streamed: the whole answer in one go, playing from its first bytes.
             if (cloud && streams) {
@@ -106,8 +163,13 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         }
     }
 
-    /** Stop at once (The owner talked over it, or the session closed). */
+    /** Stop at once (The owner talked over it, or the session closed), the cue too. */
     fun stop() {
+        stopSpeech()
+        stopCue()
+    }
+
+    private fun stopSpeech() {
         job?.cancel(); job = null
         releaseTrack()
         releasePlayer()
@@ -262,10 +324,11 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     private suspend fun device(text: String): Boolean {
         val t = engine() ?: return true
         return suspendCancellableCoroutine { cont ->
-            ttsDone = { ok -> ttsDone = null; if (cont.isActive) cont.resume(ok) }
             val id = "s" + System.nanoTime()
+            ttsId = id
+            ttsDone = { ok -> ttsDone = null; ttsId = null; if (cont.isActive) cont.resume(ok) }
             t.setSpeechRate(rate)
-            if (t.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), id) != TextToSpeech.SUCCESS) { ttsDone = null; cont.resume(true); return@suspendCancellableCoroutine }
+            if (t.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), id) != TextToSpeech.SUCCESS) { ttsDone = null; ttsId = null; cont.resume(true); return@suspendCancellableCoroutine }
             pulseWhile { ttsDone != null }
         }
     }
@@ -290,12 +353,18 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         if (voice != null) e.setVoice(voice) else e.setLanguage(Locale.UK)
         e.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
-            override fun onDone(id: String?) { scope.launch(Dispatchers.Main) { ttsDone?.invoke(true) } }
-            @Deprecated("Still called by older engines") override fun onError(id: String?) { scope.launch(Dispatchers.Main) { ttsDone?.invoke(true) } }
+            override fun onDone(id: String?) { scope.launch(Dispatchers.Main) { ended(id) } }
+            @Deprecated("Still called by older engines") override fun onError(id: String?) { scope.launch(Dispatchers.Main) { ended(id) } }
             override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { _level.value = 0.55f + Random.nextFloat() * 0.4f }
         })
         tts = e; ttsReady = true
         if (cont.isActive) cont.resume(e)
+    }
+
+    /** An utterance ended: the cue's, or a reply sentence's. */
+    private fun ended(id: String?) {
+        if (id == CUE_ID) { if (cueOnDevice) stopCue(); return }
+        ttsDone?.invoke(true)
     }
 
     /** A voice the phone can't measure still moves: a soft wave while [still] holds. */
@@ -314,6 +383,9 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         private const val TAG = "CrundiSpeaker"
         /** 20 ms at the streamed rate. */
         private const val BLOCK = VoiceApi.STREAM_RATE / 50
+        private const val CUE_ID = "cru-cue"
+        /** A cue this close to its end is let finish before the answer. */
+        const val CUE_FINISH_MS = 300L
     }
 }
 

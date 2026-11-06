@@ -168,6 +168,15 @@ export const CAPABILITIES = Object.freeze([
   // Phase 6: a turn's reply may carry phoneActions, e.g.
   // { type: 'background-listening', minutes } (0 = off), for the phone to do.
   'voice-phone-actions',
+  // Talking over Cru: /api/voice/listen's 'ready' carries echoFilter: true,
+  // and the stream takes { type: 'saying', text } / { type: 'said' } so audio
+  // keeps flowing while Cru speaks with its own words dropped. A client
+  // checks the 'ready' flag (an older server just pauses, as before).
+  'voice-barge-in',
+  // GET /api/voice/cues (the "one moment, Sir" clips for the voice in use)
+  // and GET /api/voice/cues/clip. An older server has neither: a client
+  // plays no cue, or says it with the device's own voice.
+  'voice-cues',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

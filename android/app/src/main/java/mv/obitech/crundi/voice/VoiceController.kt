@@ -25,6 +25,8 @@ import mv.obitech.crundi.api.ListenEvent
 import mv.obitech.crundi.api.SocketListener
 import mv.obitech.crundi.api.VoiceApi
 import mv.obitech.crundi.api.VoiceReply
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /** What the voice screen shows. */
 data class VoiceUi(
@@ -168,6 +170,11 @@ class VoiceController(
                 barge.reset()
                 speaker.say(fx.text) { speakingNow = false; dispatch(VoiceEvent.SpeechDone(now())) }
             }
+            // A live stream (barge-in): the server is told what Crundi says, and drops it.
+            is VoiceEffect.Saying -> socket?.send(buildJsonObject { put("type", "saying"); put("text", fx.text) }.toString())
+            VoiceEffect.Said -> { sendPreroll = false; socket?.send("""{"type":"said"}""") }
+            VoiceEffect.Cue -> playCue()
+            VoiceEffect.StopCue -> speaker.stopCue()
             VoiceEffect.StopSaying -> { speakingNow = false; speaker.stop() }
             VoiceEffect.PauseStream -> {
                 streaming = false
@@ -220,7 +227,12 @@ class VoiceController(
             if (r.ok) phoneActions(r.phoneActions)
             // The spend moved: refresh the arcs.
             // (and the voice: Cru may just have changed its own speed or voice)
-            runCatching { voice.settings() }.getOrNull()?.let { s -> speaker.rate = s.speechRate.toFloat(); speaker.deepgramVoice = s.ttsVoice; _ui.update { it.copy(spend = s) } }
+            runCatching { voice.settings() }.getOrNull()?.let { s ->
+                val old = _ui.value.spend
+                speaker.rate = s.speechRate.toFloat(); speaker.deepgramVoice = s.ttsVoice; _ui.update { it.copy(spend = s) }
+                // Another voice or speed (or Deepgram's limit reached): the cues follow it.
+                if (old == null || old.ttsVoice != s.ttsVoice || old.speechRate != s.speechRate || old.deepgramLimitReached != s.deepgramLimitReached) scope.launch { loadCues(voice, s) }
+            }
         }
     }
 
@@ -245,6 +257,63 @@ class VoiceController(
         dispatch(VoiceEvent.BargeIn(now()))
     }
 
+    /** The level detector heard a voice over Crundi's: with a live stream that only lowers the bar for his words. */
+    private fun voiceHeard() {
+        if (_ui.value.state.phase != Phase.Speaking) return
+        sendPreroll = !_ui.value.state.live
+        dispatch(VoiceEvent.VoiceHeard(now()))
+    }
+
+    // ─── the "one moment, Sir" cue ───
+
+    /** The cues for the voice in use: (phrase, clip on the phone) or (phrase, null) for the phone's own voice. */
+    @Volatile private var cues: List<Pair<String, java.io.File?>> = emptyList()
+    private var lastCue = -1
+    private var cueRetry: Job? = null
+
+    /**
+     * The server's cues (capability "voice-cues"), their clips fetched once and
+     * kept in the app's cache, so one plays with no network wait. An older
+     * server has none: the phone's voice says ours, a Deepgram voice plays none
+     * (it would not match).
+     */
+    private suspend fun loadCues(voice: VoiceApi, s: mv.obitech.crundi.api.VoiceSettings) {
+        val deviceVoice = s.ttsVoice.isEmpty() || s.deepgramLimitReached
+        val list = try { voice.cues() } catch (e: Exception) { Log.i(TAG, "cues: ${e.message}"); cues = if (deviceVoice) Speech.CUES.map { it to null } else emptyList(); return }
+        if (list == null) { cues = if (deviceVoice) Speech.CUES.map { it to null } else emptyList(); return }
+        if (list.device) { cues = list.cues.map { it.text to null }; return }
+        val safe = { x: String -> x.filter { it.isLetterOrDigit() || it == '-' || it == '.' }.ifEmpty { "_" } }
+        val dir = java.io.File(ctx.cacheDir, "cues/${safe(list.voice)}/${safe(list.rate)}")
+        val out = ArrayList<Pair<String, java.io.File?>>()
+        for (c in list.cues) {
+            val url = c.url ?: continue
+            val f = java.io.File(dir, "${safe(c.id)}.mp3")
+            if (!f.exists()) runCatching {
+                val bytes = voice.cueClip(url)
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    dir.mkdirs()
+                    val tmp = java.io.File(dir, "${safe(c.id)}.tmp")
+                    tmp.writeBytes(bytes)
+                    tmp.renameTo(f)
+                }
+            }.onFailure { Log.i(TAG, "cue clip: ${it.message}") }
+            if (f.exists()) out += c.text to f
+        }
+        cues = out
+        // Being made for the first time: ask again in a while.
+        if (list.cues.any { it.url == null } && cueRetry?.isActive != true) cueRetry = scope.launch { delay(20_000); if (running) loadCues(voice, s) }
+    }
+
+    private fun playCue() {
+        if (speaker.cueing) return
+        val list = cues
+        val i = Speech.pickCue(list.size, lastCue)
+        if (i < 0) return
+        lastCue = i
+        val (text, file) = list[i]
+        if (speaker.cue(file, text) { dispatch(VoiceEvent.CueDone(now())) }) dispatch(VoiceEvent.CueStarted(text, now()))
+    }
+
     // ─── listening ───
 
     private suspend fun checkServer(voice: VoiceApi, host: String) {
@@ -253,6 +322,7 @@ class VoiceController(
             speaker.deepgramVoice = s.ttsVoice
             speaker.rate = s.speechRate.toFloat()
             _ui.update { it.copy(spend = s) }
+            scope.launch { loadCues(voice, s) }
             // Claude Code answers on the owner's subscription: no API key needed then.
             if (!s.anthropicKeySet && s.brain != "claude-code") block("There is no Claude API key on $host yet. Add one in Settings > Voice assistant, under Keys.")
         } catch (e: ApiException) {
@@ -284,7 +354,7 @@ class VoiceController(
     private fun heard(ev: ListenEvent) {
         if (!running) return
         when (ev) {
-            ListenEvent.Ready -> dispatch(VoiceEvent.Ready(now()))
+            is ListenEvent.Ready -> dispatch(VoiceEvent.Ready(now(), ev.echoFilter && fallback == null))
             ListenEvent.Speech -> {}
             is ListenEvent.Interim -> dispatch(VoiceEvent.Interim(ev.text, now()))
             is ListenEvent.Utterance -> dispatch(VoiceEvent.Utterance(ev.text, now()))
@@ -311,7 +381,11 @@ class VoiceController(
             _mic.value = level
             if (speakingNow) {
                 val voice = if (speaker.measured) speaker.level.value else null
-                if (barge.hear(level, voice, 100)) { speakingNow = false; scope.launch { if (_ui.value.state.phase == Phase.Speaking) bargeIn() } }
+                if (barge.hear(level, voice, 100)) {
+                    // A live stream keeps listening for his words; a paused one cuts in on this alone.
+                    if (_ui.value.state.live) barge.rearm() else speakingNow = false
+                    scope.launch { voiceHeard() }
+                }
             } else barge.learn(level)
             val s = socket
             synchronized(preroll) {

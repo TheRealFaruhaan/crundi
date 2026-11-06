@@ -80,12 +80,12 @@ export async function listVoices({ fetchImpl = fetch, force = false } = {}) {
  * @returns {Promise<{ok:true, audio:Buffer, mime:string} | {ok:false, error:string}>}
  */
 /** The talking speed for Deepgram (Aura-2 only, 0.7 to 1.5; left out at normal). */
-function speedParam(model) {
-  const r = Number(getSettings().speechRate) || 1;
+export function speedParam(model, rate) {
+  const r = Number(rate ?? getSettings().speechRate) || 1;
   return /^aura-2-/.test(model) && r !== 1 ? { speed: String(Math.min(1.5, Math.max(0.7, r))) } : {};
 }
 
-export async function speak(text, voice, { fetchImpl = fetch } = {}) {
+export async function speak(text, voice, { fetchImpl = fetch, rate } = {}) {
   const key = getSettings().deepgramKey;
   if (!key) return { ok: false, error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' };
   const model = voice || getSettings().ttsVoice;
@@ -95,7 +95,7 @@ export async function speak(text, voice, { fetchImpl = fetch } = {}) {
   if (!t) return { ok: false, error: 'Nothing to say' };
   let res;
   try {
-    res = await fetchImpl(`${SPEAK_URL}?${new URLSearchParams({ model, encoding: 'mp3', ...speedParam(model) })}`, {
+    res = await fetchImpl(`${SPEAK_URL}?${new URLSearchParams({ model, encoding: 'mp3', ...speedParam(model, rate) })}`, {
       method: 'POST',
       headers: { Authorization: `Token ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: t }),

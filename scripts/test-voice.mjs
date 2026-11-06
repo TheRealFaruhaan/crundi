@@ -249,6 +249,23 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
     const healed = createVoiceAgent({ tools, client: blank, store: { load: () => saved, save: () => {} } });
     ok(healed.history[1].content.length === 1 && healed.history[1].content[0].signature === 's', 'a saved conversation with blank text is repaired on load, thinking untouched');
   }
+  {
+    // view_widget: pictures reach the model as image blocks, beside the text.
+    const { runVoiceTool } = await import('../src/voice/agent.js');
+    const vw = { name: 'view_widget', run: async () => ({ content: [{ type: 'text', text: 'No errors.' }, { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }] }) };
+    const out = await runVoiceTool(vw, 'view_widget', {}, { pending: [], phoneActions: [] });
+    ok(Array.isArray(out.content) && out.content[0].text === 'No errors.' && out.content[1].type === 'image' && out.content[1].source.media_type === 'image/png' && out.content[1].source.data === 'iVBORw0KGgo=', 'a widget view comes back as text and an image');
+    const seen = [];
+    const sc = [
+      { stop_reason: 'tool_use', usage: {}, content: [{ type: 'tool_use', id: 'w1', name: 'view_widget', input: {} }] },
+      { stop_reason: 'end_turn', usage: {}, content: [{ type: 'text', text: 'It looks tidy, Sir.' }] },
+    ];
+    const wc = () => ({ messages: { create: async (req) => { seen.push(JSON.parse(JSON.stringify(req.messages))); return sc.shift(); } } });
+    const wr = await createVoiceAgent({ tools: [...tools, vw], client: wc }).turn('how does the thakey widget look');
+    const result = seen[1].at(-1).content[0];
+    ok(wr.ok && result.type === 'tool_result' && Array.isArray(result.content) && result.content.some(b => b.type === 'image'), 'and the model is sent the picture');
+    ok(/view_widget/.test(SYSTEM_PROMPT), 'the prompt: Cru can look at widgets');
+  }
   const r = await agent.turn('what is on the kanban', { where: 'workbench', now: new Date('2026-11-10T09:00:00Z') });
   ok(r.ok && r.speak === 'One project, Sir, and the board is empty.' && r.show === 'proj: no tasks', 'a turn with two tool calls answers');
   ok(r.tools.join() === 'list_projects,get_kanban', 'both tools ran (in parallel, one round)');
@@ -503,11 +520,11 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   let t = 1000;
   const pending = A.createPending({ now: () => t });
   let locked = false;
-  const sent = [], closed = [], added = [];
+  const sent = [], closed = [], added = [], created = [];
   const deps = {
     chats: () => [{ id: 'c1', title: 'API work', project: 'proj', status: 'idle' }],
     sendMessage: (id, text) => { sent.push({ id, text }); return { ok: true }; },
-    createChat: async () => ({ ok: true, id: 'c2' }),
+    createChat: async (alias, opts) => { created.push({ alias, opts }); return { ok: true, id: 'c2' }; },
     closeChat: async (id) => { closed.push(id); return { ok: true }; },
     parkChat: () => ({ ok: true }), resumeChat: async () => ({ ok: true }), watch: () => {},
     listProjects: () => [{ alias: 'proj', name: 'Proj', path: '/tmp/proj' }],
@@ -544,6 +561,17 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(yes.ok && sent.length === 2, 'after the owner answers, the confirmed action runs');
   ok(!(await T.confirm_action.run({ id: inf.id })).ok, 'and only once');
 
+  {
+    // Bypass mode for a chat the owner plainly asked for; never silently on a guess.
+    pending.newTurn();
+    const b = await T.start_chat.run({ project: 'proj', message: 'mark reel 23 as posted', intent: 'explicit', mode: 'bypass' });
+    ok(b.ok && created.at(-1).opts.skipPermissions === true && /bypass/.test(b.mode), 'an explicit request can start its chat in bypass mode');
+    const d = await T.start_chat.run({ project: 'proj', message: 'tidy things', intent: 'explicit' });
+    ok(d.ok && !created.at(-1).opts.skipPermissions, 'without it, the project\'s own mode');
+    const n = created.length;
+    const g = await T.start_chat.run({ project: 'proj', message: 'maybe refactor', intent: 'inferred', mode: 'bypass' });
+    ok(g.needsConfirmation && /bypass mode/.test(g.ask) && created.length === n, 'bypass on a guess is read back first, nothing started');
+  }
   const close = await T.close_chat.run({ chat: 'c1' });
   ok(close.needsConfirmation && closed.length === 0 && /It is idle/.test(close.ask), 'closing a chat always asks first (D24)');
   ok((await T.park_chat.run({ chat: 'c1' })).needsConfirmation, 'parking asks first (D31)');
@@ -565,8 +593,9 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(added.at(-1).status === 'backlog', 'a new card goes to Backlog, never To do');
 
   locked = true;
+  const sentBefore = sent.length;
   const lk = await T.send_to_chat.run({ chat: 'c1', text: 'hi', intent: 'explicit' });
-  ok(lk.needsUnlock && sent.length === 2, 'a locked phone changes nothing and asks to unlock');
+  ok(lk.needsUnlock && sent.length === sentBefore, 'a locked phone changes nothing and asks to unlock');
   const lr = await T.list_chat_schedules.run({ project: 'proj' });
   ok(Array.isArray(lr), 'reading still works while locked');
   locked = false;

@@ -25,7 +25,7 @@ class VoiceMachineTest {
         assertEquals(Phase.Speaking, s.phase)
         assertEquals("Plenty, Master.", s.reply)
         assertEquals("5h: 2%", s.detail)
-        assertEquals(listOf(VoiceEffect.Ask("how much usage do I have left?"), VoiceEffect.PauseStream, VoiceEffect.Say("Plenty, Master.")), fx)
+        assertEquals(listOf(VoiceEffect.Ask("how much usage do I have left?"), VoiceEffect.Cue, VoiceEffect.PauseStream, VoiceEffect.Say("Plenty, Master.")), fx)
     }
 
     @Test fun afterSpeakingItListensAgain() {
@@ -42,14 +42,16 @@ class VoiceMachineTest {
         assertEquals(Phase.Listening, m.on(s, VoiceEvent.SpeechDone(50)).first.phase)
     }
 
-    @Test fun whatIsSaidWhileThinkingIsSentNext() {
+    @Test fun whatIsSaidWhileThinkingIsSentTheMomentTheAnswerComes() {
         val (s, fx) = run(*listening(), VoiceEvent.Utterance("first", 30), VoiceEvent.Utterance("and also this", 35),
-            VoiceEvent.Reply(true, "Done.", "", "", 40), VoiceEvent.SpeechDone(50))
+            VoiceEvent.Reply(true, "Done.", "", "", 40))
+        // Not after the answer has been said: he has moved on. The answer stays on screen.
         assertEquals(Phase.Thinking, s.phase)
         assertEquals("and also this", s.asked)
+        assertEquals("Done.", s.reply)
         assertEquals("", s.pending)
-        assertEquals(VoiceEffect.Ask("and also this"), fx.last())
-        assertEquals(2, fx.count { it is VoiceEffect.Ask })
+        assertTrue(fx.none { it is VoiceEffect.Say })
+        assertEquals(listOf(VoiceEffect.Ask("first"), VoiceEffect.Ask("and also this")), fx.filterIsInstance<VoiceEffect.Ask>())
     }
 
     @Test fun anErrorIsSaidAndShown() {
@@ -247,12 +249,162 @@ class EchoTest {
     @Test fun masterSpeakingRightAfterIsAsked() {
         val (s, fx) = m.on(afterAnswer(), VoiceEvent.Utterance("and the done column?", 1_400))
         assertEquals(Phase.Thinking, s.phase)
-        assertEquals(VoiceEffect.Ask("and the done column?"), fx.last())
+        assertTrue(VoiceEffect.Ask("and the done column?") in fx)
         assertFalse(Speech.isEcho("what is in the backlog of dhivo", said))
     }
 
     @Test fun theSameWordsLaterAreNotAnEcho() {
         val (s, _) = m.on(afterAnswer(), VoiceEvent.Utterance("all of them done", 9_000))
         assertEquals(Phase.Thinking, s.phase)
+    }
+}
+
+/** Talking over Cru (barge-in) with a live stream, and the "one moment" cue. */
+class BargeInTest {
+    private val m = VoiceMachine(silenceMs = 30_000)
+    private val said = "Your build passed an hour ago, Sir, and the tests are green."
+
+    private fun run(s0: VoiceState, vararg events: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
+        var s = s0
+        val fx = ArrayList<VoiceEffect>()
+        for (e in events) { val (n, f) = m.on(s, e); s = n; fx += f }
+        return s to fx
+    }
+
+    /** Speaking [said] on a server that drops Cru's own words (live). */
+    private fun speaking(live: Boolean = true): Pair<VoiceState, List<VoiceEffect>> =
+        run(VoiceState(), VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10, live = live), VoiceEvent.Utterance("did the build pass", 20), VoiceEvent.Reply(true, said, "", "", 30))
+
+    @Test fun aLiveStreamStaysOnWhileCruSpeaks() {
+        val (s, fx) = speaking()
+        assertEquals(Phase.Speaking, s.phase)
+        assertTrue(s.live)
+        assertEquals(listOf(VoiceEffect.Saying(said), VoiceEffect.Say(said)), fx.takeLast(2))
+        assertTrue(fx.none { it == VoiceEffect.PauseStream })
+        // Finished: the server is told, nothing to resume.
+        val (_, done) = m.on(s, VoiceEvent.SpeechDone(40))
+        assertEquals(listOf(VoiceEffect.Said), done)
+    }
+
+    @Test fun hisWordsCutCruOffAtOnce() {
+        val (s0, _) = speaking()
+        val (s, fx) = m.on(s0, VoiceEvent.Interim("which build", 35))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("which build", s.heard)
+        assertEquals(listOf(VoiceEffect.StopSaying, VoiceEffect.Said), fx)
+        // And once he finishes, it is asked straight away.
+        val (s2, fx2) = m.on(s, VoiceEvent.Utterance("which build was that", 40))
+        assertEquals(Phase.Thinking, s2.phase)
+        assertTrue(VoiceEffect.Ask("which build was that") in fx2)
+    }
+
+    @Test fun aFinishedSentenceOverCruIsAskedAtOnce() {
+        val (s0, _) = speaking()
+        val (s, fx) = m.on(s0, VoiceEvent.Utterance("open the kanban board", 35))
+        assertEquals(Phase.Thinking, s.phase)
+        assertEquals(listOf(VoiceEffect.StopSaying, VoiceEffect.Said, VoiceEffect.Ask("open the kanban board"), VoiceEffect.Cue), fx)
+    }
+
+    @Test fun cruHeardBackIsNotAnInterruption() {
+        val (s0, _) = speaking()
+        for (heard in listOf("your build passed an hour ago", "and the tests are green", "um", "really")) {
+            val (s, fx) = m.on(s0, VoiceEvent.Interim(heard, 35))
+            assertEquals(heard, Phase.Speaking, s.phase)
+            assertTrue(heard, fx.isEmpty())
+        }
+        val (s, fx) = m.on(s0, VoiceEvent.Utterance("the tests are green", 35))
+        assertEquals(Phase.Speaking, s.phase)
+        assertTrue(fx.isEmpty())
+    }
+
+    @Test fun stopAloneIsEnough() {
+        val (s0, _) = speaking()
+        assertEquals(Phase.Listening, m.on(s0, VoiceEvent.Interim("stop", 35)).first.phase)
+        assertEquals(Phase.Listening, m.on(s0, VoiceEvent.Interim("wait", 35)).first.phase)
+    }
+
+    @Test fun aVoiceOverCruLowersTheBarToOneWord() {
+        val (s0, _) = speaking()
+        val (s1, fx1) = m.on(s0, VoiceEvent.VoiceHeard(33))
+        assertEquals(Phase.Speaking, s1.phase)          // a cough is not an interruption
+        assertTrue(fx1.isEmpty())
+        assertEquals(Phase.Listening, m.on(s1, VoiceEvent.Interim("really", 35)).first.phase)
+        // Long after, one word is not enough again.
+        assertEquals(Phase.Speaking, m.on(s1, VoiceEvent.Interim("really", 5_000)).first.phase)
+    }
+
+    @Test fun anOlderServerPausesAndTheLevelAloneCutsIn() {
+        val (s0, fx0) = speaking(live = false)
+        assertEquals(listOf(VoiceEffect.PauseStream, VoiceEffect.Say(said)), fx0.takeLast(2))
+        assertEquals(Phase.Speaking, m.on(s0, VoiceEvent.Interim("which build", 35)).first.phase)
+        val (s, fx) = m.on(s0, VoiceEvent.VoiceHeard(35))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals(listOf(VoiceEffect.StopSaying, VoiceEffect.ResumeStream), fx)
+    }
+
+    @Test fun tappingCutsInOnALiveStreamToo() {
+        val (s0, _) = speaking()
+        val (s, fx) = m.on(s0, VoiceEvent.BargeIn(35))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals(listOf(VoiceEffect.StopSaying, VoiceEffect.Said), fx)
+    }
+
+    @Test fun theFallbackRecogniserIsNeverLive() {
+        val (s, _) = run(VoiceState(), VoiceEvent.Opened(false, 0), VoiceEvent.StreamLost("closed", 5), VoiceEvent.Ready(6, live = true))
+        assertFalse(s.live)
+    }
+
+    @Test fun aCuePlaysWhenSomethingIsAskedNotForHereOrNews() {
+        val (_, fx) = run(VoiceState(), VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10, live = true), VoiceEvent.Utterance("what's running", 20))
+        assertEquals(listOf(VoiceEffect.Ask("what's running"), VoiceEffect.Cue), fx)
+        val (_, here) = run(VoiceState(), VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10), VoiceEvent.Utterance("hey cru", 20))
+        assertTrue(here.none { it == VoiceEffect.Cue })
+        val (_, news) = run(VoiceState(), VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10), VoiceEvent.Report("Sir, a chat finished.", "", 20))
+        assertTrue(news.none { it == VoiceEffect.Cue })
+    }
+
+    @Test fun theCueIsToldToTheServerAndItsEchoIsNotAsked() {
+        val (s0, _) = run(VoiceState(), VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10, live = true), VoiceEvent.Utterance("what's running", 20))
+        val (s1, fx1) = m.on(s0, VoiceEvent.CueStarted("One moment, Sir.", 21))
+        assertEquals(listOf(VoiceEffect.Saying("One moment, Sir.")), fx1)
+        // Its echo is not kept as something he said meanwhile.
+        val (s2, _) = m.on(s1, VoiceEvent.Utterance("one moment sir", 900))
+        assertEquals("", s2.pending)
+        val (s3, fx3) = m.on(s2, VoiceEvent.CueDone(1_000))
+        assertEquals("", s3.cue)
+        assertEquals(listOf(VoiceEffect.Said), fx3)
+        // The answer: no Said for the cue after it starts.
+        val (s4, _) = m.on(s1, VoiceEvent.Reply(true, "Two services, Sir.", "", "", 500))
+        assertEquals(Phase.Speaking, s4.phase)
+        assertTrue(m.on(s4, VoiceEvent.CueDone(600)).second.isEmpty())
+    }
+
+    @Test fun talkingOverTheCueStopsIt() {
+        val (s0, _) = run(VoiceState(), VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10, live = true), VoiceEvent.Utterance("what's running", 20), VoiceEvent.CueStarted("One moment, Sir.", 21))
+        val (s, fx) = m.on(s0, VoiceEvent.Interim("and the docker ones", 300))
+        assertEquals(listOf(VoiceEffect.StopCue, VoiceEffect.Said), fx)
+        assertEquals("", s.cue)
+        assertEquals("and the docker ones", s.heard)
+    }
+
+    @Test fun talksOverRule() {
+        assertFalse(Speech.talksOver("your build passed", said))
+        assertFalse(Speech.talksOver("uh", said))
+        assertFalse(Speech.talksOver("really", said))
+        assertTrue(Speech.talksOver("really", said, min = 1))
+        assertFalse(Speech.talksOver("build sir", said, min = 1))
+        assertTrue(Speech.talksOver("which build was it", said))
+        assertTrue(Speech.talksOver("stop", said))
+    }
+
+    @Test fun cuesAreRandomButNeverTheSameTwiceRunning() {
+        val r = kotlin.random.Random(3)
+        var last = -1
+        val picks = (1..200).map { Speech.pickCue(8, last, r).also { last = it } }
+        assertTrue(picks.zipWithNext().none { (a, b) -> a == b })
+        assertTrue(picks.all { it in 0..7 } && picks.toSet().size == 8)
+        assertEquals(0, Speech.pickCue(1, 0, r))
+        assertEquals(-1, Speech.pickCue(0, -1, r))
+        assertTrue(Speech.CUES.size in 6..8)
     }
 }

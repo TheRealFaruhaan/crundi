@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.16 (en-US)
+
+Version code 47. Internal track. Since 1.1.3-dev.15 (code 46): barge-in on transcripts with the stream open while speaking (capability voice-barge-in), thinking cues (voice-cues).
+
+```
+<en-US>
+Talk over Cru, and hear when it has your words.
+
+- Start speaking while Cru is talking and it stops at once and answers what you just said. Its own voice, a cough or a clap does not count.
+- The moment Cru has your words it says so with a short phrase like "One moment, Sir", in its own voice.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.15 (en-US)
 
 Version code 46. Internal track. Since 1.1.3-dev.14 (code 45): server voice settings moved to Settings > Voice assistant (CruSettings.kt, folded sections); Voice settings keeps device-only things; Settings front page regrouped.

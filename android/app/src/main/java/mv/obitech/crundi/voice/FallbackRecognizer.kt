@@ -84,7 +84,7 @@ class FallbackRecognizer(
     private fun again(ms: Long) { main.postDelayed({ listen() }, ms) }
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) { emit(ListenEvent.Ready) }
+        override fun onReadyForSpeech(params: Bundle?) { emit(ListenEvent.Ready()) }
         override fun onBeginningOfSpeech() { emit(ListenEvent.Speech) }
         override fun onRmsChanged(rmsdB: Float) { onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f)) }
         override fun onBufferReceived(buffer: ByteArray?) {}

@@ -104,6 +104,7 @@ import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
 import { relay as voiceRelay } from './voice/stream.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
+import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
 
@@ -2572,6 +2573,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const allProjects = () => Object.values(listProjects()).map(p => ({ alias: p.alias, name: p.name || p.alias, path: p.path }));
   const voiceTools = makeVoiceTools({
     listProjects: allProjects,
+    // Widgets (list_widgets, view_widget): the ones in each project and the
+    // global ones once; a view is widget_render's screenshots and checks.
+    widgets: {
+      list: async (alias = '') => {
+        const seen = new Set(), list = [];
+        for (const a of alias ? [alias] : allProjects().map(p => p.alias)) {
+          let r = null;
+          try { r = await widgetApi.handleMcp('widget_list', { alias: a }); } catch { /* skip this project */ }
+          for (const w of (r && r.widgets) || []) {
+            const project = w.global ? '_global' : a;
+            if (seen.has(project + '/' + w.id)) continue;
+            seen.add(project + '/' + w.id);
+            list.push({ project, id: w.id, title: w.title, slot: w.slot, state: w.state, faults: w.faults, needsApproval: w.needsApproval });
+          }
+        }
+        return list;
+      },
+      view: (alias, id) => widgetApi.handleMcp('widget_render', { alias, id }),
+    },
     settings: () => settingsView(),
     voiceSpend: () => voiceSettings.publicSettings(),
     services: () => getAllServiceStatus().map(sv => ({
@@ -4185,6 +4205,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
     if (path === '/api/voice/memory/search' && req.method === 'GET') {
       return json(res, { ok: true, ...(await voiceMemory.index.search(String(url.searchParams.get('q') || ''))) });
+    }
+    // The "one moment, Sir" cues (capability 'voice-cues', voice/cues.js):
+    // the list for the voice in use, then each clip, made once and kept.
+    if (path === '/api/voice/cues' && req.method === 'GET') {
+      return json(res, voiceListCues());
+    }
+    if (path === '/api/voice/cues/clip' && req.method === 'GET') {
+      const clip = voiceReadClip(url.searchParams.get('voice'), url.searchParams.get('rate'), url.searchParams.get('id'));
+      if (!clip) return json(res, { ok: false, error: 'No such cue' }, 404);
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': clip.length, 'Cache-Control': 'private, max-age=86400' });
+      return res.end(clip);
     }
     // Deepgram's voices, for the picker.
     if (path === '/api/voice/voices' && req.method === 'GET') {

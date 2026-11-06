@@ -21,8 +21,13 @@
  * mic. The microphone streams as 16 kHz PCM to /api/voice/listen (Deepgram
  * through the server); each utterance goes to /api/voice/turn; the answer is
  * spoken in the chosen Deepgram voice (streamed) or the browser's en-GB one.
- * The stream pauses while Crundi speaks; talking over it stops it. Yes/no to
- * Crundi's questions by voice; on a PC you may also type.
+ * While Crundi speaks the stream keeps listening (a server that filters
+ * Crundi's own words out, 'ready' echoFilter) and the owner's words cut it
+ * off at once and become the next thing asked; an older server pauses the
+ * stream instead and only a loud voice cuts in. The moment something is asked
+ * a short cue ("One moment, Sir.") is played from clips loaded when the
+ * screen opened, or said with the browser's voice. Yes/no to Crundi's
+ * questions by voice; on a PC you may also type.
  */
 (function () {
   'use strict';
@@ -33,6 +38,10 @@
   var PALETTE = { listen: [C.sky, C.accent], think: [C.ask, C.deep], speak: [C.hover, C.ask], start: [C.accent, C.deep], ended: [C.muted, '#22223a'] };
   var LOGO = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="14" y1="14" x2="82" y2="82"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#4f46e5"/></linearGradient></defs><mask id="eh"><rect width="96" height="96" fill="#fff"/><rect x="32" y="43" width="10.5" height="18" rx="5.2" fill="#000"/><rect x="53.5" y="43" width="10.5" height="18" rx="5.2" fill="#000"/></mask><path d="M48 27V17" fill="none" stroke-linecap="round" stroke="#fbbf24" stroke-width="5.5"/><circle cx="48" cy="13" r="6.5" fill="#fbbf24"/><rect x="11" y="26" width="74" height="57" rx="23" fill="url(#g)" mask="url(#eh)"/></svg>');
   var PAUSE_AFTER_SPEECH_MS = 450, SILENCE_MS = 30000, ECHO_MS = 5000;
+  /** A cue this close to its end is let finish before the reply; any further off, the reply cuts it. */
+  var CUE_FINISH_MS = 300;
+  /** After the level detector hears a voice over Crundi, one new word is enough to cut in, for this long. */
+  var HINT_MS = 1500;
 
   function hex(c, a) { var n = parseInt(c.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; }
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
@@ -44,6 +53,29 @@
     if (h.length < 2) return h.length === 1 && s.indexOf(h[0]) >= 0 && s.length <= 3;
     var set = {}; s.forEach(function (w) { set[w] = 1; });
     return h.filter(function (w) { return set[w]; }).length / h.length >= 0.6;
+  }
+  var FILLER = { um: 1, uh: 1, erm: 1, er: 1, hmm: 1, mm: 1, mhm: 1, ah: 1, oh: 1 };
+  var STOP_WORDS = { stop: 1, wait: 1, cancel: 1, enough: 1, quiet: 1, pause: 1, hold: 1, no: 1, cru: 1, crew: 1, sorry: 1, actually: 1, hang: 1 };
+  /**
+   * [heard] while Crundi says [said] is the owner talking over it (the phone's
+   * Speech.talksOver): not an echo, at least [min] (default 2) words that
+   * aren't "um", one of them not Crundi's own; or one word like "stop" or "wait".
+   */
+  function talksOver(heard, said, min) {
+    var h = words(heard).filter(function (w) { return !FILLER[w]; });
+    if (!h.length || (said && isEcho(heard, said))) return false;
+    var s = {}; words(said).forEach(function (w) { s[w] = 1; });
+    var fresh = h.filter(function (w) { return !s[w]; });
+    return (h.length >= (min || 2) && fresh.length > 0) || fresh.some(function (w) { return STOP_WORDS[w]; });
+  }
+  /** The cues when the server has none to offer (an older server): said with the browser's voice only. */
+  var CUE_TEXTS = ['One moment, Sir.', 'Let me check.', 'On it, Sir.', 'Just a moment.', 'Looking now, Sir.', 'Right away, Sir.', 'Bear with me, Sir.', 'Let me see.'];
+  /** One of [n] at random, never [last] (when there is a choice). */
+  function pickCue(n, last, rnd) {
+    if (n <= 0) return -1;
+    if (n === 1) return 0;
+    var i = Math.floor((rnd || Math.random)() * (n - 1));
+    return last >= 0 && i >= last ? i + 1 : i;
   }
 
   var CSS = '' +
@@ -96,6 +128,8 @@
     S = {
       opts: opts, ov: ov, phase: 'start', heard: '', asked: '', reply: '', detail: '', notice: '', question: '', pending: '', reports: [],
       lastSaid: '', saidUntil: 0, quietSince: Date.now(), streaming: true, speaking: false,
+      // live: the server drops Crundi's own words, so the stream stays on while it speaks (barge-in).
+      live: false, hintAt: 0, cues: [], cueDevice: false, cueLast: -1, cue: null,
       mic: 0, voice: 0, lvl: 0, peak: 0.12, wave: new Float32Array(96), lastShift: 0,
       liq: { m: 0, mv: 0, lv: 0, peak: 0.1, hist: new Float32Array(64), drops: [], ripples: [], until: 0, lastDrop: 0, lastT: 0 },
       noise: 0.01, echo: 0.6, loudFor: 0, spokeFor: 0, recent: [0, 0, 0, 0], settings: null, caps: {},
@@ -211,6 +245,7 @@
       S.stream = stream;
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       S.ctx = ctx;
+      loadCues();
       var src = ctx.createMediaStreamSource(stream);
       var proc = ctx.createScriptProcessor(4096, 1, 1);
       S.proc = proc;
@@ -242,22 +277,30 @@
 
   function heard(e) {
     if (!S) return;
-    if (e.type === 'ready') { if (S.phase === 'start') { S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
+    if (e.type === 'ready') { S.live = !!e.echoFilter; if (S.phase === 'start') { S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
     else if (e.type === 'report') tell(e.speak || '', e.show || '');
-    else if (e.type === 'interim') { if (echo(e.text)) return; if (S.phase === 'listen' || S.phase === 'start') { S.phase = 'listen'; S.heard = e.text; S.quietSince = Date.now(); } else if (S.phase === 'think') { S.heard = (S.pending + ' ' + e.text).trim(); } }
+    else if (e.type === 'interim') {
+      // Talking over Crundi: cut it off the moment his words come.
+      if (S.phase === 'speak') { if (S.live && talksOver(e.text, S.lastSaid, Date.now() - S.hintAt <= HINT_MS ? 1 : 2)) { cutIn(); S.heard = e.text; } else return; }
+      else if (echo(e.text)) return;
+      else if (S.phase === 'listen' || S.phase === 'start') { S.phase = 'listen'; S.heard = e.text; S.quietSince = Date.now(); }
+      else if (S.phase === 'think') { if (S.cue && talksOver(e.text, S.cue.text)) stopCue(); S.heard = (S.pending + ' ' + e.text).trim(); }
+    }
     else if (e.type === 'utterance') { if (S.phase === 'listen') S.pttSent = true; utter(e.text, false); }
     else if (e.type === 'error') { S.notice = e.error; }
     render();
   }
 
-  function echo(t) { return S.lastSaid && Date.now() - S.saidUntil <= ECHO_MS && isEcho(t, S.lastSaid); }
+  /** Crundi's own words heard back: while it speaks, or for ECHO_MS after. */
+  function echo(t) { return S.lastSaid && (S.speaking || Date.now() - S.saidUntil <= ECHO_MS) && isEcho(t, S.lastSaid); }
 
   function utter(text, typed) {
     var t = String(text || '').trim();
     if (!t || !S) return;
     if (!typed && echo(t)) { S.heard = ''; render(); return; }
     if (S.phase === 'think') { S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; render(); return; }
-    if (S.phase === 'speak') { if (!typed) return; stopSpeaking(S); }
+    // Said over Crundi (the stream stayed on): cut it off and ask that now.
+    if (S.phase === 'speak') { if (!typed && !(S.live && talksOver(t, S.lastSaid, 1))) return; cutIn(); }
     if (S.phase === 'ended' && !typed) return;
     // "Hey Cru" while already awake: here at once, without asking Claude.
     if (isCalling(t)) { var h = hereLine(); S.asked = t; S.heard = ''; S.reply = h; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); speak(h); render(); return; }
@@ -284,8 +327,10 @@
     return w.length > 0 && w.length <= 2 && w.every(function (x) { return /^(cru|crew|kru|krew|crue|crews)$/.test(x); });
   }
 
-  function ask(t) {
-    S.phase = 'think'; S.asked = t; S.heard = t; S.reply = ''; S.detail = ''; S.question = ''; S.notice = ''; S.quietSince = Date.now();
+  /** [keep]: the last answer stays on screen (it was cut short by what the owner said meanwhile). */
+  function ask(t, keep) {
+    S.phase = 'think'; S.asked = t; S.heard = t; if (!keep) { S.reply = ''; S.detail = ''; } S.question = ''; S.notice = ''; S.quietSince = Date.now();
+    playCue();
     render();
     post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false }).then(function (r) {
       if (!S) return;
@@ -296,8 +341,10 @@
       S.closing = !!(ok && r.close);
       if (ok && r.phoneActions && r.phoneActions.length) S.notice = 'Background listening is for the phone: turn it on from the Crundi app.';
       var say = ok ? S.reply : S.notice;
-      api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { S.settings = s; refreshData(); } });
-      if (say) speak(say); else afterSpeech();
+      api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
+      // The owner spoke again while Crundi thought: that goes now, the answer stays on screen unsaid.
+      if (S.pending) { var p = S.pending; S.pending = ''; S.closing = false; stopCue(); ask(p, true); render(); return; }
+      if (say) speak(say); else { stopCue(); afterSpeech(); }
       render();
     }).catch(function (e) { if (!S) return; S.notice = e.message || 'Could not reach the server'; afterSpeech(); render(); });
   }
@@ -309,15 +356,25 @@
     if (S.reports.length && !S.pending) { var q = S.reports.shift(); S.speaking = false; S.saidUntil = Date.now(); tell(q.speak, q.show); return; }
     S.speaking = false; S.saidUntil = Date.now();
     S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
-    setTimeout(function () { if (S && (S.phase === 'listen' || S.phase === 'think')) { S.streaming = true; try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ } } }, PAUSE_AFTER_SPEECH_MS);
+    if (S.live) said();
+    else setTimeout(function () { if (S && (S.phase === 'listen' || S.phase === 'think')) { S.streaming = true; try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ } } }, PAUSE_AFTER_SPEECH_MS);
     if (S.pending) { var p = S.pending; S.pending = ''; ask(p); }
     render();
   }
 
   // ─── speaking ───
+  function wsSend(m) { try { if (S && S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(m)); } catch (e) { /* gone */ } }
+  /** Crundi stopped talking (live stream): the server keeps dropping its words a moment longer. */
+  function said() { wsSend({ type: 'said' }); }
+
   function speak(text) {
-    S.phase = 'speak'; S.speaking = true; S.lastSaid = text; S.streaming = false; S.loudFor = 0; S.spokeFor = 0;
-    try { S.ws && S.ws.send(JSON.stringify({ type: 'pause' })); } catch (e) { /* gone */ }
+    S.phase = 'speak'; S.speaking = true; S.lastSaid = text; S.loudFor = 0; S.spokeFor = 0; S.hintAt = 0;
+    // The stream stays on (the server drops Crundi's own words), so the owner can talk over it;
+    // an older server is paused instead, as before.
+    if (S.live) wsSend({ type: 'saying', text: text });
+    else { S.streaming = false; wsSend({ type: 'pause' }); }
+    // A cue nearly done is let finish; otherwise the answer takes over now.
+    if (!S.cue || !S.cue.node || cueLeft() > CUE_FINISH_MS) stopCue();
     var voice = S.settings && S.settings.ttsVoice;
     if (voice) streamSpeech(text).catch(function () { browserSpeech(text); });
     else browserSpeech(text);
@@ -328,7 +385,7 @@
     var ctx = S.ctx || (S.ctx = new (window.AudioContext || window.webkitAudioContext)());
     var an = ctx.createAnalyser(); an.fftSize = 512; an.connect(ctx.destination);
     S.outAnalyser = an;
-    var at = ctx.currentTime + 0.05, rate = 24000, carry = null, any = false;
+    var at = Math.max(ctx.currentTime + 0.05, S.cue && S.cue.ends ? S.cue.ends : 0), rate = 24000, carry = null, any = false;
     return S.opts.apiFetch('/api/voice/speak?stream=1', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'audio/L16' }, body: JSON.stringify({ text: text }) }).then(function (res) {
       if (!res.ok || !res.body || !/L16/i.test(res.headers.get('Content-Type') || '')) throw new Error('no stream');
       var reader = res.body.getReader();
@@ -362,7 +419,83 @@
     u.rate = (S && S.settings && S.settings.speechRate) || 1;   // the talking speed, as Deepgram's
     u.onboundary = function () { if (S) S.voiceBump = 0.6 + Math.random() * 0.35; };
     u.onend = function () { if (S && S.speaking) afterSpeech(); };
+    stopCue();
     speechSynthesis.cancel(); speechSynthesis.speak(u);
+  }
+
+  /** The browser's own voice for [text] (British where it has one). */
+  function deviceUtterance(text) {
+    var u = new SpeechSynthesisUtterance(text);
+    var vs = speechSynthesis.getVoices();
+    u.voice = vs.find(function (v) { return /en-GB/i.test(v.lang) && /male|daniel|george|arthur|ryan/i.test(v.name); }) || vs.find(function (v) { return /en-GB/i.test(v.lang); }) || null;
+    u.lang = 'en-GB';
+    u.rate = (S && S.settings && S.settings.speechRate) || 1;
+    return u;
+  }
+
+  // ─── the "one moment, Sir" cue ───
+  /**
+   * The cues for the voice in use: the server's clips (decoded now, so one
+   * plays with no network wait) or, with the browser's own voice, the phrases
+   * to say. An older server has no list: the browser's voice says ours, a
+   * Deepgram voice plays none (it would not match).
+   */
+  function loadCues() {
+    if (!S) return;
+    var s = S, gen = s.cueGen = (s.cueGen || 0) + 1;
+    var deviceVoice = !(s.settings && s.settings.ttsVoice) || (s.settings && s.settings.deepgramLimitReached);
+    api('/api/voice/cues').then(function (r) {
+      if (S !== s || s.cueGen !== gen) return;
+      if (!r || r.ok === false || !Array.isArray(r.cues)) { s.cueDevice = deviceVoice; s.cues = deviceVoice ? CUE_TEXTS.map(function (t) { return { text: t }; }) : []; return; }
+      if (r.device) { s.cueDevice = true; s.cues = r.cues.map(function (c) { return { text: c.text }; }); return; }
+      s.cueDevice = false; s.cues = [];
+      r.cues.filter(function (c) { return c.url; }).forEach(function (c) {
+        s.opts.apiFetch(c.url).then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status); return res.arrayBuffer(); })
+          .then(function (ab) { return new Promise(function (ok, no) { s.ctx.decodeAudioData(ab, ok, no); }); })
+          .then(function (buf) { if (S === s && s.cueGen === gen) s.cues.push({ text: c.text, buf: buf }); })
+          .catch(function () { /* that one is left out */ });
+      });
+      // Made for the first time just now: ask again in a while.
+      if (r.cues.some(function (c) { return !c.url; })) setTimeout(function () { if (S === s && s.cueGen === gen) loadCues(); }, 20000);
+    }).catch(function () { /* no cues */ });
+  }
+
+  function playCue() {
+    if (!S || !S.cues.length) return;
+    var i = pickCue(S.cues.length, S.cueLast, Math.random), c = S.cues[i];
+    if (!c) return;
+    S.cueLast = i;
+    stopCue();
+    var s = S, cue = { text: c.text, ends: 0 };
+    var done = function () { if (S === s && s.cue === cue) { s.cue = null; if (s.live && !s.speaking) said(); } };
+    if (c.buf && s.ctx) {
+      var node = s.ctx.createBufferSource(); node.buffer = c.buf; node.connect(s.ctx.destination);
+      cue.node = node; cue.ends = s.ctx.currentTime + 0.01 + c.buf.duration;
+      node.onended = done;
+      node.start(s.ctx.currentTime + 0.01);
+    } else if (s.cueDevice && window.speechSynthesis) {
+      var u = deviceUtterance(c.text);
+      u.onend = done; u.onerror = done;
+      cue.utter = u;
+      speechSynthesis.cancel(); speechSynthesis.speak(u);
+    } else return;
+    s.cue = cue;
+    // Its own words coming back are not the owner's.
+    s.lastSaid = c.text; s.saidUntil = Date.now() + (c.buf ? c.buf.duration * 1000 : 1500);
+    if (s.live) wsSend({ type: 'saying', text: c.text });
+  }
+
+  /** How long the cue has still to play, ms (0 when none, or the browser's voice: unknown). */
+  function cueLeft() { return S && S.cue && S.cue.node && S.ctx ? Math.max(0, (S.cue.ends - S.ctx.currentTime) * 1000) : 0; }
+
+  function stopCue(s) {
+    s = s || S;
+    if (!s || !s.cue) return;
+    var c = s.cue; s.cue = null;
+    try { if (c.node) c.node.stop(); } catch (e) { /* done */ }
+    try { if (c.utter && window.speechSynthesis) speechSynthesis.cancel(); } catch (e) { /* none */ }
+    // Cut short while thinking: the server may stop dropping its words.
+    if (s.live && !s.speaking) { try { if (s.ws && s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: 'said' })); } catch (e) { /* gone */ } }
   }
 
   function stopSpeaking(s) {
@@ -370,6 +503,7 @@
     (s.nodes || []).forEach(function (n) { try { n.stop(); } catch (e) { /* done */ } }); s.nodes = [];
     s.outAnalyser = null;
     try { window.speechSynthesis && speechSynthesis.cancel(); } catch (e) { /* none */ }
+    stopCue(s);
     s.speaking = false;
   }
 
@@ -380,10 +514,15 @@
   }
 
   function bargeIn() {
-    stopSpeaking(S);
-    S.saidUntil = Date.now(); S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now(); S.streaming = true;
-    try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ }
+    cutIn();
     render();
+  }
+
+  /** Crundi stops talking now and listens: the owner talked over it (or tapped). */
+  function cutIn() {
+    stopSpeaking(S);
+    S.saidUntil = Date.now(); S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now(); S.streaming = true; S.hintAt = 0;
+    if (S.live) said(); else wsSend({ type: 'resume' });
   }
 
   /** The same echo-aware rule as the phone's BargeInDetector. */
@@ -396,7 +535,10 @@
     var gate = S.outAnalyser ? Math.max(0.03, S.noise * 3.2, S.echo * peak * 2.2 + 0.04) : Math.max(0.45, S.noise * 3.2);
     if (S.spokeFor <= 700) { S.loudFor = 0; return; }
     S.loudFor = level >= gate ? S.loudFor + ms : 0;
-    if (S.loudFor >= 400) bargeIn();
+    if (S.loudFor < 400) return;
+    // With the stream on, a voice that loud only lowers the bar for his words
+    // (a cough or a door is not an interruption); an older server has only this.
+    if (S.live) { S.hintAt = Date.now(); S.loudFor = 0; } else bargeIn();
   }
 
   function tick() {
@@ -664,5 +806,5 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
 })();

@@ -58,7 +58,8 @@ class VoiceApiTest {
     }
 
     @Test fun theListenStreamsMessagesAreRead() {
-        assertEquals(ListenEvent.Ready, ListenEvent.parse("""{"type":"ready"}"""))
+        assertEquals(ListenEvent.Ready(), ListenEvent.parse("""{"type":"ready"}"""))
+        assertEquals(ListenEvent.Ready(echoFilter = true), ListenEvent.parse("""{"type":"ready","echoFilter":true}"""))
         assertEquals(ListenEvent.Interim("add the"), ListenEvent.parse("""{"type":"interim","text":"add the"}"""))
         assertEquals(ListenEvent.Utterance("Add a kanban task."), ListenEvent.parse("""{"type":"utterance","text":"Add a kanban task."}"""))
         assertEquals(ListenEvent.Failed("No Deepgram key is set."), ListenEvent.parse("""{"type":"error","error":"No Deepgram key is set."}"""))

@@ -79,7 +79,7 @@ How you answer:
 - Use the tools to look things up rather than guessing. Call several at once when they're independent.
 
 What you can and cannot do:
-- You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals.
+- You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals, and widgets: view_widget shows you one as it looks on a desktop and a phone, so you can say how it looks and whether it works.
 - You watch the chats you send messages to or start, and any the owner asks you to follow (watch_chat). When one finishes or waits on the owner you get a [Report for the owner…] message: say what happened, briefly, as news ("Sir, the API chat has finished: the tests pass."). It is not something the owner said.
 - You can close yourself: when the owner is done ("close", "that's all", "goodbye"), call close_voice and reply with nothing at all: an empty reply closes the screen silently. Say a brief goodbye only when you are actually in a conversation with the owner and a word back is natural.
 - Silence is an answer. When what you hear needs nothing from you (the owner talking to someone else, thinking aloud, a remark that wants no reply, background speech), reply with nothing at all: nothing is spoken and the screen keeps listening.
@@ -139,12 +139,19 @@ export function cleanHistory(history) {
  * Run one of Cru's tools (either brain). What an action reports back that the
  * client must act on (a question awaiting the owner's yes, a locked phone, a
  * phone action, closing) is collected in `signals` for the reply.
- * @returns {Promise<{content:string, isError?:boolean}>}
+ * @returns {Promise<{content:string|Array, isError?:boolean}>}  content: text, or the API's text and image blocks
  */
 export async function runVoiceTool(t, name, input, signals) {
   if (!t) return { isError: true, content: `No tool called ${name}` };
   try {
     const out = await t.run(input || {});
+    // Text and pictures (view_widget): MCP-style blocks become the API's own.
+    if (out && typeof out === 'object' && Array.isArray(out.content)) {
+      const blocks = out.content.map((b) => (b && b.type === 'image' && b.data
+        ? { type: 'image', source: { type: 'base64', media_type: b.mimeType || 'image/png', data: b.data } }
+        : { type: 'text', text: String((b && b.text) || '').slice(0, MAX_RESULT_CHARS) || ' ' })).filter((b) => b.type === 'image' || b.text.trim());
+      return { content: blocks.length ? blocks : '(nothing)' };
+    }
     if (out && typeof out === 'object' && signals) {
       if (out.needsConfirmation && out.id) signals.pending.push({ id: out.id, question: out.ask || '' });
       if (out.needsUnlock) signals.needsUnlock = true;

@@ -140,16 +140,20 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'start_chat',
-      description: 'Start a new Claude Code chat in a project, with the project\'s default model and mode unless the owner said otherwise, optionally with a first message (D15 rules apply to it, as send_to_chat).',
-      input_schema: obj({ project: str('Project alias'), title: str('Optional title'), message: str('Optional first message'), intent: str('explicit or inferred, for the first message', { enum: ['explicit', 'inferred'] }), model: str('Optional model, only if the owner named one') }, ['project']),
+      description: 'Start a new Claude Code chat in a project, with the project\'s default model unless the owner said otherwise, optionally with a first message (D15 rules apply to it, as send_to_chat). mode "bypass" starts it in bypass permissions mode, so it gets on with the job without stopping to ask for permission (Bash, edits); use it when the owner plainly asked for the task (intent explicit), and "default" (the project\'s own mode) otherwise or when they ask to approve its steps. Bypass with an inferred message is read back first.',
+      input_schema: obj({ project: str('Project alias'), title: str('Optional title'), message: str('Optional first message'), intent: str('explicit or inferred, for the first message', { enum: ['explicit', 'inferred'] }), model: str('Optional model, only if the owner named one'), mode: str('bypass (no permission prompts) or default (the project\'s mode)', { enum: ['bypass', 'default'] }) }, ['project']),
       check: (i) => project(i.project),
-      confirm: (i) => i.message && i.intent !== 'explicit' ? `Start a chat in ${project(i.project).alias} with ${readBack(i.message)}?` : null,
+      confirm: (i) => {
+        const where = project(i.project).alias;
+        if (i.mode === 'bypass' && i.intent !== 'explicit') return `Start a chat in ${where} in bypass mode${i.message ? `, with ${readBack(i.message)}` : ''}? It won't stop to ask for permission.`;
+        return i.message && i.intent !== 'explicit' ? `Start a chat in ${where} with ${readBack(i.message)}?` : null;
+      },
       run: async (i) => {
         const p = project(i.project);
-        const r = await deps.createChat(p.alias, { title: i.title || '', model: i.model || '' });
+        const r = await deps.createChat(p.alias, { title: i.title || '', model: i.model || '', ...(i.mode === 'bypass' ? { skipPermissions: true } : {}) });
         if (!r || !r.ok) return r || { ok: false, error: 'The chat could not be started' };
         if (i.message) { deps.sendMessage(r.id, String(i.message)); deps.watch?.(r.id, i.title || '', p.alias, { auto: true }); }
-        return { ok: true, started: true, chat: r.id, project: p.alias, sent: !!i.message, watching: !!i.message };
+        return { ok: true, started: true, chat: r.id, project: p.alias, sent: !!i.message, watching: !!i.message, mode: i.mode === 'bypass' ? 'bypass permissions' : 'the project default' };
       },
     },
     {

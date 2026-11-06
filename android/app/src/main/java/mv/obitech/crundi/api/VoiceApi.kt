@@ -88,6 +88,28 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     suspend fun searchMemory(q: String): List<MemoryHit> =
         rpc.read<MemorySearch>(rpc.get("/api/voice/memory/search", mapOf("q" to q)), null).results
 
+    /**
+     * The "one moment, Sir" cues for the voice in use (capability "voice-cues").
+     * Null from an older server (404): play none, or say [Cues.FALLBACK] with the phone's voice.
+     */
+    suspend fun cues(): CueList? {
+        val r = transport.exchange(ApiRequest("GET", "/api/voice/cues"))
+        if (r.status == 404) return null
+        if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(CueList.serializer(), CrundiJson.parseToJsonElement(r.text))
+    }
+
+    /** One cue's mp3, from [CueItem.url] (a path with its query). */
+    suspend fun cueClip(url: String): ByteArray {
+        val path = url.substringBefore('?')
+        val query = url.substringAfter('?', "").split('&').filter { it.contains('=') }.associate { kv ->
+            java.net.URLDecoder.decode(kv.substringBefore('='), "UTF-8") to java.net.URLDecoder.decode(kv.substringAfter('='), "UTF-8")
+        }
+        val r = transport.exchange(ApiRequest("GET", path, query = query, headers = mapOf("Accept" to "audio/mpeg")))
+        if (r.status in 200..299 && r.bytes != null && r.bytes.isNotEmpty()) return r.bytes
+        throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+    }
+
     /** [text] spoken in [voice] (or the chosen one): mp3 bytes. */
     suspend fun speak(text: String, voice: String = ""): ByteArray {
         val r = transport.exchange(ApiRequest("POST", "/api/voice/speak", json = Uploads.toJson(mapOf("text" to text, "voice" to voice.ifEmpty { null })), headers = mapOf("Accept" to "audio/mpeg")))
@@ -124,6 +146,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val MEMORY = "voice-memory"
         /** A turn's reply may carry [VoiceReply.phoneActions] (Phase 6). */
         const val PHONE_ACTIONS = "voice-phone-actions"
+        /** GET /api/voice/cues and its clips. */
+        const val CUES = "voice-cues"
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
         const val STREAM_RATE = 24000
         /** The keys [saveKey] may set. */
@@ -143,6 +167,13 @@ data class AccountUsage(
     val needsKey: Boolean = false,
     val error: String = "",
 )
+
+@Serializable
+data class CueItem(val id: String = "", val text: String = "", val url: String? = null)
+
+/** GET /api/voice/cues: [device] means say the texts with the phone's own voice. */
+@Serializable
+data class CueList(val ok: Boolean = false, val voice: String = "", val rate: String = "", val device: Boolean = false, val cues: List<CueItem> = emptyList())
 
 @Serializable
 data class VoiceModel(val id: String = "", val label: String = "")
@@ -275,7 +306,8 @@ data class VoiceList(val voices: List<DeepgramVoice> = emptyList(), val fromDeep
 
 /** What /api/voice/listen sends (src/voice/stream.js). */
 sealed interface ListenEvent {
-    data object Ready : ListenEvent
+    /** [echoFilter]: the server drops Cru's own words while told what it is saying (capability "voice-barge-in"), so the stream may stay on while Cru speaks. */
+    data class Ready(val echoFilter: Boolean = false) : ListenEvent
     /** The owner started speaking. */
     data object Speech : ListenEvent
     /** Words so far; may still change. */
@@ -292,7 +324,7 @@ sealed interface ListenEvent {
             val o = runCatching { CrundiJson.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return null
             val t = (o["text"] as? JsonPrimitive)?.contentOrNull.orEmpty()
             return when ((o["type"] as? JsonPrimitive)?.contentOrNull) {
-                "ready" -> Ready
+                "ready" -> Ready((o["echoFilter"] as? JsonPrimitive)?.contentOrNull == "true")
                 "speech" -> Speech
                 "interim" -> Interim(t)
                 "utterance" -> if (t.isBlank()) null else Utterance(t)
