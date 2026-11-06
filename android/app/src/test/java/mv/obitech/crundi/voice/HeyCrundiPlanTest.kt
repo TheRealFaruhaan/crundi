@@ -80,7 +80,10 @@ class HeyCrundiPlanTest {
     }
 
     @Test fun oneMicrophoneOwnerAtATime() {
-        val none = Situation()
+        // Untrained, nothing ever listens: "Hey Cru" is set up from the owner's voice first.
+        assertEquals(Listener.None, HeyCrundiPlan.listener(Situation(backgroundOn = true, inAppOn = true, appInFront = true, screenWaiting = true)))
+        assertEquals(Listener.None, HeyCrundiPlan.listener(Situation(trained = true, backgroundOn = true, training = true)))
+        val none = Situation(trained = true)
         assertEquals(Listener.None, HeyCrundiPlan.listener(none))
         assertEquals(Listener.None, HeyCrundiPlan.listener(none.copy(inAppOn = true))) // app not in front
         assertEquals(Listener.InApp, HeyCrundiPlan.listener(none.copy(inAppOn = true, appInFront = true)))

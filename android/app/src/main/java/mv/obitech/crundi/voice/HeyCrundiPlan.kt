@@ -104,12 +104,16 @@ object HeyCrundiPlan {
         /** Just heard: waiting for the voice screen to open, so the microphone is free for it. */
         val handingOver: Boolean = false,
         val micAllowed: Boolean = true,
+        /** The owner has trained "Hey Cru" (a voice profile exists). Untrained, nothing listens. */
+        val trained: Boolean = false,
+        /** The training screen is recording. */
+        val training: Boolean = false,
         /** The keyword spotter could load on this phone. */
         val engineReady: Boolean = true,
     )
 
     fun listener(s: Situation): Listener = when {
-        !s.micAllowed || !s.engineReady || s.sessionOpen || s.handingOver -> Listener.None
+        !s.micAllowed || !s.engineReady || !s.trained || s.training || s.sessionOpen || s.handingOver -> Listener.None
         s.screenWaiting -> Listener.Screen
         s.backgroundOn -> Listener.Background
         s.inAppOn && s.appInFront -> Listener.InApp

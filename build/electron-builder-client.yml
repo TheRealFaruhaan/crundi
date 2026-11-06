@@ -51,7 +51,7 @@ files:
   - app/main.js
   - app/preload.js
   - app/index.html
-  # "Hey Crundi" while charging (D40); its engine and model are downloaded on
+  # "Hey Cru" while plugged in (D40); its engine and model are downloaded on
   # first use, not shipped. Unpacked so its utility process loads from disk.
   - app/voice-wake/**/*
   - "!app/voice-wake/test-*.mjs"

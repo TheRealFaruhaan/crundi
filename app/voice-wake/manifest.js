@@ -1,5 +1,5 @@
 /**
- * "Hey Crundi" on the PC (D40): what the keyword spotter is made of, pinned.
+ * "Hey Cru" on the PC (D40): what the keyword spotter is made of, pinned.
  *
  * Nothing here is bundled into the installer. The first time the person turns
  * the option on, the two archives are fetched into
@@ -21,6 +21,8 @@
  * 15.4 MB + 5.3 MB. Small enough to bundle, but the wasm alone would add
  * 15 MB to every installer for an option that is off by default.
  */
+
+import { KEYWORD } from './enroll.js';
 
 export const ENGINE = {
   id: 'sherpa-onnx-2.0.1',
@@ -58,17 +60,17 @@ export const MODEL = {
 };
 
 /**
- * The wake words, as the model's BPE tokens. Made with
+ * The wake word, as the model's BPE tokens. Made with
  *   sentencepiece.SentencePieceProcessor(model_file='bpe.model')
- *     .encode('HEY CRUNDI', out_type=str)
- * which gives ▁HE Y ▁C RU N DI (and ▁C RU N DI for CRUNDI). Each line can
- * carry its own boost (:score) and trigger threshold (#threshold); the
- * defaults are in TUNING. The text after @ is what the spotter reports.
+ *     .encode('HEY CRU', out_type=str)
+ * which gives ▁HE Y ▁C RU. The text after @ is what the spotter reports.
+ * There is no bare "Cru": said alone it is "crew", far too common a word.
+ *
+ * This is only the default (test-spotter.mjs). The app listens with the
+ * owner's trained profile (enroll.js): its keyword (enroll.js KEYWORD, the
+ * same line), boost and trigger threshold replace these and TUNING's.
  */
-export const KEYWORDS = [
-  '▁HE Y ▁C RU N DI @HEY_CRUNDI',
-  '▁C RU N DI @CRUNDI',
-].join('\n');
+export const KEYWORDS = KEYWORD;
 
 export const TUNING = {
   keywordsScore: 1.5,       // boost for the keyword paths while decoding

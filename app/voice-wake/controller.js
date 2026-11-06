@@ -1,5 +1,5 @@
 /**
- * "Hey Crundi" on the PC (D40), the main-process side.
+ * "Hey Cru" on the PC (D40), the main-process side.
  *
  * When the setting is on and the PC is on charge, a hidden window holds the
  * microphone (listener.html) and streams 16 kHz PCM over IPC to a utility
@@ -9,24 +9,51 @@
  *
  * It listens only when all of these hold:
  *   - the setting is on (off by default, kept in client.json);
+ *   - "Hey Cru" has been trained from the owner's voice (enroll.js): the
+ *     profile is <userData>/voice-wake/profile.json, and without it an "on"
+ *     setting counts as off;
+ *   - no training is going on (the page has the microphone then);
  *   - the PC is on AC power (powerMonitor; checked again every minute too,
  *     since not every platform sends on-ac / on-battery);
  *   - the voice screen is not open in the main window (one microphone owner
  *     at a time; the page is asked every second whether it is open);
  *   - the screen is not locked and the PC is not asleep.
  *
- * On "Hey Crundi" the main window is shown and brought to the front, and the
- * voice screen is opened in the page.
+ * On "Hey Cru" the main window is shown and brought to the front, and the
+ * voice screen is opened in the page. A hit whose voice does not match the
+ * profile is logged and ignored (worker.js).
+ *
+ * Training: the page records the five samples itself (it asks trainBegin()
+ * first, which lets go of the microphone here), checks each with check(),
+ * then hands all five to train(), which runs enroll.js train() in a
+ * utility process of its own and saves the profile.
  */
 
 import { join } from 'path';
 import { pathToFileURL } from 'url';
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, renameSync, unlinkSync, existsSync } from 'fs';
 import { ensureInstalled, isInstalled } from './install.js';
+import { validProfile, checkSample, SAMPLES_NEEDED, RATE } from './enroll.js';
 
 const POLL_MS = 1000;
 const POWER_RECHECK_MS = 60 * 1000;
 const RESUME_DELAY_MS = 800;
 const RETRY_MS = 15 * 1000;
+// Training gives the microphone back by itself if the page goes quiet
+// (closed, reloaded) without saying it is done.
+const TRAIN_IDLE_MS = 3 * 60 * 1000;
+const TRAIN_TIMEOUT_MS = 2 * 60 * 1000;
+const MAX_SAMPLE_SECONDS = 10;
+
+const LABELS = {
+  installing: 'Downloading the wake word model…',
+  'on-battery': 'Paused: on battery',
+  'voice-open': 'Paused: voice screen open',
+  paused: 'Paused: screen locked',
+  training: 'Paused while training',
+  starting: 'Starting…',
+  listening: 'Listening',
+};
 
 // Asks the page to open the voice screen. Prefers a page function made for
 // this, then the top-bar mic button (its click opens the screen and keeps it
@@ -75,6 +102,14 @@ export function createVoiceWake(d) {
   let powerTimer = null;
   let retryTimer = null;
   let resumeAt = 0;
+  let training = false;         // the page is recording samples
+  let trainTimer = null;
+  let trainingRun = null;       // Promise while train() runs
+
+  const profileFile = join(d.dataDir, 'profile.json');
+  let profile = loadProfile();
+  // Listening needs both the setting and a trained profile.
+  const on = () => enabled && !!profile;
 
   const listenerHtml = join(d.moduleDir, 'listener.html');
   const listenerUrl = pathToFileURL(listenerHtml).href;
@@ -97,9 +132,29 @@ export function createVoiceWake(d) {
     try { return !!powerMonitor.isOnBatteryPower(); } catch { return false; }
   }
 
+  // ─── the owner's profile ───
+  function loadProfile() {
+    try {
+      if (!existsSync(profileFile)) return null;
+      const p = JSON.parse(readFileSync(profileFile, 'utf8'));
+      if (validProfile(p)) return p;
+      log('profile.json is not usable; train again');
+    } catch (err) { log('could not read profile.json: ' + err.message); }
+    return null;
+  }
+  function saveProfile(p) {
+    mkdirSync(d.dataDir, { recursive: true });
+    const tmp = profileFile + '.tmp';
+    // Owner-only: it is a description of the owner's voice.
+    writeFileSync(tmp, JSON.stringify(p), { mode: 0o600 });
+    try { chmodSync(tmp, 0o600); } catch { /* not on this platform */ }
+    renameSync(tmp, profileFile);
+  }
+
   function status() {
     let state;
-    if (!enabled) state = 'off';
+    if (!on()) state = 'off';
+    else if (training) state = 'training';
     else if (installing) state = 'installing';
     else if (installError) state = 'error';
     else if (onBattery) state = 'on-battery';
@@ -108,13 +163,19 @@ export function createVoiceWake(d) {
     else if (micState === 'listening' && childReady) state = 'listening';
     else if (micState === 'error') state = 'error';
     else state = 'starting';
+    const error = installError || (micState === 'error' ? micError : '');
     return {
-      enabled,
+      enabled: on(),
       state,
+      label: state === 'error' ? 'Not listening: ' + String(error || 'error').slice(0, 80) : LABELS[state] || '',
       onBattery,
       installed: safeInstalled(),
-      error: installError || (micState === 'error' ? micError : ''),
+      installing: !!installing,
+      error,
       lastHeard,
+      trained: !!profile,
+      trainedAt: profile ? String(profile.trainedAt || '') : '',
+      training,
     };
   }
   function safeInstalled() { try { return isInstalled(d.dataDir); } catch { return false; } }
@@ -129,13 +190,13 @@ export function createVoiceWake(d) {
     try { d.onStatus && d.onStatus(s); } catch { /* ignore */ }
   }
 
-  const wanted = () => enabled && !onBattery && !locked && !asleep && !voiceOpen && !installing && !installError;
+  const wanted = () => on() && !training && !onBattery && !locked && !asleep && !voiceOpen && !installing && !installError;
 
   // ─── the spotter's process ───
   function startChild() {
     if (child) return;
     childReady = false;
-    child = utilityProcess.fork(join(d.moduleDir, 'worker.js'), [], { serviceName: 'Crundi Hey Crundi', stdio: 'pipe' });
+    child = utilityProcess.fork(join(d.moduleDir, 'worker.js'), [], { serviceName: 'Crundi Hey Cru', stdio: 'pipe' });
     const me = child;
     // The engine reports a bad model or keyword on stderr before it exits.
     const tell = (buf) => String(buf).split('\n').filter(Boolean).forEach((l) => log('spotter: ' + l.slice(0, 300)));
@@ -144,7 +205,8 @@ export function createVoiceWake(d) {
       if (me !== child || !m) return;
       if (m.type === 'ready') { childReady = true; emit(); }
       else if (m.type === 'error') { log('spotter: ' + m.message); }
-      else if (m.type === 'detected') heard(m.keyword);
+      else if (m.type === 'detected') heard(m.keyword, m.score);
+      else if (m.type === 'rejected') log('heard ' + m.keyword + ' but not the trained voice (score ' + m.score + ', limit ' + (profile ? profile.limit : '?') + ')');
     });
     me.on('exit', (code) => {
       if (me !== child) return;
@@ -153,7 +215,7 @@ export function createVoiceWake(d) {
       if (wanted()) scheduleRetry();
       emit();
     });
-    me.postMessage({ type: 'init', dir: d.dataDir });
+    me.postMessage({ type: 'init', dir: d.dataDir, profile });
   }
   function stopChild() {
     const c = child; child = null; childReady = false;
@@ -166,7 +228,7 @@ export function createVoiceWake(d) {
     micState = 'stopped'; micError = '';
     win = new BrowserWindow({
       show: false, width: 200, height: 100, skipTaskbar: true, focusable: false,
-      title: 'Hey Crundi',
+      title: 'Hey Cru',
       webPreferences: {
         preload: join(d.moduleDir, 'listener-preload.cjs'),
         partition: 'crundi-voice-wake',
@@ -249,9 +311,9 @@ export function createVoiceWake(d) {
     emit();
   }
 
-  function heard(keyword) {
+  function heard(keyword, score) {
     lastHeard = { keyword: String(keyword || ''), at: Date.now() };
-    log('heard ' + lastHeard.keyword);
+    log('heard ' + lastHeard.keyword + (score != null ? ' (voice score ' + score + ')' : ''));
     // Hand the microphone over before the voice screen asks for it.
     voiceOpen = true; resumeAt = 0;
     reconcile();
@@ -269,19 +331,96 @@ export function createVoiceWake(d) {
 
   // ─── putting it together ───
   function install() {
-    if (installing || safeInstalled()) return;
+    if (installing || safeInstalled()) return installing || Promise.resolve();
     installError = '';
     const fetchImpl = net && net.fetch ? (u, o) => net.fetch(u, o) : globalThis.fetch;
     installing = ensureInstalled(d.dataDir, { fetch: fetchImpl, log: (m) => { try { d.log(m); } catch { /* ignore */ } } })
       .catch((err) => { installError = String(err && err.message || err); log('install failed: ' + installError); })
       .finally(() => { installing = null; reconcile(); emit(); });
+    const p = installing;
     emit();
+    return p;
+  }
+  /** Install now whatever the setting (training needs the engine). */
+  async function installed() {
+    if (safeInstalled()) return;
+    installError = '';
+    await install();
+    if (!safeInstalled()) throw new Error(installError || 'The wake word model could not be downloaded');
+  }
+
+  // ─── training ───
+  function touchTraining() {
+    if (trainTimer) clearTimeout(trainTimer);
+    trainTimer = training ? setTimeout(() => { log('training left unfinished; listening again'); endTraining(); }, TRAIN_IDLE_MS) : null;
+  }
+  function beginTraining() {
+    if (!training) log('training started');
+    training = true;
+    touchTraining();
+    reconcile();     // lets go of the microphone
+    // Fetch the engine and model while the samples are recorded.
+    if (!safeInstalled() && !installing) install();
+    return status();
+  }
+  function endTraining() {
+    if (training) log('training ended');
+    training = false;
+    touchTraining();
+    reconcile();
+    return status();
+  }
+  function f32(x) {
+    if (x instanceof Float32Array) return x;
+    if (x && (Array.isArray(x) || ArrayBuffer.isView(x))) return new Float32Array(x);
+    return new Float32Array(0);
+  }
+  function runTraining(recordings) {
+    return new Promise((resolve) => {
+      let p;
+      try {
+        p = utilityProcess.fork(join(d.moduleDir, 'worker.js'), [], { serviceName: 'Crundi Hey Cru training', stdio: 'pipe' });
+      } catch (err) { resolve({ ok: false, why: 'Could not start training: ' + err.message, redo: [] }); return; }
+      let done = false;
+      const finish = (r) => {
+        if (done) return;
+        done = true; clearTimeout(t);
+        try { p.kill(); } catch { /* gone */ }
+        resolve(r);
+      };
+      const t = setTimeout(() => finish({ ok: false, why: 'Setting up took too long. Try again.', redo: [] }), TRAIN_TIMEOUT_MS);
+      const tell = (buf) => String(buf).split('\n').filter(Boolean).forEach((l) => log('training: ' + l.slice(0, 300)));
+      try { p.stdout && p.stdout.on('data', tell); p.stderr && p.stderr.on('data', tell); } catch { /* no pipes */ }
+      p.on('message', (m) => {
+        if (m && m.type === 'trained') finish(m.result || { ok: false, why: 'Training gave no answer', redo: [] });
+        else if (m && m.type === 'error') finish({ ok: false, why: 'Training failed: ' + m.message, redo: [] });
+      });
+      p.on('exit', (code) => finish({ ok: false, why: 'Training stopped unexpectedly (' + code + ')', redo: [] }));
+      p.postMessage({ type: 'train', id: 1, dir: d.dataDir, recordings });
+    });
+  }
+  async function trainNow(list) {
+    if (!Array.isArray(list) || list.length !== SAMPLES_NEEDED) return { ok: false, why: 'Needs ' + SAMPLES_NEEDED + ' recordings', redo: [] };
+    const recs = list.map(f32).map((r) => (r.length > RATE * MAX_SAMPLE_SECONDS ? r.subarray(0, RATE * MAX_SAMPLE_SECONDS) : r));
+    try { await installed(); } catch (err) { return { ok: false, why: String(err.message || err), redo: [] }; }
+    const r = await runTraining(recs);
+    if (!r || !r.ok) {
+      log('training: ' + ((r && r.why) || 'failed') + (r && r.redo && r.redo.length ? ' (again: ' + r.redo.map((i) => i + 1).join(', ') + ')' : ''));
+      return { ok: false, why: String((r && r.why) || 'Training failed'), redo: Array.isArray(r && r.redo) ? r.redo : [] };
+    }
+    if (!validProfile(r.profile)) return { ok: false, why: 'Training gave an unusable result', redo: [] };
+    try { saveProfile(r.profile); } catch (err) { return { ok: false, why: 'Could not save the profile: ' + err.message, redo: [] }; }
+    profile = r.profile;
+    log('trained (threshold ' + profile.keywordsThreshold + ', limit ' + profile.limit + ')');
+    if (child) { try { child.postMessage({ type: 'profile', profile }); } catch { /* the exit handler tidies up */ } }
+    reconcile();
+    return { ok: true, trainedAt: String(profile.trainedAt || '') };
   }
 
   function reconcile() {
-    if (enabled && !safeInstalled() && !installing && !installError) { install(); return; }
+    if (on() && !safeInstalled() && !installing && !installError) { install(); return; }
     // Watching for the voice screen matters whenever we might be listening.
-    if (enabled && !onBattery) startPolling(); else stopPolling();
+    if (on() && !onBattery) startPolling(); else stopPolling();
     if (wanted()) {
       startChild();
       startWindow();
@@ -289,7 +428,7 @@ export function createVoiceWake(d) {
       stopWindow();
       // The spotter's process stays warm through a voice screen or a lock;
       // off or on battery, it goes too.
-      if (!enabled || onBattery || installError) stopChild();
+      if (!on() || onBattery || installError) stopChild();
     }
     emit();
   }
@@ -316,16 +455,43 @@ export function createVoiceWake(d) {
 
   return {
     status,
-    get: () => enabled,
+    get: () => on(),
     /** Turn the option on or off; saves it. Returns the status. */
-    set(on) {
-      on = !!on;
-      if (on !== enabled) {
-        if (!d.saveEnabled(on)) return { ...status(), error: 'Could not save the setting' };
-        enabled = on;
-        if (on) installError = '';   // turning it on again retries a failed download
-        log(on ? 'turned on' : 'turned off');
+    set(want) {
+      want = !!want;
+      if (want && !profile) return { ...status(), error: 'Train Hey Cru first' };
+      if (want !== enabled) {
+        if (!d.saveEnabled(want)) return { ...status(), error: 'Could not save the setting' };
+        enabled = want;
+        if (want) installError = '';   // turning it on again retries a failed download
+        log(want ? 'turned on' : 'turned off');
       }
+      reconcile();
+      return status();
+    },
+    /** One recording, checked as it is made: { ok, why, ms }. */
+    check(samples) {
+      if (training) touchTraining();
+      const r = checkSample(f32(samples));
+      return { ok: !!r.ok, why: r.why || '', ms: r.clip ? Math.round(r.clip.length / RATE * 1000) : 0 };
+    },
+    /** The page is about to record: let go of the microphone. Returns the status. */
+    trainBegin: () => beginTraining(),
+    /** The page is done recording (trained, cancelled or closed). Returns the status. */
+    trainEnd: () => endTraining(),
+    /** Five recordings -> { ok: true, trainedAt } | { ok: false, why, redo }. Saves the profile. */
+    train(recordings) {
+      if (trainingRun) return Promise.resolve({ ok: false, why: 'Already setting up', redo: [] });
+      if (training) touchTraining();
+      trainingRun = trainNow(recordings).finally(() => { trainingRun = null; if (training) touchTraining(); });
+      return trainingRun;
+    },
+    /** Delete the profile and turn listening off. Returns the status. */
+    forget() {
+      try { unlinkSync(profileFile); } catch (err) { if (err.code !== 'ENOENT') return { ...status(), error: 'Could not delete the profile: ' + err.message }; }
+      profile = null;
+      if (enabled && d.saveEnabled(false)) enabled = false;
+      log('profile forgotten');
       reconcile();
       return status();
     },
@@ -333,6 +499,7 @@ export function createVoiceWake(d) {
       stopPolling();
       if (powerTimer) clearInterval(powerTimer);
       if (retryTimer) clearTimeout(retryTimer);
+      if (trainTimer) clearTimeout(trainTimer);
       stopWindow();
       stopChild();
     },

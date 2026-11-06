@@ -1,4 +1,4 @@
-// Check the "Hey Crundi" spotter on recorded speech, in plain Node:
+// Check the "Hey Cru" spotter on recorded speech, in plain Node:
 //   node app/voice-wake/test-spotter.mjs <installDir> <file.wav>...
 // Installs the engine and model into <installDir> first (the same download
 // and checks the app does), then reads each 16 kHz mono 16-bit WAV in 100 ms

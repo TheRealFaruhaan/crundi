@@ -1,4 +1,4 @@
-/* AudioWorklet for the "Hey Crundi" window: gathers the (already 16 kHz,
+/* AudioWorklet for the "Hey Cru" window: gathers the (already 16 kHz,
  * mono) microphone into 100 ms pieces and posts each to the page. */
 class CrundiWakeTap extends AudioWorkletProcessor {
   constructor() {

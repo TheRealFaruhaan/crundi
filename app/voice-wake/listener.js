@@ -1,4 +1,4 @@
-/* The hidden "Hey Crundi" window's page (see listener.html).
+/* The hidden "Hey Cru" window's page (see listener.html).
  *
  * Opens the microphone, has Chromium resample it to 16 kHz mono (an
  * AudioContext at 16000 Hz), taps it with an AudioWorklet in 100 ms pieces

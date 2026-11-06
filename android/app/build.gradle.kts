@@ -173,8 +173,9 @@ val exportScreens = tasks.register<Copy>("exportScreens") {
 // build/wakeword. Only the int8 model (about 5 MB) and the library for
 // -PwakeWordAbis (default arm64-v8a, about 24 MB) go into the app.
 // The keywords (src/main/assets/kws/keywords.txt) are the model's BPE tokens
-// for "HEY CRUNDI" and "CRUNDI", made with sherpa-onnx's text2token:
-//   python -c "import sherpa_onnx; print(sherpa_onnx.text2token(['HEY CRUNDI'],
+// for "HEY CRU" (the stream made from the owner's profile carries its own
+// line; voice/WakeProfile.kt), made with sherpa-onnx's text2token:
+//   python -c "import sherpa_onnx; print(sherpa_onnx.text2token(['HEY CRU'],
 //     tokens='tokens.txt', tokens_type='bpe', bpe_model='bpe.model'))"
 abstract class FetchWakeWord : DefaultTask() {
     @get:Input abstract val engineUrl: Property<String>
@@ -241,7 +242,7 @@ abstract class FetchWakeWord : DefaultTask() {
             into(assetsDir)
         }
         for (abi in abis.get()) if (!jniDir.get().file("$abi/libsherpa-onnx-jni.so").asFile.isFile) throw GradleException("Hey Crundi: no library for $abi in the engine")
-        for (n in names.values) if (!assetsDir.get().file("kws/$n").asFile.isFile) throw GradleException("Hey Crundi: the model has no $n")
+        for (n in names.values) if (!assetsDir.get().file("kws/$n").asFile.isFile) throw GradleException("Hey Cru: the model has no $n")
     }
 }
 

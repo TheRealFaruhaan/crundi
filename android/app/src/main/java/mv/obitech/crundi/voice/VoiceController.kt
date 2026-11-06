@@ -212,8 +212,9 @@ class VoiceController(
                     else -> e.message
                 })
             } catch (e: Exception) { VoiceReply(ok = false, error = e.message ?: "Something went wrong") }
-            if (r.ok) phoneActions(r.phoneActions)
             dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock))
+            // After the reply, so a note about it (untrained) isn't cleared by the reply's own.
+            if (r.ok) phoneActions(r.phoneActions)
             // The spend moved: refresh the arcs.
             runCatching { voice.settings() }.getOrNull()?.let { s -> _ui.update { it.copy(spend = s) } }
         }
@@ -227,7 +228,9 @@ class VoiceController(
      */
     private fun phoneActions(actions: List<mv.obitech.crundi.api.PhoneAction>) {
         for (a in actions) when (val c = HeyCrundiPlan.command(a.type, a.minutes)) {
-            is HeyCrundiPlan.Command.Start -> HeyCrundiService.start(ctx, c.minutes)
+            is HeyCrundiPlan.Command.Start ->
+                if (WakeProfiles.trained(ctx)) HeyCrundiService.start(ctx, c.minutes)
+                else _ui.update { it.copy(state = it.state.copy(notice = "Hey Cru isn't trained yet: train it in Voice assistant settings first.")) }
             HeyCrundiPlan.Command.Stop -> HeyCrundiService.stop(ctx)
             null -> Log.i(TAG, "phone action not known here: ${a.type}")
         }

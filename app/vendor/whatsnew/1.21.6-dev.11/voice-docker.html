@@ -1,0 +1,15 @@
+<div class="wna a-vdk">
+  <div class="row r1"><span class="d"></span>postgres<span class="m">2.3% · 18 MB</span></div>
+  <div class="row r2"><span class="d"></span>relay<span class="m">0.4% · 575 MB</span></div>
+  <div class="row r3"><span class="d off"></span>old-build<span class="m">exited</span></div>
+  <div class="say">"What's running in Docker?"</div>
+  <style>
+    .a-vdk{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-vdk .row{position:absolute;left:190px;width:260px;padding:10px 14px;border-radius:8px;background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:10px;opacity:0;animation:avdk 9s ease infinite}
+    .a-vdk .r1{top:60px}.a-vdk .r2{top:110px;animation-delay:.4s}.a-vdk .r3{top:160px;animation-delay:.8s}
+    .a-vdk .d{width:8px;height:8px;border-radius:50%;background:var(--green)}.a-vdk .d.off{background:var(--text-muted)}
+    .a-vdk .m{margin-left:auto;font:12px var(--mono);color:var(--text-secondary)}
+    .a-vdk .say{position:absolute;left:0;right:0;top:250px;text-align:center;font-size:18px;color:var(--text-secondary)}
+    @keyframes avdk{0%,15%{opacity:0;transform:translateY(6px)}25%,85%{opacity:1;transform:none}95%,100%{opacity:0}}
+  </style>
+</div>

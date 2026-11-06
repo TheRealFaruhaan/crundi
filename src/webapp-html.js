@@ -5423,14 +5423,204 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     // The PC's wake word opens voice through this (app/voice-wake/controller.js).
     window.crundiOpenVoice = () => { if (window.CrundiVoice && !window.CrundiVoice.isOpen) openVoice(); };
+    // The PC's wake word (app/voice-wake/controller.js). A client that can
+    // train it is told apart by its training calls; an older one has only
+    // get/set/status and listens for "Hey Crundi" untrained.
+    function vwCan() {
+      const v = window.api && window.api.voiceWake;
+      return !!(v && v.train && v.trainBegin && v.trainEnd && v.check && v.forget);
+    }
+    let vwStyles = { btn: '', subtle: '', hint: '', label: '' };
+    let vwLast = null;            // the client’s last status
+    let vwSubscribed = false;
     async function showVoiceWake() {
       const box = document.getElementById('voice-wake-on'), st = document.getElementById('voice-wake-status');
       if (!box || !window.api || !window.api.voiceWake) return;
       try {
-        box.checked = !!(await window.api.voiceWake.get());
+        if (!vwCan()) box.checked = !!(await window.api.voiceWake.get());
         const s = await window.api.voiceWake.status();
-        if (st) st.textContent = typeof s === 'string' ? s : (s && (s.label || s.state)) || '';
+        if (!vwCan() && st) st.textContent = typeof s === 'string' ? s : (s && (s.label || s.state)) || '';
+        if (vwCan()) vwApply(s);
+        if (!vwSubscribed && vwCan() && window.api.voiceWake.onStatus) {
+          vwSubscribed = true;
+          window.api.voiceWake.onStatus((x) => vwApply(x));
+        }
       } catch { /* an older client */ }
+    }
+    function vwApply(s) {
+      if (s && typeof s === 'object') vwLast = s;
+      s = vwLast || {};
+      const box = document.getElementById('voice-wake-on'), st = document.getElementById('voice-wake-status');
+      const hint = document.getElementById('voice-wake-hint');
+      if (box) { box.checked = !!s.enabled; box.disabled = !s.trained || vwt.active; }
+      if (hint) hint.style.display = s.trained ? 'none' : '';
+      if (st) st.textContent = vwt.active ? '' : (s.enabled ? (s.label || '') : (s.error || ''));
+      renderVoiceTrain();
+    }
+
+    // Training "Hey Cru": five recordings of the owner, made here (16 kHz
+    // mono, as the client’s listener hears it), each checked by the client,
+    // then trained there (app/voice-wake/enroll.js). The client lets go of
+    // the microphone while this runs and takes it back after.
+    const VW_N = 5, VW_RATE = 16000;
+    const VW_MAX = VW_RATE * 3, VW_TAIL = VW_RATE * 0.6;
+    const vwt = { active: false, recs: [], todo: [], pos: 0, rec: null, mic: null, msg: '', bad: false, busy: false, watch: null };
+    function renderVoiceTrain() {
+      const el = document.getElementById('voice-wake-train');
+      if (!el) return;
+      const s = vwLast || {}, S = vwStyles;
+      const say = (t, bad) => t ? '<p style="' + S.hint + 'font-size:0.78rem;margin-top:8px;' + (bad ? 'color:var(--red);' : '') + '">' + escHtml(t) + '</p>' : '';
+      let h = '';
+      if (!vwt.active) {
+        if (s.trained) {
+          const when = s.trainedAt ? new Date(s.trainedAt) : null;
+          h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">'
+            + '<span style="font-size:0.78rem;color:var(--text-secondary);display:inline-flex;gap:6px;align-items:center;">' + ic('check') + 'Trained'
+            + (when && !isNaN(when.getTime()) ? ' on ' + escHtml(when.toLocaleDateString()) : '') + '</span>'
+            + '<button data-action="voice-wake-train" style="' + S.subtle + '">Train again</button>'
+            + '<button data-action="voice-wake-forget" style="' + S.subtle + '">Forget</button></div>';
+        } else {
+          h += '<div style="margin-top:8px;"><button data-action="voice-wake-train" style="' + S.btn + '">Train Hey Cru</button></div>';
+        }
+        el.innerHTML = h + say(vwt.msg, vwt.bad);
+        return;
+      }
+      if (vwt.busy) {
+        el.innerHTML = '<p style="' + S.label + 'margin-top:10px;">Setting up…</p>'
+          + say(s.installing ? 'Downloading the wake word model first, then a few seconds more.' : 'This takes a few seconds.', false);
+        return;
+      }
+      const i = vwt.todo[vwt.pos];
+      h += '<p style="' + S.label + 'margin-top:10px;font-size:0.9rem;color:var(--text-primary);">Say “Hey Cru” — ' + (i + 1) + ' of ' + VW_N + '</p>'
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        + '<button data-action="voice-wake-rec" style="' + S.btn + '">' + (vwt.rec ? ic('stop') + ' Stop' : 'Record') + '</button>'
+        + '<div style="width:160px;height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden;">'
+        + '<div id="voice-wake-meter" style="height:100%;width:0%;background:var(--accent);transition:width 60ms linear;"></div></div>'
+        + '<button data-action="voice-wake-cancel" style="' + S.subtle + '">Cancel</button></div>';
+      el.innerHTML = h + say(vwt.rec ? 'Listening…' : vwt.msg, !vwt.rec && vwt.bad);
+    }
+    async function vwStart() {
+      if (!vwCan() || vwt.active) return;
+      Object.assign(vwt, { active: true, recs: new Array(VW_N).fill(null), todo: [0, 1, 2, 3, 4], pos: 0, rec: null, busy: false, bad: false,
+        msg: 'Click Record, then say “Hey Cru” the way you normally would.' });
+      vwApply();
+      try { const s = await window.api.voiceWake.trainBegin(); if (s) vwLast = s; } catch { /* it will say so on Record */ }
+      // Closing Settings ends it, so the client listens again.
+      if (vwt.watch) clearInterval(vwt.watch);
+      vwt.watch = setInterval(() => { if (!document.getElementById('voice-wake-train')) vwStop(); }, 1000);
+      vwApply();
+    }
+    async function vwOpenMic() {
+      if (vwt.mic) return vwt.mic;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false,
+      });
+      let ctx = null;
+      try {
+        ctx = new AudioContext({ sampleRate: VW_RATE });
+        if (ctx.sampleRate !== VW_RATE) throw new Error('This device cannot record at 16 kHz');
+        const src = ctx.createMediaStreamSource(stream);
+        const proc = ctx.createScriptProcessor(1024, 1, 1);
+        const mute = ctx.createGain(); mute.gain.value = 0;
+        src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+        proc.onaudioprocess = (e) => { if (vwt.rec) vwFeed(e.inputBuffer.getChannelData(0)); };
+        if (ctx.state === 'suspended') await ctx.resume();
+        vwt.mic = { stream, ctx, proc };
+        return vwt.mic;
+      } catch (err) {
+        stream.getTracks().forEach((t) => t.stop());
+        if (ctx) { try { ctx.close(); } catch { /* gone */ } }
+        throw err;
+      }
+    }
+    function vwCloseMic() {
+      const m = vwt.mic; vwt.mic = null;
+      if (!m) return;
+      try { m.proc.onaudioprocess = null; } catch { /* gone */ }
+      try { m.stream.getTracks().forEach((t) => t.stop()); } catch { /* gone */ }
+      try { m.ctx.close(); } catch { /* gone */ }
+    }
+    async function vwRecord() {
+      if (!vwt.active || vwt.busy || vwt.rec) return;
+      try { await vwOpenMic(); }
+      catch (err) { vwt.msg = 'Could not open the microphone: ' + ((err && (err.message || err.name)) || err); vwt.bad = true; renderVoiceTrain(); return; }
+      if (!vwt.active) { vwCloseMic(); return; }
+      vwt.rec = { chunks: [], n: 0, floor: 1, spoke: false, quiet: 0 };
+      renderVoiceTrain();
+    }
+    // Each piece from the microphone: kept, shown on the meter, and the
+    // recording ends at 3 s or after a short quiet once something was said.
+    function vwFeed(ch) {
+      const r = vwt.rec;
+      const c = new Float32Array(ch);
+      r.chunks.push(c); r.n += c.length;
+      let sum = 0;
+      for (let k = 0; k < c.length; k++) sum += c[k] * c[k];
+      const rms = Math.sqrt(sum / (c.length || 1));
+      const m = document.getElementById('voice-wake-meter');
+      if (m) m.style.width = Math.min(100, Math.round(Math.sqrt(rms) * 250)) + '%';
+      if (rms < r.floor) r.floor = rms;
+      if (rms > Math.max(0.02, r.floor * 4)) { r.spoke = true; r.quiet = 0; } else if (r.spoke) r.quiet += c.length;
+      if ((r.spoke && r.quiet >= VW_TAIL) || r.n >= VW_MAX) vwFinish();
+    }
+    async function vwFinish() {
+      const r = vwt.rec;
+      if (!r) return;
+      vwt.rec = null;
+      const all = new Float32Array(r.n);
+      let o = 0;
+      for (const c of r.chunks) { all.set(c, o); o += c.length; }
+      const i = vwt.todo[vwt.pos];
+      vwt.msg = 'Checking…'; vwt.bad = false;
+      renderVoiceTrain();
+      let c;
+      try { c = await window.api.voiceWake.check(all); }
+      catch (err) { c = { ok: false, why: 'Could not check it: ' + ((err && err.message) || err) }; }
+      if (!vwt.active) return;
+      if (!c || !c.ok) { vwt.msg = ((c && c.why) || 'That did not work.') + ' Record it again.'; vwt.bad = true; renderVoiceTrain(); return; }
+      vwt.recs[i] = all;
+      vwt.pos++;
+      if (vwt.pos < vwt.todo.length) { vwt.msg = 'Got it.'; renderVoiceTrain(); return; }
+      vwTrain();
+    }
+    async function vwTrain() {
+      vwt.busy = true; vwt.msg = '';
+      vwCloseMic();
+      renderVoiceTrain();
+      let r;
+      try { r = await window.api.voiceWake.train(vwt.recs); }
+      catch (err) { r = { ok: false, why: 'Setting up failed: ' + ((err && err.message) || err), redo: [] }; }
+      vwt.busy = false;
+      if (!vwt.active) return;
+      if (r && r.ok) {
+        vwt.msg = 'Done. With listening on, say “Hey Cru” while the computer is plugged in.';
+        vwt.bad = false;
+        vwStop();
+        return;
+      }
+      const redo = r && Array.isArray(r.redo) ? r.redo.filter((n) => n >= 0 && n < VW_N) : [];
+      vwt.todo = redo.length ? redo : [0, 1, 2, 3, 4];
+      vwt.pos = 0;
+      vwt.msg = (r && r.why) || 'That did not work. Record them again.';
+      vwt.bad = true;
+      renderVoiceTrain();
+    }
+    async function vwStop() {
+      if (!vwt.active) return;
+      vwt.active = false; vwt.rec = null;
+      if (vwt.watch) { clearInterval(vwt.watch); vwt.watch = null; }
+      vwCloseMic();
+      try { const s = await window.api.voiceWake.trainEnd(); if (s) vwLast = s; } catch { /* the client gives it back by itself */ }
+      showVoiceWake();
+    }
+    async function vwForget() {
+      if (!vwCan() || vwt.active) return;
+      if (!confirm('Forget your “Hey Cru” training? Listening turns off until you train it again.')) return;
+      try {
+        const s = await window.api.voiceWake.forget();
+        vwt.msg = s && s.error ? s.error : ''; vwt.bad = !!(s && s.error);
+        vwApply(s);
+      } catch (err) { vwt.msg = 'Could not forget it: ' + ((err && err.message) || err); vwt.bad = true; renderVoiceTrain(); }
     }
     function voiceOpts() {
       return ({
@@ -13687,9 +13877,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<span id="voice-ptt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div>'
           // The PC client only (D40): its wake word, while the PC is on charge.
+          // A client that can train it (vwCan) listens for "Hey Cru" only once
+          // trained from the owner's voice; an older one still listens for
+          // "Hey Crundi" and has no training.
           + (window.api && window.api.voiceWake ? '<div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">'
-            + '<label style="' + labelStyle + ';margin:0;display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="checkbox" id="voice-wake-on" data-action="voice-wake-toggle"> Listen for “Hey Crundi” while charging</label>'
-            + '<span id="voice-wake-status" style="font-size:0.78rem;color:var(--text-muted);"></span></div>' : '')
+            + '<label style="' + labelStyle + ';margin:0;display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="checkbox" id="voice-wake-on" data-action="voice-wake-toggle"' + (vwCan() ? ' disabled' : '') + '> Listen for “' + (vwCan() ? 'Hey Cru' : 'Hey Crundi') + '” while plugged in</label>'
+            + '<span id="voice-wake-status" style="font-size:0.78rem;color:var(--text-muted);"></span></div>'
+            + (vwCan() ? '<p id="voice-wake-hint" style="' + hintStyle + '">Train Hey Cru first: say it five times so it knows your voice.</p>'
+              + '<div id="voice-wake-train"></div>' : '') : '')
           + '</div>' : '')
           // Sign-in methods. At least one must stay on; the server refuses to
           // disable the last, so these toggles can fail and say why.
@@ -13852,6 +14047,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<div id="sess-body" style="display:none"></div>'
           + '</div>';
 
+        vwStyles = { btn: btnStyle, subtle: btnSubtleStyle, hint: hintStyle, label: labelStyle };
         panel.innerHTML = html;
         showVoiceWake();
         const pushHost = document.getElementById('phone-push');
@@ -14317,6 +14513,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (window.api && window.api.voiceWake) window.api.voiceWake.set(on).then(() => showVoiceWake());
           break;
         }
+        case 'voice-wake-train': vwStart(); break;
+        case 'voice-wake-rec': if (vwt.rec) vwFinish(); else vwRecord(); break;
+        case 'voice-wake-cancel': vwt.msg = ''; vwStop(); break;
+        case 'voice-wake-forget': vwForget(); break;
         case 'voice-ptt-reset': {
           const lbl = window.CrundiVoice && window.CrundiVoice.resetShortcut();
           const k = document.getElementById('voice-ptt-key'); if (k && lbl) k.textContent = lbl;

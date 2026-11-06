@@ -50,20 +50,39 @@ import mv.obitech.crundi.UrgentAlerts
  * isn't available.
  */
 class WakeWordEngine private constructor(private val kws: KeywordSpotter) {
-    private val stream: OnlineStream = kws.createStream("")
+    private var stream: OnlineStream = kws.createStream(CruWake.line(0.2))
+
+    /** Listen with the owner's tuned keyword line (their profile's threshold). */
+    fun use(line: String) {
+        runCatching { stream.release() }
+        stream = kws.createStream(line)
+    }
 
     /** 16 kHz mono floats in -1..1. True when the wake word was just heard. */
-    fun feed(samples: FloatArray): Boolean {
-        stream.acceptWaveform(samples, RATE)
+    fun feed(samples: FloatArray): Boolean = feed(stream, samples)
+
+    private fun feed(s: OnlineStream, samples: FloatArray): Boolean {
+        s.acceptWaveform(samples, RATE)
         var heard = false
-        while (kws.isReady(stream)) {
-            kws.decode(stream)
-            if (kws.getResult(stream).keyword.isNotBlank()) {
-                kws.reset(stream)
+        while (kws.isReady(s)) {
+            kws.decode(s)
+            if (kws.getResult(s).keyword.isNotBlank()) {
+                kws.reset(s)
                 heard = true
             }
         }
         return heard
+    }
+
+    /** Training: would [line] hear "Hey Cru" in [clip]? On a stream of its own; the live one is untouched. */
+    fun hears(line: String, clip: FloatArray): Boolean {
+        val s = kws.createStream(line)
+        try {
+            var hit = false
+            var i = 0
+            while (i < clip.size) { if (feed(s, clip.copyOfRange(i, minOf(clip.size, i + 1600)))) hit = true; i += 1600 }
+            return hit
+        } finally { runCatching { s.release() } }
     }
 
     fun release() {
@@ -91,8 +110,8 @@ class WakeWordEngine private constructor(private val kws: KeywordSpotter) {
                 ),
                 maxActivePaths = 4,
                 keywordsFile = "$DIR/keywords.txt",
-                // Checked on the server with synthetic voices: hears "Hey Cru" and
-                // "Crundi", and none of "Hey Siri", "Hey Google", "Grundy", "Hey Candy".
+                // Each stream's keyword line carries its own boost and threshold
+                // (the owner's profile, CruWake.line); these are only the defaults.
                 keywordsScore = 1.5f,
                 keywordsThreshold = 0.2f,
                 numTrailingBlanks = 1,
@@ -197,11 +216,24 @@ object HeyCrundi {
     /** The microphone permission may have changed. */
     fun refresh() = update { it }
 
+    /** Training is recording: the wake word lets go of the microphone (synchronously) until it's done. */
+    fun training(on: Boolean) = update { it.copy(training = on) }
+
+    /** A profile was made or forgotten: listen again with it (or not at all). */
+    fun profileChanged() { stopMic(); update { it } }
+
+    /** The keyword spotter, for training; null when this phone can't run it. Main thread. */
+    fun engineForTraining(): WakeWordEngine? {
+        if (!ready()) return null
+        if (!engineTried) { engineTried = true; engine = WakeWordEngine.load(app) }
+        return engine
+    }
+
     private fun update(change: (HeyCrundiPlan.Situation) -> HeyCrundiPlan.Situation) {
         if (!ready()) return
         if (Looper.myLooper() != Looper.getMainLooper()) { main.post { update(change) }; return }
         val mic = ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        situation = change(situation).copy(micAllowed = mic, engineReady = !engineTried || engine != null)
+        situation = change(situation).copy(micAllowed = mic, engineReady = !engineTried || engine != null, trained = WakeProfiles.trained(app))
         val who = HeyCrundiPlan.listener(situation)
         if (who == HeyCrundiPlan.Listener.None) stopMic() else startMic()
         _listening.value = if (running) who else HeyCrundiPlan.Listener.None
@@ -214,6 +246,9 @@ object HeyCrundi {
         if (running) return
         if (!engineTried) { engineTried = true; engine = WakeWordEngine.load(app) }
         val kws = engine ?: run { situation = situation.copy(engineReady = false); return }
+        // Never without the owner's voice: "Hey Cru" is trained first.
+        val profile = WakeProfiles.get(app) ?: return
+        kws.use(profile.keywordLine())
         val min = AudioRecord.getMinBufferSize(WakeWordEngine.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (min <= 0) return
         // VOICE_RECOGNITION: the raw microphone tuned for speech, no call processing.
@@ -225,6 +260,11 @@ object HeyCrundi {
         thread = Thread({
             val shorts = ShortArray(WakeWordEngine.RATE / 10)
             val floats = FloatArray(shorts.size)
+            // The last two seconds, for the voice match when the spotter fires.
+            val keep = (WakeWordEngine.RATE * CruWake.VERIFY_SECONDS).toInt()
+            val ring = FloatArray(keep)
+            var at = 0
+            var filled = 0
             try {
                 rec.startRecording()
                 while (running) {
@@ -233,7 +273,13 @@ object HeyCrundi {
                     if (got == 0) continue
                     val chunk = if (got == floats.size) floats else FloatArray(got)
                     for (i in 0 until got) chunk[i] = shorts[i] / 32768f
-                    if (kws.feed(chunk) && running) main.post { heard() }
+                    for (i in 0 until got) { ring[at] = chunk[i]; at = (at + 1) % keep }
+                    filled = minOf(keep, filled + got)
+                    if (kws.feed(chunk) && running) {
+                        val recent = FloatArray(filled) { ring[(at - filled + it + keep) % keep] }
+                        val v = profile.verify(recent)
+                        if (v.ok) main.post { heard() } else Log.i(TAG, "Hey Cru heard, but not like the owner's (${v.score} > ${profile.limit}): ignored")
+                    }
                     HeyCrundiService.tick()
                 }
             } catch (e: Exception) {

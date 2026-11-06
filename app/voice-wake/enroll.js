@@ -1,6 +1,6 @@
 /**
  * "Hey Cru", set up from the owner's own voice. Plain JavaScript with no
- * dependencies: the PC's spotter process uses it, scripts/test-enroll.mjs
+ * dependencies: the PC's spotter process uses it, scripts/test-voice-wake-train.mjs
  * checks it on recorded speech, and the phone has the same rules in Kotlin
  * (android/.../voice/WakeProfile.kt), checked against numbers made here
  * (scripts/wake-fixture.mjs).

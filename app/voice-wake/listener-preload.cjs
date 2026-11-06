@@ -1,4 +1,4 @@
-// Preload for the hidden "Hey Crundi" window (sandboxed, context isolated).
+// Preload for the hidden "Hey Cru" window (sandboxed, context isolated).
 // The page gets three calls and nothing else.
 const { contextBridge, ipcRenderer } = require('electron');
 

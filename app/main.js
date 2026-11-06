@@ -1169,7 +1169,7 @@ function showSetupWizard(oldConfig) {
   }
 }
 
-// ─── "Hey Crundi" while charging (D40) ───
+// ─── "Hey Cru" while plugged in (D40) ───
 //
 // An always-on microphone option for the PC, off by default and kept in
 // client.json as voiceWake. It listens only on AC power, only while the voice
@@ -1232,9 +1232,11 @@ function voiceWakeTrayItems() {
   if (!voiceWake) return [];
   const s = voiceWakeStatus;
   const note = s.enabled ? (s.state === 'error' ? 'Not listening: ' + String(s.error || 'error').slice(0, 80) : VOICE_WAKE_NOTE[s.state] || '') : '';
+  // Not trained yet: the setting cannot be turned on (it is trained in Settings).
+  const untrained = s.trained === false;
   return [
-    { label: 'Listen for "Hey Crundi" while charging', type: 'checkbox', checked: !!s.enabled, click: (item) => { voiceWake?.set(item.checked); } },
-    ...(note ? [{ label: '    ' + note, enabled: false }] : []),
+    { label: 'Listen for "Hey Cru" while plugged in', type: 'checkbox', checked: !!s.enabled, enabled: !untrained, click: (item) => { voiceWake?.set(item.checked); } },
+    ...(untrained ? [{ label: '    Train it first in Settings, Voice assistant', enabled: false }] : note ? [{ label: '    ' + note, enabled: false }] : []),
     { type: 'separator' },
   ];
 }
@@ -1242,6 +1244,14 @@ function voiceWakeTrayItems() {
 ipcMain.handle('voice-wake:get', () => !!(voiceWake ? voiceWake.get() : readVoiceWakeSetting()));
 ipcMain.handle('voice-wake:set', (_e, on) => voiceWake ? voiceWake.set(!!on) : { ...voiceWakeStatus, error: 'Not available in this build' });
 ipcMain.handle('voice-wake:status', () => voiceWake ? voiceWake.status() : voiceWakeStatus);
+// Training "Hey Cru" from the owner's voice: the page records, these check,
+// train and keep the profile (app/voice-wake/controller.js).
+const VOICE_WAKE_MISSING = { ok: false, why: 'Not available in this build', redo: [] };
+ipcMain.handle('voice-wake:check', (_e, samples) => voiceWake ? voiceWake.check(samples) : VOICE_WAKE_MISSING);
+ipcMain.handle('voice-wake:train-begin', () => voiceWake ? voiceWake.trainBegin() : { ...voiceWakeStatus, error: 'Not available in this build' });
+ipcMain.handle('voice-wake:train-end', () => voiceWake ? voiceWake.trainEnd() : voiceWakeStatus);
+ipcMain.handle('voice-wake:train', (_e, recordings) => voiceWake ? voiceWake.train(recordings) : VOICE_WAKE_MISSING);
+ipcMain.handle('voice-wake:forget', () => voiceWake ? voiceWake.forget() : { ...voiceWakeStatus, error: 'Not available in this build' });
 
 // ─── IPC Handlers ───
 

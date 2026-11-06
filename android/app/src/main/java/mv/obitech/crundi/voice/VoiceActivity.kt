@@ -16,8 +16,7 @@ import mv.obitech.crundi.ui.theme.CrundiTheme
 
 /**
  * Trigger mode B (D33): Gemini stays the phone's assistant, and this screen
- * is opened by double-pressing the side key (set to open "Cru") or
- * "Hey Google, open Cru". The launcher entry "Cru" is an
+ * is opened by double-pressing the side key (set to open "Cru"). The launcher entry "Cru" is an
  * alias of it. Shows over the lock screen.
  *
  * Left alone it winds down in three steps: the microphone stays on for the

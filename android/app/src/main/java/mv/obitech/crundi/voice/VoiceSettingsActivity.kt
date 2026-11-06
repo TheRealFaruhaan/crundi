@@ -119,6 +119,10 @@ data class WakeUi(
     val micSeconds: Int = 30,
     /** Then the screen stays on, listening for "Hey Cru", this many minutes. */
     val screenMinutes: Int = 2,
+    /** "Hey Cru" has been trained on the owner's voice ("6 Nov"); empty until it has. */
+    val trainedOn: String = "",
+    /** Forget was tapped once: tap again to forget. */
+    val confirmForget: Boolean = false,
 )
 
 /** The notebook: files as the server has them, the owner's edits, the search. */
@@ -155,6 +159,8 @@ class VoiceSettingsEvents(
     val onReset: () -> Unit = {},
     val onTry: () -> Unit = {},
     val onWakeInApp: (Boolean) -> Unit = {},
+    val onTrain: () -> Unit = {},
+    val onForget: () -> Unit = {},
     val onWakeBackground: (Boolean) -> Unit = {},
     val onWakeMinutes: (Int) -> Unit = {},
     val onMicSeconds: (Int) -> Unit = {},
@@ -231,6 +237,8 @@ class VoiceSettingsActivity : ComponentActivity() {
             fullScreen = UrgentAlerts.fullScreenGranted(this),
             micSeconds = VoicePrefs.silenceSeconds(this),
             screenMinutes = VoicePrefs.screenAwakeMinutes(this),
+            trainedOn = WakeProfiles.get(this)?.let { p -> runCatching { java.time.format.DateTimeFormatter.ofPattern("d MMM").format(java.time.Instant.parse(p.trainedAt).atZone(java.time.ZoneId.systemDefault())) }.getOrDefault("yes").ifEmpty { "yes" } }.orEmpty(),
+            confirmForget = ui.wake.confirmForget,
         ))
     }
 
@@ -372,6 +380,15 @@ class VoiceSettingsActivity : ComponentActivity() {
         onTry = { startActivity(Intent(this, VoiceActivity::class.java)) },
         onMicSeconds = { v -> VoicePrefs.setSilenceSeconds(this, v); wakeRefresh() },
         onScreenMinutes = { v -> VoicePrefs.setScreenAwakeMinutes(this, v); wakeRefresh() },
+        onTrain = { startActivity(Intent(this, WakeTrainActivity::class.java)) },
+        onForget = {
+            if (!ui.wake.confirmForget) { ui = ui.copy(wake = ui.wake.copy(confirmForget = true)); lifecycleScope.launch { delay(4000); ui = ui.copy(wake = ui.wake.copy(confirmForget = false)) } }
+            else {
+                WakeProfiles.forget(this); HeyCrundiService.stop(this); HeyCrundi.setInApp(false); HeyCrundi.profileChanged()
+                ui = ui.copy(wake = ui.wake.copy(confirmForget = false), note = "Hey Cru forgot your voice. Train it again to use it.")
+                wakeRefresh()
+            }
+        },
         onWakeInApp = { on ->
             if (on) withMic { HeyCrundi.setInApp(true); ui = ui.copy(note = "Say \"Hey Cru\" while Crundi is open"); wakeRefresh() }
             else { HeyCrundi.setInApp(false); wakeRefresh() }
@@ -467,7 +484,7 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
             ) { CrundiButton("Choose the digital assistant", ev.onAssistantSettings, icon = "settings") }
             Mode(
                 "B. Keep Gemini, double-press the side key",
-                "Gemini stays the assistant and \"Hey Google\" keeps working. Cru opens on a double press, or when you say \"Hey Google, open Cru\". Works after unlocking.",
+                "Gemini stays the phone's assistant. A double press of the side key opens Cru directly; Gemini isn't involved. Works after unlocking.",
                 if (ui.isAssistant) "Gemini is not the assistant now" else "Available",
                 null,
                 steps = "On Samsung: Advanced features > Side button > Double press > Open app > Cru.",
@@ -641,13 +658,13 @@ private fun VoiceRow(title: String, detail: String, selected: Boolean, onPick: (
 private fun ScreenTimes(w: WakeUi, ev: VoiceSettingsEvents) {
     CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
         Text("Microphone stays on", style = CrundiType.Heading)
-        Text("After the last thing you said or Crundi answered, then it stops recording. Noise in the room doesn't keep it on.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+        Text("After the last thing you said or Cru answered, then it stops recording. Noise in the room doesn't keep it on.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (v in listOf(15, 30, 60, 120, 300)) CrundiChip(if (v < 60) "$v s" else "${v / 60} min", w.micSeconds == v, { if (w.micSeconds != v) ev.onMicSeconds(v) })
         }
         Text("Then the screen stays on", style = CrundiType.Heading, modifier = Modifier.padding(top = 16.dp))
         Text(
-            (if (w.supported) "Listening on the phone only for \"Hey Cru\", which starts again where you left off. Nothing is sent meanwhile, and the Hey Cru settings below needn't be on. " else "") +
+            (if (w.supported && w.trainedOn.isNotEmpty()) "Listening on the phone only for \"Hey Cru\", which starts again where you left off. Nothing is sent meanwhile, and the Hey Cru switches below needn't be on. " else if (w.supported) "Once Hey Cru is trained (below), it listens for it meanwhile. " else "") +
                 "After this the phone may sleep as usual, and the voice screen closes.",
             style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
         )
@@ -664,6 +681,21 @@ private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEven
         if (!w.supported) {
             Text("This build of Crundi has no wake word for this phone's processor.", style = CrundiType.Small.copy(color = CrundiColors.Yellow), modifier = Modifier.padding(14.dp))
             return@CrundiCard
+        }
+        // Trained first (the owner's own voice, five times), then the switches.
+        if (w.trainedOn.isEmpty()) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Train it first", style = CrundiType.Heading)
+                Text("Say \"Hey Cru\" five times so it learns your voice: it wakes for you, and not for \"crew\" on the television. Takes a minute; the recordings stay on this phone.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+                CrundiButton("Train Hey Cru", ev.onTrain, kind = ButtonKind.Primary, icon = "mic")
+            }
+            return@CrundiCard
+        }
+        Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            CrundiIcon("check", size = 14.dp, tint = CrundiColors.Green)
+            Text("Trained on your voice, ${w.trainedOn}", style = CrundiType.Small.copy(color = CrundiColors.Green), modifier = Modifier.weight(1f).padding(start = 6.dp))
+            CrundiButton("Train again", ev.onTrain, kind = ButtonKind.Ghost)
+            CrundiButton(if (w.confirmForget) "Tap to forget" else "Forget", ev.onForget, kind = if (w.confirmForget) ButtonKind.Danger else ButtonKind.Ghost)
         }
         CrundiSwitchRow(
             "In the app", w.inApp, ev.onWakeInApp,
@@ -687,7 +719,7 @@ private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEven
                 style = CrundiType.Small, modifier = Modifier.padding(top = 10.dp),
             )
             if (!isAssistant && !w.fullScreen) {
-                Text("Heard with the phone locked, Cru opens over the lock screen only with full-screen notifications allowed; otherwise it shows a notification to tap.", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
+                Text("Heard with the phone locked, the voice screen opens over the lock screen only with full-screen notifications allowed; otherwise it shows a notification to tap.", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
                 CrundiButton("Allow full-screen notifications", ev.onFullScreen, icon = "bell")
             }
         }

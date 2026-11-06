@@ -105,8 +105,7 @@
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
-        <!-- What the side key's double press, or "Hey Google, open Crundi
-             Voice", opens. Turned off with the assistant in App settings. -->
+        <!-- What the side key's double press opens. Turned off with the assistant in App settings. -->
         <activity-alias
             android:name=".voice.CrundiVoice"
             android:targetActivity=".voice.VoiceActivity"
@@ -143,6 +142,7 @@
         <!-- Phase 6: background listening for "Hey Cru" (D4-D7), started only from the foreground. -->
         <service android:name=".voice.HeyCrundiService" android:exported="false" android:foregroundServiceType="microphone" />
         <activity android:name=".voice.VoiceSettingsActivity" android:exported="false" android:label="Voice assistant" />
+        <activity android:name=".voice.WakeTrainActivity" android:exported="false" android:label="Train Hey Cru" />
 
         <service android:name=".PushService" android:exported="false">
             <intent-filter>
