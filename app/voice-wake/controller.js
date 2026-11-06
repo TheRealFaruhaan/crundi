@@ -60,13 +60,16 @@ const LABELS = {
 // open). Says what it did.
 const OPEN_SCRIPT = `(function () {
   var V = window.CrundiVoice;
+  if (V && V.isOpen && V.holdsMic === false && typeof V.wake === 'function') { V.wake(); return 'woken'; }
   if (V && V.isOpen) return 'open';
   if (typeof window.crundiOpenVoice === 'function') { window.crundiOpenVoice({ how: 'wake' }); return 'called'; }
   var b = document.getElementById('voice-btn');
   if (b) { b.click(); return 'clicked'; }
   return 'none';
 })()`;
-const IS_OPEN_SCRIPT = '!!(window.CrundiVoice && window.CrundiVoice.isOpen)';
+// 'open' (it has the microphone), 'asleep' (open, but it let the microphone
+// go: listen for "Hey Cru" to wake it), or 'closed'. An older page: open or closed.
+const IS_OPEN_SCRIPT = "(function () { var V = window.CrundiVoice; if (!V || !V.isOpen) return 'closed'; return V.holdsMic === false ? 'asleep' : 'open'; })()";
 
 /**
  * @param {object} d
@@ -110,6 +113,11 @@ export function createVoiceWake(d) {
   let profile = loadProfile();
   // Listening needs both the setting and a trained profile.
   const on = () => enabled && !!profile;
+  // The voice screen is open but asleep: listen for "Hey Cru" to wake it,
+  // with the setting on or not and on battery too, as the phone does; only
+  // the owner's trained voice is needed.
+  let screenAsleep = false;
+  const listening = () => on() || (screenAsleep && !!profile);
 
   const listenerHtml = join(d.moduleDir, 'listener.html');
   const listenerUrl = pathToFileURL(listenerHtml).href;
@@ -153,11 +161,11 @@ export function createVoiceWake(d) {
 
   function status() {
     let state;
-    if (!on()) state = 'off';
+    if (!listening()) state = 'off';
     else if (training) state = 'training';
     else if (installing) state = 'installing';
     else if (installError) state = 'error';
-    else if (onBattery) state = 'on-battery';
+    else if (onBattery && !screenAsleep) state = 'on-battery';
     else if (asleep || locked) state = 'paused';
     else if (voiceOpen) state = 'voice-open';
     else if (micState === 'listening' && childReady) state = 'listening';
@@ -190,7 +198,7 @@ export function createVoiceWake(d) {
     try { d.onStatus && d.onStatus(s); } catch { /* ignore */ }
   }
 
-  const wanted = () => on() && !training && !onBattery && !locked && !asleep && !voiceOpen && !installing && !installError;
+  const wanted = () => listening() && !training && (!onBattery || screenAsleep) && !locked && !asleep && !voiceOpen && !installing && !installError;
 
   // ─── the spotter's process ───
   function startChild() {
@@ -296,8 +304,12 @@ export function createVoiceWake(d) {
     const t = setTimeout(() => { polling = false; }, 3000);
     wc.executeJavaScript(IS_OPEN_SCRIPT, false).then((open) => {
       clearTimeout(t); polling = false;
-      setVoiceOpen(!!open);
-    }, () => { clearTimeout(t); polling = false; setVoiceOpen(false); });
+      const st = open === true ? 'open' : open === false ? 'closed' : String(open || 'closed');
+      const wasAsleep = screenAsleep;
+      screenAsleep = st === 'asleep';
+      setVoiceOpen(st === 'open');
+      if (wasAsleep !== screenAsleep) { reconcile(); emit(); }
+    }, () => { clearTimeout(t); polling = false; screenAsleep = false; setVoiceOpen(false); });
   }
   function setVoiceOpen(open) {
     if (open === voiceOpen) {
@@ -418,9 +430,10 @@ export function createVoiceWake(d) {
   }
 
   function reconcile() {
-    if (on() && !safeInstalled() && !installing && !installError) { install(); return; }
-    // Watching for the voice screen matters whenever we might be listening.
-    if (on() && !onBattery) startPolling(); else stopPolling();
+    if (listening() && !safeInstalled() && !installing && !installError) { install(); return; }
+    // Watching for the voice screen matters whenever we might be listening:
+    // also with the setting off, once trained, for an asleep voice screen.
+    if ((on() && !onBattery) || profile) startPolling(); else stopPolling();
     if (wanted()) {
       startChild();
       startWindow();
@@ -428,7 +441,7 @@ export function createVoiceWake(d) {
       stopWindow();
       // The spotter's process stays warm through a voice screen or a lock;
       // off or on battery, it goes too.
-      if (!on() || onBattery || installError) stopChild();
+      if (!listening() || (onBattery && !screenAsleep) || installError) stopChild();
     }
     emit();
   }

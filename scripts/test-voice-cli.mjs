@@ -152,6 +152,26 @@ const make = (fake, extra = {}) => createCliVoiceAgent({
   ok(!last.args.includes('--resume') && /We talked about the API chat/.test(last.sent[0].message.content) && /Short answers/.test(last.sent[0].message.content), 'the new conversation opens with the persona and the summary');
 }
 
+// ─── a model change ───
+{
+  // The owner switches model: the process is replaced (resumed on the new
+  // model). The old one ending must not fail the turn already on the new one.
+  vs.updateSettings({ model: 'claude-sonnet-5-5' });
+  const fake = fakeClaude(async () => { await new Promise(r => setTimeout(r, 60)); return { text: 'Yes, Sir.' }; });
+  const realKill = null;
+  const ag = make(fake);
+  await ag.turn('hello');
+  vs.updateSettings({ model: 'claude-opus-5-5' });
+  // The old process takes a moment to go, as a real one does.
+  const old = fake.procs[0];
+  old.kill = () => setTimeout(() => { if (old.exitCode === null) { old.exitCode = 0; old.emit('exit', 0); } }, 20);
+  old.stdin.removeAllListeners('finish');
+  old.stdin.on('finish', () => old.kill());
+  const r = await ag.turn('switch back');
+  ok(r.ok && r.speak === 'Yes, Sir.' && fake.procs.length === 2, 'after a model change the old process ending does not fail the new turn');
+  vs.updateSettings({ model: 'claude-sonnet-5-5' });
+}
+
 // ─── cancel ───
 {
   let hold = null;

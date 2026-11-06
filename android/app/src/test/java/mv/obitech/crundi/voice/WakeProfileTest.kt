@@ -63,16 +63,67 @@ class WakeProfileTest {
         assertEquals(0.0, CruWake.distance(fa, fa), 1e-9)
     }
 
+    @Test fun theOnsetCheckMatchesThePc() {
+        val fa = CruWake.mfcc(signal(1)); val fb = CruWake.mfcc(signal(2, 150.0, 1.1)); val fc = CruWake.mfcc(signal(3, 220.0, 0.8))
+        near(fx["windowAB"]!!.jsonPrimitive.double, CruWake.windowDistance(fa, fb), 1e-3, "window A to B")
+        near(fx["windowBA"]!!.jsonPrimitive.double, CruWake.windowDistance(fb, fa), 1e-3, "window B to A")
+        near(fx["windowAC"]!!.jsonPrimitive.double, CruWake.windowDistance(fa, fc), 1e-3, "window A to C")
+        near(fx["windowLimit"]!!.jsonPrimitive.double, CruWake.windowLimitOf(listOf(fa, fb, fc)), 1e-3, "window limit")
+        assertEquals(0.0, CruWake.windowDistance(fa, fa), 1e-9)
+    }
+
+    @Test fun theDecoysAreThePcs() {
+        assertEquals(fx["decoys"]!!.jsonArray.map { it.jsonPrimitive.content }, CruWake.DECOYS.map { it.first })
+        assertEquals(fx["competingLines"]!!.jsonPrimitive.content, CruWake.competing(CruWake.CONFIRM_THRESHOLD, CruWake.KEYWORDS_SCORE))
+    }
+
+    private fun thresholdOf(line: String) = line.substringAfter('#').substringBefore(' ').toDouble()
+
+    /** A spotter that hears "Hey Cru" (the Cru spelling, reported as HEY_CRU) up to [upTo], and nothing else. */
+    private fun hearsCru(upTo: Double): (String, FloatArray) -> Boolean = { lines, _ ->
+        lines.lines().any { it.startsWith("▁HE Y ▁C RU ") && it.endsWith("@HEY_CRU") && thresholdOf(it) <= upTo }
+    }
+
+    /** A spotter that hears the decoy [name] (when it is among the lines) wherever it is asked, and "Hey Cru" nowhere. */
+    private fun hearsDecoy(name: String): (String, FloatArray) -> Boolean = { lines, _ ->
+        val sp = CruWake.DECOYS.first { it.first == name }.second
+        lines.lines().any { it.startsWith("$sp :") && it.endsWith("@HEY_CRU") }
+    }
+
     @Test fun trainingTunesAndKeepsTheVoice() {
         // Five takes of one "voice", a spotter that hears them up to threshold 0.25.
         val takes = (1..5).map { signal(10 + it, 140.0 + it, 0.95 + it * 0.02) }
-        val r = CruWake.train(takes, "2026-11-06T06:00:00Z") { line, _ -> line.substringAfter('#').substringBefore(' ').toDouble() <= 0.25 }
+        val r = CruWake.train(takes, "2026-11-06T06:00:00Z", hearsCru(0.25))
         assertTrue(r is CruWake.Trained.Ok)
         val p = (r as CruWake.Trained.Ok).profile
         assertEquals(0.15, p.keywordsThreshold, 1e-9) // two steps looser than the strictest that heard all five
         assertTrue(p.valid() && p.templates.size == 15 && p.takes == 5 && p.keywordLine().contains("#0.15"))
         assertTrue("the owner's own take wakes", p.verify(signal(30, 143.0, 1.0)).ok)
         assertFalse("a very different voice does not", p.verify(signal(31, 260.0, 0.7)).ok)
+        // Every decoy listened for (none was heard in the takes), competing with "Hey Cru".
+        assertEquals(CruWake.DECOYS.map { it.first }, p.decoys)
+        assertTrue(p.keywordLine().contains("▁HE Y ▁YOU :1.5 #0.15 @NOT_YOU") && p.windowLimit > 0)
+        // The model hears this voice: a burst wakes only when it hears "Hey Cru" over the decoys.
+        assertTrue(p.modelHeard >= 3)
+        assertTrue("the model hears Hey Cru", p.matchPhrase(signal(30, 143.0, 1.0), hearsCru(1.0)).ok)
+        assertFalse("the model hears hey you instead", p.matchPhrase(signal(30, 143.0, 1.0), hearsDecoy("YOU")).ok)
+    }
+
+    @Test fun aDecoyTheModelHearsInTheTakesIsNotUsed() {
+        // The model hears this voice's "Hey Cru" as "hey who": WHO must not refuse it.
+        val takes = (1..5).map { signal(10 + it, 140.0 + it, 0.95 + it * 0.02) }
+        val p = (CruWake.train(takes, "", hearsDecoy("WHO")) as CruWake.Trained.Ok).profile
+        assertFalse("WHO" in p.decoys!!)
+        assertTrue("YOU" in p.decoys!! && p.decoys!!.size == CruWake.DECOYS.size - 1)
+        assertFalse(p.keywordLine().contains("@NOT_WHO"))
+        assertTrue("its own take still wakes", p.matchPhrase(signal(30, 143.0, 1.0), hearsDecoy("WHO")).ok)
+    }
+
+    @Test fun anOlderProfileListensForEveryDecoy() {
+        val takes = (1..5).map { signal(10 + it, 140.0 + it, 0.95 + it * 0.02) }
+        val p = (CruWake.train(takes, "", hearsCru(0.25)) as CruWake.Trained.Ok).profile.copy(decoys = null, windowLimit = 0.0)
+        assertEquals(CruWake.DECOYS, p.decoyList)
+        assertTrue(p.valid() && p.matchPhrase(signal(30, 143.0, 1.0)).ok)
     }
 
     @Test fun onlyEmptyTakesAreAskedAgainNeverOnesTheModelMissed() {
@@ -87,6 +138,9 @@ class WakeProfileTest {
         assertEquals(0, p.modelHeard)
         assertTrue("the owner's take, on its own, wakes", p.matchPhrase(signal(30, 143.0, 1.0)).ok)
         assertFalse("a very different voice does not", p.matchPhrase(signal(31, 260.0, 0.7)).ok)
+        // Deaf to "Hey Cru", the model may still hear "hey you": that refuses it.
+        assertTrue("nothing heard: the phrase decides", p.matchPhrase(signal(30, 143.0, 1.0)) { _, _ -> false }.ok)
+        assertFalse("a decoy heard refuses it", p.matchPhrase(signal(30, 143.0, 1.0), hearsDecoy("YOU")).ok)
     }
 
     @Test fun burstsOfSpeechAreFoundWithAPauseEitherSide() {

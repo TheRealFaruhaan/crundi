@@ -25,7 +25,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 function write() {
 const a = signal(1), b = signal(2, 150, 1.1), c = signal(3, 220, 0.8);
-const fa = E.mfcc(a), ta = E.trim(a);
+const fa = E.mfcc(a), fb = E.mfcc(b), fc = E.mfcc(c), ta = E.trim(a);
 const fixture = {
   note: 'Made by scripts/wake-fixture.mjs from app/voice-wake/enroll.js; checked by WakeProfileTest.',
   signal: { seeds: [1, 2, 3], pitches: [140, 150, 220], stretches: [1, 1.1, 0.8] },
@@ -36,7 +36,13 @@ const fixture = {
   distanceAB: E.distance(fa, E.mfcc(b)),
   distanceAC: E.distance(fa, E.mfcc(c)),
   distanceAA: E.distance(fa, fa),
+  windowAB: E.windowDistance(fa, fb),
+  windowBA: E.windowDistance(fb, fa),
+  windowAC: E.windowDistance(fa, fc),
+  windowLimit: E.windowLimitOf([fa, fb, fc]),
+  decoys: E.DECOYS.map(([n]) => n),
+  competingLines: E.competingLines(E.CONFIRM_THRESHOLD, E.KEYWORDS_SCORE),
 };
 writeFileSync(new URL('../android/app/src/test/resources/wake-fixture.json', import.meta.url), JSON.stringify(fixture, null, 1) + '\n');
-console.log({ frames: fixture.frames, trimmed: fixture.trimmed, AB: fixture.distanceAB, AC: fixture.distanceAC, AA: fixture.distanceAA });
+console.log({ frames: fixture.frames, trimmed: fixture.trimmed, AB: fixture.distanceAB, AC: fixture.distanceAC, AA: fixture.distanceAA, wAB: fixture.windowAB, wAC: fixture.windowAC, windowLimit: fixture.windowLimit });
 }

@@ -22,6 +22,12 @@
  *     of a sentence, say), the last two seconds are compared with the
  *     templates at a looser limit.
  *
+ * Both ways also ask the model about near misses ("hey you", "hey who",
+ * "hey two"...: DECOYS), which compete with "Hey Cru" in the spotter: a
+ * decoy heard is no wake, even when the model is deaf to the owner's "Hey
+ * Cru". And the phrase match looks at its worst 150 ms as well as its
+ * average (windowDistance), where "Cru" and "you" differ.
+ *
  * No recording is refused because the model didn't hear it: that is what
  * the first way is for. One is asked again only when it is empty, too short
  * or long, or sounds unlike the other four.
@@ -39,6 +45,45 @@ export const SAMPLES_NEEDED = 5;
 export const SPELLINGS = ['▁HE Y ▁C RU', '▁HE Y ▁K RU', '▁HE Y ▁C RE W'];
 /** The plain line (no tuning), for the shipped keywords file. */
 export const KEYWORD = SPELLINGS[0] + ' @HEY_CRU';
+/** The name the spotter reports for "Hey Cru"; anything else it reports is a decoy. */
+export const WAKE = 'HEY_CRU';
+/**
+ * Decoys: phrases that sound close to "Hey Cru" and are not a call, as the
+ * model's BPE tokens (bpe.model). The spotter is given these as keywords too,
+ * so they compete with "Hey Cru" for the same stretch of sound: the model
+ * reports only its best guess, so "hey you" comes out as NOT_YOU instead of a
+ * faint HEY_CRU. A decoy heard means no wake. The vowel of "you", "who",
+ * "two" is the vowel of "Cru", and "hey" is the same in all of them, so the
+ * owner's recordings alone (the phrase match) can hardly tell them apart;
+ * the model can. Training drops any decoy the model hears in the owner's own
+ * takes ([train], profile.decoys), so their "Hey Cru" is never refused as one.
+ */
+export const DECOYS = [
+  ['YOU', '▁HE Y ▁YOU'], ['YOUR', '▁HE Y ▁YOUR'], ['WHO', '▁HE Y ▁WHO'], ['HOO', '▁HE Y ▁HO O'], ['HUGH', '▁HE Y ▁ H UGH'],
+  ['HUE', '▁HE Y ▁HU E'], ['TWO', '▁HE Y ▁TWO'], ['TO', '▁HE Y ▁TO'], ['DO', '▁HE Y ▁DO'], ['NEW', '▁HE Y ▁NEW'],
+  ['TRUE', '▁HE Y ▁T RU E'], ['THROUGH', '▁HE Y ▁THROUGH'], ['SUE', '▁HE Y ▁SU E'], ['SHOE', '▁HE Y ▁S HO E'], ['RU', '▁HE Y ▁RU'],
+  ['ROO', '▁HE Y ▁RO O'], ['DREW', '▁HE Y ▁DR E W'], ['GREW', '▁HE Y ▁G RE W'], ['SCREW', '▁HE Y ▁S C RE W'], ['CUE', '▁HE Y ▁C U E'],
+  ['COOL', '▁HE Y ▁CO OL'], ['BLUE', '▁HE Y ▁B LU E'], ['GLUE', '▁HE Y ▁G LU E'], ['THERE', '▁HE Y ▁THERE'], ['WHAT', '▁HE Y ▁WHAT'],
+  ['HOW', '▁HE Y ▁HOW'], ['LOOK', '▁HE Y ▁LOOK'], ['GOOGLE', '▁HE Y ▁GO O G LE'], ['OKAY_WHO', '▁OKAY ▁WHO'], ['OKAY_YOU', '▁OKAY ▁YOU'],
+];
+/** The decoys a profile listens with: its own list (training dropped the ones its takes set off), every one for a profile made before decoys. */
+export function decoysOf(profile) {
+  const use = profile && Array.isArray(profile.decoys) ? new Set(profile.decoys) : null;
+  return DECOYS.filter(([n]) => !use || use.has(n));
+}
+/** Keyword lines for [decoys], each reported as NOT_<name>. */
+export function decoyLines(threshold, score = KEYWORDS_SCORE, decoys = DECOYS) {
+  return decoys.map(([n, sp]) => `${sp} :${score} #${threshold} @NOT_${n}`).join('\n');
+}
+/** "Hey Cru" and the decoys together, at one threshold. */
+export function competingLines(threshold, score = KEYWORDS_SCORE, decoys = DECOYS) {
+  return decoys.length ? keywordLines(threshold, score) + '\n' + decoyLines(threshold, score, decoys) : keywordLines(threshold, score);
+}
+/** What the spotter listens with for [profile]: its tuned "Hey Cru" lines and its decoys. */
+export function listenLines(profile) {
+  const d = decoysOf(profile);
+  return d.length ? profile.keyword + '\n' + decoyLines(profile.keywordsThreshold, profile.keywordsScore, d) : profile.keyword;
+}
 /** Trigger thresholds tried, strictest first. */
 export const THRESHOLDS = [0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.06];
 export const KEYWORDS_SCORE = 1.5;
@@ -54,8 +99,17 @@ const STRICT_MARGIN = 1.3;
 const LENGTH_RANGE = [0.65, 1.5];
 /** At least this share of a burst's loud frames must be voiced (vowels have a pitch; noise has none). */
 const MIN_VOICED = 0.3;
-/** Below this many takes heard by the model, the phrase wakes without its second opinion. */
+/** Below this many takes heard by the model, the phrase wakes without its second opinion (only a decoy heard refuses it). */
 const MODEL_TRUSTED = 3;
+/**
+ * The onset check: the closest the burst comes to a take in its worst 150 ms
+ * (WINDOW frames along the DTW path), against how the takes do among
+ * themselves, times this. "Cru" and "screw", "who", "you" differ in a few
+ * frames at the start of the second word, which an average over the whole
+ * phrase hides.
+ */
+const WINDOW = 15;
+const WINDOW_MARGIN = 1.6;
 /** What the verifier looks at when the spotter fires. */
 export const VERIFY_SECONDS = 2.0;
 
@@ -267,6 +321,46 @@ export function fullDistance(a, b) {
 }
 
 /**
+ * The onset check's measure: DTW of [a] against [b], both ends held (as
+ * [fullDistance], but summed, not per step); along the best path, each of
+ * [a]'s frames gets the mean distance of the frames of [b] it was matched
+ * with, and the result is the worst run of WINDOW of those (the whole
+ * phrase, when it is shorter). Low only when every part of [a] has a close
+ * part in [b], the consonants included.
+ */
+export function windowDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (!m || !n) return Infinity;
+  const w = n + 1, D = new Float64Array((m + 1) * w).fill(Infinity), C = new Float64Array(m * n);
+  D[0] = 0;
+  for (let i = 1; i <= m; i++) {
+    const x = a[i - 1];
+    for (let j = 1; j <= n; j++) {
+      const y = b[j - 1];
+      let s = 0; for (let k = 0; k < x.length; k++) { const t = x[k] - y[k]; s += t * t; }
+      const c = Math.sqrt(s);
+      C[(i - 1) * n + j - 1] = c;
+      D[i * w + j] = c + Math.min(D[(i - 1) * w + j - 1], D[(i - 1) * w + j], D[i * w + j - 1]);
+    }
+  }
+  // Back along the path: diagonal first, then along [a], then along [b].
+  const per = new Float64Array(m), cnt = new Float64Array(m);
+  let i = m, j = n;
+  while (i > 0 && j > 0) {
+    per[i - 1] += C[(i - 1) * n + j - 1]; cnt[i - 1]++;
+    const d = D[(i - 1) * w + j - 1], u = D[(i - 1) * w + j], l = D[i * w + j - 1];
+    if (d <= u && d <= l) { i--; j--; } else if (u <= l) i--; else j--;
+  }
+  for (let k = 0; k < m; k++) per[k] = cnt[k] ? per[k] / cnt[k] : 0;
+  const win = Math.min(WINDOW, m);
+  let sum = 0;
+  for (let k = 0; k < win; k++) sum += per[k];
+  let worst = sum;
+  for (let k = win; k < m; k++) { sum += per[k] - per[k - win]; if (sum > worst) worst = sum; }
+  return worst / win;
+}
+
+/**
  * The share of a clip's loud 30 ms frames that are voiced: a clear pitch
  * between 70 and 400 Hz (normalised autocorrelation over 0.45). Speech
  * has it in its vowels; a fan, a tap or a clatter hardly ever does.
@@ -309,14 +403,57 @@ export function checkSample(samples) {
   return { ok: true, clip };
 }
 
-/** Would the spotter (made with [makeSpotter]({ keywordsThreshold })) hear this clip? */
-function heard(spot, clip) {
+/** What the spotter (made with [makeSpotter]) reports on this clip, 0.3 s of quiet before and a second after: the names, in order. */
+export function spotted(spot, clip) {
   spot.reset();
   const padded = new Float32Array(RATE * 0.3 + clip.length + RATE);
   padded.set(clip, RATE * 0.3);
-  let hit = false;
-  for (let i = 0; i < padded.length; i += 1600) if (spot.accept(padded.subarray(i, i + 1600))) hit = true;
-  return hit;
+  const names = [];
+  for (let i = 0; i < padded.length; i += 1600) { const k = spot.accept(padded.subarray(i, i + 1600)); if (k) names.push(k); }
+  return names;
+}
+const heard = (spot, clip) => spotted(spot, clip).includes(WAKE);
+
+/**
+ * The decoys the model hears in the owner's own takes, at the confirm
+ * threshold, competing with "Hey Cru": those are how it hears this voice
+ * say the wake word, so they must not refuse it. Asked again without them
+ * (another may come second) up to three times. [heardBy] (lines, clip) gives
+ * the names the spotter reported.
+ */
+export function decoysHeard(clips, score, heardBy) {
+  const out = new Set();
+  for (let round = 0; round < 3; round++) {
+    const use = DECOYS.filter(([n]) => !out.has(n));
+    const lines = competingLines(CONFIRM_THRESHOLD, score, use);
+    let more = false;
+    for (const c of clips) for (const k of heardBy(lines, levelled(c))) if (k.startsWith('NOT_') && !out.has(k.slice(4))) { out.add(k.slice(4)); more = true; }
+    if (!more) break;
+  }
+  return out;
+}
+
+/**
+ * [clip] scaled so its loudest sample is at half of full scale: the model's
+ * second opinion hears a quiet (far) call as well as a near one, the decoys
+ * included.
+ */
+export function levelled(clip) {
+  let peak = 0;
+  for (let i = 0; i < clip.length; i++) peak = Math.max(peak, Math.abs(clip[i]));
+  const out = new Float32Array(clip.length);
+  if (!peak) return out;
+  const k = 0.5 / peak;
+  for (let i = 0; i < clip.length; i++) out[i] = clip[i] * k;
+  return out;
+}
+
+/** The onset check's limit from the takes: each against the others (both ways), the median, times WINDOW_MARGIN. */
+export function windowLimitOf(takes) {
+  if (!takes || takes.length < 2) return 0;
+  const near = takes.map((t, i) => Math.min(...takes.map((u, j) => j === i ? Infinity : Math.max(windowDistance(u, t), windowDistance(t, u)))));
+  const sorted = [...near].sort((a, b) => a - b);
+  return Math.round(sorted[Math.floor(sorted.length / 2)] * WINDOW_MARGIN * 1000) / 1000;
 }
 
 /**
@@ -346,12 +483,24 @@ export function train(recordings, makeSpotter) {
   const typical = nearSorted[Math.floor(nearSorted.length / 2)];
   const frames = templates.map(t => t.length).sort((a, b) => a - b)[Math.floor(templates.length / 2)];
 
+  // The decoys this voice may use: all but those the model hears in the takes.
+  const spots = new Map();
+  let dropped;
+  try {
+    dropped = decoysHeard(clips, KEYWORDS_SCORE, (lines, c) => {
+      if (!spots.has(lines)) spots.set(lines, makeSpotter({ keywords: lines, keywordsScore: KEYWORDS_SCORE, keywordsThreshold: CONFIRM_THRESHOLD, gate: false }));
+      return spotted(spots.get(lines), c);
+    });
+  } finally { for (const sp of spots.values()) sp.free(); }
+  const decoys = DECOYS.filter(([n]) => !dropped.has(n));
+
   // The model, tuned: the strictest threshold that hears as many takes as
-  // any does, two steps looser. Takes it never hears are fine: the owner's
-  // phrase (the templates) wakes for those.
+  // any does, two steps looser, with the decoys competing as they do when
+  // listening. Takes it never hears are fine: the owner's phrase (the
+  // templates) wakes for those.
   let best = THRESHOLDS.length - 1, most = 0;
   for (let t = 0; t < THRESHOLDS.length; t++) {
-    const spot = makeSpotter({ keywords: keywordLines(THRESHOLDS[t]), keywordsScore: KEYWORDS_SCORE, keywordsThreshold: THRESHOLDS[t], gate: false });
+    const spot = makeSpotter({ keywords: competingLines(THRESHOLDS[t], KEYWORDS_SCORE, decoys), keywordsScore: KEYWORDS_SCORE, keywordsThreshold: THRESHOLDS[t], gate: false });
     let n = 0;
     try { n = clips.filter(c => heard(spot, c)).length; } finally { spot.free(); }
     if (n > most) { most = n; best = t; }
@@ -373,6 +522,10 @@ export function train(recordings, makeSpotter) {
       phraseFrames: frames,
       /** How many takes the model itself heard (the rest wake by the phrase alone). */
       modelHeard: most,
+      /** The decoys listened for (DECOYS' names): all but those the model heard in the takes. Absent before decoys: all. */
+      decoys: decoys.map(([n]) => n),
+      /** The onset check's limit ([windowDistance]); absent in older profiles, worked out from their takes. */
+      windowLimit: windowLimitOf(templates),
       templates: [...templates, ...clips.flatMap(c => variants(c).map(v => mfcc(v)))].map(t => t.map(f => Array.from(f, x => Math.round(x * 1000) / 1000))),
       trainedAt: new Date().toISOString(),
     },
@@ -412,13 +565,38 @@ export function matchPhrase(profile, segment, confirm = null) {
   for (const t of profile.templates) best = Math.min(best, Math.max(fullDistance(t, feats), fullDistance(feats, t)));
   const score = Math.round(best * 1000) / 1000;
   if (best > strictLimit(profile)) return no('unlike', score);
-  // When the model can hear this voice, it must agree, if only faintly.
-  if (confirm && (profile.modelHeard ?? 0) >= MODEL_TRUSTED && !confirm(c.clip)) return no('model', score);
+  // Every part of it close to a take, the start of "Cru" included.
+  const wl = windowLimit(profile);
+  if (wl > 0) {
+    let w = Infinity;
+    for (const t of profile.templates) w = Math.min(w, Math.max(windowDistance(t, feats), windowDistance(feats, t)));
+    if (w > wl) return no('onset', score);
+  }
+  if (confirm) {
+    // The model's second opinion, "Hey Cru" and the decoys competing at
+    // their loosest (confirmLines). When the model can hear this voice, it
+    // must hear "Hey Cru", if only faintly (not a decoy in its place); when
+    // it can't, a decoy heard still refuses it.
+    const r = confirm(levelled(c.clip));
+    const names = Array.isArray(r) ? r : (r ? [WAKE] : []);
+    if ((profile.modelHeard ?? 0) >= MODEL_TRUSTED) { if (!names.includes(WAKE)) return no('model', score); }
+    else if (names.some(k => k !== WAKE)) return no('decoy', score);
+  }
   return { ok: true, score };
 }
 
 /** The loosest keyword lines, for the model's second opinion on a burst the phrase matched. */
 export const CONFIRM_THRESHOLD = 0.04;
+/** The second opinion's lines for [profile]: "Hey Cru" and its decoys, at CONFIRM_THRESHOLD. */
+export function confirmLines(profile) { return competingLines(CONFIRM_THRESHOLD, profile.keywordsScore, decoysOf(profile)); }
+
+/** The onset check's limit: the profile's, or (made before it) from its takes, worked out once. */
+const windowLimits = new WeakMap();
+export function windowLimit(p) {
+  if (p.windowLimit > 0) return p.windowLimit;
+  if (!windowLimits.has(p)) windowLimits.set(p, p.takes >= 2 ? windowLimitOf(p.templates.slice(0, p.takes)) : 0);
+  return windowLimits.get(p);
+}
 
 /** A version 1 profile (before the phrase match) had no strict limit: the same margin, from its limit. */
 export function strictLimit(p) { return p.strictLimit > 0 ? p.strictLimit : p.limit / LIMIT_MARGIN * STRICT_MARGIN; }

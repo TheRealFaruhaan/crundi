@@ -32,6 +32,9 @@ import kotlin.math.sqrt
  *  2. The model, tuned: the spotter (Cru, Kru, Crew spellings) at two steps
  *     looser than the strictest threshold that hears as many takes as any;
  *     its hits are checked against the templates at a looser limit.
+ * Both also ask the model about near misses ("hey you", "hey who"...:
+ * [CruWake.DECOYS]) competing with "Hey Cru": a decoy heard is no wake. The
+ * phrase match also checks its worst 150 ms ([CruWake.windowDistance]).
  * No take is refused because the model didn't hear it.
  * Not a speaker check: someone else saying it the same way may pass. It
  * keeps out "crew" on the television and the near misses.
@@ -51,25 +54,44 @@ data class WakeProfile(
     val phraseFrames: Int = 0,
     /** The first [takes] templates are the takes; the rest, the same takes heard other ways. */
     val takes: Int = 0,
+    /** The decoys listened for ([CruWake.DECOYS]' names): all but those the model heard in the takes. Null before decoys: all. */
+    val decoys: List<String>? = null,
+    /** The onset check's limit ([CruWake.windowDistance]); 0 in an older profile, worked out from its takes. */
+    val windowLimit: Double = 0.0,
     val templates: List<List<List<Double>>> = emptyList(),
     val trainedAt: String = "",
 ) {
     // Version 4: deltas in the features; anything older must be trained again.
     fun valid() = version == 4 && phraseFrames > 0 && templates.size >= 3 && limit > 0 && keywordsThreshold > 0 && keyword.isNotBlank()
 
-    /** The keyword lines with this profile's boost and threshold (sherpa-onnx's "tokens :score #threshold @name"), every spelling. */
-    fun keywordLine() = CruWake.lines(keywordsThreshold, keywordsScore)
+    /**
+     * The keyword lines to listen with (sherpa-onnx's "tokens :score #threshold
+     * @name"): every spelling at this profile's boost and threshold, and its
+     * decoys competing with them (enroll.js listenLines).
+     */
+    fun keywordLine() = CruWake.competing(keywordsThreshold, keywordsScore, decoyList)
+
+    /** The decoys this profile listens with (enroll.js decoysOf). */
+    val decoyList: List<Pair<String, String>> get() = decoys?.toSet()?.let { use -> CruWake.DECOYS.filter { it.first in use } } ?: CruWake.DECOYS
+
+    /** The model's second opinion on a burst: "Hey Cru" and the decoys at their loosest (enroll.js confirmLines). */
+    fun confirmLines() = CruWake.competing(CruWake.CONFIRM_THRESHOLD, keywordsScore, decoyList)
 
     private val strict get() = if (strictLimit > 0) strictLimit else limit / CruWake.LIMIT_MARGIN * CruWake.STRICT_MARGIN
     private val feats by lazy { templates.map { t -> t.map { it.toDoubleArray() } } }
+    /** The onset check's limit: the profile's, or (made before it) from its takes (enroll.js windowLimit). */
+    private val window by lazy { if (windowLimit > 0) windowLimit else if (takes >= 2) CruWake.windowLimitOf(feats.take(takes)) else 0.0 }
 
     /**
      * A burst of speech on its own ([CruWake.Segmenter]): the owner's "Hey
      * Cru"? As long as their takes, voiced (speech, not a noise), close to
-     * them compared whole and both ways, and (when the model can hear this
-     * voice at all) [confirm]ed by the model, if only faintly. As enroll.js's matchPhrase.
+     * them compared whole and both ways, every part close (the onset check),
+     * and the model's second opinion from [hears] (did a keyword named
+     * HEY_CRU fire, on the clip as given): when the model can hear this
+     * voice, it must hear "Hey Cru" over the decoys, if only faintly; when it
+     * can't, a decoy heard still refuses it. As enroll.js's matchPhrase.
      */
-    fun matchPhrase(segment: FloatArray, confirm: ((FloatArray) -> Boolean)? = null): CruWake.Verdict {
+    fun matchPhrase(segment: FloatArray, hears: ((line: String, clip: FloatArray) -> Boolean)? = null): CruWake.Verdict {
         val no = CruWake.Verdict(false, Double.POSITIVE_INFINITY)
         val c = CruWake.checkSample(segment) as? CruWake.Sample.Ok ?: return no
         val frames = phraseFrames
@@ -80,7 +102,13 @@ data class WakeProfile(
         val t = feats.minOf { maxOf(CruWake.fullDistance(it, f), CruWake.fullDistance(f, it)) }
         val score = (t * 1000).roundToInt() / 1000.0
         if (t > strict) return CruWake.Verdict(false, score)
-        if (confirm != null && modelHeard >= 3 && !confirm(c.clip)) return CruWake.Verdict(false, score)
+        if (window > 0 && feats.minOf { maxOf(CruWake.windowDistance(it, f), CruWake.windowDistance(f, it)) } > window) return CruWake.Verdict(false, score)
+        if (hears != null) {
+            val clip = CruWake.padded(CruWake.levelled(c.clip))
+            if (modelHeard >= 3) { if (!hears(confirmLines(), clip)) return CruWake.Verdict(false, score) }
+            // The decoys reported as HEY_CRU, "Hey Cru" as something else: the same contest, the other question.
+            else if (decoyList.isNotEmpty() && hears(CruWake.asWake(CruWake.CONFIRM_THRESHOLD, keywordsScore, decoyList, decoyList.map { it.first }.toSet()), clip)) return CruWake.Verdict(false, score)
+        }
         return CruWake.Verdict(true, score)
     }
 
@@ -97,7 +125,7 @@ data class WakeProfile(
         var i = 0
         while (i < all.size) {
             seg.accept(all.copyOfRange(i, minOf(all.size, i + 1600)))?.let { burst ->
-                val v = matchPhrase(burst) { clip -> hears(CruWake.lines(CruWake.CONFIRM_THRESHOLD, keywordsScore), CruWake.padded(clip)) }
+                val v = matchPhrase(burst, hears)
                 if (v.ok) return v
                 if (v.score.isFinite() && (closest == null || v.score < closest!!.score)) closest = v
             }
@@ -132,8 +160,84 @@ object CruWake {
     const val VERIFY_SECONDS = 2.0
 
     /** Every spelling, each with its boost and threshold, one per line. */
-    fun lines(threshold: Double, score: Double = KEYWORDS_SCORE) = SPELLINGS.joinToString("\n") { "$it :$score #$threshold @HEY_CRU" }
+    fun lines(threshold: Double, score: Double = KEYWORDS_SCORE) = SPELLINGS.joinToString("\n") { "$it :$score #$threshold @$WAKE" }
     fun line(threshold: Double, score: Double = KEYWORDS_SCORE) = lines(threshold, score)
+
+    /** The name the spotter reports for "Hey Cru"; anything else it reports is a decoy. */
+    const val WAKE = "HEY_CRU"
+
+    /**
+     * Decoys: phrases close to "Hey Cru" that are not a call, as the model's
+     * BPE tokens, given to the spotter as keywords too so they compete with
+     * it (the model reports only its best guess: "hey you" comes out as
+     * NOT_YOU, not a faint HEY_CRU). The same list as enroll.js DECOYS.
+     */
+    val DECOYS = listOf(
+        "YOU" to "▁HE Y ▁YOU", "YOUR" to "▁HE Y ▁YOUR", "WHO" to "▁HE Y ▁WHO", "HOO" to "▁HE Y ▁HO O", "HUGH" to "▁HE Y ▁ H UGH",
+        "HUE" to "▁HE Y ▁HU E", "TWO" to "▁HE Y ▁TWO", "TO" to "▁HE Y ▁TO", "DO" to "▁HE Y ▁DO", "NEW" to "▁HE Y ▁NEW",
+        "TRUE" to "▁HE Y ▁T RU E", "THROUGH" to "▁HE Y ▁THROUGH", "SUE" to "▁HE Y ▁SU E", "SHOE" to "▁HE Y ▁S HO E", "RU" to "▁HE Y ▁RU",
+        "ROO" to "▁HE Y ▁RO O", "DREW" to "▁HE Y ▁DR E W", "GREW" to "▁HE Y ▁G RE W", "SCREW" to "▁HE Y ▁S C RE W", "CUE" to "▁HE Y ▁C U E",
+        "COOL" to "▁HE Y ▁CO OL", "BLUE" to "▁HE Y ▁B LU E", "GLUE" to "▁HE Y ▁G LU E", "THERE" to "▁HE Y ▁THERE", "WHAT" to "▁HE Y ▁WHAT",
+        "HOW" to "▁HE Y ▁HOW", "LOOK" to "▁HE Y ▁LOOK", "GOOGLE" to "▁HE Y ▁GO O G LE", "OKAY_WHO" to "▁OKAY ▁WHO", "OKAY_YOU" to "▁OKAY ▁YOU",
+    )
+
+    /** "Hey Cru" and [decoys] (each reported as NOT_<name>) at one threshold (enroll.js competingLines). */
+    fun competing(threshold: Double, score: Double = KEYWORDS_SCORE, decoys: List<Pair<String, String>> = DECOYS): String =
+        (listOf(lines(threshold, score)) + decoys.map { (n, sp) -> "$sp :$score #$threshold @NOT_$n" }).joinToString("\n")
+
+    /**
+     * The same contest as [competing], asked the other way: the decoys named
+     * in [wake] reported as HEY_CRU, "Hey Cru" and the other decoys as
+     * something else. So a spotter that only says whether HEY_CRU fired says
+     * whether one of them did.
+     */
+    fun asWake(threshold: Double, score: Double, decoys: List<Pair<String, String>>, wake: Set<String>): String =
+        (SPELLINGS.map { "$it :$score #$threshold @CRU_SELF" } + decoys.map { (n, sp) -> "$sp :$score #$threshold @" + (if (n in wake) WAKE else "NOT_$n") }).joinToString("\n")
+
+    /**
+     * The decoys the model hears in the owner's own takes, competing with "Hey
+     * Cru" at the confirm threshold: how it hears this voice say the wake
+     * word, so they must not refuse it. Asked again without them (another may
+     * come second) up to three times. As enroll.js decoysHeard; [hears] says
+     * whether a keyword named HEY_CRU fired, so each take is asked first
+     * whether any decoy won, then (rarely) which.
+     */
+    fun decoysHeard(clips: List<FloatArray>, score: Double, hears: (line: String, clip: FloatArray) -> Boolean): Set<String> {
+        val out = LinkedHashSet<String>()
+        repeat(3) {
+            val use = DECOYS.filter { it.first !in out }
+            if (use.isEmpty()) return out
+            val all = use.map { it.first }.toSet()
+            var more = false
+            for (c in clips) {
+                val p = padded(levelled(c))
+                if (!hears(asWake(CONFIRM_THRESHOLD, score, use, all), p)) continue
+                for (n in all) if (n !in out && hears(asWake(CONFIRM_THRESHOLD, score, use, setOf(n)), p)) { out += n; more = true }
+            }
+            if (!more) return out
+        }
+        return out
+    }
+
+    /** [clip] scaled so its loudest sample is at half of full scale, for the model's second opinion (enroll.js levelled). */
+    fun levelled(clip: FloatArray): FloatArray {
+        var peak = 0f
+        for (x in clip) peak = max(peak, abs(x))
+        if (peak == 0f) return FloatArray(clip.size)
+        val k = 0.5 / peak
+        return FloatArray(clip.size) { (clip[it] * k).toFloat() }
+    }
+
+    /** The onset check's limit from the takes: each against the others, both ways, the median, times [WINDOW_MARGIN] (enroll.js windowLimitOf). */
+    fun windowLimitOf(takes: List<List<DoubleArray>>): Double {
+        if (takes.size < 2) return 0.0
+        val near = takes.indices.map { i -> takes.indices.filter { it != i }.minOf { maxOf(windowDistance(takes[it], takes[i]), windowDistance(takes[i], takes[it])) } }
+        return (near.sorted()[near.size / 2] * WINDOW_MARGIN * 1000).roundToInt() / 1000.0
+    }
+
+    /** The onset check: the worst [WINDOW] frames along the DTW path (enroll.js). */
+    const val WINDOW = 15
+    const val WINDOW_MARGIN = 1.6
 
     data class Verdict(val ok: Boolean, val score: Double)
 
@@ -317,6 +421,45 @@ object CruWake {
         return if (pl[n] > 0) pc[n] / pl[n] else Double.POSITIVE_INFINITY
     }
 
+    /**
+     * DTW of [a] against [b], both ends held; along the best path each of
+     * [a]'s frames gets the mean distance of the frames of [b] matched with
+     * it; the worst run of [WINDOW] of those (the whole, when shorter). As
+     * enroll.js windowDistance.
+     */
+    fun windowDistance(a: List<DoubleArray>, b: List<DoubleArray>): Double {
+        val m = a.size; val n = b.size
+        if (m == 0 || n == 0) return Double.POSITIVE_INFINITY
+        val w = n + 1
+        val d = DoubleArray((m + 1) * w) { Double.POSITIVE_INFINITY }
+        val cost = DoubleArray(m * n)
+        d[0] = 0.0
+        for (i in 1..m) {
+            val x = a[i - 1]
+            for (j in 1..n) {
+                val y = b[j - 1]
+                var s = 0.0; for (k in x.indices) { val t = x[k] - y[k]; s += t * t }
+                val c = sqrt(s)
+                cost[(i - 1) * n + j - 1] = c
+                d[i * w + j] = c + min(min(d[(i - 1) * w + j - 1], d[(i - 1) * w + j]), d[i * w + j - 1])
+            }
+        }
+        val per = DoubleArray(m); val cnt = DoubleArray(m)
+        var i = m; var j = n
+        while (i > 0 && j > 0) {
+            per[i - 1] += cost[(i - 1) * n + j - 1]; cnt[i - 1] += 1.0
+            val dg = d[(i - 1) * w + j - 1]; val up = d[(i - 1) * w + j]; val lf = d[i * w + j - 1]
+            if (dg <= up && dg <= lf) { i--; j-- } else if (up <= lf) i-- else j--
+        }
+        for (k in 0 until m) per[k] = if (cnt[k] > 0) per[k] / cnt[k] else 0.0
+        val win = min(WINDOW, m)
+        var sum = 0.0
+        for (k in 0 until win) sum += per[k]
+        var worst = sum
+        for (k in win until m) { sum += per[k] - per[k - win]; if (sum > worst) worst = sum }
+        return worst / win
+    }
+
     /** The share of a clip's loud 30 ms frames with a clear pitch, 70 to 400 Hz (enroll.js voicedShare). */
     fun voicedShare(clip: FloatArray): Double {
         val n = 480; val h = 240
@@ -368,8 +511,9 @@ object CruWake {
 
     /**
      * The profile from five recordings. [hears] says whether the spotter,
-     * with the keyword line given, hears "Hey Cru" in a clip (the engine is
-     * Android's; tests pass their own).
+     * with the keyword lines given, reports a keyword named HEY_CRU in a clip
+     * (not a decoy; the engine is Android's, [WakeWordEngine.hears]; tests
+     * pass their own).
      */
     fun train(recordings: List<FloatArray>, now: String, hears: (line: String, clip: FloatArray) -> Boolean): Trained {
         val checked = recordings.map { checkSample(it) }
@@ -388,11 +532,15 @@ object CruWake {
         val typical = near.sorted()[near.size / 2]
         val frames = templates.map { it.size }.sorted()[templates.size / 2]
 
-        // The model, tuned: the strictest threshold that hears as many takes as any, two steps looser.
-        // Takes it never hears are fine: the owner's phrase wakes for those.
+        // The decoys this voice may use: all but those the model hears in the takes.
+        val dropped = decoysHeard(clips, KEYWORDS_SCORE, hears)
+        val decoys = DECOYS.filter { it.first !in dropped }
+
+        // The model, tuned: the strictest threshold that hears as many takes as any, two steps looser,
+        // the decoys competing as when listening. Takes it never hears are fine: the owner's phrase wakes for those.
         var best = THRESHOLDS.lastIndex; var most = 0
         for ((t, th) in THRESHOLDS.withIndex()) {
-            val n = clips.count { hears(lines(th), padded(it)) }
+            val n = clips.count { hears(competing(th, KEYWORDS_SCORE, decoys), padded(it)) }
             if (n > most) { most = n; best = t }
             if (n == clips.size) break
         }
@@ -405,6 +553,8 @@ object CruWake {
             modelHeard = most,
             phraseFrames = frames,
             takes = templates.size,
+            decoys = decoys.map { it.first },
+            windowLimit = windowLimitOf(templates),
             templates = (templates + clips.flatMap { c -> variants(c).map { mfcc(it) } }).map { t -> t.map { f -> f.map { (it * 1000).roundToInt() / 1000.0 } } },
             trainedAt = now,
         ))

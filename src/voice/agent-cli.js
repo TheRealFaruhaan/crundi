@@ -137,9 +137,12 @@ export function createCliVoiceAgent({
     c.resolve({ ...r, tools: c.tools });
   }
 
-  function onLine(line) {
+  function onLine(line, from) {
     let m;
     try { m = JSON.parse(line); } catch { return; }
+    // Only the process the turn is running on speaks for it: an older one
+    // (replaced on a model change, or stopped) never ends the current turn.
+    if (current && current.proc && from && current.proc !== from) return;
     if (draining && !current && m.type === 'result') {
       draining = false; clearTimeout(drainTimer);
       const p = proc || {};
@@ -206,15 +209,17 @@ export function createCliVoiceAgent({
     p.stdout.on('data', (d) => {
       buf += d.toString();
       let i;
-      while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (l) onLine(l); }
+      while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (l) onLine(l, p); }
     });
     p.stderr.on('data', (d) => { p.err = (p.err + d.toString()).slice(-2000); });
-    p.on('error', (e) => { if (proc === p) proc = null; finish({ ok: false, error: `Claude Code did not start: ${e.message}` }); });
+    // A process ending fails the turn only if the turn is running on it.
+    const mine = () => !current || !current.proc || current.proc === p;
+    p.on('error', (e) => { if (proc === p) proc = null; if (mine()) finish({ ok: false, error: `Claude Code did not start: ${e.message}` }); });
     p.on('exit', (code) => {
       if (proc === p) proc = null;
       // A resumed session that no longer exists: forget it, the next turn starts afresh.
       if (/No conversation found|session.*not found/i.test(p.err)) { state.sessionId = ''; saveState(); }
-      finish({ ok: false, error: `Claude Code stopped (exit ${code})${p.err ? `: ${p.err.trim().split('\n').pop()}` : ''}` });
+      if (mine()) finish({ ok: false, error: `Claude Code stopped (exit ${code})${p.err ? `: ${p.err.trim().split('\n').pop()}` : ''}` });
     });
     proc = p;
     armIdle();
@@ -225,7 +230,7 @@ export function createCliVoiceAgent({
   function ask(model, content) {
     const p = ensure(model);
     return new Promise((resolve) => {
-      current = { resolve, tools: [] };
+      current = { resolve, tools: [], proc: p };
       current.timer = setTimeout(() => { finish({ ok: false, error: 'Claude Code took too long to answer' }); stop(); }, TURN_MS);
       current.timer.unref?.();
       p.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n');

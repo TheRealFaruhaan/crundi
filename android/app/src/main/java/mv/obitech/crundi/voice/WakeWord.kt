@@ -50,7 +50,7 @@ import mv.obitech.crundi.UrgentAlerts
  * isn't available.
  */
 class WakeWordEngine private constructor(private val kws: KeywordSpotter) {
-    private var stream: OnlineStream = kws.createStream(CruWake.line(0.2))
+    private var stream: OnlineStream = kws.createStream(CruWake.competing(0.2))
 
     /** Listen with the owner's tuned keyword line (their profile's threshold). */
     fun use(line: String) {
@@ -58,7 +58,11 @@ class WakeWordEngine private constructor(private val kws: KeywordSpotter) {
         stream = kws.createStream(line)
     }
 
-    /** 16 kHz mono floats in -1..1. True when the wake word was just heard. */
+    /**
+     * 16 kHz mono floats in -1..1. True when the wake word was just heard:
+     * a keyword named HEY_CRU, not a decoy ("hey you" and the like, which
+     * the lines carry to compete with it: [CruWake.DECOYS]).
+     */
     fun feed(samples: FloatArray): Boolean = feed(stream, samples)
 
     private fun feed(s: OnlineStream, samples: FloatArray): Boolean {
@@ -66,15 +70,16 @@ class WakeWordEngine private constructor(private val kws: KeywordSpotter) {
         var heard = false
         while (kws.isReady(s)) {
             kws.decode(s)
-            if (kws.getResult(s).keyword.isNotBlank()) {
+            val k = kws.getResult(s).keyword
+            if (k.isNotBlank()) {
                 kws.reset(s)
-                heard = true
+                if (k == CruWake.WAKE) heard = true
             }
         }
         return heard
     }
 
-    /** Training: would [line] hear "Hey Cru" in [clip]? On a stream of its own; the live one is untouched. */
+    /** Training and the checks: do [line] report HEY_CRU in [clip]? On a stream of its own; the live one is untouched. */
     fun hears(line: String, clip: FloatArray): Boolean {
         val s = kws.createStream(line)
         try {
@@ -275,7 +280,7 @@ object HeyCrundi {
                     filled = minOf(keep, filled + got)
                     val spotted = kws.feed(chunk)
                     val burst = bursts.accept(chunk)
-                    val phrase = burst?.let { b -> profile.matchPhrase(b) { clip -> kws.hears(CruWake.lines(CruWake.CONFIRM_THRESHOLD, profile.keywordsScore), CruWake.padded(clip)) } }
+                    val phrase = burst?.let { b -> profile.matchPhrase(b) { line, clip -> kws.hears(line, clip) } }
                     if (phrase?.ok == true && running) { Log.i(TAG, "Hey Cru: the owner's phrase (${phrase.score})"); main.post { heard() } }
                     else if (spotted && running) {
                         val recent = FloatArray(filled) { ring[(at - filled + it + keep) % keep] }

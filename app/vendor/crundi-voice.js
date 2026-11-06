@@ -426,6 +426,7 @@
       outNode();
       loadCues();
       var src = ctx.createMediaStreamSource(stream);
+      S.src = src;
       var proc = ctx.createScriptProcessor(4096, 1, 1);
       S.proc = proc;
       var ratio = ctx.sampleRate / 16000;
@@ -814,7 +815,35 @@
   function tapMic() {
     if (!S) return;
     if (S.phase === 'speak') { bargeIn(); return; }
+    if (S.phase === 'ended' && S.micOff) { wakeMic(); return; }
     if (S.phase === 'ended' && !S.notice) { S.phase = 'listen'; S.quietSince = Date.now(); render(); }
+  }
+
+  /**
+   * Asleep: the microphone is let go (nothing is streamed, and on the PC its
+   * own "Hey Cru" listener takes the microphone and wakes this screen). The
+   * voice stays, so a report can still be said.
+   */
+  function sleepMic() {
+    if (!S || S.micOff) return;
+    S.micOff = true;
+    try { if (S.ws) { S.ws.send(JSON.stringify({ type: 'stop' })); S.ws.close(); } } catch (e) { /* gone */ }
+    S.ws = null; S.live = false; S.streaming = false;
+    try { if (S.src) S.src.disconnect(); if (S.proc) S.proc.disconnect(); } catch (e) { /* gone */ }
+    try { if (S.stream) S.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* gone */ }
+    S.stream = null; S.src = null; S.proc = null;
+  }
+
+  /** "Hey Cru" on the PC, a tap, the shortcut: listening again, on the same screen. */
+  function wakeMic() {
+    if (!S || !S.micOff) return;
+    S.micOff = false;
+    try { if (S.loop) S.loop.close(); } catch (e) { /* gone */ }
+    try { if (S.ctx) S.ctx.close(); } catch (e) { /* gone */ }
+    S.loop = null; S.ctx = null;
+    S.phase = 'start'; S.notice = ''; S.heard = ''; S.streaming = true; S.quietSince = Date.now();
+    render();
+    openMic();
   }
 
   function bargeIn() {
@@ -851,7 +880,7 @@
     // After a short silence (Settings, default a minute) the voice screen closes itself; "Hey Cru" opens it again.
     var idleMs = ((S.settings && S.settings.screenCloseSeconds) || 60) * 1000;
     if ((S.phase === 'ended' || S.phase === 'listen') && !S.pending && Date.now() - S.quietSince > idleMs) { close(); return; }
-    if (S.phase === 'listen' && !S.pending && Date.now() - S.quietSince > SILENCE_MS) { S.phase = 'ended'; render(); }
+    if (S.phase === 'listen' && !S.pending && Date.now() - S.quietSince > SILENCE_MS) { S.phase = 'ended'; sleepMic(); render(); }
   }
 
   // ─── the screen ───
@@ -1112,5 +1141,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
+    // The PC's "Hey Cru" (app/voice-wake/controller.js): an asleep screen has let the microphone go, and is woken where it is.
+    get holdsMic() { return !!S && !S.micOff; }, wake: function () { if (S && S.micOff) { wakeMic(); return true; } return false; } };
 })();

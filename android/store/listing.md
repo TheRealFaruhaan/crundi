@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.19 (en-US)
+
+Version code 50. Internal track. Since 1.1.3-dev.18 (code 49): decoy keywords (30 near phrases) in listening and the second opinion, the owner's own takes drop decoys, a worst-150-ms DTW check, level-normalised confirm.
+
+```
+<en-US>
+Hey Cru wakes only for Hey Cru.
+
+- Near phrases such as "hey you", "hey who" or "hey two" no longer wake Cru. Your real "Hey Cru" still does; retrain once if it seems harder to trigger.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.18 (en-US)
 
 Version code 49. Internal track. Since 1.1.3-dev.17 (code 48): cancel (voice-cancel): the x and the discard phrases; /api/voice/cancel while thinking.
