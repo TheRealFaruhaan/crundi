@@ -77,7 +77,7 @@
     if (!document.getElementById('cv-css')) { var st = el('style'); st.id = 'cv-css'; st.textContent = CSS; document.head.appendChild(st); }
     var ov = el('div', 'cv-ov');
     ov.innerHTML =
-      '<div class="cv-top"><span class="cv-wm">CRUNDI</span><span>' + (opts.host ? '· ' + esc(opts.host) : '') + '</span>' +
+      '<div class="cv-top"><span class="cv-wm">CRU</span><span>' + (opts.host ? '· ' + esc(opts.host) : '') + '</span>' +
       '<div class="cv-pill"><i></i><span class="cv-st">Waking</span></div>' +
       '<button class="cv-x" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
       '<div class="cv-field"><canvas></canvas></div><div class="cv-leg"></div>' +
@@ -94,7 +94,7 @@
       ov.style.setProperty('--cv-right', Math.max(8, Math.round(window.innerWidth - rc.right - 8)) + 'px');
     }
     S = {
-      opts: opts, ov: ov, phase: 'start', heard: '', asked: '', reply: '', detail: '', notice: '', question: '', pending: '',
+      opts: opts, ov: ov, phase: 'start', heard: '', asked: '', reply: '', detail: '', notice: '', question: '', pending: '', reports: [],
       lastSaid: '', saidUntil: 0, quietSince: Date.now(), streaming: true, speaking: false,
       mic: 0, voice: 0, lvl: 0, peak: 0.12, wave: new Float32Array(96), lastShift: 0,
       liq: { m: 0, mv: 0, lv: 0, peak: 0.1, hist: new Float32Array(64), drops: [], ripples: [], until: 0, lastDrop: 0, lastT: 0 },
@@ -241,7 +241,8 @@
 
   function heard(e) {
     if (!S) return;
-    if (e.type === 'ready') { if (S.phase === 'start') { S.phase = 'listen'; S.quietSince = Date.now(); } }
+    if (e.type === 'ready') { if (S.phase === 'start') { S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
+    else if (e.type === 'report') tell(e.speak || '', e.show || '');
     else if (e.type === 'interim') { if (echo(e.text)) return; if (S.phase === 'listen' || S.phase === 'start') { S.phase = 'listen'; S.heard = e.text; S.quietSince = Date.now(); } else if (S.phase === 'think') { S.heard = (S.pending + ' ' + e.text).trim(); } }
     else if (e.type === 'utterance') { if (S.phase === 'listen') S.pttSent = true; utter(e.text, false); }
     else if (e.type === 'error') { S.notice = e.error; }
@@ -260,6 +261,15 @@
     // "Hey Cru" while already awake: here at once, without asking Claude.
     if (isCalling(t)) { var h = hereLine(); S.asked = t; S.heard = ''; S.reply = h; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); speak(h); render(); return; }
     ask(t);
+  }
+
+  /** News, unasked (a watched chat finished or waits on the owner): said now if Cru is just listening, else once it is free. */
+  function tell(say, show) {
+    if (!S) return;
+    if (S.phase !== 'listen' || S.pending || S.heard) { S.reports.push({ speak: say, show: show }); return; }
+    S.reply = say; S.detail = show; S.heard = ''; S.notice = ''; S.question = ''; S.quietSince = Date.now();
+    if (say) speak(say);
+    render();
   }
 
   /** What Cru says when called while it is already listening, one at random, never the same twice running (as the phone's Speech.HERE). */
@@ -281,6 +291,8 @@
       var ok = r && r.ok;
       S.reply = ok ? (r.speak || '') : ''; S.detail = ok ? (r.show || '') : ''; S.notice = ok ? '' : (r && r.error || 'Something went wrong');
       S.question = ok && r.pending && r.pending.length ? r.pending[0].question : '';
+      // The owner is done: close once the goodbye has been said.
+      S.closing = !!(ok && r.close);
       if (ok && r.phoneActions && r.phoneActions.length) S.notice = 'Background listening is for the phone: turn it on from the Crundi app.';
       var say = ok ? S.reply : S.notice;
       api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { S.settings = s; refreshData(); } });
@@ -291,6 +303,9 @@
 
   function afterSpeech() {
     if (!S) return;
+    if (S.closing) { close(); return; }
+    // News that came while Cru was busy.
+    if (S.reports.length && !S.pending) { var q = S.reports.shift(); S.speaking = false; S.saidUntil = Date.now(); tell(q.speak, q.show); return; }
     S.speaking = false; S.saidUntil = Date.now();
     S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
     setTimeout(function () { if (S && (S.phase === 'listen' || S.phase === 'think')) { S.streaming = true; try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ } } }, PAUSE_AFTER_SPEECH_MS);
@@ -639,5 +654,11 @@
   }
   function resetShortcut() { try { localStorage.removeItem(SHORTCUT_KEY); } catch (e) { /* none */ } return label(DEFAULT_SHORTCUT); }
 
-  window.CrundiVoice = { open: open, close: close, attach: attach, icon: cruIcon, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
+  /** The PC: news while the dropdown is shut opens it and says it (src/webapp.js voiceReport). */
+  function report(say, show, opts) {
+    if (!S) { open(opts || {}); if (S) S.reports.push({ speak: say, show: show }); return; }
+    tell(say, show);
+  }
+
+  window.CrundiVoice = { open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
 })();

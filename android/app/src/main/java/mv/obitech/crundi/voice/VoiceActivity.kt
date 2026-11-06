@@ -68,7 +68,8 @@ class VoiceActivity : ComponentActivity() {
         enableEdgeToEdge()
         // The screen stays on while the voice screen is open.
         keepOn(true)
-        controller = VoiceController(this, "Cru", ::locked) { asleep() }
+        // Asked to close: gone, not asleep listening for Hey Cru.
+        controller = VoiceController(this, "Cru", ::locked, onFinish = { asleep() }, onDismiss = { finish() })
         setContent {
             CrundiTheme {
                 val ui by controller.ui.collectAsStateWithLifecycle()

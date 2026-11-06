@@ -99,7 +99,7 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
         // which Android honours for an assistant's window (the view's flag alone is not enough).
         runCatching { window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
         owner.resume()
-        val c = controller ?: VoiceController(context, "side key", ::locked) { hide() }.also { controller = it }
+        val c = controller ?: VoiceController(context, "side key", ::locked, onFinish = { hide() }).also { controller = it }
         view?.setContent {
             CrundiTheme {
                 val ui by c.ui.collectAsStateWithLifecycle()

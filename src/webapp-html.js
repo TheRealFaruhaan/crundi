@@ -9211,6 +9211,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if (msg.type === 'server-log') {
           appendServerLog(msg);
         }
+        // The PC app: Cru has news (a watched chat finished or waits on the
+        // owner) and no voice screen is open, so it opens and says it.
+        if (msg.type === 'voice-report' && window.api && window.CrundiVoice && window.CrundiVoice.report && userRole !== 'collaborator') {
+          window.CrundiVoice.report(String(msg.speak || ''), String(msg.show || ''), voiceOpts());
+        }
         if (typeof msg.type === 'string' && msg.type.indexOf('docker-') === 0 && window.CrundiDocker) {
           window.CrundiDocker.handleMessage(msg);
         }

@@ -96,6 +96,32 @@ class VoiceMachineTest {
         assertFalse(Speech.isCalling("hey crew what's running") || Speech.isCalling("the crew") || Speech.isCalling("hey"))
     }
 
+    @Test fun askedToCloseItClosesOnceTheGoodbyeIsSaid() {
+        val (s1, fx1) = run(*listening(), VoiceEvent.Utterance("that's all, thanks", 30), VoiceEvent.Reply(true, "Goodbye, Sir.", "", "", 40, close = true))
+        assertEquals(Phase.Speaking, s1.phase)
+        assertTrue(fx1.none { it == VoiceEffect.Dismiss })
+        val (s2, fx2) = m.on(s1, VoiceEvent.SpeechDone(60))
+        assertEquals(Phase.Ended, s2.phase)
+        assertEquals(listOf(VoiceEffect.Dismiss), fx2)
+        // Nothing to say: closes at once.
+        val (_, fx3) = run(*listening(), VoiceEvent.Utterance("close", 30), VoiceEvent.Reply(true, "", "", "", 40, close = true))
+        assertEquals(VoiceEffect.Dismiss, fx3.last())
+    }
+
+    @Test fun newsIsSaidWhenListeningAndKeptWhileBusy() {
+        val (s1, fx1) = run(*listening(), VoiceEvent.Report("Sir, the API chat has finished.", "tests pass", 20))
+        assertEquals(Phase.Speaking, s1.phase)
+        assertEquals(VoiceEffect.Say("Sir, the API chat has finished."), fx1.last())
+        // Busy answering: kept, then said once the answer has been.
+        val (s2, _) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Report("Sir, a chat waits on you.", "", 35))
+        assertEquals(Phase.Thinking, s2.phase)
+        assertEquals(1, s2.reports.size)
+        val (s3, _) = m.on(s2, VoiceEvent.Reply(true, "Hello, Sir.", "", "", 40))
+        val (s4, fx4) = m.on(s3, VoiceEvent.SpeechDone(50))
+        assertEquals(VoiceEffect.Say("Sir, a chat waits on you."), fx4.last())
+        assertTrue(s4.reports.isEmpty())
+    }
+
     @Test fun speakingIsNeverCutOffByTheTimeout() {
         val (s, _) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Reply(true, "A long answer.", "", "", 40), VoiceEvent.Tick(90_000))
         assertEquals(Phase.Speaking, s.phase)

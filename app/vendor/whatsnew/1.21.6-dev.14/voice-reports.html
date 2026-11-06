@@ -1,0 +1,16 @@
+<div class="wna a-vrep">
+  <div class="chat"><span class="d"></span>API chat<span class="st">working…</span><span class="st2">done</span></div>
+  <div class="say">"Sir, the API chat has finished: the tests pass."</div>
+  <style>
+    .a-vrep{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-vrep .chat{position:absolute;left:200px;top:80px;width:240px;padding:12px 14px;border-radius:10px;background:var(--bg-secondary);border:1px solid var(--border);display:flex;gap:10px;align-items:center;color:var(--text-primary);font-size:14px}
+    .a-vrep .d{width:8px;height:8px;border-radius:50%;background:var(--yellow);animation:avrep-d 9s steps(1) infinite}
+    .a-vrep .st,.a-vrep .st2{margin-left:auto;font:12px var(--mono);color:var(--text-secondary)}
+    .a-vrep .st{animation:avrep-a 9s steps(1) infinite}.a-vrep .st2{position:absolute;right:14px;opacity:0;color:var(--green);animation:avrep-b 9s steps(1) infinite}
+    .a-vrep .say{position:absolute;left:0;right:0;top:190px;text-align:center;font-size:18px;color:var(--text-primary);opacity:0;animation:avrep-s 9s ease infinite}
+    @keyframes avrep-d{0%{background:var(--yellow)}40%{background:var(--green)}}
+    @keyframes avrep-a{0%{opacity:1}40%{opacity:0}}
+    @keyframes avrep-b{0%{opacity:0}40%{opacity:1}}
+    @keyframes avrep-s{0%,45%{opacity:0;transform:translateY(6px)}55%,90%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

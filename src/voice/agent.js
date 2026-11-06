@@ -80,6 +80,8 @@ How you answer:
 
 What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals.
+- You watch the chats you send messages to or start, and any the owner asks you to follow (watch_chat). When one finishes or waits on the owner you get a [Report for the owner…] message: say what happened, briefly, as news ("Sir, the API chat has finished: the tests pass."). It is not something the owner said.
+- You can close yourself: when the owner is done ("close", "that's all", "goodbye"), call close_voice and say a brief goodbye; the screen closes once it has been said.
 - You can act: turn background "Hey Cru" listening on the phone on for 15–120 minutes (or off), send messages into chats, start, close, park and resume chats, tell the owner when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
 - Some actions need the owner's yes. When a tool answers needsConfirmation, nothing has been done: ask its question in your own words, briefly, and stop. Only when the owner agrees in their next message call confirm_action with the id; if they decline, cancel_action. Never confirm on the owner's behalf, and never call confirm_action in the same turn you asked.
 - send_to_chat and start_chat take an intent: "explicit" only when the owner plainly asked you to send, tell, type or reply something; otherwise "inferred", and it is read back first.
@@ -171,7 +173,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * on (a question awaiting the owner's yes, a locked phone) is collected in
    * `signals` for the reply.
    */
-  async function runTool(block, signals = { pending: [], needsUnlock: false, phoneActions: [] }) {
+  async function runTool(block, signals = { pending: [], needsUnlock: false, phoneActions: [], close: false }) {
     const t = byName.get(block.name);
     if (!t) return { type: 'tool_result', tool_use_id: block.id, is_error: true, content: `No tool called ${block.name}` };
     try {
@@ -180,6 +182,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         if (out.needsConfirmation && out.id) signals.pending.push({ id: out.id, question: out.ask || '' });
         if (out.needsUnlock) signals.needsUnlock = true;
         if (out.phoneAction) signals.phoneActions.push(out.phoneAction);
+        if (out.close) signals.close = true;
       }
       let s = typeof out === 'string' ? out : JSON.stringify(out);
       if (s.length > MAX_RESULT_CHARS) s = s.slice(0, MAX_RESULT_CHARS) + '… (cut)';
@@ -193,7 +196,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * One spoken (or typed) request.
    * @returns {Promise<{ok:boolean, speak?:string, show?:string, tools?:string[], costUsd?:number, error?:string, limitReached?:boolean}>}
    */
-  async function turn(text, { where = '', locked = false, now = new Date() } = {}) {
+  async function turn(text, { where = '', locked = false, now = new Date(), report = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     const s = settings.getSettings();
@@ -208,10 +211,11 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const used = [];
     let cost = 0;
     const cache = { read: 0, written: 0, uncached: 0 };
-    const signals = { pending: [], needsUnlock: false, phoneActions: [] };
+    const signals = { pending: [], needsUnlock: false, phoneActions: [], close: false };
     try {
-      // A new turn: The owner has spoken, so actions proposed before may now be confirmed.
-      beforeTurn({ locked });
+      // A new turn: the owner has spoken, so actions proposed before may now be
+      // confirmed. Not for a report: the owner said nothing, so nothing is agreed.
+      if (!report) beforeTurn({ locked });
       // Too long for one conversation: compact it now rather than lose it.
       if (history.length > MAX_HISTORY_MESSAGES) { busy = false; const c = await compact({ force: true }); busy = true; if (!c.ok) { history = []; lastReq = null; } }
       history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${contextLine({ now, where, locked })}\n${said}` });
@@ -243,8 +247,8 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
           return { ok: false, error: 'The answer ran out of room before it was finished', tools: used, costUsd: cost, cache };
         }
         const parts = splitReply(reply);
-        try { onTurnDone({ said, ...parts, at: now.getTime() }); } catch { /* memory is best effort */ }
-        return { ok: true, ...parts, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions };
+        try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, at: now.getTime() }); } catch { /* memory is best effort */ }
+        return { ok: true, ...parts, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions, close: signals.close };
       }
       return { ok: false, error: 'Too many lookups for one request; try asking more specifically', tools: used, costUsd: cost, cache };
     } catch (e) {
@@ -338,8 +342,20 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     }
   }
 
+  /**
+   * Something happened that the owner should hear about (a chat Cru watches
+   * finished, or is waiting on them): Cru turns [note] into a sentence or two
+   * to say, unprompted. Waits for a turn in progress to end (up to 30 s).
+   */
+  async function report(note, { now = new Date() } = {}) {
+    for (let i = 0; i < 60 && busy; i++) await new Promise(ok => setTimeout(ok, 500));
+    if (busy) return { ok: false, error: 'busy' };
+    return turn(`[Report for the owner, not said by them] ${String(note).trim()}\nTell the owner now, unprompted, in a sentence or two; detail after ---. Don't ask a question unless something needs their decision.`, { where: 'a report', now, report: true });
+  }
+
   return {
     turn,
+    report,
     warm,
     /** Start a fresh conversation. */
     compact,

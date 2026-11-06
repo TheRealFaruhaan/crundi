@@ -51,6 +51,10 @@ data class VoiceState(
     val question: String = "",
     /** The last answer needed the phone unlocked. */
     val needsUnlock: Boolean = false,
+    /** The owner is done: close once the goodbye has been said. */
+    val closing: Boolean = false,
+    /** News that came while Cru was busy: said once it is free (speak to show). */
+    val reports: List<Pair<String, String>> = emptyList(),
 )
 
 sealed interface VoiceEvent {
@@ -59,7 +63,7 @@ sealed interface VoiceEvent {
     data class Interim(val text: String, val now: Long) : VoiceEvent
     data class Utterance(val text: String, val now: Long) : VoiceEvent
     /** Claude's answer, or why there is none. */
-    data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long, val question: String = "", val needsUnlock: Boolean = false) : VoiceEvent
+    data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long, val question: String = "", val needsUnlock: Boolean = false, val close: Boolean = false) : VoiceEvent
     /** The owner tapped Yes or No (or typed): asked like something said. */
     data class Typed(val text: String, val now: Long) : VoiceEvent
     data class SpeechDone(val now: Long) : VoiceEvent
@@ -69,6 +73,8 @@ sealed interface VoiceEvent {
     data class Unlocked(val now: Long) : VoiceEvent
     data class Tick(val now: Long) : VoiceEvent
     data object Close : VoiceEvent
+    /** Cru has news, unasked: said now if it is just listening, else once it is free. */
+    data class Report(val speak: String, val show: String, val now: Long) : VoiceEvent
 }
 
 sealed interface VoiceEffect {
@@ -80,6 +86,8 @@ sealed interface VoiceEffect {
     /** The stream is gone: listen with the phone's own recogniser from here on. */
     data object UseFallback : VoiceEffect
     data object Finish : VoiceEffect
+    /** The owner asked Cru to close: the screen goes (not just to sleep). */
+    data object Dismiss : VoiceEffect
 }
 
 class VoiceMachine(
@@ -98,7 +106,11 @@ class VoiceMachine(
         if (s.phase == Phase.Ended) return s to emptyList()
         return when (e) {
             is VoiceEvent.Opened -> s.copy(phase = Phase.Starting, locked = e.locked, quietSince = e.now, activeSince = e.now) to emptyList()
-            is VoiceEvent.Ready -> if (s.phase == Phase.Starting) s.copy(phase = Phase.Listening, quietSince = e.now, activeSince = e.now) to emptyList() else s to emptyList()
+            is VoiceEvent.Ready -> if (s.phase != Phase.Starting) s to emptyList() else {
+                val ready = s.copy(phase = Phase.Listening, quietSince = e.now, activeSince = e.now)
+                // News that came while it was starting: said now.
+                if (ready.reports.isEmpty()) ready to emptyList() else ready.reports.first().let { (sp, sh) -> tell(ready.copy(reports = ready.reports.drop(1)), sp, sh, e.now) }
+            }
             is VoiceEvent.Interim -> if (echoOf(s, e.text, e.now)) s to emptyList() else when (s.phase) {
                 Phase.Starting, Phase.Listening -> s.copy(phase = Phase.Listening, heard = e.text, quietSince = e.now) to emptyList()
                 Phase.Thinking -> s.copy(heard = join(s.pending, e.text), quietSince = e.now) to emptyList()
@@ -119,7 +131,7 @@ class VoiceMachine(
             is VoiceEvent.Reply -> {
                 if (s.phase != Phase.Thinking) return s to emptyList()
                 val say = if (e.ok) e.speak.trim() else e.error.trim()
-                val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, activeSince = e.now, question = e.question, needsUnlock = e.needsUnlock)
+                val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, activeSince = e.now, question = e.question, needsUnlock = e.needsUnlock, closing = e.ok && e.close)
                 if (say.isEmpty()) afterSpeech(next, e.now)
                 else next.copy(phase = Phase.Speaking, lastSaid = say) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(say))
             }
@@ -148,6 +160,8 @@ class VoiceMachine(
                 else -> s to emptyList()
             }
             VoiceEvent.Close -> s.copy(phase = Phase.Ended) to listOf(VoiceEffect.StopSaying, VoiceEffect.Finish)
+            is VoiceEvent.Report -> if (s.phase == Phase.Listening && s.pending.isEmpty() && s.heard.isEmpty()) tell(s, e.speak, e.show, e.now)
+                else s.copy(reports = s.reports + (e.speak to e.show)) to emptyList()
         }
     }
 
@@ -156,10 +170,22 @@ class VoiceMachine(
 
     /** The answer has been said: listen again, or send what was said meanwhile. */
     private fun afterSpeech(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> {
+        if (s.closing) return s.copy(phase = Phase.Ended) to listOf(VoiceEffect.Dismiss)
+        if (s.reports.isNotEmpty() && s.pending.isBlank()) {
+            val (sp, sh) = s.reports.first()
+            return tell(s.copy(reports = s.reports.drop(1)), sp, sh, now)
+        }
         val resumed = s.copy(phase = Phase.Listening, heard = "", quietSince = now, activeSince = now, saidUntil = now)
         if (s.pending.isBlank()) return resumed to listOf(VoiceEffect.ResumeStream)
         val (next, fx) = ask(resumed.copy(pending = ""), s.pending, now)
         return next to (listOf<VoiceEffect>(VoiceEffect.ResumeStream) + fx)
+    }
+
+    /** News said unasked: shown, and spoken with the stream paused. */
+    private fun tell(s: VoiceState, speak: String, show: String, now: Long): Pair<VoiceState, List<VoiceEffect>> {
+        val next = s.copy(reply = speak, detail = show, heard = "", notice = "", quietSince = now, activeSince = now, question = "", needsUnlock = false)
+        return if (speak.isBlank()) next.copy(phase = Phase.Listening) to emptyList()
+        else next.copy(phase = Phase.Speaking, lastSaid = speak) to listOf(VoiceEffect.PauseStream, VoiceEffect.Say(speak))
     }
 
     /** Heard within [echoMs] of Crundi speaking, and mostly Crundi's own words. */

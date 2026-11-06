@@ -2605,12 +2605,62 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // yes is parked until their next message.
   const voicePending = createVoicePending();
   const voiceCtx = { pending: voicePending, locked: () => false };
-  const voiceWatches = new Map();   // chat id -> { title, project }
+  // Chats Cru reports on: those it set going (one turn), and those the owner
+  // asked it to follow (every turn). chat id -> { title, project, follow, told: Set of pending ids }
+  const voiceWatches = new Map();
+  // Where a report can be said: open voice screens (their listen sockets), and
+  // the PC app, whose connection is always open even with the dropdown shut.
+  const voiceListeners = new Set();
+  const desktopSockets = new Set();
+  const lastSaidBy = (id) => {
+    const h = claudeUi && claudeUi.history ? claudeUi.history(id) : null;
+    const m = (h && h.messages || []).filter(x => x.kind === 'assistant-text' && String(x.text || '').trim()).pop();
+    return m ? String(m.text).replace(/\s+/g, ' ').trim().slice(0, 1500) : '';
+  };
+  /**
+   * Tell the owner about a watched chat: said by Cru where a voice screen is
+   * open, else by the PC (it opens its dropdown and says it), else a phone
+   * notification.
+   */
+  // Only when a watched chat finishes its turn or needs the owner, never at
+  // every step, so Cru doesn't chatter.
+  async function voiceReport(id, w, what) {
+    const name = `the "${w.title || 'untitled'}" chat in ${w.project}`;
+    const last = lastSaidBy(id);
+    const open = [...voiceListeners].filter(ws => ws.readyState === 1);
+    const pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
+    if (open.length || pcs.length) {
+      const r = await voiceAgent.report(`${name} ${what}.${last ? ` Its last message: "${last}"` : ''}`).catch(() => null);
+      if (r && r.ok && (r.speak || r.show)) {
+        const msg = JSON.stringify({ type: 'report', speak: r.speak || '', show: r.show || '', chat: id });
+        if (open.length) { for (const ws of open) { try { ws.send(msg); } catch { /* gone */ } } return; }
+        // No voice screen open: the PC says it (its connection stays open)…
+        const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: id });
+        for (const ws of pcs) { try { ws.send(pcMsg); } catch { /* gone */ } }
+      }
+    }
+    // …and the phone, whose connection drops when Cru is closed, gets a
+    // notification, since the owner may not be at the PC.
+    mobilePush.send(`${(w.title || 'The chat')} in ${w.project} ${what}.${last ? ' ' + last.slice(0, 120) : ''}`, { title: 'Cru', url: `/chat/${id}`, tag: `voice-watch-${id}` }).catch(() => {});
+  }
   if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
     const w = voiceWatches.get(id);
     if (!w) return;
-    voiceWatches.delete(id);
-    mobilePush.send(`${w.title || 'The chat'} in ${w.project} has finished.`, { title: 'Crundi', url: `/chat/${id}`, tag: `voice-watch-${id}` }).catch(() => {});
+    if (!w.follow) voiceWatches.delete(id);
+    w.told = new Set();
+    voiceReport(id, w, 'has finished its turn').catch(() => {});
+  });
+  // Waiting on the owner (a permission or a question): said once per card.
+  if (claudeUi && claudeUi.onPendingChange) claudeUi.onPendingChange((id) => {
+    const w = voiceWatches.get(id);
+    if (!w) return;
+    const c = claudeUi.list().find(x => x.id === id);
+    const cards = (c && c.pending) || [];
+    const fresh = cards.filter(p => p && p.id && !(w.told || (w.told = new Set())).has(p.id));
+    if (!fresh.length) return;
+    for (const p of fresh) w.told.add(p.id);
+    const what = fresh.map(p => p.kind === 'question' ? 'a question' : `permission for ${p.displayName || p.toolName || 'a tool'}`).join(' and ');
+    voiceReport(id, w, `is waiting on the owner: ${what}`).catch(() => {});
   });
   const voiceActions = makeVoiceActionTools({
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
@@ -2619,7 +2669,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     closeChat: (id) => claudeUi.close(id),
     parkChat: (id) => { const r = panes.park(id, 'manual'); broadcastState(); return r; },
     resumeChat: async (id) => { const r = await panes.resume(id, {}); broadcastState(); return r; },
-    watch: (id, title, project) => voiceWatches.set(id, { title, project }),
+    // A chat Cru set going (auto) is reported on for its turn; one the owner
+    // asked to follow keeps being reported on. Auto never turns a follow off.
+    watch: (id, title, project, { follow = false, auto = false } = {}) => {
+      const was = voiceWatches.get(id);
+      voiceWatches.set(id, { title: title || was?.title || '', project, follow: follow || (auto && !!was?.follow), told: was?.told || new Set() });
+    },
+    unwatch: (id) => voiceWatches.delete(id),
     listProjects: allProjects,
     projectsDir: () => getProjectMode().projectsDir || '',
     registerProject: (alias, path, name) => { const r = registerProject(alias, path, name, { create: true }); broadcastState(); return r; },
@@ -7109,6 +7165,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           return;
         }
         voiceWss.handleUpgrade(req, socket, head, (ws) => {
+          // An open voice screen: reports are said here.
+          voiceListeners.add(ws);
+          ws.on('close', () => voiceListeners.delete(ws));
           voiceRelay(ws, {
             projects: allProjects().flatMap(p => [p.alias, p.name]),
             services: getAllServiceStatus().map(sv => sv.name),
@@ -7160,6 +7219,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // whole server log.
       const principal = req ? validateToken(req) : null;
       const confined = isConfined(principal);
+      // The owner's PC app: its connection is always open, so Cru can speak there unasked.
+      if (!confined && req && clientVersion.identifyClient(req).kind === 'desktop') {
+        desktopSockets.add(ws);
+        ws.on('close', () => desktopSockets.delete(ws));
+      }
       /** A chat this caller is allowed to watch. */
       const ownsUiSession = (sid) => {
         if (!confined) return true;

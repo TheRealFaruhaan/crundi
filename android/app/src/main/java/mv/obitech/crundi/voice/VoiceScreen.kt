@@ -153,7 +153,7 @@ private fun UsageLegend(u: UsageArcs) {
 @Composable
 private fun TopRow(ui: VoiceUi, phase: Phase, onClose: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("CRUNDI", style = CrundiType.Wordmark.copy(fontSize = 14.sp, color = CrundiColors.TextSecondary))
+        Text("CRU", style = CrundiType.Wordmark.copy(fontSize = 14.sp, color = CrundiColors.TextSecondary))
         if (ui.server.isNotEmpty()) Text("  ·  " + ui.server, style = CrundiType.Meta.copy(fontSize = 12.sp), maxLines = 1, modifier = Modifier.weight(1f, fill = false))
         Spacer(Modifier.weight(1f))
         StatusPill(statusText(ui, phase), phase)

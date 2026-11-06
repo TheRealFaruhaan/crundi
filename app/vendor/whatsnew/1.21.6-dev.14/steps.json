@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "id": "voice-reports",
+      "tag": "Voice",
+      "title": "Cru reports back",
+      "body": "Chats Cru sets going, and any you ask it to follow, are reported on when they finish or need you: said aloud where a voice screen is open, by the PC app if it is running, and as a notification on the phone. Only then, never at every step.",
+      "keys": [ { "keys": ["Keep an eye on the API chat"], "text": "every turn, until you say stop" } ],
+      "art": "voice-reports.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "voice-close",
+      "tag": "Voice",
+      "title": "Tell Cru you're done",
+      "body": "Say \"that's all\" or \"goodbye\" and Cru says a quick goodbye and closes its own screen.",
+      "keys": [ { "keys": ["That's all, thanks"], "text": "closes" } ],
+      "art": "voice-close.html",
+      "artTitle": "Voice"
+    }
+  ]
+}

@@ -179,6 +179,8 @@ data class VoiceReply(
     val needsUnlock: Boolean = false,
     /** For the phone to do, already confirmed by the owner (D32), e.g. background listening. */
     val phoneActions: List<PhoneAction> = emptyList(),
+    /** The owner said they were done: close the voice screen once [speak] has been said. */
+    val close: Boolean = false,
 )
 
 /** { type: "background-listening", minutes } (0 = off). Unknown types are ignored. */
@@ -231,6 +233,8 @@ sealed interface ListenEvent {
     /** A finished sentence. */
     data class Utterance(val text: String) : ListenEvent
     data class Failed(val error: String) : ListenEvent
+    /** Cru has news, unasked (a watched chat finished or waits on the owner): say it. */
+    data class Report(val speak: String, val show: String) : ListenEvent
 
     companion object {
         /** One message off the socket, or null for one this app does not know. */
@@ -243,6 +247,7 @@ sealed interface ListenEvent {
                 "interim" -> Interim(t)
                 "utterance" -> if (t.isBlank()) null else Utterance(t)
                 "error" -> Failed((o["error"] as? JsonPrimitive)?.contentOrNull ?: "The stream stopped")
+                "report" -> (o["speak"] as? JsonPrimitive)?.contentOrNull.orEmpty().let { sp -> val sh = (o["show"] as? JsonPrimitive)?.contentOrNull.orEmpty(); if (sp.isBlank() && sh.isBlank()) null else Report(sp, sh) }
                 else -> null
             }
         }

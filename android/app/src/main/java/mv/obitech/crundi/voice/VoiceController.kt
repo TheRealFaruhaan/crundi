@@ -57,6 +57,8 @@ class VoiceController(
     private val isLocked: () -> Boolean,
     /** The session is over (quiet for a while, or closed): the host hides itself. */
     private val onFinish: () -> Unit,
+    /** The owner asked Cru to close: by default the same as [onFinish]. */
+    private val onDismiss: () -> Unit = onFinish,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val machine = VoiceMachine(silenceMs = VoicePrefs.silenceSeconds(ctx) * 1000L)
@@ -197,6 +199,7 @@ class VoiceController(
             }
             VoiceEffect.UseFallback -> useFallback()
             VoiceEffect.Finish -> { stopAll(); onFinish() }
+            VoiceEffect.Dismiss -> { stopAll(); onDismiss() }
         }
     }
 
@@ -212,7 +215,7 @@ class VoiceController(
                     else -> e.message
                 })
             } catch (e: Exception) { VoiceReply(ok = false, error = e.message ?: "Something went wrong") }
-            dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock))
+            dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close))
             // After the reply, so a note about it (untrained) isn't cleared by the reply's own.
             if (r.ok) phoneActions(r.phoneActions)
             // The spend moved: refresh the arcs.
@@ -285,6 +288,7 @@ class VoiceController(
             is ListenEvent.Interim -> dispatch(VoiceEvent.Interim(ev.text, now()))
             is ListenEvent.Utterance -> dispatch(VoiceEvent.Utterance(ev.text, now()))
             is ListenEvent.Failed -> if (fallback != null) block("No speech recognition: ${ev.error}.") else lost(ev.error)
+            is ListenEvent.Report -> dispatch(VoiceEvent.Report(ev.speak, ev.show, now()))
         }
     }
 

@@ -30,7 +30,7 @@
 import { join } from 'node:path';
 
 export const ACTION_TOOL_NAMES = [
-  'send_to_chat', 'start_chat', 'close_chat', 'park_chat', 'resume_chat', 'watch_chat',
+  'send_to_chat', 'start_chat', 'close_chat', 'park_chat', 'resume_chat', 'watch_chat', 'unwatch_chat',
   'add_kanban_task', 'update_kanban_task', 'move_kanban_task', 'delete_kanban_task', 'add_kanban_todo', 'check_kanban_todo',
   'create_note', 'append_to_note', 'delete_note',
   'add_mindmap_node', 'update_mindmap_node', 'delete_mindmap_node',
@@ -38,7 +38,7 @@ export const ACTION_TOOL_NAMES = [
   'list_chat_schedules', 'add_chat_schedule', 'delete_chat_schedule',
   'add_schedule', 'update_schedule', 'set_schedule_enabled', 'delete_schedule',
   'set_voice_setting', 'set_background_listening',
-  'confirm_action', 'cancel_action',
+  'confirm_action', 'cancel_action', 'close_voice',
 ];
 
 /** D6: how long background "Hey Cru" listening may be turned on for by voice (minutes). */
@@ -130,7 +130,13 @@ export function makeActionTools(deps, ctx) {
       input_schema: obj({ chat: str('The chat: its id or title (see list_panels)'), text: str('The message, exactly as it should be sent'), intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }) }, ['chat', 'text', 'intent']),
       check: (i) => { chat(i.chat); if (!String(i.text || '').trim()) throw new Error('Nothing to send'); },
       confirm: (i) => i.intent === 'explicit' ? null : `Send ${readBack(i.text)} to ${chatName(chat(i.chat))}?`,
-      run: (i) => { const c = chat(i.chat); const r = deps.sendMessage(c.id, String(i.text)); return r && r.ok === false ? r : { ok: true, sent: true, chat: c.title, project: c.project }; },
+      run: (i) => {
+        const c = chat(i.chat); const r = deps.sendMessage(c.id, String(i.text));
+        if (r && r.ok === false) return r;
+        // What Cru sets going, it reports back on.
+        deps.watch?.(c.id, c.title, c.project, { auto: true });
+        return { ok: true, sent: true, chat: c.title, project: c.project, watching: true };
+      },
     },
     {
       name: 'start_chat',
@@ -142,8 +148,8 @@ export function makeActionTools(deps, ctx) {
         const p = project(i.project);
         const r = await deps.createChat(p.alias, { title: i.title || '', model: i.model || '' });
         if (!r || !r.ok) return r || { ok: false, error: 'The chat could not be started' };
-        if (i.message) deps.sendMessage(r.id, String(i.message));
-        return { ok: true, started: true, chat: r.id, project: p.alias, sent: !!i.message };
+        if (i.message) { deps.sendMessage(r.id, String(i.message)); deps.watch?.(r.id, i.title || '', p.alias, { auto: true }); }
+        return { ok: true, started: true, chat: r.id, project: p.alias, sent: !!i.message, watching: !!i.message };
       },
     },
     {
@@ -170,10 +176,16 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'watch_chat',
-      description: 'Tell the owner (a notification on the phone) when a chat finishes its current turn.',
-      input_schema: obj({ chat: str('The chat: its id or title') }, ['chat']),
+      description: 'Report on a chat when it finishes its turn or waits on the owner: said aloud if a voice screen is open (or on the PC), else a phone notification. follow: true keeps reporting every turn until unwatch_chat; otherwise just the current turn. Chats you send to or start are watched for their turn already.',
+      input_schema: obj({ chat: str('The chat: its id or title'), follow: { type: 'boolean', description: 'Keep reporting every turn, until told to stop' } }, ['chat']),
       check: (i) => chat(i.chat),
-      run: (i) => { const c = chat(i.chat); deps.watch(c.id, c.title, c.project); return { ok: true, watching: c.title }; },
+      run: (i) => { const c = chat(i.chat); deps.watch(c.id, c.title, c.project, { follow: !!i.follow }); return { ok: true, watching: c.title, follow: !!i.follow }; },
+    },
+    {
+      name: 'unwatch_chat',
+      description: 'Stop reporting on a chat.',
+      input_schema: obj({ chat: str('The chat: its id or title') }, ['chat']),
+      run: (i) => { const c = chat(i.chat); return { ok: true, stopped: deps.unwatch ? deps.unwatch(c.id) : false }; },
     },
 
     // ─── kanban (D13) ───
@@ -422,6 +434,13 @@ export function makeActionTools(deps, ctx) {
     description: 'Drop an action the owner declined.',
     input_schema: obj({ id: str('The id the action gave') }, ['id']),
     run: ({ id }) => ({ ok: true, cancelled: ctx.pending.cancel(id) }),
+  });
+  // Closing the voice screen itself: only the window, nothing changes, so no yes is needed.
+  tools.push({
+    name: 'close_voice',
+    description: 'Close this voice screen (the phone\'s voice screen or side-key overlay, or the voice dropdown on the web and PC) once your answer has been said. Use it when the owner says they are done: "close", "that\'s all", "goodbye", "go away", "thanks, that\'s it". Say a brief goodbye in your reply.',
+    input_schema: obj({}),
+    run: () => ({ ok: true, close: true, say: 'The voice screen closes after your reply.' }),
   });
   return tools;
 }

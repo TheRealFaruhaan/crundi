@@ -220,6 +220,17 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
     ok(seen[1].messages[0].content === seen[0].messages[0].content && !/Roger/.test(JSON.stringify(seen[1].messages)), 'an edit mid-conversation changes nothing already sent');
     ok(/never over|never changes what you may/i.test(SYSTEM_PROMPT) && /persona\.md/.test(SYSTEM_PROMPT), 'the prompt: the owner shapes the manner, not the rules');
   }
+  {
+    // News, unasked: a report is a turn Cru starts itself; the owner said nothing, so nothing is confirmed by it.
+    let turns = 0; const seen = [];
+    const rc = () => ({ messages: { create: async (req) => { seen.push(JSON.parse(JSON.stringify(req))); return { stop_reason: 'end_turn', usage: {}, content: [{ type: 'text', text: 'Sir, the API chat has finished.\n---\ntests pass' }] }; } } });
+    const ra = createVoiceAgent({ tools, client: rc, beforeTurn: () => { turns++; } });
+    const rr = await ra.report('the "API" chat in api has finished its turn. Its last message: "tests pass"');
+    ok(rr.ok && rr.speak === 'Sir, the API chat has finished.' && rr.show === 'tests pass', 'a report becomes something to say, with detail to show');
+    ok(turns === 0, 'a report does not count as the owner speaking (nothing waiting is confirmed by it)');
+    ok(/Report for the owner, not said by them/.test(JSON.stringify(seen[0].messages)), 'the model is told it is a report, not the owner');
+    ok(/watch_chat/.test(SYSTEM_PROMPT) && /Report for the owner/.test(SYSTEM_PROMPT), 'the prompt: Cru reports on the chats it watches');
+  }
   const r = await agent.turn('what is on the kanban', { where: 'workbench', now: new Date('2026-11-10T09:00:00Z') });
   ok(r.ok && r.speak === 'One project, Sir, and the board is empty.' && r.show === 'proj: no tasks', 'a turn with two tool calls answers');
   ok(r.tools.join() === 'list_projects,get_kanban', 'both tools ran (in parallel, one round)');
@@ -494,6 +505,11 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   const tools = A.makeActionTools(deps, { pending, locked: () => locked });
   const T = Object.fromEntries(tools.map(x => [x.name, x]));
   ok(JSON.stringify(tools.map(x => x.name)) === JSON.stringify(A.ACTION_TOOL_NAMES), 'the action tools are exactly the pinned list');
+  {
+    const cv = tools.find(x => x.name === 'close_voice');
+    const out = await cv.run({});
+    ok(out.close === true && !out.needsConfirmation, 'close_voice closes the voice screen, no yes needed');
+  }
   ok(!tools.some(x => /terminal|secret|key|password|tunnel|collaborator|backup|update_server|skill/i.test(x.name)), 'no action reaches terminals, secrets, keys or critical settings (D17, D21)');
 
   pending.newTurn();

@@ -1,0 +1,11 @@
+<div class="wna a-vcl">
+  <div class="scr"><div class="you">"That's all, thanks."</div><div class="cru">Goodbye, Sir.</div></div>
+  <style>
+    .a-vcl{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-vcl .scr{position:absolute;left:210px;top:50px;width:220px;height:220px;border-radius:16px;background:var(--bg-secondary);border:1px solid var(--border);animation:avcl 8s ease infinite}
+    .a-vcl .you{position:absolute;top:70px;left:0;right:0;text-align:center;color:var(--text-secondary);font-size:15px}
+    .a-vcl .cru{position:absolute;top:120px;left:0;right:0;text-align:center;color:var(--text-primary);font-size:18px;opacity:0;animation:avcl-c 8s ease infinite}
+    @keyframes avcl{0%,60%{opacity:1;transform:none}75%,100%{opacity:0;transform:scale(.9)}}
+    @keyframes avcl-c{0%,25%{opacity:0}35%,60%{opacity:1}}
+  </style>
+</div>

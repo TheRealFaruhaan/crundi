@@ -1692,10 +1692,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // cards, but it was only re-sent on unrelated events — answering a card in
   // the chat left it in the inbox until the page reconnected. Anything that
   // adds, answers or clears a card now says so.
-  let pendingChangeCb = null;
-  function onPendingChange(cb) { pendingChangeCb = cb; }
+  // Several may listen (the approvals inbox, the voice assistant's watches).
+  const pendingChangeCbs = [];
+  function onPendingChange(cb) { if (typeof cb === 'function') pendingChangeCbs.push(cb); }
   function pendingChanged(s) {
-    try { pendingChangeCb?.(s.id); } catch { /* the inbox is a view, never fatal */ }
+    for (const cb of pendingChangeCbs) { try { cb(s.id); } catch { /* a view, never fatal */ } }
   }
 
   let escalationGoneCb = null;
@@ -2110,7 +2111,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     s.waiting.clear();
     s.turns = (s.turns || 0) + 1;
     scheduleIdleRecap(s);
-    if (turnEndCb && !s.factory && !s.background) { try { turnEndCb(s.id); } catch { /* the listener's problem */ } }
+    if (!s.factory && !s.background) for (const cb of turnEndCbs) { try { cb(s.id); } catch { /* the listener's problem */ } }
   }
 
   /**
@@ -2165,8 +2166,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function onRecap(cb) { recapCb = cb; }
   // Told when one of the person's chats finishes a turn (not a factory's or
   // a scheduled job's): the moment to see whether its title still fits.
-  let turnEndCb = null;
-  function onTurnEnd(cb) { turnEndCb = cb; }
+  // Several may listen: retitling, the voice assistant's watches. (One slot
+  // here let the second silently replace the first.)
+  const turnEndCbs = [];
+  function onTurnEnd(cb) { if (typeof cb === 'function') turnEndCbs.push(cb); }
 
   function handleControlRequest(s, msg) {
     const req = msg.request || {};
