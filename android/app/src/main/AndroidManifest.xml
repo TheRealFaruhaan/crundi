@@ -6,6 +6,8 @@
          page that wants the camera or microphone. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Cru speaks as speakerphone call audio, so the echo canceller takes it out of the microphone (voice/CallAudio.kt). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Staying up and online while a bubble or a live card is showing (Link). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

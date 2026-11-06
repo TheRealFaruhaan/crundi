@@ -33,6 +33,9 @@ import kotlin.math.sqrt
 class MicStream(private val rate: Int = RATE, private val onChunk: (bytes: ByteArray, level: Float) -> Unit) {
     @Volatile private var running = false
     private var thread: Thread? = null
+    /** The recording's audio session (0 until started): Cru's playback joins it, for the echo canceller. */
+    @Volatile var sessionId: Int = 0
+        private set
 
     /** False when the microphone could not be opened (no permission, in use). */
     @SuppressLint("MissingPermission")
@@ -44,6 +47,7 @@ class MicStream(private val rate: Int = RATE, private val onChunk: (bytes: ByteA
             AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, rate))
         } catch (e: Exception) { Log.w(TAG, "AudioRecord: ${e.message}"); return false }
         if (rec.state != AudioRecord.STATE_INITIALIZED) { rec.release(); return false }
+        sessionId = rec.audioSessionId
         val aec = runCatching { if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(rec.audioSessionId)?.apply { enabled = true } else null }.getOrNull()
         val ns = runCatching { if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId)?.apply { enabled = true } else null }.getOrNull()
         running = true

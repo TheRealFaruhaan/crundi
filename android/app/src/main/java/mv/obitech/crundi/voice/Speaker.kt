@@ -62,7 +62,17 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     private var job: Job? = null
     private var player: MediaPlayer? = null
     private var viz: Visualizer? = null
-    private val attrs = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+    /**
+     * How Cru is played ([CruAudio]): as call audio on the speaker, so the
+     * call-mode microphone's echo canceller takes it out, or as assistant
+     * audio (headphones, older phones). [sessionId]: the microphone's audio
+     * session, which the playback joins (0: its own).
+     */
+    var route: CruAudio.Route = CruAudio.Route.Media
+    var sessionId: Int = 0
+    private val attrs: AudioAttributes get() = AudioAttributes.Builder()
+        .setUsage(if (route == CruAudio.Route.Call) AudioAttributes.USAGE_VOICE_COMMUNICATION else AudioAttributes.USAGE_ASSISTANT)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
 
     private var tts: TextToSpeech? = null
     private var ttsReady: Boolean? = null
@@ -71,7 +81,19 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     val speaking: Boolean get() = job?.isActive == true
 
     /** [level] is measured from the actual playback (Deepgram's voice), not drawn. */
-    val measured: Boolean get() = viz != null || track != null
+    val measured: Boolean get() = viz != null || track != null || cueViz != null
+    private var cueViz: Visualizer? = null
+
+    /**
+     * Cru's level now, for the owner gate: 0 when nothing plays, null when it
+     * can't be known (the phone's own voice, or a clip that can't be measured).
+     */
+    val playLevel: Float? get() = when {
+        cueOnDevice || ttsId != null -> null
+        player != null && viz == null -> null
+        cuePlayer != null && cueViz == null -> null
+        else -> _level.value
+    }
 
     @Volatile private var track: AudioTrack? = null
     /** (first frame, level) of each 20 ms block written to [track], oldest first. */
@@ -95,9 +117,11 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     fun cue(file: File?, text: String, onDone: () -> Unit): Boolean {
         stopCue()
         if (file != null) {
-            val mp = runCatching { MediaPlayer().apply { setAudioAttributes(attrs); setDataSource(file.path); prepare() } }.getOrNull() ?: return false
+            val mp = runCatching { MediaPlayer().apply { setAudioAttributes(attrs); joinSession(this); setDataSource(file.path); prepare() } }.getOrNull() ?: return false
             cuePlayer = mp
             cueDone = onDone
+            // Its level, for the gate: how loud Cru is now.
+            cueViz = runCatching { levelOf(mp.audioSessionId) }.getOrNull()
             mp.setOnCompletionListener { if (cuePlayer === mp) stopCue() }
             mp.setOnErrorListener { _, _, _ -> if (cuePlayer === mp) stopCue(); true }
             runCatching { mp.start() }.onFailure { stopCue(); return false }
@@ -109,7 +133,8 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
             val t = engine()
             if (t == null || !cueOnDevice) { if (cueOnDevice) stopCue(); return@launch }
             t.setSpeechRate(rate)
-            if (t.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), CUE_ID) != TextToSpeech.SUCCESS) stopCue()
+            t.setAudioAttributes(attrs)
+            if (t.speak(text, TextToSpeech.QUEUE_FLUSH, ttsParams(), CUE_ID) != TextToSpeech.SUCCESS) stopCue()
         }
         return true
     }
@@ -120,8 +145,10 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     fun stopCue() {
         val done = cueDone ?: return
         cueDone = null
+        runCatching { cueViz?.enabled = false; cueViz?.release() }; cueViz = null
         cuePlayer?.let { mp -> runCatching { mp.stop() }; runCatching { mp.release() } }
         cuePlayer = null
+        if (viz == null && track == null) _level.value = 0f
         if (cueOnDevice) { cueOnDevice = false; if (ttsId == null) tts?.stop() }
         done()
     }
@@ -194,6 +221,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
         val t = runCatching {
             AudioTrack.Builder()
                 .setAudioAttributes(attrs)
+                .apply { if (sessionId > 0) setSessionId(sessionId) }
                 .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setBufferSizeInBytes(maxOf(AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT), rate / 5 * 2))
@@ -276,6 +304,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
                 player = mp
                 try {
                     mp.setAudioAttributes(attrs)
+                    joinSession(mp)
                     mp.setDataSource(file.path)
                     mp.setOnCompletionListener { if (cont.isActive) cont.resume(true) }
                     mp.setOnErrorListener { _, _, _ -> if (cont.isActive) cont.resume(false); true }
@@ -294,8 +323,19 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
 
     /** The level of what the player is saying, from its own output (needs the microphone permission, which the assistant has). */
     private fun follow(mp: MediaPlayer) {
-        viz = runCatching {
-            Visualizer(mp.audioSessionId).apply {
+        viz = runCatching { levelOf(mp.audioSessionId) }.getOrNull()
+        if (viz == null) pulseWhile { player === mp }
+    }
+
+    /** The playback shares the microphone's session (the echo canceller's reference on some phones). */
+    private fun joinSession(mp: MediaPlayer) { if (sessionId > 0) runCatching { mp.audioSessionId = sessionId } }
+
+    /** The device voice's parameters: the microphone's session too. */
+    private fun ttsParams() = Bundle().apply { if (sessionId > 0) putInt(TextToSpeech.Engine.KEY_PARAM_SESSION_ID, sessionId) }
+
+    /** [_level] follows what is played on [session]. */
+    private fun levelOf(session: Int): Visualizer =
+            Visualizer(session).apply {
                 captureSize = Visualizer.getCaptureSizeRange()[0].coerceAtLeast(128)
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, wave: ByteArray?, rate: Int) {
@@ -309,9 +349,6 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
                 }, Visualizer.getMaxCaptureRate() / 2, true, false)
                 enabled = true
             }
-        }.getOrNull()
-        if (viz == null) pulseWhile { player === mp }
-    }
 
     private fun releasePlayer() {
         runCatching { viz?.enabled = false; viz?.release() }; viz = null
@@ -328,7 +365,8 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
             ttsId = id
             ttsDone = { ok -> ttsDone = null; ttsId = null; if (cont.isActive) cont.resume(ok) }
             t.setSpeechRate(rate)
-            if (t.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), id) != TextToSpeech.SUCCESS) { ttsDone = null; ttsId = null; cont.resume(true); return@suspendCancellableCoroutine }
+            t.setAudioAttributes(attrs)
+            if (t.speak(text, TextToSpeech.QUEUE_FLUSH, ttsParams(), id) != TextToSpeech.SUCCESS) { ttsDone = null; ttsId = null; cont.resume(true); return@suspendCancellableCoroutine }
             pulseWhile { ttsDone != null }
         }
     }

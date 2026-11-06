@@ -54,6 +54,32 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
   ok(b.push({ type: 'UtteranceEnd' }).text === 'three tasks in progress', 'a client that never says what Cru says gets everything, as before');
   ok(vstream.isEcho('one moment sir', 'One moment, Sir.') && !vstream.isEcho('open the board', 'One moment, Sir.'), 'isEcho: a cue heard back, not the owner');
 
+  {
+    // The loop seen live: the cue's echo was still being transcribed when the
+    // reply started, so it no longer matched; and "Right away, Sir." came back
+    // as "Riseway, sir.". Each became a new turn, with a new cue.
+    let t2 = 5000;
+    const c = vstream.createAssembler({ now: () => t2 });
+    c.saying('Looking now, Sir.');
+    t2 += 300;
+    c.saying('Right away, Sir.');
+    t2 += 900;
+    c.saying('Sir, the API chat has finished: the tests pass.');
+    t2 += 400;
+    c.push(R('Riseway, sir.', { final: true }));
+    ok(c.push({ type: 'UtteranceEnd' }) === null, 'a cue heard back after the reply has started is still Cru\'s, even misheard');
+    c.push(R('Looking now, sir.', { final: true }));
+    ok(c.push({ type: 'UtteranceEnd' }) === null, 'an earlier saying is remembered alongside the latest');
+    // The owner often says these words himself: only Cru's own, just said, are dropped.
+    const d = vstream.createAssembler();
+    d.push(R('Just a moment.', { final: true }));
+    ok(d.push({ type: 'UtteranceEnd' }).text === 'Just a moment.', 'the owner saying a cue\'s words is his, when Cru has not just said them');
+    t2 += vstream.ECHO_TAIL_MS + 10;
+    c.said();
+    c.push(R('Right away', { final: true }));
+    ok(c.push({ type: 'UtteranceEnd' }).text === 'Right away', 'and once Cru\'s last words are seconds old, the same words are the owner\'s');
+  }
+
   class FakeWs extends EventEmitter {
     constructor(url, opts) { super(); this.sent = []; this.readyState = 0; FakeWs.last = this; }
     send(d) { this.sent.push(d); }
@@ -119,7 +145,7 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
 {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const src = readFileSync(join(root, 'app', 'vendor', 'crundi-voice.js'), 'utf8');
-  const ctx = { window: {}, document: {}, navigator: {}, localStorage: {} };
+  const ctx = { window: {}, document: {}, navigator: {}, localStorage: {}, setTimeout, clearTimeout };
   vm.runInNewContext(src, ctx);
   const T = ctx.window.CrundiVoice._test;
   const said = 'Your build passed an hour ago, Sir.';
@@ -137,6 +163,74 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
   ok(!repeat, 'a cue is never the same as the one before, and always one of them');
   ok(T.pickCue(1, 0, Math.random) === 0 && T.pickCue(0, -1, Math.random) === -1, 'one cue: that one; none: none');
   ok(T.CUE_TEXTS.join('|') === cues.CUES.join('|'), 'the web client\'s fallback phrases match the server\'s');
+
+  // ─── the local gate: Cru's own voice decided on the device ───
+  const voicedClip = () => { const c = new Float32Array(6400); for (let i = 0; i < c.length; i++) { const t = i / 16000; c[i] = 0.5 * Math.sin(2 * Math.PI * 140 * t) + 0.25 * Math.sin(2 * Math.PI * 280 * t) + 0.1 * Math.sin(2 * Math.PI * 420 * t); } return c; };
+  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const noiseClip = () => { const c = new Float32Array(6400); for (let i = 0; i < c.length; i++) c[i] = rnd() * 2 - 1; return c; };
+  ok(T.voicedShare(voicedClip()) > 0.8 && T.voicedShare(noiseClip()) < 0.3, 'voicing: a pitched voice is voiced, a hiss or a clap is not');
+  const speech = () => 0.6, clap = () => 0.05;
+  const playFor = (g, frames, mic, play, voiced = speech) => { let hit = -1; for (let i = 0; i < frames; i++) { const p = typeof play === 'function' ? play(i) : play; if (g.hear(typeof mic === 'function' ? mic(i, p) : mic, p, 85, voiced) && hit < 0) hit = i; } return hit; };
+  {
+    // Speakers, no echo cancelling: Cru's voice comes back at a third of its level, rising and falling.
+    const g = T.createGate(); for (let i = 0; i < 50; i++) g.learn(0.01);
+    g.start();
+    const play = (i) => (i % 5 === 0 ? 0.15 : 0.55 + 0.1 * Math.sin(i));
+    ok(playFor(g, 60, (i, p) => p * 0.33, play) < 0, 'speakers: five seconds of Cru\'s own voice through the mic never count as the owner');
+    const hit = playFor(g, 12, 0.75, 0.55);
+    ok(hit >= 0 && hit * 85 <= 600, 'speakers: the owner talking over it is heard within about half a second (' + hit * 85 + ' ms)');
+    g.start();
+    playFor(g, 20, (i, p) => p * 0.33, play);
+    ok(playFor(g, 12, 0.75, 0.55, clap) < 0, 'a clap or a cough as loud is not him (not voiced)');
+  }
+  {
+    // Headphones (or the loopback's echo cancelling working): hardly any echo.
+    const g = T.createGate(); for (let i = 0; i < 50; i++) g.learn(0.01);
+    g.start();
+    ok(playFor(g, 40, (i, p) => p * 0.02, 0.6) < 0, 'headphones: silence through a long answer stays silent');
+    const hit = playFor(g, 10, 0.2, 0.6);
+    ok(hit >= 0 && hit * 85 <= 450, 'headphones: even a quiet voice cuts in at once (' + hit * 85 + ' ms)');
+  }
+  {
+    // The browser's own voice: its level is unknown.
+    const g = T.createGate(); for (let i = 0; i < 50; i++) g.learn(0.01);
+    g.start();
+    ok(playFor(g, 5, 0.4, null) < 0, 'unknown voice: at first only a loud voice counts');
+    ok(playFor(g, 60, (i) => (i % 4 === 0 ? 0.42 : 0.3), null) < 0, 'unknown voice: its steady echo, loud syllables and all, is learnt and never counts');
+    ok(playFor(g, 12, 0.85, null) >= 0, 'unknown voice: the owner well above it does');
+  }
+  {
+    const p = T.createPreroll(1300);
+    for (let i = 0; i < 30; i++) p.push(i, 85);
+    const got = p.drain();
+    ok(got.length >= 15 && got.length <= 16 && got[got.length - 1] === 29 && got[0] === 30 - got.length, 'pre-roll: the last 1.3 s, oldest first');
+    ok(p.drain().length === 0, 'pre-roll: drained once');
+    for (let i = 0; i < 30; i++) p.push(i, 100);
+    const last = p.drain(900);
+    ok(last.length === 9 && last[0] === 21 && last[8] === 29, 'pre-roll: only from just before he spoke (Cru before that is never sent)');
+  }
+  ok(/maxaveragebitrate=96000/.test(T.richOpus('a=rtpmap:111 opus/48000/2\r\na=fmtp:111 minptime=10;useinbandfec=1\r\n')) && T.richOpus('no opus') === 'no opus', 'the loopback asks for good Opus');
+  {
+    const ctx = { createMediaStreamDestination: () => ({ stream: { getAudioTracks: () => [{}] } }) };
+    const rejects = async (W, ms) => { try { await T.makeLoopback(ctx, W, ms || 60); return false; } catch { return true; } };
+    ok(await rejects({}), 'no WebRTC: played directly');
+    ok(await rejects({ RTCPeerConnection: function () { throw new Error('blocked'); } }), 'WebRTC refused: played directly');
+    class Never { constructor() { this.localDescription = null; } addTrack() {} createOffer() { return Promise.reject(new Error('no')); } setLocalDescription() {} setRemoteDescription() {} createAnswer() {} addIceCandidate() {} close() { this.closed = true; } }
+    ok(await rejects({ RTCPeerConnection: Never }), 'an offer that fails: played directly');
+    class Silent extends Never { createOffer() { return Promise.resolve({ type: 'offer', sdp: '' }); } setLocalDescription(d) { this.localDescription = d; return Promise.resolve(); } setRemoteDescription() { return Promise.resolve(); } createAnswer() { return Promise.resolve({ type: 'answer', sdp: '' }); } }
+    ok(await rejects({ RTCPeerConnection: Silent }, 50), 'a loopback that never connects: played directly after the timeout');
+    const made = [];
+    class Works extends Silent {
+      constructor() { super(); made.push(this); }
+      setRemoteDescription() { const me = this; if (made.indexOf(me) === 1) setTimeout(() => { me.ontrack({ streams: [{}] }); me.iceConnectionState = 'connected'; me.oniceconnectionstatechange(); }, 5); return Promise.resolve(); }
+    }
+    const W = { RTCPeerConnection: Works, Audio: function () { this.play = () => Promise.resolve(); this.pause = () => {}; }, MediaStream: function () {} };
+    let lb = null; try { lb = await T.makeLoopback(ctx, W, 500); } catch { /* fails the check */ }
+    ok(lb && lb.dest && typeof lb.close === 'function', 'a loopback that connects and plays: Cru\'s voice goes through it');
+    const W2 = { ...W, Audio: function () { this.play = () => Promise.reject(new Error('needs a click')); this.pause = () => {}; } };
+    made.length = 0;
+    ok(await rejects(W2, 500), 'audio not allowed to play yet: played directly');
+  }
 }
 
 try { rmSync(dir, { recursive: true, force: true }); } catch { /* fine */ }

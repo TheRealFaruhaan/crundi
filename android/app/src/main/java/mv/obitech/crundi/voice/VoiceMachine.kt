@@ -9,14 +9,15 @@ package mv.obitech.crundi.voice
  *                          ▲                        │ (more said: kept)  │
  *                          └──────── SpeechDone / BargeIn ◀─────────────┘
  *
- * - Talking over Cru (barge-in). On a server that drops Cru's own words
- *   ([VoiceState.live], 'ready' echoFilter) the stream stays on while Cru
- *   speaks ([VoiceEffect.Saying] / [VoiceEffect.Said] tell it what Cru is
- *   saying): the owner's words ([Speech.talksOver]: not an echo, two words of
- *   his own, or "stop") cut Cru off at once and are asked as soon as he
- *   finishes. A voice the level detector hears over Cru ([VoiceEvent.VoiceHeard])
- *   only lowers that bar to one word. On an older server the stream is paused
- *   while Cru speaks, as before, and the level detector alone cuts in.
+ * - Cru's own voice never goes to the server. While it speaks, or a cue
+ *   plays, the stream is paused and the microphone runs into the phone's own
+ *   gate ([OwnerGate]: louder than Cru's echo, for a moment, and voiced).
+ *   When that hears the owner ([VoiceEvent.VoiceHeard]) Cru stops at once and
+ *   the stream resumes from a pre-roll of the last second and a bit, so his
+ *   first words are kept. On a server that knows barge-in ([VoiceState.live],
+ *   'ready' echoFilter) it is also told what Cru is saying ([VoiceEffect.Saying]
+ *   / [VoiceEffect.Said]): its transcript filter is the second net. An older
+ *   server gets the same pause, with the older level detector.
  * - What the owner says while Crundi is thinking is kept and sent the moment
  *   the answer comes (the answer is shown, not said: he has moved on).
  * - The moment something is asked, a short cue ("One moment, Sir.") plays
@@ -65,8 +66,6 @@ data class VoiceState(
     val reports: List<Pair<String, String>> = emptyList(),
     /** The server drops Cru's own words: the stream stays on while it speaks (barge-in). */
     val live: Boolean = false,
-    /** When the level detector last heard a voice over Cru: one word of his own is enough for a while. */
-    val voiceHeardAt: Long = 0,
     /** The cue playing now ("One moment, Sir."), or "". */
     val cue: String = "",
 )
@@ -128,8 +127,6 @@ class VoiceMachine(
     val echoMs: Long = 5_000,
     /** What to say when called while already listening: one of [Speech.HERE], never the same twice running. */
     val here: () -> String = Speech.hereLine(),
-    /** After [VoiceEvent.VoiceHeard], one word of the owner's own cuts in, for this long. */
-    val hintMs: Long = 1_500,
 ) {
     fun on(s: VoiceState, e: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
         if (s.phase == Phase.Ended) return s to emptyList()
@@ -142,7 +139,7 @@ class VoiceMachine(
             }
             is VoiceEvent.Interim -> when {
                 // Talking over Crundi: cut it off the moment his words come.
-                s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(e.text, s.lastSaid, if (s.voiceHeardAt > 0 && e.now - s.voiceHeardAt <= hintMs) 1 else 2)) {
+                s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(e.text, s.lastSaid)) {
                     val (n, fx) = cutIn(s, e.now)
                     n.copy(heard = e.text) to fx
                 } else s to emptyList()
@@ -151,7 +148,7 @@ class VoiceMachine(
                 s.phase == Phase.Thinking -> {
                     val n = s.copy(heard = join(s.pending, e.text), quietSince = e.now)
                     // Talking over the cue stops it.
-                    if (s.cue.isNotEmpty() && Speech.talksOver(e.text, s.cue)) n.copy(cue = "") to (listOf<VoiceEffect>(VoiceEffect.StopCue) + if (s.live) listOf(VoiceEffect.Said) else emptyList())
+                    if (s.cue.isNotEmpty() && Speech.talksOver(e.text, s.cue)) n.copy(cue = "") to (listOf<VoiceEffect>(VoiceEffect.StopCue) + doneFx(s))
                     else n to emptyList()
                 }
                 else -> s to emptyList()
@@ -197,17 +194,19 @@ class VoiceMachine(
             is VoiceEvent.SpeechDone -> if (s.phase == Phase.Speaking) afterSpeech(s, e.now) else s to emptyList()
             is VoiceEvent.BargeIn -> if (s.phase == Phase.Speaking) cutIn(s, e.now) else s to emptyList()
             // The stream is on: wait for his words (a cough is not an interruption). Paused: this is all there is.
+            // The phone's gate heard the owner over Cru: stop it here and now, and listen from his first word.
             is VoiceEvent.VoiceHeard -> when {
-                s.phase != Phase.Speaking -> s to emptyList()
-                s.live -> s.copy(voiceHeardAt = e.now) to emptyList()
-                else -> cutIn(s, e.now)
+                s.phase == Phase.Speaking -> cutIn(s, e.now)
+                !s.live && s.cue.isEmpty() -> s to emptyList()
+                s.cue.isNotEmpty() -> s.copy(cue = "") to (listOf<VoiceEffect>(VoiceEffect.StopCue) + doneFx(s))
+                else -> s to listOf(VoiceEffect.ResumeStream)
             }
             is VoiceEvent.CueStarted -> if (s.phase != Phase.Thinking) s to emptyList() else {
                 // Its own words heard back are not the owner's.
-                s.copy(cue = e.text, lastSaid = e.text, saidUntil = e.now + CUE_ECHO_MS) to (if (s.live) listOf<VoiceEffect>(VoiceEffect.Saying(e.text)) else emptyList())
+                s.copy(cue = e.text, lastSaid = e.text, saidUntil = e.now + CUE_ECHO_MS) to holdFx(s, e.text)
             }
             is VoiceEvent.CueDone -> if (s.cue.isEmpty()) s to emptyList() else {
-                s.copy(cue = "") to (if (s.live && s.phase == Phase.Thinking) listOf<VoiceEffect>(VoiceEffect.Said) else emptyList())
+                s.copy(cue = "") to (if (s.phase == Phase.Thinking) doneFx(s) else emptyList())
             }
             is VoiceEvent.StreamLost -> if (s.offline) s to emptyList() else {
                 s.copy(offline = true, live = false, notice = "Live speech recognition is unavailable (${e.why}). Using the phone's recogniser.", phase = if (s.phase == Phase.Starting) Phase.Listening else s.phase, quietSince = e.now) to listOf(VoiceEffect.UseFallback)
@@ -238,14 +237,17 @@ class VoiceMachine(
 
     /** Crundi stops talking now and listens (the owner talked over it, or tapped). */
     private fun cutIn(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> =
-        s.copy(phase = Phase.Listening, heard = "", quietSince = now, activeSince = now, saidUntil = now, voiceHeardAt = 0) to (listOf(VoiceEffect.StopSaying) + doneFx(s))
+        s.copy(phase = Phase.Listening, heard = "", quietSince = now, activeSince = now, saidUntil = now) to (listOf(VoiceEffect.StopSaying) + doneFx(s))
 
     /** Start saying [text]: a live stream is told what Crundi says, an older one is paused. */
-    private fun sayFx(s: VoiceState, text: String): List<VoiceEffect> =
-        if (s.live) listOf(VoiceEffect.Saying(text), VoiceEffect.Say(text)) else listOf(VoiceEffect.PauseStream, VoiceEffect.Say(text))
+    private fun sayFx(s: VoiceState, text: String): List<VoiceEffect> = holdFx(s, text) + VoiceEffect.Say(text)
 
-    /** Crundi has stopped talking: tell a live stream, resume a paused one. */
-    private fun doneFx(s: VoiceState): List<VoiceEffect> = if (s.live) listOf(VoiceEffect.Said) else listOf(VoiceEffect.ResumeStream)
+    /** Cru is about to make a sound: the stream pauses (the gate listens); a live one is told what. */
+    private fun holdFx(s: VoiceState, text: String): List<VoiceEffect> =
+        if (s.live) listOf(VoiceEffect.Saying(text), VoiceEffect.PauseStream) else listOf(VoiceEffect.PauseStream)
+
+    /** Crundi has stopped talking: the stream resumes (a live one is told). */
+    private fun doneFx(s: VoiceState): List<VoiceEffect> = if (s.live) listOf(VoiceEffect.Said, VoiceEffect.ResumeStream) else listOf(VoiceEffect.ResumeStream)
 
     /** The answer has been said: listen again, or send what was said meanwhile. */
     private fun afterSpeech(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> {

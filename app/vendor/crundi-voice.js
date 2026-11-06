@@ -21,10 +21,17 @@
  * mic. The microphone streams as 16 kHz PCM to /api/voice/listen (Deepgram
  * through the server); each utterance goes to /api/voice/turn; the answer is
  * spoken in the chosen Deepgram voice (streamed) or the browser's en-GB one.
- * While Crundi speaks the stream keeps listening (a server that filters
- * Crundi's own words out, 'ready' echoFilter) and the owner's words cut it
- * off at once and become the next thing asked; an older server pauses the
- * stream instead and only a loud voice cuts in. The moment something is asked
+ * Crundi's own voice never goes to the server. Its speech and cues play
+ * through a WebRTC loopback inside the page, so Chrome's echo canceller
+ * has them as the far end and takes them out of the microphone; and while
+ * it speaks (or a cue plays) nothing at all is sent: the mic runs into a
+ * local gate (createGate: louder than Crundi's echo, for a moment, and
+ * voiced) that decides here whether the owner is talking. When it is him,
+ * Crundi stops at once and the stream resumes from a pre-roll of the last
+ * second and a bit, so his first words are kept. On a server that knows
+ * barge-in ('ready' echoFilter) the server's transcript filter ('saying' /
+ * 'said') is the second net; an older server is paused as before and a loud
+ * voice alone cuts in. The moment something is asked
  * a short cue ("One moment, Sir.") is played from clips loaded when the
  * screen opened, or said with the browser's voice. Yes/no to Crundi's
  * questions by voice; on a PC you may also type.
@@ -42,6 +49,12 @@
   var CUE_FINISH_MS = 300;
   /** After the level detector hears a voice over Crundi, one new word is enough to cut in, for this long. */
   var HINT_MS = 1500;
+  /** What is kept of the microphone while Crundi speaks, to send when the owner cuts in. */
+  var PREROLL_MS = 1300;
+  /** Sent from this long before the owner's voice rose over Cru's (a soft first syllable). */
+  var LEAD_MS = 600;
+  /** The owner's voice is looked at over this much of the latest microphone (16 kHz samples). */
+  var VOICE_WINDOW = 6400;
 
   function hex(c, a) { var n = parseInt(c.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; }
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
@@ -76,6 +89,151 @@
     if (n === 1) return 0;
     var i = Math.floor((rnd || Math.random)() * (n - 1));
     return last >= 0 && i >= last ? i + 1 : i;
+  }
+
+  /**
+   * The share of a clip's loud 30 ms frames that are voiced: a clear pitch
+   * between 70 and 400 Hz at 16 kHz (app/voice-wake/enroll.js voicedShare,
+   * the phone's CruWake.voicedShare). Speech has it; a cough or a clap hardly.
+   */
+  function voicedShare(clip) {
+    var N = 480, H = 240, peak = 0, i, k;
+    for (i = 0; i + N <= clip.length; i += H) { var e0 = 0; for (k = 0; k < N; k++) e0 += clip[i + k] * clip[i + k]; peak = Math.max(peak, e0); }
+    if (!peak) return 0;
+    var loud = 0, voiced = 0;
+    for (i = 0; i + N <= clip.length; i += H) {
+      var e = 0; for (k = 0; k < N; k++) e += clip[i + k] * clip[i + k];
+      if (e < peak * 0.05) continue;
+      loud++;
+      var best = 0;
+      for (var lag = 40; lag <= 228; lag++) {
+        var c = 0, e1 = 0, e2 = 0;
+        for (k = 0; k + lag < N; k++) { var a = clip[i + k], b = clip[i + k + lag]; c += a * b; e1 += a * a; e2 += b * b; }
+        var r = c / Math.sqrt((e1 * e2) || 1);
+        if (r > best) best = r;
+      }
+      if (best > 0.45) voiced++;
+    }
+    return loud ? voiced / loud : 0;
+  }
+
+  /**
+   * Is it the owner talking over Crundi? Decided here, from the microphone
+   * alone (the phone's OwnerGate has the same rule). Levels are 0..1 on a
+   * square-root scale (the mic's and the playback's alike).
+   *
+   * With Crundi's playback level known (its streamed voice, a cue clip),
+   * how much of it comes back through the mic is learnt as it plays (falls
+   * fast, rises slowly: the owner's voice hardly moves it), and only a voice
+   * [overEcho] times louder than that echo counts. With it unknown (the
+   * browser's own voice) the bar is the loudest of the last two seconds,
+   * and high until there are some. Either way: held for [holdMs], and voiced.
+   */
+  function createGate(o) {
+    o = o || {};
+    var holdMs = o.holdMs || 300, floor = 0.03, overNoise = 3.2, overEcho = 2, unknownOver = 1.6, unknownStart = 0.45, minVoiced = 0.3;
+    var est = 0.6, noise = 0.01, loud = 0, recent = [0, 0, 0, 0], hist = [], run = [];
+    function pct90(a) { if (!a.length) return 0; var b = a.slice().sort(function (x, y) { return x - y; }); return b[Math.min(b.length - 1, Math.floor(b.length * 0.9))]; }
+    return {
+      /** Listening (nothing playing): how loud the room is. */
+      learn: function (level) { noise = Math.min(0.2, Math.max(0.002, noise * 0.95 + level * 0.05)); },
+      /** Crundi starts to play: count afresh (the echo learnt is kept). */
+      start: function () { loud = 0; recent = [0, 0, 0, 0]; hist = []; run = []; },
+      /** One stretch of microphone: [play] Crundi's level now (null: unknown); voiced() the share of voiced frames lately. True: it is him. */
+      hear: function (level, play, ms, voiced) {
+        var gate;
+        if (play != null) {
+          recent.shift(); recent.push(play);
+          var P = Math.max.apply(null, recent);
+          // Learnt only while Crundi plays steadily (the mic lags the playback a little).
+          if (P > 0.05 && Math.min.apply(null, recent) >= P * 0.5) { var r = level / P; est = Math.min(3, Math.max(0.02, r < est ? est + (r - est) * 0.3 : est + (r - est) * 0.01)); }
+          gate = Math.max(floor, noise * overNoise, est * Math.max(P, 0.05) * overEcho + 0.03);
+        } else {
+          gate = Math.max(floor, noise * overNoise, pct90(hist) * unknownOver);
+          if (hist.length < 6) gate = Math.max(gate, unknownStart);
+        }
+        if (level >= gate) { loud += ms; run.push(level); }
+        else {
+          // A short burst (a loud syllable of Crundi's) joins what the echo sounds like.
+          if (play == null) { hist = hist.concat(run, [level]).slice(-24); }
+          loud = 0; run = [];
+        }
+        if (loud < holdMs) return false;
+        return !voiced || voiced() >= minVoiced;
+      },
+      /** How long it has been loud: his words began about then. */
+      get loudMs() { return loud; },
+      get echo() { return est; },
+      get noise() { return noise; },
+    };
+  }
+
+  /** The last [maxMs] of microphone chunks, to send when the owner cuts in. */
+  function createPreroll(maxMs) {
+    var q = [], total = 0;
+    return {
+      push: function (chunk, ms) { q.push({ c: chunk, ms: ms }); total += ms; while (q.length > 1 && total - q[0].ms >= maxMs) total -= q.shift().ms; },
+      /** Oldest first; [lastMs]: only about that much of the latest (what came before was not him). */
+      drain: function (lastMs) {
+        var keep = q;
+        if (lastMs != null) { var t = 0, i = q.length; while (i > 0 && t < lastMs) { i--; t += q[i].ms; } keep = q.slice(i); }
+        var out = keep.map(function (x) { return x.c; }); q = []; total = 0; return out;
+      },
+      clear: function () { q = []; total = 0; },
+      get ms() { return total; },
+    };
+  }
+
+  /** Opus at a speech-friendly bitrate for the loopback (it never leaves the machine). */
+  function richOpus(sdp) {
+    var m = /a=rtpmap:(\d+) opus\/48000/i.exec(sdp || '');
+    if (!m) return sdp;
+    var re = new RegExp('(a=fmtp:' + m[1] + ' [^\r\n]*)');
+    return re.test(sdp) ? sdp.replace(re, function (l) { return /maxaveragebitrate/.test(l) ? l : l + ';maxaveragebitrate=96000'; }) : sdp;
+  }
+
+  /**
+   * Crundi's voice through WebRTC inside the page: two connections joined to
+   * each other here (no server, no STUN), the sound played from the second's
+   * remote stream in an <audio>. That is what Chrome's echo canceller listens
+   * to as the far end, so it takes Crundi out of the microphone. Resolves to
+   * { dest, close } with dest the node to play into; rejects (play directly
+   * instead) without WebRTC, or when it isn't connected in [timeoutMs].
+   */
+  function makeLoopback(ctx, W, timeoutMs) {
+    W = W || window;
+    return new Promise(function (resolve, reject) {
+      if (!W.RTCPeerConnection || !ctx || !ctx.createMediaStreamDestination) { reject(new Error('no WebRTC here')); return; }
+      var a = null, b = null, el = null, done = false, playing = false, joined = false, dest = null;
+      var lb = { close: function () { try { a && a.close(); } catch (e) { /* gone */ } try { b && b.close(); } catch (e) { /* gone */ } try { if (el) { el.pause(); el.srcObject = null; } } catch (e) { /* gone */ } }, onlost: null };
+      var timer = setTimeout(function () { fail(new Error('the loopback did not connect')); }, timeoutMs || 3000);
+      function fail(e) { if (done) { if (lb.onlost) lb.onlost(e); return; } done = true; clearTimeout(timer); lb.close(); reject(e); }
+      function ready() { if (done || !playing || !joined) return; done = true; clearTimeout(timer); lb.dest = dest; resolve(lb); }
+      try {
+        dest = ctx.createMediaStreamDestination();
+        a = new W.RTCPeerConnection({ iceServers: [] }); b = new W.RTCPeerConnection({ iceServers: [] });
+        a.onicecandidate = function (e) { if (e.candidate) Promise.resolve(b.addIceCandidate(e.candidate)).catch(function () { /* the next one */ }); };
+        b.onicecandidate = function (e) { if (e.candidate) Promise.resolve(a.addIceCandidate(e.candidate)).catch(function () { /* the next one */ }); };
+        b.oniceconnectionstatechange = function () {
+          var st = b.iceConnectionState;
+          if (st === 'connected' || st === 'completed') { joined = true; ready(); }
+          else if (st === 'failed' || st === 'closed' || st === 'disconnected') fail(new Error('the loopback ' + st));
+        };
+        b.ontrack = function (e) {
+          el = new W.Audio(); el.autoplay = true;
+          el.srcObject = (e.streams && e.streams[0]) || new W.MediaStream([e.track]);
+          Promise.resolve(el.play()).then(function () { playing = true; ready(); }, fail);
+        };
+        dest.stream.getAudioTracks().forEach(function (t) { a.addTrack(t, dest.stream); });
+        Promise.resolve(a.createOffer())
+          .then(function (o) { return a.setLocalDescription({ type: o.type, sdp: richOpus(o.sdp) }); })
+          .then(function () { return b.setRemoteDescription(a.localDescription); })
+          .then(function () { return b.createAnswer(); })
+          .then(function (ans) { return b.setLocalDescription({ type: ans.type, sdp: richOpus(ans.sdp) }); })
+          .then(function () { return a.setRemoteDescription(b.localDescription); })
+          .catch(fail);
+      } catch (e) { fail(e); }
+    });
   }
 
   var CSS = '' +
@@ -130,6 +288,8 @@
       lastSaid: '', saidUntil: 0, quietSince: Date.now(), streaming: true, speaking: false,
       // live: the server drops Crundi's own words, so the stream stays on while it speaks (barge-in).
       live: false, hintAt: 0, cues: [], cueDevice: false, cueLast: -1, cue: null,
+      // held: Crundi is talking (or just was): the mic goes to the local gate and the pre-roll, not the server.
+      held: false, gate: createGate(), preroll: createPreroll(PREROLL_MS), ring: new Float32Array(VOICE_WINDOW), ringAt: 0, unknownVoice: false, route: 'direct',
       mic: 0, voice: 0, lvl: 0, peak: 0.12, wave: new Float32Array(96), lastShift: 0,
       liq: { m: 0, mv: 0, lv: 0, peak: 0.1, hist: new Float32Array(64), drops: [], ripples: [], until: 0, lastDrop: 0, lastT: 0 },
       noise: 0.01, echo: 0.6, loudFor: 0, spokeFor: 0, recent: [0, 0, 0, 0], settings: null, caps: {},
@@ -203,6 +363,8 @@
     cancelAnimationFrame(s.raf); clearInterval(s.timer);
     window.removeEventListener('keydown', s.onKey, true);
     stopSpeaking(s);
+    clearTimeout(s.releaseTimer);
+    try { if (s.loop) s.loop.close(); } catch (e) { /* gone */ }
     try { if (s.ws) { s.ws.send(JSON.stringify({ type: 'stop' })); s.ws.close(); } } catch (e) { /* gone */ }
     try { if (s.proc) s.proc.disconnect(); if (s.stream) s.stream.getTracks().forEach(function (t) { t.stop(); }); if (s.ctx) s.ctx.close(); } catch (e) { /* gone */ }
     s.ov.remove();
@@ -245,6 +407,7 @@
       S.stream = stream;
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       S.ctx = ctx;
+      outNode();
       loadCues();
       var src = ctx.createMediaStreamSource(stream);
       var proc = ctx.createScriptProcessor(4096, 1, 1);
@@ -260,9 +423,18 @@
           var v = Math.max(-1, Math.min(1, a / Math.max(1, to - from)));
           out[i] = v * 32767; sum += v * v;
         }
-        var level = Math.sqrt(Math.sqrt(sum / Math.max(1, n)));
+        var level = Math.sqrt(Math.sqrt(sum / Math.max(1, n))), ms = x.length / ctx.sampleRate * 1000;
         S.mic = level;
-        onLevel(level, x.length / ctx.sampleRate * 1000);
+        if (S.live) {
+          if (S.held) {
+            // Crundi is talking: nothing goes out; is it him?
+            S.preroll.push(out.buffer, ms);
+            keepVoice(out);
+            if (S.gate.hear(level, S.unknownVoice ? null : playLevel(), ms, recentVoicing)) ownerSpoke();
+            return;
+          }
+          if (!S.speaking && !S.cue) S.gate.learn(level);
+        } else onLevel(level, ms);
         if (S.streaming && S.ws && S.ws.readyState === 1) S.ws.send(out.buffer);
       };
       src.connect(proc); proc.connect(ctx.destination);
@@ -354,12 +526,84 @@
     if (S.closing) { close(); return; }
     // News that came while Cru was busy.
     if (S.reports.length && !S.pending) { var q = S.reports.shift(); S.speaking = false; S.saidUntil = Date.now(); tell(q.speak, q.show); return; }
-    S.speaking = false; S.saidUntil = Date.now();
+    S.speaking = false; S.saidUntil = Date.now(); S.unknownVoice = false;
     S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
-    if (S.live) said();
+    if (S.live) { said(); releaseLater(); }
     else setTimeout(function () { if (S && (S.phase === 'listen' || S.phase === 'think')) { S.streaming = true; try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ } } }, PAUSE_AFTER_SPEECH_MS);
     if (S.pending) { var p = S.pending; S.pending = ''; ask(p); }
     render();
+  }
+
+  // ─── the local gate: Crundi's voice never goes to the server ───
+  /** Crundi starts to talk (an answer or a cue): the mic stays local until the owner talks or it is done. */
+  function hold() {
+    if (!S) return;
+    clearTimeout(S.releaseTimer);
+    if (!S.held) { S.held = true; S.gate.start(); S.preroll.clear(); }
+    S.streaming = false;
+    wsSend({ type: 'pause' });
+  }
+
+  /** Back to the server: [withPreroll] the owner cut in, so what he said just before goes first. */
+  function release(withPreroll) {
+    if (!S) return;
+    clearTimeout(S.releaseTimer);
+    // From a little before he got loud (the start of his first word), never more than the pre-roll.
+    var chunks = S.preroll.drain(Math.min(PREROLL_MS, S.gate.loudMs + LEAD_MS));
+    S.held = false; S.streaming = true;
+    wsSend({ type: 'resume' });
+    if (withPreroll && S.ws && S.ws.readyState === 1) chunks.forEach(function (c) { try { S.ws.send(c); } catch (e) { /* gone */ } });
+  }
+
+  /** Crundi is done: the gate stays a moment (the room's echo), then the mic goes back to the server. */
+  function releaseLater() {
+    if (!S) return;
+    clearTimeout(S.releaseTimer);
+    S.releaseTimer = setTimeout(function () { if (S && S.held && !S.speaking && !S.cue) release(false); }, PAUSE_AFTER_SPEECH_MS);
+  }
+
+  /** The gate heard the owner: stop Crundi now, here, and send what he is saying from its start. */
+  function ownerSpoke() {
+    if (!S) return;
+    if (S.phase === 'speak') { stopSpeaking(S); S.saidUntil = Date.now(); S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now(); said(); }
+    else if (S.cue) stopCue();
+    release(true);
+    render();
+  }
+
+  function keepVoice(pcm) {
+    var r = S.ring, at = S.ringAt;
+    for (var i = 0; i < pcm.length; i++) { r[at] = pcm[i] / 32768; at = (at + 1) % r.length; }
+    S.ringAt = at;
+  }
+  function recentVoicing() {
+    var r = S.ring, n = r.length, c = new Float32Array(n);
+    for (var i = 0; i < n; i++) c[i] = r[(S.ringAt + i) % n];
+    return voicedShare(c);
+  }
+
+  /** Where Crundi's voice is played into: an analyser (its level), then the loopback or the speakers. */
+  function outNode() {
+    if (S.out || !S.ctx) return S.out;
+    var ctx = S.ctx, an = ctx.createAnalyser(); an.fftSize = 512; an.connect(ctx.destination);
+    S.out = an; S.outBuf = new Float32Array(an.fftSize);
+    var s = S;
+    makeLoopback(ctx, window, 3000).then(function (lb) {
+      if (S !== s) { lb.close(); return; }
+      an.disconnect(); an.connect(lb.dest); s.loop = lb; s.route = 'loopback';
+      // Lost later: straight to the speakers again.
+      lb.onlost = function () { if (S !== s || s.route !== 'loopback') return; try { an.disconnect(); } catch (e) { /* none */ } an.connect(ctx.destination); s.route = 'direct'; };
+    }).catch(function () { /* played directly: the gate does the work */ });
+    return an;
+  }
+
+  /** Crundi's level now, as the microphone's scale. */
+  function playLevel() {
+    if (!S.out) return 0;
+    S.out.getFloatTimeDomainData(S.outBuf);
+    var sum = 0, b = S.outBuf;
+    for (var i = 0; i < b.length; i++) sum += b[i] * b[i];
+    return Math.min(1, Math.sqrt(Math.sqrt(sum / b.length)) * 1.4);
   }
 
   // ─── speaking ───
@@ -368,10 +612,11 @@
   function said() { wsSend({ type: 'said' }); }
 
   function speak(text) {
-    S.phase = 'speak'; S.speaking = true; S.lastSaid = text; S.loudFor = 0; S.spokeFor = 0; S.hintAt = 0;
-    // The stream stays on (the server drops Crundi's own words), so the owner can talk over it;
-    // an older server is paused instead, as before.
-    if (S.live) wsSend({ type: 'saying', text: text });
+    S.phase = 'speak'; S.speaking = true; S.lastSaid = text; S.loudFor = 0; S.spokeFor = 0; S.hintAt = 0; S.unknownVoice = false;
+    // Nothing goes to the server while Crundi talks: the gate here listens for the owner.
+    // The server is still told what it says (its transcript filter is the second net).
+    // An older server is paused, as before.
+    if (S.live) { wsSend({ type: 'saying', text: text }); hold(); }
     else { S.streaming = false; wsSend({ type: 'pause' }); }
     // A cue nearly done is let finish; otherwise the answer takes over now.
     if (!S.cue || !S.cue.node || cueLeft() > CUE_FINISH_MS) stopCue();
@@ -383,7 +628,7 @@
   function streamSpeech(text) {
     var token = S.speakToken = {};
     var ctx = S.ctx || (S.ctx = new (window.AudioContext || window.webkitAudioContext)());
-    var an = ctx.createAnalyser(); an.fftSize = 512; an.connect(ctx.destination);
+    var an = outNode();
     S.outAnalyser = an;
     var at = Math.max(ctx.currentTime + 0.05, S.cue && S.cue.ends ? S.cue.ends : 0), rate = 24000, carry = null, any = false;
     return S.opts.apiFetch('/api/voice/speak?stream=1', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'audio/L16' }, body: JSON.stringify({ text: text }) }).then(function (res) {
@@ -420,6 +665,8 @@
     u.onboundary = function () { if (S) S.voiceBump = 0.6 + Math.random() * 0.35; };
     u.onend = function () { if (S && S.speaking) afterSpeech(); };
     stopCue();
+    // The browser's voice can't go through the loopback: the gate has only the mic to go by.
+    if (S) S.unknownVoice = true;
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   }
 
@@ -467,9 +714,9 @@
     S.cueLast = i;
     stopCue();
     var s = S, cue = { text: c.text, ends: 0 };
-    var done = function () { if (S === s && s.cue === cue) { s.cue = null; if (s.live && !s.speaking) said(); } };
+    var done = function () { if (S === s && s.cue === cue) { s.cue = null; if (s.live && !s.speaking) { said(); s.unknownVoice = false; releaseLater(); } } };
     if (c.buf && s.ctx) {
-      var node = s.ctx.createBufferSource(); node.buffer = c.buf; node.connect(s.ctx.destination);
+      var node = s.ctx.createBufferSource(); node.buffer = c.buf; node.connect(outNode() || s.ctx.destination);
       cue.node = node; cue.ends = s.ctx.currentTime + 0.01 + c.buf.duration;
       node.onended = done;
       node.start(s.ctx.currentTime + 0.01);
@@ -477,12 +724,13 @@
       var u = deviceUtterance(c.text);
       u.onend = done; u.onerror = done;
       cue.utter = u;
+      s.unknownVoice = true;
       speechSynthesis.cancel(); speechSynthesis.speak(u);
     } else return;
     s.cue = cue;
-    // Its own words coming back are not the owner's.
+    // Its own words coming back are not the owner's: and they are not sent at all.
     s.lastSaid = c.text; s.saidUntil = Date.now() + (c.buf ? c.buf.duration * 1000 : 1500);
-    if (s.live) wsSend({ type: 'saying', text: c.text });
+    if (s.live) { wsSend({ type: 'saying', text: c.text }); hold(); }
   }
 
   /** How long the cue has still to play, ms (0 when none, or the browser's voice: unknown). */
@@ -494,8 +742,11 @@
     var c = s.cue; s.cue = null;
     try { if (c.node) c.node.stop(); } catch (e) { /* done */ }
     try { if (c.utter && window.speechSynthesis) speechSynthesis.cancel(); } catch (e) { /* none */ }
-    // Cut short while thinking: the server may stop dropping its words.
-    if (s.live && !s.speaking) { try { if (s.ws && s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: 'said' })); } catch (e) { /* gone */ } }
+    // Cut short while thinking: the server may stop dropping its words, and the mic goes back.
+    if (s.live && !s.speaking) {
+      try { if (s.ws && s.ws.readyState === 1) s.ws.send(JSON.stringify({ type: 'said' })); } catch (e) { /* gone */ }
+      if (S === s) { s.unknownVoice = false; releaseLater(); }
+    }
   }
 
   function stopSpeaking(s) {
@@ -522,7 +773,8 @@
   function cutIn() {
     stopSpeaking(S);
     S.saidUntil = Date.now(); S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now(); S.streaming = true; S.hintAt = 0;
-    if (S.live) said(); else wsSend({ type: 'resume' });
+    // Tapped: straight back to the server. Not the pre-roll: that is Cru's own voice.
+    if (S.live) { said(); release(false); } else wsSend({ type: 'resume' });
   }
 
   /** The same echo-aware rule as the phone's BargeInDetector. */
@@ -806,5 +1058,5 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; } };
 })();

@@ -66,6 +66,12 @@ class VoiceController(
     private val machine = VoiceMachine(silenceMs = VoicePrefs.silenceSeconds(ctx) * 1000L)
     private val speaker = Speaker(ctx, scope)
     private val barge = BargeInDetector()
+    /** Is it the owner over Cru? Decided here while nothing is sent ([OwnerGate]). */
+    private val gate = OwnerGate()
+    private val ring = VoiceRing()
+    @Volatile private var gateFired = false
+    /** Cru's voice as speakerphone call audio, so the echo canceller takes it out ([CallAudio]). */
+    private val callAudio = CallAudio(ctx)
 
     private val _ui = MutableStateFlow(VoiceUi())
     val ui: StateFlow<VoiceUi> = _ui
@@ -90,9 +96,13 @@ class VoiceController(
     /** Audio goes to the server (not while Crundi speaks). Read on the recording thread. */
     @Volatile private var streaming = true
     @Volatile private var speakingNow = false
-    /** The last half second of microphone while paused: The owner\'s first word when they talk over Crundi. */
+    /** The microphone said before the socket was up: sent first once it is. */
     private val preroll = ArrayDeque<ByteArray>()
+    /** The microphone held back while paused (Cru talking): the owner's first words when he talks over it. */
+    private val held = PreRoll(PREROLL_MS)
     private var sendPreroll = false
+    /** Of the pre-roll, how much to send: from just before the owner's voice rose (not Cru's before it). */
+    private var prerollTake = PREROLL_MS
 
     fun open() {
         if (running) return
@@ -177,22 +187,26 @@ class VoiceController(
             VoiceEffect.StopCue -> speaker.stopCue()
             VoiceEffect.StopSaying -> { speakingNow = false; speaker.stop() }
             VoiceEffect.PauseStream -> {
+                if (streaming) { gate.start(); gateFired = false }
                 streaming = false
                 synchronized(preroll) { preroll.clear() }
+                held.clear()
                 socket?.send("""{"type":"pause"}""")
                 fallback?.pause()
             }
             VoiceEffect.ResumeStream -> {
                 val bargedIn = sendPreroll
                 sendPreroll = false
+                val take = prerollTake
+                prerollTake = PREROLL_MS
                 val resume = {
                     val s = socket
                     if (s != null) {
                         s.send("""{"type":"resume"}""")
                         // Talked over: The owner\'s first words are in the last moment held back.
-                        if (bargedIn) synchronized(preroll) { for (b in preroll.takeLast(3)) s.send(b) }
+                        if (bargedIn) for (b in held.drain(take)) s.send(b)
                     }
-                    synchronized(preroll) { preroll.clear() }
+                    held.clear()
                     streaming = true
                     fallback?.start()
                 }
@@ -253,14 +267,25 @@ class VoiceController(
     }
 
     private fun bargeIn() {
-        sendPreroll = true
+        // Tapped: on a live server the pre-roll is Cru's own voice, never sent.
+        sendPreroll = !_ui.value.state.live
+        prerollTake = OLD_PREROLL_MS
         dispatch(VoiceEvent.BargeIn(now()))
     }
 
-    /** The level detector heard a voice over Crundi's: with a live stream that only lowers the bar for his words. */
+    /** The gate heard the owner over Cru (or the cue): stop it here, and resume the stream from his first words. */
+    private fun ownerHeard() {
+        if (!running || streaming) return
+        sendPreroll = true
+        prerollTake = minOf(PREROLL_MS, gate.loudMs + LEAD_MS)
+        dispatch(VoiceEvent.VoiceHeard(now()))
+    }
+
+    /** An older server: the level detector heard a voice over Crundi's, and that alone cuts in. */
     private fun voiceHeard() {
         if (_ui.value.state.phase != Phase.Speaking) return
         sendPreroll = !_ui.value.state.live
+        prerollTake = OLD_PREROLL_MS
         dispatch(VoiceEvent.VoiceHeard(now()))
     }
 
@@ -379,14 +404,21 @@ class VoiceController(
     private fun startMic() {
         val m = MicStream { bytes, level ->
             _mic.value = level
-            if (speakingNow) {
+            if (!streaming && _ui.value.state.let { it.live || it.cue.isNotEmpty() }) {
+                // Cru is talking (or a cue plays): nothing goes out; the phone decides if it is him.
+                ring.add(bytes)
+                if (!gateFired) {
+                    val play = speaker.playLevel
+                    if (gate.hear(level, play, 100) { CruWake.voicedShare(ring.snapshot()) }) { gateFired = true; scope.launch { ownerHeard() } }
+                }
+            } else if (speakingNow) {
                 val voice = if (speaker.measured) speaker.level.value else null
                 if (barge.hear(level, voice, 100)) {
                     // A live stream keeps listening for his words; a paused one cuts in on this alone.
                     if (_ui.value.state.live) barge.rearm() else speakingNow = false
                     scope.launch { voiceHeard() }
                 }
-            } else barge.learn(level)
+            } else { barge.learn(level); if (!speakingNow && !speaker.cueing) gate.learn(level) }
             val s = socket
             synchronized(preroll) {
                 when {
@@ -394,13 +426,16 @@ class VoiceController(
                     streaming && s != null -> { for (b in preroll) s.send(b); preroll.clear(); s.send(bytes) }
                     // The socket is still opening: keep it all (up to 10 s).
                     streaming -> { preroll.addLast(bytes); while (preroll.size > 100) preroll.removeFirst() }
-                    // Crundi is speaking: keep the last half second, for a barge-in.
-                    else -> { preroll.addLast(bytes); while (preroll.size > 5) preroll.removeFirst() }
+                    // Crundi is speaking: keep the last 1.3 s, for when the owner cuts in.
+                    else -> held.push(bytes, 100)
                 }
             }
         }
         if (!m.start()) { block("The microphone could not be opened. Is another app using it?"); return }
         mic = m
+        // Cru's voice joins the microphone's session, as call audio on the speaker when it can.
+        speaker.sessionId = m.sessionId
+        speaker.route = callAudio.start()
     }
 
     private fun stopMic() { mic?.stop(); mic = null; _mic.value = 0f }
@@ -411,10 +446,12 @@ class VoiceController(
         speakingNow = false
         speaker.stop()
         stopMic()
+        callAudio.stop(); speaker.route = CruAudio.Route.Media; speaker.sessionId = 0
         socket?.let { s -> runCatching { s.send("""{"type":"stop"}"""); s.close() } }
         socket = null
         fallback?.pause()
         synchronized(preroll) { preroll.clear() }
+        held.clear()
         VoiceMicService.stop(ctx)
         if (holdsMic) { holdsMic = false; HeyCrundi.sessionClosed() }
     }
@@ -431,6 +468,12 @@ class VoiceController(
         private const val TAG = "CrundiVoice"
         /** Quiet after Crundi finishes before listening again: the speaker's tail and the room's echo. */
         private const val RESUME_AFTER_SPEECH_MS = 450L
+        /** 100 ms chunks kept while Cru talks: 1.3 s. */
+        private const val PREROLL_MS = 1_300L
+        /** An older server (no barge-in): the last moment only, as before. */
+        private const val OLD_PREROLL_MS = 300L
+        /** Sent from this long before the owner's voice rose over Cru's (a soft first syllable). */
+        private const val LEAD_MS = 600L
 
         /** Words the phone's own recogniser is hinted with (the server sends Deepgram more). */
         val VOCABULARY = listOf(

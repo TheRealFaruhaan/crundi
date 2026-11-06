@@ -35,6 +35,7 @@
 import WebSocket from 'ws';
 import { getSettings, addDeepgramSpend, deepgramOverLimit } from './settings.js';
 import { keyterms } from './stt.js';
+import { CUES } from './cues.js';
 
 const STREAM_URL = 'wss://api.deepgram.com/v1/listen';
 /** Deepgram closes a stream after about 10 s without audio; it asks for a KeepAlive every 3–5 s. */
@@ -80,7 +81,9 @@ export function streamUrl(terms, { language = 'en', audio = null, pauseMs = PAUS
 }
 
 /** After Cru stops, its last words may still be finalised for this long. */
-export const ECHO_TAIL_MS = 2500;
+export const ECHO_TAIL_MS = 4000;
+/** How many of Cru's recent sayings (cues and replies) are kept to match echoes against. */
+const RECENT_SAYINGS = 4;
 /** A 'saying' with no 'said' (a client gone quiet) is forgotten after this. */
 const SAYING_MAX_MS = 120_000;
 
@@ -95,7 +98,51 @@ export function isEcho(heard, said) {
   const h = words(heard), s = words(said);
   if (h.length < 2) return h.length === 1 && s.includes(h[0]) && s.length <= 3;
   const set = new Set(s);
-  return h.filter(w => set.has(w)).length / h.length >= 0.6;
+  if (h.filter(w => set.has(w)).length / h.length >= 0.6) return true;
+  // Misheard (Cru's "Right away, Sir." comes back as "Riseway, sir."): a short
+  // phrase that sounds like Cru's words, letter by letter.
+  return h.length <= 6 && soundsLike(h, s);
+}
+
+/** Letters alone, as one string. */
+const letters = (ws) => ws.join('').replace(/[^\p{L}\p{N}]/gu, '');
+
+function editDistance(a, b) {
+  if (a === b) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * [h] (heard words) is close, letter by letter, to [s] or to a run of [s]'s
+ * words about as long: at least 60% the same.
+ */
+export function soundsLike(h, s, min = 0.6) {
+  const a = letters(h);
+  if (a.length < 4 || !s.length) return false;
+  const close = (b) => b.length && 1 - editDistance(a, b) / Math.max(a.length, b.length) >= min;
+  if (s.length <= 6) return close(letters(s));
+  for (let n = Math.max(1, h.length - 1); n <= h.length + 1; n++) {
+    for (let i = 0; i + n <= s.length; i++) if (close(letters(s.slice(i, i + n)))) return true;
+  }
+  return false;
+}
+
+/** The whole utterance is one of the cues ("One moment, Sir."), however it was heard. */
+export function isCue(heard) {
+  const h = words(heard);
+  if (h.length < 2 || h.length > 6) return false;
+  return CUES.some((c) => {
+    const s = words(c), set = new Set(s), hs = new Set(h);
+    // Most of the cue's words are there, and little else; or it sounds just like it.
+    const shared = s.filter((w) => hs.has(w)).length;
+    return (shared / s.length >= 0.75 && h.filter((w) => set.has(w)).length / h.length >= 0.75) || soundsLike(h, s, 0.72);
+  });
 }
 
 /**
@@ -107,13 +154,16 @@ export function isEcho(heard, said) {
 export function createAssembler({ now = () => Date.now() } = {}) {
   let parts = [];
   let audioEnd = 0;
-  /** What Cru is saying (or just said), and when it stopped (null: still speaking). */
-  let saying = '', saidAt = null, sayingFrom = 0;
+  /**
+   * What Cru said lately (a cue, then the reply, ...), each with when it
+   * started and stopped (null: still speaking). Several, not one: the cue's
+   * echo is still being transcribed when the reply starts.
+   */
+  let recent = [];
   const echo = (text) => {
-    if (!saying) return false;
     const t = now();
-    if (saidAt === null ? t - sayingFrom > SAYING_MAX_MS : t - saidAt > ECHO_TAIL_MS) { saying = ''; return false; }
-    return isEcho(text, saying);
+    recent = recent.filter((r) => (r.saidAt === null ? t - r.from <= SAYING_MAX_MS : t - r.saidAt <= ECHO_TAIL_MS));
+    return recent.some((r) => isEcho(text, r.text));
   };
   const sofar = () => (parts.length ? { type: 'interim', text: parts.join(' ') } : null);
   return {
@@ -136,9 +186,14 @@ export function createAssembler({ now = () => Date.now() } = {}) {
       return { type: 'interim', text: [...parts, text].join(' ') };
     },
     /** Cru starts saying [text] (a reply, a cue). */
-    saying(text) { saying = String(text || '').slice(0, 4000); saidAt = null; sayingFrom = now(); },
+    saying(text) {
+      const t = now();
+      for (const r of recent) if (r.saidAt === null) r.saidAt = t;
+      recent.push({ text: String(text || '').slice(0, 4000), from: t, saidAt: null });
+      if (recent.length > RECENT_SAYINGS) recent = recent.slice(-RECENT_SAYINGS);
+    },
     /** Cru stopped (finished, or was talked over). */
-    said() { if (saying && saidAt === null) saidAt = now(); },
+    said() { const t = now(); for (const r of recent) if (r.saidAt === null) r.saidAt = t; },
     /** Whatever was heard but not yet sent (the stream is ending). */
     flush,
     get seconds() { return audioEnd; },
