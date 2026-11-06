@@ -166,6 +166,7 @@ class VoiceSettingsEvents(
     val onWakeMinutes: (Int) -> Unit = {},
     val onMicSeconds: (Int) -> Unit = {},
     val onScreenMinutes: (Int) -> Unit = {},
+    val onScreenClose: (Int) -> Unit = {},
     val onFullScreen: () -> Unit = {},
     val onMemoryText: (String, String) -> Unit = { _, _ -> },
     val onMemorySave: (String) -> Unit = {},
@@ -321,12 +322,12 @@ class VoiceSettingsActivity : ComponentActivity() {
         }
     }
 
-    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, pause: Int? = null, dgLimit: Double? = null, rate: Double? = null, note: String = "Saved") {
+    private fun save(model: String? = null, limit: Double? = null, ttsVoice: String? = null, day: Int? = null, dgDay: Int? = null, pause: Int? = null, dgLimit: Double? = null, rate: Double? = null, screenClose: Int? = null, note: String = "Saved") {
         val v = voice() ?: return
         ui = ui.copy(busy = true)
         lifecycleScope.launch {
             ui = try {
-                val s = v.save(model, limit, ttsVoice, day, dgDay, pause, dgLimit, rate)
+                val s = v.save(model, limit, ttsVoice, day, dgDay, pause, dgLimit, rate, screenClose)
                 ui.copy(server = s, busy = false, note = note, limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString(), dgLimitText = fmtUsd(s.deepgramLimitUsd))
             } catch (e: Exception) { ui.copy(busy = false, note = e.message ?: "Could not save") }
         }
@@ -382,6 +383,7 @@ class VoiceSettingsActivity : ComponentActivity() {
         onTry = { startActivity(Intent(this, VoiceActivity::class.java)) },
         onMicSeconds = { v -> VoicePrefs.setSilenceSeconds(this, v); wakeRefresh() },
         onScreenMinutes = { v -> VoicePrefs.setScreenAwakeMinutes(this, v); wakeRefresh() },
+        onScreenClose = { sec -> save(screenClose = sec, note = "The voice screen closes after ${closeLabel(sec)} of silence") },
         onTrain = { startActivity(Intent(this, WakeTrainActivity::class.java)) },
         onForget = {
             if (!ui.wake.confirmForget) { ui = ui.copy(wake = ui.wake.copy(confirmForget = true)); lifecycleScope.launch { delay(4000); ui = ui.copy(wake = ui.wake.copy(confirmForget = false)) } }
@@ -494,7 +496,7 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
 
             // ─── Winding down: the microphone, then "Hey Cru", then sleep ───
             Section("On the voice screen")
-            ScreenTimes(ui.wake, ev)
+            ScreenTimes(ui.wake, ui.server?.screenCloseSeconds?.takeIf { it > 0 }, ev)
 
             // ─── "Hey Cru" (Phase 6, D3–D7) ───
             Section("Hey Cru")
@@ -668,7 +670,7 @@ private fun VoiceRow(title: String, detail: String, selected: Boolean, onPick: (
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ScreenTimes(w: WakeUi, ev: VoiceSettingsEvents) {
+private fun ScreenTimes(w: WakeUi, screenClose: Int?, ev: VoiceSettingsEvents) {
     CrundiCard(Modifier.fillMaxWidth(), padding = 14.dp) {
         Text("Microphone stays on", style = CrundiType.Heading)
         Text("After the last thing you said or Cru answered, then it stops recording. Noise in the room doesn't keep it on.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
@@ -683,6 +685,15 @@ private fun ScreenTimes(w: WakeUi, ev: VoiceSettingsEvents) {
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (v in listOf(1, 2, 5, 10)) CrundiChip("$v min", w.screenMinutes == v, { if (w.screenMinutes != v) ev.onScreenMinutes(v) })
+        }
+        // A server setting (every client), so it shows once the server has answered.
+        if (screenClose != null) {
+            Text("The voice screen closes", style = CrundiType.Heading, modifier = Modifier.padding(top = 16.dp))
+            Text("After this much silence, even when the phone stays awake (plugged in). \"Hey Cru\" opens it again. The same time closes it on the web and the PC.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp, bottom = 10.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (v in CLOSE_CHOICES) CrundiChip(closeLabel(v), screenClose == v, { if (screenClose != v) ev.onScreenClose(v) })
+            }
+            if (screenClose !in CLOSE_CHOICES) Text("Now ${closeLabel(screenClose)}", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
@@ -792,4 +803,7 @@ private fun MemoryPart(m: MemoryUi, ev: VoiceSettingsEvents) {
 }
 
 /** A talking speed as shown: "Normal", "1.15×". */
+private val CLOSE_CHOICES = listOf(30, 45, 60, 120, 300)
+fun closeLabel(sec: Int): String = if (sec < 60) "$sec s" else if (sec % 60 == 0) "${sec / 60} min" else "${sec / 60} min ${sec % 60} s"
+
 fun rateLabel(r: Double): String = if (kotlin.math.abs(r - 1.0) < 0.01) "Normal" else ("%.2f".format(java.util.Locale.US, r).trimEnd('0').trimEnd('.') + "×")

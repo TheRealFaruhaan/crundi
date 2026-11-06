@@ -45,7 +45,7 @@ export const ACTION_TOOL_NAMES = [
 export const LISTEN_MINUTES = [15, 30, 45, 60, 120];
 
 /** Settings voice may change (each confirmed, D32). Keys and critical settings are not among them (D17). */
-export const VOICE_SETTINGS = ['model', 'ttsVoice', 'speechRate', 'monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay'];
+export const VOICE_SETTINGS = ['model', 'ttsVoice', 'speechRate', 'monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay', 'screenCloseSeconds', 'cliIdleMinutes'];
 
 const PENDING_MS = 10 * 60 * 1000;
 const STATUSES = ['backlog', 'todo', 'in_progress', 'done'];
@@ -378,7 +378,7 @@ export function makeActionTools(deps, ctx) {
       check: (i) => { if (!VOICE_SETTINGS.includes(i.setting)) throw new Error('That setting is not one voice may change'); },
       confirm: (i) => `Change ${i.setting} to ${i.value}?`,
       run: (i) => {
-        const v = ['monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay', 'speechRate'].includes(i.setting) ? Number(i.value) : String(i.value);
+        const v = ['monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay', 'speechRate', 'screenCloseSeconds', 'cliIdleMinutes'].includes(i.setting) ? Number(i.value) : String(i.value);
         const r = deps.voiceSettings.updateSettings({ [i.setting]: v });
         if (r.ok) deps.onSettingsChanged?.();
         return r;
@@ -438,9 +438,9 @@ export function makeActionTools(deps, ctx) {
   // Closing the voice screen itself: only the window, nothing changes, so no yes is needed.
   tools.push({
     name: 'close_voice',
-    description: 'Close this voice screen (the phone\'s voice screen or side-key overlay, or the voice dropdown on the web and PC) once your answer has been said. Use it when the owner says they are done: "close", "that\'s all", "goodbye", "go away", "thanks, that\'s it". Say a brief goodbye in your reply.',
+    description: 'Close this voice screen (the phone\'s voice screen or side-key overlay, or the voice dropdown on the web and PC). Use it when the owner says they are done: "close", "that\'s all", "goodbye", "go away", "thanks, that\'s it". Reply with nothing and it closes silently; add a brief goodbye only when you are actually in a conversation with the owner.',
     input_schema: obj({}),
-    run: () => ({ ok: true, close: true, say: 'The voice screen closes after your reply.' }),
+    run: () => ({ ok: true, close: true, say: 'The voice screen closes after your reply; an empty reply closes it silently.' }),
   });
   return tools;
 }

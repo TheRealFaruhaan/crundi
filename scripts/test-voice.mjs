@@ -231,6 +231,24 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
     ok(/Report for the owner, not said by them/.test(JSON.stringify(seen[0].messages)), 'the model is told it is a report, not the owner');
     ok(/watch_chat/.test(SYSTEM_PROMPT) && /Report for the owner/.test(SYSTEM_PROMPT), 'the prompt: Cru reports on the chats it watches');
   }
+  {
+    // Silent close and silence: an empty reply says nothing (the screen closes, or keeps listening).
+    ok(/close_voice and reply with nothing at all/.test(SYSTEM_PROMPT) && /Silence is an answer/.test(SYSTEM_PROMPT), 'the prompt: close silently, and stay quiet when nothing is needed');
+    const quiet = () => ({ messages: { create: async () => ({ stop_reason: 'end_turn', usage: {}, content: [] }) } });
+    const q = await createVoiceAgent({ tools, client: quiet }).turn('hmm, let me think');
+    ok(q.ok && q.speak === '' && q.show === '', 'an empty reply is fine: nothing said');
+    // A silent reply that comes back as blank text must not poison the conversation:
+    // the API refuses "text content blocks must contain non-whitespace text" on every later request.
+    const sent = [];
+    const blank = () => ({ messages: { create: async (req) => { sent.push(JSON.parse(JSON.stringify(req.messages))); return { stop_reason: 'end_turn', usage: {}, content: [{ type: 'text', text: ' ' }] }; } } });
+    const ba = createVoiceAgent({ tools, client: blank });
+    await ba.turn('that is all');
+    await ba.turn('one more thing');
+    ok(!JSON.stringify(sent[1]).includes('"text":" "') && sent[1].length === 3, 'a blank reply is not sent back to the API');
+    const saved = [{ role: 'user', content: 'x' }, { role: 'assistant', content: [{ type: 'thinking', thinking: 't', signature: 's' }, { type: 'text', text: '  ' }] }];
+    const healed = createVoiceAgent({ tools, client: blank, store: { load: () => saved, save: () => {} } });
+    ok(healed.history[1].content.length === 1 && healed.history[1].content[0].signature === 's', 'a saved conversation with blank text is repaired on load, thinking untouched');
+  }
   const r = await agent.turn('what is on the kanban', { where: 'workbench', now: new Date('2026-11-10T09:00:00Z') });
   ok(r.ok && r.speak === 'One project, Sir, and the board is empty.' && r.show === 'proj: no tasks', 'a turn with two tool calls answers');
   ok(r.tools.join() === 'list_projects,get_kanban', 'both tools ran (in parallel, one round)');

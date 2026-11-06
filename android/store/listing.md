@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.14 (en-US)
+
+Version code 45. Internal track. Since 1.1.3-dev.13 (code 44): the voice screen closes after the server's screenCloseSeconds of silence (Voice settings chips).
+
+```
+<en-US>
+Cru closes when you go quiet.
+
+- After a minute of silence the voice screen closes itself, even when the phone stays awake. "Hey Cru" opens it again. Change the time in Voice settings.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.13 (en-US)
 
 Version code 44. Internal track. Since 1.1.3-dev.12 (code 43): reports said unasked on the voice screen, close_voice.

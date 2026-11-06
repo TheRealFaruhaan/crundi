@@ -1,0 +1,36 @@
+{
+  "steps": [
+    {
+      "id": "voice-brain",
+      "tag": "Voice",
+      "title": "Cru on Claude Code",
+      "body": "An experiment: Cru can answer through your own Claude Code, on your subscription, instead of the Claude API. Same tools, same rules, same notebook. Switch it on the Voice page, and compare speed and cost there as you use it.",
+      "keys": [
+        {
+          "keys": [
+            "Voice page › Brain"
+          ],
+          "text": "Claude API or Claude Code"
+        }
+      ],
+      "art": "voice-brain.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "voice-idle-close",
+      "tag": "Voice",
+      "title": "Cru closes when you go quiet",
+      "body": "After a minute of silence the voice screen closes itself, on the phone, the web and the PC; \"Hey Cru\" opens it again. Change the time in Voice settings.",
+      "keys": [
+        {
+          "keys": [
+            "Voice settings › The voice screen closes"
+          ],
+          "text": "30 seconds to 5 minutes"
+        }
+      ],
+      "art": "voice-idle-close.html",
+      "artTitle": "Voice"
+    }
+  ]
+}

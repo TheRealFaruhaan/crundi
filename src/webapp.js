@@ -98,6 +98,8 @@ import { makeTools as makeVoiceTools } from './voice/tools.js';
 import { createVoiceAgent } from './voice/agent.js';
 import { makeActionTools as makeVoiceActionTools, createPending as createVoicePending } from './voice/actions.js';
 import { createVoiceMemory } from './voice/memory.js';
+import { createCliVoiceAgent } from './voice/agent-cli.js';
+import { createVoiceBrain } from './voice/brain.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { getVoicePageHtml } from './voice/page.js';
 import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
@@ -2694,13 +2696,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }, voiceCtx);
   // One memory (Phase 2): the conversation on disk, the notebook, search.
   const voiceMemory = createVoiceMemory({ dataDir: config.dataDir });
-  const voiceAgent = createVoiceAgent({
+  const voiceBrainOpts = {
     tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool],
     beforeTurn: ({ locked }) => { voiceCtx.locked = () => !!locked; voicePending.newTurn(); },
-    store: voiceMemory.store,
     onTurnDone: (t) => voiceMemory.remember(t),
     onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
     persona: () => (voiceMemory.notebook.list().find(f => f.path === '/memories/persona.md') || {}).text || '',
+  };
+  // The experiment (brain setting): the same tools and rules, answered by the
+  // owner's own Claude Code in JSON mode, running in Cru's notes folder.
+  const voiceCli = createCliVoiceAgent({
+    ...voiceBrainOpts,
+    workdir: join(config.dataDir, 'voice-memory', 'memories'),
+    stateDir: join(config.dataDir, 'voice-memory', 'cli'),
+    apiUrl: () => `http://127.0.0.1:${localPort || port}`,
+    claudeBin: () => resolveClaudeBin(),
+  });
+  const voiceAgent = createVoiceBrain({
+    api: createVoiceAgent({ ...voiceBrainOpts, store: voiceMemory.store }),
+    cli: voiceCli,
+    logFile: join(config.dataDir, 'voice-memory', 'brain-log.jsonl'),
   });
   // Compaction while idle: ten quiet minutes, at most once a minute's check.
   setInterval(() => {
@@ -3427,7 +3442,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // MCP call + hook status endpoints use their own X-Api-Key auth (not tokens)
-    const keyAuthed = path === '/api/mcp/call' || path === '/api/terminal-status';
+    const keyAuthed = path === '/api/mcp/call' || path === '/api/terminal-status' || path === '/api/voice/cli-tool';
     let principal = null;
     if (!authConfig.isOpen() && !keyAuthed) {
       principal = validateToken(req);
@@ -4143,6 +4158,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         model: body.model, monthlyLimitUsd: body.monthlyLimitUsd, deepgramLimitUsd: body.deepgramLimitUsd,
         anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey, anthropicAdminKey: body.anthropicAdminKey,
         ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay, pauseMs: body.pauseMs, speechRate: body.speechRate,
+        brain: body.brain, screenCloseSeconds: body.screenCloseSeconds, cliIdleMinutes: body.cliIdleMinutes,
       });
       return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
     }
@@ -4197,6 +4213,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return res.end(r.audio);
     }
     // A voice session just opened: warm the prompt cache while the owner speaks.
+    // The brain experiment: turns, speed, cost and cache use per brain and model.
+    if (path === '/api/voice/brain-stats' && req.method === 'GET') {
+      return json(res, { ok: true, brain: voiceAgent.which, stats: voiceAgent.stats({ since: Date.parse(url.searchParams.get('since') || '') || 0 }) });
+    }
     if (path === '/api/voice/warm' && req.method === 'POST') {
       return json(res, await voiceAgent.warm());
     }
@@ -6360,6 +6380,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Internal MCP dispatch (from stdio MCP servers) ───
+    // Cru's tools, called by Claude Code through voice/mcp-cru.js (the Claude
+    // Code brain). Its own token, made at start: it reaches these tools only.
+    if (path === '/api/voice/cli-tool' && req.method === 'POST') {
+      const tok = String(req.headers['x-cru-token'] || '');
+      if (!tok || tok.length !== voiceCli.token.length || !timingSafeEqual(Buffer.from(tok), Buffer.from(voiceCli.token))) return json(res, { error: 'Invalid token' }, 403);
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { isError: true, content: 'Bad request body' }, 400); }
+      return json(res, await voiceCli.callTool(String(body.tool || '').replace(/^mcp__cru__/, ''), body.args || {}));
+    }
     if (path === '/api/mcp/call' && req.method === 'POST') {
       // Auth via internal API key (not user token) — or a collaborator's own.
       //

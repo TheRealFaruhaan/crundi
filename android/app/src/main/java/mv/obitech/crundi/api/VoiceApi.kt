@@ -22,8 +22,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     suspend fun settings(): VoiceSettings = rpc.read(rpc.get("/api/voice/settings"), null)
 
     /** Change the model, the monthly limit or the Deepgram voice ("" = the phone's own). Null leaves one as it is. */
-    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null, speechRate: Double? = null): VoiceSettings =
-        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate)), null)
+    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null, speechRate: Double? = null, screenCloseSeconds: Int? = null): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds)), null)
 
     /**
      * One request. [where] is what the owner is looking at ("lock screen",
@@ -158,6 +158,10 @@ data class VoiceSettings(
     val pauseMs: Int = 2000,
     /** How fast Cru talks: 1 normal, 0.7 to 1.5 (Deepgram's speed; the phone's voice follows). An older server has none: 1. */
     val speechRate: Double = 1.0,
+    /** After this many seconds of silence the voice screen closes (every client; "Hey Cru" opens it again). An older server has none: 0, never. */
+    val screenCloseSeconds: Int = 0,
+    /** Which brain answers: "api" or "claude-code" (an experiment, set on the server's /voice page). */
+    val brain: String = "api",
     val spend: VoiceSpend = VoiceSpend(),
     val limitReached: Boolean = false,
 )

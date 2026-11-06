@@ -400,6 +400,9 @@
 
   function tick() {
     if (!S) return;
+    // After a short silence (Settings, default a minute) the voice screen closes itself; "Hey Cru" opens it again.
+    var idleMs = ((S.settings && S.settings.screenCloseSeconds) || 60) * 1000;
+    if ((S.phase === 'ended' || S.phase === 'listen') && !S.pending && Date.now() - S.quietSince > idleMs) { close(); return; }
     if (S.phase === 'listen' && !S.pending && Date.now() - S.quietSince > SILENCE_MS) { S.phase = 'ended'; render(); }
   }
 

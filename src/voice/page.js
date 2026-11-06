@@ -89,7 +89,9 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 
 <section class="card">
   <h2>Settings</h2>
-  <label for="model">Model</label>
+  <label for="brain">Brain (an experiment: the Claude API, paid from the key below, or your own Claude Code in JSON mode, on your subscription)</label>
+  <select id="brain"><option value="api">Claude API</option><option value="claude-code">Claude Code</option></select>
+  <label for="model">Model (both brains)</label>
   <select id="model"></select>
   <label for="limit">Claude API monthly limit (US$)</label>
   <input id="limit" type="number" min="0" step="1">
@@ -103,6 +105,10 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <input id="pause" type="number" min="1" max="5" step="0.5">
   <label for="rate">Talking speed (1 is normal; 0.7 slowest, 1.5 fastest)</label>
   <input id="rate" type="number" min="0.7" max="1.5" step="0.05">
+  <label for="sclose">Close the voice screen after this much silence (seconds; "Hey Cru" opens it again)</label>
+  <input id="sclose" type="number" min="15" max="600" step="5">
+  <label for="idle">Stop Claude Code after (minutes without a turn; Claude Code brain only)</label>
+  <input id="idle" type="number" min="1" max="240" step="1">
   <label for="akey">Claude API key <span id="akeyState"></span></label>
   <input id="akey" type="password" autocomplete="off" placeholder="Leave empty to keep the current key">
   <label for="xkey">Anthropic Admin API key, optional: to show the whole account's usage <span id="xkeyState"></span></label>
@@ -111,6 +117,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
   <input id="dkey" type="password" autocomplete="off" placeholder="Leave empty to keep the current key">
   <div class="row"><button id="save">Save</button><span id="saved"></span></div>
   <div class="spend" id="spend"></div>
+  <h2 style="margin-top:18px">Brains compared</h2>
+  <div class="spend" id="brainStats">Nothing logged yet.</div>
 </section>
 <section class="card">
   <h2>Memory</h2>
@@ -350,6 +358,10 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
       if (document.activeElement !== $('dday')) $('dday').value = s.deepgramBillingDay || 1;
       if (document.activeElement !== $('pause')) $('pause').value = (s.pauseMs || 2000) / 1000;
       if (document.activeElement !== $('rate')) $('rate').value = s.speechRate || 1;
+      if (document.activeElement !== $('idle')) $('idle').value = s.cliIdleMinutes || 30;
+      if (document.activeElement !== $('sclose')) $('sclose').value = s.screenCloseSeconds || 60;
+      if (document.activeElement !== $('brain')) $('brain').value = s.brain || 'api';
+      loadBrainStats();
       if (ttsVoice !== (s.ttsVoice || '')) { ttsVoice = s.ttsVoice || ''; drawVoices(); }
       if (s.deepgramKeySet && !allVoices.length) loadVoices();
       if (!s.deepgramKeySet) $('voices').innerHTML = '<div class="spend">Add a Deepgram key below to hear its voices.</div>';
@@ -363,8 +375,19 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
         + (s.deepgramLimitReached ? ' <span class="err">limit reached</span>' : '');
     } catch (e) { $('spend').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; }
   }
+  // The brain experiment: speed, cost and cache use per brain and model (Claude Code's cost is what it reports at list price; the subscription pays).
+  async function loadBrainStats() {
+    try {
+      const r = await api('/api/voice/brain-stats');
+      if (!r.ok || !r.stats || !r.stats.length) return;
+      const secs = (ms) => (ms / 1000).toFixed(1) + ' s';
+      $('brainStats').innerHTML = '<table style="width:100%;border-collapse:collapse"><tr><th align="left">Brain · model</th><th align="right">Turns</th><th align="right">Median</th><th align="right">p90</th><th align="right">$/turn</th><th align="right">Cached</th></tr>'
+        + r.stats.map(g => '<tr><td>' + esc(g.brain === 'claude-code' ? 'Claude Code' : 'API') + ' · ' + esc(g.model.replace('claude-', '')) + '</td><td align="right">' + g.turns + (g.failed ? ' (' + g.failed + ' failed)' : '') + '</td><td align="right">' + secs(g.medianMs) + '</td><td align="right">' + secs(g.p90Ms) + '</td><td align="right">' + g.costPerTurnUsd.toFixed(4) + '</td><td align="right">' + Math.round(g.cacheReadShare * 100) + '%</td></tr>').join('')
+        + '</table><div style="margin-top:6px">Answering now: ' + (r.brain === 'claude-code' ? 'Claude Code' : 'Claude API') + '. Claude Code costs are at list price, for comparison; your subscription pays them.</div>';
+    } catch (e) { /* stats are optional */ }
+  }
   $('save').onclick = async () => {
-    const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value), deepgramLimitUsd: Number($('dlimit').value), billingDay: Number($('bday').value) || 1, deepgramBillingDay: Number($('dday').value) || 1, pauseMs: Math.round((Number($('pause').value) || 2) * 1000), speechRate: Number($('rate').value) || 1 };
+    const body = { model: $('model').value, monthlyLimitUsd: Number($('limit').value), deepgramLimitUsd: Number($('dlimit').value), billingDay: Number($('bday').value) || 1, deepgramBillingDay: Number($('dday').value) || 1, pauseMs: Math.round((Number($('pause').value) || 2) * 1000), speechRate: Number($('rate').value) || 1, cliIdleMinutes: Math.round(Number($('idle').value) || 30), screenCloseSeconds: Math.round(Number($('sclose').value) || 60), brain: $('brain').value };
     if ($('akey').value.trim()) body.anthropicKey = $('akey').value.trim();
     if ($('dkey').value.trim()) body.deepgramKey = $('dkey').value.trim();
     if ($('xkey').value.trim()) body.anthropicAdminKey = $('xkey').value.trim();

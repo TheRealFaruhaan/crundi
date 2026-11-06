@@ -81,7 +81,8 @@ How you answer:
 What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals.
 - You watch the chats you send messages to or start, and any the owner asks you to follow (watch_chat). When one finishes or waits on the owner you get a [Report for the owner…] message: say what happened, briefly, as news ("Sir, the API chat has finished: the tests pass."). It is not something the owner said.
-- You can close yourself: when the owner is done ("close", "that's all", "goodbye"), call close_voice and say a brief goodbye; the screen closes once it has been said.
+- You can close yourself: when the owner is done ("close", "that's all", "goodbye"), call close_voice and reply with nothing at all: an empty reply closes the screen silently. Say a brief goodbye only when you are actually in a conversation with the owner and a word back is natural.
+- Silence is an answer. When what you hear needs nothing from you (the owner talking to someone else, thinking aloud, a remark that wants no reply, background speech), reply with nothing at all: nothing is spoken and the screen keeps listening.
 - You can act: turn background "Hey Cru" listening on the phone on for 15–120 minutes (or off), send messages into chats, start, close, park and resume chats, tell the owner when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
 - Some actions need the owner's yes. When a tool answers needsConfirmation, nothing has been done: ask its question in your own words, briefly, and stop. Only when the owner agrees in their next message call confirm_action with the id; if they decline, cancel_action. Never confirm on the owner's behalf, and never call confirm_action in the same turn you asked.
 - send_to_chat and start_chat take an intent: "explicit" only when the owner plainly asked you to send, tell, type or reply something; otherwise "inferred", and it is read back first.
@@ -117,6 +118,48 @@ export function contextLine({ now = new Date(), where = '', locked = false } = {
 }
 
 /**
+ * The API refuses a text block that is empty or only whitespace ("text content
+ * blocks must contain non-whitespace text"), and a silent reply (closing, or
+ * nothing to say) can come back as one. Such blocks are dropped before a
+ * response joins the conversation, and from a conversation saved before this
+ * rule, or every later request fails. Dropping them changes nothing the model
+ * checks: thinking blocks and everything else stay exactly as they were.
+ */
+export function withoutBlankText(content) {
+  if (!Array.isArray(content)) return content;
+  return content.filter(b => !(b && b.type === 'text' && !String(b.text || '').trim()));
+}
+
+/** A saved conversation, repaired: no blank text in Cru's replies. */
+export function cleanHistory(history) {
+  return (Array.isArray(history) ? history : []).map(m => (m && m.role === 'assistant' && Array.isArray(m.content) ? { ...m, content: withoutBlankText(m.content) } : m));
+}
+
+/**
+ * Run one of Cru's tools (either brain). What an action reports back that the
+ * client must act on (a question awaiting the owner's yes, a locked phone, a
+ * phone action, closing) is collected in `signals` for the reply.
+ * @returns {Promise<{content:string, isError?:boolean}>}
+ */
+export async function runVoiceTool(t, name, input, signals) {
+  if (!t) return { isError: true, content: `No tool called ${name}` };
+  try {
+    const out = await t.run(input || {});
+    if (out && typeof out === 'object' && signals) {
+      if (out.needsConfirmation && out.id) signals.pending.push({ id: out.id, question: out.ask || '' });
+      if (out.needsUnlock) signals.needsUnlock = true;
+      if (out.phoneAction) signals.phoneActions.push(out.phoneAction);
+      if (out.close) signals.close = true;
+    }
+    let s = typeof out === 'string' ? out : JSON.stringify(out);
+    if (s.length > MAX_RESULT_CHARS) s = s.slice(0, MAX_RESULT_CHARS) + '… (cut)';
+    return { content: s };
+  } catch (e) {
+    return { isError: true, content: String(e.message || e) };
+  }
+}
+
+/**
  * @param {object} opts
  * @param {Array} opts.tools    from makeTools(): {name, description, input_schema, run}
  * @param {Function} [opts.client]  (apiKey) => Anthropic-like client; tests pass a fake
@@ -140,7 +183,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     .map((t) => t.def || { name: t.name, description: t.description, input_schema: t.input_schema })
     .sort((a, b) => a.name.localeCompare(b.name));
   // The running conversation (D26): from disk when there is one (Phase 2).
-  let history = store ? store.load() : [];
+  let history = cleanHistory(store ? store.load() : []);
   let lastActivity = Date.now();
   const save = () => { if (store) { try { store.save(history); } catch { /* the next save tries again */ } } };
   let busy = false;
@@ -174,22 +217,8 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * `signals` for the reply.
    */
   async function runTool(block, signals = { pending: [], needsUnlock: false, phoneActions: [], close: false }) {
-    const t = byName.get(block.name);
-    if (!t) return { type: 'tool_result', tool_use_id: block.id, is_error: true, content: `No tool called ${block.name}` };
-    try {
-      const out = await t.run(block.input || {});
-      if (out && typeof out === 'object') {
-        if (out.needsConfirmation && out.id) signals.pending.push({ id: out.id, question: out.ask || '' });
-        if (out.needsUnlock) signals.needsUnlock = true;
-        if (out.phoneAction) signals.phoneActions.push(out.phoneAction);
-        if (out.close) signals.close = true;
-      }
-      let s = typeof out === 'string' ? out : JSON.stringify(out);
-      if (s.length > MAX_RESULT_CHARS) s = s.slice(0, MAX_RESULT_CHARS) + '… (cut)';
-      return { type: 'tool_result', tool_use_id: block.id, content: s };
-    } catch (e) {
-      return { type: 'tool_result', tool_use_id: block.id, is_error: true, content: String(e.message || e) };
-    }
+    const r = await runVoiceTool(byName.get(block.name), block.name, block.input, signals);
+    return { type: 'tool_result', tool_use_id: block.id, ...(r.isError ? { is_error: true } : {}), content: r.content };
   }
 
   /**
@@ -230,7 +259,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         cache.read += res.usage?.cache_read_input_tokens || 0;
         cache.written += res.usage?.cache_creation_input_tokens || 0;
         cache.uncached += res.usage?.input_tokens || 0;
-        history.push({ role: 'assistant', content: res.content });
+        history.push({ role: 'assistant', content: withoutBlankText(res.content) });
 
         if (res.stop_reason === 'refusal') {
           return { ok: true, speak: "I'm afraid I can't help with that one, Sir.", show: '', tools: used, costUsd: cost, cache };

@@ -41,8 +41,12 @@ export const DEEPGRAM_USD_PER_MIN = 0.0077 + 0.0013;
 /** Deepgram Aura-2 text-to-speech, US$ per 1,000 characters (approximate). */
 export const DEEPGRAM_TTS_USD_PER_1K_CHARS = 0.030;
 
+/** What answers for Cru (an experiment): the Claude API, or the owner's own Claude Code in JSON mode. */
+export const BRAINS = ['api', 'claude-code'];
+
 const DEFAULTS = {
   model: DEFAULT_MODEL,
+  brain: 'api',
   anthropicKey: '',
   deepgramKey: '',
   // Optional: an Anthropic Admin API key, only to read the account's own usage report.
@@ -61,6 +65,11 @@ const DEFAULTS = {
   // How fast Cru talks: Deepgram Aura-2's speed (0.7 to 1.5), and the phone's
   // or browser's own voice at the same rate.
   speechRate: 1,
+  // After this many seconds of silence the voice screen closes (every client;
+  // "Hey Cru" opens it again).
+  screenCloseSeconds: 60,
+  // After this many minutes without a turn the Claude Code brain's process stops.
+  cliIdleMinutes: 30,
   // month: the Claude month's first day; deepgramMonth: Deepgram's.
   spend: { month: '', deepgramMonth: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },
 };
@@ -143,6 +152,7 @@ export function publicSettings(now = new Date()) {
   const dg = billingPeriod(now, s.deepgramBillingDay);
   return {
     model: s.model,
+    brain: BRAINS.includes(s.brain) ? s.brain : 'api',
     // Claude's billing month (periodStart/nextReset), then Deepgram's.
     billingDay: s.billingDay,
     periodStart: ymd(period.start),
@@ -150,6 +160,8 @@ export function publicSettings(now = new Date()) {
     deepgramBillingDay: s.deepgramBillingDay,
     pauseMs: s.pauseMs,
     speechRate: s.speechRate || 1,
+    screenCloseSeconds: s.screenCloseSeconds || 60,
+    cliIdleMinutes: s.cliIdleMinutes || 30,
     deepgramPeriodStart: ymd(dg.start),
     deepgramNextReset: ymd(dg.next),
     models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
@@ -176,6 +188,10 @@ export function updateSettings(patch = {}) {
     if (!MODELS[patch.model]) return { ok: false, error: `Unknown model: ${patch.model}` };
     s.model = patch.model;
   }
+  if (patch.brain !== undefined) {
+    if (!BRAINS.includes(patch.brain)) return { ok: false, error: `Unknown brain: ${patch.brain}` };
+    s.brain = patch.brain;
+  }
   if (patch.deepgramLimitUsd !== undefined) {
     const n = Number(patch.deepgramLimitUsd);
     if (!Number.isFinite(n) || n < 0 || n > 100000) return { ok: false, error: 'The Deepgram limit must be a number of dollars from 0 to 100000' };
@@ -201,6 +217,16 @@ export function updateSettings(patch = {}) {
     const n = Number(patch.speechRate);
     if (!Number.isFinite(n) || n < 0.7 || n > 1.5) return { ok: false, error: 'Talking speed is 0.7 to 1.5 (1 is normal)' };
     s.speechRate = Math.round(n * 20) / 20;
+  }
+  if (patch.screenCloseSeconds !== undefined) {
+    const n = Number(patch.screenCloseSeconds);
+    if (!Number.isInteger(n) || n < 15 || n > 600) return { ok: false, error: 'The voice screen closes after 15 to 600 seconds of silence' };
+    s.screenCloseSeconds = n;
+  }
+  if (patch.cliIdleMinutes !== undefined) {
+    const n = Number(patch.cliIdleMinutes);
+    if (!Number.isInteger(n) || n < 1 || n > 240) return { ok: false, error: 'Claude Code stops after 1 to 240 minutes idle' };
+    s.cliIdleMinutes = n;
   }
   if (patch.ttsVoice !== undefined) {
     const v = String(patch.ttsVoice || '');

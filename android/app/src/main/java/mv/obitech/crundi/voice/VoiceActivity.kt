@@ -37,6 +37,8 @@ class VoiceActivity : ComponentActivity() {
     private var waiting by mutableStateOf(false)
     private var inFront = false
     private val letSleep = Runnable { keepOn(false) }
+    /** After a short silence (the server's screenCloseSeconds): the voice screen closes, even on a phone that stays awake; "Hey Cru" opens it again. */
+    private val closeIdle = Runnable { finish() }
 
     private fun keepOn(on: Boolean) {
         val f = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -50,11 +52,16 @@ class VoiceActivity : ComponentActivity() {
         HeyCrundi.screenWaiting { wake() }
         handler.removeCallbacks(letSleep)
         handler.postDelayed(letSleep, VoicePrefs.screenAwakeMinutes(this) * 60_000L)
+        // Silent since the last thing said, which was the microphone's time ago. An older server sets none.
+        val close = controller.ui.value.spend?.screenCloseSeconds ?: 0
+        handler.removeCallbacks(closeIdle)
+        if (close > 0) handler.postDelayed(closeIdle, (close * 1000L - VoicePrefs.silenceSeconds(this) * 1000L).coerceAtLeast(0L))
     }
 
     /** "Hey Cru", or the mic tapped: listening again. */
     private fun wake() {
         handler.removeCallbacks(letSleep)
+        handler.removeCallbacks(closeIdle)
         keepOn(true)
         waiting = false
         controller.tapMic() // asleep: opens a new session (it takes the microphone first)
@@ -109,6 +116,7 @@ class VoiceActivity : ComponentActivity() {
         inFront = false
         val wasWaiting = waiting
         handler.removeCallbacks(letSleep)
+        handler.removeCallbacks(closeIdle)
         HeyCrundi.screenWaiting(null)
         waiting = false
         controller.close()
@@ -118,6 +126,7 @@ class VoiceActivity : ComponentActivity() {
 
     override fun onDestroy() {
         handler.removeCallbacks(letSleep)
+        handler.removeCallbacks(closeIdle)
         if (waiting) HeyCrundi.screenWaiting(null)
         controller.release()
         super.onDestroy()
