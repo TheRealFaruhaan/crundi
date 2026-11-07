@@ -2688,7 +2688,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
     sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
     createChat: (alias, opts) => claudeUi.create(alias, opts),
-    closeChat: (id) => claudeUi.close(id),
+    closeChat: (id) => {
+      const conv = (claudeUi.meta(id) || {}).sessionId || '';
+      const r = claudeUi.close(id);
+      if (r && r.ok !== false) { try { chatSchedule.discardFor(id, conv); } catch { /* best effort */ } panes.forget(id); }
+      return r;
+    },
     parkChat: (id) => { const r = panes.park(id, 'manual'); broadcastState(); return r; },
     resumeChat: async (id) => { const r = await panes.resume(id, {}); broadcastState(); return r; },
     // A chat Cru set going (auto) is reported on for its turn; one the owner
@@ -4663,7 +4668,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, r);
       }
       if (act === 'park') { const r = panes.park(pid, 'manual'); broadcastState(); return json(res, r); }
-      if (act === 'discard') { panes.forget(pid); broadcastState(); return json(res, { ok: true }); }
+      if (act === 'discard') {
+        // Closed for good: its scheduled messages have nowhere to go.
+        try { chatSchedule.discardFor(pid, panes.conversationOf(pid)); } catch { /* best effort */ }
+        panes.forget(pid); broadcastState(); return json(res, { ok: true });
+      }
     }
 
     const termMatch = path.match(/^\/api\/terminals\/([^/]+)\/(close|resize|rename)$/);
@@ -4848,7 +4857,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // employee) would end the run's work behind its back. Stop it first.
         const guard = factoryRunner && factoryRunner.guardsChat(sid);
         if (guard) return json(res, { ok: false, factoryGuard: true, runId: guard.id, error: `This chat belongs to the factory "${guard.factoryName}", which is still ${guard.status}. Stop the factory first.` }, 409);
+        // Closed on purpose (a park closes too, but keeps them): its
+        // scheduled messages go with it.
+        const conv = (claudeUi.meta(sid) || {}).sessionId || panes.conversationOf(sid);
         const result = claudeUi.close(sid);
+        if (result && result.ok !== false) { try { chatSchedule.discardFor(sid, conv); } catch { /* best effort */ } }
         panes.forget(sid);
         broadcastState();
         return json(res, result);

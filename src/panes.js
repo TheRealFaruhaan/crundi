@@ -295,5 +295,7 @@ export function createPanes(o) {
   }
   function stop() { if (timer) clearInterval(timer); timer = null; }
 
-  return { start, stop, snapshot, park, resume, forget, listParked, preview, touch, tick, has: (id) => !!records[id] && records[id].status === 'parked' };
+  return { start, stop, snapshot, park, resume, forget, listParked, preview, touch, tick, has: (id) => !!records[id] && records[id].status === 'parked',
+    /** The Claude conversation a pane (parked or live) carries, or ''. */
+    conversationOf: (id) => (records[id] && records[id].sessionId) || '' };
 }
