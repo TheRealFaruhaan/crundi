@@ -86,19 +86,10 @@ fun CrundiApp(
     val atRoot = route == null || Routes.isAreaRoot(route)
     val ctx = LocalContext.current
     var lastBack by remember { mutableLongStateOf(0L) }
-    // Back with the keyboard up closes the keyboard, never counts towards
-    // leaving: the handler stands aside while it shows, and if a back still
-    // reaches it as the keyboard goes (it can, depending on timing), it only
-    // hides the keyboard.
-    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-    val imeUp = androidx.compose.foundation.layout.WindowInsets.isImeVisible
-    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    val focus = androidx.compose.ui.platform.LocalFocusManager.current
-    var imeGoneAt by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(imeUp) { if (!imeUp) imeGoneAt = System.currentTimeMillis() }
-    BackHandler(enabled = atRoot && !drawer && !approvalsOpen && wb.full == null && !imeUp) {
+    // Back with the keyboard up closes the keyboard (KeyboardBackCloses).
+    KeyboardBackCloses()
+    BackHandler(enabled = atRoot && !drawer && !approvalsOpen && wb.full == null) {
         val now = System.currentTimeMillis()
-        if (now - imeGoneAt < 600) { keyboard?.hide(); focus.clearFocus(); return@BackHandler }
         if (now - lastBack < 2000) host.close()
         else { lastBack = now; Toast.makeText(ctx.applicationContext, "Press back again to exit", Toast.LENGTH_SHORT).show() }
     }
@@ -199,5 +190,35 @@ private fun AddProjectDialog(services: AppServices, onDone: (String?) -> Unit) {
             CrundiTextField(path, { path = it }, placeholder = "/home/you/projects/my-app (optional)", mono = true, modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, style = CrundiType.Small.copy(color = mv.obitech.crundi.ui.theme.CrundiColors.Red)) }
         }
+    }
+}
+
+
+/**
+ * Back with the keyboard up closes the keyboard, on every screen, and
+ * nothing else: some keyboards hand the back press to the app instead of
+ * closing themselves. A callback is put on top of every other back handler
+ * the moment the keyboard shows (the last one added wins), and taken off when
+ * it goes. Used by the main window and the chat bubble.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun KeyboardBackCloses() {
+    val imeUp = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(imeUp, dispatcher, lifecycle) {
+        val cb = object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                keyboard?.hide()
+                androidx.core.view.ViewCompat.getWindowInsetsController(view)?.hide(androidx.core.view.WindowInsetsCompat.Type.ime())
+                focus.clearFocus()
+            }
+        }
+        if (imeUp && dispatcher != null) dispatcher.addCallback(lifecycle, cb)
+        onDispose { cb.remove() }
     }
 }

@@ -955,6 +955,21 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
     scheduleAutoDismiss(s, a);
     emitAgent(s, a);
+    // An agent resumed with a message (SendMessage) gets a bubble of its own,
+    // but its finish can arrive keyed by the call that first started it: end
+    // every bubble of the same task, or the resumed one shows "running" for good.
+    const done = msg.subtype === 'task_notification' || (msg.subtype === 'task_updated' && msg.patch && msg.patch.status && msg.patch.status !== 'running');
+    if (done && msg.task_id && a.endedAt) {
+      for (const other of s.agents.values()) {
+        if (other === a || other.taskId !== msg.task_id || other.endedAt) continue;
+        if (other.kind === 'task' && a.kind === 'task' && a.status === 'running') continue;
+        other.status = a.status || other.status;
+        if (a.summary && !other.summary) other.summary = a.summary;
+        other.endedAt = a.endedAt;
+        scheduleAutoDismiss(s, other);
+        emitAgent(s, other);
+      }
+    }
   }
 
   /** Append a conversation entry and notify subscribers. */

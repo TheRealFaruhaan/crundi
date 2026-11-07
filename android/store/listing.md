@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.22 (en-US)
+
+Version code 53. Internal track. Since 1.1.3-dev.21 (code 52): KeyboardBackCloses: a top back callback while the IME shows (main window and bubble).
+
+```
+<en-US>
+Back closes the keyboard.
+
+- With the keyboard open, back now closes it, in the app and in chat bubbles, instead of being taken as "back to exit".
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.21 (en-US)
 
 Version code 52. Internal track. Since 1.1.3-dev.20 (code 51): the inbox (capability inbox) in threads; back with the keyboard up only closes it.

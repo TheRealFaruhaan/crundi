@@ -130,7 +130,7 @@ const MIN = 60_000;
 }
 
 // ─── Wiring: the countdown is actually reached ───
-ok(/scheduleAutoDismiss\(s, a\);\s*emitAgent\(s, a\);\s*\}/.test(ui), 'every task event passes through the countdown');
+ok(/scheduleAutoDismiss\(s, a\);\s*emitAgent\(s, a\);/.test(ui) && /scheduleAutoDismiss\(s, other\);\s*emitAgent\(s, other\);/.test(ui), 'every task event passes through the countdown (and so does a resumed agent ended with it)');
 ok(/if \(rec\.status === 'running'\) \{\s*rec\.status = 'stopped'/.test(ui) && /scheduleAutoDismiss\(s, rec\)/.test(ui), 'anything restored as "running" is marked stopped and counted down: its process is gone');
 ok(/cancelAutoDismiss\(s, id\)/.test(ui), 'dismissing by hand cancels the countdown');
 ok(/s\.agentTimers\.values\(\)\) clearTimeout\(t\)/.test(ui), 'closing a chat clears its countdowns');

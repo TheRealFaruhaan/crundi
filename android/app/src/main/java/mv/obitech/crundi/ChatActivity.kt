@@ -68,6 +68,7 @@ class ChatActivity : androidx.fragment.app.FragmentActivity() {
                     mv.obitech.crundi.ui.mini.MiniStage(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
                         // The chat, and Claude asking for a secret from it (ui.chats.BubbleChat).
                         BubbleChat(startChat, shownChat)
+                        mv.obitech.crundi.ui.shell.KeyboardBackCloses()
                     }
                 }
             }
