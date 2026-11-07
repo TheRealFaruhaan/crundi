@@ -970,6 +970,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         emitAgent(s, other);
       }
     }
+    // The last thing a waiting chat waited on has ended: it is idle now.
+    if (done && s.state === 'waiting' && !activeTriggers(s)) setState(s, 'idle');
   }
 
   /** Append a conversation entry and notify subscribers. */
@@ -2161,13 +2163,27 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   setInterval(() => {
     for (const s of sessions.values()) {
       if (s.state !== 'waiting') continue;
-      if (retireTriggers(s) && !s.waiting.size) setState(s, 'idle');
+      retireTriggers(s);
+      if (!activeTriggers(s)) setState(s, 'idle');
     }
   }, WAITING_RECHECK_MS).unref?.();
 
-  /** How many callbacks this turn armed. Reset by handleResult. */
+  /**
+   * What the chat is still waiting on: the callbacks it armed, plus every
+   * agent and background task the CLI reports as still running (the same
+   * list the chat's agent and task counts are drawn from: started agents,
+   * agents resumed with a message, background commands, monitors).
+   */
+  function runningTasks(s) {
+    let n = 0;
+    const now = Date.now();
+    // Past six hours an entry that never heard its end is not waited on (a
+    // badge that never goes out was the old bug).
+    for (const a of (s.agents ? s.agents.values() : [])) if (a && !a.endedAt && (a.status === 'running' || !a.status) && now - (a.startedAt || now) < 6 * 60 * 60 * 1000) n++;
+    return n;
+  }
   function activeTriggers(s) {
-    return s.waiting.size;
+    return s.waiting.size + runningTasks(s);
   }
 
   function handleResult(s, msg) {

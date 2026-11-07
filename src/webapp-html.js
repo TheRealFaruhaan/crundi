@@ -622,6 +622,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .ibx-row:hover { background: var(--bg-hover); }
     .ibx-row.active { background: var(--accent-dim); }
     .ibx-ic { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary); color: var(--text-secondary); }
+    .ibx-ic { position: relative; }
+    .ibx-ic.has-pico { background: transparent; }
+    .ibx-ic .ibx-pico { width: 34px; height: 34px; border-radius: 9px; object-fit: cover; }
+    .ibx-ic .ibx-pbadge { position: absolute; right: -3px; bottom: -3px; width: 16px; height: 16px; border-radius: 5px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 8px; font-weight: 700; border: 1.5px solid var(--bg-secondary); }
+    .ibx-ic .ibx-pbadge img { width: 100%; height: 100%; object-fit: cover; }
     .ibx-ic .ic { width: 16px; height: 16px; }
     .ibx-ic.t-chat { color: var(--accent-hover); }
     .ibx-ic.t-project { color: var(--sky); }
@@ -9811,9 +9816,22 @@ export function getWebappHtml(botUsername, appVersion = '') {
       } catch (err) { /* shown as it was */ }
       finally { ibx.loading = false; }
     }
+    // A thread's picture: a project thread shows the project's own icon where
+    // it has one; a chat thread keeps its glyph with the project's icon (or
+    // initials) as a small badge, as the phone app does.
+    function ibxThreadIcon(t) {
+      const glyph = ic(IBX_THREAD_IC[t.kind] || 'mail');
+      if (t.kind !== 'chat' && t.kind !== 'project') return '<span class="ibx-ic t-' + escHtml(t.kind) + '">' + glyph + '</span>';
+      const key = String(t.project || '').toLowerCase();
+      const p = projects.find(x => String(x.alias || '').toLowerCase() === key) || projects.find(x => String(x.name || '').toLowerCase() === key);
+      const src = p ? projIconSrc(p.icon) : '';
+      if (t.kind === 'project' && src) return '<span class="ibx-ic has-pico t-project"><img class="ibx-pico" src="' + escHtml(src) + '" alt=""></span>';
+      const badge = '<span class="ibx-pbadge">' + (src ? '<img src="' + escHtml(src) + '" alt="">' : escHtml(projectInitials((p && (p.name || p.alias)) || t.project || '?'))) + '</span>';
+      return '<span class="ibx-ic t-' + escHtml(t.kind) + '">' + glyph + (t.project ? badge : '') + '</span>';
+    }
     function ibxThreadRow(t) {
       return '<button type="button" class="ibx-row' + (t.unread ? ' unread' : '') + (t.key === ibx.openKey ? ' active' : '') + '" data-ibx="thread" data-key="' + escHtml(t.key) + '">'
-        + '<span class="ibx-ic t-' + escHtml(t.kind) + '">' + ic(IBX_THREAD_IC[t.kind] || 'mail') + '</span>'
+        + ibxThreadIcon(t)
         + '<span class="ibx-main"><span class="ibx-t">' + escHtml(t.title) + '</span>'
         + (t.subtitle ? '<span class="ibx-s">' + escHtml(t.subtitle) + '</span>' : '')
         + '<span class="ibx-m">' + escHtml(t.last ? t.last.title : '') + '</span></span>'

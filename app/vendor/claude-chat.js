@@ -466,7 +466,28 @@
     '.cc-vline-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.cc-vline-t.idle{color:var(--text-muted);font-style:italic}',
     '.cc-vline.err{color:var(--red)}',
-    '.cc-vline.err .cc-vline-dot{display:none}'
+    '.cc-vline.err .cc-vline-dot{display:none}',
+    // Recording (a hold, or voice mode hearing words): Send's place shows the
+    // live level, the time and the words; a cancel sits at the far right.
+    '.cc-rec{display:none;align-items:center;justify-content:center;gap:7px;min-width:0;cursor:default;overflow:hidden;white-space:nowrap;font-variant-numeric:tabular-nums}',
+    '.cc-rec:hover{background:var(--accent)}',
+    '.cc-recording .cc-sendbtn{display:none!important}',
+    '.cc-recording .cc-rec{display:inline-flex}',
+    '.cc-rec-bars{display:inline-flex;align-items:center;gap:2px;height:16px;flex:none}',
+    '.cc-rec-bars i{display:block;width:3px;height:3px;border-radius:2px;background:#fff;transition:height .08s linear}',
+    '.cc-rec-t{flex:none;font-size:calc(11.5px*var(--cc-fs,1))}',
+    '.cc-rec-w{display:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:400;opacity:.9;text-align:left}',
+    '.cc-narrow .cc-rec-w{display:block}',
+    // Narrow: Send's place is the rest of the row, less the cancel beside it.
+    '.cc-narrow .cc-actions .cc-rec{flex:1 1 0;min-width:0!important}',
+    '.cc-rec.cancelling{background:var(--red-dim);border-color:var(--red);color:var(--red)}',
+    '.cc-rec.cancelling .cc-rec-bars i{background:var(--red)}',
+    '.cc-rec-x{display:none;flex:none;width:34px;height:34px;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0;transition:.12s}',
+    '.cc-rec-x svg{width:16px;height:16px;pointer-events:none}',
+    '.cc-recording .cc-rec-x{display:inline-flex}',
+    '.cc-rec-x:hover,.cc-rec-x.hot{color:#fff;background:var(--red);border-color:var(--red)}',
+    '.cc-rec-x.hot{transform:scale(1.12)}',
+    '.cc-narrow .cc-rec-x{flex:none}'
   ].join('');
 
   function ensureStyles() {
@@ -799,6 +820,30 @@
     },
     /** Deepgram's voice for replies, or '' for the browser's own. */
     ttsVoice: function (s) { return s && s.ttsVoice && !s.deepgramLimitReached ? String(s.ttsVoice) : ''; },
+    /** Recording, so Send's place shows the level and a cancel: a hold, or voice mode hearing words. */
+    recording: function (st) {
+      st = st || {};
+      return !!st.ptt || (!!st.on && !st.playing && !!String(st.interim || '').trim());
+    },
+    /** A hold let go: over the cancel button it is dropped, anywhere else it is sent. */
+    releaseAction: function (overCancel) { return overCancel ? 'cancel' : 'send'; },
+    /** A tap (or Enter) on the mic: start voice mode, send what is heard now, or end voice mode. */
+    micClick: function (st) {
+      st = st || {};
+      if (!st.on) return 'on';
+      return String(st.interim || '').trim() ? 'send-now' : 'off';
+    },
+    /** Elapsed recording time, m:ss. */
+    elapsed: function (ms) {
+      var t = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+      return Math.floor(t / 60) + ':' + (t % 60 < 10 ? '0' : '') + (t % 60);
+    },
+    /** After "send now": a late utterance that is only words already sent is dropped. */
+    alreadySent: function (sent, text) {
+      var norm = function (x) { return String(x || '').toLowerCase().replace(/[^a-z0-9\u00c0-\uffff' ]+/g, ' ').replace(/\s+/g, ' ').trim(); };
+      var a = norm(sent), b = norm(text);
+      return !!b && (' ' + a + ' ').indexOf(' ' + b + ' ') >= 0;
+    },
     /** The sample rate of a streamed reply (audio/L16; rate=N), 24 kHz when unsaid. */
     pcmRate: function (contentType, header) {
       var m = /rate=(\d+)/i.exec(contentType || '');
@@ -838,7 +883,7 @@
     var input = el('textarea', 'cc-input');
     input.rows = 1;
     input.placeholder = 'Message Claude…  (Enter to send, Shift+Enter for newline)';
-    var sendBtn = el('button', 'cc-btn primary', 'Send');
+    var sendBtn = el('button', 'cc-btn primary cc-sendbtn', 'Send');
     // Icon button between attach and send. Interrupting mid-turn is
     // destructive and easy to hit by accident on a phone, so it arms on the
     // first tap and only fires on the second.
@@ -870,9 +915,12 @@
     actions.appendChild(stopBtn);
     // Voice input, beside send. Hidden until the server says Cru can listen
     // (see "Voice mode" below).
-    var micBtn = el('button', 'cc-mic',
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-      + '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>');
+    var MIC_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>';
+    // While recording the mic is the send button: letting go, or a click, sends.
+    var MIC_SEND_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+    var micBtn = el('button', 'cc-mic', MIC_IC);
     micBtn.type = 'button';
     micBtn.title = 'Voice input (tap: voice mode, hold: push to talk)';
     micBtn.setAttribute('aria-label', 'Voice input (tap: voice mode, hold: push to talk)');
@@ -880,6 +928,21 @@
     micBtn.style.display = 'none';
     actions.appendChild(micBtn);
     actions.appendChild(sendBtn);
+    // Recording: in Send's place, the level, the time and the words; then cancel.
+    var recBox = el('div', 'cc-btn primary cc-rec',
+      '<span class="cc-rec-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span class="cc-rec-t">0:00</span><span class="cc-rec-w"></span>');
+    recBox.setAttribute('role', 'status');
+    recBox.setAttribute('aria-label', 'Recording');
+    var recBars = recBox.querySelectorAll('.cc-rec-bars i');
+    var recTime = recBox.querySelector('.cc-rec-t');
+    var recWords = recBox.querySelector('.cc-rec-w');
+    var recCancel = el('button', 'cc-rec-x',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>');
+    recCancel.type = 'button';
+    recCancel.title = 'Cancel: drop what was heard (when holding, slide here and let go)';
+    recCancel.setAttribute('aria-label', 'Cancel voice input: drop what was heard');
+    actions.appendChild(recBox);
+    actions.appendChild(recCancel);
     // What the microphone is hearing, live, above the message box.
     var voiceLine = el('div', 'cc-vline', '<span class="cc-vline-dot"></span><span class="cc-vline-t"></span>');
     voiceLine.setAttribute('aria-live', 'polite');
@@ -2717,9 +2780,47 @@
       playing: null,       // { stop() } for the one being said
       out: null,           // AudioContext for Deepgram's voice
       settings: null,
-      press: null,         // { at, timer, id }
+      press: null,         // { at, timer, id, held, over }
       noteTimer: null,
+      level: 0,            // the microphone's level, 0..1
+      recAt: 0,            // when this recording began (0: not recording)
+      raf: 0,
+      sentNow: null,       // { text, at }: voice mode, sent before the pause
     };
+    // Recording: Send's place shows the level, the time and the words, a
+    // cancel appears at the far right, and the mic becomes a send button.
+    function recPaint() {
+      var rec = voiceLogic.recording({ ptt: vc.ptt, on: vc.on, playing: !!vc.playing, interim: vc.interim });
+      var was = !!vc.recAt;
+      if (rec && !was) {
+        // The same size as Send: measured before it is hidden.
+        recBox.style.minWidth = (sendBtn.offsetWidth || 60) + 'px';
+        vc.recAt = Date.now();
+      }
+      if (!rec) { vc.recAt = 0; recCancel.classList.remove('hot'); recBox.classList.remove('cancelling'); }
+      root.classList.toggle('cc-recording', rec);
+      if (rec !== was) {
+        micBtn.innerHTML = rec ? MIC_SEND_IC : MIC_IC;
+        if (rec && !vc.raf) vc.raf = requestAnimationFrame(recTick);
+      }
+      var label = rec ? (vc.ptt ? 'Let go to send (slide to cancel to drop it)' : 'Send what was heard now')
+        : 'Voice input (tap: voice mode, hold: push to talk)';
+      micBtn.setAttribute('aria-label', label);
+      if (rec) micBtn.title = label;
+      recWords.textContent = vc.ptt ? voiceLogic.join(vc.heard.concat([vc.interim])) : vc.interim;
+      recBox.setAttribute('aria-label', 'Recording ' + voiceLogic.elapsed(rec ? Date.now() - vc.recAt : 0));
+    }
+    function recTick() {
+      vc.raf = 0;
+      if (!vc.recAt || destroyed) return;
+      recTime.textContent = voiceLogic.elapsed(Date.now() - vc.recAt);
+      var t = Date.now() / 1000, lv = Math.min(1, vc.level * 2.2);
+      for (var i = 0; i < recBars.length; i++) {
+        var wob = 0.55 + 0.45 * Math.abs(Math.sin(t * (5 + i * 1.7) + i));
+        recBars[i].style.height = Math.max(3, Math.round(3 + 13 * lv * wob)) + 'px';
+      }
+      vc.raf = requestAnimationFrame(recTick);
+    }
     function voiceShow(text, kind) {
       clearTimeout(vc.noteTimer);
       var t = voiceLine.querySelector('.cc-vline-t');
@@ -2744,6 +2845,7 @@
       micBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
       micBtn.title = vc.on ? 'Voice mode is on: tap to turn it off'
         : 'Voice input (tap: voice mode, hold: push to talk)';
+      recPaint();
       if (!active) {
         // After push to talk the reply is still said: show that, and let a tap on it stop it.
         if (vc.playing) voiceShow('', 'speaking');
@@ -2798,13 +2900,14 @@
         proc.onaudioprocess = function (ev) {
           if (vc.mic !== m || m.closing || m.paused) return;
           var x = ev.inputBuffer.getChannelData(0);
-          var n = Math.floor(x.length / ratio), out = new Int16Array(n);
+          var n = Math.floor(x.length / ratio), out = new Int16Array(n), sum = 0;
           for (var i = 0; i < n; i++) {
             var a = 0, from = Math.floor(i * ratio), to = Math.floor((i + 1) * ratio);
             for (var j = from; j < to; j++) a += x[j];
             var v = Math.max(-1, Math.min(1, a / Math.max(1, to - from)));
-            out[i] = v * 32767;
+            out[i] = v * 32767; sum += v * v;
           }
+          vc.level = Math.sqrt(Math.sqrt(sum / Math.max(1, n)));
           if (m.ws && m.ws.readyState === 1) {
             while (m.pending.length) m.ws.send(m.pending.shift());
             m.ws.send(out.buffer);
@@ -2852,7 +2955,8 @@
     }
     function micHeard(e, m) {
       if (e.type === 'ready') { m.ready = true; return; }
-      if (e.type === 'interim') { vc.interim = String(e.text || ''); voicePaint(); return; }
+      var late = vc.sentNow && Date.now() - vc.sentNow.at < 4000 && voiceLogic.alreadySent(vc.sentNow.text, e.text);
+      if (e.type === 'interim') { if (late && vc.on && !vc.ptt) return; vc.interim = String(e.text || ''); voicePaint(); return; }
       if (e.type === 'discard') {
         // "Scratch that": what was heard goes, nothing is sent.
         vc.interim = '';
@@ -2863,7 +2967,8 @@
       if (e.type === 'utterance') {
         vc.interim = '';
         if (vc.ptt || m.closing) { vc.heard.push(String(e.text || '')); voicePaint(); return; }
-        if (vc.on) voiceSend(e.text, false);
+        if (vc.on && !late) voiceSend(e.text, false);
+        vc.sentNow = null;
         voicePaint();
         return;
       }
@@ -2942,8 +3047,7 @@
       m.closing = true;
       m.onClosed = finish;
       micSend({ type: 'stop' });
-      micBtn.classList.remove('on');
-      micBtn.setAttribute('aria-pressed', 'false');
+      voicePaint();
       voiceShow(voiceLogic.join(vc.heard.concat([vc.interim])) || 'Sending…', 'listen');
     }
 
@@ -2959,25 +3063,89 @@
       // In voice mode any press ends it; otherwise a long one is push to talk.
       if (!vc.on) press.timer = setTimeout(function () { if (vc.press === press) { press.held = true; pttStart(); } }, VOICE_HOLD_MS);
     });
+    // Holding: the pointer is captured, so a slide onto cancel is followed
+    // even outside the mic. Over it, cancel lights up; let go there to drop it.
+    function overCancel(e) {
+      if (!e || recCancel.offsetParent === null) return false;
+      var r = recCancel.getBoundingClientRect(), pad = 8;
+      return e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
+    }
+    micBtn.addEventListener('pointermove', function (e) {
+      var press = vc.press;
+      if (!press || !press.held || e.pointerId !== press.id) return;
+      var over = overCancel(e);
+      if (over === !!press.over) return;
+      press.over = over;
+      recCancel.classList.toggle('hot', over);
+      recBox.classList.toggle('cancelling', over);
+      micBtn.setAttribute('aria-label', over ? 'Let go to cancel' : 'Let go to send (slide to cancel to drop it)');
+    });
     function pressEnd(e, cancelled) {
       var press = vc.press;
       if (!press || (e && press.id !== undefined && e.pointerId !== press.id)) return;
       vc.press = null;
       clearTimeout(press.timer);
-      if (press.held) { pttRelease(); return; }
-      if (cancelled) return;
-      if (voiceLogic.pressKind(Date.now() - press.at) === 'tap' || vc.on) {
-        if (vc.on) voiceStop(); else voiceStart();
+      if (press.held) {
+        var over = !cancelled && (press.over || overCancel(e));
+        if (voiceLogic.releaseAction(over) === 'cancel') pttCancel(); else pttRelease();
+        return;
       }
+      if (cancelled) return;
+      if (voiceLogic.pressKind(Date.now() - press.at) === 'tap' || vc.on) micAct();
+    }
+    // A tap or Enter: voice mode on, "send what is heard now", or voice mode off.
+    function micAct() {
+      var a = voiceLogic.micClick({ on: vc.on, interim: vc.interim });
+      if (a === 'on') voiceStart();
+      else if (a === 'send-now') voiceSendNow();
+      else voiceStop();
     }
     micBtn.addEventListener('pointerup', function (e) { pressEnd(e, false); });
     micBtn.addEventListener('pointercancel', function (e) { pressEnd(e, true); });
     micBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-    // The keyboard (Enter / Space) has no hold: it toggles voice mode.
+    // The keyboard (Enter / Space) has no hold.
     micBtn.addEventListener('click', function (e) {
       if (e.detail !== 0) return;   // a pointer press, handled above
-      if (vc.on) voiceStop(); else voiceStart();
+      micAct();
     });
+    // Voice mode: send the words heard so far without waiting for the pause.
+    // The server is told to drop them, so they don't come back as an utterance.
+    function voiceSendNow() {
+      var text = vc.interim;
+      if (!vc.on || !String(text || '').trim()) return;
+      micSend({ type: 'discard' });
+      vc.sentNow = { text: text, at: Date.now() };
+      vc.interim = '';
+      voiceSend(text, false);
+      voicePaint();
+    }
+    // Cancel: what was heard is dropped and nothing is sent. Voice mode keeps listening.
+    function voiceCancelWords() {
+      micSend({ type: 'discard' });
+      vc.interim = '';
+      vc.heard = [];
+      vc.sentNow = null;
+      voicePaint();
+    }
+    function pttCancel() {
+      if (!vc.ptt) return;
+      var m = vc.mic;
+      voiceCancelWords();
+      vc.ptt = false;
+      if (m) micClose(m);
+      voicePaint();
+      voiceShow('', 'off');
+    }
+    recCancel.addEventListener('pointerdown', function (e) { e.preventDefault(); });
+    recCancel.addEventListener('click', function () { if (vc.ptt) pttCancel(); else voiceCancelWords(); });
+    // Escape ends voice mode (or drops a hold), from anywhere in this chat.
+    function onVoiceKey(e) {
+      if (e.key !== 'Escape' || !(vc.on || vc.ptt)) return;
+      var a = document.activeElement;
+      if (a && a !== document.body && !root.contains(a)) return;
+      if (vc.ptt) { vc.press = null; pttCancel(); } else voiceStop();
+    }
+    window.addEventListener('keydown', onVoiceKey);
 
     // ─── Claude's voice ───
     function onVoiceSay(ev) {
@@ -4482,6 +4650,7 @@
       destroy: function () {
         closeModeModal();
         voiceStop();
+        window.removeEventListener('keydown', onVoiceKey);
         try { if (vc.out) vc.out.close(); } catch (e) { /* gone */ }
         destroyed = true;
         if (mini) { try { mini.destroy(); } catch (e) {} mini = null; }

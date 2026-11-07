@@ -31,6 +31,18 @@ ok(V.HOLD_MS === 350, 'a hold is 350 ms');
 ok(V.pressKind(0) === 'tap' && V.pressKind(120) === 'tap' && V.pressKind(349) === 'tap', 'a short press is a tap (voice mode)');
 ok(V.pressKind(350) === 'hold' && V.pressKind(2000) === 'hold', 'a long press is push to talk');
 
+// ─── Recording: the mic is send, cancel is at the far right ───
+ok(V.recording({ ptt: true }) && V.recording({ ptt: true, interim: '' }), 'a hold is recording from the moment it starts');
+ok(V.recording({ on: true, interim: 'open the' }) && !V.recording({ on: true, interim: '  ' }) && !V.recording({ on: true }), 'voice mode is recording while words are being heard, not while quiet');
+ok(!V.recording({ on: true, playing: true, interim: 'x' }) && !V.recording({}), 'not while Claude speaks; not at all when off: the composer is as before');
+ok(V.releaseAction(false) === 'send', 'a hold let go on the mic (or anywhere but cancel) sends');
+ok(V.releaseAction(true) === 'cancel', 'a hold let go over cancel is dropped');
+ok(V.micClick({ on: false }) === 'on', 'a tap with voice mode off turns it on');
+ok(V.micClick({ on: true, interim: 'run the tests' }) === 'send-now', 'a click in voice mode with words heard sends them now (and keeps listening)');
+ok(V.micClick({ on: true, interim: '' }) === 'off' && V.micClick({ on: true, interim: '  ' }) === 'off', 'a click in voice mode with nothing heard turns it off');
+ok(V.elapsed(0) === '0:00' && V.elapsed(3400) === '0:03' && V.elapsed(65000) === '1:05' && V.elapsed(-5) === '0:00', 'the recording time reads m:ss');
+ok(V.alreadySent('Run the tests, please.', 'please') && V.alreadySent('Run the tests, please.', 'run the tests') && !V.alreadySent('Run the tests', 'and deploy') && !V.alreadySent('run the tests', '') && !V.alreadySent('testing', 'test'), 'after "send now", a late utterance of words already sent is dropped, new words are not');
+
 // ─── What is sent ───
 ok(V.message('what time is it') === 'voice input: what time is it', 'what was said goes as "voice input: …"');
 ok(V.message('  run   the\n tests  ') === 'voice input: run the tests', 'spacing is tidied');
@@ -66,6 +78,9 @@ ok(/case 'voice-say': onVoiceSay\(ev\)/.test(cc), 'the view takes voice-say even
 ok(cc.includes("'Voice input (tap: voice mode, hold: push to talk)'"), 'the mic has its accessible label');
 ok(/\/api\/voice\/listen\?encoding=linear16&sample_rate=16000&token=/.test(cc), 'it listens as Cru\'s screen does: 16 kHz PCM');
 ok(cc.includes("micSend({ type: 'stop' })") && cc.includes("type: p ? 'pause' : 'resume'"), 'push to talk ends with stop; Claude\'s voice pauses the listening');
+ok(cc.includes("'Cancel voice input: drop what was heard'") && cc.includes("setPointerCapture(e.pointerId)") && cc.includes("micBtn.addEventListener('pointermove'"), 'cancel has its label; a hold is followed by pointer capture so a slide onto cancel is seen');
+ok(/function pttCancel\(\)[\s\S]{0,200}voiceCancelWords\(\)/.test(cc) && /function voiceCancelWords\(\)\s*\{\s*micSend\(\{ type: 'discard' \}\)/.test(cc), 'cancelling tells the server to discard what it heard');
+ok(/'\.cc-recording \.cc-sendbtn\{display:none!important\}'/.test(cc) && /'\.cc-rec\{display:none;/.test(cc) && /'\.cc-rec-x\{display:none;/.test(cc), 'not recording: Send shows and the recording parts are hidden');
 ok(/typeof opts\.token === 'function'/.test(cc), 'an older host (no token) gets no mic, and no error');
 ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(cc.slice(cc.indexOf('// ─── Voice mode ───'), cc.indexOf('// ─── Claude\'s voice ───'))), 'flat icons, no emoji');
 const wb = read('src', 'webapp-html.js');

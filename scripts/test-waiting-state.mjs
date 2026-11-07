@@ -150,6 +150,20 @@ check('nothing left outstanding', session.waiting.size === 0, session.waiting.si
   say('The agent finished.');
   handleMessage(s2, { type: 'result', subtype: 'success' });
   check('once the agent has reported, idle', s2.state === 'idle', s2.state);
+  // Whatever the CLI reports as still running (an agent resumed with a
+  // message, a background task) keeps the chat waiting, as the counts show.
+  s2.agents = new Map([['tu9', { kind: 'agent', status: 'running', endedAt: 0, startedAt: Date.now() }]]);
+  say('Resumed an agent.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('a running agent (even one resumed with a message) keeps the chat waiting', s2.state === 'waiting', s2.state);
+  s2.agents.get('tu9').endedAt = Date.now();
+  say('It reported.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('and when it has ended, idle', s2.state === 'idle', s2.state);
+  s2.agents = new Map([['tu10', { kind: 'agent', status: 'running', endedAt: 0, startedAt: Date.now() - 7 * 60 * 60 * 1000 }]]);
+  say('An old one never heard its end.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('an entry older than six hours is not waited on', s2.state === 'idle', s2.state);
 }
 
 if (failures) {
