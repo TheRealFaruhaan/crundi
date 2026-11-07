@@ -1,5 +1,6 @@
 package mv.obitech.crundi.ui.inbox
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.composable
@@ -97,6 +99,22 @@ fun NavGraphBuilder.inboxGraph() {
             navArgument("open") { type = NavType.StringType; nullable = true; defaultValue = null },
         ),
     ) { e -> InboxThreadRoute(key = e.arguments?.getString("key"), open = e.arguments?.getString("open")) }
+}
+
+/**
+ * Tells the window an inbox thread is in front of the person while this is
+ * composed and resumed, again every three seconds (as ChatOnScreenEffect).
+ */
+@Composable
+fun InboxOnScreenEffect(thread: String, host: mv.obitech.crundi.ui.shell.Host) {
+    if (thread.isEmpty()) return
+    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(thread, owner, host) {
+        owner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            try { while (true) { host.inboxOnScreen(thread, true); kotlinx.coroutines.delay(3_000) } }
+            finally { host.inboxOnScreen(thread, false) }
+        }
+    }
 }
 
 private fun toast(ctx: android.content.Context, text: String) = Toast.makeText(ctx.applicationContext, text, Toast.LENGTH_LONG).show()
@@ -238,10 +256,15 @@ private fun ThreadRow(t: InboxThread, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         if (t.kind == "chat" || t.kind == "project") {
-            val mark = mv.obitech.crundi.ui.chats.projectMark(t.project.ifBlank { t.name })
-            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+            // The project's own icon where it has one (as the drawer shows it), else its initials.
+            val shell by LocalAppServices.current.shell.state.collectAsStateWithLifecycle()
+            val key = t.project.ifBlank { t.name }
+            val p = shell.projects.firstOrNull { it.alias.equals(key, ignoreCase = true) } ?: shell.projects.firstOrNull { it.name.equals(key, ignoreCase = true) }
+            val mark = mv.obitech.crundi.ui.chats.projectMark(p?.name ?: key)
+            if (t.kind == "project") mv.obitech.crundi.ui.chats.MarkTile(mark, p?.icon, 40.dp)
+            else Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
                 Tile(InboxThread.iconOf(t.kind), unread)
-                Box(Modifier.align(Alignment.BottomEnd)) { mv.obitech.crundi.ui.chats.MarkTile(mark, null, 16.dp) }
+                Box(Modifier.align(Alignment.BottomEnd)) { mv.obitech.crundi.ui.chats.MarkTile(mark, p?.icon, 18.dp) }
             }
         } else Tile(InboxThread.iconOf(t.kind), unread)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -341,6 +364,8 @@ fun InboxThreadRoute(key: String?, open: String? = null) {
     }
 
     LaunchedEffect(Unit) { loadFirst() }
+    // In front of the owner: the thread's notification goes, and new ones for it are left out (Host.inboxOnScreen).
+    InboxOnScreenEffect(ui.key, host)
     LifecycleResumeEffect(Unit) { if (ui.list.loaded) scope.launch { loadFirst() }; onPauseOrDispose {} }
     // Live: this thread's items come in (and are read, since the owner is looking at them).
     LaunchedEffect(Unit) {
@@ -372,15 +397,15 @@ fun InboxThreadRoute(key: String?, open: String? = null) {
     }
 
     InboxThreadScreen(ui, InboxThreadEvents(
-        onBack = { nav.back() },
+        onBack = { if (host.isBubble) host.close() else nav.back() },
         onOlder = { older() },
         onRetry = { ui = ui.copy(error = null); scope.launch { loadFirst() } },
-        onOpenChat = { ui.chatId.takeIf { it.isNotEmpty() }?.let { nav.chat(it) } },
+        onOpenChat = { ui.chatId.takeIf { it.isNotEmpty() }?.let { id -> if (!host.openChat(id, ui.title, ui.thread?.project ?: ui.subtitle.orEmpty())) nav.chat(id) } },
         onMarkRead = { markRead() },
         onDeleteThread = {
             val k = ui.key
             scope.launch {
-                try { api.inbox.deleteThread(k); nav.back() } catch (e: Exception) { toast(ctx, errorText(e)) }
+                try { api.inbox.deleteThread(k); if (host.isBubble) host.close() else nav.back() } catch (e: Exception) { toast(ctx, errorText(e)) }
             }
         },
         onDelete = { item ->
@@ -390,7 +415,7 @@ fun InboxThreadRoute(key: String?, open: String? = null) {
         onLink = { item ->
             val route = DeepLinks.route(item.link)
             when {
-                route != null -> nav.to(route)
+                route != null && !host.isBubble -> nav.to(route)
                 item.link.startsWith("https://") || item.link.startsWith("http://") -> host.openExternal(item.link)
                 else -> host.openInMain(item.link)
             }

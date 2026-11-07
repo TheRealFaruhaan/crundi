@@ -184,6 +184,8 @@ data class ChatUi(
     val retiredRecap: String? = null,
     /** The composer's mic and voice mode (ChatVoice); null hides the mic. */
     val voice: ChatVoiceUi? = null,
+    /** The mic's last levels, for the recording bar (ChatVoiceSession.levels). */
+    val voiceLevels: kotlinx.coroutines.flow.StateFlow<List<Float>>? = null,
 ) {
     /** Put to sleep (parked): the live state's row for it says so (ChatSleep). */
     val asleep get() = ChatSleep.asleep(pane)
@@ -356,7 +358,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                 model = c.model, stateWords = stateLine(c.state, c.exited, asleep, ui.waking != null), cost = c.totalCostUsd,
                 commands = ChatAside.commands(c.slashCommands, ui.asideOk), pending = ui.pending, suggestion = c.suggestion, uploads = ui.uploads,
                 scheduled = ui.schedule.items.size, scheduleOpen = ui.schedule.open, onSchedule = actions::schedule,
-                enterSends = ui.enterSends, miniId = c.id, voice = ui.voice.takeIf { !asleep },
+                enterSends = ui.enterSends, miniId = c.id, voice = ui.voice.takeIf { !asleep }, voiceLevels = ui.voiceLevels,
             )
         }
         if (ui.schedule.open && c.loaded) SchedulePanel(
@@ -704,7 +706,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         if (ok) voiceSession.toggle() else voiceSession.note("Voice input needs the microphone. Allow it in the phone's settings to use it.")
     }
     fun micAllowed() = androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
-    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true, secretsOk = secretsOk, secretGrants = ChatSecretPreauth.active(grants, System.currentTimeMillis()).size, recapOk = recapOk, asideOk = asideOk, voice = voiceUi.takeIf { voiceShown })
+    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true, secretsOk = secretsOk, secretGrants = ChatSecretPreauth.active(grants, System.currentTimeMillis()).size, recapOk = recapOk, asideOk = asideOk, voice = voiceUi.takeIf { voiceShown }, voiceLevels = voiceSession.levels)
     // A new chat (or one back under a new id) with nothing of its own takes the project's draft, unless another open chat has it.
     LaunchedEffect(project) { composer.attach(project, ui.draft)?.let { ui = ui.copy(draft = it) } }
 
@@ -882,7 +884,12 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         }
         override fun voicePress() { if (micAllowed()) voiceSession.press() else askMic.launch(android.Manifest.permission.RECORD_AUDIO) }
         override fun voiceHold() = voiceSession.hold()
-        override fun voiceRelease(heldMs: Long) = voiceSession.release(heldMs)
+        // A tap on the mic in voice mode with nothing heard yet sends what is typed, if anything.
+        override fun voiceRelease(heldMs: Long, overCancel: Boolean) { if (!voiceSession.release(heldMs, overCancel) && ui.draft.isNotBlank()) send() }
+        override fun voiceDrag(progress: Float) = voiceSession.drag(progress)
+        override fun voiceSendNow() { if (!voiceSession.sendNow() && ui.draft.isNotBlank()) send() }
+        override fun voiceCancel() = voiceSession.cancel()
+        override fun voiceOff() = voiceSession.stop()
         override fun voiceToggle() { if (micAllowed()) voiceSession.toggle() else askMic.launch(android.Manifest.permission.RECORD_AUDIO) }
         override fun wake(mode: String) = wakeChat(mode, null, known = true)
         override fun stop() {

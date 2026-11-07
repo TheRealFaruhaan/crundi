@@ -31,8 +31,14 @@ import mv.obitech.crundi.voice.Speaker
  *
  *   tap   voice mode on: each thing said is sent as "voice input: …", and
  *         Claude's speak tool (the chat's voice-say events) is said aloud,
- *         until tapped off, the chat is left or the app goes behind another
- *   hold  push to talk: listen while held, send what was said on release
+ *         until turned off, the chat is left or the app goes behind another
+ *   hold  push to talk: listen while held, send what was said on release;
+ *         slid onto Cancel and let go there, nothing is sent
+ *
+ * While it records, the wide Send is a live recording bar with Cancel at the
+ * far right, and the mic is a send button: in voice mode a tap sends what has
+ * been heard so far at once. Cancel drops the words; with none, it turns
+ * voice mode off (as does holding the mic).
  *
  * The pure rules are here; [ChatVoiceSession] runs them.
  */
@@ -64,14 +70,52 @@ object ChatVoice {
     /** Several finished sentences heard while held, as one. */
     fun joined(parts: List<String>): String = parts.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ")
 
-    enum class Release { Off, VoiceMode, PushToTalk }
+    enum class Release { Off, VoiceMode, PushToTalk, Cancel, SendNow }
 
-    /** What letting go of the mic does: off if voice mode was on, else push to talk when held long enough, else voice mode on. */
-    fun release(wasOn: Boolean, heldMs: Long): Release = when {
-        wasOn -> Release.Off
+    /**
+     * What letting go of the mic does. Over Cancel: nothing is sent. In voice
+     * mode a tap sends what has been heard so far and a hold turns it off;
+     * otherwise a hold was push to talk (sent now) and a tap turns voice mode on.
+     */
+    fun release(wasOn: Boolean, heldMs: Long, overCancel: Boolean = false): Release = when {
+        overCancel -> Release.Cancel
+        wasOn && heldMs >= HOLD_MS -> Release.Off
+        wasOn -> Release.SendNow
         heldMs >= HOLD_MS -> Release.PushToTalk
         else -> Release.VoiceMode
     }
+
+    enum class CancelTap { Discard, Off }
+
+    /** Cancel tapped in voice mode: words being heard are dropped (voice mode stays); with none, voice mode goes off. */
+    fun cancelTap(hasWords: Boolean): CancelTap = if (hasWords) CancelTap.Discard else CancelTap.Off
+
+    /** Slid this far from the mic toward Cancel (0..1), the release cancels. */
+    const val CANCEL_AT = 0.8f
+
+    /** How far the finger at [fingerX] is from the mic's centre [startX] toward Cancel's centre [cancelX], 0..1. */
+    fun cancelProgress(fingerX: Float, startX: Float, cancelX: Float): Float =
+        if (cancelX <= startX) 0f else ((fingerX - startX) / (cancelX - startX)).coerceIn(0f, 1f)
+
+    fun overCancel(progress: Float): Boolean = progress >= CANCEL_AT
+
+    /**
+     * An utterance after words were already sent (send now) or dropped
+     * (Cancel) from the interim: the part of it still new. A server that
+     * honours { type: 'discard' } never repeats them; an older one may.
+     */
+    fun afterEarly(utterance: String, early: String): String {
+        val u = utterance.trim()
+        val e = early.trim()
+        if (e.isEmpty() || !u.startsWith(e, ignoreCase = true)) return u
+        return u.substring(e.length).trimStart(' ', ',', '.', ';', ':').trim()
+    }
+
+    /** The recording's length: "0:07", "1:05", "12:00". */
+    fun elapsed(ms: Long): String { val s = (ms.coerceAtLeast(0) / 1000); return "${s / 60}:${(s % 60).toString().padStart(2, '0')}" }
+
+    /** The recording bar's words: the end of them when they are long. */
+    fun tail(words: String, max: Int = 48): String = words.trim().let { if (it.length <= max) it else "…" + it.takeLast(max - 1).trimStart() }
 
     /** Claude's voice is played now: in voice mode, or within [SAY_WINDOW_MS] of a push-to-talk message. */
     fun plays(voiceMode: Boolean, lastPushToTalkAt: Long, now: Long): Boolean =
@@ -92,11 +136,19 @@ data class ChatVoiceUi(
     val connecting: Boolean = false,
     /** A short note (no microphone, the stream stopped). */
     val note: String? = null,
+    /** When this recording began (epoch ms): the bar's clock. */
+    val since: Long = 0L,
+    /** While held: how far the finger has slid toward Cancel, 0..1 ([ChatVoice.overCancel] past [ChatVoice.CANCEL_AT]). */
+    val cancelProgress: Float = 0f,
 ) {
     enum class Mode { Off, Pressed, On, Holding, Finishing }
     /** The mic button is lit. */
     val lit get() = mode != Mode.Off
     val listening get() = mode == Mode.Pressed || mode == Mode.On || mode == Mode.Holding
+    /** The recording bar takes Send's place, Cancel is at the far right, and the mic is a send button. */
+    val recording get() = mode == Mode.Holding || mode == Mode.Finishing || mode == Mode.On
+    val hasWords get() = interim.isNotBlank()
+    val overCancel get() = ChatVoice.overCancel(cancelProgress)
 }
 
 /**
@@ -111,6 +163,11 @@ class ChatVoiceSession(ctx: Context, private val voice: VoiceApi, private val se
     private val _ui = MutableStateFlow(ChatVoiceUi())
     val ui: StateFlow<ChatVoiceUi> = _ui
     private val speaker = Speaker(ctx, scope).also { it.api = voice }
+    private val _levels = MutableStateFlow(List(BARS) { 0f })
+    /** The mic's last levels, 0..1, oldest first: the recording bar's bars. */
+    val levels: StateFlow<List<Float>> = _levels
+    /** Words already sent (send now) or dropped (Cancel) from the interim: not sent again if the utterance repeats them. */
+    private var early = ""
 
     private var mic: MicStream? = null
     @Volatile private var socket: DataSocket? = null
@@ -158,29 +215,75 @@ class ChatVoiceSession(ctx: Context, private val voice: VoiceApi, private val se
 
     /** Still held after [ChatVoice.HOLD_MS]: push to talk. */
     fun hold() {
-        if (pressing && _ui.value.mode == ChatVoiceUi.Mode.Pressed) _ui.update { it.copy(mode = ChatVoiceUi.Mode.Holding) }
+        if (pressing && _ui.value.mode == ChatVoiceUi.Mode.Pressed) _ui.update { it.copy(mode = ChatVoiceUi.Mode.Holding, since = System.currentTimeMillis()) }
     }
 
-    /** The finger came up (or slid off) after [heldMs]. */
-    fun release(heldMs: Long) {
-        if (!pressing) return
+    /** While held, the finger slid [progress] of the way to Cancel. */
+    fun drag(progress: Float) {
+        if (pressing && _ui.value.lit) _ui.update { it.copy(cancelProgress = progress.coerceIn(0f, 1f)) }
+    }
+
+    /**
+     * The finger came up (or slid off) after [heldMs], [overCancel] or not.
+     * False only for a tap in voice mode with nothing heard to send (the
+     * screen may then send what is typed).
+     */
+    fun release(heldMs: Long, overCancel: Boolean = false): Boolean {
+        if (!pressing) return true
         pressing = false
+        _ui.update { it.copy(cancelProgress = 0f) }
         val m = _ui.value.mode
-        if (m == ChatVoiceUi.Mode.Off || m == ChatVoiceUi.Mode.Finishing) return
-        when (ChatVoice.release(pressWasOn, heldMs)) {
+        if (m == ChatVoiceUi.Mode.Off || m == ChatVoiceUi.Mode.Finishing) return true
+        when (ChatVoice.release(pressWasOn, heldMs, overCancel)) {
             ChatVoice.Release.Off -> stop()
             ChatVoice.Release.VoiceMode -> {
-                _ui.update { it.copy(mode = ChatVoiceUi.Mode.On) }
+                _ui.update { it.copy(mode = ChatVoiceUi.Mode.On, since = System.currentTimeMillis()) }
                 // Said while the press was being decided: it goes now.
                 ChatVoice.message(ChatVoice.joined(said))?.let(send)
                 said.clear()
             }
             ChatVoice.Release.PushToTalk -> finishPushToTalk()
+            ChatVoice.Release.SendNow -> return sendNow()
+            // Let go over Cancel: held, nothing goes and the mic stops; in voice mode the words go and it listens on.
+            ChatVoice.Release.Cancel -> if (pressWasOn) discardWords() else { socket?.send(DISCARD); teardown() }
+        }
+        return true
+    }
+
+    /** A tap without the gesture (accessibility, or the microphone just allowed): voice mode on, or off. */
+    fun toggle() { if (_ui.value.mode == ChatVoiceUi.Mode.On) stop() else { press(); release(0) } }
+
+    /**
+     * In voice mode, what has been heard so far goes now, without waiting for
+     * the pause, and it listens on for the next. False when nothing was heard.
+     */
+    fun sendNow(): Boolean {
+        if (_ui.value.mode != ChatVoiceUi.Mode.On) return false
+        val words = ChatVoice.joined(said + _ui.value.interim)
+        val msg = ChatVoice.message(words) ?: return false
+        dropHeard(words)
+        send(msg)
+        return true
+    }
+
+    /** Cancel tapped (voice mode): the words being heard are dropped; with none, voice mode goes off. */
+    fun cancel() {
+        if (!_ui.value.lit) return
+        when (ChatVoice.cancelTap(_ui.value.hasWords || said.isNotEmpty())) {
+            ChatVoice.CancelTap.Discard -> discardWords()
+            ChatVoice.CancelTap.Off -> stop()
         }
     }
 
-    /** A tap without the gesture (accessibility, or the microphone just allowed). */
-    fun toggle() { press(); release(0) }
+    private fun discardWords() = dropHeard(ChatVoice.joined(said + _ui.value.interim))
+
+    /** The server forgets what it has heard (so its utterance does not bring [words] back), and so does the screen. */
+    private fun dropHeard(words: String) {
+        early = words
+        socket?.send(DISCARD)
+        said.clear()
+        _ui.update { it.copy(interim = "", since = System.currentTimeMillis()) }
+    }
 
     /** Voice mode off: listening and Claude's voice stop. [why] is shown for a moment. */
     fun stop(why: String? = null) {
@@ -251,7 +354,8 @@ class ChatVoiceSession(ctx: Context, private val voice: VoiceApi, private val se
         synchronized(preroll) { preroll.clear() }
         streaming = true
         HeyCrundi.chatVoice(true); holdsMic = true
-        val m = MicStream { bytes, _ ->
+        val m = MicStream { bytes, level ->
+            _levels.value = _levels.value.drop(1) + level
             if (!streaming) return@MicStream
             val s = socket
             synchronized(preroll) {
@@ -296,11 +400,11 @@ class ChatVoiceSession(ctx: Context, private val voice: VoiceApi, private val se
         if (mode == ChatVoiceUi.Mode.Off) return
         when (ev) {
             is ListenEvent.Ready -> _ui.update { it.copy(connecting = false) }
-            is ListenEvent.Interim -> if (mode != ChatVoiceUi.Mode.Finishing || ev.text.isNotBlank()) _ui.update { it.copy(interim = ev.text, connecting = false) }
+            is ListenEvent.Interim -> if (early.isNotEmpty() && ChatVoice.afterEarly(ev.text, early).isEmpty()) {} else if (mode != ChatVoiceUi.Mode.Finishing || ev.text.isNotBlank()) _ui.update { it.copy(interim = ev.text, connecting = false) }
             is ListenEvent.Utterance -> {
                 _ui.update { it.copy(interim = "") }
                 when (mode) {
-                    ChatVoiceUi.Mode.On -> ChatVoice.message(ev.text)?.let(send)
+                    ChatVoiceUi.Mode.On -> { val t = ChatVoice.afterEarly(ev.text, early); early = ""; ChatVoice.message(t)?.let(send) }
                     ChatVoiceUi.Mode.Finishing -> { said += ev.text; final?.complete(Unit) }
                     else -> said += ev.text
                 }
@@ -345,15 +449,20 @@ class ChatVoiceSession(ctx: Context, private val voice: VoiceApi, private val se
         socket = null
         synchronized(preroll) { preroll.clear() }
         said.clear()
+        early = ""
+        _levels.value = List(BARS) { 0f }
         final = null
         if (holdsMic) { holdsMic = false; HeyCrundi.chatVoice(false) }
         if (current === this) current = null
-        _ui.update { it.copy(mode = ChatVoiceUi.Mode.Off, interim = "", connecting = false) }
+        _ui.update { it.copy(mode = ChatVoiceUi.Mode.Off, interim = "", connecting = false, cancelProgress = 0f) }
     }
 
     companion object {
         private const val TAG = "CrundiChatVoice"
         private const val RESUME_AFTER_SPEECH_MS = 450L
+        private const val DISCARD = """{"type":"discard"}"""
+        /** Levels kept for the recording bar (100 ms each). */
+        const val BARS = 28
         /** The chat whose voice mode has the mic (one at a time, across panes and bubbles). */
         private var current: ChatVoiceSession? = null
     }

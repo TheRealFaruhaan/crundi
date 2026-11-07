@@ -244,6 +244,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true, why = "the same chat is open in the main window")
         }
 
+        override fun inboxOnScreen(thread: String, onScreen: Boolean) {
+            val s = server ?: return
+            if (!onScreen || !hasWindowFocus()) return
+            OnScreen.seenInMain("inbox:${s.id}:$thread")
+            Notifier.clearInbox(this@MainActivity, s.id, thread, evenBubble = true)
+        }
+
         override fun openBubble(chatId: String) {
             withChat(chatId) { chat ->
                 if (BubbleHelp.blocked(this@MainActivity)) { BubbleHelp.show(this@MainActivity); return@withChat }

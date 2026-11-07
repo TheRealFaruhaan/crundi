@@ -95,6 +95,17 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- One inbox thread by itself: what an inbox thread's bubble opens.
+             Bubble-ready as ChatActivity is, and apart from it. -->
+        <activity
+            android:name=".InboxBubbleActivity"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:allowEmbedded="true"
+            android:documentLaunchMode="always"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- ─── Voice assistant (specs/voice-assistant.md, D33) ─── -->
         <!-- Mode B: the voice screen, over the lock screen. -->
         <activity

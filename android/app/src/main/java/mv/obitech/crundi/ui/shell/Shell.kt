@@ -7,6 +7,7 @@ import mv.obitech.crundi.ui.mini.miniTarget
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -186,7 +187,14 @@ fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, 
                 Modifier.fillMaxSize().padding(start = 2.dp, end = 10.dp),
                 left = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CrundiIconButton("menu", onMenu, contentDescription = "Projects", tint = CrundiColors.TextPrimary, size = 22.dp)
+                        // A dot on the menu while the inbox has anything unread (the envelope is in the drawer).
+                        Box {
+                            CrundiIconButton("menu", onMenu, contentDescription = if (data.hasInbox && data.inboxUnread > 0) "Projects, ${data.inboxUnread} unread in the inbox" else "Projects", tint = CrundiColors.TextPrimary, size = 22.dp)
+                            if (data.hasInbox && data.inboxUnread > 0) Box(
+                                Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 7.dp).size(8.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape).background(CrundiColors.Red),
+                            )
+                        }
                         // Mini (ui.mini) comes out of this head and goes back into it; while it is out the spot is empty.
                         RobotHead(Modifier.miniLogo(), size = 24.dp, motion = when {
                             data.connection != Connection.Connected -> MarkMotion.Load
@@ -199,12 +207,38 @@ fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, 
                     }
                 },
                 name = {
-                    Text(
-                        data.project?.name ?: "No project",
-                        style = CrundiType.Body.copy(color = CrundiColors.TextSecondary),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false,
-                        modifier = Modifier.clickable(onClick = onMenu),
-                    )
+                    // A new inbox message: the title area says so for a few
+                    // seconds (slides in, pulses), then gives the name back.
+                    // The dot on the menu stays until it is read.
+                    var lastUnread by remember { mutableStateOf(data.inboxUnread) }
+                    var flashAt by remember { mutableStateOf(0L) }
+                    LaunchedEffect(data.inboxUnread) {
+                        if (data.hasInbox && data.inboxUnread > lastUnread) flashAt = System.currentTimeMillis()
+                        lastUnread = data.inboxUnread
+                    }
+                    var flashing by remember { mutableStateOf(false) }
+                    LaunchedEffect(flashAt) {
+                        if (flashAt == 0L) return@LaunchedEffect
+                        flashing = true
+                        kotlinx.coroutines.delay(3500)
+                        flashing = false
+                    }
+                    androidx.compose.animation.AnimatedContent(
+                        targetState = flashing,
+                        transitionSpec = {
+                            (androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn())
+                                .togetherWith(androidx.compose.animation.slideOutVertically { -it } + androidx.compose.animation.fadeOut())
+                        },
+                        label = "inbox-flash",
+                    ) { now ->
+                        if (now) NewMessageFlash(callbacks.onInbox)
+                        else Text(
+                            data.project?.name ?: "No project",
+                            style = CrundiType.Body.copy(color = CrundiColors.TextSecondary),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false,
+                            modifier = Modifier.clickable(onClick = onMenu),
+                        )
+                    }
                 },
                 right = { compact -> TopBarRight(data, callbacks, compact) },
             )
@@ -582,6 +616,29 @@ private fun DashedButton(icon: String, label: String, onClick: () -> Unit, modif
     ) {
         CrundiIcon(icon, size = 15.dp, tint = CrundiColors.TextMuted)
         Text(label, style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
+    }
+}
+
+/** The top bar's "New message", for a few seconds after one arrives: the envelope and a gentle pulse; tap opens the inbox. */
+@Composable
+internal fun NewMessageFlash(onInbox: () -> Unit) {
+    // Still in previews and screenshot tests: an endless animation never lets Robolectric go idle.
+    val still = androidx.compose.ui.platform.LocalInspectionMode.current
+    val glow = if (still) 0.6f else {
+        val pulse = androidx.compose.animation.core.rememberInfiniteTransition(label = "inbox-pulse")
+        pulse.animateFloat(
+            initialValue = 0.25f, targetValue = 0.7f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(700), androidx.compose.animation.core.RepeatMode.Reverse),
+            label = "inbox-glow",
+        ).value
+    }
+    Row(
+        Modifier.clip(RoundedCornerShape(12.dp)).background(CrundiColors.Accent.copy(alpha = glow * 0.45f))
+            .clickable(onClickLabel = "Open the inbox", onClick = onInbox).padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        CrundiIcon("mail", size = 14.dp, tint = CrundiColors.TextPrimary)
+        Text("New message", style = CrundiType.Body.copy(color = CrundiColors.TextPrimary), maxLines = 1, softWrap = false)
     }
 }
 

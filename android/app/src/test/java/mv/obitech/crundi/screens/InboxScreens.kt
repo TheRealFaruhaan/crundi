@@ -17,6 +17,8 @@ import mv.obitech.crundi.ui.shell.Area
 import mv.obitech.crundi.ui.shell.ShellCallbacks
 import mv.obitech.crundi.ui.shell.ShellScaffold
 import org.junit.Test
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 
 /** Crundi's inbox: the envelope in the drawer, the threads, a chat's thread, Crundi's own. */
 class InboxScreens : ScreenshotTest() {
@@ -41,6 +43,21 @@ class InboxScreens : ScreenshotTest() {
             drawerOpen = true,
             onDrawer = {},
         ) { EmptyState("terminal", "Workbench") }
+    }
+
+    @Test fun topBarDot() = shoot("inbox-topbar-dot") {
+        ShellScaffold(
+            data = FakeServices.shellData.copy(capabilities = setOf("inbox"), inboxUnread = 3),
+            current = Area.Workbench,
+            showChrome = true,
+            callbacks = ShellCallbacks(),
+            drawerOpen = false,
+            onDrawer = {},
+        ) { EmptyState("terminal", "Workbench") }
+    }
+
+    @Test fun topBarFlash() = shoot("inbox-topbar-flash") {
+        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.padding(16.dp)) { mv.obitech.crundi.ui.shell.NewMessageFlash {} }
     }
 
     @Test fun threadList() = shoot("inbox-threads") { InboxThreadsScreen(InboxThreadsUi(threads)) }

@@ -36,10 +36,65 @@ class ChatVoiceTest {
         assertEquals(ChatVoice.Release.VoiceMode, ChatVoice.release(false, ChatVoice.HOLD_MS - 1))
         assertEquals(ChatVoice.Release.PushToTalk, ChatVoice.release(false, ChatVoice.HOLD_MS))
         assertEquals(ChatVoice.Release.PushToTalk, ChatVoice.release(false, 4_000))
-        // Voice mode on: any press turns it off, however long.
-        assertEquals(ChatVoice.Release.Off, ChatVoice.release(wasOn = true, heldMs = 50))
+        // Voice mode on: the mic is a send button, a tap sends what was heard now; a hold turns it off.
+        assertEquals(ChatVoice.Release.SendNow, ChatVoice.release(wasOn = true, heldMs = 50))
         assertEquals(ChatVoice.Release.Off, ChatVoice.release(true, 2_000))
         assertEquals(350L, ChatVoice.HOLD_MS)
+    }
+
+    @Test fun releaseOnTheMicSendsOverCancelCancels() {
+        // Held and let go on the mic: push to talk, sent.
+        assertEquals(ChatVoice.Release.PushToTalk, ChatVoice.release(wasOn = false, heldMs = 1_200, overCancel = false))
+        // Held, slid onto Cancel and let go there: nothing is sent.
+        assertEquals(ChatVoice.Release.Cancel, ChatVoice.release(wasOn = false, heldMs = 1_200, overCancel = true))
+        assertEquals(ChatVoice.Release.Cancel, ChatVoice.release(wasOn = true, heldMs = 900, overCancel = true))
+        // Tapped in voice mode: sent now.
+        assertEquals(ChatVoice.Release.SendNow, ChatVoice.release(wasOn = true, heldMs = 120, overCancel = false))
+    }
+
+    @Test fun slidingToCancel() {
+        // The mic's centre at 100, Cancel's at 400.
+        assertEquals(0f, ChatVoice.cancelProgress(100f, 100f, 400f), 0.001f)
+        assertEquals(0f, ChatVoice.cancelProgress(40f, 100f, 400f), 0.001f)   // back past the mic
+        assertEquals(0.5f, ChatVoice.cancelProgress(250f, 100f, 400f), 0.001f)
+        assertEquals(1f, ChatVoice.cancelProgress(460f, 100f, 400f), 0.001f)  // past Cancel
+        assertFalse(ChatVoice.overCancel(ChatVoice.cancelProgress(330f, 100f, 400f)))
+        assertTrue(ChatVoice.overCancel(ChatVoice.cancelProgress(340f, 100f, 400f)))
+        // No Cancel laid out: never over it.
+        assertEquals(0f, ChatVoice.cancelProgress(500f, 100f, 0f), 0.001f)
+    }
+
+    @Test fun cancelTapInVoiceMode() {
+        assertEquals(ChatVoice.CancelTap.Discard, ChatVoice.cancelTap(hasWords = true))
+        // Nothing to drop (or a second tap): voice mode off.
+        assertEquals(ChatVoice.CancelTap.Off, ChatVoice.cancelTap(hasWords = false))
+    }
+
+    @Test fun wordsSentEarlyAreNotSentTwice() {
+        assertEquals("", ChatVoice.afterEarly("Open the kanban.", "open the kanban"))
+        assertEquals("and the mind map", ChatVoice.afterEarly("Open the kanban, and the mind map", "open the kanban"))
+        // A server that dropped them sends new words: all of them go.
+        assertEquals("Something else", ChatVoice.afterEarly(" Something else ", "open the kanban"))
+        assertEquals("Anything", ChatVoice.afterEarly("Anything", ""))
+    }
+
+    @Test fun theBarsClockAndWords() {
+        assertEquals("0:00", ChatVoice.elapsed(0))
+        assertEquals("0:07", ChatVoice.elapsed(7_400))
+        assertEquals("1:05", ChatVoice.elapsed(65_000))
+        assertEquals("12:00", ChatVoice.elapsed(720_000))
+        assertEquals("0:00", ChatVoice.elapsed(-50))
+        assertEquals("short words", ChatVoice.tail("  short words "))
+        val long = ChatVoice.tail("x".repeat(30) + " and the end of what was said")
+        assertTrue(long.startsWith("…") && long.endsWith("what was said") && long.length <= 48)
+    }
+
+    @Test fun recordingState() {
+        assertFalse(ChatVoiceUi().recording)
+        assertFalse(ChatVoiceUi(mode = ChatVoiceUi.Mode.Pressed).recording)   // not yet decided: as before
+        assertTrue(ChatVoiceUi(mode = ChatVoiceUi.Mode.Holding).recording)
+        assertTrue(ChatVoiceUi(mode = ChatVoiceUi.Mode.On).recording)
+        assertTrue(ChatVoiceUi(mode = ChatVoiceUi.Mode.Holding, cancelProgress = 0.9f).overCancel)
     }
 
     @Test fun thePrefix() {

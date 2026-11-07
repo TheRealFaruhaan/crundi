@@ -61,6 +61,20 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.23 (en-US)
+
+Version code 54. Internal track. Since 1.1.3-dev.22 (code 53): hold-to-record composer (recording bar, mic as send, slide to cancel); inbox bubbles (InboxBubbleActivity, InboxNotify); notification opens the inbox thread; menu dot and NewMessageFlash; project icons in inbox rows.
+
+```
+<en-US>
+Hold to talk, slide to cancel; inbox bubbles.
+
+- Hold the mic in a chat to record: the Send button becomes a live recording bar, the mic becomes Send, and sliding onto the x cancels. In voice mode, tap the mic to send what you said straight away.
+- With bubbles on, a message in Crundi's inbox opens as its own bubble. Tapping a message notification opens its inbox thread.
+- A dot on the menu and a short "New message" in the top bar when a message arrives; project icons in the inbox.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.22 (en-US)
 
 Version code 53. Internal track. Since 1.1.3-dev.21 (code 52): KeyboardBackCloses: a top back callback while the IME shows (main window and bubble).

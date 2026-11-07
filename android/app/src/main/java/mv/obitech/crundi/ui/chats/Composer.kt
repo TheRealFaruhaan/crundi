@@ -24,11 +24,34 @@ import java.util.Locale
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import android.view.HapticFeedbackConstants
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -102,12 +125,22 @@ interface ComposerActions {
     fun tasks() {}
     /** Swap what the keyboard's Enter does: send, or a new line. */
     fun toggleEnter() {}
-    /** The mic (ChatVoice): the finger went down, is still down after [ChatVoice.HOLD_MS], came up after [heldMs]. */
+    /**
+     * The mic (ChatVoice): the finger went down, is still down after
+     * [ChatVoice.HOLD_MS], slid [progress] of the way to Cancel, came up
+     * after [heldMs] ([overCancel]: over Cancel, so nothing is sent).
+     */
     fun voicePress() {}
     fun voiceHold() {}
-    fun voiceRelease(heldMs: Long) {}
+    fun voiceDrag(progress: Float) {}
+    fun voiceRelease(heldMs: Long, overCancel: Boolean) {}
     /** Voice mode on or off without the gesture (TalkBack's double tap). */
     fun voiceToggle() {}
+    /** Voice mode: send what has been heard so far, now (the mic as a send button, TalkBack's double tap). */
+    fun voiceSendNow() {}
+    /** Cancel tapped: drop the words being heard; with none, voice mode off. */
+    fun voiceCancel() {}
+    fun voiceOff() {}
 }
 
 /** The status line's first words (the web's stateLbl). */
@@ -156,6 +189,8 @@ fun Composer(
     miniId: String? = null,
     /** The mic beside Send and what it hears (ChatVoice); null hides it (an older server, no voice key, a collaborator). */
     voice: ChatVoiceUi? = null,
+    /** The mic's last levels (ChatVoiceSession.levels), for the recording bar's bars. */
+    voiceLevels: StateFlow<List<Float>>? = null,
 ) {
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary).miniTarget(miniId, "composer")) {
         Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.Border))
@@ -197,6 +232,8 @@ fun Composer(
                 Text("${(u.fraction * 100).toInt()}%", style = CrundiType.Meta, modifier = Modifier.widthIn(min = 34.dp))
             }
             if (voice != null) VoiceLine(voice)
+            val recording = voice?.recording == true
+            val geo = remember { VoiceGeometry() }
             Row(Modifier.fillMaxWidth().padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 BoxButton("paperclip", "Attach a file", actions::attach, enabled = !ended && uploads.isEmpty())
                 Box {
@@ -216,8 +253,12 @@ fun Composer(
                     CrundiIcon("stop", size = 15.dp, tint = CrundiColors.Red, contentDescription = "Stop")
                     if (stopArmed) Text("Sure?", style = CrundiType.Meta.copy(color = CrundiColors.Red, fontFamily = CrundiType.Sans))
                 }
-                if (voice != null) MicButton(voice, actions, enabled = !ended)
-                CrundiButton(
+                if (voice != null) MicButton(voice, actions, enabled = !ended, geo)
+                // Recording: the bar takes Send's place, and Cancel is at the far right.
+                if (voice != null && recording) {
+                    RecordingBar(voice, voiceLevels, Modifier.weight(1f).height(40.dp))
+                    CancelButton(voice, actions, geo)
+                } else CrundiButton(
                     if (busy) "Queue" else "Send", actions::send, kind = ButtonKind.Primary, icon = if (busy) "layers" else "send",
                     enabled = !ended && canSend && draft.isNotBlank(), modifier = Modifier.weight(1f).height(40.dp).miniTarget(miniId, "send"),
                 )
@@ -245,46 +286,153 @@ fun Composer(
     }
 }
 
+/** Where the mic and Cancel are on screen (root x, px), for sliding to Cancel. */
+private class VoiceGeometry { var micLeft = 0f; var micCenter = 0f; var cancelCenter = 0f }
+
 /**
- * The mic beside Send: a tap turns voice mode on (lit) or off, a hold is
- * push to talk. The press is decided here, by time; what it means is
- * ChatVoice's.
+ * The mic beside Send: a tap turns voice mode on (lit), a hold is push to
+ * talk. While recording it is a send button: let go to send what was said,
+ * or (voice mode) tap to send it now. Sliding from it to Cancel and letting
+ * go there sends nothing. The press is decided here, by time and place;
+ * what it means is ChatVoice's.
  */
 @Composable
-private fun MicButton(voice: ChatVoiceUi, actions: ComposerActions, enabled: Boolean) {
+private fun MicButton(voice: ChatVoiceUi, actions: ComposerActions, enabled: Boolean, geo: VoiceGeometry) {
     val act by rememberUpdatedState(actions)
+    val view = LocalView.current
     val lit = voice.lit
     val holding = voice.mode == ChatVoiceUi.Mode.Holding
+    val sends = voice.recording
+    val on = voice.mode == ChatVoiceUi.Mode.On
     Box(
         Modifier.size(40.dp).clip(Dimens.ShapeSm)
-            .background(if (lit) CrundiColors.AccentDim else CrundiColors.BgPrimary)
-            .border(if (lit) 1.5.dp else Dimens.Hairline, if (lit) CrundiColors.Accent else CrundiColors.Border, Dimens.ShapeSm)
+            .background(if (sends) CrundiColors.Accent else if (lit) CrundiColors.AccentDim else CrundiColors.BgPrimary)
+            .border(if (lit && !sends) 1.5.dp else Dimens.Hairline, if (sends) Color.Transparent else if (lit) CrundiColors.Accent else CrundiColors.Border, Dimens.ShapeSm)
+            .onGloballyPositioned { c -> val x = c.positionInRoot().x; geo.micLeft = x; geo.micCenter = x + c.size.width / 2f }
             .semantics(mergeDescendants = true) {
-                contentDescription = ChatVoice.LABEL
+                contentDescription = if (sends) "Send what I said" else ChatVoice.LABEL
                 role = Role.Button
-                stateDescription = when { holding -> "Listening while held"; voice.mode == ChatVoiceUi.Mode.On -> "Voice mode on"; else -> "Voice mode off" }
-                if (enabled) onClick(label = if (voice.mode == ChatVoiceUi.Mode.On) "Turn voice mode off" else "Turn voice mode on") { act.voiceToggle(); true } else disabled()
+                stateDescription = when { holding -> "Listening while held"; on -> "Voice mode on"; else -> "Voice mode off" }
+                if (!enabled) disabled()
+                else if (on) {
+                    onClick(label = "Send what I said") { act.voiceSendNow(); true }
+                    customActions = listOf(CustomAccessibilityAction("Turn voice mode off") { act.voiceOff(); true })
+                } else onClick(label = "Turn voice mode on") { act.voiceToggle(); true }
             }
             .then(if (!enabled) Modifier else Modifier.pointerInput(Unit) {
                 awaitEachGesture {
-                    awaitFirstDown()
+                    val down = awaitFirstDown()
                     val t0 = System.currentTimeMillis()
                     act.voicePress()
-                    val up = withTimeoutOrNull(ChatVoice.HOLD_MS) { waitForUpOrCancellation() }
-                    if (up == null && currentEvent.changes.any { it.pressed }) {
-                        act.voiceHold()
-                        waitForUpOrCancellation()
+                    var held = false
+                    var over = false
+                    var last = 0f
+                    while (true) {
+                        val ev = if (held) awaitPointerEvent()
+                        else withTimeoutOrNull((ChatVoice.HOLD_MS - (System.currentTimeMillis() - t0)).coerceAtLeast(1)) { awaitPointerEvent() }
+                        if (ev == null) {
+                            held = true
+                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            act.voiceHold()
+                            continue
+                        }
+                        val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!c.pressed) { c.consume(); break }
+                        if (geo.cancelCenter > 0f) {
+                            val p = ChatVoice.cancelProgress(geo.micLeft + c.position.x, geo.micCenter, geo.cancelCenter)
+                            val now = ChatVoice.overCancel(p)
+                            if (now && !over) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            over = now
+                            if (kotlin.math.abs(p - last) >= 0.04f || ChatVoice.overCancel(last) != now) { last = p; act.voiceDrag(p) }
+                        }
+                        c.consume()
                     }
-                    act.voiceRelease(System.currentTimeMillis() - t0)
+                    act.voiceRelease(System.currentTimeMillis() - t0, over)
                 }
             }),
         contentAlignment = Alignment.Center,
-    ) { CrundiIcon("mic", size = 16.dp, tint = if (!enabled) CrundiColors.TextMuted else if (lit) CrundiColors.AccentHover else CrundiColors.TextSecondary) }
+    ) {
+        if (sends) CrundiIcon("send", size = 16.dp, tint = Color.White)
+        else CrundiIcon("mic", size = 16.dp, tint = if (!enabled) CrundiColors.TextMuted else if (lit) CrundiColors.AccentHover else CrundiColors.TextSecondary)
+    }
+}
+
+/**
+ * Send's place while recording, its size and shape: a dot (a spinner while
+ * starting or sending), the time, bars that follow the mic and the words so
+ * far. Slid toward Cancel it reddens; over it, it says so.
+ */
+@Composable
+private fun RecordingBar(voice: ChatVoiceUi, levels: StateFlow<List<Float>>?, modifier: Modifier) {
+    val still = remember { MutableStateFlow(List(ChatVoiceSession.BARS) { 0f }) }
+    val lv by (levels ?: still).collectAsState()
+    val inspecting = LocalInspectionMode.current
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    if (!inspecting) LaunchedEffect(voice.since) { while (true) { now = System.currentTimeMillis(); delay(500) } }
+    val p = voice.cancelProgress
+    val over = voice.overCancel
+    val words = when {
+        over -> "Let go to cancel"
+        voice.mode == ChatVoiceUi.Mode.Finishing -> voice.interim.ifEmpty { "Sending what you said…" }
+        voice.speaking -> "Claude is speaking…"
+        voice.hasWords -> ChatVoice.tail(voice.interim)
+        voice.connecting -> "Starting the microphone…"
+        voice.mode == ChatVoiceUi.Mode.Holding -> "Slide to the x to cancel"
+        else -> "Listening…"
+    }
+    Row(
+        modifier.clip(Dimens.ShapeSm).background(lerp(CrundiColors.Accent, CrundiColors.RedDim, if (over) 1f else p * 0.6f))
+            .border(Dimens.Hairline, if (over) CrundiColors.Red else Color.Transparent, Dimens.ShapeSm)
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite; contentDescription = "Recording, " + ChatVoice.elapsed(now - voice.since) + ". " + words }
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (voice.connecting || voice.mode == ChatVoiceUi.Mode.Finishing || voice.speaking) Spinner(9.dp) else Dot(if (over) Color.White else CrundiColors.Red, 8.dp)
+        Text(ChatVoice.elapsed(if (voice.since > 0) now - voice.since else 0), style = CrundiType.Code.copy(fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.SemiBold), maxLines = 1)
+        // Over Cancel the words need the room.
+        if (!over) Canvas(Modifier.width(52.dp).height(22.dp)) {
+            val n = lv.size.coerceAtLeast(1)
+            val gap = 1.dp.toPx()
+            val w = ((size.width - gap * (n - 1)) / n).coerceAtLeast(1f)
+            for ((i, l) in lv.withIndex()) {
+                val h = (size.height * l.coerceIn(0f, 1f)).coerceAtLeast(2.dp.toPx())
+                drawRoundRect(Color.White.copy(alpha = if (voice.speaking) 0.35f else 0.9f), topLeft = Offset(i * (w + gap), (size.height - h) / 2f), size = Size(w, h), cornerRadius = CornerRadius(w / 2f))
+            }
+        }
+        // The newest words: a line too long for the bar shows its end, cut at the left.
+        Box(Modifier.weight(1f).clipToBounds(), contentAlignment = if (voice.hasWords && !over) Alignment.CenterEnd else Alignment.CenterStart) {
+            Text(words, style = ChatType.Small.copy(color = Color.White), maxLines = 1, softWrap = false,
+                modifier = if (voice.hasWords && !over) Modifier.wrapContentWidth(Alignment.End, unbounded = true) else Modifier, overflow = if (voice.hasWords && !over) TextOverflow.Clip else TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** The far right while recording: tap to drop the words (none: voice mode off); held, slide here and let go to send nothing. */
+@Composable
+private fun CancelButton(voice: ChatVoiceUi, actions: ComposerActions, geo: VoiceGeometry) {
+    DisposableEffect(Unit) { onDispose { geo.cancelCenter = 0f } }
+    val p = voice.cancelProgress
+    val over = voice.overCancel
+    val label = when {
+        voice.mode == ChatVoiceUi.Mode.Holding -> "Cancel: slide here and let go to send nothing"
+        voice.hasWords -> "Discard what I said"
+        else -> "Turn voice mode off"
+    }
+    Box(
+        Modifier.size(40.dp).clip(Dimens.ShapeSm)
+            .background(if (over) CrundiColors.Red else lerp(CrundiColors.BgPrimary, CrundiColors.RedDim, p))
+            .border(if (p > 0f) 1.5.dp else Dimens.Hairline, if (p > 0f) CrundiColors.Red.copy(alpha = 0.4f + 0.6f * p) else CrundiColors.Border, Dimens.ShapeSm)
+            .onGloballyPositioned { c -> geo.cancelCenter = c.positionInRoot().x + c.size.width / 2f }
+            .clickable(onClickLabel = label, onClick = actions::voiceCancel),
+        contentAlignment = Alignment.Center,
+    ) { CrundiIcon("x", size = 16.dp, tint = if (over) Color.White else if (p > 0f) CrundiColors.Red else CrundiColors.TextSecondary, contentDescription = label) }
 }
 
 /** Over the buttons while the mic is on: what it hears, live, or that Claude is speaking; or a note. */
 @Composable
 private fun VoiceLine(voice: ChatVoiceUi) {
+    // Recording, the bar has the words; only long ones are shown whole here too.
+    if (voice.recording && !(voice.hasWords && ChatVoice.tail(voice.interim) != voice.interim.trim() && !voice.overCancel)) return
     val words = when {
         voice.note != null && !voice.lit -> voice.note
         voice.speaking -> "Claude is speaking…"
