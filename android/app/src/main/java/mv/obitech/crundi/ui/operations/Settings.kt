@@ -60,6 +60,7 @@ enum class SettingsGroup(val title: String) { Server("Server"), Claude("Claude")
 enum class SettingsPage(val route: String, val title: String, val icon: String, val blurb: String, val group: SettingsGroup) {
     Server("settings/server", "Server and Claude Code", "server", "Version, updates, release channel, restart", SettingsGroup.Server),
     Config("settings/config", "Configuration", "settings", "Telegram, projects folder, port, tunnel", SettingsGroup.Server),
+    Backup("settings/backup", "Backup and restore", "upload", "Encrypted backups to S3-compatible storage, and restoring them", SettingsGroup.Server),
     Machine("settings/machine", "This machine", "hard-drive", "CPU, memory, disk, and space to reclaim", SettingsGroup.Server),
     Logs("settings/logs", "Server logs", "file-text", "What the server is saying, live", SettingsGroup.Server),
     Prompt("settings/prompt", "System prompt", "message-square", "Added to every chat and terminal Crundi starts", SettingsGroup.Claude),

@@ -246,8 +246,20 @@ fun SessionsRoute() {
     val nav = LocalNavigator.current
     val actions = rememberActions()
     val list = rememberLoad { api.system.sessions() }
+    val host = mv.obitech.crundi.ui.shell.LocalHost.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     SessionsScreen(
         SessionsState(list.value, actions.busy, actions.note),
+        onSignOut = {
+            // As the web's Sign out: this phone's session and its refresh token are revoked,
+            // then the app offers to pair again, as when the server ends a sign-in.
+            actions.run("signout") {
+                api.system.signOut()
+                val server = mv.obitech.crundi.Servers.current(ctx)
+                if (server != null) mv.obitech.crundi.PageLogin.forget(ctx, server.id)
+                host.pairAgain("Signed out of ${server?.host ?: "this server"}. Pair this phone again to use it.")
+            }
+        },
         onRevoke = { s -> actions.run(s.id, "Session revoked", list::reload) { api.system.revokeSession(s.id) } },
         onRevokeOthers = {
             actions.run("others", after = list::reload) {
@@ -284,14 +296,19 @@ fun deviceName(s: LoginSession): String {
 }
 
 @Composable
-fun SessionsScreen(state: SessionsState, onRevoke: (LoginSession) -> Unit = {}, onRevokeOthers: () -> Unit = {}, onCloseNote: () -> Unit = {}, onBack: () -> Unit = {}) {
+fun SessionsScreen(state: SessionsState, onRevoke: (LoginSession) -> Unit = {}, onRevokeOthers: () -> Unit = {}, onCloseNote: () -> Unit = {}, onBack: () -> Unit = {}, onSignOut: () -> Unit = {}, askSignOut: Boolean = false) {
     var confirmOthers by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(askSignOut) }
     var revoke by remember { mutableStateOf<LoginSession?>(null) }
     SettingsPageFrame(SettingsPage.Sessions, state.note, onCloseNote, onBack) {
         when (val l = state.sessions) {
             Load.Loading -> LoadingState(text = "Loading…")
             is Load.Failed -> ErrorState(l.message)
             is Load.Ready -> if (l.value.isEmpty()) EmptyState("smartphone", "No active sessions.") else ScrollBody {
+                Group("This phone") {
+                    Text("Ends this phone's sign-in and revokes its tokens, so they cannot be refreshed. To use this server again, pair the phone again.", style = CrundiType.Small)
+                    CrundiButton(if (state.busy == "signout") "Signing out…" else "Sign out this phone", { confirmSignOut = true }, kind = ButtonKind.Danger, icon = "x", enabled = state.busy != "signout")
+                }
                 Group("Signed-in devices") {
                     for ((i, s) in l.value.withIndex()) {
                         if (i > 0) CrundiDivider()
@@ -315,6 +332,9 @@ fun SessionsScreen(state: SessionsState, onRevoke: (LoginSession) -> Unit = {}, 
             }
         }
     }
+    if (confirmSignOut) CrundiDialog("Sign out this phone?", { confirmSignOut = false },
+        message = "This phone's sign-in ends and its tokens stop working. Chats, notifications and bubbles from this server stop until you pair the phone again.",
+        confirm = "Sign out", danger = true, onConfirm = { confirmSignOut = false; onSignOut() })
     revoke?.let { s -> CrundiDialog("Revoke this sign-in?", { revoke = null }, message = "${deviceName(s)} is signed out and its tokens stop working.", confirm = "Revoke", danger = true, onConfirm = { revoke = null; onRevoke(s) }) }
     if (confirmOthers) CrundiDialog("Sign them all out?", { confirmOthers = false }, message = "Every other device signed in to this server is signed out. This phone stays signed in.",
         confirm = "Sign them out", danger = true, onConfirm = { confirmOthers = false; onRevokeOthers() })

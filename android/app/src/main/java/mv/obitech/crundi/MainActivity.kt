@@ -306,8 +306,14 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     }
 
     /** Send the person to pair this phone with this server again. */
+    /** When the pairing screen was last opened: a sign-out and the stream noticing it must not open it twice. */
+    private var pairAgainAt = 0L
+
     private fun pairAgain(why: String = "") {
         val s = server ?: return
+        val now = System.currentTimeMillis()
+        if (now - pairAgainAt < 5_000) return
+        pairAgainAt = now
         if (why.isNotEmpty()) Toast.makeText(this, why, Toast.LENGTH_LONG).show()
         startActivity(Intent(this, PairActivity::class.java).putExtra(PairActivity.EXTRA_AGAIN, s.id))
     }

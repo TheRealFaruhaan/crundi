@@ -29,5 +29,6 @@ fun NavGraphBuilder.operationsGraph() {
     composable(SettingsPage.Logs.route) { LogsRoute() }
     composable(SettingsPage.Sessions.route) { SessionsRoute() }
     composable(SettingsPage.SignIn.route) { SignInRoute() }
+    composable(SettingsPage.Backup.route) { BackupRoute() }
     composable(SettingsPage.Voice.route) { mv.obitech.crundi.voice.CruSettingsRoute() }
 }

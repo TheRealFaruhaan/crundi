@@ -63,14 +63,15 @@ app has been run on one.
 
 ## Release notes, 1.1.3-dev.25 (en-US)
 
-Version code 56. Internal track. Since 1.1.3-dev.24 (code 55): Settings > Sign-in (AuthApi, SignIn.kt; OAuth Test from the phone); the inbox channel first and locked on; Telegram optional in Configuration; Telegram chat ID field.
+Version code 56. Internal track. Since 1.1.3-dev.24 (code 55): Settings > Sign-in (AuthApi, SignIn.kt) and Backup and restore (BackupApi, Backup.kt); Sign out this phone; inbox channel first; Telegram optional.
 
 ```
 <en-US>
-Sign-in settings in the app.
+Sign-in, backups and sign-out in the app.
 
-- Settings has a Sign-in page: Telegram, password, Google and GitHub, each with its switch, set-up and Test.
-- Notifications lists Crundi's inbox first, always on; Telegram is optional.
+- Settings has Sign-in (Telegram, password, Google, GitHub) and Backup and restore pages, as on the web.
+- Signed-in devices can sign this phone out.
+- Notifications lists Crundi's inbox first, always on.
 </en-US>
 ```
 
