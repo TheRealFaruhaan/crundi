@@ -171,7 +171,11 @@ class ApiParsingTest {
         assertTrue(client.system.update().update.available)
         assertEquals("Pixel 7", client.system.sessions()[0].device?.name)
         assertEquals("warn", client.system.logs()[1].level)
-        assertFalse(client.system.channels()[0].available)
+        // The Crundi inbox first, always on; then Telegram, optional and not set up here.
+        val channels = client.system.channels()
+        assertTrue(channels[0].id == "inbox" && channels[0].alwaysOn)
+        assertFalse(channels[1].alwaysOn)
+        assertFalse(channels[1].available)
         assertEquals(2, client.usage.history().size)
     }
 

@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.25 (en-US)
+
+Version code 56. Internal track. Since 1.1.3-dev.24 (code 55): Settings > Sign-in (AuthApi, SignIn.kt; OAuth Test from the phone); the inbox channel first and locked on; Telegram optional in Configuration; Telegram chat ID field.
+
+```
+<en-US>
+Sign-in settings in the app.
+
+- Settings has a Sign-in page: Telegram, password, Google and GitHub, each with its switch, set-up and Test.
+- Notifications lists Crundi's inbox first, always on; Telegram is optional.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.24 (en-US)
 
 Version code 55. Internal track. Since 1.1.3-dev.23 (code 54): LiveTranscript in the message box; talking over the reply pauses it (OwnerGate, call audio, pre-roll), resumes sentence by sentence; replies wait behind the owner; mic hand-over with Cru (ask to switch, pause/resume, wake word off).

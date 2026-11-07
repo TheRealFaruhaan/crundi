@@ -61,6 +61,8 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
     val approvals = ApprovalsApi(rpc)
     val usage = UsageApi(rpc)
     val system = SystemApi(rpc)
+    /** How the owner signs in: Telegram, password, Google, GitHub (Settings > Sign-in). */
+    val auth = AuthApi(rpc)
     /** The Claude skills on the server (Settings > Skills). */
     val skills = SkillsApi(rpc)
     /** Panels (widgets): list, frame documents, data, calls from frames. See api.md "Panels". */

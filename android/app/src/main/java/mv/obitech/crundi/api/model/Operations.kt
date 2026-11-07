@@ -157,8 +157,9 @@ data class SettingsChange(
 
 @Serializable data class SettingsSaved(val restartRequired: Boolean = false, val clearedLimitReset: Int = 0)
 
-/** A way the server tells the person things (GET /api/notify/channels). id: telegram, desktop, webpush, mobile. */
-@Serializable data class NotifyChannel(val id: String, val label: String = "", val describe: String = "", val available: Boolean = true, val unavailableReason: String = "", val enabled: Boolean = false)
+/** A way the server tells the person things (GET /api/notify/channels), in the server's order. id: inbox, telegram, desktop, webpush, mobile. */
+/** [alwaysOn]: the Crundi inbox, which cannot be turned off (an older server has no such channel). */
+@Serializable data class NotifyChannel(val id: String, val label: String = "", val describe: String = "", val available: Boolean = true, val unavailableReason: String = "", val enabled: Boolean = false, val alwaysOn: Boolean = false)
 
 @Serializable
 data class UpdateInfo(

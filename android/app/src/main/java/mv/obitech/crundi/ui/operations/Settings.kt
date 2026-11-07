@@ -67,6 +67,7 @@ enum class SettingsPage(val route: String, val title: String, val icon: String, 
     General("settings/general", "Usage and idle panes", "clock", "Keep the 5-hour window warm, close idle panes", SettingsGroup.Claude),
     Voice("settings/voice", "Voice assistant", "mic", "Cru's brain, model, voice, keys, spending, notebook", SettingsGroup.Claude),
     Notifications("settings/notifications", "Notifications", "bell", "Channels, and which events are worth telling you", SettingsGroup.Access),
+    SignIn("settings/signin", "Sign-in", "key", "Telegram, password, Google, GitHub: how you sign in", SettingsGroup.Access),
     Sessions("settings/sessions", "Signed-in devices", "smartphone", "Where you are signed in; sign others out", SettingsGroup.Access),
     ;
 
@@ -347,14 +348,16 @@ fun NotificationsRoute() {
 fun NotificationsScreen(state: NotificationsState, onChannel: (NotifyChannel, Boolean) -> Unit = { _, _ -> }, onPref: (String, String) -> Unit = { _, _ -> }, onCloseNote: () -> Unit = {}, onBack: () -> Unit = {}) {
     SettingsPageFrame(SettingsPage.Notifications, state.note, onCloseNote, onBack) {
         ScrollBody {
-            Group("Notification channels", detail = "Which of these get told. Turn on as many as you like, or none at all. The list below decides which events are worth telling you about.") {
+            Group("Notification channels", detail = notifyChannelsDetail(state.channels.valueOrNull.orEmpty())) {
                 when (val l = state.channels) {
                     Load.Loading -> Text("Loading…", style = CrundiType.Small)
                     is Load.Failed -> Text(l.message, style = CrundiType.Small.copy(color = CrundiColors.Red))
+                    // The Crundi inbox comes first and is always on: its switch shows on and cannot move.
                     is Load.Ready -> for (ch in l.value) CrundiSwitchRow(
-                        ch.label, ch.enabled && ch.available, { if (ch.available) onChannel(ch, it) },
-                        detail = if (ch.available) ch.describe else ch.unavailableReason.ifEmpty { "Not available here" },
+                        ch.label, ch.alwaysOn || (ch.enabled && ch.available), { if (ch.available && !ch.alwaysOn) onChannel(ch, it) },
+                        detail = (if (ch.available) ch.describe else ch.unavailableReason.ifEmpty { ch.describe.ifEmpty { "Not available here" } }),
                         modifier = Modifier.padding(horizontal = 0.dp),
+                        enabled = ch.available && !ch.alwaysOn,
                     )
                 }
             }
@@ -376,6 +379,11 @@ fun NotificationsScreen(state: NotificationsState, onChannel: (NotifyChannel, Bo
         }
     }
 }
+
+/** The channels' explanation, as the web's: with an inbox (always on) it says so; an older server has none. */
+fun notifyChannelsDetail(channels: List<NotifyChannel>): String =
+    if (channels.any { it.alwaysOn }) "Which of these get told. Everything for you lands in the Crundi inbox first, and it is always on; turn on as many of the others as you like, or none at all. The list below decides which events are worth telling you about."
+    else "Which of these get told. Turn on as many as you like, or none at all. The list below decides which events are worth telling you about."
 
 // ─── System prompt ───
 
@@ -505,7 +513,7 @@ fun GeneralScreen(state: GeneralState, onWarmup: (Boolean) -> Unit = {}, onAutoP
                         }
                         error?.let { Text(it, style = CrundiType.Small.copy(color = CrundiColors.Red)) }
                         Text(
-                            "A chat or Claude terminal with nothing going on closes once you have also been away this long. It keeps its place, shows what it was, and Resume picks the conversation back up. 0 turns it off; otherwise at least ${s.autoParkMin}. Shells are never closed for being idle.",
+                            "A chat or Claude terminal with nothing going on closes once you have also been away this long. It keeps its place, shows what it was, and Resume picks the conversation back up. 0 turns it off; otherwise at least ${s.autoParkMin}. Shells are never closed for being idle. After a restart, every pane that was open comes back the same way.",
                             style = CrundiType.Small,
                         )
                     }
@@ -524,14 +532,27 @@ fun GeneralScreen(state: GeneralState, onWarmup: (Boolean) -> Unit = {}, onAutoP
 data class EnvField(val key: String, val label: String, val placeholder: String, val hint: String, val secret: Boolean = false, val required: Boolean = false)
 
 val ENV_FIELDS = listOf(
-    EnvField("TELEGRAM_BOT_TOKEN", "Telegram bot token", "123456:ABC-DEF...", "From @BotFather. Used for login and notifications.", secret = true),
-    EnvField("ALLOWED_USERNAME", "Allowed username", "your-telegram-username", "Only this Telegram user can access Crundi."),
+    EnvField("TELEGRAM_BOT_TOKEN", "Telegram bot token", "123456:ABC-DEF...", "Optional. From @BotFather. Telegram is one notification channel (and a way to sign in); Crundi runs fully without it, and everything for you lands in its own inbox.", secret = true),
+    EnvField("ALLOWED_USERNAME", "Allowed username", "your-telegram-username", "With a bot token: the Telegram user who may sign in with it and receive its messages."),
+    EnvField(CHAT_ID, "Telegram chat ID", "(set when you send /start to the bot)", "Where the Telegram channel sends. Found when you send /start, or enter it by hand."),
     EnvField("PROJECTS_DIR", "Projects directory", "/home/you/projects", "Single mode: subfolders are found by themselves. Leave empty for multi mode (add projects one by one)."),
     EnvField("WEB_PORT", "Web port", "0 (auto)", "Port for the web UI. 0 picks one."),
     EnvField("CLOUDFLARE_TUNNEL_TOKEN", "Cloudflare tunnel token", "(optional)", "For a lasting custom domain. Leave empty for a random quick tunnel.", secret = true),
     EnvField("CLOUDFLARE_TUNNEL_URL", "Cloudflare tunnel URL", "https://crundi.example.com", "Your public tunnel URL (used with the named tunnel token above)."),
     EnvField("DATA_DIR", "Data directory", "(default: platform app dir)", "Where Crundi keeps its data. Leave empty for the default."),
 )
+
+/** Not a .env key: the Telegram chat ID is saved beside the settings (chatId). */
+const val CHAT_ID = "chatId"
+
+object ConfigRules {
+    /** Telegram is optional: a bot token and an allowed username together, or neither. Null when that holds. */
+    fun telegramError(values: Map<String, String>): String? {
+        val token = values["TELEGRAM_BOT_TOKEN"].orEmpty().isNotBlank()
+        val user = values["ALLOWED_USERNAME"].orEmpty().isNotBlank()
+        return if (token != user) "For Telegram, give both the bot token and the allowed username, or leave both empty." else null
+    }
+}
 
 data class ConfigState(val settings: Load<ServerSettings> = Load.Loading, val restartRequired: Boolean = false, val busy: String? = null, val note: Actions.Note? = null)
 
@@ -544,9 +565,11 @@ fun ConfigRoute() {
     var restart by remember { mutableStateOf(false) }
     ConfigScreen(
         ConfigState(settings.value, restart, actions.busy, actions.note),
-        onSave = { env ->
-            actions.run("save", "Settings saved. Restart required for changes to take effect.", settings::reload) {
-                restart = api.system.saveSettings(SettingsChange(env = env)).restartRequired
+        onSave = { values ->
+            val bad = ConfigRules.telegramError(values)
+            if (bad != null) actions.note = Actions.Note(bad, true)
+            else actions.run("save", "Settings saved. Restart required for changes to take effect.", settings::reload) {
+                restart = api.system.saveSettings(SettingsChange(env = values - CHAT_ID, chatId = values[CHAT_ID].orEmpty().trim())).restartRequired
             }
         },
         onRestartPage = { nav.to(SettingsPage.Server.route) },
@@ -562,7 +585,7 @@ fun ConfigScreen(state: ConfigState, onSave: (Map<String, String>) -> Unit = {},
             Load.Loading -> LoadingState()
             is Load.Failed -> ErrorState(l.message)
             is Load.Ready -> {
-                val values = remember(l.value) { androidx.compose.runtime.mutableStateMapOf<String, String>().apply { putAll(l.value.settings) } }
+                val values = remember(l.value) { androidx.compose.runtime.mutableStateMapOf<String, String>().apply { putAll(l.value.settings); put(CHAT_ID, l.value.chatId) } }
                 ScrollBody {
                     if (l.value.envPath.isNotEmpty()) Text("Changes are saved to ${l.value.envPath}", style = CrundiType.Meta, modifier = Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 6.dp))
                     if (state.restartRequired) Banner("Saved: restart the server for it to take effect.", Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 6.dp).fillMaxWidth(), BadgeKind.Warn, "alert-triangle")

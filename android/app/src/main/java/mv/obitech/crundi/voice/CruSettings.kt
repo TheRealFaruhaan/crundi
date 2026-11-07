@@ -446,29 +446,9 @@ private fun CruSections(ui: CruSettingsUi, s: VoiceSettings, ev: CruSettingsEven
     CrundiButton("Start a fresh conversation", ev.onReset, icon = "refresh", modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
 }
 
-/**
- * One section: a header to tap (title, the value now, a chevron) and,
- * unfolded, its card. Folded at first unless [key] is in [open].
- */
 @Composable
-private fun Fold(key: String, title: String, summary: String, open: Set<String>, padding: androidx.compose.ui.unit.Dp = 14.dp, warn: Boolean = false, card: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
-    var unfolded by rememberSaveable(key) { mutableStateOf(key in open) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            Modifier.fillMaxWidth().clip(Dimens.Shape).background(CrundiColors.BgSecondary).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape)
-                .clickable(onClickLabel = if (unfolded) "Fold" else "Show") { unfolded = !unfolded }.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(title, style = CrundiType.Heading, modifier = Modifier.weight(1f))
-            if (summary.isNotEmpty()) Text(summary, style = CrundiType.Small.copy(color = if (warn) CrundiColors.Yellow else CrundiColors.TextSecondary), maxLines = 1, modifier = Modifier.padding(start = 8.dp, end = 8.dp))
-            CrundiIcon(if (unfolded) "chevron-up" else "chevron-down", size = Dimens.IconSm, tint = CrundiColors.TextMuted)
-        }
-        if (unfolded) {
-            if (card) CrundiCard(Modifier.fillMaxWidth(), padding = padding) { content() }
-            else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
-        }
-    }
-}
+private fun Fold(key: String, title: String, summary: String, open: Set<String>, padding: androidx.compose.ui.unit.Dp = 14.dp, warn: Boolean = false, card: Boolean = true, content: @Composable ColumnScope.() -> Unit) =
+    mv.obitech.crundi.ui.operations.FoldSection(key, title, summary, open, padding, if (warn) CrundiColors.Yellow else null, card, content)
 
 /** The brains side by side: turns, the median time (and the slowest tenth), cost per turn (and how much came from the cache). */
 @Composable
