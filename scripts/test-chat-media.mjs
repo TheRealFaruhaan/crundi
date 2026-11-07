@@ -121,7 +121,7 @@ ok(sweep() === 2 && !existsSync(oldFile) && !!locate(S, one.items[0].name), 'a c
 // ─── the wiring that keeps it where it belongs ───
 const bridge = readFileSync(new URL('../src/mcp-stdio.js', import.meta.url), 'utf8');
 for (const t of ['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed']) ok(new RegExp(`name: '${t}'`).test(bridge), `${t} is offered to Claude`);
-ok(/CHAT_ONLY_TOOLS = new Set\(\['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed'\]\)/.test(bridge) && /IN_CHAT \|\| !CHAT_ONLY_TOOLS\.has/.test(bridge), 'all five are listed only inside a chat');
+ok(/CHAT_ONLY_TOOLS = new Set\(\['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed', 'speak'\]\)/.test(bridge) && /IN_CHAT \|\| !CHAT_ONLY_TOOLS\.has/.test(bridge), 'all five are listed only inside a chat');
 ok(/if \(CHAT_ONLY_TOOLS\.has\(name\)\) \{\s*delete args\.sessionId;/.test(bridge), 'which chat it shows in comes from the process, never from the caller');
 const { COLLABORATOR_MCP_TOOLS } = await import('../src/access-policy.js');
 ok(!['show_image', 'show_video', 'show_audio', 'show_file'].some((t) => COLLABORATOR_MCP_TOOLS.has(t)), 'none is offered to collaborators: the file is read outside their sandbox');

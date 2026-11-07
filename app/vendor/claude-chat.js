@@ -12,6 +12,9 @@
  *   opts.apiFetch    (path, init) => Promise<Response>, adds the auth header
  *   opts.wsSend      (obj) => void, writes a frame on the shared WebSocket
  *   opts.onTitle     (title) => void, optional
+ *   opts.token       () => string, optional: the sign-in token for the voice
+ *                    input's WebSocket (/api/voice/listen). Without it (an older
+ *                    host) the composer has no mic.
  *
  * view.applyHistory(session)  render a full conversation (subscribe / reconnect)
  * view.applyEvent(ev)         apply one incremental server event
@@ -446,7 +449,24 @@
     '.cc-sched-item.next .cc-sched-when b{color:var(--accent-hover)}',
     '.cc-sched-text{color:var(--text-secondary);font-size:calc(12px*var(--cc-fs,1));white-space:pre-wrap;word-break:break-word;max-height:52px;overflow:hidden}',
     '.cc-sched-del{position:absolute;top:4px;right:4px;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:calc(12px*var(--cc-fs,1));line-height:1;padding:2px 4px}',
-    '.cc-sched-del:hover{color:var(--red)}'
+    '.cc-sched-del:hover{color:var(--red)}',
+    // Voice mode: the mic beside send (tap: voice mode, hold: push to talk),
+    // and the line above the box that shows what is being heard.
+    '.cc-mic{flex:none;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;transition:.15s}',
+    '.cc-mic:hover{color:var(--accent-hover);border-color:var(--accent)}',
+    '.cc-mic svg{width:16px;height:16px;pointer-events:none}',
+    '.cc-mic.on{color:#fff;background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim,rgba(99,102,241,.25));animation:cc-mic-pulse 1.6s ease-in-out infinite}',
+    '.cc-mic.on.speaking{animation:none;box-shadow:0 0 0 3px rgba(56,189,248,.35)}',
+    '@keyframes cc-mic-pulse{0%,100%{box-shadow:0 0 0 2px var(--accent-dim,rgba(99,102,241,.25))}50%{box-shadow:0 0 0 6px var(--accent-dim,rgba(99,102,241,.12))}}',
+    '.cc-narrow .cc-mic{flex:none}',
+    '.cc-vline{display:none;align-items:center;gap:7px;padding:0 2px 6px;font-size:calc(12px*var(--cc-fs,1));color:var(--text-secondary);min-width:0}',
+    '.cc-vline.on{display:flex}',
+    '.cc-vline-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent);animation:cc-mic-pulse 1.6s ease-in-out infinite}',
+    '.cc-vline.speaking .cc-vline-dot{background:var(--sky,#38bdf8)}',
+    '.cc-vline-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cc-vline-t.idle{color:var(--text-muted);font-style:italic}',
+    '.cc-vline.err{color:var(--red)}',
+    '.cc-vline.err .cc-vline-dot{display:none}'
   ].join('');
 
   function ensureStyles() {
@@ -744,6 +764,60 @@
     try { localStorage.setItem(DIS_KEY, JSON.stringify({ t: Date.now(), ids: map })); } catch (e) {}
   }
 
+  // ─── Voice mode: the rules, kept apart so they can be tested in node ───
+  var VOICE_HOLD_MS = 350;              // pressed this long: push to talk, not a tap
+  var VOICE_PREFIX = 'voice input: ';
+  var VOICE_PTT_WINDOW_MS = 10 * 60 * 1000; // after push to talk, replies are said this long
+  var VOICE_STOP_WAIT_MS = 2500;        // after release, how long to wait for the last words
+  var voiceLogic = {
+    HOLD_MS: VOICE_HOLD_MS,
+    PREFIX: VOICE_PREFIX,
+    PTT_WINDOW_MS: VOICE_PTT_WINDOW_MS,
+    /** A press on the mic: 'tap' (voice mode on/off) or 'hold' (push to talk). */
+    pressKind: function (ms) { return ms >= VOICE_HOLD_MS ? 'hold' : 'tap'; },
+    /** What goes to Claude for [said], or null when nothing was heard. */
+    message: function (said) {
+      var t = String(said == null ? '' : said).replace(/\s+/g, ' ').trim();
+      return t ? VOICE_PREFIX + t : null;
+    },
+    /** Push to talk: the phrases heard while held, as one. */
+    join: function (parts) {
+      return (parts || []).map(function (p) { return String(p || '').trim(); }).filter(Boolean).join(' ');
+    },
+    /** Whether a 'voice-say' event is said aloud by this view. */
+    shouldSpeak: function (ev, st) {
+      if (!ev || ev.type !== 'voice-say' || !String(ev.text || '').trim()) return false;
+      st = st || {};
+      if (ev.id && st.seen && st.seen[ev.id]) return false;
+      if (st.voiceOn) return true;
+      var now = st.now || Date.now();
+      return !!st.lastPttAt && now - st.lastPttAt >= 0 && now - st.lastPttAt <= VOICE_PTT_WINDOW_MS;
+    },
+    /** GET /api/voice/settings answered: is there a voice assistant to listen with? */
+    available: function (status, body) {
+      return status === 200 && !!body && body.ok !== false && body.deepgramKeySet === true;
+    },
+    /** Deepgram's voice for replies, or '' for the browser's own. */
+    ttsVoice: function (s) { return s && s.ttsVoice && !s.deepgramLimitReached ? String(s.ttsVoice) : ''; },
+    /** The sample rate of a streamed reply (audio/L16; rate=N), 24 kHz when unsaid. */
+    pcmRate: function (contentType, header) {
+      var m = /rate=(\d+)/i.exec(contentType || '');
+      var n = Number(header) || (m ? Number(m[1]) : 0);
+      return n > 0 ? n : 24000;
+    },
+  };
+  // One settings answer shared by every chat on the page, for a minute.
+  var voiceSettingsMemo = null;
+  function voiceSettings(apiFetch, fresh) {
+    if (!fresh && voiceSettingsMemo && Date.now() - voiceSettingsMemo.at < 60000) return voiceSettingsMemo.p;
+    var p = Promise.resolve().then(function () { return apiFetch('/api/voice/settings'); }).then(function (res) {
+      if (!res || res.status !== 200) return null;
+      return res.json().then(function (b) { return voiceLogic.available(res.status, b) ? b : null; }, function () { return null; });
+    }).catch(function () { return null; });
+    voiceSettingsMemo = { at: Date.now(), p: p };
+    return p;
+  }
+
   // ─── Mount ───
 
   function mount(host, opts) {
@@ -794,7 +868,21 @@
     var actions = el('div', 'cc-actions');
     actions.appendChild(attachBtn);
     actions.appendChild(stopBtn);
+    // Voice input, beside send. Hidden until the server says Cru can listen
+    // (see "Voice mode" below).
+    var micBtn = el('button', 'cc-mic',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>');
+    micBtn.type = 'button';
+    micBtn.title = 'Voice input (tap: voice mode, hold: push to talk)';
+    micBtn.setAttribute('aria-label', 'Voice input (tap: voice mode, hold: push to talk)');
+    micBtn.setAttribute('aria-pressed', 'false');
+    micBtn.style.display = 'none';
+    actions.appendChild(micBtn);
     actions.appendChild(sendBtn);
+    // What the microphone is hearing, live, above the message box.
+    var voiceLine = el('div', 'cc-vline', '<span class="cc-vline-dot"></span><span class="cc-vline-t"></span>');
+    voiceLine.setAttribute('aria-live', 'polite');
     inrow.appendChild(input);
     inrow.appendChild(actions);
     inrow.appendChild(fileInput);
@@ -924,6 +1012,7 @@
     meta.appendChild(modelLbl);
     meta.appendChild(costLbl);
 
+    wrap.appendChild(voiceLine);
     wrap.appendChild(inrow);
     wrap.appendChild(upRow);
     composer.appendChild(wrap);
@@ -2604,6 +2693,402 @@
     }
     disarmStop();
 
+    // ─── Voice mode ───
+    // The mic beside send. A tap turns voice mode on for this chat: it
+    // listens, and each time the owner stops talking what he said is sent as
+    // "voice input: …" through the normal send path, until tapped off. A hold
+    // is push to talk: listen while held, send on release. Claude answers a
+    // voice input with its speak tool, which arrives here as 'voice-say' and is
+    // said aloud while in voice mode (or for a while after push to talk).
+    // Speech to text is /api/voice/listen (Deepgram through the server), as on
+    // Cru's voice screen; the token for that socket comes from the host
+    // (opts.token), so an older host simply shows no mic.
+    var voiceToken = typeof opts.token === 'function' ? opts.token : null;
+    var vc = {
+      ok: false,           // the server can listen (shown)
+      on: false,           // voice mode
+      ptt: false,          // push to talk, held
+      mic: null,           // { ws, stream, ctx, proc, pending[], closing }
+      heard: [],           // push to talk: phrases so far
+      interim: '',
+      lastPttAt: 0,
+      seen: {},            // voice-say ids already taken
+      queue: [],           // replies waiting to be said
+      playing: null,       // { stop() } for the one being said
+      out: null,           // AudioContext for Deepgram's voice
+      settings: null,
+      press: null,         // { at, timer, id }
+      noteTimer: null,
+    };
+    function voiceShow(text, kind) {
+      clearTimeout(vc.noteTimer);
+      var t = voiceLine.querySelector('.cc-vline-t');
+      voiceLine.classList.remove('err');
+      voiceLine.classList.toggle('speaking', kind === 'speaking');
+      if (kind === 'off') { voiceLine.classList.remove('on'); t.textContent = ''; return; }
+      voiceLine.classList.add('on');
+      if (kind === 'err') {
+        voiceLine.classList.add('err');
+        t.className = 'cc-vline-t';
+        t.textContent = text;
+        vc.noteTimer = setTimeout(function () { if (!vc.on && !vc.ptt) voiceShow('', 'off'); }, 6000);
+        return;
+      }
+      t.className = 'cc-vline-t' + (text ? '' : ' idle');
+      t.textContent = text || (kind === 'speaking' ? 'Speaking…' : 'Listening…');
+    }
+    function voicePaint() {
+      var active = vc.on || vc.ptt;
+      micBtn.classList.toggle('on', active);
+      micBtn.classList.toggle('speaking', active && !!vc.playing);
+      micBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      micBtn.title = vc.on ? 'Voice mode is on: tap to turn it off'
+        : 'Voice input (tap: voice mode, hold: push to talk)';
+      if (!active) {
+        // After push to talk the reply is still said: show that, and let a tap on it stop it.
+        if (vc.playing) voiceShow('', 'speaking');
+        else if (voiceLine.classList.contains('speaking')) voiceShow('', 'off');
+        return;
+      }
+      if (vc.playing && !vc.ptt) voiceShow('', 'speaking');
+      else if (vc.ptt) voiceShow(voiceLogic.join(vc.heard.concat([vc.interim])), 'listen');
+      else voiceShow(vc.interim, 'listen');
+    }
+    function voiceCheck() {
+      if (!voiceToken || !apiFetch) return;
+      voiceSettings(apiFetch).then(function (s) {
+        if (destroyed) return;
+        vc.ok = !!s;
+        if (s) vc.settings = s;
+        micBtn.style.display = vc.ok ? '' : 'none';
+      });
+    }
+    voiceCheck();
+    voiceLine.addEventListener('click', function () { if (vc.playing) { speakStop(); voicePaint(); } });
+
+    // Deepgram's voice is played through Web Audio; the context is made (or
+    // woken) on the press itself, while the browser counts it as the owner's.
+    function voiceOutCtx() {
+      try {
+        if (!vc.out) { var AC = window.AudioContext || window.webkitAudioContext; if (AC) vc.out = new AC(); }
+        if (vc.out && vc.out.state === 'suspended') vc.out.resume();
+      } catch (e) { vc.out = null; }
+      return vc.out;
+    }
+
+    // The microphone: 16 kHz Int16 PCM frames on /api/voice/listen.
+    function micOpen(onReady) {
+      if (window.CrundiVoice && window.CrundiVoice.isOpen) {
+        // Cru's own screen has the microphone: one listener at a time.
+        try { window.CrundiVoice.close(); } catch (e) { /* it closes itself */ }
+      }
+      var m = { ws: null, stream: null, ctx: null, proc: null, pending: [], closing: false, paused: false, ready: false };
+      vc.mic = m;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { voiceFail('This browser cannot use the microphone here.'); return; }
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+        if (vc.mic !== m || m.closing) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+        m.stream = stream;
+        var AC = window.AudioContext || window.webkitAudioContext;
+        var ctx = new AC();
+        m.ctx = ctx;
+        var src = ctx.createMediaStreamSource(stream);
+        var proc = ctx.createScriptProcessor(4096, 1, 1);
+        m.proc = proc;
+        var ratio = ctx.sampleRate / 16000;
+        proc.onaudioprocess = function (ev) {
+          if (vc.mic !== m || m.closing || m.paused) return;
+          var x = ev.inputBuffer.getChannelData(0);
+          var n = Math.floor(x.length / ratio), out = new Int16Array(n);
+          for (var i = 0; i < n; i++) {
+            var a = 0, from = Math.floor(i * ratio), to = Math.floor((i + 1) * ratio);
+            for (var j = from; j < to; j++) a += x[j];
+            var v = Math.max(-1, Math.min(1, a / Math.max(1, to - from)));
+            out[i] = v * 32767;
+          }
+          if (m.ws && m.ws.readyState === 1) {
+            while (m.pending.length) m.ws.send(m.pending.shift());
+            m.ws.send(out.buffer);
+          } else if (m.pending.length < 40) m.pending.push(out.buffer); // the first words, while the socket opens
+        };
+        src.connect(proc); proc.connect(ctx.destination);
+        var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        var tok = '';
+        try { tok = voiceToken() || ''; } catch (e) { tok = ''; }
+        var ws = new WebSocket(proto + '://' + location.host + '/api/voice/listen?encoding=linear16&sample_rate=16000&token=' + encodeURIComponent(tok));
+        ws.binaryType = 'arraybuffer';
+        m.ws = ws;
+        ws.onmessage = function (msg) {
+          var e;
+          try { e = JSON.parse(msg.data); } catch (x) { return; }
+          if (vc.mic === m || m.closing) micHeard(e, m);
+        };
+        ws.onclose = function () {
+          if (m.closing) { if (m.onClosed) m.onClosed(); return; }
+          if (vc.mic !== m) return;
+          voiceFail('Listening stopped (the connection closed).');
+        };
+        ws.onopen = function () { if (vc.playing) micPause(true); if (onReady) onReady(); };
+      }).catch(function () {
+        if (vc.mic === m) voiceFail('The microphone is not allowed. Allow it for this site to talk to this chat.');
+      });
+    }
+    function micSend(obj) { var m = vc.mic; try { if (m && m.ws && m.ws.readyState === 1) m.ws.send(JSON.stringify(obj)); } catch (e) { /* gone */ } }
+    // Claude talking: nothing goes to the server, so its voice is not heard back as the owner's.
+    function micPause(p) {
+      var m = vc.mic;
+      if (!m || m.paused === p) return;
+      m.paused = p;
+      micSend({ type: p ? 'pause' : 'resume' });
+    }
+    function micClose(which) {
+      var m = which || vc.mic;
+      if (vc.mic === m) vc.mic = null;
+      if (!m) return;
+      m.closing = true;
+      try { if (m.ws && m.ws.readyState <= 1) m.ws.close(); } catch (e) { /* gone */ }
+      try { if (m.proc) { m.proc.onaudioprocess = null; m.proc.disconnect(); } } catch (e) { /* gone */ }
+      try { if (m.stream) m.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* gone */ }
+      try { if (m.ctx) m.ctx.close(); } catch (e) { /* gone */ }
+    }
+    function micHeard(e, m) {
+      if (e.type === 'ready') { m.ready = true; return; }
+      if (e.type === 'interim') { vc.interim = String(e.text || ''); voicePaint(); return; }
+      if (e.type === 'discard') {
+        // "Scratch that": what was heard goes, nothing is sent.
+        vc.interim = '';
+        if (vc.ptt || m.closing) vc.heard = [];
+        voicePaint();
+        return;
+      }
+      if (e.type === 'utterance') {
+        vc.interim = '';
+        if (vc.ptt || m.closing) { vc.heard.push(String(e.text || '')); voicePaint(); return; }
+        if (vc.on) voiceSend(e.text, false);
+        voicePaint();
+        return;
+      }
+      if (e.type === 'error' && vc.mic === m) voiceFail(e.error || 'Listening stopped.');
+    }
+    function voiceSend(said, ptt) {
+      var text = voiceLogic.message(said);
+      if (!text || destroyed || input.disabled) return false;
+      if (ptt) vc.lastPttAt = Date.now();
+      stickBottom = true;
+      scrollDown(true);
+      sendText(text);
+      return true;
+    }
+    function voiceFail(why) {
+      voiceStop();
+      voiceShow(why, 'err');
+    }
+
+    // Voice mode on and off.
+    function voiceStart() {
+      if (vc.on || destroyed) return;
+      if (input.disabled) { voiceShow('This chat has ended.', 'err'); return; }
+      vc.on = true;
+      vc.interim = '';
+      voiceOutCtx();
+      voicePaint();
+      // The voice and talking speed may have changed since the mic was shown.
+      voiceSettings(apiFetch, true).then(function (s) { if (s) vc.settings = s; });
+      micOpen(null);
+    }
+    function voiceStop() {
+      vc.on = false;
+      vc.ptt = false;
+      vc.heard = [];
+      vc.interim = '';
+      if (vc.press) { clearTimeout(vc.press.timer); vc.press = null; }
+      micClose();
+      speakStop();
+      voicePaint();
+      voiceShow('', 'off');
+    }
+
+    // Push to talk: listen while held, send on release.
+    function pttStart() {
+      if (destroyed || vc.on) return;
+      if (input.disabled) { voiceShow('This chat has ended.', 'err'); return; }
+      speakStop();   // talking now: whatever Claude was saying can wait
+      vc.ptt = true;
+      vc.heard = [];
+      vc.interim = '';
+      voiceOutCtx();
+      voicePaint();
+      micOpen(null);
+    }
+    function pttRelease() {
+      if (!vc.ptt) return;
+      vc.ptt = false;
+      var m = vc.mic;
+      var sent = false;
+      var finish = function () {
+        if (sent) return;
+        sent = true;
+        clearTimeout(wait);
+        // The server's last utterance, or failing that what was on screen.
+        var said = voiceLogic.join(vc.heard.length ? vc.heard : [vc.interim]);
+        vc.heard = [];
+        vc.interim = '';
+        if (m) micClose(m);
+        if (vc.on || vc.ptt) voicePaint(); else voiceShow('', 'off');
+        voiceSend(said, true);
+      };
+      var wait = setTimeout(finish, VOICE_STOP_WAIT_MS);
+      if (!m || !m.ws || m.ws.readyState !== 1) { finish(); return; }
+      // 'stop' makes the server send what it has as a last utterance, then close.
+      m.closing = true;
+      m.onClosed = finish;
+      micSend({ type: 'stop' });
+      micBtn.classList.remove('on');
+      micBtn.setAttribute('aria-pressed', 'false');
+      voiceShow(voiceLogic.join(vc.heard.concat([vc.interim])) || 'Sending…', 'listen');
+    }
+
+    // Tap or hold, told apart by how long the mic is pressed.
+    micBtn.addEventListener('pointerdown', function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();   // keep the keyboard where it is on a phone
+      try { micBtn.setPointerCapture(e.pointerId); } catch (x) { /* fine */ }
+      if (vc.press) clearTimeout(vc.press.timer);
+      var press = { at: Date.now(), id: e.pointerId, timer: null };
+      vc.press = press;
+      voiceOutCtx();
+      // In voice mode any press ends it; otherwise a long one is push to talk.
+      if (!vc.on) press.timer = setTimeout(function () { if (vc.press === press) { press.held = true; pttStart(); } }, VOICE_HOLD_MS);
+    });
+    function pressEnd(e, cancelled) {
+      var press = vc.press;
+      if (!press || (e && press.id !== undefined && e.pointerId !== press.id)) return;
+      vc.press = null;
+      clearTimeout(press.timer);
+      if (press.held) { pttRelease(); return; }
+      if (cancelled) return;
+      if (voiceLogic.pressKind(Date.now() - press.at) === 'tap' || vc.on) {
+        if (vc.on) voiceStop(); else voiceStart();
+      }
+    }
+    micBtn.addEventListener('pointerup', function (e) { pressEnd(e, false); });
+    micBtn.addEventListener('pointercancel', function (e) { pressEnd(e, true); });
+    micBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    // The keyboard (Enter / Space) has no hold: it toggles voice mode.
+    micBtn.addEventListener('click', function (e) {
+      if (e.detail !== 0) return;   // a pointer press, handled above
+      if (vc.on) voiceStop(); else voiceStart();
+    });
+
+    // ─── Claude's voice ───
+    function onVoiceSay(ev) {
+      var st = { voiceOn: vc.on, lastPttAt: vc.lastPttAt, seen: vc.seen, now: Date.now() };
+      var say = voiceLogic.shouldSpeak(ev, st);
+      if (ev && ev.id) vc.seen[ev.id] = 1;
+      if (!say) return;
+      vc.queue.push(String(ev.text).trim());
+      speakNext();
+    }
+    function speakNext() {
+      if (vc.playing || destroyed) return;
+      var text = vc.queue.shift();
+      if (text == null) { micPause(false); voicePaint(); return; }
+      var token = { stopped: false, nodes: [], stop: null };
+      vc.playing = token;
+      micPause(true);
+      voicePaint();
+      var done = function () {
+        if (vc.playing !== token) return;
+        vc.playing = null;
+        speakNext();
+      };
+      token.stop = function () {
+        token.stopped = true;
+        token.nodes.forEach(function (n) { try { n.stop(); } catch (e) { /* ended */ } });
+        try { if (token.utter && window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { /* none */ }
+      };
+      var voice = voiceLogic.ttsVoice(vc.settings);
+      if (voice) speakDeepgram(text, token).then(done, function () { if (!token.stopped) speakBrowser(text, token, done); });
+      else speakBrowser(text, token, done);
+    }
+    function speakStop() {
+      vc.queue = [];
+      var p = vc.playing;
+      vc.playing = null;
+      if (p) p.stop();
+      micPause(false);
+    }
+    // Deepgram's voice: streamed 16-bit PCM where the server can (an older one
+    // sends a whole mp3), played as it arrives. Resolves when it has been said.
+    function speakDeepgram(text, token) {
+      var ctx = voiceOutCtx();
+      if (!ctx) return Promise.reject(new Error('no audio'));
+      var at = ctx.currentTime + 0.05, any = false;
+      var whenSaid = function () {
+        return new Promise(function (resolve) {
+          var left = Math.max(0, (at - ctx.currentTime) * 1000);
+          setTimeout(resolve, left + 60);
+        });
+      };
+      var play = function (buf) {
+        var node = ctx.createBufferSource();
+        node.buffer = buf;
+        node.connect(ctx.destination);
+        at = Math.max(at, ctx.currentTime + 0.02);
+        node.start(at);
+        at += buf.duration;
+        token.nodes.push(node);
+        any = true;
+      };
+      return apiFetch('/api/voice/speak?stream=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'audio/L16' },
+        body: JSON.stringify({ text: text }),
+      }).then(function (res) {
+        if (!res || !res.ok) throw new Error('speak failed');
+        var ct = (res.headers && res.headers.get('Content-Type')) || '';
+        if (!/L16/i.test(ct) || !res.body || !res.body.getReader) {
+          return res.arrayBuffer().then(function (ab) {
+            return new Promise(function (resolve, reject) { ctx.decodeAudioData(ab, resolve, reject); });
+          }).then(function (buf) { if (!token.stopped) play(buf); return whenSaid(); });
+        }
+        var rate = voiceLogic.pcmRate(ct, res.headers.get('X-Sample-Rate'));
+        var reader = res.body.getReader(), carry = null;
+        var pump = function () {
+          return reader.read().then(function (r) {
+            if (token.stopped) { try { reader.cancel(); } catch (e) { /* done */ } return null; }
+            if (r.done) return whenSaid();
+            var bytes = r.value;
+            if (carry) { var j = new Uint8Array(carry.length + bytes.length); j.set(carry); j.set(bytes, carry.length); bytes = j; carry = null; }
+            if (bytes.length % 2) { carry = bytes.slice(bytes.length - 1); bytes = bytes.slice(0, bytes.length - 1); }
+            var n = bytes.length / 2;
+            if (!n) return pump();
+            var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+            var buf = ctx.createBuffer(1, n, rate), ch = buf.getChannelData(0);
+            for (var i = 0; i < n; i++) ch[i] = dv.getInt16(i * 2, true) / 32768;
+            play(buf);
+            return pump();
+          });
+        };
+        return pump();
+      }).catch(function (e) { if (any) return whenSaid(); throw e; });
+    }
+    // The browser's own voice (British where it has one), at Cru's talking speed.
+    function speakBrowser(text, token, done) {
+      if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { done(); return; }
+      var u = new SpeechSynthesisUtterance(text);
+      var vs = [];
+      try { vs = window.speechSynthesis.getVoices() || []; } catch (e) { vs = []; }
+      u.voice = vs.find(function (v) { return /en-GB/i.test(v.lang) && /male|daniel|george|arthur|ryan/i.test(v.name); })
+        || vs.find(function (v) { return /en-GB/i.test(v.lang); }) || null;
+      u.lang = 'en-GB';
+      u.rate = (vc.settings && Number(vc.settings.speechRate)) || 1;
+      token.utter = u;
+      // onend is not always fired: a generous cap so the queue never sticks.
+      var cap = setTimeout(function () { done(); }, 8000 + text.length * 120);
+      u.onend = u.onerror = function () { clearTimeout(cap); done(); };
+      try { window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch (e) { clearTimeout(cap); done(); }
+    }
+
     function appendLocal(data) {
       data.id = 'local-' + Math.random().toString(16).slice(2);
       addEntry(data);
@@ -3925,6 +4410,7 @@
           renderQueue();
           break;
         }
+        case 'voice-say': onVoiceSay(ev); break;
         case 'agent': applyAgent(ev.agent); break;
         case 'agent-entry': addAgentEntry(ev.toolUseId, ev.entry); break;
         case 'agent-patch': patchAgentEntry(ev.toolUseId, ev.id, ev.patch); break;
@@ -3954,6 +4440,7 @@
           // Nothing will flush the queue now, so hand the text back rather than
           // silently dropping what the user typed.
           if (queued.length) unqueue();
+          if (vc.on || vc.ptt) voiceStop();
           // Anything already handed over is beyond recall and will never be
           // acknowledged now, so stop implying it is still on its way.
           if (handedOver.length) { handedOver = []; renderQueue(); }
@@ -3994,6 +4481,8 @@
       insertText: function (text) { if (text) insertPath(text); },
       destroy: function () {
         closeModeModal();
+        voiceStop();
+        try { if (vc.out) vc.out.close(); } catch (e) { /* gone */ }
         destroyed = true;
         if (mini) { try { mini.destroy(); } catch (e) {} mini = null; }
         // Let a later chat in this project pick the draft back up.
@@ -4019,5 +4508,5 @@
     };
   }
 
-  window.CrundiChat = { mount: mount };
+  window.CrundiChat = { mount: mount, _voice: voiceLogic };
 })();

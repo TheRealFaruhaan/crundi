@@ -206,6 +206,12 @@ object HeyCrundi {
 
     fun sessionClosed() = update { it.copy(sessionOpen = false) }
 
+    /** A voice session (the voice screen or the side-key overlay) holds the microphone now. */
+    val sessionOpen: Boolean get() = situation.sessionOpen
+
+    /** A chat's voice mode took the microphone (on) or let go of it: the wake word lets go of it meanwhile (synchronously). */
+    fun chatVoice(on: Boolean) = update { it.copy(chatVoice = on) }
+
     private var screenWake: (() -> Unit)? = null
 
     /**

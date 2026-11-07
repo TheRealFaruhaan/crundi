@@ -7267,6 +7267,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // The token lives here, not in the chat component, so the uploader is
         // passed in rather than the credential.
         apiUpload: uploadWithProgress,
+        // For the voice input's own socket (/api/voice/listen), as Cru's screen has it.
+        token: () => token,
         toast,
         wsSend: (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
         onChatMeta: (patch) => applyChatMeta(t.id, patch),

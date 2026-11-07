@@ -295,6 +295,15 @@ const TOOLS = [
     },
   },
   {
+    name: 'speak',
+    description: 'Say something aloud to the person in this chat, in Crundi\'s voice (the voice assistant\'s). Only for a message that starts with "voice input:" (they spoke it in the chat\'s voice mode and are listening): a short spoken version of your answer, one to three sentences of plain speech, no markdown, code, paths or links. The written answer still goes in the chat as usual.',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string', description: 'What to say: plain speech, one to three sentences' } },
+      required: ['text'],
+    },
+  },
+  {
     name: 'show_video',
     description: 'Show one or more videos to the person, in the chat, as players drawn under this call. Use it for a screen recording of what you built, a rendered clip or reel, an animation, anything that has to be watched. path for one, paths for several (up to 8); MP4, MOV or WebM, 250 MB each; the files are copied, so a file in a temp or render folder is fine. Prefer this over send_file_to_user whenever the person is in the chat.',
     inputSchema: {
@@ -675,7 +684,7 @@ const TOOL_SCOPE = process.env.CRUNDI_TOOL_SCOPE || '';
 const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);
 // Tools that only mean anything inside a Crundi chat (UI mode): a terminal
 // session has no transcript for Crundi to draw into, so it is not told about them.
-const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed']);
+const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed', 'speak']);
 const IN_CHAT = !!process.env.CRUNDI_CHAT_ID;
 // Only a factory run's chats are offered factory_handoff.
 const IN_FACTORY = !!process.env.CRUNDI_FACTORY_RUN;

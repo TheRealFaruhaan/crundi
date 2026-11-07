@@ -6589,6 +6589,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         });
       }
 
+      // ─── speak: said aloud to whoever listens to this chat in voice mode ───
+      if (body.tool === 'speak') {
+        const sid = String(a.sessionId || '');
+        if (!sid || !claudeUi || !claudeUi.has(sid)) return json(res, { ok: false, error: 'speak only works in a Crundi chat (UI mode).' });
+        const r = claudeUi.voiceSay(sid, a.text);
+        return json(res, r.ok ? { ok: true, note: 'Said aloud where the person listens to this chat in voice mode. Keep the written answer in the chat as usual.' } : r);
+      }
+
       // ─── show_embed: a web address or Claude's own HTML, framed in the chat ───
       // Nothing is read from disk, so there is no file to leak; what it frames
       // runs in a sandboxed frame that cannot reach the page around it.

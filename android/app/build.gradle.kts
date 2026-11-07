@@ -37,8 +37,8 @@ android {
         applicationId = "mv.obitech.crundi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 50
-        versionName = "1.1.3-dev.19"
+        versionCode = 51
+        versionName = "1.1.3-dev.20"
 
         // The oldest server this app can work with. The server holds the
         // mirror of this (MIN_CLIENT in src/client-version.js) and each side

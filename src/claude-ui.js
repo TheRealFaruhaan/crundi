@@ -3088,6 +3088,19 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   const has = (id) => sessions.has(id);
+  /**
+   * The speak tool: Claude says [text] aloud to whoever is listening to this
+   * chat in voice mode. An event only (not part of the conversation), so a
+   * screen not in voice mode, or one opened later, never plays it.
+   */
+  function voiceSay(id, text) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: 'No such chat' };
+    const t = String(text || '').trim().slice(0, 2000);
+    if (!t) return { ok: false, error: 'Nothing to say' };
+    s.emitter.emit('event', { type: 'voice-say', id: genId(), text: t, at: Date.now() });
+    return { ok: true };
+  }
   const on = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.on('event', handler); };
   const off = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.off('event', handler); };
 
@@ -3126,6 +3139,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   return {
+    voiceSay,
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, addCard, patchCard, setFirstChatHandler, onSessionGone, onChatEnded, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,

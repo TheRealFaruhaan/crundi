@@ -114,6 +114,11 @@ class ChatsScreens : ScreenshotTest() {
         ChatScreen(ChatUi(c, pane = parked(c), draft = "and the 401 renewal", isBubble = true, error = mv.obitech.crundi.ui.chats.ChatSleep.WAKE_FAILED + "project \"crundi\" no longer exists."), noChat)
     }
 
+    /** Voice mode on (ChatVoice): the mic lit beside Send, what it hears live over the buttons. */
+    @Test fun chatVoiceMode() = snap("chats-chat-voice-mode") {
+        ChatScreen(ChatUi(chat(0), voice = mv.obitech.crundi.ui.chats.ChatVoiceUi(mode = mv.obitech.crundi.ui.chats.ChatVoiceUi.Mode.On, interim = "and make the retry wait twice as long each time")), noChat)
+    }
+
     @Test fun chatLoading() = snap("chats-chat-loading") {
         ChatScreen(ChatUi(ChatState("a1b2c3d4e5f60718")), noChat)
     }

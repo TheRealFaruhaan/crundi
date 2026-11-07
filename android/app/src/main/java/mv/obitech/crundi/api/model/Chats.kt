@@ -327,6 +327,12 @@ data class ChatState(
     val factory: FactoryRole? = null,
     /** Set when the Claude process ended (exit code). */
     val exitCode: Int? = null,
+    /**
+     * What Claude asked to say aloud (its speak tool, capability "chat-voice"),
+     * newest last, the last few only. Events, never in the history: a screen
+     * in voice mode plays the ones it has not played yet.
+     */
+    val voiceSays: List<VoiceSay> = emptyList(),
 ) {
     val busy get() = state == AgentState.Working || pendingInjections.isNotEmpty()
     val exited get() = status == "exited" || exitCode != null
@@ -335,6 +341,9 @@ data class ChatState(
     /** The permission requests and questions waiting on the person, oldest first. */
     val waiting get() = messages.filter { it.isPending }
 }
+
+/** One `voice-say` event: [text] to say aloud, [at] when the server sent it (epoch ms). */
+data class VoiceSay(val id: String, val text: String, val at: Long)
 
 internal fun slashCommandsOf(el: JsonElement?): List<SlashCommand> = (el as? JsonArray)?.mapNotNull {
     when (it) {

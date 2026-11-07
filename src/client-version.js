@@ -183,6 +183,11 @@ export const CAPABILITIES = Object.freeze([
   // { type: 'discard' } for a phrase the owner cancelled, and takes
   // { type: 'discard' } to drop what it has heard so far.
   'voice-cancel',
+  // Voice mode in a chat: the composer's mic sends "voice input: …" (spoken
+  // through /api/voice/listen), and the chat's 'voice-say' events (Claude's
+  // speak tool) are said aloud by the screen in voice mode, through
+  // /api/voice/speak. Shown only when the voice assistant has a Deepgram key.
+  'chat-voice',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

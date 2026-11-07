@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.20 (en-US)
+
+Version code 51. Internal track. Since 1.1.3-dev.19 (code 50): per-chat voice mode (capability chat-voice): tap for voice mode, hold to talk; voice-say events spoken.
+
+```
+<en-US>
+Talk to a chat.
+
+- Each chat has a mic beside Send. Tap it for voice mode: whenever you pause, what you said goes to Claude, and it answers in the chat and says a short version aloud. Or hold it, talk, and let go.
+- Shown once the voice assistant has a Deepgram key on your server.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.19 (en-US)
 
 Version code 50. Internal track. Since 1.1.3-dev.18 (code 49): decoy keywords (30 near phrases) in listening and the second opinion, the owner's own takes drop decoys, a worst-150-ms DTW check, level-normalised confirm.

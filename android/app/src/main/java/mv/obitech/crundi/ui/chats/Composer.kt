@@ -24,6 +24,21 @@ import java.util.Locale
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,6 +102,12 @@ interface ComposerActions {
     fun tasks() {}
     /** Swap what the keyboard's Enter does: send, or a new line. */
     fun toggleEnter() {}
+    /** The mic (ChatVoice): the finger went down, is still down after [ChatVoice.HOLD_MS], came up after [heldMs]. */
+    fun voicePress() {}
+    fun voiceHold() {}
+    fun voiceRelease(heldMs: Long) {}
+    /** Voice mode on or off without the gesture (TalkBack's double tap). */
+    fun voiceToggle() {}
 }
 
 /** The status line's first words (the web's stateLbl). */
@@ -133,6 +154,8 @@ fun Composer(
     enterSends: Boolean = true,
     /** The chat's id, so Mini (ui.mini) knows where the box, Send and the queued message are. */
     miniId: String? = null,
+    /** The mic beside Send and what it hears (ChatVoice); null hides it (an older server, no voice key, a collaborator). */
+    voice: ChatVoiceUi? = null,
 ) {
     Column(modifier.fillMaxWidth().background(CrundiColors.BgSecondary).miniTarget(miniId, "composer")) {
         Box(Modifier.fillMaxWidth().height(Dimens.Hairline).background(CrundiColors.Border))
@@ -173,6 +196,7 @@ fun Composer(
                 }
                 Text("${(u.fraction * 100).toInt()}%", style = CrundiType.Meta, modifier = Modifier.widthIn(min = 34.dp))
             }
+            if (voice != null) VoiceLine(voice)
             Row(Modifier.fillMaxWidth().padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 BoxButton("paperclip", "Attach a file", actions::attach, enabled = !ended && uploads.isEmpty())
                 Box {
@@ -192,6 +216,7 @@ fun Composer(
                     CrundiIcon("stop", size = 15.dp, tint = CrundiColors.Red, contentDescription = "Stop")
                     if (stopArmed) Text("Sure?", style = CrundiType.Meta.copy(color = CrundiColors.Red, fontFamily = CrundiType.Sans))
                 }
+                if (voice != null) MicButton(voice, actions, enabled = !ended)
                 CrundiButton(
                     if (busy) "Queue" else "Send", actions::send, kind = ButtonKind.Primary, icon = if (busy) "layers" else "send",
                     enabled = !ended && canSend && draft.isNotBlank(), modifier = Modifier.weight(1f).height(40.dp).miniTarget(miniId, "send"),
@@ -217,6 +242,75 @@ fun Composer(
                 if (cost > 0) Text("$" + "%.4f".format(Locale.US, cost), style = CrundiType.Meta.copy(fontSize = 10.5.sp))
             }
         }
+    }
+}
+
+/**
+ * The mic beside Send: a tap turns voice mode on (lit) or off, a hold is
+ * push to talk. The press is decided here, by time; what it means is
+ * ChatVoice's.
+ */
+@Composable
+private fun MicButton(voice: ChatVoiceUi, actions: ComposerActions, enabled: Boolean) {
+    val act by rememberUpdatedState(actions)
+    val lit = voice.lit
+    val holding = voice.mode == ChatVoiceUi.Mode.Holding
+    Box(
+        Modifier.size(40.dp).clip(Dimens.ShapeSm)
+            .background(if (lit) CrundiColors.AccentDim else CrundiColors.BgPrimary)
+            .border(if (lit) 1.5.dp else Dimens.Hairline, if (lit) CrundiColors.Accent else CrundiColors.Border, Dimens.ShapeSm)
+            .semantics(mergeDescendants = true) {
+                contentDescription = ChatVoice.LABEL
+                role = Role.Button
+                stateDescription = when { holding -> "Listening while held"; voice.mode == ChatVoiceUi.Mode.On -> "Voice mode on"; else -> "Voice mode off" }
+                if (enabled) onClick(label = if (voice.mode == ChatVoiceUi.Mode.On) "Turn voice mode off" else "Turn voice mode on") { act.voiceToggle(); true } else disabled()
+            }
+            .then(if (!enabled) Modifier else Modifier.pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown()
+                    val t0 = System.currentTimeMillis()
+                    act.voicePress()
+                    val up = withTimeoutOrNull(ChatVoice.HOLD_MS) { waitForUpOrCancellation() }
+                    if (up == null && currentEvent.changes.any { it.pressed }) {
+                        act.voiceHold()
+                        waitForUpOrCancellation()
+                    }
+                    act.voiceRelease(System.currentTimeMillis() - t0)
+                }
+            }),
+        contentAlignment = Alignment.Center,
+    ) { CrundiIcon("mic", size = 16.dp, tint = if (!enabled) CrundiColors.TextMuted else if (lit) CrundiColors.AccentHover else CrundiColors.TextSecondary) }
+}
+
+/** Over the buttons while the mic is on: what it hears, live, or that Claude is speaking; or a note. */
+@Composable
+private fun VoiceLine(voice: ChatVoiceUi) {
+    val words = when {
+        voice.note != null && !voice.lit -> voice.note
+        voice.speaking -> "Claude is speaking…"
+        voice.mode == ChatVoiceUi.Mode.Finishing -> voice.interim.ifEmpty { "Sending what you said…" }
+        voice.interim.isNotEmpty() -> voice.interim
+        voice.connecting -> "Starting the microphone…"
+        voice.mode == ChatVoiceUi.Mode.Holding -> "Listening while you hold…"
+        voice.lit -> "Listening…"
+        else -> return
+    }
+    val live = voice.lit && voice.note == null || voice.speaking
+    Row(
+        Modifier.fillMaxWidth().padding(top = 7.dp).clip(RoundedCornerShape(8.dp))
+            .background(if (live) CrundiColors.Accent.copy(alpha = 0.08f) else CrundiColors.BgTertiary)
+            .border(Dimens.Hairline, if (live) CrundiColors.Accent.copy(alpha = 0.45f) else CrundiColors.Border, RoundedCornerShape(8.dp))
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (voice.speaking || voice.connecting || voice.mode == ChatVoiceUi.Mode.Finishing) Spinner(9.dp)
+        else if (voice.lit) Dot(CrundiColors.Red, 7.dp)
+        else CrundiIcon("info", size = 13.dp, tint = CrundiColors.TextMuted)
+        Text(
+            words, style = ChatType.Small.copy(color = if (voice.interim.isNotEmpty() && voice.lit) CrundiColors.TextPrimary else CrundiColors.TextSecondary),
+            maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
     }
 }
 

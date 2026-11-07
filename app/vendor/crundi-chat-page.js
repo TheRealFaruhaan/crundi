@@ -718,6 +718,8 @@
         project: meta.project,
         apiFetch: apiFetch,
         apiUpload: apiUpload,
+        // For the voice input's own socket (/api/voice/listen).
+        token: function () { return token; },
         toast: toast,
         wsSend: wsSend,
         toolExtra: toolExtra,

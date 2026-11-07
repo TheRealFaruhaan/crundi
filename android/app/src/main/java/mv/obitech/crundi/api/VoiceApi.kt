@@ -159,6 +159,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val PHONE_ACTIONS = "voice-phone-actions"
         /** POST /api/voice/cancel, { type: 'discard' } both ways on the stream. */
         const val CANCEL = "voice-cancel"
+        /** Voice mode in a chat: the composer's mic, and the chat's voice-say events (Claude's speak tool). */
+        const val CHAT_VOICE = "chat-voice"
         /** GET /api/voice/cues and its clips. */
         const val CUES = "voice-cues"
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
