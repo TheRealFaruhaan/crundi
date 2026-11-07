@@ -54,7 +54,13 @@ if (iEnd >= lines.length) throw new Error('Could not find the end of handleResul
 const seg = (a, b) => lines.slice(a, b).join('\n');
 const setStateFn = src.match(/function setState\(s, state\) \{[^]*?\n {2}\}/)[0];
 
-const { handleMessage } = new Function(`
+import { mkdtempSync, writeFileSync, appendFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+const deps = { join, statSync, openSync, readSync, closeSync, dir: mkdtempSync(join(tmpdir(), 'waiting-')) };
+const { handleMessage } = new Function('deps', `
+  const { join, statSync, openSync, readSync, closeSync } = deps;
+  function transcriptDir() { return deps.dir; }
+  const sessions = new Map();
   const MAX_TEXT = 4000, MAX_MESSAGES = 500;
   let n = 0; const nextSeq = () => ++n; const genId = () => 'i' + (++n);
   function handleAgentAssistant(){} function handleAgentUser(){} function handleHookFeedback(){}
@@ -73,7 +79,7 @@ const { handleMessage } = new Function(`
     }
   }
   return { handleMessage };
-`)();
+`)(deps);
 
 const states = [];
 const session = {
@@ -101,6 +107,38 @@ console.log(`replayed ${replayed} real wire messages`);
 check('state sequence', seen === want, seen);
 check('does not end stuck on waiting', session.state === 'idle', session.state);
 check('nothing left outstanding', session.waiting.size === 0, session.waiting.size);
+
+// The owner writes while a background command still runs: his turn ends, the
+// command has not, so the chat is still waiting; it settles once the CLI's
+// transcript says the task finished.
+{
+  const st2 = [];
+  const s2 = {
+    state: 'idle', waiting: new Map(), messages: [], blocks: new Map(), streamedQueue: [],
+    goal: null, emitter: { emit() {} }, onStateChange: (_id, st) => st2.push(st), sessionId: 'S1', cwd: '/somewhere',
+  };
+  const file = join(deps.dir, 'S1.jsonl');
+  writeFileSync(file, '{"type":"user"}\n');
+  const say = (text) => handleMessage(s2, { type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  handleMessage(s2, { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 600', run_in_background: true } }] } });
+  handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: b42fon2a4. Output is being written to: /tmp/x.output' }] } });
+  say('Started it.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('a turn that started a command ends waiting', s2.state === 'waiting', s2.state);
+  say('Answering the owner\'s new message.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('the owner\'s next turn ends while it still runs: still waiting', s2.state === 'waiting', s2.state);
+  appendFileSync(file, JSON.stringify({ type: 'queue-operation', operation: 'enqueue', content: '<task-notification>\n<task-id>b42fon2a4</task-id>\n<status>completed</status>' }) + '\n');
+  say('The command finished.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('once the transcript says it finished, idle', s2.state === 'idle' && s2.waiting.size === 0, s2.state);
+  // Claude stopping it counts as finished too.
+  handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't2', content: 'Command running in background with ID: c9x. Output…' }] } });
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't3', content: '{"message":"Successfully stopped task: c9x"}' }] } });
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('a task Claude stopped is not waited on', s2.state === 'idle', s2.state);
+}
 
 if (failures) {
   console.error(`\n${failures} failure(s). Expected: ${want}`);

@@ -2074,14 +2074,74 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   const BG_LAUNCH_RE = /(?:running in background with ID|moved to the background \(ID):\s*([a-z0-9]+)/i;
   const MONITOR_LAUNCH_RE = /Monitor started \(task ([a-z0-9]+), timeout (\d+)ms/i;
 
-  /** Note that this turn started something that will call back later. */
+  const TASK_STOPPED_RE = /stopped task:?\s*([a-z0-9]+)/i;
+  /** The longest a background command may run (Claude Code's own cap). */
+  const BG_MAX_MS = 2 * 60 * 60 * 1000;
+
+  /** Note that this turn started something that will call back later (or that Claude stopped one). */
   function noteTriggerLaunch(s, text) {
     const t = String(text || '');
+    const now = Date.now();
     const mon = MONITOR_LAUNCH_RE.exec(t);
-    if (mon) { s.waiting.set(mon[1], 'monitor'); return; }
+    if (mon) { s.waiting.set(mon[1], { label: 'monitor', until: now + Math.min(Number(mon[2]) || BG_MAX_MS, BG_MAX_MS) + 5000 }); return; }
     const bg = BG_LAUNCH_RE.exec(t);
-    if (bg) s.waiting.set(bg[1], 'background command');
+    if (bg) { s.waiting.set(bg[1], { label: 'background command', until: now + BG_MAX_MS }); return; }
+    const stopped = TASK_STOPPED_RE.exec(t);
+    if (stopped) s.waiting.delete(stopped[1]);
   }
+
+  /**
+   * Which background tasks have finished, from the CLI's own transcript: the
+   * completion is never sent over stream-json, but the CLI writes it there
+   * (a queue-operation / queued_command carrying <task-notification> with the
+   * <task-id>). Read from the tail only. null when the transcript cannot be
+   * read (an unknown session, another HOME): then nothing is known, and
+   * "waiting" falls back to lasting one turn.
+   */
+  function finishedTasks(s) {
+    if (!s.sessionId || !s.cwd) return null;
+    const file = join(transcriptDir(s.cwd), s.sessionId + '.jsonl');
+    let fd;
+    try {
+      const size = statSync(file).size;
+      const len = Math.min(size, 512 * 1024);
+      const buf = Buffer.alloc(len);
+      fd = openSync(file, 'r');
+      readSync(fd, buf, 0, len, size - len);
+      const done = new Set();
+      const re = /<task-notification>[\s\S]{0,40}?<task-id>([a-z0-9]+)<\/task-id>/g;
+      const text = buf.toString('utf8');
+      let m;
+      while ((m = re.exec(text))) done.add(m[1]);
+      return done;
+    } catch { return null; }
+    finally { if (fd !== undefined) { try { closeSync(fd); } catch { /* closed */ } } }
+  }
+
+  /**
+   * Cross off what has finished, been stopped or timed out. Returns false
+   * when finishing cannot be seen (no transcript): the caller then keeps the
+   * old one-turn scope.
+   */
+  function retireTriggers(s) {
+    if (!s.waiting.size) return true;
+    const done = finishedTasks(s);
+    if (!done) return false;
+    const now = Date.now();
+    for (const [id, w] of s.waiting) if (done.has(id) || (w && w.until && now > w.until)) s.waiting.delete(id);
+    return true;
+  }
+
+  // A chat left "waiting" is looked at again now and then: its task may
+  // finish while nothing else happens (the CLI only speaks again if Claude
+  // decides to).
+  const WAITING_RECHECK_MS = 15 * 1000;
+  setInterval(() => {
+    for (const s of sessions.values()) {
+      if (s.state !== 'waiting') continue;
+      if (retireTriggers(s) && !s.waiting.size) setState(s, 'idle');
+    }
+  }, WAITING_RECHECK_MS).unref?.();
 
   /** How many callbacks this turn armed. Reset by handleResult. */
   function activeTriggers(s) {
@@ -2105,10 +2165,13 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       numTurns: msg.num_turns || 0, isError: !!msg.is_error,
       text: msg.subtype && msg.subtype !== 'success' ? String(msg.result || msg.subtype) : '',
     });
+    // Background work is followed across turns: a message the owner sends
+    // while a command runs must not make the chat read idle when its own turn
+    // ends. Finished tasks are crossed off from the CLI's transcript; where
+    // that cannot be read, the only honest scope is the turn that armed it.
+    const known = retireTriggers(s);
     setState(s, activeTriggers(s) ? 'waiting' : 'idle');
-    // Cleared every turn: the completion notification never reaches us, so the
-    // only honest scope for "waiting" is the turn that armed it.
-    s.waiting.clear();
+    if (!known) s.waiting.clear();
     s.turns = (s.turns || 0) + 1;
     scheduleIdleRecap(s);
     if (!s.factory && !s.background) for (const cb of turnEndCbs) { try { cb(s.id); } catch { /* the listener's problem */ } }
