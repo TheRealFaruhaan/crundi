@@ -236,7 +236,8 @@ const googleOk = (state) => {
   check('Settings status never carries a client secret', !st.includes('G-SECRET') && !st.includes('H-SECRET') && !st.includes('H-NEW-SECRET') && !/clientSecret/.test(st));
   check('Settings status says whether a secret is set', auth.status().oauth.github.secretSet === true);
   const mode = statSync(join(process.env.DATA_DIR, 'auth.json')).mode & 0o777;
-  check('the file holding the secrets is 0600', mode === 0o600, mode.toString(8));
+  // Windows has no Unix permission bits (a file always reads back 666 there).
+  if (process.platform !== 'win32') check('the file holding the secrets is 0600', mode === 0o600, mode.toString(8));
 }
 
 // ─── The routes: what the browser is given ───
