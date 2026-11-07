@@ -2075,6 +2075,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   const MONITOR_LAUNCH_RE = /Monitor started \(task ([a-z0-9]+), timeout (\d+)ms/i;
 
   const TASK_STOPPED_RE = /stopped task:?\s*([a-z0-9]+)/i;
+  // A background agent (the Agent tool, run in the background): its finish
+  // reaches the transcript as a <task-notification> with its agentId.
+  const AGENT_LAUNCH_RE = /Async agent launched successfully[\s\S]{0,600}?agentId:\s*([a-z0-9]+)/i;
+  /** A background agent can work for hours; past this it is no longer waited on. */
+  const AGENT_MAX_MS = 6 * 60 * 60 * 1000;
   /** The longest a background command may run (Claude Code's own cap). */
   const BG_MAX_MS = 2 * 60 * 60 * 1000;
 
@@ -2086,6 +2091,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (mon) { s.waiting.set(mon[1], { label: 'monitor', until: now + Math.min(Number(mon[2]) || BG_MAX_MS, BG_MAX_MS) + 5000 }); return; }
     const bg = BG_LAUNCH_RE.exec(t);
     if (bg) { s.waiting.set(bg[1], { label: 'background command', until: now + BG_MAX_MS }); return; }
+    const ag = AGENT_LAUNCH_RE.exec(t);
+    if (ag) { s.waiting.set(ag[1], { label: 'background agent', until: now + AGENT_MAX_MS }); return; }
     const stopped = TASK_STOPPED_RE.exec(t);
     if (stopped) s.waiting.delete(stopped[1]);
   }

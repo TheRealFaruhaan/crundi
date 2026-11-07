@@ -138,6 +138,18 @@ check('nothing left outstanding', session.waiting.size === 0, session.waiting.si
   handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't3', content: '{"message":"Successfully stopped task: c9x"}' }] } });
   handleMessage(s2, { type: 'result', subtype: 'success' });
   check('a task Claude stopped is not waited on', s2.state === 'idle', s2.state);
+  // A background agent (the Agent tool): waited on until its notification arrives.
+  handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't4', content: [{ type: 'text', text: 'Async agent launched successfully. (This tool result is internal metadata.)\nagentId: ad385e50c0d7da50d (internal ID)' }] }] } });
+  say('Three agents are working.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('a turn that started a background agent ends waiting', s2.state === 'waiting', s2.state);
+  say('Answering something else meanwhile.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('and stays waiting while the agent works', s2.state === 'waiting', s2.state);
+  appendFileSync(file, JSON.stringify({ type: 'queue-operation', operation: 'enqueue', content: '<task-notification>\n<task-id>ad385e50c0d7da50d</task-id>\n<status>completed</status>' }) + '\n');
+  say('The agent finished.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('once the agent has reported, idle', s2.state === 'idle', s2.state);
 }
 
 if (failures) {
