@@ -135,6 +135,16 @@ class ChatsScreens : ScreenshotTest() {
         ChatScreen(ChatUi(chat(0), voice = recording(1f), voiceLevels = levels), noChat)
     }
 
+    /** Turned on while Cru listens: the chat asks to take the microphone. */
+    @Test fun chatVoiceAskSwitch() = snap("chats-chat-voice-ask-switch") {
+        ChatScreen(ChatUi(chat(0), voice = mv.obitech.crundi.ui.chats.ChatVoiceUi(askSwitch = true)), noChat)
+    }
+
+    /** Cru opened on purpose: voice mode waits, and goes on by itself after. */
+    @Test fun chatVoicePausedForCru() = snap("chats-chat-voice-paused") {
+        ChatScreen(ChatUi(chat(0), voice = mv.obitech.crundi.ui.chats.ChatVoiceUi(mode = mv.obitech.crundi.ui.chats.ChatVoiceUi.Mode.Paused)), noChat)
+    }
+
     @Test fun chatLoading() = snap("chats-chat-loading") {
         ChatScreen(ChatUi(ChatState("a1b2c3d4e5f60718")), noChat)
     }

@@ -1,0 +1,14 @@
+<div class="wna a-tov">
+  <div class="say">"There are three items left: the Android build, the</div>
+  <div class="pause">Paused</div>
+  <div class="box">and the release notes too</div>
+  <style>
+    .a-tov{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-tov .say{position:absolute;left:150px;top:60px;width:340px;font-size:14px;font-style:italic;color:var(--text-secondary);animation:atov-s 7s ease infinite}
+    .a-tov .pause{position:absolute;left:150px;top:100px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);opacity:0;animation:atov-p 7s ease infinite}
+    .a-tov .box{position:absolute;left:150px;top:150px;width:340px;padding:10px 12px;border-radius:8px;border:1px solid var(--accent);background:var(--bg-secondary);font-size:14px;opacity:0;animation:atov-b 7s ease infinite}
+    @keyframes atov-s{0%,35%{opacity:1}45%,80%{opacity:.35}90%,100%{opacity:1}}
+    @keyframes atov-p{0%,35%{opacity:0}45%,80%{opacity:1}90%,100%{opacity:0}}
+    @keyframes atov-b{0%,38%{opacity:0;transform:translateY(5px)}48%,82%{opacity:1;transform:none}92%,100%{opacity:0}}
+  </style>
+</div>

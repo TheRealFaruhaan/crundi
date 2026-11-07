@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -141,6 +142,8 @@ interface ComposerActions {
     /** Cancel tapped: drop the words being heard; with none, voice mode off. */
     fun voiceCancel() {}
     fun voiceOff() {}
+    /** "Cru is listening. Switch to this chat?" answered. */
+    fun voiceSwitch(yes: Boolean) {}
 }
 
 /** The status line's first words (the web's stateLbl). */
@@ -214,7 +217,10 @@ fun Composer(
                     }
                 }
             }
-            ComposerField(
+            // Recording: the box shows the whole live transcript (the bar has
+            // only room for its end); the typed draft is kept and comes back.
+            if (voice != null && voice.recording) LiveTranscript(voice)
+            else ComposerField(
                 draft, actions::draft,
                 placeholder = if (ended) "Session ended." else "Message Claude…",
                 enabled = !ended,
@@ -231,6 +237,7 @@ fun Composer(
                 }
                 Text("${(u.fraction * 100).toInt()}%", style = CrundiType.Meta, modifier = Modifier.widthIn(min = 34.dp))
             }
+            if (voice != null && voice.askSwitch) SwitchPrompt(actions)
             if (voice != null) VoiceLine(voice)
             val recording = voice?.recording == true
             val geo = remember { VoiceGeometry() }
@@ -373,9 +380,9 @@ private fun RecordingBar(voice: ChatVoiceUi, levels: StateFlow<List<Float>>?, mo
     val over = voice.overCancel
     val words = when {
         over -> "Let go to cancel"
-        voice.mode == ChatVoiceUi.Mode.Finishing -> voice.interim.ifEmpty { "Sending what you said…" }
+        voice.mode == ChatVoiceUi.Mode.Finishing -> "Sending…"
         voice.speaking -> "Claude is speaking…"
-        voice.hasWords -> ChatVoice.tail(voice.interim)
+        voice.transcript.isNotBlank() -> ""
         voice.connecting -> "Starting the microphone…"
         voice.mode == ChatVoiceUi.Mode.Holding -> "Slide to the x to cancel"
         else -> "Listening…"
@@ -400,10 +407,47 @@ private fun RecordingBar(voice: ChatVoiceUi, levels: StateFlow<List<Float>>?, mo
             }
         }
         // The newest words: a line too long for the bar shows its end, cut at the left.
-        Box(Modifier.weight(1f).clipToBounds(), contentAlignment = if (voice.hasWords && !over) Alignment.CenterEnd else Alignment.CenterStart) {
-            Text(words, style = ChatType.Small.copy(color = Color.White), maxLines = 1, softWrap = false,
-                modifier = if (voice.hasWords && !over) Modifier.wrapContentWidth(Alignment.End, unbounded = true) else Modifier, overflow = if (voice.hasWords && !over) TextOverflow.Clip else TextOverflow.Ellipsis)
+        // The words themselves are in the message box above (LiveTranscript); this says what is happening.
+        Box(Modifier.weight(1f).clipToBounds(), contentAlignment = Alignment.CenterStart) {
+            Text(words, style = ChatType.Small.copy(color = Color.White), maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+/**
+ * The message box while recording: everything heard so far, live (the
+ * finished sentences of a hold and the one in progress), wrapping and
+ * following the newest words; "Listening…" until something is heard. Read
+ * only: what is sent is what was said.
+ */
+@Composable
+private fun LiveTranscript(voice: ChatVoiceUi) {
+    val text = voice.transcript
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    LaunchedEffect(text) { scroll.animateScrollTo(scroll.maxValue) }
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp, max = 150.dp).clip(shape)
+            .background(CrundiColors.BgPrimary)
+            .border(1.dp, if (voice.overCancel) CrundiColors.Red else CrundiColors.Accent, shape)
+            .semantics { liveRegion = LiveRegionMode.Polite; contentDescription = if (text.isBlank()) "Listening" else "Heard: $text" }
+            .verticalScroll(scroll)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+    ) {
+        Text(
+            when {
+                voice.overCancel -> if (text.isBlank()) "Let go to cancel" else text
+                text.isNotBlank() -> text
+                voice.speaking -> "Claude is speaking…"
+                voice.connecting -> "Starting the microphone…"
+                else -> "Listening…"
+            },
+            style = CrundiType.Body.copy(color = when {
+                voice.overCancel -> CrundiColors.Red
+                text.isNotBlank() -> CrundiColors.TextPrimary
+                else -> CrundiColors.TextMuted
+            }),
+        )
     }
 }
 
@@ -431,10 +475,11 @@ private fun CancelButton(voice: ChatVoiceUi, actions: ComposerActions, geo: Voic
 /** Over the buttons while the mic is on: what it hears, live, or that Claude is speaking; or a note. */
 @Composable
 private fun VoiceLine(voice: ChatVoiceUi) {
-    // Recording, the bar has the words; only long ones are shown whole here too.
-    if (voice.recording && !(voice.hasWords && ChatVoice.tail(voice.interim) != voice.interim.trim() && !voice.overCancel)) return
+    // Recording, the message box has the words; only a note is said here.
+    if (voice.recording && voice.note == null) return
     val words = when {
-        voice.note != null && !voice.lit -> voice.note
+        voice.mode == ChatVoiceUi.Mode.Paused -> ChatVoice.PAUSED_FOR_CRU
+        voice.note != null -> voice.note
         voice.speaking -> "Claude is speaking…"
         voice.mode == ChatVoiceUi.Mode.Finishing -> voice.interim.ifEmpty { "Sending what you said…" }
         voice.interim.isNotEmpty() -> voice.interim
@@ -453,12 +498,30 @@ private fun VoiceLine(voice: ChatVoiceUi) {
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (voice.speaking || voice.connecting || voice.mode == ChatVoiceUi.Mode.Finishing) Spinner(9.dp)
-        else if (voice.lit) Dot(CrundiColors.Red, 7.dp)
+        else if (voice.mode == ChatVoiceUi.Mode.Paused) CrundiIcon("pause", size = 13.dp, tint = CrundiColors.AccentHover)
+        else if (voice.lit && voice.note == null) Dot(CrundiColors.Red, 7.dp)
         else CrundiIcon("info", size = 13.dp, tint = CrundiColors.TextMuted)
         Text(
             words, style = ChatType.Small.copy(color = if (voice.interim.isNotEmpty() && voice.lit) CrundiColors.TextPrimary else CrundiColors.TextSecondary),
             maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
         )
+    }
+}
+
+/** Cru has the microphone: "Switch to this chat?" with Not now and Yes. */
+@Composable
+private fun SwitchPrompt(actions: ComposerActions) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 7.dp).clip(RoundedCornerShape(8.dp)).background(CrundiColors.Accent.copy(alpha = 0.08f))
+            .border(Dimens.Hairline, CrundiColors.Accent.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+            .semantics { liveRegion = LiveRegionMode.Polite }
+            .padding(start = 10.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CrundiIcon("mic", size = 14.dp, tint = CrundiColors.AccentHover)
+        Text(ChatVoice.ASK_SWITCH, style = ChatType.Small.copy(color = CrundiColors.TextPrimary), modifier = Modifier.weight(1f))
+        CrundiButton("Not now", { actions.voiceSwitch(false) }, kind = ButtonKind.Ghost)
+        CrundiButton("Yes", { actions.voiceSwitch(true) }, kind = ButtonKind.Primary)
     }
 }
 

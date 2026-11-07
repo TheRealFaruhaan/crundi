@@ -127,6 +127,8 @@ class VoiceController(
         // One microphone owner: "Hey Cru" lets go of it before the session takes it.
         holdsMic = true
         HeyCrundi.sessionOpened()
+        // A chat in voice mode may ask for the microphone ("Switch to this chat?"): this is how it closes the session.
+        HeyCrundi.sessionCloser { close() }
         dispatch(VoiceEvent.Opened(isLocked(), now(), cancellable = VoiceApi.CANCEL in caps))
         VoiceMicService.start(ctx)
         scope.launch { voice.warm() }
@@ -466,7 +468,7 @@ class VoiceController(
         synchronized(preroll) { preroll.clear() }
         held.clear()
         VoiceMicService.stop(ctx)
-        if (holdsMic) { holdsMic = false; HeyCrundi.sessionClosed() }
+        if (holdsMic) { holdsMic = false; HeyCrundi.sessionCloser(null); HeyCrundi.sessionClosed() }
     }
 
     private fun block(why: String) {

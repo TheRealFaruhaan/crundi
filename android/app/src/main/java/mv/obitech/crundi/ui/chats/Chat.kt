@@ -689,7 +689,11 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
     val voiceLifecycle = LocalLifecycleOwner.current
     DisposableEffect(voiceLifecycle, voiceSession) {
         val owner = voiceLifecycle
-        val obs = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_STOP) voiceSession.stop() }
+        // Behind Cru's own screen it pauses and goes on when back; behind anything else it ends (ChatVoice.handover).
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_STOP) voiceSession.foreground(false)
+            if (e == Lifecycle.Event.ON_START) voiceSession.foreground(true)
+        }
         owner.lifecycle.addObserver(obs)
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
@@ -890,6 +894,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         override fun voiceSendNow() { if (!voiceSession.sendNow() && ui.draft.isNotBlank()) send() }
         override fun voiceCancel() = voiceSession.cancel()
         override fun voiceOff() = voiceSession.stop()
+        override fun voiceSwitch(yes: Boolean) = voiceSession.switchAnswer(yes)
         override fun voiceToggle() { if (micAllowed()) voiceSession.toggle() else askMic.launch(android.Manifest.permission.RECORD_AUDIO) }
         override fun wake(mode: String) = wakeChat(mode, null, known = true)
         override fun stop() {

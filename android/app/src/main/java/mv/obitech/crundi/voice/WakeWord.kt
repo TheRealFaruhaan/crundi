@@ -200,6 +200,8 @@ object HeyCrundi {
 
     /** A voice session took the microphone: the wake word lets go of it first (synchronously). */
     fun sessionOpened() {
+        // A chat in voice mode lets go of the microphone first.
+        opening?.invoke()
         main.removeCallbacks(endHandOver)
         update { it.copy(sessionOpen = true, handingOver = false) }
     }
@@ -208,6 +210,21 @@ object HeyCrundi {
 
     /** A voice session (the voice screen or the side-key overlay) holds the microphone now. */
     val sessionOpen: Boolean get() = situation.sessionOpen
+
+    private var closer: (() -> Unit)? = null
+    private var opening: (() -> Unit)? = null
+
+    /** A chat in voice mode: called (main thread, synchronously) as a voice session takes the microphone; null to stop. */
+    fun onSessionOpening(f: (() -> Unit)?) { opening = f }
+
+    /** The open voice session says how to close it (a chat asking for the microphone); null once it has closed. */
+    fun sessionCloser(close: (() -> Unit)?) { closer = close }
+
+    /** Close Cru's voice session, for a chat taking the microphone. False when none is open. Main thread. */
+    fun closeSession(): Boolean { val c = closer ?: return false; c(); return true }
+
+    /** "Hey Cru" is listening now (in the app, in the background, or the asleep voice screen). */
+    val wakeListening: Boolean get() = _listening.value != HeyCrundiPlan.Listener.None
 
     /** A chat's voice mode took the microphone (on) or let go of it: the wake word lets go of it meanwhile (synchronously). */
     fun chatVoice(on: Boolean) = update { it.copy(chatVoice = on) }

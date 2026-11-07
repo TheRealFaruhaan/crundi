@@ -274,9 +274,20 @@
 
   var S = null;   // the open session
 
+  /**
+   * Hand-over with a chat's voice mode (claude-chat.js): 'crundi-voice-open'
+   * on window as the screen opens (before it asks for the microphone), so a
+   * chat listening lets go of it and pauses; 'crundi-voice-close' when it
+   * closes, so that chat carries on.
+   */
+  function announce(name, detail) {
+    try { window.dispatchEvent(new CustomEvent(name, { detail: detail || {} })); } catch (e) { /* an old browser: nobody listens */ }
+  }
+
   function open(opts) {
     if (S) return;
     opts = opts || {};
+    announce('crundi-voice-open', { how: opts.how || '' });
     if (!document.getElementById('cv-css')) { var st = el('style'); st.id = 'cv-css'; st.textContent = CSS; document.head.appendChild(st); }
     var ov = el('div', 'cv-ov');
     ov.innerHTML =
@@ -374,6 +385,7 @@
   function close() {
     if (!S) return;
     var s = S; S = null;
+    announce('crundi-voice-close', {});
     try { if (s.wake) s.wake.release(); } catch (e) { /* gone */ }
     if (s.onVis) document.removeEventListener('visibilitychange', s.onVis);
     cancelAnimationFrame(s.raf); clearInterval(s.timer);
@@ -1089,7 +1101,8 @@
     var hoverTimer = null;
     var openWith = function (how) { var o = getOpts() || {}; o.anchor = button; o.how = how; open(o); };
     button.addEventListener('click', function (e) { e.stopPropagation(); clearTimeout(hoverTimer); if (S) { if (S.how === 'hover') S.how = 'click'; else close(); } else openWith('click'); });
-    button.addEventListener('mouseenter', function () { if (window.innerWidth < 900 || S) return; hoverTimer = setTimeout(function () { if (!S) openWith('hover'); }, 350); });
+    // Hovering is not asking: while a chat is in voice mode it keeps the microphone.
+    button.addEventListener('mouseenter', function () { if (window.innerWidth < 900 || S || (window.CrundiChat && window.CrundiChat.voiceActive === true)) return; hoverTimer = setTimeout(function () { if (!S) openWith('hover'); }, 350); });
     button.addEventListener('mouseleave', function () { clearTimeout(hoverTimer); if (S) maybeLeave(); });
     var held = false;
     window.addEventListener('keydown', function (e) {
@@ -1142,6 +1155,8 @@
   }
 
   window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
+    // The own-voice tools, shared with a chat's voice mode (claude-chat.js), which talks over its replies the same way.
+    kit: { createGate: createGate, createPreroll: createPreroll, voicedShare: voicedShare, makeLoopback: makeLoopback },
     // The PC's "Hey Cru" (app/voice-wake/controller.js): an asleep screen has let the microphone go, and is woken where it is.
     get holdsMic() { return !!S && !S.micOff; }, wake: function () { if (S && S.micOff) { wakeMic(); return true; } return false; } };
 })();

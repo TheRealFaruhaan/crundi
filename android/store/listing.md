@@ -61,6 +61,20 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.24 (en-US)
+
+Version code 55. Internal track. Since 1.1.3-dev.23 (code 54): LiveTranscript in the message box; talking over the reply pauses it (OwnerGate, call audio, pre-roll), resumes sentence by sentence; replies wait behind the owner; mic hand-over with Cru (ask to switch, pause/resume, wake word off).
+
+```
+<en-US>
+Talk over the reply.
+
+- In voice mode, talk while Claude speaks: the reply pauses and carries on after you. A reply that arrives while you talk waits for you.
+- The message box shows your whole live transcript.
+- Chat voice and Cru share the mic sensibly: it asks before taking over, and pauses and resumes.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.23 (en-US)
 
 Version code 54. Internal track. Since 1.1.3-dev.22 (code 53): hold-to-record composer (recording bar, mic as send, slide to cancel); inbox bubbles (InboxBubbleActivity, InboxNotify); notification opens the inbox thread; menu dot and NewMessageFlash; project icons in inbox rows.

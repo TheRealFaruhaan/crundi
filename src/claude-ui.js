@@ -902,7 +902,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * task_id only) and task_notification (final status, summary, usage).
    */
   function handleTaskEvent(s, msg) {
-    const toolUseId = msg.tool_use_id || s.agentsByTask.get(msg.task_id) || '';
+    // One entry per task. An agent resumed with a message (SendMessage)
+    // starts again under the new call's id, but its progress and its end
+    // come under the first: everything of a task the chat already knows
+    // goes to that task's entry, which is revived on a new start.
+    const known = msg.task_id ? s.agentsByTask.get(msg.task_id) : '';
+    const toolUseId = (known && s.agents.has(known) ? known : '') || msg.tool_use_id || known || '';
     if (!toolUseId) return;
     // These events cover every kind of background task the CLI tracks, not just
     // subagents — a background Bash command and a Monitor raise them too. Both
@@ -919,6 +924,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     if (msg.task_id) { a.taskId = msg.task_id; s.agentsByTask.set(msg.task_id, toolUseId); }
 
     if (msg.subtype === 'task_started') {
+      // Started again (resumed): running once more, its name kept.
+      if (a.endedAt) { a.endedAt = 0; a.summary = ''; a.dismissed = false; a.autoDismissed = false; }
       // Long enough to identify the job, short enough that the bubble stays a
       // bubble. The full text is on the tool row in the transcript.
       a.description = String(msg.description || a.description).slice(0, MAX_LABEL);

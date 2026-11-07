@@ -49,6 +49,8 @@ const LABELS = {
   installing: 'Downloading the wake word model…',
   'on-battery': 'Paused: on battery',
   'voice-open': 'Paused: voice screen open',
+  // Shown in place of voice-open (same state) while a chat has the microphone.
+  'chat-voice': 'Paused: a chat is listening',
   paused: 'Paused: screen locked',
   training: 'Paused while training',
   starting: 'Starting…',
@@ -68,8 +70,10 @@ const OPEN_SCRIPT = `(function () {
   return 'none';
 })()`;
 // 'open' (it has the microphone), 'asleep' (open, but it let the microphone
-// go: listen for "Hey Cru" to wake it), or 'closed'. An older page: open or closed.
-const IS_OPEN_SCRIPT = "(function () { var V = window.CrundiVoice; if (!V || !V.isOpen) return 'closed'; return V.holdsMic === false ? 'asleep' : 'open'; })()";
+// go: listen for "Hey Cru" to wake it), 'chat' (a chat is in voice mode or a
+// push to talk, CrundiChat.voiceActive: the microphone is taken, and "Hey Cru"
+// said there is words for that chat), or 'closed'. An older page: open or closed.
+export const IS_OPEN_SCRIPT = "(function () { var V = window.CrundiVoice; if (!V || !V.isOpen) { var C = window.CrundiChat; return C && C.voiceActive === true ? 'chat' : 'closed'; } return V.holdsMic === false ? 'asleep' : 'open'; })()";
 
 /**
  * @param {object} d
@@ -92,6 +96,7 @@ export function createVoiceWake(d) {
   let locked = false;
   let asleep = false;
   let voiceOpen = false;
+  let chatVoice = false;        // the microphone is a chat's (voice mode), not Cru's
   let installing = null;        // Promise while downloading
   let installError = '';
   let micState = 'stopped';     // from the window: loaded | listening | stopped | error
@@ -175,7 +180,7 @@ export function createVoiceWake(d) {
     return {
       enabled: on(),
       state,
-      label: state === 'error' ? 'Not listening: ' + String(error || 'error').slice(0, 80) : LABELS[state] || '',
+      label: state === 'error' ? 'Not listening: ' + String(error || 'error').slice(0, 80) : LABELS[state === 'voice-open' && chatVoice ? 'chat-voice' : state] || '',
       onBattery,
       installed: safeInstalled(),
       installing: !!installing,
@@ -307,9 +312,12 @@ export function createVoiceWake(d) {
       const st = open === true ? 'open' : open === false ? 'closed' : String(open || 'closed');
       const wasAsleep = screenAsleep;
       screenAsleep = st === 'asleep';
-      setVoiceOpen(st === 'open');
+      const wasChat = chatVoice;
+      chatVoice = st === 'chat';
+      setVoiceOpen(st === 'open' || st === 'chat');
+      if (wasChat !== chatVoice) emit();
       if (wasAsleep !== screenAsleep) { reconcile(); emit(); }
-    }, () => { clearTimeout(t); polling = false; screenAsleep = false; setVoiceOpen(false); });
+    }, () => { clearTimeout(t); polling = false; screenAsleep = false; chatVoice = false; setVoiceOpen(false); });
   }
   function setVoiceOpen(open) {
     if (open === voiceOpen) {

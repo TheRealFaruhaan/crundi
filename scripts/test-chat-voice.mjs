@@ -24,6 +24,7 @@ const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) faile
 const win = {};
 vm.runInNewContext(read('app', 'vendor', 'claude-chat.js'), { window: win });
 const V = win.CrundiChat && win.CrundiChat._voice;
+const cc = read('app', 'vendor', 'claude-chat.js');
 ok(!!V && typeof win.CrundiChat.mount === 'function', 'the component loads with its voice rules beside mount');
 
 // ─── Tap or hold ───
@@ -33,8 +34,57 @@ ok(V.pressKind(350) === 'hold' && V.pressKind(2000) === 'hold', 'a long press is
 
 // ─── Recording: the mic is send, cancel is at the far right ───
 ok(V.recording({ ptt: true }) && V.recording({ ptt: true, interim: '' }), 'a hold is recording from the moment it starts');
-ok(V.recording({ on: true, interim: 'open the' }) && !V.recording({ on: true, interim: '  ' }) && !V.recording({ on: true }), 'voice mode is recording while words are being heard, not while quiet');
-ok(!V.recording({ on: true, playing: true, interim: 'x' }) && !V.recording({}), 'not while Claude speaks; not at all when off: the composer is as before');
+ok(V.recording({ on: true }) && V.recording({ on: true, interim: 'open the' }), 'voice mode is recording the whole time it is on ("Listening…" in the box when quiet)');
+ok(V.recording({ sending: true }) && !V.recording({}), 'a hold let go stays recording until its words are sent; off, the composer is as before');
+
+// ─── The live transcript is in the message box ───
+ok(V.transcript(['Open the readme.', 'Then run the tests.'], 'and push') === 'Open the readme. Then run the tests. and push', 'the box shows every phrase of this recording, then the one in progress');
+ok(V.transcript([], '') === '' && V.transcript(null, 'so far') === 'so far', 'empty until something is heard (the box then says Listening…)');
+ok(V.status({}) === 'Listening' && V.status({ sending: true }) === 'Sending' && V.status({ playing: true }) === 'Speaking' && V.status({ playing: true, paused: true }) === 'Paused', 'Send\'s place shows only a short status beside the dot, time and level');
+ok(/function boxOn\(\)[\s\S]{0,200}draft: input\.value[\s\S]{0,120}input\.readOnly = true/.test(cc) && /function boxOff\(\)[\s\S]{0,300}input\.value = b\.draft/.test(cc), 'the box is read-only while it shows the transcript, and the typed draft comes back after');
+ok(/function doSend\(\) \{\s*\/\/[^\n]*\n\s*if \(vc && vc\.box\) return;/.test(cc) && /function saveDraft\(\) \{\s*if \(vc && vc\.box\) return;/.test(cc), 'the transcript is never sent by Enter nor saved as the draft');
+ok(cc.includes("input.placeholder = 'Listening…'") && cc.includes('input.scrollTop = input.scrollHeight'), 'it says Listening… when empty and follows the newest words');
+
+// ─── Replies wait for the owner, and pause when he talks over them ───
+const T0 = 1_900_000_000_000;
+ok(V.QUIET_MS === 1500, 'he has finished after 1.5 s without new words');
+ok(V.ownerTalking({ ptt: true, now: T0 }) && V.ownerTalking({ sending: true, now: T0 }), 'a hold, or its words being sent: a reply waits (or pauses)');
+ok(V.ownerTalking({ lastHeardAt: T0 - 1499, now: T0 }) && !V.ownerTalking({ lastHeardAt: T0 - 1500, now: T0 }), 'words within 1.5 s: still talking; 1.5 s quiet: the reply goes on');
+ok(!V.ownerTalking({ lastHeardAt: 0, now: T0 }) && !V.ownerTalking({ now: T0 }), 'his utterance sent (lastHeardAt 0): the reply goes on at once');
+ok(/if \(vc\.on && !late\) voiceSend\(e\.text, false\);\s*vc\.sentNow = null;\s*vc\.lastHeardAt = 0;/.test(cc), 'an utterance sent marks him finished');
+ok(/function replyTick\(\)[\s\S]{0,600}p\.pause\(\); micRelease\(false\)[\s\S]{0,300}micHold\(p\.text\); p\.resume\(\)/.test(cc), 'a reply pauses while he talks and carries on from where it was');
+ok(/function ownerSpoke\(\)[\s\S]{0,200}p\.pause\(\);\s*micRelease\(true\)/.test(cc), 'talking over it pauses the reply (not stopped) and sends his words from their start (the pre-roll)');
+ok(/function micAct\(\)[\s\S]{0,500}p && !p\.paused[\s\S]{0,120}p\.pause\(\)/.test(cc), 'a click on the mic while Claude talks pauses it too');
+ok(/function voiceCancelWords\(\)[\s\S]{0,200}speakStop\(\)/.test(cc) && /function voiceStop\(\)[\s\S]{0,400}speakStop\(\)/.test(cc), 'Cancel, or voice mode off, stops it for good');
+ok(cc.includes('ctx.suspend()') && cc.includes('ctx.resume()') && cc.includes('SS.pause()') && cc.includes('SS.resume()'), 'Deepgram\'s voice pauses by suspending its audio; the browser\'s with speechSynthesis.pause/resume');
+ok(V.sentenceStart('One. Two three. Four', 10) === 5 && V.sentenceStart('One. Two three. Four', 17) === 16 && V.sentenceStart('No stops here', 8) === 0 && V.sentenceStart('', 3) === 0, 'where pause is not supported, it starts again from the sentence it was in');
+
+// ─── The own-voice gate is crundi-voice.js's ───
+ok(V.gateKit({}) === null && V.gateKit({ CrundiVoice: { _test: {} } }) === null, 'without crundi-voice.js (the compact page) there is no gate: listening pauses while Claude talks, as before');
+{
+  const vw = { addEventListener() {}, location: {}, navigator: {} };
+  vm.runInNewContext(read('app', 'vendor', 'crundi-voice.js'), { window: vw, document: { addEventListener() {}, createElement() { return {}; } }, navigator: {}, localStorage: { getItem() { return null; } } });
+  const kit = V.gateKit(vw);
+  ok(!!kit && typeof kit.makeLoopback === 'function', 'with it, the gate, the pre-roll and the loopback are reused from it');
+  const g = kit.createGate();
+  g.start();
+  let fired = false;
+  for (let i = 0; i < 40 && !fired; i++) fired = g.hear(0.3, 0.5, 100, () => 1);   // Claude's own echo, as loud as it plays
+  ok(!fired, 'Claude\'s voice coming back through the mic does not count as the owner');
+  let at = -1;
+  for (let i = 0; i < 10 && at < 0; i++) if (g.hear(0.95, 0.5, 100, () => 1)) at = (i + 1) * 100;
+  ok(at >= 300, 'a voice well over the echo, held about 300 ms, is the owner (' + at + ' ms)');
+  g.start();
+  let unvoiced = false;
+  for (let i = 0; i < 10; i++) unvoiced = g.hear(0.95, 0.5, 100, () => 0) || unvoiced;
+  ok(!unvoiced, 'a loud noise with no voicing (a cough, a clap) is not');
+  const pr = kit.createPreroll(1300);
+  for (let i = 0; i < 30; i++) pr.push('c' + i, 100);
+  ok(pr.drain(500).join() === 'c25,c26,c27,c28,c29', 'when he cuts in, his words go first from the pre-roll');
+}
+ok(/m\.held\) \{[\s\S]{0,300}m\.preroll\.push\(out\.buffer, ms\)[\s\S]{0,500}return;/.test(cc), 'while Claude talks the mic is held here, not streamed');
+ok(cc.includes("micSend({ type: 'saying', text: text })"), 'the server is told what Claude is saying (its echo filter is the second net)');
+
 ok(V.releaseAction(false) === 'send', 'a hold let go on the mic (or anywhere but cancel) sends');
 ok(V.releaseAction(true) === 'cancel', 'a hold let go over cancel is dropped');
 ok(V.micClick({ on: false }) === 'on', 'a tap with voice mode off turns it on');
@@ -73,7 +123,6 @@ ok(V.ttsVoice({ ttsVoice: '' }) === '' && V.ttsVoice(null) === '' && V.ttsVoice(
 ok(V.pcmRate('audio/L16; rate=24000; channels=1', null) === 24000 && V.pcmRate('audio/L16; rate=16000', null) === 16000 && V.pcmRate('audio/L16', '48000') === 48000 && V.pcmRate('', null) === 24000, 'the streamed voice\'s sample rate');
 
 // ─── The component and its hosts ───
-const cc = read('app', 'vendor', 'claude-chat.js');
 ok(/case 'voice-say': onVoiceSay\(ev\)/.test(cc), 'the view takes voice-say events');
 ok(cc.includes("'Voice input (tap: voice mode, hold: push to talk)'"), 'the mic has its accessible label');
 ok(/\/api\/voice\/listen\?encoding=linear16&sample_rate=16000&token=/.test(cc), 'it listens as Cru\'s screen does: 16 kHz PCM');
@@ -89,6 +138,39 @@ ok(mountAt > 0 && /token: \(\) => token,/.test(wb.slice(mountAt, mountAt + 1200)
 const page = read('app', 'vendor', 'crundi-chat-page.js');
 const pageAt = page.indexOf("view = window.CrundiChat.mount($('cp-chat'), {");
 ok(pageAt > 0 && /token: function \(\) \{ return token; \},/.test(page.slice(pageAt, pageAt + 800)), 'so does the compact chat page');
+
+// ─── Sharing the microphone with Cru, and with other chats ───
+ok(V.startChoice({ cruOpen: true }) === 'ask' && V.startChoice({ cruOpen: false }) === 'start', 'voice mode while Cru\'s screen is open asks first ("Cru is listening. Switch to this chat?")');
+ok(cc.includes("'Cru is listening. Switch to this chat?'") && cc.includes('>Switch</button>') && cc.includes('>Not now</button>'), 'with Switch and Not now');
+ok(!/function micOpen\([^)]*\) \{\s*if \(window\.CrundiVoice && window\.CrundiVoice\.isOpen\)/.test(cc), 'Cru is no longer closed silently when the mic opens');
+ok(V.onCruOpen({ on: true }) === 'pause' && V.onCruOpen({ on: true, away: 'cru' }) === 'none' && V.onCruOpen({ on: false }) === 'none', 'Cru opened on purpose: voice mode pauses (it stays on)');
+ok(V.onCruOpen({ ptt: true, on: false }) === 'cancel-hold', 'a hold under way when Cru opens is dropped');
+ok(cc.includes("voicePauseFor('cru', 'Paused: Cru is listening')"), 'with the note "Paused: Cru is listening"');
+ok(V.onCruClose({ on: true, away: 'cru' }) === 'resume' && V.onCruClose({ on: false, away: 'cru' }) === 'none' && V.onCruClose({ on: true, away: 'chat' }) === 'none', 'Cru\'s screen closed: voice mode paused for it carries on by itself');
+ok(V.recording({ on: true, away: 'cru' }) === false && V.ownerTalking({ away: true, now: T0 }) === true, 'paused for Cru: no recording view, and Claude\'s replies wait');
+ok(cc.includes("window.addEventListener('crundi-voice-open', onCruOpen)") && cc.includes("window.addEventListener('crundi-voice-close', onCruClose)"), 'the chat listens for Cru\'s hand-over events');
+const cv = read('app', 'vendor', 'crundi-voice.js');
+ok(/function open\(opts\) \{\s*if \(S\) return;\s*opts = opts \|\| \{\};\s*announce\('crundi-voice-open'/.test(cv), 'Cru announces it is opening before it asks for the microphone');
+ok(/var s = S; S = null;\s*announce\('crundi-voice-close'/.test(cv), 'and that it closed');
+ok(/mouseenter[^\n]*CrundiChat\.voiceActive === true\)\) return;/.test(cv), 'hovering Cru\'s button (not asking) never takes a chat\'s microphone');
+{
+  const vw2 = { addEventListener() {}, location: {}, navigator: {} };
+  vm.runInNewContext(cv, { window: vw2, document: { addEventListener() {}, createElement() { return {}; } }, navigator: {}, localStorage: { getItem() { return null; } } });
+  ok(vw2.CrundiVoice.kit && typeof vw2.CrundiVoice.kit.createGate === 'function' && typeof vw2.CrundiVoice.kit.makeLoopback === 'function' && V.gateKit(vw2) === vw2.CrundiVoice.kit, 'Cru shares its own-voice tools as CrundiVoice.kit, and the chat uses them');
+}
+ok(V.holdsMic({ on: true }) && V.holdsMic({ ptt: true }) && V.holdsMic({ sending: true }) && !V.holdsMic({ on: true, away: 'cru' }) && !V.holdsMic({}), 'a chat holds the microphone in voice mode (not while paused for Cru) or a hold');
+ok(win.CrundiChat.voiceActive === false, 'no chat listening: CrundiChat.voiceActive is false');
+ok(V.onClaim({ on: true }) === 'off' && V.onClaim({ on: false }) === 'none', 'one chat in voice mode at a time: another turning it on turns this one off');
+ok(cc.includes("voiceClaim(voiceSelf);") && cc.includes("new BroadcastChannel('crundi-chat-voice')") && cc.includes("'Voice mode moved to another chat.'"), 'across the workbench\'s cells and other windows (the bubble page), with a note in the one turned off');
+
+// ─── The PC's "Hey Cru" listener ───
+const { IS_OPEN_SCRIPT } = await import('../app/voice-wake/controller.js');
+const isOpen = (w) => vm.runInNewContext(IS_OPEN_SCRIPT, { window: w });
+ok(isOpen({}) === 'closed' && isOpen({ CrundiVoice: { isOpen: false } }) === 'closed', 'nothing listening: Hey Cru listens');
+ok(isOpen({ CrundiVoice: { isOpen: true } }) === 'open' && isOpen({ CrundiVoice: { isOpen: true, holdsMic: false } }) === 'asleep', 'Cru\'s screen as before');
+ok(isOpen({ CrundiVoice: { isOpen: false }, CrundiChat: { voiceActive: true } }) === 'chat' && isOpen({ CrundiChat: { voiceActive: false } }) === 'closed' && isOpen({ CrundiChat: { mount() {} } }) === 'closed', 'a chat in voice mode takes the microphone: Hey Cru pauses, so "Hey Cru" in a sentence is words for that chat; an older page is as before');
+const ctl = read('app', 'voice-wake', 'controller.js');
+ok(/setVoiceOpen\(st === 'open' \|\| st === 'chat'\)/.test(ctl) && ctl.includes("'chat-voice': 'Paused: a chat is listening'"), 'the listener pauses while a chat listens, says so, and resumes after');
 
 console.log(failed ? `\n${failed} failed` : '\nAll passed');
 process.exit(failed ? 1 : 0);
