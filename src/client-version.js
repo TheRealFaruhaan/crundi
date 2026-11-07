@@ -188,6 +188,13 @@ export const CAPABILITIES = Object.freeze([
   // speak tool) are said aloud by the screen in voice mode, through
   // /api/voice/speak. Shown only when the voice assistant has a Deepgram key.
   'chat-voice',
+  // Crundi's own inbox (contract at the top of src/inbox-store.js):
+  // GET /api/inbox?limit=&before=, POST /api/inbox/read { ids } | { all },
+  // POST /api/inbox/delete { ids } | { allRead }, GET /api/inbox/media/<id>/<name>,
+  // and the SSE event 'inbox' { type, unread, item? }. Pushes may carry
+  // inboxId. An older server has none of it, so a client shows the inbox
+  // only when this is listed.
+  'inbox',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));
@@ -302,7 +309,7 @@ export function isGated(path) {
  * collaborator's phrase, first-run setup. Renewing, signing out and asking
  * which methods exist are not sign-ins and are not listed.
  */
-const SIGN_IN_PATHS = new Set(['/api/auth', '/auth/telegram/callback', '/api/auth/webapp', '/api/auth/password', '/api/auth/collab', '/api/auth/setup']);
+const SIGN_IN_PATHS = new Set(['/api/auth', '/auth/telegram/callback', '/api/auth/webapp', '/api/auth/password', '/api/auth/collab', '/api/auth/setup', '/api/auth/oauth/start', '/api/auth/oauth/exchange', '/api/auth/oauth/poll']);
 
 /**
  * Is this the phone app trying to sign in some way other than pairing?

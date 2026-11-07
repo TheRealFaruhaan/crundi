@@ -67,10 +67,10 @@ const keyOnlyBrowser = (name, description) => ({
 // ─── Tool definitions ───
 
 const TOOLS = [
-  // Telegram notification tools
+  // Messages for the person: kept in Crundi's inbox, copied to their notification channels
   {
     name: 'send_message_to_user',
-    description: 'Send a Telegram notification to the user. Use this to notify the user when you finish a task, when you need their input, or for important mid-turn status updates. The user may be away from the terminal, so always send a notification when your work is complete.',
+    description: 'Send the person a message. It is kept in Crundi\'s inbox and copied to whichever notification channels they have on (phone app, desktop app, browser, Telegram). Use this to tell them when you finish a task, when you need their input, or for important mid-turn status updates. They may be away from the screen, so always send one when your work is complete.',
     inputSchema: { type: 'object', properties: { message: { type: 'string', description: 'The message to send' } }, required: ['message'] },
   },
   {
@@ -88,12 +88,12 @@ const TOOLS = [
   },
   {
     name: 'send_photo_to_user',
-    description: 'Send a photo/image to the user via Telegram (in a chat where they are present, show_image puts it in the conversation and is the better choice). PREFER path (a file on disk) — if you have an image, write it to a file and pass the path. `data` takes base64 but you should not hand-copy a large base64 string into it: doing so corrupts it and Telegram rejects the result with IMAGE_PROCESS_FAILED. `data` is for callers that already hold the bytes programmatically. PNG, JPEG, GIF or WebP, up to 10 MB.',
+    description: 'Send the person a photo/image: it is kept in Crundi\'s inbox (a copy, so a temporary file is fine) and copied to their notification channels (Telegram gets the picture itself). In a chat where they are present, show_image puts it in the conversation and is the better choice. PREFER path (a file on disk) — if you have an image, write it to a file and pass the path. `data` takes base64 but you should not hand-copy a large base64 string into it: doing so corrupts it. `data` is for callers that already hold the bytes programmatically. PNG, JPEG, GIF or WebP, up to 10 MB.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the image file' }, data: { type: 'string', description: 'Image bytes as base64, with or without a data: URL prefix. For programmatic callers that already hold the bytes; do not paste a long base64 string here by hand.' }, caption: { type: 'string', description: 'Optional caption (max 1024 chars)' } },  },
   },
   {
     name: 'send_file_to_user',
-    description: 'Send a file to the user on Telegram (in a chat where they are present, show_file puts it in the conversation and is the better choice). It is delivered on Telegram when a chat is linked (attached up to 50 MB, as a link beyond that), and a download link valid for 30 minutes is returned either way. The result says how it was delivered; if it was not sent out of band, put the link in your reply.',
+    description: 'Send the person a file: a copy is kept in Crundi\'s inbox (up to 200 MB) and they are told on their notification channels (Telegram attaches it up to 50 MB, a link beyond that). In a chat where they are present, show_file puts it in the conversation and is the better choice. A download link valid for 30 minutes is returned too. The result says where it went.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } }, required: ['path'] },
   },
 
@@ -203,8 +203,8 @@ const TOOLS = [
   { name: 'list_displays', description: 'List all connected displays/monitors.', inputSchema: { type: 'object', properties: {} } },
   { name: 'capture_window', description: 'Capture a screenshot of a specific window (returned as image).', inputSchema: { type: 'object', properties: { windowId: { type: 'number', description: 'Window ID (hwnd) from list_windows' } }, required: ['windowId'] } },
   { name: 'capture_display', description: 'Capture a screenshot of a display/monitor (returned as image).', inputSchema: { type: 'object', properties: { display: { type: 'number', description: '1-based display index (default: 1)' } } } },
-  { name: 'send_window_screenshot_to_user', description: 'Capture a window screenshot and send it to the user via Telegram.', inputSchema: { type: 'object', properties: { windowId: { type: 'number', description: 'Window ID (hwnd)' } }, required: ['windowId'] } },
-  { name: 'send_display_screenshot_to_user', description: 'Capture a display screenshot and send it to the user via Telegram.', inputSchema: { type: 'object', properties: { display: { type: 'number', description: '1-based display index (default: 1)' } } } },
+  { name: 'send_window_screenshot_to_user', description: 'Capture a window screenshot and send it to the person (kept in Crundi\'s inbox, copied to their notification channels).', inputSchema: { type: 'object', properties: { windowId: { type: 'number', description: 'Window ID (hwnd)' } }, required: ['windowId'] } },
+  { name: 'send_display_screenshot_to_user', description: 'Capture a display screenshot and send it to the person (kept in Crundi\'s inbox, copied to their notification channels).', inputSchema: { type: 'object', properties: { display: { type: 'number', description: '1-based display index (default: 1)' } } } },
 
 
   // RDP tools
@@ -266,7 +266,7 @@ const TOOLS = [
 
   // ─── Secrets tools (global) ───
   { name: 'secret_search', description: 'Search the global secrets store by name and description (case-insensitive). Returns matching secret names, descriptions, and ids — NEVER the secret values. No approval needed. Use this to discover which secret to request.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Search text matched against name and description. Empty returns all.' } } } },
-  { name: 'secret_get', description: 'Request the decrypted value of a secret. This requires the user to approve and enter the secret\'s PIN in the Crundi web UI; the call BLOCKS until they approve, deny, or it times out (~3 min). The user is notified via Telegram. Identify the secret by id (preferred) or exact name. Always provide a clear reason.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } } } },
+  { name: 'secret_get', description: 'Request the decrypted value of a secret. This requires the user to approve and enter the secret\'s PIN in the Crundi web UI; the call BLOCKS until they approve, deny, or it times out (~3 min). The user is notified (Crundi inbox and their notification channels). Identify the secret by id (preferred) or exact name. Always provide a clear reason.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } } } },
   { name: 'secret_run', description: 'Run a shell command with a secret bound to an environment variable, WITHOUT the value ever being shown to you. Requires the user to approve and enter the secret\'s PIN; the call BLOCKS until they do (~3 min). They see the exact command before approving. Reference the secret in your command as $SECRET (or the envName you choose) — never try to read or print it, and note that stdout/stderr have the value redacted out. Prefer this over secret_get whenever you only need to USE a secret rather than know it.', inputSchema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to run. Reference the secret as $SECRET, e.g. curl -H "Authorization: Bearer $SECRET" https://api.example.com' }, id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, envName: { type: 'string', description: 'Environment variable to bind the value to (default: SECRET)' }, cwd: { type: 'string', description: 'Working directory (defaults to the project directory)' }, timeoutMs: { type: 'number', description: 'Max run time in ms (default 120000, max 600000)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } }, required: ['command'] } },
 
   // ─── Skills (Claude skills on this machine) ───
@@ -281,7 +281,7 @@ const TOOLS = [
   // ─── Showing things in the chat (chat UI mode only) ───
   // When the person is in a Crundi chat, these are how something reaches them:
   // it appears in the conversation, where they are looking. The send_*_to_user
-  // tools go to Telegram and are for when they are NOT looking.
+  // tools go to the inbox and the notification channels, for when they are NOT looking.
   {
     name: 'show_image',
     description: 'Show one or more images to the person, right here in the chat, drawn under this call. Use it whenever a picture answers better than words: a screenshot of the page you just changed, a before and after, a chart or diagram you generated, a photo they asked you to find. An image you only looked at yourself (browser_screenshot, a capture) is NOT visible to them until you save it and show it. path for one, paths for several (up to 8); PNG, JPEG, GIF or WebP, 10 MB each; the files are copied, so a temporary file is fine. Prefer this over send_photo_to_user whenever the person is in the chat.',
@@ -329,7 +329,7 @@ const TOOLS = [
   },
   {
     name: 'show_file',
-    description: 'Offer one or more files to the person as downloads, in the chat: a card with the file\'s icon, name and size and a Download button, drawn under this call. Use it for anything they should take away: an export, a report, an archive, a build, a document, a spreadsheet. path for one, paths for several (up to 8). The file is NOT copied; it is downloaded as it is when they press the button, so leave it where it is. Prefer this over send_file_to_user whenever the person is in the chat; use that one to reach them on Telegram when they are away.',
+    description: 'Offer one or more files to the person as downloads, in the chat: a card with the file\'s icon, name and size and a Download button, drawn under this call. Use it for anything they should take away: an export, a report, an archive, a build, a document, a spreadsheet. path for one, paths for several (up to 8). The file is NOT copied; it is downloaded as it is when they press the button, so leave it where it is. Prefer this over send_file_to_user whenever the person is in the chat; use that one to reach them when they are away (it lands in their Crundi inbox).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -579,6 +579,7 @@ const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service',
   'secret_run',
   'skill_list', 'skill_get', 'skill_install', 'skill_delete',
   'widget_open', 'widget_set_data', 'widget_render', 'widget_get', 'widget_list', 'widget_close', 'widget_rollback', 'widget_scope']);
+const SEND_TO_USER_TOOLS = new Set(['send_message_to_user', 'send_photo_to_user', 'send_file_to_user', 'send_window_screenshot_to_user', 'send_display_screenshot_to_user']);
 const IMAGE_TOOLS = new Set(['browser_screenshot', 'capture_window', 'capture_display']);
 
 async function handleToolCall(name, args) {
@@ -593,6 +594,12 @@ async function handleToolCall(name, args) {
   // An alert is filed under the chat that sent it, which is this process's
   // own, never an argument.
   if (name === 'alert_user') {
+    delete args.sessionId;
+    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+  }
+  // So is a message, picture or file for the person: its inbox item links
+  // back to the chat that sent it.
+  if (SEND_TO_USER_TOOLS.has(name)) {
     delete args.sessionId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }

@@ -71,6 +71,8 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
     val collaborators = CollaboratorsApi(rpc)
     /** The owner's voice assistant (capability "voice-assistant"). */
     val voice = VoiceApi(rpc, transport)
+    /** Crundi's own inbox (capability "inbox"): what the server sent the owner. */
+    val inbox = InboxApi(rpc)
 
     /**
      * A chat, live: its whole conversation, then every change, as

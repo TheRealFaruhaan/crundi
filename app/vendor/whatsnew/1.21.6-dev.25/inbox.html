@@ -1,0 +1,22 @@
+<div class="wna a-ibx">
+  <div class="list">
+    <div class="t on"><b>Release checklist</b><span>crundi · Shown: the new header</span><i>2</i></div>
+    <div class="t"><b>Cru</b><span>The API chat has finished.</span></div>
+    <div class="t"><b>Crundi</b><span>Claude Code 2.1.319 is available</span></div>
+  </div>
+  <div class="conv"><div class="m">Deploy finished on staging.</div><div class="m pic"></div><div class="m">All tests passed.</div></div>
+  <style>
+    .a-ibx{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-ibx .list{position:absolute;left:110px;top:50px;width:210px;border:1px solid var(--border);border-radius:10px;background:var(--bg-secondary);overflow:hidden}
+    .a-ibx .t{position:relative;padding:9px 12px;border-bottom:1px solid var(--border);font-size:12px}
+    .a-ibx .t b{display:block;font-size:13px}.a-ibx .t span{color:var(--text-secondary)}
+    .a-ibx .t i{position:absolute;right:10px;top:12px;font-style:normal;background:var(--accent);color:#fff;border-radius:9px;padding:0 6px;font-size:11px;animation:aibx-i 7s steps(1) infinite}
+    .a-ibx .t.on{background:var(--bg-tertiary)}
+    .a-ibx .conv{position:absolute;left:340px;top:50px;width:190px;display:flex;flex-direction:column;gap:8px}
+    .a-ibx .m{padding:8px 10px;border-radius:9px;background:var(--bg-secondary);border:1px solid var(--border);font-size:12px;opacity:0;animation:aibx-m 7s ease infinite}
+    .a-ibx .m.pic{height:46px;background:linear-gradient(135deg,var(--accent),var(--bg-tertiary));animation-delay:.4s}
+    .a-ibx .m:nth-child(3){animation-delay:.8s}
+    @keyframes aibx-m{0%,10%{opacity:0;transform:translateY(5px)}20%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes aibx-i{0%{opacity:1}40%{opacity:0}}
+  </style>
+</div>

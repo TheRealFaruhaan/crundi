@@ -99,6 +99,8 @@ class ShellCallbacks(
     val onPanels: () -> Unit = {},
     val onAddProject: () -> Unit = {},
     val onAppSettings: () -> Unit = {},
+    /** The envelope beside App settings: Crundi's inbox (shown only when the server has one). */
+    val onInbox: () -> Unit = {},
     val onPairAnother: () -> Unit = {},
     /** The "+" beside the Workbench tab. */
     val onAdd: (PaneKind) -> Unit = {},
@@ -156,6 +158,7 @@ fun ShellScaffold(
                     onAddProject = { onDrawer(false); callbacks.onAddProject() },
                     onAppSettings = { onDrawer(false); callbacks.onAppSettings() },
                     onPairAnother = { onDrawer(false); callbacks.onPairAnother() },
+                    onInbox = { onDrawer(false); callbacks.onInbox() },
                 )
             }
             overlay()
@@ -510,7 +513,8 @@ fun AddMenuBody(callbacks: ShellCallbacks, onDone: () -> Unit = {}) {
  * The sidebar as a drawer (280dp, from the left, under the top bar): each
  * project with its icon or initials, state dot, name, the services
  * heartbeat, the schedule clock and the factory mark; then "Add project",
- * "App settings" and "Connect to another server".
+ * "App settings" (with the inbox's envelope and its unread count beside it,
+ * when the server has an inbox) and "Connect to another server".
  */
 @Composable
 fun ProjectDrawer(
@@ -520,6 +524,7 @@ fun ProjectDrawer(
     onAppSettings: () -> Unit,
     onPairAnother: () -> Unit,
     modifier: Modifier = Modifier,
+    onInbox: () -> Unit = {},
 ) {
     Column(
         modifier.width(280.dp).fillMaxHeight().background(CrundiColors.BgSecondary)
@@ -534,7 +539,10 @@ fun ProjectDrawer(
             }
         }
         Column(Modifier.drawBehind { drawLine(CrundiColors.BorderSubtle, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            DashedButton("smartphone", "App settings", onAppSettings)
+            Row(Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                DashedButton("smartphone", "App settings", onAppSettings, Modifier.weight(1f))
+                if (data.hasInbox) InboxButton(data.inboxUnread, onInbox)
+            }
             DashedButton("plus", "Add project", onAddProject)
             DashedButton("link", "Connect to another server", onPairAnother)
         }
@@ -565,15 +573,34 @@ private fun ProjectRow(p: ProjectSummary, active: Boolean, onClick: () -> Unit) 
 
 /** .sidebar-footer button: dashed, muted, full width. */
 @Composable
-private fun DashedButton(icon: String, label: String, onClick: () -> Unit) {
+private fun DashedButton(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Row(
-        Modifier.fillMaxWidth().clip(Dimens.ShapeSm).drawBehind {
+        modifier.fillMaxWidth().clip(Dimens.ShapeSm).drawBehind {
             drawRoundRect(CrundiColors.Border, style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()))), cornerRadius = CornerRadius(Dimens.RadiusSm.toPx()))
         }.clickable(onClick = onClick).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
         CrundiIcon(icon, size = 15.dp, tint = CrundiColors.TextMuted)
         Text(label, style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
+    }
+}
+
+/** The drawer's envelope: Crundi's inbox, with its unread count in a red badge on the corner. */
+@Composable
+private fun InboxButton(unread: Int, onClick: () -> Unit) {
+    val label = if (unread > 0) "Inbox, $unread unread" else "Inbox"
+    Box(
+        Modifier.width(52.dp).fillMaxHeight().clip(Dimens.ShapeSm).drawBehind {
+            drawRoundRect(CrundiColors.Border, style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()))), cornerRadius = CornerRadius(Dimens.RadiusSm.toPx()))
+        }.clickable(onClickLabel = label, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        CrundiIcon("mail", size = 17.dp, tint = if (unread > 0) CrundiColors.TextPrimary else CrundiColors.TextMuted, contentDescription = label)
+        if (unread > 0) Text(
+            if (unread > 99) "99+" else unread.toString(),
+            style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White, lineHeight = 12.sp),
+            modifier = Modifier.align(Alignment.Center).offset(x = 11.dp, y = (-9).dp).clip(RoundedCornerShape(8.dp)).background(CrundiColors.Red).padding(horizontal = 4.dp),
+        )
     }
 }
 

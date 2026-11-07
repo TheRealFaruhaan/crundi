@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +28,7 @@ import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import mv.obitech.crundi.ui.chats.chatsGraph
+import mv.obitech.crundi.ui.inbox.inboxGraph
 import mv.obitech.crundi.ui.components.CrundiDialog
 import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.components.errorText
@@ -84,8 +86,19 @@ fun CrundiApp(
     val atRoot = route == null || Routes.isAreaRoot(route)
     val ctx = LocalContext.current
     var lastBack by remember { mutableLongStateOf(0L) }
-    BackHandler(enabled = atRoot && !drawer && !approvalsOpen && wb.full == null) {
+    // Back with the keyboard up closes the keyboard, never counts towards
+    // leaving: the handler stands aside while it shows, and if a back still
+    // reaches it as the keyboard goes (it can, depending on timing), it only
+    // hides the keyboard.
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    val imeUp = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    var imeGoneAt by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(imeUp) { if (!imeUp) imeGoneAt = System.currentTimeMillis() }
+    BackHandler(enabled = atRoot && !drawer && !approvalsOpen && wb.full == null && !imeUp) {
         val now = System.currentTimeMillis()
+        if (now - imeGoneAt < 600) { keyboard?.hide(); focus.clearFocus(); return@BackHandler }
         if (now - lastBack < 2000) host.close()
         else { lastBack = now; Toast.makeText(ctx.applicationContext, "Press back again to exit", Toast.LENGTH_SHORT).show() }
     }
@@ -121,6 +134,7 @@ fun CrundiApp(
                 onPanels = { drawer = false; panelsOpen = true },
                 onAddProject = { addingProject = true },
                 onAppSettings = host::openAppSettings,
+                onInbox = { navigator.to(mv.obitech.crundi.ui.nav.Routes.inbox()) },
                 onPairAnother = host::pairAnother,
                 onAdd = { navigator.area(Area.Workbench); wb.add(it) },
                 onFit = wb::fit,
@@ -139,6 +153,7 @@ fun CrundiApp(
                 workspaceGraph()
                 planningGraph()
                 operationsGraph()
+                inboxGraph()
             }
         }
         // The top bar's Panels button: its chips and their panels (ui.panels).

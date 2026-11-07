@@ -302,6 +302,10 @@ function payloadWith(text, meta, bodyMax) {
     // (POST /api/alerts/answer). An app that does not know it ignores it.
     ...(meta.alertId ? { alertId: String(meta.alertId).slice(0, 40) } : {}),
     ...(meta.downgraded ? { downgraded: true } : {}),
+    // The item in Crundi's inbox this notification is a copy of (GET
+    // /api/inbox). An app that does not know it ignores it.
+    ...(meta.inboxId ? { inboxId: String(meta.inboxId).slice(0, 40) } : {}),
+    ...(meta.inboxThread && /^[A-Za-z0-9_.:-]{1,100}$/.test(String(meta.inboxThread)) ? { inboxThread: String(meta.inboxThread) } : {}),
     ...(Array.isArray(meta.clear) ? { clear: meta.clear.map((k) => String(k).slice(0, 40)).slice(0, 10) } : {}),
     // Chats whose own request has been answered: their notifications go too.
     ...(Array.isArray(meta.chats) && meta.chats.length ? { chats: meta.chats.map((k) => String(k).slice(0, 80)).slice(0, 20) } : {}),

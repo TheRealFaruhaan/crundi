@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.21 (en-US)
+
+Version code 52. Internal track. Since 1.1.3-dev.20 (code 51): the inbox (capability inbox) in threads; back with the keyboard up only closes it.
+
+```
+<en-US>
+Crundi's own inbox.
+
+- Everything meant for you lands in Crundi's inbox, in threads: one per chat, per project, Cru and Crundi. Find it by the envelope next to App settings. Telegram is now optional.
+- Pressing back to close the keyboard no longer counts as "back to exit".
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.20 (en-US)
 
 Version code 51. Internal track. Since 1.1.3-dev.19 (code 50): per-chat voice mode (capability chat-voice): tap for voice mode, hold to talk; voice-say events spoken.

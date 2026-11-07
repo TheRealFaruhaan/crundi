@@ -347,7 +347,8 @@ try {
                 : outcome === 'start-failed' || outcome === 'no-prompt'
                   ? `⚠️ "${label}" could not start${proj}.`
                   : `⚠️ "${label}" did not finish${proj} (${outcome}) — left open.`;
-          webapp.notifyEvent('scheduledChat', body ? `${head}\n\n${body}` : head);
+          // Filed under its project's inbox thread.
+          webapp.notifyEvent('scheduledChat', body ? `${head}\n\n${body}` : head, sch.project ? { project: sch.project } : {});
         } catch { /* non-fatal */ }
       },
     });

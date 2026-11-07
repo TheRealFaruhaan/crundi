@@ -33,7 +33,6 @@ import {
 import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
 import * as claudeUpdate from './claude-update.js';
-import { decodeImage } from './image-input.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration, listAllRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -65,8 +64,11 @@ import { createPanes, MIN_TIMEOUT_MIN, DEFAULT_TIMEOUT_MIN } from './panes.js';
 import { createLimitWarmer } from './limit-warmer.js';
 import { createLimitResetNotifier } from './limit-reset-notify.js';
 import * as authConfig from './auth-config.js';
+import { createOAuth, PROVIDERS as OAUTH_PROVIDERS, NOT_ALLOWED as OAUTH_NOT_ALLOWED, callbackPath as oauthCallbackPath, oauthPage } from './auth-oauth.js';
 import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
+import { createInboxStore } from './inbox-store.js';
+import { createOwnerMessenger, INBOX_EVENTS } from './inbox-send.js';
 import { createBackups } from './backup.js';
 import * as skills from './skills-store.js';
 import * as skillsGithub from './skills-github.js';
@@ -417,10 +419,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return tok;
   }
 
+  /** A link that opens one inbox item on the page, or '' with no public URL. */
+  function inboxWebLink(id) {
+    const base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port });
+    return base ? `${base}/#inbox/${encodeURIComponent(id)}` : '';
+  }
+
   function getFileShareUrl(token) {
     const base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port });
     if (!base) return null;
     return base + '/dl/' + token;
+  }
+
+  // ─── Google / GitHub sign-in (src/auth-oauth.js) ───
+  // The callback URL has to match what the owner registered at the provider
+  // exactly, so it is built from the one public address, never from whatever
+  // host a request happened to arrive on.
+  const oauth = createOAuth();
+  function oauthCallbackUrl(provider) {
+    const base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port });
+    return base ? base + oauthCallbackPath(provider) : '';
   }
 
   let htmlCache = getWebappHtml(config.botUsername || '', APP_VERSION);
@@ -938,6 +956,25 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // ─── SSE ───
   const sseClients = new Set();
 
+  // ─── Crundi's inbox (inbox-store.js, inbox-send.js) ───
+  // Everything meant for the owner lands here first; copies then go to the
+  // notification channels that are on. Created this early because factory
+  // runs and schedules can have something to say as soon as they load.
+  // convOf: a chat's Claude conversation id, so a chat that comes back under
+  // a new id (resumed) keeps its inbox thread. claudeUi is a parameter of
+  // createWebApp, so it is there already.
+  const inbox = createInboxStore({ dataDir: config.dataDir, convOf: (id) => { try { return (claudeUi && claudeUi.meta && claudeUi.meta(id) || {}).sessionId || ''; } catch { return ''; } } });
+  const ownerMsg = createOwnerMessenger({
+    inbox,
+    deliver: (text, meta, opts) => channels.deliver(text, meta, opts),
+    labelOf: (id) => (channels.list().find((c) => c.id === id) || {}).label || id,
+  });
+  // Live to the owner's pages (never a collaborator's): the unread count, and
+  // the new item when one was added.
+  inbox.onChange((ev) => { try { broadcastOwnerSSE('inbox', ev); } catch { /* not up yet */ } });
+  setTimeout(() => { inbox.sweepOrphans(); inbox.prune(); }, 20_000).unref?.();
+  setInterval(() => inbox.prune(), 6 * 60 * 60 * 1000).unref?.();
+
   // ─── Claude agent state (driven by Claude Code lifecycle hooks) ───
   // terminalId → 'working' | 'needs-input' | 'idle'. Liveness is the source of
   // truth: states are reconciled against the live terminal list (see
@@ -1177,7 +1214,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return Date.now() - lastPresentAt >= ms;
     },
     broadcast: (st) => broadcastOwnerSSE('backup', st),
-    notify: (text) => { channels.deliver(text).catch(() => {}); },
+    notify: (text) => { ownerMsg.post({ kind: 'system', text, channelText: text, meta: { tag: 'backup' } }); },
   });
   backups.start();
 
@@ -1248,6 +1285,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // ─── Notification channels ───
   // Registered once here; notifyEvent fans out to whichever are enabled. Adding
   // another channel later means writing its send(), not touching call sites.
+  //
+  // Crundi's own inbox comes first and is always on. It is passive: things
+  // are written to it (ownerMsg) BEFORE the copies go out, so deliver()
+  // skips it. Listed so Settings shows where everything lands.
+  channels.register({
+    id: 'inbox',
+    label: 'Crundi inbox',
+    alwaysOn: true,
+    passive: true,
+    enabledByDefault: true,
+    describe: () => 'Always on. Messages, pictures, files, questions and reports for you are kept here first, in the envelope at the bottom of the projects list.',
+    send: async () => true,
+  });
   channels.register({
     id: 'telegram',
     label: 'Telegram',
@@ -1260,6 +1310,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: async (text, meta = {}) => {
       const chatId = getChatId ? getChatId() : null;
       if (!chatId || !bot) return false;
+      // Where the inbox copy can be opened, for the things Claude sent.
+      const link = meta.inboxLink && meta.inboxId ? inboxWebLink(meta.inboxId) : '';
+      if (link) text = `${text}\n\nIn Crundi's inbox: ${link}`;
+      // A picture or a file kept in the inbox goes as itself; past Telegram's
+      // bot limit (50 MB) or when the upload fails, as a line with a link.
+      const att = meta.attach;
+      if (att && (att.path || att.shareUrl)) {
+        const caption = String(text).slice(0, 1024);
+        try {
+          const { InputFile } = await import('grammy');
+          if (att.path && att.kind === 'photo') {
+            await bot.api.sendPhoto(chatId, new InputFile(att.path, att.name), caption ? { caption } : undefined);
+            return true;
+          }
+          if (att.path && att.size > 0 && att.size <= 49 * 1024 * 1024) {
+            await bot.api.sendDocument(chatId, new InputFile(att.path, att.name), { caption: att.shareUrl ? `${caption}\nDownload (30 min): ${att.shareUrl}`.slice(0, 1024) : caption });
+            return true;
+          }
+        } catch (err) {
+          console.warn('[channels] Telegram could not attach the file, sending a line instead:', err.message);
+        }
+        await bot.api.sendMessage(chatId, att.shareUrl ? `${text}\nDownload (30 min): ${att.shareUrl}` : text);
+        return true;
+      }
       // Claude answers in markdown, which Telegram shows literally unless we
       // translate it into its own dialect. That parser is strict — one stray
       // character rejects the whole message — so a failure falls back to the
@@ -1338,7 +1412,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return { ok: true };
     },
     push: (text, meta) => mobilePush.send(text, meta),
-    deliver: (text, meta, opts) => channels.deliver(text, meta, opts),
+    // No phone to ring: the alert lands in Crundi's inbox and goes out on
+    // the other channels, so it always reaches the owner somewhere.
+    deliver: async (text, meta, opts) => {
+      const nl = String(text).indexOf('\n');
+      const { results } = await ownerMsg.tell({
+        kind: 'alert', title: nl < 0 ? text : String(text).slice(0, nl), text: nl < 0 ? '' : String(text).slice(nl + 1),
+        chat: meta && meta.chat ? meta.chat : null, channelText: text, meta: meta || {}, deliverOpts: opts || {},
+      });
+      return [{ id: 'inbox', ok: true }, ...results];
+    },
   });
 
   // Single entry point for every Telegram notification. Honors the per-event
@@ -1351,15 +1434,29 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // phone, would stop that ringing (Android plays one sound at a time), so
     // it goes to the phone app only, quietly: still listed, never heard.
     const hushed = meta.chat && meta.chat.id && alerter.hushing(meta.chat.id);
+    // The ones that are for the owner rather than live state also land in
+    // Crundi's inbox first (INBOX_EVENTS), whether or not anyone is here;
+    // the copies follow the same rules as before.
+    let kind = INBOX_EVENTS[key];
+    if (kind === 'question' && meta.prompt) kind = 'permission';
+    // A factory run's news belongs to its project, not to its Manager's chat.
+    const proj = String(meta.project || (meta.chat && meta.chat.project) || '').toLowerCase();
+    const thread = key === 'factory' ? (proj ? 'project:' + proj : 'system') : '';
+    const toInbox = (quiet) => ownerMsg.post({
+      kind, text: message, chat: meta.chat || null, channelText: message, collapse: kind === 'system', thread, project: proj,
+      meta: { tag: key, ...meta, ...(quiet ? { quiet: true } : {}) }, deliverOpts: quiet ? { only: ['mobile'] } : {},
+    });
     if (hushed || (mode === 'away' && anyClientPresent())) {
       // The owner is here, so nothing needs to ping them. The phone app is
       // told all the same, marked quiet: its bubbles, its live card and its
       // list of what happened are kept from these, and a phone that only
       // heard of things while nobody was at a desk would have gaps in all
       // three. Quiet means shown without sound or vibration.
+      if (kind) { toInbox(true); return; }
       channels.deliver(message, { tag: key, ...meta, quiet: true }, { only: ['mobile'] }).catch(() => { /* non-fatal */ });
       return;
     }
+    if (kind) { toInbox(false); return; }
     // Fire and forget: a slow or dead channel must not hold up whatever was
     // being notified about.
     channels.deliver(message, { tag: key, ...meta }).catch(() => { /* non-fatal */ });
@@ -1383,7 +1480,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (s.status === 'running' && prev !== 'running') {
         notifyEvent('serviceUp', `▶️ Service "${name}"${proj} started.`);
       } else if (prev === 'running' && s.status !== 'running') {
-        notifyEvent('serviceDown', `⏹️ Service "${name}"${proj} ${s.status === 'error' ? 'crashed' : 'stopped'}.`);
+        notifyEvent('serviceDown', `⏹️ Service "${name}"${proj} ${s.status === 'error' ? 'crashed' : 'stopped'}.`, s.alias ? { project: s.alias } : {});
       }
     }
     for (const k of [...prevServiceStatus.keys()]) if (!seen.has(k)) prevServiceStatus.delete(k);
@@ -1427,7 +1524,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const fails = prev.fails + 1;
         if (prev.up && fails >= 2) {
           console.log(`[forwards] ${f.host} is down: ${why}`);
-          notifyEvent('forwardDown', `⏹️ Forward "${f.host}" is down: ${why}.`, { url: f.url });
+          notifyEvent('forwardDown', `⏹️ Forward "${f.host}" is down: ${why}.`, { url: f.url, ...(f.project ? { project: f.project } : {}) });
           forwardHealth.set(f.host, { up: false, fails });
           return;
         }
@@ -1775,10 +1872,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (u.over && !collabLimitNotified.has(u.identity)) {
       collabLimitNotified.add(u.identity);
       console.log(`[crundi] Collaborator ${u.name} reached their token limit (${u.used}/${u.limit})`);
-      channels.deliver(
-        `${u.name || 'A collaborator'} reached their token limit on ${collab.project} (${fmtTok(u.used)} of ${fmtTok(u.limit)}). Their chat was stopped. Raise it in Info → Outside collaborators.`,
-        { tag: 'collab-limit' },
-      ).catch(() => { /* non-fatal */ });
+      const said = `${u.name || 'A collaborator'} reached their token limit on ${collab.project} (${fmtTok(u.used)} of ${fmtTok(u.limit)}). Their chat was stopped. Raise it in Info → Outside collaborators.`;
+      ownerMsg.post({ kind: 'system', text: said, channelText: said, project: collab.project || '', meta: { tag: 'collab-limit' } });
       broadcastState();
     } else if (!u.over) {
       collabLimitNotified.delete(u.identity);
@@ -1842,10 +1937,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Delivered unconditionally rather than through notifyEvent: this is a
     // person sitting blocked, not an event about the machine, and "away" is
     // exactly when it matters most.
-    channels.deliver(
-      `${rec.name} asks: ${rec.title}${rec.project ? ` (${rec.project})` : ''}`,
-      { tag: 'collabRequest' },
-    ).catch(() => { /* a dead channel must not fail the request */ });
+    const asks = `${rec.name} asks: ${rec.title}${rec.project ? ` (${rec.project})` : ''}`;
+    ownerMsg.post({ kind: 'question', text: asks, channelText: asks, project: rec.project || '', meta: { tag: 'collabRequest' } });
   });
 
   /** Like broadcastSSE, to the owner's pages only (never a collaborator's). */
@@ -2650,6 +2743,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const last = lastSaidBy(id);
     const open = [...voiceListeners].filter(ws => ws.readyState === 1);
     const pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
+    let spoken = false;
     if (open.length || pcs.length) {
       const r = await voiceAgent.report(`${name} ${what}.${last ? ` Its last message: "${last}"` : ''}`).catch(() => null);
       if (r && r.ok && (r.speak || r.show)) {
@@ -2658,12 +2752,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // No voice screen open: the PC says it (its connection stays open)…
         // A question or a permission brings the PC window forward; a finished turn doesn't.
         const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: id, needsOwner });
-        for (const ws of pcs) { try { ws.send(pcMsg); } catch { /* gone */ } }
+        for (const ws of pcs) { try { ws.send(pcMsg); } catch { /* gone */ } spoken = true; }
       }
+    }
+    // Not said anywhere: kept in Crundi's inbox, so it is not lost when the
+    // phone notification is swiped away.
+    const line = `${(w.title || 'The chat')} in ${w.project} ${what}.`;
+    let inboxId = '';
+    if (!spoken) {
+      try {
+        const term = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
+        const it = inbox.add({ kind: 'report', cru: true, title: line, text: last || '', project: w.project || '', chatId: id, chatTitle: (term && (term.longTitle || term.title)) || w.title || '' });
+        inboxId = it.id;
+      } catch (err) { console.warn('[inbox] could not keep the report:', err.message); }
     }
     // …and the phone, whose connection drops when Cru is closed, gets a
     // notification, since the owner may not be at the PC.
-    mobilePush.send(`${(w.title || 'The chat')} in ${w.project} ${what}.${last ? ' ' + last.slice(0, 120) : ''}`, { title: 'Cru', url: `/chat/${id}`, tag: `voice-watch-${id}` }).catch(() => {});
+    mobilePush.send(`${line}${last ? ' ' + last.slice(0, 120) : ''}`, { title: 'Cru', url: `/chat/${id}`, tag: `voice-watch-${id}`, ...(inboxId ? { inboxId, inboxThread: 'cru' } : {}) }).catch(() => {});
   }
   if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
     const w = voiceWatches.get(id);
@@ -3059,6 +3164,134 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, { ok: true, ...createSession(config.localUsername, undefined, req) });
     }
 
+    // ─── Google / GitHub sign-in ───
+    // All above the auth gate: they ARE the way past it. See auth-oauth.js for
+    // the two ways the session reaches the page (redirect, poll).
+    if (path === '/api/auth/oauth/start' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || '{}') || {}; } catch { body = {}; }
+      const provider = String(body.provider || '');
+      const p = OAUTH_PROVIDERS[provider];
+      if (!p) return json(res, { ok: false, error: 'Unknown sign-in method' }, 400);
+      if (oauth.limited(clientIp(req))) {
+        console.warn(`[crundi] Too many ${p.label} sign-in starts from ${clientIp(req)}`);
+        return json(res, { ok: false, error: 'Too many sign-in attempts. Wait a few minutes and try again.' }, 429);
+      }
+      // A test runs the flow with what is saved, before it is turned on, so
+      // only the signed-in owner may start one.
+      const purpose = body.purpose === 'test' ? 'test' : 'login';
+      if (purpose === 'test') {
+        const who = validateToken(req);
+        if (!who || who.role !== ROLE_OWNER) return json(res, { error: 'Unauthorized' }, 401);
+      } else if (!authConfig.methods()[provider]) {
+        return json(res, { ok: false, error: `${p.label} sign-in is not turned on here` }, 400);
+      }
+      const redirectUri = oauthCallbackUrl(provider);
+      if (!redirectUri) return json(res, { ok: false, error: 'This server does not know its own address yet.' }, 409);
+      // The redirect lands on the callback's origin, so it can only hand the
+      // session to a page on that origin in an ordinary browser. Anything
+      // else (the desktop app, another address, a test) waits by polling.
+      let sameOrigin = false;
+      try { sameOrigin = new URL(String(body.origin || '')).origin === new URL(redirectUri).origin; } catch { /* not same */ }
+      const mode = (purpose === 'test' || body.desktop || !sameOrigin) ? 'poll' : 'redirect';
+      const r = oauth.start(provider, { creds: authConfig.oauthCreds(provider), redirectUri, purpose, mode });
+      if (!r.ok) return json(res, r, 400);
+      return json(res, { ok: true, url: r.url, mode: r.mode, ...(r.pollId ? { pollId: r.pollId, confirmCode: r.confirmCode } : {}) });
+    }
+
+    {
+      const m = /^\/api\/auth\/oauth\/(google|github)\/callback$/.exec(path);
+      if (m && req.method === 'GET') {
+        const provider = m[1];
+        const label = OAUTH_PROVIDERS[provider].label;
+        const page = (o, status = 200) => {
+          res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+          res.end(oauthPage(o));
+        };
+        const r = await oauth.complete(provider, Object.fromEntries(url.searchParams.entries()), () => authConfig.oauthCreds(provider));
+        const entry = r.entry;
+        if (!r.ok) {
+          const who = r.account ? (r.account.email || r.account.login || '?') : '';
+          console.warn(`[crundi] ${label} sign-in${entry?.purpose === 'test' ? ' test' : ''} refused from ${clientIp(req)}: ${r.notAllowed ? `account not allowed (${who})` : r.error}`);
+          // Never which part failed: the wrong account, an unverified email
+          // and a changed id all read the same.
+          const msg = r.notAllowed ? OAUTH_NOT_ALLOWED : r.error;
+          if (r.notAllowed) await new Promise(rs => setTimeout(rs, 400 + Math.floor(Math.random() * 300)));
+          if (entry && entry.mode === 'redirect') {
+            res.writeHead(302, { Location: '/?auth_error=' + encodeURIComponent(msg), 'Cache-Control': 'no-store' });
+            res.end();
+            return;
+          }
+          return page({ title: entry?.purpose === 'test' ? `${label} test did not pass` : 'Not signed in', text: msg, ok: false }, 403);
+        }
+        if (entry.purpose === 'test') {
+          authConfig.markOAuthVerified(provider, r.account);
+          const as = r.account.email || r.account.login;
+          console.log(`[crundi] ${label} sign-in test passed (${as})`);
+          return page({ title: `${label} sign-in works`, text: `Signed in as ${as}. You can close this tab; ${label} sign-in can now be turned on in Settings.` });
+        }
+        // Turned off between the start and now: the switch wins.
+        if (!authConfig.methods()[provider]) return page({ title: 'Not signed in', text: `${label} sign-in is not turned on here.`, ok: false }, 403);
+        authConfig.noteOAuthAccount(provider, r.account);
+        console.log(`[crundi] ${label} sign-in succeeded (${r.account.email || r.account.login}) from ${clientIp(req)}`);
+        if (entry.mode === 'poll') {
+          const rec = oauth.pollStatus(entry.pollId);
+          return page({
+            title: 'Sign in the Crundi app?',
+            text: 'Continue only if Crundi on this computer is showing this code. If you did not just choose to sign in there, close this tab.',
+            code: rec?.confirmCode || '',
+            form: { action: '/api/auth/oauth/confirm', fields: { t: oauth.confirmTokenFor(entry.pollId) }, button: 'Yes, sign it in' },
+          });
+        }
+        res.writeHead(302, { Location: '/#oauth=' + oauth.issueHandoff({ provider }), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+        res.end();
+        return;
+      }
+    }
+
+    // The browser that signed in says the waiting app shows the same code.
+    if (path === '/api/auth/oauth/confirm' && req.method === 'POST') {
+      const t = new URLSearchParams(String(await readBody(req) || '')).get('t') || '';
+      const ok = oauth.confirmPoll(t);
+      res.writeHead(ok ? 200 : 410, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(oauthPage(ok
+        ? { title: 'Signed in', text: 'Crundi is signed in. You can close this tab and go back to it.' }
+        : { title: 'Not signed in', text: 'This sign-in has expired or was already used. Start again from Crundi.', ok: false }));
+      return;
+    }
+
+    // The redirected page swaps its one-time code for a session.
+    if (path === '/api/auth/oauth/exchange' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || '{}') || {}; } catch { body = {}; }
+      const grant = oauth.redeemHandoff(body.code);
+      if (!grant) return json(res, { ok: false, error: 'This sign-in has expired. Start again.' }, 401);
+      setForwardCookie(res);
+      return json(res, { ok: true, ...createSession(config.localUsername, undefined, req) });
+    }
+
+    // The desktop app (or a Settings test) waiting on a flow in another window.
+    if (path === '/api/auth/oauth/poll' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || '{}') || {}; } catch { body = {}; }
+      const peek = oauth.pollStatus(body.pollId);
+      if (!peek) return json(res, { ok: true, status: 'expired' });
+      if (peek.purpose === 'test') {
+        // What account a test signed in as is for the owner's eyes only.
+        const who = validateToken(req);
+        if (!who || who.role !== ROLE_OWNER) return json(res, { error: 'Unauthorized' }, 401);
+        const rec = oauth.collectPoll(body.pollId);
+        const as = rec.account ? (rec.account.email || rec.account.login || '') : '';
+        return json(res, { ok: true, status: rec.status, ...(rec.error ? { error: rec.error } : {}), ...(as ? { account: as } : {}) });
+      }
+      if (peek.status === 'waiting' || peek.status === 'confirm') return json(res, { ok: true, status: peek.status });
+      const rec = oauth.collectPoll(body.pollId);
+      if (rec.status === 'failed') return json(res, { ok: true, status: 'failed', error: rec.notAllowed ? OAUTH_NOT_ALLOWED : (rec.error || 'Sign-in failed') });
+      if (!authConfig.methods()[rec.provider]) return json(res, { ok: true, status: 'failed', error: 'That sign-in method is not turned on here' });
+      setForwardCookie(res);
+      return json(res, { ok: true, status: 'done', ...createSession(config.localUsername, undefined, req) });
+    }
+
     // ─── Collaborator sign-in ───
     //
     // Their own door, deliberately separate from the owner's. It grants a
@@ -3160,6 +3393,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         ok: true,
         telegram: m.telegram,
         password: m.password,
+        // Only whether each is on: the client ID, secret and allowed account
+        // are nothing a stranger needs before signing in.
+        google: m.google,
+        github: m.github,
         setupRequired: !m.anyConfigured,
         botUsername: m.telegram ? (config.botUsername || '') : '',
       });
@@ -3669,6 +3906,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         projectCount: projects.length,
         botConnected: !!config.botUsername,
         botUsername: config.botUsername || '',
+        // Telegram is one optional channel: a server without it is not "offline".
+        botConfigured: !!config.botToken,
       });
     }
 
@@ -5360,6 +5599,65 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, r, r.ok ? 200 : 404);
     }
 
+    // ─── Crundi's inbox (contract at the top of inbox-store.js) ───
+    // The owner's only: access-policy.js does not list these for
+    // collaborators, and each one says no to a confined caller again.
+    if (path === '/api/inbox' || path.startsWith('/api/inbox/')) {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available to collaborator access.', collaborator: true }, 403);
+      if (path === '/api/inbox/threads' && req.method === 'GET') {
+        return json(res, { ok: true, threads: inbox.threads(), unread: inbox.unread() });
+      }
+      if (path === '/api/inbox' && req.method === 'GET') {
+        const r = inbox.list({ limit: url.searchParams.get('limit'), before: url.searchParams.get('before'), thread: url.searchParams.get('thread') || '' });
+        return json(res, { ok: true, items: r.items, unread: r.unread });
+      }
+      if ((path === '/api/inbox/read' || path === '/api/inbox/delete') && req.method === 'POST') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, { ok: false, error: 'Bad JSON' }, 400); }
+        const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 2000) : [];
+        const thread = typeof body.thread === 'string' ? body.thread : '';
+        if (path === '/api/inbox/read') {
+          if (!body.all && !ids.length && !thread) return json(res, { ok: false, error: 'Give ids, thread, or all: true' }, 400);
+          // read: false marks them unread again.
+          const changed = inbox.markRead({ ids, thread, all: !!body.all, read: body.read !== false });
+          return json(res, { ok: true, changed, unread: inbox.unread() });
+        }
+        if (!body.allRead && !ids.length && !thread) return json(res, { ok: false, error: 'Give ids, thread, or allRead: true' }, 400);
+        const removed = inbox.remove({ ids, thread, allRead: !!body.allRead });
+        return json(res, { ok: true, removed, unread: inbox.unread() });
+      }
+      // One item, so a notification can open it directly.
+      const one = req.method === 'GET' && /^\/api\/inbox\/([a-z0-9]{6,40})$/.exec(path);
+      if (one) {
+        const it = inbox.get(one[1]);
+        return it ? json(res, { ok: true, item: it, unread: inbox.unread() }) : json(res, { ok: false, error: 'No such inbox item' }, 404);
+      }
+      const mm = req.method === 'GET' && /^\/api\/inbox\/media\/([a-z0-9]{6,40})\/([^/]+)$/.exec(path);
+      if (mm) {
+        let name;
+        try { name = decodeURIComponent(mm[2]); } catch { name = ''; }
+        const f = name && inbox.mediaPath(mm[1], name);
+        if (!f) { res.writeHead(404); res.end('Not found'); return; }
+        try {
+          const st = statSync(f.path);
+          const download = url.searchParams.get('download') === '1';
+          // Inline only for kinds a browser shows safely; anything else
+          // (HTML, SVG, scripts) downloads, so it never runs on this origin.
+          const inlineOk = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm)|audio\/|application\/pdf|text\/plain)/.test(f.mime);
+          res.writeHead(200, {
+            'Content-Type': inlineOk ? f.mime : 'application/octet-stream',
+            'Content-Length': st.size,
+            'Content-Disposition': `${download || !inlineOk ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(f.name)}`,
+            'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'private, max-age=3600',
+          });
+          createReadStream(f.path).pipe(res);
+        } catch (err) { res.writeHead(500); res.end(err.message); }
+        return;
+      }
+      return json(res, { ok: false, error: 'Not found' }, 404);
+    }
+
     // ─── Notification channels ───
     if (path === '/api/notify/channels' && req.method === 'GET') {
       return json(res, { ok: true, channels: channels.list() });
@@ -5640,7 +5938,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Sign-in methods (authenticated) ───
     if (path === '/api/auth/config' && req.method === 'GET') {
-      return json(res, { ok: true, ...authConfig.status() });
+      // The exact address each provider must be told to send people back to.
+      return json(res, { ok: true, ...authConfig.status(), callbackUrls: { google: oauthCallbackUrl('google'), github: oauthCallbackUrl('github') } });
     }
 
     if (path === '/api/auth/config' && req.method === 'POST') {
@@ -5654,17 +5953,29 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const r = authConfig.setPassword(body.password);
         return json(res, r, r.ok ? 200 : 400);
       }
+      // Google / GitHub: the client ID, secret and allowed account. The
+      // secret is write-only: never sent back, blank keeps the stored one.
+      if (body.action === 'oauth-save') {
+        const r = authConfig.setOAuthConfig(String(body.provider || ''), { clientId: body.clientId, clientSecret: body.clientSecret, allowed: body.allowed });
+        if (r.ok) console.log(`[crundi] ${OAUTH_PROVIDERS[body.provider]?.label || body.provider} sign-in settings saved`);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      if (body.action === 'oauth-clear') {
+        const r = authConfig.clearOAuth(String(body.provider || ''));
+        if (r.ok) console.log(`[crundi] ${OAUTH_PROVIDERS[body.provider]?.label || body.provider} sign-in removed`);
+        return json(res, r, r.ok ? 200 : 400);
+      }
       if (body.action === 'enable') {
-        const r = body.method === 'telegram'
-          ? authConfig.setTelegramEnabled(true)
+        const r = body.method === 'telegram' ? authConfig.setTelegramEnabled(true)
+          : (body.method === 'google' || body.method === 'github') ? authConfig.setOAuthEnabled(body.method, true)
           : authConfig.setPasswordEnabled(true);
         return json(res, r, r.ok ? 200 : 400);
       }
       // Refused when it would leave nothing to sign in with — the server must
       // never fall back to the open state once it has left it.
       if (body.action === 'disable') {
-        const r = body.method === 'telegram'
-          ? authConfig.setTelegramEnabled(false)
+        const r = body.method === 'telegram' ? authConfig.setTelegramEnabled(false)
+          : (body.method === 'google' || body.method === 'github') ? authConfig.setOAuthEnabled(body.method, false)
           : authConfig.setPasswordEnabled(false);
         return json(res, r, r.ok ? 200 : 400);
       }
@@ -7004,6 +7315,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           : null;
         try {
           const r = await alerter.alert({ title: a.title, body: a.body, level: a.level }, chat ? { chat } : {});
+          // Kept in Crundi's inbox too. (Without a phone it went through the
+          // inbox already: see the alerter's deliver.)
+          if (r.ok && r.delivered === 'phone') {
+            try { inbox.add({ kind: 'alert', title: String(a.title || 'Alert'), text: String(a.body || ''), project: chat ? chat.project : '', chatId: chat ? chat.id : '', chatTitle: chat ? chat.title : '' }); }
+            catch (err) { console.warn('[inbox] could not keep the alert:', err.message); }
+          }
           // An alert that rings: wait for the person's answer (or the end of
           // the ring time) and give it to the caller.
           if (!r.ok || !r.alertId) return json(res, r);
@@ -7014,74 +7331,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 
-      if (body.tool === 'send_message_to_user' && bot) {
+      // Messages, pictures and files for the owner: Crundi's inbox first, then
+      // copies to the channels that are on (Telegram attaches the picture or
+      // the file itself). They used to go only to the Telegram bot, so without
+      // it they reached nobody. The chat they come from is the bridge's own
+      // (CRUNDI_CHAT_ID), never Claude's say.
+      if (body.tool === 'send_message_to_user' || body.tool === 'send_photo_to_user' || body.tool === 'send_file_to_user'
+          || body.tool === 'send_window_screenshot_to_user' || body.tool === 'send_display_screenshot_to_user') {
+        const sid = String(a.sessionId || '');
+        const term = sid && claudeUi ? claudeUi.list().find((x) => x.id === sid) : null;
+        const chat = term && !term.collaborator
+          ? { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) }
+          : null;
         try {
-          const chatId = getChatId ? getChatId() : null;
-          if (!chatId) return json(res, { ok: false, error: 'No chat ID configured' });
-          await bot.api.sendMessage(chatId, body.args?.message || '(empty)');
-          return json(res, { ok: true });
+          if (body.tool === 'send_message_to_user') return json(res, await ownerMsg.sendMessage(a, { chat }));
+          if (body.tool === 'send_photo_to_user') return json(res, await ownerMsg.sendPhoto(a, { chat }));
+          if (body.tool === 'send_file_to_user') return json(res, await ownerMsg.sendFile(a, { chat, shareUrl: (p) => getFileShareUrl(shareFile(p)) }));
+          // A screenshot: captured by the machine's own tools, then sent as a picture.
+          if (!mcpDispatch) return json(res, { ok: false, error: 'Screen capture is not available on this server.' });
+          const cap = await mcpDispatch(body.tool === 'send_window_screenshot_to_user' ? 'capture_window' : 'capture_display', a);
+          if (!cap || !cap.ok || !cap.data) return json(res, { ok: false, error: (cap && cap.error) || 'Could not capture the screen' });
+          return json(res, await ownerMsg.sendPhoto({ data: cap.data, caption: body.tool === 'send_window_screenshot_to_user' ? 'Screenshot of a window' : 'Screenshot of the screen' }, { chat }));
         } catch (err) {
           return json(res, { ok: false, error: err.message });
         }
-      }
-
-      if (body.tool === 'send_photo_to_user' && bot) {
-        try {
-          const chatId = getChatId ? getChatId() : null;
-          if (!chatId) return json(res, { ok: false, error: 'No chat ID configured' });
-          // Path or bytes. Sending the bytes either way means one code path,
-          // and a bad path now fails with "no such file" rather than whatever
-          // the Telegram client makes of a missing stream.
-          const img = decodeImage({ path: body.args?.path, data: body.args?.data });
-          if (!img.ok) return json(res, { ok: false, error: img.error });
-          const { InputFile } = await import('grammy');
-          await bot.api.sendPhoto(chatId, new InputFile(img.buffer, img.filename),
-            body.args?.caption ? { caption: String(body.args.caption).slice(0, 1024) } : undefined);
-          return json(res, { ok: true, sent: img.ext, bytes: img.buffer.length });
-        } catch (err) {
-          return json(res, { ok: false, error: err.message });
-        }
-      }
-
-      if (body.tool === 'send_file_to_user') {
-        const filePath = body.args?.path;
-        if (!filePath || !existsSync(filePath)) return json(res, { ok: false, error: 'File not found' });
-        const tok = shareFile(filePath);
-        const url = getFileShareUrl(tok);
-        // The name says "send", and it only ever made a link and handed it
-        // back to Claude: nothing reached the person unless Claude then pasted
-        // it into a reply they happened to be reading. Deliver it. Telegram
-        // takes the file itself up to its bot limit; past that, or if the
-        // upload fails, the link goes instead.
-        let delivered = 'link';
-        let note = 'Nothing was sent out of band (no Telegram chat is linked). Give the person this link in your reply; it works for 30 minutes.';
-        const chatId = bot && getChatId ? getChatId() : null;
-        if (chatId) {
-          let size = 0;
-          try { size = statSync(filePath).size; } catch { /* sent as a link */ }
-          const caption = url ? `Download (30 min): ${url}` : undefined;
-          try {
-            if (size > 0 && size <= 49 * 1024 * 1024) {
-              const { InputFile } = await import('grammy');
-              await bot.api.sendDocument(chatId, new InputFile(filePath, basename(filePath)), caption ? { caption } : undefined);
-              delivered = 'telegram-file';
-              note = 'Sent to the person on Telegram as a file, with the download link.';
-            } else {
-              await bot.api.sendMessage(chatId, `${basename(filePath)}\n${caption || ''}`.trim());
-              delivered = 'telegram-link';
-              note = 'Too large to attach on Telegram (50 MB limit), so the download link was sent there instead.';
-            }
-          } catch (err) {
-            try {
-              await bot.api.sendMessage(chatId, `${basename(filePath)}\n${caption || ''}`.trim());
-              delivered = 'telegram-link';
-              note = `Could not attach the file on Telegram (${err.message}); the download link was sent there instead.`;
-            } catch (err2) {
-              note = `Telegram delivery failed (${err2.message}). Give the person this link in your reply; it works for 30 minutes.`;
-            }
-          }
-        }
-        return json(res, { ok: true, url, delivered, note });
       }
 
       // Service tools

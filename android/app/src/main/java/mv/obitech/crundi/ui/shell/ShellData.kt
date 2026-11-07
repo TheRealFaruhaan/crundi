@@ -74,8 +74,12 @@ data class ShellData(
     /** What the server said of itself in its handshake ("" and empty until known): for hiding what an older server cannot do. */
     val serverVersion: String = "",
     val capabilities: Set<String> = emptySet(),
+    /** Unread items in Crundi's inbox: the drawer's envelope badge. */
+    val inboxUnread: Int = 0,
 ) {
     val project: ProjectSummary? get() = projects.firstOrNull { it.alias == currentProject }
+    /** The server has an inbox (capability "inbox"): the drawer shows its envelope. */
+    val hasInbox: Boolean get() = mv.obitech.crundi.api.InboxApi.supported(capabilities)
 }
 
 /**

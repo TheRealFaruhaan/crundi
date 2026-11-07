@@ -156,7 +156,7 @@ object Notifier {
         val at = payload.optLong("at", System.currentTimeMillis())
         val chatJson = payload.optJSONObject("chat")?.takeIf { it.optString("id").isNotEmpty() }
         val chatId = chatJson?.optString("id").orEmpty()
-        val url = if (chatId.isNotEmpty()) "/chat/$chatId" else payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
+        val url = if (chatId.isNotEmpty()) "/chat/$chatId" else inboxPath(payload) ?: payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
         // Its own notification each time: one that only updated an earlier
         // alert still in the shade would buzz but never open full screen
         // (Android opens that only for a notification that is new).
@@ -498,6 +498,19 @@ object Notifier {
         for (i in 0 until chats.length()) chats.optString(i).takeIf { it.isNotEmpty() }?.let { clearChat(ctx, server.id, it, why = "its request was answered") }
     }
 
+    /**
+     * A notification that is also in Crundi's inbox (its payload carries
+     * `inboxId` and/or `inboxThread`) opens that thread at that item, when
+     * it has no chat of its own to open. Null without either: the
+     * notification's own url, as before.
+     */
+    fun inboxPath(payload: JSONObject): String? {
+        val id = payload.optString("inboxId").takeIf { Regex("^[A-Za-z0-9_.:-]{1,120}$").matches(it) }
+        val thread = payload.optString("inboxThread").takeIf { Regex("^[A-Za-z0-9_.:@-]{1,200}$").matches(it) }
+        if (id == null && thread == null) return null
+        return "/inbox" + (id?.let { "/$it" } ?: "") + (thread?.let { "?thread=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")
+    }
+
     /** A notification that has just arrived, opened and parsed. */
     fun show(ctx: Context, server: Server, payload: JSONObject) {
         val body = plain(payload.optString("body"))
@@ -505,7 +518,7 @@ object Notifier {
         val at = payload.optLong("at", System.currentTimeMillis())
         val chatJson = payload.optJSONObject("chat")
         if (chatJson == null || chatJson.optString("id").isEmpty()) {
-            val url = payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
+            val url = inboxPath(payload) ?: payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
             val kind = payload.optString("kind", "crundi")
             post(
                 ctx, "srv:${server.id}:$kind".hashCode(),

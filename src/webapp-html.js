@@ -235,7 +235,23 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .login-box.collab-mode #telegram-login-container,
     .login-box.collab-mode #login-or,
     .login-box.collab-mode #password-login,
-    .login-box.collab-mode #collab-login-link { display: none !important; }
+    .login-box.collab-mode #collab-login-link,
+    .login-box.collab-mode #oauth-login,
+    .login-box.restore-mode #oauth-login { display: none !important; }
+    /* Google / GitHub buttons: flat, the provider's mark in the text colour. */
+    #oauth-login { flex-direction: column; gap: 10px; width: 260px; }
+    .oauth-btn {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg-primary); color: var(--text-primary);
+      font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    }
+    .oauth-btn:hover { border-color: var(--accent); background: var(--bg-tertiary, var(--bg-primary)); }
+    .oauth-btn:disabled { opacity: 0.55; cursor: default; }
+    .oauth-btn svg { width: 18px; height: 18px; flex: none; }
+    #oauth-wait { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.5; text-align: center; }
+    #oauth-wait b { display: block; font-family: var(--mono); font-size: 1.4rem; letter-spacing: 0.3em; color: var(--text-primary); margin: 6px 0; }
+    #oauth-wait a { color: var(--accent-hover); cursor: pointer; }
 
     /* ─── Room for the on-screen keyboard ─── */
     /*
@@ -577,6 +593,89 @@ export function getWebappHtml(botUsername, appVersion = '') {
       background: var(--accent-dim);
     }
     .sidebar-footer .add-plus { font-weight: 700; }
+    /* The inbox: under "+ Add project", solid where that one is dashed. */
+    .sidebar-footer .inbox-btn {
+      margin-top: 8px; border-style: solid; border-color: var(--border-subtle);
+      display: flex; align-items: center; justify-content: center; gap: 8px; position: relative;
+    }
+    .sidebar-footer .inbox-btn .ic { width: 16px; height: 16px; }
+    .sidebar-footer .inbox-btn.has-unread { color: var(--text-primary); border-color: var(--accent); }
+    .inbox-badge {
+      min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+      background: var(--accent); color: #fff; font-size: 0.68rem; font-weight: 700; line-height: 18px; text-align: center;
+    }
+    .sidebar.collapsed .sidebar-footer .inbox-badge { position: absolute; top: 2px; right: 6px; min-width: 16px; height: 16px; line-height: 16px; font-size: 0.6rem; padding: 0 4px; }
+
+    /* ─── Inbox view: threads on the left, the open one as a conversation ─── */
+    .inbox-panel { padding: 0; }
+    .ibx { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .ibx-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+    .ibx-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 1rem; color: var(--text-primary); }
+    .ibx-sub { color: var(--text-muted); font-size: 0.78rem; }
+    .ibx-head .spacer, .ibx-chead .spacer { flex: 1; }
+    .ibx-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); font-size: 0.78rem; cursor: pointer; white-space: nowrap; }
+    .ibx-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+    .ibx-btn.danger:hover { border-color: var(--red); color: var(--red); }
+    .ibx-body { display: flex; flex: 1; min-height: 0; }
+    .ibx-list { width: 360px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border-subtle); }
+    .ibx-row { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--border-subtle); background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; font: inherit; }
+    .ibx-row:hover { background: var(--bg-hover); }
+    .ibx-row.active { background: var(--accent-dim); }
+    .ibx-ic { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary); color: var(--text-secondary); }
+    .ibx-ic .ic { width: 16px; height: 16px; }
+    .ibx-ic.t-chat { color: var(--accent-hover); }
+    .ibx-ic.t-project { color: var(--sky); }
+    .ibx-ic.t-cru { color: var(--green); }
+    .ibx-ic.t-system { color: var(--amber); }
+    .ibx-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .ibx-t { font-size: 0.86rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ibx-row.unread .ibx-t { font-weight: 600; }
+    .ibx-s { font-size: 0.7rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ibx-m { font-size: 0.76rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+    .ibx-row.unread .ibx-m { color: var(--text-secondary); }
+    .ibx-when { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; font-size: 0.7rem; color: var(--text-muted); }
+    .ibx-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 0.66rem; font-weight: 700; line-height: 18px; text-align: center; }
+    .ibx-more { width: 100%; padding: 10px; border: 0; background: transparent; color: var(--accent-hover); cursor: pointer; font-size: 0.8rem; }
+    .ibx-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+    .ibx-chead { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+    .ibx-chead .ibx-ct { display: flex; flex-direction: column; min-width: 0; }
+    .ibx-chead .ibx-ct b { color: var(--text-primary); font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ibx-chead .ibx-ct span { color: var(--text-muted); font-size: 0.74rem; }
+    .ibx-back { display: none; }
+    .ibx-conv { flex: 1; overflow-y: auto; padding: 16px 18px 24px; display: flex; flex-direction: column; gap: 12px; }
+    .ibx-msg { position: relative; max-width: 760px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 10px 14px 12px; }
+    .ibx-msg.new { border-left: 3px solid var(--accent); }
+    .ibx-msg.focus { box-shadow: var(--ring); border-color: var(--accent); }
+    .ibx-mh { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; padding-right: 22px; }
+    .ibx-mh .ic { width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0; }
+    .ibx-mh .k-alert, .ibx-mh .k-permission { color: var(--amber); }
+    .ibx-mh .k-question { color: var(--sky); }
+    .ibx-mt { color: var(--text-primary); font-weight: 600; font-size: 0.86rem; word-break: break-word; }
+    .ibx-mtime { margin-left: auto; color: var(--text-muted); font-size: 0.7rem; white-space: nowrap; }
+    .ibx-mdel { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0.55; }
+    .ibx-mdel:hover { opacity: 1; color: var(--red); background: var(--red-dim); }
+    .ibx-mdel .ic { width: 13px; height: 13px; }
+    .ibx-text { white-space: pre-wrap; word-break: break-word; color: var(--text-secondary); font-size: 0.85rem; line-height: 1.55; }
+    .ibx-media { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+    .ibx-img img { max-width: 100%; max-height: 50vh; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); display: block; }
+    .ibx-file { display: inline-flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); text-decoration: none; font-size: 0.82rem; max-width: 100%; }
+    .ibx-file:hover { border-color: var(--accent); }
+    .ibx-file .ibx-fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ibx-file .ibx-fs { color: var(--text-muted); font-size: 0.74rem; }
+    .ibx-file.missing { color: var(--text-muted); }
+    .ibx-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted); text-align: center; padding: 24px; font-size: 0.84rem; }
+    .ibx-empty .ic { width: 34px; height: 34px; opacity: 0.6; }
+    .ibx-list .ibx-empty { padding: 40px 20px; }
+    @media (max-width: 768px) {
+      .ibx-head { padding: 10px 12px; }
+      .ibx-list { width: 100%; border-right: 0; }
+      .ibx.has-open .ibx-list { display: none; }
+      .ibx.has-open .ibx-head { display: none; }
+      .ibx:not(.has-open) .ibx-detail { display: none; }
+      .ibx-chead { padding: 10px 12px; }
+      .ibx-back { display: inline-flex; }
+      .ibx-conv { padding: 12px 10px 20px; }
+    }
 
     /* ─── Collapsed sidebar rail (desktop) ───
        A narrow rail of circular initial-avatars; each project's services ECG
@@ -3418,6 +3517,20 @@ export function getWebappHtml(botUsername, appVersion = '') {
     <div class="login-box">
       <p id="login-prompt">Sign in to continue</p>
       <div id="telegram-login-container"></div>
+      <!-- Google / GitHub, through the owner's own OAuth app. Each button
+           shows only when that method is set up and turned on. -->
+      <div id="oauth-login" style="display:none;">
+        <button type="button" class="oauth-btn" id="oauth-btn-google" data-provider="google" style="display:none;">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>
+          <span>Sign in with Google</span>
+        </button>
+        <button type="button" class="oauth-btn" id="oauth-btn-github" data-provider="github" style="display:none;">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>Sign in with GitHub</span>
+        </button>
+        <div id="oauth-wait" style="display:none;"></div>
+        <div id="oauth-error" style="color:var(--red);font-size:0.78rem;text-align:center;"></div>
+      </div>
       <div id="login-or" style="display:none;color:var(--text-muted);font-size:0.76rem;letter-spacing:0.08em;">OR</div>
       <!-- First run: nothing is configured, and nothing else is reachable
            until something is. -->
@@ -3573,6 +3686,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="sidebar-footer">
           <button data-action="app-settings" id="app-settings-btn" title="Settings for the app on this phone" style="display:none;margin-bottom:8px;"><span class="add-label">App settings</span></button>
           <button data-action="add-project" title="Add project"><span class="add-plus">+</span><span class="add-label"> Add project</span></button>
+          <button type="button" class="inbox-btn" id="inbox-btn" data-ibx="show" title="Inbox" aria-label="Inbox"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/></svg><span class="add-label">Inbox</span><span class="inbox-badge" id="inbox-badge" style="display:none">0</span></button>
         </div>
       </div>
       <div class="sidebar-overlay" id="sidebar-overlay" data-action="close-sidebar"></div>
@@ -3680,6 +3794,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
         <div class="info-panel tab-panel" id="info-panel" data-panel="info"></div>
         <div class="info-panel tab-panel" id="settings-panel" data-panel="settings"></div>
+        <div class="inbox-panel tab-panel" id="inbox-panel" data-panel="inbox"></div>
       </div>
     </div>
   </div>
@@ -4664,6 +4779,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
       zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
       layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
       'hard-drive': '<line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/>',
+      mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/>',
+      'help-circle': '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+      mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/>',
       network: '<rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3"/><line x1="12" y1="8" x2="12" y2="13"/>',
     };
     function ic(name) {
@@ -4719,14 +4837,108 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
       if (methods.telegram) injectTelegramWidget();
       if (methods.password) form.style.display = 'flex';
-      if (methods.telegram && methods.password) orEl.style.display = '';
+      // An empty Telegram slot still took its height, leaving a gap at the top.
+      if (!methods.telegram) $('#telegram-login-container').style.display = 'none';
+      // Google / GitHub: a button each, only for what is on. An older server
+      // sends neither field, so nothing shows.
+      const oauthOn = ['google', 'github'].filter((k) => methods[k] === true);
+      if (oauthOn.length) {
+        $('#oauth-login').style.display = 'flex';
+        for (const k of oauthOn) {
+          const b = $('#oauth-btn-' + k);
+          b.style.display = '';
+          b.addEventListener('click', () => oauthLogin(k));
+        }
+        if (window.__crundiAuthErr) $('#oauth-error').textContent = window.__crundiAuthErr;
+      }
+      if ((methods.telegram || oauthOn.length) && methods.password) orEl.style.display = '';
 
-      prompt.textContent = methods.telegram && methods.password
+      prompt.textContent = oauthOn.length ? 'Sign in to continue'
+        : methods.telegram && methods.password
         ? 'Sign in with Telegram, or with your password'
         : methods.password ? 'Sign in with your password and authenticator code'
         : 'Sign in with your Telegram account to continue';
 
       if (methods.password) setTimeout(() => { try { $('#login-password').focus(); } catch {} }, 60);
+    }
+
+    // ─── Google / GitHub sign-in ───
+    // The desktop app runs the flow in the system browser (Google refuses
+    // embedded browsers), and so does any page not on the server's public
+    // address, since the provider can only send people back there. Those wait
+    // by polling; an ordinary browser on the public address is redirected.
+    function isDesktopApp() {
+      return !!(window.api && typeof window.api === 'object') || navigator.userAgent.indexOf('Electron/') >= 0;
+    }
+    let oauthPollTimer = null;
+    function oauthStopWaiting() {
+      if (oauthPollTimer) { clearTimeout(oauthPollTimer); oauthPollTimer = null; }
+      const w = $('#oauth-wait');
+      if (w) { w.style.display = 'none'; w.textContent = ''; }
+      for (const b of document.querySelectorAll('.oauth-btn')) b.disabled = false;
+    }
+    async function oauthLogin(provider) {
+      const err = $('#oauth-error');
+      const wait = $('#oauth-wait');
+      err.textContent = '';
+      oauthStopWaiting();
+      for (const b of document.querySelectorAll('.oauth-btn')) b.disabled = true;
+      let d = null;
+      try {
+        const r = await fetch('/api/auth/oauth/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, origin: location.origin, desktop: isDesktopApp() }),
+        });
+        d = await r.json();
+      } catch (ex) { err.textContent = 'Could not reach the server: ' + ex.message; oauthStopWaiting(); return; }
+      if (!d || !d.ok) { err.textContent = (d && d.error) || 'Could not start the sign-in'; oauthStopWaiting(); return; }
+      if (d.mode === 'redirect') { location.href = d.url; return; }
+      const label = provider === 'google' ? 'Google' : 'GitHub';
+      // A browser may block a window opened after an await, so the page also
+      // offers a link the person can click themselves.
+      wait.innerHTML = 'Finish signing in with ' + label + ' in your browser. When it asks, check it shows this code:'
+        + '<b>' + escHtml(d.confirmCode || '') + '</b>'
+        + '<a id="oauth-open">Open the sign-in page</a> &middot; <a id="oauth-cancel">Cancel</a>';
+      wait.style.display = '';
+      const openIt = () => { try { window.open(d.url, '_blank', 'noopener'); } catch (e) { /* the link is still there */ } };
+      $('#oauth-open').addEventListener('click', openIt);
+      $('#oauth-cancel').addEventListener('click', () => oauthStopWaiting());
+      openIt();
+      const until = Date.now() + 10 * 60 * 1000;
+      const tick = async () => {
+        oauthPollTimer = null;
+        if (Date.now() > until) { oauthStopWaiting(); err.textContent = 'The sign-in timed out. Try again.'; return; }
+        let p = null;
+        try {
+          const r = await fetch('/api/auth/oauth/poll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pollId: d.pollId }) });
+          p = await r.json();
+        } catch (ex) { /* the network blinked; try again */ }
+        if ($('#oauth-wait').style.display === 'none') return;   // cancelled meanwhile
+        if (p && p.status === 'done' && storeSession(p)) { oauthStopWaiting(); showApp(); return; }
+        if (p && (p.status === 'failed' || p.status === 'expired')) {
+          oauthStopWaiting();
+          err.textContent = p.status === 'expired' ? 'The sign-in expired. Try again.' : (p.error || 'Sign-in failed');
+          return;
+        }
+        oauthPollTimer = setTimeout(tick, 1500);
+      };
+      oauthPollTimer = setTimeout(tick, 1500);
+    }
+
+    // Arrived back from the provider: swap the one-time code for a session.
+    // The code is cleared from the address bar before anything else.
+    async function consumeOAuthHandoff() {
+      const m = location.hash.match(/(?:^#|&)oauth=([A-Za-z0-9_-]+)/);
+      if (!m) return false;
+      history.replaceState(null, '', location.pathname);
+      try {
+        const r = await fetch('/api/auth/oauth/exchange', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: m[1] }) });
+        const d = await r.json();
+        if (d && d.ok) return storeSession(d);
+        window.__crundiAuthErr = (d && d.error) || 'Sign-in failed';
+      } catch (ex) { window.__crundiAuthErr = 'Could not reach the server: ' + ex.message; }
+      return false;
     }
 
     async function submitSetup(e) {
@@ -6193,13 +6405,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (window.api) {
         document.querySelector('.topbar').style.webkitAppRegion = 'drag';
         $('#win-controls').style.display = 'flex';
-        $('#tg-badge').style.display = '';
-        // Poll telegram status via server
+        // Poll telegram status via server. Shown only where a bot is set up:
+        // Telegram is one optional channel, and its absence is not a fault.
         async function updateTgBadge() {
           try {
             const r = await apiFetch('/api/status');
             const d = await r.json();
             const el = $('#tg-badge');
+            el.style.display = (d.botConfigured === false && !d.botConnected) ? 'none' : '';
             if (d.botConnected) {
               el.className = 'status-badge connected';
               el.textContent = 'tg: @' + (d.botUsername || 'bot');
@@ -9511,6 +9724,289 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (appr && collab) appr.classList.remove('on');   // the inbox is the owner's
     }
 
+    // ─── Crundi's inbox ───
+    //
+    // Everything the server meant for the owner, kept on the server whatever
+    // channels are on, in THREADS: one per chat, one per project (what came
+    // with no chat), Cru's reports, and Crundi itself. Opened from the
+    // envelope at the bottom of the projects list. The server pushes
+    // 'inbox' { unread, item?, thread? } whenever it changes.
+    const IBX_KIND = {
+      message: ['message-square', 'Message'], photo: ['image', 'Picture'], file: ['file', 'File'],
+      alert: ['bell', 'Alert'], question: ['help-circle', 'Question'], permission: ['shield-alert', 'Permission'],
+      report: ['mic', 'Report'], schedule: ['clock', 'Scheduled job'], system: ['info', 'Crundi'],
+    };
+    const IBX_THREAD_IC = { chat: 'message-square', project: 'folder', cru: 'mic', system: 'info' };
+    const IBX_INLINE = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+    const ibx = { threads: [], unread: 0, openKey: '', msgs: [], fresh: {}, more: false, focusId: '', pin: true, loading: false, supported: true, hashDone: false, timer: null };
+    function ibxKind(k) { return IBX_KIND[k] || IBX_KIND.message; }
+    function ibxWhen(at, full) {
+      const d = new Date(Number(at) || 0);
+      if (full) return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const s = (Date.now() - d.getTime()) / 1000;
+      if (s < 60) return 'now';
+      if (s < 3600) return Math.floor(s / 60) + 'm';
+      if (s < 86400) return Math.floor(s / 3600) + 'h';
+      if (s < 6 * 86400) return d.toLocaleDateString(undefined, { weekday: 'short' });
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+    function ibxSize(n) {
+      n = Number(n) || 0;
+      if (n < 1024) return n + ' B';
+      if (n < 1048576) return Math.round(n / 1024) + ' KB';
+      return (n / 1048576).toFixed(1) + ' MB';
+    }
+    function ibxMediaUrl(m, download) {
+      return m.url + (m.url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(token || '') + (download ? '&download=1' : '');
+    }
+    function ibxBadge() {
+      const btn = document.getElementById('inbox-btn');
+      const b = document.getElementById('inbox-badge');
+      if (btn) {
+        btn.style.display = (ibx.supported && userRole !== 'collaborator') ? '' : 'none';
+        btn.classList.toggle('has-unread', ibx.unread > 0);
+        btn.title = ibx.unread ? 'Inbox: ' + ibx.unread + ' unread' : 'Inbox';
+      }
+      if (b) { b.textContent = ibx.unread > 99 ? '99+' : String(ibx.unread); b.style.display = ibx.unread > 0 ? '' : 'none'; }
+      const sub = document.getElementById('ibx-sub');
+      if (sub) sub.textContent = ibx.unread ? (ibx.unread + ' unread') : (ibx.threads.length ? 'All read' : '');
+    }
+    function ibxGet(path) {
+      return apiFetch(path).then(r => {
+        // 404: a server from before the inbox. 403: a collaborator's page.
+        if (r.status === 404 || r.status === 403) { ibx.supported = false; ibxBadge(); return null; }
+        return r.json();
+      });
+    }
+    function ibxPost(path, body) {
+      return apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(r => r.json())
+        .then(d => { if (d && typeof d.unread === 'number') { ibx.unread = d.unread; ibxBadge(); } return d; });
+    }
+    // The thread list (and the unread total).
+    async function ibxLoad() {
+      if (userRole === 'collaborator') { ibxBadge(); return; }
+      try {
+        const d = await ibxGet('/api/inbox/threads');
+        if (!d || !d.ok) return;
+        ibx.threads = d.threads || [];
+        ibx.unread = d.unread || 0;
+        ibxBadge();
+        if (currentTab === 'inbox') ibxRender();
+      } catch (err) { /* the badge catches up on the next push */ }
+    }
+    // The open thread's items, newest first as the server gives them.
+    async function ibxLoadThread(more) {
+      const key = ibx.openKey;
+      if (!key || ibx.loading) return;
+      ibx.loading = true;
+      try {
+        const oldest = more && ibx.msgs.length ? ibx.msgs[ibx.msgs.length - 1].id : '';
+        const d = await ibxGet('/api/inbox?limit=100&thread=' + encodeURIComponent(key) + (oldest ? '&before=' + encodeURIComponent(oldest) : ''));
+        if (!d || !d.ok || key !== ibx.openKey) return;
+        const got = d.items || [];
+        ibx.msgs = more ? ibx.msgs.concat(got) : got;
+        ibx.more = got.length >= 100;
+        for (const it of got) if (!it.read) ibx.fresh[it.id] = true;
+      } catch (err) { /* shown as it was */ }
+      finally { ibx.loading = false; }
+    }
+    function ibxThreadRow(t) {
+      return '<button type="button" class="ibx-row' + (t.unread ? ' unread' : '') + (t.key === ibx.openKey ? ' active' : '') + '" data-ibx="thread" data-key="' + escHtml(t.key) + '">'
+        + '<span class="ibx-ic t-' + escHtml(t.kind) + '">' + ic(IBX_THREAD_IC[t.kind] || 'mail') + '</span>'
+        + '<span class="ibx-main"><span class="ibx-t">' + escHtml(t.title) + '</span>'
+        + (t.subtitle ? '<span class="ibx-s">' + escHtml(t.subtitle) + '</span>' : '')
+        + '<span class="ibx-m">' + escHtml(t.last ? t.last.title : '') + '</span></span>'
+        + '<span class="ibx-when">' + escHtml(ibxWhen(t.last && t.last.at)) + (t.unread ? '<span class="ibx-count">' + (t.unread > 99 ? '99+' : t.unread) + '</span>' : '') + '</span>'
+        + '</button>';
+    }
+    function ibxMediaHtml(it) {
+      return (it.media || []).map(m => {
+        if (!m.url) return '<div class="ibx-file missing">' + ic('file') + '<span class="ibx-fn">' + escHtml(m.name) + '</span><span class="ibx-fs">not kept</span></div>';
+        if (IBX_INLINE.indexOf(m.mime) >= 0) {
+          return '<a class="ibx-img" href="' + escHtml(ibxMediaUrl(m)) + '" target="_blank" rel="noopener"><img src="' + escHtml(ibxMediaUrl(m)) + '" alt="' + escHtml(m.name) + '"></a>';
+        }
+        return '<a class="ibx-file" href="' + escHtml(ibxMediaUrl(m, true)) + '" download="' + escHtml(m.name) + '">' + ic('file') + '<span class="ibx-fn">' + escHtml(m.name) + '</span><span class="ibx-fs">' + ibxSize(m.size) + '</span>' + ic('download') + '</a>';
+      }).join('');
+    }
+    function ibxMsgHtml(it) {
+      const k = ibxKind(it.kind);
+      const media = ibxMediaHtml(it);
+      return '<div class="ibx-msg' + (ibx.fresh[it.id] ? ' new' : '') + (it.id === ibx.focusId ? ' focus' : '') + '" id="ibx-msg-' + escHtml(it.id) + '">'
+        + '<div class="ibx-mh"><span class="k-' + escHtml(it.kind) + '" title="' + escHtml(k[1]) + '">' + ic(k[0]) + '</span>'
+        + '<span class="ibx-mt">' + escHtml(it.title) + '</span><span class="ibx-mtime">' + escHtml(ibxWhen(it.at, true)) + '</span></div>'
+        + '<button type="button" class="ibx-mdel" data-ibx="del-msg" data-id="' + escHtml(it.id) + '" title="Delete this message" aria-label="Delete this message">' + ic('x') + '</button>'
+        + (it.text ? '<div class="ibx-text">' + escHtml(it.text) + '</div>' : '')
+        + (media ? '<div class="ibx-media">' + media + '</div>' : '')
+        + '</div>';
+    }
+    function ibxConvHtml(t) {
+      if (!t) {
+        return '<div class="ibx-empty">' + ic('mail') + '<p>' + (ibx.threads.length ? 'Choose a conversation to read it.' : 'Nothing here yet.') + '</p></div>';
+      }
+      const msgs = ibx.msgs.slice().reverse();
+      return '<div class="ibx-chead">'
+        + '<button type="button" class="ibx-btn ibx-back" data-ibx="back" aria-label="Back to the inbox">' + ic('chevron-left') + '</button>'
+        + '<span class="ibx-ic t-' + escHtml(t.kind) + '">' + ic(IBX_THREAD_IC[t.kind] || 'mail') + '</span>'
+        + '<span class="ibx-ct"><b>' + escHtml(t.title) + '</b>' + (t.subtitle ? '<span>' + escHtml(t.subtitle) + '</span>' : '') + '</span>'
+        + '<span class="spacer"></span>'
+        + (t.kind === 'chat' && t.chatId ? '<button type="button" class="ibx-btn" data-ibx="chat" data-id="' + escHtml(t.chatId) + '">' + ic('message-square') + ' Open chat</button>' : '')
+        + '<button type="button" class="ibx-btn" data-ibx="read-thread">' + ic('check') + ' Mark read</button>'
+        + '<button type="button" class="ibx-btn danger" data-ibx="del-thread">' + ic('trash') + ' Delete thread</button>'
+        + '</div>'
+        + '<div class="ibx-conv" id="ibx-conv">'
+        + (ibx.more ? '<button type="button" class="ibx-more" data-ibx="older">Show older</button>' : '')
+        + msgs.map(ibxMsgHtml).join('')
+        + '</div>';
+    }
+    function ibxRender(scroll) {
+      const panel = document.getElementById('inbox-panel');
+      if (!panel) return;
+      if (!document.getElementById('ibx')) {
+        panel.innerHTML = '<div class="ibx" id="ibx">'
+          + '<div class="ibx-head"><span class="ibx-title">' + ic('mail') + ' Inbox</span><span class="ibx-sub" id="ibx-sub"></span><span class="spacer"></span>'
+          + '<button type="button" class="ibx-btn" data-ibx="read-all">' + ic('check') + ' Mark all read</button></div>'
+          + '<div class="ibx-body"><div class="ibx-list" id="ibx-list"></div><div class="ibx-detail" id="ibx-detail"></div></div></div>';
+      }
+      const list = document.getElementById('ibx-list');
+      const keep = list.scrollTop;
+      list.innerHTML = ibx.threads.length
+        ? ibx.threads.map(ibxThreadRow).join('')
+        : '<div class="ibx-empty">' + ic('mail') + '<p>Nothing here yet. Messages, pictures and files from your chats land here, with questions, alerts and reports.</p></div>';
+      list.scrollTop = keep;
+      const t = ibx.threads.find(x => x.key === ibx.openKey) || null;
+      const det = document.getElementById('ibx-detail');
+      const conv0 = document.getElementById('ibx-conv');
+      const was = conv0 ? { top: conv0.scrollTop, atEnd: conv0.scrollHeight - conv0.scrollTop - conv0.clientHeight < 40 } : null;
+      det.innerHTML = ibxConvHtml(t);
+      document.getElementById('ibx').classList.toggle('has-open', !!t);
+      const conv = document.getElementById('ibx-conv');
+      if (conv) {
+        // Kept at the newest message (or at the one a link named) until the
+        // owner scrolls away; pictures take their height as they load.
+        if (scroll) ibx.pin = true;
+        else if (was && !was.atEnd && !ibx.focusId) ibx.pin = false;
+        const place = () => {
+          const f = ibx.focusId && document.getElementById('ibx-msg-' + ibx.focusId);
+          if (f) f.scrollIntoView({ block: 'center' });
+          else if (ibx.pin) conv.scrollTop = conv.scrollHeight;
+          else if (was) conv.scrollTop = was.top;
+        };
+        place();
+        conv.querySelectorAll('img').forEach(im => { if (!im.complete) im.addEventListener('load', () => { if (ibx.pin || ibx.focusId) place(); }, { once: true }); });
+        conv.addEventListener('wheel', () => { ibx.focusId = ''; }, { once: true, passive: true });
+        conv.addEventListener('touchmove', () => { ibx.focusId = ''; }, { once: true, passive: true });
+        conv.addEventListener('scroll', () => { if (!ibx.focusId) ibx.pin = conv.scrollHeight - conv.scrollTop - conv.clientHeight < 40; }, { passive: true });
+      }
+      ibxBadge();
+    }
+    async function ibxOpenThread(key, focusId) {
+      ibx.openKey = key || '';
+      ibx.focusId = focusId || '';
+      ibx.msgs = [];
+      ibx.fresh = {};
+      ibx.more = false;
+      ibxRender();
+      if (!ibx.openKey) return;
+      await ibxLoadThread(false);
+      const t = ibx.threads.find(x => x.key === key);
+      const unread = t && t.unread;
+      if (t) t.unread = 0;
+      ibx.msgs.forEach(x => { x.read = true; });
+      ibxRender(true);
+      if (unread) ibxPost('/api/inbox/read', { thread: key }).then(() => ibxLoad()).catch(() => {});
+    }
+    function openInbox(itemId) {
+      if (typeof closeSidebar === 'function') closeSidebar();
+      switchTab('inbox');
+      ibxRender();
+      ibxLoad().then(async () => {
+        if (!itemId) return;
+        // A link to one item opens its thread, scrolled to it.
+        try {
+          const d = await ibxGet('/api/inbox/' + encodeURIComponent(itemId));
+          if (d && d.ok && d.item) { await ibxLoad(); ibxOpenThread(d.item.thread, d.item.id); }
+          else toast('That message is no longer in the inbox');
+        } catch (err) { /* stays on the list */ }
+      });
+    }
+    // #inbox or #inbox/<id> (the link in a Telegram copy, a browser push).
+    function ibxFromHash() {
+      const h = String(location.hash || '');
+      if (h.indexOf('#inbox') !== 0) return;
+      let id = h.length > 7 ? h.slice(7) : '';
+      try { id = decodeURIComponent(id); } catch (err) { id = ''; }
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (err) { /* fine */ }
+      openInbox(id);
+    }
+    window.addEventListener('hashchange', ibxFromHash);
+    function ibxOnEvent(d) {
+      if (!d) return;
+      if (typeof d.unread === 'number') { ibx.unread = d.unread; ibxBadge(); }
+      // Coalesced: one answer can change several items at once.
+      clearTimeout(ibx.timer);
+      ibx.timer = setTimeout(async () => {
+        const open = currentTab === 'inbox' && ibx.openKey && (!d.thread || d.thread === ibx.openKey);
+        if (open) {
+          await ibxLoadThread(false);
+          // Arriving in the thread being read: read.
+          if (d.item && document.visibilityState === 'visible') ibxPost('/api/inbox/read', { thread: ibx.openKey }).catch(() => {});
+        }
+        await ibxLoad();
+      }, 150);
+    }
+    document.addEventListener('click', (e) => {
+      const el = e.target && e.target.closest ? e.target.closest('[data-ibx]') : null;
+      if (!el) return;
+      const act = el.getAttribute('data-ibx');
+      const key = ibx.openKey;
+      if (act === 'show') { openInbox(''); return; }
+      if (act === 'thread') { ibxOpenThread(el.getAttribute('data-key'), ''); return; }
+      if (act === 'back') { ibx.openKey = ''; ibx.focusId = ''; ibxRender(); return; }
+      if (act === 'older') { ibx.focusId = ''; ibxLoadThread(true).then(() => ibxRender()); return; }
+      if (act === 'read-all') {
+        ibx.threads.forEach(t => { t.unread = 0; });
+        ibx.unread = 0;
+        ibxRender();
+        ibxPost('/api/inbox/read', { all: true }).then(() => ibxLoad()).catch(err => toast('Could not mark them read: ' + err.message, 'error'));
+        return;
+      }
+      if (act === 'read-thread' && key) {
+        ibxPost('/api/inbox/read', { thread: key }).then(() => ibxLoad()).catch(err => toast('Could not mark it read: ' + err.message, 'error'));
+        return;
+      }
+      if (act === 'del-thread' && key) {
+        if (!confirm('Delete this whole conversation from the inbox?')) return;
+        ibxPost('/api/inbox/delete', { thread: key })
+          .then(d => { if (!d.ok) throw new Error(d.error || 'failed'); ibx.openKey = ''; ibx.msgs = []; return ibxLoad(); })
+          .then(() => ibxRender())
+          .catch(err => toast('Could not delete: ' + err.message, 'error'));
+        return;
+      }
+      if (act === 'del-msg') {
+        const id = el.getAttribute('data-id');
+        ibxPost('/api/inbox/delete', { ids: [id] })
+          .then(d => {
+            if (!d.ok) throw new Error(d.error || 'failed');
+            ibx.msgs = ibx.msgs.filter(x => x.id !== id);
+            if (!ibx.msgs.length) ibx.openKey = '';
+            return ibxLoad();
+          })
+          .then(() => ibxRender())
+          .catch(err => toast('Could not delete: ' + err.message, 'error'));
+        return;
+      }
+      if (act === 'chat') {
+        const sid = el.getAttribute('data-id');
+        const t = ibx.threads.find(x => x.key === key);
+        switchTab('workbench');
+        if (!goToChat(sid)) {
+          if (t && t.project && typeof selectProject === 'function') selectProject(t.project);
+          toast('That chat is not open any more');
+        }
+      }
+    });
+
     // ─── Approvals inbox ───
     //
     // Secrets, chat permission cards and collaborator requests in one list. It
@@ -9708,6 +10204,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
           }
         } catch { /* ignore */ }
       });
+      es.addEventListener('inbox', (e) => {
+        try { ibxOnEvent(JSON.parse(e.data)); } catch (err) { /* a malformed frame must not stop the stream */ }
+      });
+      // The unread count now (and again after every reconnect), and a link
+      // that opened the page on #inbox.
+      ibxLoad().then(() => { if (!ibx.hashDone) { ibx.hashDone = true; ibxFromHash(); } });
       es.addEventListener('approvals', (e) => {
         try {
           const d = JSON.parse(e.data);
@@ -13998,6 +14500,104 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       panel.appendChild(frag);
     }
+
+    // ─── Settings → Sign-in: Google and GitHub ───
+    // The client secret is write-only: the server says only whether one is
+    // saved, and a blank field keeps it. A method must pass Test before its
+    // switch can be turned on.
+    const OAUTH_MARKS = {
+      google: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;"><path fill="currentColor" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>',
+      github: '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>',
+    };
+    function authOAuthSettings(authCfg, st) {
+      // An older server sends no oauth block: say nothing rather than offer
+      // fields it cannot save.
+      if (!authCfg || !authCfg.oauth) return '';
+      const P = [
+        { k: 'google', label: 'Google', acct: 'Allowed Google email', ph: 'you@gmail.com',
+          where: 'Google Cloud console, APIs and Services, Credentials: create an OAuth client ID of type Web application, and add this as an authorised redirect URI.',
+          link: 'https://console.cloud.google.com/apis/credentials' },
+        { k: 'github', label: 'GitHub', acct: 'Allowed GitHub username', ph: 'your-username',
+          where: 'GitHub, Settings, Developer settings, OAuth Apps, New OAuth App: use this as the authorisation callback URL.',
+          link: 'https://github.com/settings/applications/new' },
+      ];
+      const urls = authCfg.callbackUrls || {};
+      return P.map((p) => {
+        const o = authCfg.oauth[p.k] || {};
+        const on = !!authCfg[p.k];
+        const canOn = !!(o.configured && o.verified);
+        const status = !o.configured
+          ? 'Not set up. Create an OAuth app with ' + p.label + ', then fill this in, Save and Test.'
+          : !o.verified
+            ? 'Saved, not tested since the last change. Run Test before turning it on.'
+            : 'Tested: signed in as ' + escHtml(o.verifiedAs || o.allowed) + '.' + (o.idPinned ? ' Pinned to that account\\u2019s id, so a renamed username cannot take it over.' : '');
+        const url = urls[p.k] || '';
+        const local = /^http:\\/\\/localhost[:\\/]/.test(url);
+        return '<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">'
+          + '<div class="seg-pref-row" style="margin-bottom:10px;">'
+          + '<div><div class="set-tgl-lbl">' + OAUTH_MARKS[p.k] + p.label + '</div>'
+          + '<p style="' + st.hintStyle + '">' + status + '</p></div>'
+          + '<button type="button" class="set-tgl' + (on ? ' on' : '') + '" id="auth-tgl-' + p.k + '"'
+          + ((canOn || on) ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+          + ' role="switch" aria-checked="' + (on ? 'true' : 'false') + '" data-action="auth-toggle" data-method="' + p.k + '"><span class="set-tgl-knob"></span></button>'
+          + '</div>'
+          + '<label style="' + st.labelStyle + '">Callback URL to give ' + p.label + '</label>'
+          + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">'
+          + '<code id="auth-' + p.k + '-cb" style="flex:1;min-width:0;font-family:var(--mono);font-size:0.74rem;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:8px 10px;word-break:break-all;color:var(--text-primary);">' + escHtml(url || 'Unknown until this server has a public address') + '</code>'
+          + (url ? '<button type="button" class="kanban-btn" data-action="auth-oauth-copy" data-provider="' + p.k + '">Copy</button>' : '')
+          + '</div>'
+          + '<p style="' + st.hintStyle + ';margin-bottom:10px;">' + escHtml(p.where) + ' <a href="' + p.link + '" target="_blank" rel="noopener" style="color:var(--accent-hover);">Open</a>'
+          + (local ? ' This is a local address: it only works when signing in on this computer.' : '') + '</p>'
+          + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
+          + '<div><label style="' + st.labelStyle + '">Client ID</label><input id="auth-' + p.k + '-id" value="' + escHtml(o.clientId || '') + '" autocomplete="off" spellcheck="false" style="' + st.monoStyle + '"></div>'
+          + '<div><label style="' + st.labelStyle + '">Client secret</label><input id="auth-' + p.k + '-secret" type="password" autocomplete="new-password" placeholder="' + (o.secretSet ? 'Saved (leave blank to keep)' : 'Not set') + '" style="' + st.monoStyle + '"></div>'
+          + '</div>'
+          + '<div style="margin-bottom:10px;"><label style="' + st.labelStyle + '">' + p.acct + '</label><input id="auth-' + p.k + '-allowed" value="' + escHtml(o.allowed || '') + '" placeholder="' + p.ph + '" autocomplete="off" spellcheck="false" style="' + st.inputStyle + '"></div>'
+          + '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+          + '<button type="button" data-action="auth-oauth-save" data-provider="' + p.k + '" style="' + st.btnStyle + '">Save</button>'
+          + '<button type="button" class="kanban-btn" data-action="auth-oauth-test" data-provider="' + p.k + '"' + (o.configured ? '' : ' disabled style="opacity:0.5;"') + '>Test</button>'
+          + (o.configured ? '<button type="button" class="kanban-btn" data-action="auth-oauth-clear" data-provider="' + p.k + '">Remove</button>' : '')
+          + '<span id="auth-' + p.k + '-test" style="font-size:0.78rem;color:var(--text-muted);align-self:center;"></span>'
+          + '</div>'
+          + '</div>';
+      }).join('');
+    }
+    async function authOAuthTest(provider) {
+      const out = $('#auth-' + provider + '-test');
+      const label = provider === 'google' ? 'Google' : 'GitHub';
+      // Opened now, while the click still counts as one, then pointed at the
+      // provider once the server has made the URL. The desktop app cannot
+      // open a blank window, so it opens the real one afterwards instead.
+      const desktop = isDesktopApp();
+      let win = null;
+      if (!desktop) { try { win = window.open('about:blank', '_blank'); } catch (e) { win = null; } }
+      let d = null;
+      try {
+        const r = await apiFetch('/api/auth/oauth/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, purpose: 'test', origin: location.origin, desktop }) });
+        d = await r.json();
+      } catch (ex) { d = { ok: false, error: ex.message }; }
+      if (!d || !d.ok) { if (win) win.close(); toast((d && d.error) || 'Could not start the test', 'error'); return; }
+      if (win && !win.closed) { try { win.opener = null; win.location.href = d.url; } catch (e) { window.open(d.url, '_blank', 'noopener'); } }
+      else window.open(d.url, '_blank', 'noopener');
+      if (out) out.textContent = 'Waiting for the sign-in in the other window\\u2026';
+      const until = Date.now() + 10 * 60 * 1000;
+      const tick = async () => {
+        if (Date.now() > until) { if (out) out.textContent = 'The test timed out.'; return; }
+        let p = null;
+        try { p = await (await apiFetch('/api/auth/oauth/poll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pollId: d.pollId }) })).json(); } catch (e) { p = null; }
+        if (p && p.status === 'done') { toast(label + ' sign-in works (' + (p.account || '') + ')', 'success'); renderSettings(); return; }
+        if (p && p.status === 'failed') {
+          const msg = (p.error || 'The test did not pass') + (p.account ? ' (signed in as ' + p.account + ')' : '');
+          if (out) out.textContent = msg;
+          toast(msg, 'error');
+          return;
+        }
+        if (p && p.status === 'expired') { if (out) out.textContent = 'The test expired.'; return; }
+        setTimeout(tick, 1500);
+      };
+      setTimeout(tick, 1500);
+    }
+
     async function renderSettings() {
       const panel = $('#settings-panel');
       panel.innerHTML = '<div class="info-section"><h4>Loading...</h4></div>';
@@ -14084,15 +14684,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
         let html = '<div class="info-section"><h4>Configuration</h4>'
           + '<p style="color:var(--text-muted);font-size:0.78rem;margin-bottom:16px;">Changes are saved to <code style="font-family:var(--mono);font-size:0.72rem;background:var(--bg-tertiary);padding:2px 5px;border-radius:3px;">' + escHtml(data.envPath) + '</code></p>'
-          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Bot Token <span style="color:var(--red);">*</span></label>'
+          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Bot Token</label>'
           + '<input type="password" id="set-bot-token" style="' + monoStyle + '" value="' + escHtml(s.TELEGRAM_BOT_TOKEN || '') + '" placeholder="123456:ABC-DEF..." />'
-          + '<p style="' + hintStyle + '">From @BotFather. Used for login + notifications.</p></div>'
-          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Allowed Username <span style="color:var(--red);">*</span></label>'
+          + '<p style="' + hintStyle + '">Optional. From @BotFather. Telegram is one notification channel (and a way to sign in); Crundi runs fully without it, and everything for you lands in its own inbox.</p></div>'
+          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Allowed Username</label>'
           + '<input type="text" id="set-username" style="' + inputStyle + '" value="' + escHtml(s.ALLOWED_USERNAME || '') + '" placeholder="your-telegram-username" />'
-          + '<p style="' + hintStyle + '">Only this Telegram user can access Crundi.</p></div>'
+          + '<p style="' + hintStyle + '">With a bot token: the Telegram user who may sign in with it and receive its messages.</p></div>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Chat ID</label>'
           + '<input type="text" id="set-chat-id" style="' + monoStyle + '" value="' + escHtml(data.chatId || '') + '" placeholder="(auto-set when you send /start to the bot)" />'
-          + '<p style="' + hintStyle + '">Required for notifications. Auto-discovered when you send /start, or enter manually.</p></div>'
+          + '<p style="' + hintStyle + '">Where the Telegram channel sends. Auto-discovered when you send /start, or enter manually.</p></div>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Projects Directory</label>'
           + '<input type="text" id="set-projects-dir" style="' + monoStyle + '" value="' + escHtml(s.PROJECTS_DIR || '') + '" placeholder="C:\\\\Projects" />'
           + '<p style="' + hintStyle + '">Single mode: subfolders auto-discovered. Leave empty for multi mode (add projects individually).</p></div>'
@@ -14152,7 +14752,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           // Sign-in methods. At least one must stay on; the server refuses to
           // disable the last, so these toggles can fail and say why.
           + '<div class="info-section"><h4>Sign-in</h4>'
-          + '<p style="' + hintStyle + ';margin-bottom:14px;">Two ways in. Either is enough, both can be on, and one must always stay on.</p>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Any one of these is enough, any mix can be on, and one must always stay on.</p>'
 
           + '<div class="seg-pref-row" style="margin-bottom:14px;">'
           + '<div><div class="set-tgl-lbl">Telegram</div>'
@@ -14187,12 +14787,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<p style="' + hintStyle + ';margin-bottom:8px;">Shown once. Without it you will not be able to sign in with the new password.</p>'
           + '<code id="auth-enrol-secret" style="display:block;font-family:var(--mono);font-size:0.95rem;letter-spacing:0.12em;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:9px;text-align:center;word-break:break-all;"></code>'
           + '</div>'
+          + authOAuthSettings(authCfg, { inputStyle, monoStyle, labelStyle, hintStyle, btnStyle })
           + '</div>'
 
           // Where notifications go. Unlike sign-in, having none on is a valid
           // choice — it means "do not tell me".
           + '<div class="info-section"><h4>Notification Channels</h4>'
-          + '<p style="' + hintStyle + ';margin-bottom:14px;">Which of these get told. Turn on as many as you like, or none at all. The table below decides <em>which events</em> are worth telling you about.</p>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Which of these get told. Everything for you lands in the Crundi inbox first, and it is always on; turn on as many of the others as you like, or none at all. The table below decides <em>which events</em> are worth telling you about.</p>'
           + chans.map(c =>
               '<div class="seg-pref-row" style="margin-bottom:12px;">'
               + '<div><div class="set-tgl-lbl">' + escHtml(c.label) + '</div>'
@@ -14206,7 +14807,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
               + '</div>'
               + '<button type="button" class="set-tgl' + (c.enabled ? ' on' : '') + '"'
               + ' id="chan-tgl-' + escHtml(c.id) + '"'
-              + (c.available ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+              + (c.alwaysOn ? ' disabled title="Always on" style="opacity:0.75;cursor:default;"' : c.available ? '' : ' disabled style="opacity:0.4;cursor:default;"')
               + ' role="switch" aria-checked="' + (c.enabled ? 'true' : 'false')
               + '" data-action="channel-toggle" data-id="' + escHtml(c.id) + '"><span class="set-tgl-knob"></span></button>'
               + '</div>').join('')
@@ -14352,8 +14953,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
         CLOUDFLARE_TUNNEL_URL: ($('#set-tunnel-url') || {}).value || '',
         DATA_DIR: ($('#set-data-dir') || {}).value || '',
       };
-      if (!settings.TELEGRAM_BOT_TOKEN || !settings.ALLOWED_USERNAME) {
-        toast('Bot Token and Allowed Username are required', 'error');
+      // Telegram is optional: both or neither.
+      if (!settings.TELEGRAM_BOT_TOKEN !== !settings.ALLOWED_USERNAME) {
+        toast('For Telegram, give both the bot token and the allowed username, or leave both empty', 'error');
         return;
       }
       const chatId = ($('#set-chat-id') || {}).value || '';
@@ -14593,11 +15195,46 @@ export function getWebappHtml(botUsername, appVersion = '') {
               if (!dd.ok) { toast(dd.error || 'Could not change that', 'error'); return; }
               btn.classList.toggle('on', on);
               btn.setAttribute('aria-checked', on ? 'true' : 'false');
-              toast(method === 'telegram'
-                ? (on ? 'Telegram sign-in enabled' : 'Telegram sign-in disabled')
-                : (on ? 'Password sign-in enabled' : 'Password sign-in disabled'), 'success');
+              const mlabel = { telegram: 'Telegram', password: 'Password', google: 'Google', github: 'GitHub' }[method] || method;
+              toast(mlabel + ' sign-in ' + (on ? 'enabled' : 'disabled'), 'success');
             })
             .catch(err => toast('Could not change that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-oauth-save': {
+          const k = d.provider;
+          const sec = $('#auth-' + k + '-secret');
+          apiFetch('/api/auth/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'oauth-save', provider: k, clientId: $('#auth-' + k + '-id').value, clientSecret: sec ? sec.value : '', allowed: $('#auth-' + k + '-allowed').value }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) { toast(dd.error || 'Could not save that', 'error'); return; }
+              toast('Saved. Run Test to check it works.', 'success');
+              renderSettings();
+            })
+            .catch(err => toast('Could not save that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-oauth-test': {
+          authOAuthTest(d.provider);
+          break;
+        }
+        case 'auth-oauth-clear': {
+          const k = d.provider;
+          if (!confirm('Remove ' + (k === 'google' ? 'Google' : 'GitHub') + ' sign-in and forget its client ID and secret?')) break;
+          apiFetch('/api/auth/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'oauth-clear', provider: k }) })
+            .then(r => r.json())
+            .then(dd => { if (!dd.ok) { toast(dd.error || 'Could not remove that', 'error'); return; } toast('Removed', 'success'); renderSettings(); })
+            .catch(err => toast('Could not remove that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-oauth-copy': {
+          const el = $('#auth-' + d.provider + '-cb');
+          const txt = el ? el.textContent : '';
+          if (navigator.clipboard && txt) navigator.clipboard.writeText(txt).then(() => toast('Copied', 'success'), () => toast('Select it and copy it by hand', 'error'));
           break;
         }
         case 'auth-set-password': {
@@ -18217,6 +18854,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (err) {
         history.replaceState(null, '', location.pathname);
         toast('Login failed: ' + err, 'error');
+        window.__crundiAuthErr = err;   // shown under the Google / GitHub buttons too
       }
       return false;
     }
@@ -18272,7 +18910,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (APP_LOGIN && !token) {
         if (!takeAppLogin(await askAppLogin('get'))) takeAppLogin(await askAppLogin('renew'));
       }
-      if (consumeRedirectToken() && await checkAuth()) {
+      if (((await consumeOAuthHandoff()) || consumeRedirectToken()) && await checkAuth()) {
         showApp(); connectSSE(); checkImport();
         return;
       }
