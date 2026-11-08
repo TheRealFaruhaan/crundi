@@ -12,7 +12,7 @@
  */
 
 import { userInfo } from 'node:os';
-import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, unlinkSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync, unlinkSync, readdirSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -265,6 +265,9 @@ echo "installing into ${ROOT}"
 # bash, NOT sh: install.sh uses 'set -o pipefail', which dash rejects
 # outright - and /bin/sh is dash on Debian and Ubuntu.
 bash scripts/install.sh --no-service --prefix "${ROOT}"
+# The download and its unpacked copy (about 1 GB) are no longer needed.
+cd /
+rm -rf "${work}"
 echo "restarting"
 # The unit is called crundi either way; which manager owns it depends on how
 # it was installed, so try the system one and fall back to the user one.
@@ -300,8 +303,27 @@ export function readLog() {
   }
 }
 
+/**
+ * Updates left behind by earlier versions of the script, which never removed
+ * their download (about 1 GB each, one per update, in the temp folder).
+ * Anything but an update running right now goes.
+ */
+export function cleanLeftovers() {
+  if (state.applying) return 0;
+  let n = 0;
+  try {
+    for (const name of readdirSync(tmpdir())) {
+      if (!/^crundi-update-[0-9][0-9A-Za-z.+-]*$/.test(name)) continue;
+      try { rmSync(join(tmpdir(), name), { recursive: true, force: true }); n++; } catch { /* another user's, or busy */ }
+    }
+  } catch { /* no temp folder to read */ }
+  if (n) console.log(`[update] removed ${n} leftover update folder(s) from ${tmpdir()}`);
+  return n;
+}
+
 /** Check now, then on an interval. Failures are logged once and retried later. */
 export function start() {
+  cleanLeftovers();
   if (timer) return;
   check().catch(() => { /* recorded in state.error */ });
   timer = setInterval(() => check().catch(() => {}), CHECK_INTERVAL_MS);

@@ -25,18 +25,27 @@ const lift = (start) => {
 let failed = 0;
 const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
 
-const { handleTaskEvent } = new Function(`
+const { handleTaskEvent, retireAgents, runningTasks, setDone } = new Function(`
   const MAX_LABEL = 120, MAX_TEXT = 4000;
   const toMs = (v) => (typeof v === 'number' ? v : Date.parse(v) || Date.now());
-  function trimAgents() {} function scheduleAutoDismiss() {} function emitAgent() {}
-  function activeTriggers(s) { let n = 0; for (const a of s.agents.values()) if (!a.endedAt) n++; return n; }
+  function trimAgents() {} function scheduleAutoDismiss() {} function emitAgent() {} function cancelAutoDismiss() {}
+  let doneIds = null;
+  function finishedTasks() { return doneIds; }
   function setState(s, st) { s.state = st; }
+  const AGENT_SILENT_MS = 15 * 60 * 1000;
+  const TASK_CAP_MS = 6 * 60 * 60 * 1000;
+  ${lift('  function isStale(a, now = Date.now()) {')}
+  ${lift('  function runningTasks(s) {')}
+  function activeTriggers(s) { return runningTasks(s); }
+  ${lift('  function endRunning(s, which) {')}
+  ${lift('  function retireAgents(s) {')}
+  ${lift('  function revive(s, a) {')}
   ${lift('  function getAgent(s, toolUseId, kind) {')}
   ${lift('  function handleTaskEvent(s, msg) {')}
-  return { handleTaskEvent };
+  return { handleTaskEvent, retireAgents, runningTasks, setDone: (d) => { doneIds = d; } };
 `)();
 
-const s = { agents: new Map(), agentsByTask: new Map(), state: 'working' };
+const s = { agents: new Map(), agentsByTask: new Map(), state: 'working', proc: {} };
 const ev = (subtype, extra) => handleTaskEvent(s, { type: 'system', subtype, ...extra });
 ev('task_started', { tool_use_id: 'tu-agent', task_id: 'A1', description: 'Chat voice mode: web', subagent_type: 'general-purpose' });
 ev('task_notification', { tool_use_id: 'tu-agent', task_id: 'A1', status: 'completed', summary: 'done' });
@@ -59,6 +68,30 @@ ok(s.state === 'idle', 'and a chat waiting only on it is idle');
 ev('task_started', { tool_use_id: 'tu-send2', task_id: 'A1' });
 ev('task_notification', { tool_use_id: 'tu-send2', task_id: 'A1', status: 'completed' });
 ok(s.agents.size === 1 && a.endedAt > 0, 'an end keyed by the resuming call still ends the one entry');
+
+// Ends that never reached us (the stuck "Agent running" entries).
+{
+  const t = { agents: new Map(), agentsByTask: new Map(), state: 'waiting', proc: {} };
+  const e = (subtype, extra) => handleTaskEvent(t, { type: 'system', subtype, ...extra });
+  e('task_started', { tool_use_id: 'x1', task_id: 'X1', subagent_type: 'general-purpose' });
+  e('task_started', { tool_use_id: 'x2', task_id: 'X2', subagent_type: 'general-purpose' });
+  e('task_started', { tool_use_id: 'b1', task_id: 'B1', task_type: 'local_bash' });
+  ok(runningTasks(t) === 3, 'three running');
+  setDone(new Set(['X1']));
+  retireAgents(t);
+  ok(t.agents.get('x1').endedAt > 0 && !t.agents.get('x2').endedAt, 'an agent finished per the transcript is ended');
+  t.agents.get('x2').lastAt = Date.now() - 16 * 60 * 1000;
+  t.agents.get('b1').lastAt = Date.now() - 16 * 60 * 1000;
+  ok(runningTasks(t) === 1, 'a silent agent no longer counts; a quiet command still does');
+  retireAgents(t);
+  ok(t.agents.get('x2').status === 'stopped' && !t.agents.get('b1').endedAt, 'the silent agent is ended, the command is not');
+  e('task_progress', { tool_use_id: 'x2', task_id: 'X2', description: 'Still here' });
+  ok(!t.agents.get('x2').endedAt && t.agents.get('x2').status === 'running', 'a later sign of life revives a guessed end');
+  t.proc = null;
+  retireAgents(t);
+  ok(runningTasks(t) === 0 && t.state === 'idle', 'with no process left nothing runs, and the chat is idle');
+  setDone(null);
+}
 
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

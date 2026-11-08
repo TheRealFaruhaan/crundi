@@ -87,6 +87,21 @@ ok(JSON.parse(readFileSync(join(dataDir, 'update-channel.json'), 'utf-8')).chann
 su.setChannel('production');
 ok(su.getChannel() === 'production', 'switching back to production is stored');
 
+{
+  // An update's download used to stay in the temp folder for good (about 1 GB each).
+  const { mkdirSync: mk, existsSync: ex, writeFileSync: wf } = await import('node:fs');
+  const { tmpdir: td } = await import('node:os');
+  const { join: j } = await import('node:path');
+  const old = j(td(), 'crundi-update-0.0.0-test'), other = j(td(), 'crundi-update-notes');
+  mk(old, { recursive: true }); wf(j(old, 'pkg.tar.gz'), 'x'); mk(other, { recursive: true });
+  const n = su.cleanLeftovers();
+  ok(n >= 1 && !ex(old), 'leftover update downloads in the temp folder are removed');
+  ok(ex(other), 'only update folders: anything else named alike stays');
+  rmSync(other, { recursive: true, force: true });
+  const script = readFileSync(new URL('../src/server-update.js', import.meta.url), 'utf8');
+  ok(/bash scripts\/install\.sh[\s\S]{0,200}rm -rf "\$\{work\}"/.test(script), 'the update script removes its own download once installed');
+}
+
 rmSync(dataDir, { recursive: true, force: true });
 if (failed) { console.log(`\n${failed} channel check(s) failed`); process.exit(1); }
 console.log('\nAll update-channel checks passed.');
