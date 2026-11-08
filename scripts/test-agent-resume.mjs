@@ -93,5 +93,24 @@ ok(s.agents.size === 1 && a.endedAt > 0, 'an end keyed by the resuming call stil
   setDone(null);
 }
 
+// "Dismiss finished" takes the finished ones away on every open view at once.
+{
+  const events = [];
+  const d = { agents: new Map([
+    ['f1', { toolUseId: 'f1', status: 'completed', endedAt: 1, messages: [] }],
+    ['r1', { toolUseId: 'r1', status: 'running', endedAt: 0, messages: [] }],
+  ]), emitter: { emit: (_, e) => events.push(e) } };
+  const { dismissAgents } = new Function('d', `
+    const sessions = new Map([['c1', d]]);
+    function cancelAutoDismiss() {} function persistNow() {}
+    ${lift('  function agentMeta(a) {')}
+    ${lift('  function dismissAgents(sessionId, toolUseIds) {')}
+    return { dismissAgents };
+  `)(d);
+  const r = dismissAgents('c1', 'all');
+  ok(r.dismissed === 1 && d.agents.get('f1').dismissed && !d.agents.get('r1').dismissed, 'dismiss finished leaves the running one');
+  ok(events.length === 1 && events[0].type === 'agent' && events[0].agent.dismissed, 'and tells every open view');
+}
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

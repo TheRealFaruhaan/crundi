@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -530,7 +531,7 @@ private fun ChatSheetContent(s: ChatSheet, ui: ChatUi, a: ChatActions, wide: Boo
         is ChatSheet.Agents -> SheetCard(if (s.kind == "task") "Background commands" else "Agents", close) {
             val agents = ui.chat.agents.values.filter { !it.dismissed && (it.kind == "task") == (s.kind == "task") }
             if (agents.isEmpty()) Text(if (s.kind == "task") "No background commands in this chat." else "No agents in this chat.", style = CrundiType.Small, modifier = Modifier.padding(10.dp))
-            Column(Modifier.heightIn(max = 420.dp)) {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 for (ag in agents) Row(
                     Modifier.fillMaxWidth().clickable { a.sheet(ChatSheet.Agent(ag.toolUseId)) }.padding(horizontal = 8.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp),

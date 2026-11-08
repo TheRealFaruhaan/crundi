@@ -61,6 +61,17 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.27 (en-US)
+
+Version code 58. Internal track. Since 1.1.3-dev.26 (code 57): agents panel scrolls; Dismiss finished takes effect at once (server 1.21.6-dev.31 sends the change).
+
+```
+<en-US>
+- Dismiss finished in a chat's agents panel now clears them at once; running agents stay.
+- The agents and background commands panels scroll when the list is long.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.26 (en-US)
 
 Version code 57. Internal track. Since 1.1.3-dev.25 (code 56): Telegram moved out of Configuration: bot under Sign-in > Telegram, chat ID and bot status under Notifications (servers with telegramBot); older servers as before.

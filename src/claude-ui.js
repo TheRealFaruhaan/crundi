@@ -3223,14 +3223,19 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function dismissAgents(sessionId, toolUseIds) {
     const s = sessions.get(sessionId);
     if (!s) return { ok: false, error: 'No such session' };
+    // "All" is "Dismiss finished": a running agent stays on show.
     const ids = toolUseIds === 'all'
-      ? [...s.agents.keys()]
+      ? [...s.agents.entries()].filter(([, a]) => a && a.status !== 'running').map(([id]) => id)
       : (Array.isArray(toolUseIds) ? toolUseIds : []);
     let n = 0;
     for (const id of ids) {
       const a = s.agents.get(id);
-      if (a && !a.dismissed) { a.dismissed = true; n++; }
       cancelAutoDismiss(s, id);
+      if (!a || a.dismissed) continue;
+      a.dismissed = true; n++;
+      // Every open view (this phone, other tabs, the PC) takes it away now,
+      // not on its next reload.
+      s.emitter.emit('event', { type: 'agent', agent: agentMeta(a) });
     }
     if (n) persistNow(s);   // survive a restart, not just this process
     return { ok: true, dismissed: n };
