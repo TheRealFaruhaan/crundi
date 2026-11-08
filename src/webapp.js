@@ -107,6 +107,7 @@ import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
 import { relay as voiceRelay } from './voice/stream.js';
 import { fixNames } from './voice/names.js';
 import { makeAdminTools as makeVoiceAdminTools } from './voice/admin.js';
+import { selfNote as voiceSelfNote, capCheck as voiceCapCheck, ROUTINES_DIR as VOICE_ROUTINES_DIR } from './voice/reflect.js';
 import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, turnPolicy as voiceTurnPolicy, trimSilence as trimVoiceSilence } from './voice/speaker.js';
 import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
@@ -2802,6 +2803,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * trigger) always asks Cru, and Cru may say nothing: then nothing is said,
    * kept or pushed. Answers { ok, quiet?, said?, busy? }.
    */
+  // Cru's messages nobody has read yet: counted until the owner opens Cru's chat view.
+  const voiceUnread = (() => {
+    const file = join(config.dataDir, 'voice-memory', 'unread.json');
+    let st = { count: 0, latestAt: 0, line: '' };
+    try { st = { ...st, ...JSON.parse(readFileSync(file, 'utf-8')) }; } catch { /* none yet */ }
+    const save = () => { try { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(st), { mode: 0o600 }); } catch { /* best effort */ } broadcastSSE('voice-unread', { count: st.count, latestAt: st.latestAt }); };
+    return {
+      add(line) { st.count += 1; st.latestAt = Date.now(); st.line = String(line || '').slice(0, 200); save(); },
+      seen() { if (st.count) { st.count = 0; save(); } },
+      get state() { return { count: st.count, latestAt: st.latestAt, line: st.line }; },
+    };
+  })();
   async function cruDeliver({ note, wake = false, line = '', detail = '', chatId = '', project = '', chatTitle = '', needsOwner = false, tag = 'cru', url = '/' }) {
     const open = [...voiceListeners].filter(ws => ws.readyState === 1);
     const pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
@@ -2828,18 +2841,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       line = said.slice(0, 200);
       detail = r.speak ? String(r.show || '') : (said.length > 200 ? said : '');
     }
-    // Not said anywhere: kept in Crundi's inbox, so it is not lost when the
-    // phone notification is swiped away.
-    let inboxId = '';
+    // Not said anywhere: kept in Cru's own history (its chat view) as unread,
+    // not in the inbox; the Cru mark shows a dot until it is read.
     if (!spoken) {
       try {
-        const it = inbox.add({ kind: 'report', cru: true, title: line, text: detail || '', project: project || '', chatId: chatId || '', chatTitle: chatTitle || '' });
-        inboxId = it.id;
-      } catch (err) { console.warn('[inbox] could not keep the report:', err.message); }
+        // A wake-up's answer is already in the history (Cru said it); a report nobody heard yet is put there now.
+        if (!wake) voiceMemory.remember({ said: `[Report for the owner, not said by them] ${String(note || line).slice(0, 2000)}`, speak: line, show: detail || '' });
+        voiceUnread.add(line);
+      } catch (err) { console.warn('[voice] could not keep the report:', err.message); }
     }
     // …and the phone, whose connection drops when Cru is closed, gets a
-    // notification, since the owner may not be at the PC.
-    mobilePush.send(`${line}${detail ? ' ' + detail.slice(0, 120) : ''}`, { title: 'Cru', url, tag, ...(inboxId ? { inboxId, inboxThread: 'cru' } : {}) }).catch(() => {});
+    // notification, since the owner may not be at the PC. It opens Cru's chat view.
+    mobilePush.send(`${line}${detail ? ' ' + detail.slice(0, 120) : ''}`, { title: 'Cru', url: '/?cru=chat', tag, cruChat: true, chatId: chatId || undefined }).catch(() => {});
     return { ok: true, said: spoken ? 'pc' : 'push' };
   }
   // A watched chat, only when it finishes its turn or needs the owner, never
@@ -3007,6 +3020,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     onTurnDone: (t) => voiceMemory.remember(t),
     onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
     persona: () => (voiceMemory.notebook.list().find(f => f.path === '/memories/persona.md') || {}).text || '',
+    // Who the owner is and Cru's routines go with the persona (reflect.js).
+    selfNote: () => { const files = voiceMemory.notebook.list(); const at = (p) => (files.find(f => f.path === p) || {}).text || ''; return voiceSelfNote({ persona: at('/memories/persona.md'), owner: at('/memories/owner.md'), routines: files.filter(f => f.path.startsWith(VOICE_ROUTINES_DIR)) }); },
+    selfFiles: () => { const files = voiceMemory.notebook.list(); const at = (p) => (files.find(f => f.path === p) || {}).text || ''; return { persona: at('/memories/persona.md'), owner: at('/memories/owner.md') }; },
+    // What a compaction taught: the two files rewritten whole, within their limits.
+    onReflected: ({ persona, owner }) => {
+      const files = voiceMemory.notebook.list(); const at = (p) => (files.find(f => f.path === p) || {}).text || '';
+      for (const [path, text] of [['/memories/persona.md', persona], ['/memories/owner.md', owner]]) {
+        if (!text || !String(text).trim()) continue;
+        if (voiceCapCheck(path, at(path), text)) { console.warn(`[voice] reflection left ${path} as it was (over its limit)`); continue; }
+        try { voiceMemory.notebook.save(path, String(text).trim() + '\n'); console.log(`[voice] reflection updated ${path}`); } catch (e) { console.warn(`[voice] reflection could not write ${path}: ${e.message}`); }
+      }
+    },
   };
   // The experiment (brain setting): the same tools and rules, answered by the
   // owner's own Claude Code in JSON mode, running in Cru's notes folder.
@@ -4677,6 +4702,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
     // Cru's conversation as chat bubbles (the voice screen's chat view): the
     // latest turns, oldest first, paged back with ?before=<ms>.
+    // Cru's unread messages (the dot on its mark), and marking them read.
+    if (path === '/api/voice/unread' && req.method === 'GET') return json(res, { ok: true, ...voiceUnread.state });
+    if (path === '/api/voice/seen' && req.method === 'POST') { voiceUnread.seen(); return json(res, { ok: true, ...voiceUnread.state }); }
     if (path === '/api/voice/history' && req.method === 'GET') {
       const turns = voiceMemory.turns({ before: Number(url.searchParams.get('before')) || 0, limit: Number(url.searchParams.get('limit')) || 50 });
       return json(res, { ok: true, turns: turns.reverse(), more: turns.length >= (Number(url.searchParams.get('limit')) || 50) });

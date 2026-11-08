@@ -13,6 +13,7 @@
  * password is refused too.
  */
 
+import { capCheck } from './reflect.js';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, chmodSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
@@ -66,16 +67,24 @@ export function createNotebook(dir, { onChange = () => {} } = {}) {
     onChange(shown(full), text);
   }
 
+  // Cru's own writes keep persona.md and owner.md within their limits (reflect.js); the owner's edits are his.
+  function capped(full, next) {
+    const why = capCheck(shown(full), existsSync(full) ? readFileSync(full, 'utf-8') : '', next);
+    if (why) throw new Error(why);
+  }
+
   const commands = {
     view,
-    create({ path, file_text = '' }) { ensure(); const f = file(path); write(f, String(file_text)); return `File created: ${shown(f)}`; },
+    create({ path, file_text = '' }) { ensure(); const f = file(path); capped(f, String(file_text)); write(f, String(file_text)); return `File created: ${shown(f)}`; },
     str_replace({ path, old_str, new_str = '' }) {
       const f = file(path);
       if (!existsSync(f)) throw new Error(`${path} does not exist`);
       const text = readFileSync(f, 'utf-8');
       const n = text.split(String(old_str)).length - 1;
       if (n !== 1) throw new Error(n === 0 ? 'That text is not in the file' : `That text is in the file ${n} times; make it unique`);
-      write(f, text.replace(String(old_str), String(new_str)));
+      const next = text.replace(String(old_str), String(new_str));
+      capped(f, next);
+      write(f, next);
       return `Edited ${shown(f)}`;
     },
     insert({ path, insert_line = 0, insert_text = '' }) {
@@ -83,6 +92,7 @@ export function createNotebook(dir, { onChange = () => {} } = {}) {
       const lines = existsSync(f) ? readFileSync(f, 'utf-8').split('\n') : [];
       const at = Math.max(0, Math.min(lines.length, Number(insert_line) || 0));
       lines.splice(at, 0, ...String(insert_text).split('\n'));
+      capped(f, lines.join('\n'));
       write(f, lines.join('\n'));
       return `Inserted into ${shown(f)}`;
     },

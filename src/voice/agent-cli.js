@@ -29,6 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as voiceSettings from './settings.js';
+import { reflectionAsk, parseReflection } from './reflect.js';
 import { SYSTEM_PROMPT, PERSONA_FILE, splitReply, contextLine, runVoiceTool, reportPrompt } from './agent.js';
 
 /** A turn that takes longer than this is abandoned (the process is restarted). */
@@ -74,7 +75,7 @@ const MEMORY_DEF = {
  */
 export function createCliVoiceAgent({
   tools, workdir, stateDir, apiUrl, claudeBin,
-  settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '',
+  settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '', selfNote = null, selfFiles = null, onReflected = () => {},
   spawn = nodeSpawn,
 } = {}) {
   const byName = new Map(tools.map(t => [t.name, t]));
@@ -111,6 +112,8 @@ export function createCliVoiceAgent({
   let cancelledNote = '';
 
   const personaNote = () => {
+    // The whole note (persona, owner, routines) when the server builds it (reflect.js selfNote).
+    if (selfNote) { try { const n = String(selfNote() || ''); if (n.trim()) return n.endsWith('\n') ? n : n + '\n'; } catch { /* fall back */ } }
     let p = '';
     try { p = String(persona() || '').trim(); } catch { /* none */ }
     return p ? `[How the owner wants you to be (${PERSONA_FILE}):\n${p.slice(0, 4000)}]\n` : `[${PERSONA_FILE} is empty: nothing learnt yet about how the owner wants you to be.]\n`;
@@ -315,11 +318,14 @@ export function createCliVoiceAgent({
     busy = true;
     try {
       const model = settings.getSettings().model || settings.DEFAULT_MODEL;
-      let r;
+      let r, files = null;
       try {
-        r = await ask(model, '[Not from the owner: Crundi is starting you a fresh conversation.] Summarise this conversation so you can carry on from the summary: decisions, requests in progress, actions taken (what, where), what is waiting on someone, facts learnt about the owner\'s projects and preferences. Plain prose and short lists, no preamble, under 400 words. Use no tools.');
+        files = selfFiles ? selfFiles() : null;
+        r = await ask(model, '[Not from the owner: Crundi is starting you a fresh conversation.] Summarise this conversation so you can carry on from the summary: decisions, requests in progress, actions taken (what, where), what is waiting on someone, facts learnt about the owner\'s projects and preferences. Plain prose and short lists, no preamble, under 400 words. Use no tools.' + (files ? reflectionAsk(files) : ''));
       } catch (e) { return { ok: false, skipped: String(e.message || e) }; }
-      const summary = r.ok ? String(r.result?.result || '').trim() : '';
+      const learnt = parseReflection(r.ok ? String(r.result?.result || '') : '');
+      const summary = learnt.summary;
+      if (files && (learnt.persona || learnt.owner)) { try { onReflected({ persona: learnt.persona, owner: learnt.owner }); } catch { /* best effort */ } }
       if (!summary) return { ok: false, skipped: r.error || 'empty summary' };
       stop();
       state = { sessionId: '', turns: 0, summary };

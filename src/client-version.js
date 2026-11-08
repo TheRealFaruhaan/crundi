@@ -190,6 +190,8 @@ export const CAPABILITIES = Object.freeze([
   'voice-history',
   // Keyboard mode: /api/voice/listen?keyboard=1 carries reports and settings only (no mic, no Deepgram).
   'voice-keyboard',
+  // Cru's unread reports: GET /api/voice/unread, POST /api/voice/seen, SSE 'voice-unread' {count}; pushes carry cruChat (open Cru's chat view), not the inbox.
+  'voice-unread',
   // Cru's own tickers and triggers (src/voice/wakeups.js): GET /api/voice/wakeups,
   // POST /api/voice/wakeups { id, action: 'enable'|'disable'|'delete' }, SSE 'voice-wakeups'.
   'voice-wakeups',

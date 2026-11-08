@@ -258,7 +258,7 @@
     '.cv-m{max-width:82%;padding:8px 12px;border-radius:16px;font-size:14px;line-height:20px;white-space:pre-wrap;word-wrap:break-word}.cv-m.me{align-self:flex-end;background:#2b2b55;border-bottom-right-radius:5px}.cv-m.cru{align-self:flex-start;background:' + C.card + ';border:1px solid ' + C.border + ';border-bottom-left-radius:5px}.cv-m.live{opacity:.6;font-style:italic}' +
     '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
     '.cv-more{align-self:center;font-size:12px;color:' + C.text2 + ';cursor:pointer;padding:4px 10px;margin-bottom:6px;border-radius:12px;background:#1a1a28}' +
-    '.cv-x.on{background:' + C.accent + ';color:#fff}' +
+    '.cv-x.on{background:' + C.accent + ';color:#fff}.cv-chatb{position:relative}.cv-chatb.cru-unread:after{content:"";position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#ef4444}' +
     '.cv-bot .cv-kbb{margin-left:0;flex:none}.cv-ov.kb .cv-mic,.cv-ov.kb .cv-ptt{display:none!important}' +
     '.cv-ov.chat .cv-field,.cv-ov.chat .cv-words{display:none}.cv-ov.chat .cv-chat{display:flex}.cv-ov.chat .cv-mic{width:64px;height:64px}.cv-ov.chat .cv-mic canvas{left:-104px;top:-44px}' +
     '.cv-x{margin-left:10px;width:34px;height:34px;border-radius:50%;border:0;background:#1a1a28;color:' + C.text2 + ';cursor:pointer;font-size:0;display:flex;align-items:center;justify-content:center}' +
@@ -345,6 +345,7 @@
     q('.cv-more').onclick = function (e) { e.stopPropagation(); loadChat(true); };
     // The view the owner chose last time, on this device.
     if (chatPref()) setTimeout(function () { if (S) chatView(true); }, 0);
+    setUnread(unread);
     q('.cv-cmp').onclick = function (e) {
       e.stopPropagation();
       if (!S) return;
@@ -601,7 +602,8 @@
     try { localStorage.setItem(CHAT_KEY, on ? '1' : '0'); } catch (e) { /* private mode */ }
     S.ov.classList.toggle('chat', S.chat);
     var b = S.ov.querySelector('.cv-chatb'); if (b) { b.classList.toggle('on', S.chat); b.title = S.chat ? 'Back to the voice view' : 'Chat view: the whole conversation as messages'; }
-    if (S.chat && !S.msgs) loadChat(false); else renderChat(true);
+    if (S.chat && !S.msgs) loadChat(false); else if (S.chat && unread) loadChat(false); else renderChat(true);
+    if (S.chat) markSeen(); else setUnread(unread);
   }
   function loadChat(older) {
     if (!S) return;
@@ -1295,6 +1297,19 @@
       '<g stroke="url(#' + g + ')" stroke-width="9">' + lines + '</g>' +
       '<g stroke="#fff" stroke-opacity=".28" stroke-width="2.4" transform="translate(-1.2 -1.4)">' + lines + '</g></svg>';
   }
+  // Cru's unread messages (reports nobody heard): a dot on its mark and on the chat button.
+  var unread = 0, cruButtons = [];
+  function setUnread(n) {
+    unread = Math.max(0, Number(n) || 0);
+    cruButtons.forEach(function (b) { b.classList.toggle('cru-unread', unread > 0); b.title = unread ? 'Talk to Cru (' + unread + ' unread)' : 'Talk to Cru (voice assistant)'; });
+    if (S) { var c = S.ov.querySelector('.cv-chatb'); if (c) c.classList.toggle('cru-unread', unread > 0 && !S.chat); }
+  }
+  function markSeen() {
+    if (!unread || !S) return;
+    setUnread(0);
+    post('/api/voice/seen').catch(function () { /* next time */ });
+  }
+
   /** The marks move while a voice screen is open and Cru listens, thinks or talks. */
   function liveMark() {
     var on = !!(S && S.phase && S.phase !== 'ended');
@@ -1308,11 +1323,12 @@
     // The top-bar button wears Cru's mark: no outline, no background.
     if (!document.getElementById('cru-btn-css')) {
       var bs = el('style'); bs.id = 'cru-btn-css';
-      bs.textContent = '.cru-btn,.cru-btn:hover{border:none!important;background:transparent!important;padding:2px!important;width:auto!important}.cru-btn .cru-ic{display:block;transition:transform .2s}.cru-btn:hover .cru-ic{transform:scale(1.08)}' +
+      bs.textContent = '.cru-btn{position:relative}.cru-unread:after{content:"";position:absolute;top:1px;right:1px;width:8px;height:8px;border-radius:50%;background:#ef4444;box-shadow:0 0 0 2px var(--bg-primary,#05050a)}' + '.cru-btn,.cru-btn:hover{border:none!important;background:transparent!important;padding:2px!important;width:auto!important}.cru-btn .cru-ic{display:block;transition:transform .2s}.cru-btn:hover .cru-ic{transform:scale(1.08)}' +
         '.cru-ic .cru-b1,.cru-ic .cru-b2{transform-box:fill-box;transform-origin:50% 50%}.cru-ic.cru-live .cru-b1{animation:cru-p .9s ease-in-out infinite}.cru-ic.cru-live .cru-b2{animation:cru-p .9s ease-in-out .15s infinite}@keyframes cru-p{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.45)}}';
       document.head.appendChild(bs);
     }
     button.classList.add('cru-btn');
+    cruButtons.push(button); setUnread(unread);
     button.innerHTML = cruIcon(24);
     var hoverTimer = null;
     var openWith = function (how) { var o = getOpts() || {}; o.anchor = button; o.how = how; open(o); };
@@ -1370,7 +1386,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, tone: tone, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
     // The own-voice tools, shared with a chat's voice mode (claude-chat.js), which talks over its replies the same way.
     kit: { createGate: createGate, createPreroll: createPreroll, voicedShare: voicedShare, makeLoopback: makeLoopback },
     // The PC's "Hey Cru" (app/voice-wake/controller.js): an asleep screen has let the microphone go, and is woken where it is.

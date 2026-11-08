@@ -5725,6 +5725,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
       b.classList.add('on');   // top-bar buttons show only when switched on; the owner's alone
       window.CrundiVoice.attach(b, voiceOpts);
       voiceAttached = true;
+      // Unread messages from Cru, and a notification that asked for Cru's chat view (?cru=chat).
+      apiFetch('/api/voice/unread').then((r) => r.json()).then((d) => { if (d && d.ok && window.CrundiVoice.setUnread) window.CrundiVoice.setUnread(d.count || 0); }).catch(() => {});
+      try {
+        const q = new URLSearchParams(location.search);
+        if (q.get('cru') === 'chat') {
+          try { localStorage.setItem('crundi_cru_chat_view', '1'); } catch (err) { /* private mode */ }
+          q.delete('cru'); history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
+          setTimeout(() => b.click(), 300);
+        }
+      } catch (err) { /* ignore */ }
     }
     // The PC's wake word opens voice through this (app/voice-wake/controller.js).
     window.crundiOpenVoice = () => { if (window.CrundiVoice && !window.CrundiVoice.isOpen) openVoice(); };
@@ -10555,6 +10565,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       });
       es.addEventListener('schedule', () => { if (currentTab === 'schedule') loadSchedules(); });
       es.addEventListener('voice-wakeups', () => { if (document.getElementById('vs-wake')) vsLoadWakeups(); });
+      // Cru's unread messages: the dot on its mark.
+      es.addEventListener('voice-unread', (e) => { try { const d = JSON.parse(e.data || '{}'); if (window.CrundiVoice && window.CrundiVoice.setUnread) window.CrundiVoice.setUnread(d.count || 0); } catch (err) { /* ignore */ } });
       // Factory runs and the factory library: the views refresh what they show.
       es.addEventListener('factoryRun', (e) => { try { if (window.CrundiFactories) window.CrundiFactories.runEvent(JSON.parse(e.data)); } catch (err) { /* malformed */ } });
       es.addEventListener('factories', () => { if (window.CrundiFactories) window.CrundiFactories.runEvent({ kind: 'factories' }); });

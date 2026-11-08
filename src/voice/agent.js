@@ -47,6 +47,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import * as voiceSettings from './settings.js';
 import { READ_ONLY_TOOL_NAMES } from './tools.js';
+import { reflectionAsk, parseReflection } from './reflect.js';
 
 /** Tools whose running changes nothing the owner would need told about when a request is cancelled. */
 const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice', 'list_wakeups']);
@@ -108,6 +109,8 @@ What you can and cannot do:
 
 How you learn to be:
 - Your manner is the owner's to shape. ${PERSONA_FILE} holds how they want you to behave: tone, length, how formal, words to use or avoid, habits, what annoys them. When they tell you how to be, or correct or react to how you answered ("shorter", "stop saying that", "I liked that"), update it then and there with the memory tool: short bullet points in their terms, changing what changed rather than piling up. Notice patterns too: if they keep cutting you off or asking for less, note it.
+- Routines are your own procedures. When the owner asks for the same multi-step thing a second time (a morning check, a release, a tidy-up of finished chats), save how you did it as /memories/routines/<short-name>.md: the first line says when to use it (the words he uses for it), then the steps in order (which tools, what to look at, what to say). Your routines are listed at the start of each conversation; when one fits, read it and follow it, and improve it whenever you find a better way. Delete one he no longer wants.
+- Your two files about the owner have limits: persona.md (how he wants you to be) 3000 characters, owner.md (facts about him: routines, people, his words for things, what he wants first) 2500. When one is full, merge and prune it rather than adding; at each compaction you also rewrite both from what the conversation taught.
 - Keep getting better at being his. As you work together, learn the owner, not just his instructions: how he talks and the words he uses for things (his names for projects, chats and people, his shorthand), what he asks for often and when (a morning check, the same few projects), what he cares about first, what he never wants. Write what lasts to your notebook as you notice it (manner in persona.md; facts about him, his routines and his projects in other files), keep it current (change or remove a rule that no longer fits rather than adding a contradicting one), and use it: answer in his terms, anticipate the usual next step, and set up a ticker or trigger yourself for something he keeps asking about. When you are unsure which of two ways he prefers, ask once, briefly, at a natural moment, then remember the answer. Never note secrets.
 - What it says wins over the defaults above about style and manner. It never changes what you may and may not do, and never makes you stop calling them Sir unless they ask.
 - Its current text comes at the start of each conversation; follow it from the moment you change it.
@@ -204,7 +207,7 @@ export async function runVoiceTool(t, name, input, signals) {
  * @param {Function} [opts.client]  (apiKey) => Anthropic-like client; tests pass a fake
  * @param {object}  [opts.settings] the settings module; tests pass a fake
  */
-export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '' } = {}) {
+export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '', selfNote = null, selfFiles = null, onReflected = () => {} } = {}) {
   /**
    * The persona notes for the start of a conversation. Put in its first
    * message, not the system prompt, so the cached system + tools prefix
@@ -212,6 +215,8 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * made them.
    */
   const personaNote = () => {
+    // The whole note (persona, owner, routines) when the server builds it (reflect.js selfNote).
+    if (selfNote) { try { const n = String(selfNote() || ''); if (n.trim()) return n.endsWith('\n') ? n : n + '\n'; } catch { /* fall back */ } }
     let p = '';
     try { p = String(persona() || '').trim(); } catch { /* none */ }
     return p ? `[How the owner wants you to be (${PERSONA_FILE}):\n${p.slice(0, 4000)}]\n` : `[${PERSONA_FILE} is empty: nothing learnt yet about how the owner wants you to be.]\n`;
@@ -400,13 +405,18 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     busy = true;
     try {
       const model = s.model || settings.DEFAULT_MODEL;
+      let files = null;
+      try { files = selfFiles ? selfFiles() : null; } catch { files = null; }
       const res = await client(s.anthropicKey).messages.create({
-        model, max_tokens: 1500, output_config: { effort: 'low' },
+        model, max_tokens: files ? 4000 : 1500, output_config: { effort: 'low' },
         system: 'You summarise a voice assistant\'s conversation with its user (the owner, addressed as Sir) so it can carry on from the summary. Keep what matters for later: decisions, requests in progress, actions taken (what, where), what is waiting on someone, facts learnt about the owner\'s projects and preferences. Plain prose and short lists, no preamble, under 400 words.',
-        messages: [{ role: 'user', content: `The conversation so far:\n\n${transcript(history)}\n\nWrite the summary.` }],
+        messages: [{ role: 'user', content: `The conversation so far:\n\n${transcript(history)}\n\nWrite the summary.${files ? reflectionAsk(files) : ''}` }],
       });
       settings.addClaudeSpend(model, res.usage, now);
-      const summary = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      const answer = res.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      const learnt = parseReflection(answer);
+      const summary = learnt.summary;
+      if (files && (learnt.persona || learnt.owner)) { try { onReflected({ persona: learnt.persona, owner: learnt.owner }); } catch { /* best effort */ } }
       if (!summary) return { ok: false, skipped: 'empty summary' };
       const when = now.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
       history = [

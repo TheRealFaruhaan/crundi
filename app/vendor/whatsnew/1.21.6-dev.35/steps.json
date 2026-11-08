@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "id": "cru-routines",
+      "tag": "Voice",
+      "title": "Cru learns your routines",
+      "body": "Ask Cru for the same few things again, a morning check say, and it saves how it did it as a routine: next time the words are enough, and the routine gets better each time. When a conversation is compacted, Cru also looks back over it and updates what it knows about you and how you like it to be.",
+      "keys": [ { "keys": ["Morning check"], "text": "once Cru has learnt it" } ],
+      "art": "routines.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "cru-unread",
+      "tag": "Voice",
+      "title": "Unread from Cru",
+      "body": "When Cru has something to tell you and no screen is open, it keeps it in its conversation instead of the inbox, and a red dot appears on its mark. Open Cru's chat view to read it; a notification takes you straight there.",
+      "art": "unread.html",
+      "artTitle": "Workbench"
+    }
+  ]
+}
