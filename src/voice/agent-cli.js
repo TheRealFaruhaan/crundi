@@ -240,7 +240,7 @@ export function createCliVoiceAgent({
     });
   }
 
-  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, speaker = '', now = new Date(), report = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     if (busy) return { ok: false, error: 'Still answering the last request' };
@@ -261,7 +261,7 @@ export function createCliVoiceAgent({
       settings.countTurn(now);
       let r;
       const note = cancelledNote; cancelledNote = '';
-      try { r = await ask(model, `${lead}${note}${contextLine({ now, where, locked, unrecognised })}\n${said}`); }
+      try { r = await ask(model, `${lead}${note}${contextLine({ now, where, locked, unrecognised, speaker })}\n${said}`); }
       catch (e) { return { ok: false, error: String(e.message || e) }; }
       const tools = r.tools;
       if (r.cancelled) return { ok: false, cancelled: true, acted: turnSignals.acted, tools };

@@ -3002,7 +3002,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   function voiceTurnRules({ typed = false, verdict = null } = {}) {
     const p = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, ownerOnly: voiceSettings.getSettings().ownerOnly !== false, typed, verdict });
     // admin: set as the turn starts (beforeTurn), never while another still runs.
-    return { unrecognised: p.unrecognised, voice: p.admin, speaker: { owner: verdict ? verdict.owner ?? null : null, unrecognised: p.unrecognised } };
+    // Who spoke, in words for Cru's context line.
+    const who = typed ? 'typed by the signed-in owner'
+      : !voiceSpeaker.enrolled ? 'no voice enrolled yet, so you cannot tell voices apart (the owner can enrol in Settings, Voice assistant, Your voice)'
+        : verdict && verdict.owner === true ? 'spoken in the owner\'s recognised voice'
+          : verdict && verdict.owner === false ? 'spoken in a voice not recognised as the owner\'s'
+            : 'spoken, too short (or not checkable) to tell whose voice';
+    return { unrecognised: p.unrecognised, voice: p.admin, who, speaker: { owner: verdict ? verdict.owner ?? null : null, unrecognised: p.unrecognised } };
   }
   const voiceAdminTools = makeVoiceAdminTools({
     ownerVoice: () => voiceOwnerVerdict,
@@ -4642,7 +4648,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // a spoken one finds the verdict its utterance got on /api/voice/listen.
       const typed = body.typed === true;
       const rules = voiceTurnRules({ typed, verdict: typed ? null : (voiceSpeaker.recent.lookup(body.text) || voiceSpeaker.recent.lookup(said)) });
-      const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, voice: rules.voice });
+      const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, voice: rules.voice, speaker: rules.who });
       if (r && r.ok) r.speaker = rules.speaker;
       // The volume to say it at (Cru may have just changed it).
       if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
@@ -4788,7 +4794,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         } catch { verdict = voiceSpeaker.recent.lookup(r.text); }
       }
       const rules = voiceTurnRules({ typed: false, verdict });
-      const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, voice: rules.voice }) : { ok: false, error: 'Nothing was heard' };
+      const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, voice: rules.voice, speaker: rules.who }) : { ok: false, error: 'Nothing was heard' };
       if (answer && answer.ok) answer.speaker = rules.speaker;
       if (answer && answer.ok) answer.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok || answer.cancelled ? 200 : 400);
