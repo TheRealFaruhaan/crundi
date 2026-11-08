@@ -105,6 +105,7 @@ import { createVoiceBrain } from './voice/brain.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
 import { relay as voiceRelay } from './voice/stream.js';
+import { fixNames } from './voice/names.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
 import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
@@ -4489,7 +4490,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
       // Optional (capability 'voice-assistant'): locked, the phone is on its lock screen.
-      const r = await voiceAgent.turn(String(body.text || ''), { where: String(body.where || '').slice(0, 200), locked: body.locked === true });
+      // The phone's own recogniser (over the Deepgram limit) mishears the names too.
+      const said = fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
+      const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true });
       return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
     }
     // What Anthropic reports the whole account has cost this billing month

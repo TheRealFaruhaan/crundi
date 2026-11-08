@@ -35,6 +35,7 @@
 import WebSocket from 'ws';
 import { getSettings, addDeepgramSpend, deepgramOverLimit } from './settings.js';
 import { keyterms } from './stt.js';
+import { fixNames, nameList } from './names.js';
 import { CUES } from './cues.js';
 
 const STREAM_URL = 'wss://api.deepgram.com/v1/listen';
@@ -172,8 +173,10 @@ export function isCue(heard) {
  * UtteranceEnd only: speech_final comes after a short pause, and the owner may
  * pause mid-sentence (D44).
  */
-export function createAssembler({ now = () => Date.now() } = {}) {
+export function createAssembler({ now = () => Date.now(), names = [] } = {}) {
   let parts = [];
+  // Crundi's names put back into what was heard (names.js).
+  const fix = (text) => (names.length ? fixNames(text, { names }) : text);
   let audioEnd = 0;
   /**
    * What Cru said lately (a cue, then the reply, ...), each with when it
@@ -186,7 +189,7 @@ export function createAssembler({ now = () => Date.now() } = {}) {
     recent = recent.filter((r) => (r.saidAt === null ? t - r.from <= SAYING_MAX_MS : t - r.saidAt <= ECHO_TAIL_MS));
     return recent.some((r) => isEcho(text, r.text));
   };
-  const sofar = () => (parts.length ? { type: 'interim', text: parts.join(' ') } : null);
+  const sofar = () => (parts.length ? { type: 'interim', text: fix(parts.join(' ')) } : null);
   return {
     /** @returns an event for the client, or null */
     push(msg) {
@@ -204,7 +207,7 @@ export function createAssembler({ now = () => Date.now() } = {}) {
         return sofar();
       }
       if (!text) return null;
-      return { type: 'interim', text: [...parts, text].join(' ') };
+      return { type: 'interim', text: fix([...parts, text].join(' ')) };
     },
     /** Cru starts saying [text] (a reply, a cue). */
     saying(text) {
@@ -227,7 +230,7 @@ export function createAssembler({ now = () => Date.now() } = {}) {
     // "…scratch that": nothing, or only what came after it, is the request.
     const d = applyDiscard(heard);
     if (d.discard) return { type: 'discard', text: heard };
-    const text = d.text;
+    const text = d.text ? fix(d.text) : '';
     return text ? { type: 'utterance', text } : null;
   }
 }
@@ -254,7 +257,7 @@ export function relay(client, { projects = [], services = [], audio = null, paus
     return;
   }
   const dg = new WebSocketImpl(streamUrl(keyterms({ projects, services }), { audio: rawAudio(audio || {}), pauseMs }), { headers: { Authorization: `Token ${key}` } });
-  const asm = createAssembler();
+  const asm = createAssembler({ names: nameList({ projects, services }) });
   const queue = [];
   let open = false;
   let paused = false;

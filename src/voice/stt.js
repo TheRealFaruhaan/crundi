@@ -12,6 +12,7 @@
  */
 
 import { getSettings, addDeepgramSpend, deepgramOverLimit } from './settings.js';
+import { fixNames } from './names.js';
 
 const LISTEN_URL = 'https://api.deepgram.com/v1/listen';
 const MODEL = 'nova-3';
@@ -86,7 +87,7 @@ export async function transcribe(audio, mime, { projects = [], services = [], fe
   addDeepgramSpend(seconds);
   return {
     ok: true,
-    text: String(alts[0]?.transcript || '').trim(),
+    text: fixNames(String(alts[0]?.transcript || '').trim(), { projects, services }),
     alternatives: alts.slice(1).map(a => String(a.transcript || '').trim()).filter(Boolean),
     confidence: Number(alts[0]?.confidence) || 0,
     seconds,
