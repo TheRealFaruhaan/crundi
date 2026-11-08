@@ -5793,8 +5793,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
         + '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px;font-size:0.78rem;color:var(--text-secondary);"><label><input type="checkbox" id="vs-brit" checked> British only</label><label><input type="checkbox" id="vs-male"> Male only</label><button type="button" class="svc-btn" id="vs-device">Use the device voice</button></div>'
         + '<div id="vs-voices" style="margin-top:6px;max-height:260px;overflow-y:auto;"></div></div>';
       html += row('Talking speed', 'vs-rate', choices([0.85, 1, 1.15, 1.3, 1.5], s.speechRate || 1).map((r) => opt(r, rateLabel(r), s.speechRate || 1)).join(''), '');
+      if (s.volume !== undefined) html += row('Volume', 'vs-vol', choices([25, 40, 55, 70, 85, 100], s.volume).map((v) => opt(v, v + '%', s.volume)).join(''), 'How loud Cru talks, everywhere. Cru can change it too: say louder or quieter.');
       html += row('Pause before sending', 'vs-pause', choices([1500, 2000, 2500, 3000, 4000], s.pauseMs || 2000).map((ms) => opt(ms, (ms / 1000) + ' seconds', s.pauseMs || 2000)).join(''), 'How long you may pause before what you said is sent.');
       if (s.screenCloseSeconds) html += row('Close the voice screen after', 'vs-sclose', choices([30, 45, 60, 120, 300], s.screenCloseSeconds).map((n) => opt(n, secLabel(n) + ' of silence', s.screenCloseSeconds)).join(''), 'On the phone, the web and the PC. Hey Cru opens it again.');
+      // Whose voice Cru acts on (capability 'voice-speaker'; an older server: left out), then admin mode.
+      html += '<details id="vs-spk-box" style="margin-top:14px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Your voice</summary><div id="vs-spk" style="margin-top:6px;"></div></details>';
+      if (s.adminMode !== undefined) {
+        html += '<div style="margin-top:12px;"><label style="display:flex;gap:8px;align-items:center;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-admin"' + (s.adminMode ? ' checked' : '') + '> ' + ic('shield-alert') + ' Admin mode</label>'
+          + hint('Cru can run any command on this server as the Crundi user, with no confirmation. Only your voice is obeyed.' + (s.adminCapable === false ? ' It needs Sonnet or above: choose another model first.' : '')) + '</div>';
+      }
       // Spending
       html += sub('Spending');
       html += '<p style="' + st.hint + ';margin:4px 0 0;">Claude API: $' + (Number(sp.claudeUsd) || 0).toFixed(2) + ' of $' + s.monthlyLimitUsd + ', ' + (Number(sp.turns) || 0) + ' requests, restarts ' + escHtml(s.nextReset || '') + (s.limitReached ? ' (limit reached)' : '') + '. Deepgram: $' + (Number(sp.deepgramUsd) || 0).toFixed(2) + ' of $' + s.deepgramLimitUsd + ', restarts ' + escHtml(s.deepgramNextReset || '') + (s.deepgramLimitReached ? ' (limit reached)' : '') + '.</p>';
@@ -5815,6 +5822,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       html += '<div id="vs-mem-info" style="' + st.hint + ';margin-top:10px;"></div>';
       html += field('Search what was said before', 'vs-mem-q', 'text', '', 'placeholder="e.g. the kanban card about the home screen"', '');
       html += '<div id="vs-mem-hits"></div><div style="margin-top:10px;"><span style="' + st.label + '">Notebook (what Cru keeps for good; edit or empty a file to change it)</span><div id="vs-mem-files"></div></div>';
+      // Cru's own tickers and triggers (an older server has none: left out)
+      html += '<details id="vs-wake-box" style="margin-top:18px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Tickers and triggers</summary>'
+        + hint('Reasons for Cru to wake up on its own: a ticker repeats on a schedule, a trigger fires when something happens. Each is off until switched on; on each wake-up Cru decides whether to stay quiet, tell you, or alert you. Ask Cru to add one.')
+        + '<div id="vs-wake" style="margin-top:6px;"></div></details>';
       // The experiment
       if (s.brain) html += sub('Brains compared') + '<div id="vs-stats" style="margin-top:6px;"></div>';
       html += '<div id="vs-status" style="font-size:0.78rem;color:var(--text-muted);margin-top:8px;"></div>';
@@ -5829,6 +5840,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       on('vs-model', (v) => save({ model: v }, 'Model saved. It applies from the next conversation.'));
       on('vs-cidle', (v) => save({ cliIdleMinutes: Number(v) }, 'Saved'));
       on('vs-rate', (v) => save({ speechRate: Number(v) }, 'Cru talks at ' + rateLabel(Number(v))));
+      on('vs-vol', (v) => save({ volume: Number(v) }, 'Cru talks at ' + v + '%'));
       on('vs-pause', (v) => save({ pauseMs: Number(v) }, 'Saved'));
       on('vs-sclose', (v) => save({ screenCloseSeconds: Number(v) }, 'Saved'));
       const val = (id) => (document.getElementById(id) || {}).value;
@@ -5847,12 +5859,197 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const d = await vsPost('/api/voice/reset', {}).catch(() => null);
         vsNote('vs-reset-note', d && d.ok !== false ? 'Cru starts a fresh conversation' : 'Could not reset', !(d && d.ok !== false));
       };
+      const adm = document.getElementById('vs-admin');
+      if (adm) adm.onchange = async () => {
+        const want = adm.checked;
+        const d = await save({ adminMode: want }, want ? 'Admin mode is on: Cru can run any command, and only your voice is obeyed' : 'Admin mode is off');
+        if (!(d && d.ok)) adm.checked = !want;
+      };
+      vsLoadSpeaker();
       vsShowVoices(s);
       vsLoadMemory();
+      vsLoadWakeups();
       let memTimer = null;
       const q = document.getElementById('vs-mem-q');
       if (q) q.oninput = () => { clearTimeout(memTimer); memTimer = setTimeout(vsSearchMemory, 350); };
       if (s.brain) showVoiceStats();
+    }
+    // The owner's voice (voice/speaker.js): enrolled here with this browser's
+    // microphone, one phrase at a time (16 kHz mono WAV), each checked by the
+    // server; "Only act on my voice"; forgetting it.
+    const spk = { st: null, active: false, pos: 0, results: [], rec: null, mic: null, busy: false, msg: '', bad: false, watch: null };
+    const SPK_MAX_S = 15;
+    async function vsLoadSpeaker() {
+      const box = document.getElementById('vs-spk-box');
+      if (!box) return;
+      let r = null;
+      try { const res = await apiFetch('/api/voice/speaker'); r = res.ok ? await res.json() : null; } catch { r = null; }
+      if (!r || !r.ok) { box.style.display = 'none'; return; }
+      spk.st = r;
+      box.style.display = '';
+      vsSpkRender();
+    }
+    function vsSpkRender() {
+      const el = document.getElementById('vs-spk');
+      if (!el || !spk.st) return;
+      const st = spk.st, S = vwStyles;
+      const say = (t, bad) => t ? '<p style="' + S.hint + ';margin:8px 0 0;' + (bad ? 'color:var(--red);' : '') + '">' + escHtml(t) + '</p>' : '';
+      let h = '';
+      if (!spk.active) {
+        if (!st.available) h += say('The voice check is not available on this server: onnxruntime-node is not installed.', false);
+        else if (st.enrolled) {
+          const when = st.enrolledAt ? new Date(st.enrolledAt) : null;
+          h += '<div style="font-size:0.78rem;color:var(--text-secondary);display:flex;gap:6px;align-items:center;margin-top:4px;">' + ic('check') + 'Enrolled'
+            + (when && !isNaN(when.getTime()) ? ' on ' + escHtml(when.toLocaleDateString()) : '') + ': ' + st.phrases + ' phrases, ' + st.seconds + ' s of speech</div>';
+        } else h += say('Not enrolled yet: Cru acts on any voice. Read a few short phrases so it knows yours (about a minute).', false);
+        if (st.available) {
+          h += '<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-spk-only"' + (st.ownerOnly ? ' checked' : '') + (st.enrolled ? '' : ' disabled') + '> Only act on my voice</label>'
+            + '<p style="' + S.hint + ';margin:4px 0 0;">Anyone may still ask Cru questions; only your voice, or typing, changes anything. Admin mode always needs your voice.</p>'
+            + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;"><button type="button" data-spk="start" style="' + (st.enrolled ? S.subtle : S.btn) + '">' + (st.enrolled ? 'Enrol again' : 'Enrol my voice') + '</button>'
+            + (st.enrolled ? '<button type="button" data-spk="forget" style="' + S.subtle + '">Forget my voice</button>' : '') + '</div>';
+        }
+        el.innerHTML = h + say(spk.msg, spk.bad);
+      } else {
+        const prompts = st.prompts || [], kept = spk.results.filter((r) => r.accepted).length, min = st.minPhrases || 5;
+        if (spk.pos < prompts.length) {
+          h += '<p style="' + S.label + ';margin-top:10px;">Phrase ' + (spk.pos + 1) + ' of ' + prompts.length + ': click Record, read it as you would say it to Cru, then Stop</p>'
+            + '<p style="font-size:0.95rem;color:var(--text-primary);margin:6px 0 10px;">' + escHtml(prompts[spk.pos]) + '</p>'
+            + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="rec" style="' + S.btn + '"' + (spk.busy ? ' disabled' : '') + '>' + (spk.rec ? ic('stop') + ' Stop' : ic('mic') + ' Record') + '</button>'
+            + '<div style="width:160px;height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden;"><div id="vs-spk-meter" style="height:100%;width:0%;background:var(--accent);transition:width 60ms linear;"></div></div>'
+            + (kept >= min && !spk.rec ? '<button type="button" data-spk="finish" style="' + S.subtle + '">Finish now</button>' : '')
+            + '<button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
+        } else {
+          h += '<p style="' + S.label + ';margin-top:10px;">All phrases read.</p><div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="finish" style="' + S.btn + '"' + (spk.busy ? ' disabled' : '') + '>Finish</button><button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
+        }
+        h += spk.results.map((r, i) => '<div style="display:flex;gap:6px;align-items:center;font-size:0.75rem;margin-top:4px;color:' + (r.accepted ? 'var(--text-secondary)' : 'var(--red)') + ';">'
+          + ic(r.accepted ? 'check' : 'x') + 'Phrase ' + (r.n + 1) + ': ' + r.seconds + ' s of speech'
+          + (r.consistency != null ? ', ' + Math.round(r.consistency * 100) + '% like the others' : '') + (r.problem ? '. ' + escHtml(r.problem) : '') + '</div>').join('');
+        el.innerHTML = h + say(spk.rec ? 'Listening…' : spk.msg, !spk.rec && spk.bad);
+      }
+      const only = document.getElementById('vs-spk-only');
+      if (only) only.onchange = async () => {
+        const d = await vsPost('/api/voice/settings', { ownerOnly: only.checked }).catch(() => null);
+        if (d && d.ok) { st.ownerOnly = only.checked; vsNote('vs-status', only.checked ? 'Cru acts on your voice only' : 'Cru acts on any voice'); }
+        else { only.checked = !only.checked; vsNote('vs-status', (d && d.error) || 'Not saved', true); }
+      };
+      el.onclick = (e) => {
+        const b = e.target.closest('[data-spk]');
+        if (!b) return;
+        const a = b.getAttribute('data-spk');
+        if (a === 'start') vsSpkStart();
+        else if (a === 'rec') { if (spk.rec) vsSpkStop(); else vsSpkRecord(); }
+        else if (a === 'finish') vsSpkFinish();
+        else if (a === 'cancel') vsSpkEnd('Enrolment cancelled: nothing changed.', false);
+        else if (a === 'forget') vsSpkForget();
+      };
+    }
+    function vsSpkStart() {
+      Object.assign(spk, { active: true, pos: 0, results: [], rec: null, busy: false, msg: '', bad: false });
+      if (spk.watch) clearInterval(spk.watch);
+      // Closing Settings lets go of the microphone.
+      spk.watch = setInterval(() => { if (!document.getElementById('vs-spk')) vsSpkEnd('', false); }, 1000);
+      vsSpkRender();
+    }
+    function vsSpkEnd(msg, bad) {
+      vsSpkCloseMic();
+      if (spk.watch) { clearInterval(spk.watch); spk.watch = null; }
+      Object.assign(spk, { active: false, rec: null, busy: false, msg: msg || '', bad: !!bad });
+      vsSpkRender();
+    }
+    async function vsSpkOpenMic() {
+      if (spk.mic) return spk.mic;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+      let ctx = null;
+      try {
+        // 16 kHz where the browser can; otherwise its own rate (the server resamples).
+        try { ctx = new AudioContext({ sampleRate: 16000 }); } catch { ctx = new AudioContext(); }
+        const src = ctx.createMediaStreamSource(stream);
+        const proc = ctx.createScriptProcessor(2048, 1, 1);
+        const mute = ctx.createGain(); mute.gain.value = 0;
+        src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+        proc.onaudioprocess = (e) => { if (spk.rec) vsSpkFeed(e.inputBuffer.getChannelData(0)); };
+        if (ctx.state === 'suspended') await ctx.resume();
+        spk.mic = { stream, ctx, proc };
+        return spk.mic;
+      } catch (err) {
+        stream.getTracks().forEach((t) => t.stop());
+        if (ctx) { try { ctx.close(); } catch { /* gone */ } }
+        throw err;
+      }
+    }
+    function vsSpkCloseMic() {
+      const m = spk.mic; spk.mic = null;
+      if (!m) return;
+      try { m.proc.onaudioprocess = null; } catch { /* gone */ }
+      try { m.stream.getTracks().forEach((t) => t.stop()); } catch { /* gone */ }
+      try { m.ctx.close(); } catch { /* gone */ }
+    }
+    async function vsSpkRecord() {
+      if (!spk.active || spk.busy || spk.rec) return;
+      try { await vsSpkOpenMic(); }
+      catch (err) { spk.msg = 'Could not open the microphone: ' + ((err && (err.message || err.name)) || err); spk.bad = true; vsSpkRender(); return; }
+      if (!spk.active) { vsSpkCloseMic(); return; }
+      spk.rec = { chunks: [], n: 0, rate: spk.mic.ctx.sampleRate };
+      vsSpkRender();
+    }
+    function vsSpkFeed(ch) {
+      const r = spk.rec;
+      const c = new Float32Array(ch);
+      r.chunks.push(c); r.n += c.length;
+      let sum = 0;
+      for (let k = 0; k < c.length; k++) sum += c[k] * c[k];
+      const m = document.getElementById('vs-spk-meter');
+      if (m) m.style.width = Math.min(100, Math.round(Math.sqrt(Math.sqrt(sum / (c.length || 1))) * 250)) + '%';
+      if (r.n >= r.rate * SPK_MAX_S) vsSpkStop();
+    }
+    // 16-bit mono WAV of the recording.
+    function vsSpkWav(chunks, n, rate) {
+      const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+      const tag = (o, t) => { for (let i = 0; i < 4; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+      tag(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+      v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+      v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); tag(36, 'data'); v.setUint32(40, n * 2, true);
+      let o = 44;
+      for (const c of chunks) for (let i = 0; i < c.length; i++) { const x = Math.max(-1, Math.min(1, c[i])); v.setInt16(o, x < 0 ? x * 32768 : x * 32767, true); o += 2; }
+      return new Blob([buf], { type: 'audio/wav' });
+    }
+    async function vsSpkStop() {
+      const r = spk.rec;
+      if (!r) return;
+      spk.rec = null; spk.busy = true; spk.msg = 'Checking…'; spk.bad = false;
+      vsSpkRender();
+      const first = !spk.results.some((x) => x.accepted);
+      let d = null;
+      try {
+        const res = await apiFetch('/api/voice/speaker/enrol' + (first ? '?restart=1' : ''), { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: vsSpkWav(r.chunks, r.n, r.rate) });
+        d = await res.json();
+      } catch { d = null; }
+      spk.busy = false;
+      if (!spk.active) return;
+      if (!d || !d.ok) { spk.msg = (d && d.error) || 'Could not reach the server'; spk.bad = true; vsSpkRender(); return; }
+      spk.results.push({ n: spk.pos, accepted: !!d.accepted, seconds: d.seconds, consistency: d.consistency, problem: d.problem || '' });
+      if (d.accepted) { spk.pos++; spk.msg = ''; } else { spk.msg = d.problem || 'Try that one again.'; spk.bad = true; }
+      vsSpkRender();
+    }
+    async function vsSpkFinish() {
+      if (spk.busy) return;
+      spk.busy = true; vsSpkRender();
+      let d = null;
+      try { d = await vsPost('/api/voice/speaker/finish', {}); } catch { d = null; }
+      spk.busy = false;
+      if (!d || !d.ok) { spk.msg = (d && d.error) || 'Not saved'; spk.bad = true; vsSpkRender(); return; }
+      spk.st = Object.assign({}, spk.st, d);
+      vsSpkEnd('Cru knows your voice now.', false);
+    }
+    async function vsSpkForget() {
+      if (!confirm('Forget your voice? Cru will act on any voice again, and admin mode will not check who is speaking.')) return;
+      let d = null;
+      try { const res = await apiFetch('/api/voice/speaker', { method: 'DELETE' }); d = await res.json(); } catch { d = null; }
+      if (d && d.ok) { spk.st = Object.assign({}, spk.st, d); spk.msg = 'Your voice is forgotten.'; spk.bad = false; }
+      else { spk.msg = (d && d.error) || 'Not changed'; spk.bad = true; }
+      vsSpkRender();
     }
     async function vsShowVoices(s) {
       const box = document.getElementById('vs-voices'), now = document.getElementById('vs-voice-now');
@@ -5917,6 +6114,36 @@ export function getWebappHtml(botUsername, appVersion = '') {
         };
         files.appendChild(box);
       }
+    }
+    // Tickers and triggers: GET /api/voice/wakeups, POST { id, action }.
+    async function vsLoadWakeups(r) {
+      const el = document.getElementById('vs-wake'), box = document.getElementById('vs-wake-box');
+      if (!el || !box) return;
+      if (!r) { try { r = await vsGet('/api/voice/wakeups'); } catch { r = null; } }
+      if (!r || !r.ok) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      const when = (ms) => ms ? new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'never';
+      const item = (x) => '<div class="sched-item' + (x.enabled ? '' : ' off') + '" style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);">'
+        + '<button type="button" class="sched-power' + (x.enabled ? ' on' : '') + '" data-vs-wake="' + (x.enabled ? 'disable' : 'enable') + '" data-id="' + escHtml(x.id) + '" title="' + (x.enabled ? 'On: click to switch off' : 'Off: click to switch on') + '"></button>'
+        + '<div style="flex:1;min-width:0;"><div style="font-size:0.82rem;color:var(--text-primary);">' + escHtml(x.name) + '</div>'
+        + '<div style="' + vwStyles.hint + '">' + escHtml(x.summary || '') + '</div>'
+        + '<div style="' + vwStyles.hint + '">' + escHtml(x.purpose || '') + '</div>'
+        + '<div style="' + vwStyles.hint + '">Last woke Cru: ' + escHtml(when(x.lastFiredAt)) + (x.fires ? ' (' + x.fires + ' in all)' : '') + ' · made by ' + (x.createdBy === 'owner' ? 'you' : 'Cru') + '</div></div>'
+        + '<button type="button" class="svc-btn danger" data-vs-wake="delete" data-id="' + escHtml(x.id) + '" title="Delete">' + ic('trash') + '</button></div>';
+      const group = (title, list, none) => '<div style="' + vwStyles.label + ';margin-top:10px;">' + title + '</div>' + (list.length ? list.map(item).join('') : '<p style="' + vwStyles.hint + ';margin:4px 0 0;">' + none + '</p>');
+      const lim = r.limits || {};
+      el.innerHTML = group('Tickers', r.tickers || [], 'No tickers yet. Try: Cru, wake me with a briefing at half seven on weekdays.')
+        + group('Triggers', r.triggers || [], 'No triggers yet. Try: Cru, tell me if the CPU stays above 90 percent.')
+        + '<p style="' + vwStyles.hint + ';margin:8px 0 0;">At most ' + (lim.perHour || 12) + ' wake-ups an hour (' + (lim.firedLastHour || 0) + ' in the last hour), and none once the monthly limit is reached.</p><div id="vs-wake-note" style="font-size:0.75rem;"></div>';
+      el.onclick = async (e) => {
+        const b = e.target.closest('[data-vs-wake]');
+        if (!b) return;
+        const action = b.getAttribute('data-vs-wake');
+        if (action === 'delete' && !confirm('Delete this? Cru can make it again if you ask.')) return;
+        b.disabled = true;
+        const d = await vsPost('/api/voice/wakeups', { id: b.getAttribute('data-id'), action }).catch(() => null);
+        if (d && d.ok) vsLoadWakeups(d); else { b.disabled = false; vsNote('vs-wake-note', (d && d.error) || 'Not changed', true); }
+      };
     }
     async function vsSearchMemory() {
       const q = String((document.getElementById('vs-mem-q') || {}).value || '').trim(), out = document.getElementById('vs-mem-hits');
@@ -10327,6 +10554,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         } catch { /* ignore */ }
       });
       es.addEventListener('schedule', () => { if (currentTab === 'schedule') loadSchedules(); });
+      es.addEventListener('voice-wakeups', () => { if (document.getElementById('vs-wake')) vsLoadWakeups(); });
       // Factory runs and the factory library: the views refresh what they show.
       es.addEventListener('factoryRun', (e) => { try { if (window.CrundiFactories) window.CrundiFactories.runEvent(JSON.parse(e.data)); } catch (err) { /* malformed */ } });
       es.addEventListener('factories', () => { if (window.CrundiFactories) window.CrundiFactories.runEvent({ kind: 'factories' }); });

@@ -17,7 +17,7 @@ import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, e
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { basename, join, dirname, resolve, isAbsolute, sep } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, cpus as osCpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
@@ -106,6 +106,9 @@ import { transcribe as voiceTranscribe } from './voice/stt.js';
 import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
 import { relay as voiceRelay } from './voice/stream.js';
 import { fixNames } from './voice/names.js';
+import { makeAdminTools as makeVoiceAdminTools } from './voice/admin.js';
+import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, turnPolicy as voiceTurnPolicy, trimSilence as trimVoiceSilence } from './voice/speaker.js';
+import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
 import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
@@ -2775,7 +2778,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // same gate: a locked phone waits for an unlock; anything that needs the owner's
   // yes is parked until their next message.
   const voicePending = createVoicePending();
-  const voiceCtx = { pending: voicePending, locked: () => false };
+  const voiceCtx = { pending: voicePending, locked: () => false, unrecognised: () => false };
   // Chats Cru reports on: those it set going (one turn), and those the owner
   // asked it to follow (every turn). chat id -> { title, project, follow, told: Set of pending ids }
   const voiceWatches = new Map();
@@ -2789,43 +2792,68 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return m ? String(m.text).replace(/\s+/g, ' ').trim().slice(0, 1500) : '';
   };
   /**
-   * Tell the owner about a watched chat: said by Cru where a voice screen is
-   * open, else by the PC (it opens its dropdown and says it), else a phone
-   * notification.
+   * Something from Cru for the owner: said by Cru where a voice screen is
+   * open, else by the PC (it opens its dropdown and says it), else kept in
+   * Crundi's inbox; and a phone notification, since the owner may not be at
+   * the PC.
+   *
+   * A report (a watched chat) is always told: when no screen is open the
+   * fixed [line] goes out without asking Cru. A wake-up (wake: a ticker or a
+   * trigger) always asks Cru, and Cru may say nothing: then nothing is said,
+   * kept or pushed. Answers { ok, quiet?, said?, busy? }.
    */
-  // Only when a watched chat finishes its turn or needs the owner, never at
-  // every step, so Cru doesn't chatter.
-  async function voiceReport(id, w, what, { needsOwner = false } = {}) {
-    const name = `the "${w.title || 'untitled'}" chat in ${w.project}`;
-    const last = lastSaidBy(id);
+  async function cruDeliver({ note, wake = false, line = '', detail = '', chatId = '', project = '', chatTitle = '', needsOwner = false, tag = 'cru', url = '/' }) {
     const open = [...voiceListeners].filter(ws => ws.readyState === 1);
     const pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
     let spoken = false;
-    if (open.length || pcs.length) {
-      const r = await voiceAgent.report(`${name} ${what}.${last ? ` Its last message: "${last}"` : ''}`).catch(() => null);
+    let r = null;
+    if (wake || open.length || pcs.length) {
+      r = await voiceAgent.report(note, wake ? { wake: true } : {}).catch(() => null);
+      if (wake) {
+        if (!r || !r.ok) return { ok: false, busy: !!r && r.error === 'busy', error: (r && r.error) || 'Cru did not answer' };
+        if (!String(r.speak || '').trim() && !String(r.show || '').trim()) return { ok: true, quiet: true };
+      }
       if (r && r.ok && (r.speak || r.show)) {
-        const msg = JSON.stringify({ type: 'report', speak: r.speak || '', show: r.show || '', chat: id });
-        if (open.length) { for (const ws of open) { try { ws.send(msg); } catch { /* gone */ } } return; }
+        const msg = JSON.stringify({ type: 'report', speak: r.speak || '', show: r.show || '', chat: chatId });
+        if (open.length) { for (const ws of open) { try { ws.send(msg); } catch { /* gone */ } } return { ok: true, said: 'screen' }; }
         // No voice screen open: the PC says it (its connection stays open)…
         // A question or a permission brings the PC window forward; a finished turn doesn't.
-        const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: id, needsOwner });
+        const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: chatId, needsOwner });
         for (const ws of pcs) { try { ws.send(pcMsg); } catch { /* gone */ } spoken = true; }
       }
     }
+    // A wake-up's words are Cru's own.
+    if (wake) {
+      const said = String(r.speak || r.show).replace(/\s+/g, ' ').trim();
+      line = said.slice(0, 200);
+      detail = r.speak ? String(r.show || '') : (said.length > 200 ? said : '');
+    }
     // Not said anywhere: kept in Crundi's inbox, so it is not lost when the
     // phone notification is swiped away.
-    const line = `${(w.title || 'The chat')} in ${w.project} ${what}.`;
     let inboxId = '';
     if (!spoken) {
       try {
-        const term = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
-        const it = inbox.add({ kind: 'report', cru: true, title: line, text: last || '', project: w.project || '', chatId: id, chatTitle: (term && (term.longTitle || term.title)) || w.title || '' });
+        const it = inbox.add({ kind: 'report', cru: true, title: line, text: detail || '', project: project || '', chatId: chatId || '', chatTitle: chatTitle || '' });
         inboxId = it.id;
       } catch (err) { console.warn('[inbox] could not keep the report:', err.message); }
     }
     // …and the phone, whose connection drops when Cru is closed, gets a
     // notification, since the owner may not be at the PC.
-    mobilePush.send(`${line}${last ? ' ' + last.slice(0, 120) : ''}`, { title: 'Cru', url: `/chat/${id}`, tag: `voice-watch-${id}`, ...(inboxId ? { inboxId, inboxThread: 'cru' } : {}) }).catch(() => {});
+    mobilePush.send(`${line}${detail ? ' ' + detail.slice(0, 120) : ''}`, { title: 'Cru', url, tag, ...(inboxId ? { inboxId, inboxThread: 'cru' } : {}) }).catch(() => {});
+    return { ok: true, said: spoken ? 'pc' : 'push' };
+  }
+  // A watched chat, only when it finishes its turn or needs the owner, never
+  // at every step, so Cru doesn't chatter.
+  async function voiceReport(id, w, what, { needsOwner = false } = {}) {
+    const name = `the "${w.title || 'untitled'}" chat in ${w.project}`;
+    const last = lastSaidBy(id);
+    const term = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
+    return cruDeliver({
+      note: `${name} ${what}.${last ? ` Its last message: "${last}"` : ''}`,
+      line: `${(w.title || 'The chat')} in ${w.project} ${what}.`, detail: last,
+      chatId: id, project: w.project || '', chatTitle: (term && (term.longTitle || term.title)) || w.title || '',
+      needsOwner, tag: `voice-watch-${id}`, url: `/chat/${id}`,
+    });
   }
   if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
     const w = voiceWatches.get(id);
@@ -2846,6 +2874,68 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const what = fresh.map(p => p.kind === 'question' ? 'a question' : `permission for ${p.displayName || p.toolName || 'a tool'}`).join(' and ');
     voiceReport(id, w, `is waiting on the owner: ${what}`, { needsOwner: true }).catch(() => {});
   });
+  // Cru's own tickers and triggers (voice/wakeups.js): built-in, read-only
+  // reasons to wake Cru, each off until switched on. A wake-up asks Cru, who
+  // may stay quiet, say something (cruDeliver) or alert the owner.
+  const wakeStore = createWakeupStore({ file: join(config.dataDir, 'voice-wakeups.json'), onChange: () => broadcastSSE('voice-wakeups', {}) });
+  const wakeEngine = createWakeupEngine({
+    store: wakeStore,
+    overLimit: () => voiceAgent.which === 'api' && voiceSettings.overLimit(),
+    report: async (note, item) => {
+      const r = await cruDeliver({ note, wake: true, tag: `voice-wake-${item.id}`, url: '/' });
+      if (!r.busy) console.log(`[voice] ${item.type} "${item.name}" woke Cru: ${r.quiet ? 'stayed quiet' : r.ok ? `said it (${r.said})` : (r.error || 'no answer')}`);
+      return r;
+    },
+  });
+  const wakeDefs = wakeupToolDefs({
+    store: wakeStore, engine: wakeEngine,
+    // Cru's alert: the alert_user path (its per-hour limits), without waiting for the answer.
+    alert: async ({ title, body, urgent }) => {
+      const r = await alerter.alert({ title, body, level: urgent ? 'urgent' : 'normal' }, { url: '/' });
+      if (r.ok && r.delivered === 'phone') {
+        try { inbox.add({ kind: 'alert', cru: true, title: String(title || 'Alert'), text: String(body || '') }); } catch (err) { console.warn('[inbox] could not keep the alert:', err.message); }
+      }
+      const { alertId, ...rest } = r;
+      return rest;
+    },
+  });
+  // What chats do, for the chat_finished / chat_waiting / collaborator triggers.
+  const wakeTold = new Map();   // chat id -> pending card ids already told
+  if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
+    const c = claudeUi.list().find(x => x.id === id);
+    if (c) wakeEngine.event('chat_finished', { chat: c });
+  });
+  if (claudeUi && claudeUi.onPendingChange) claudeUi.onPendingChange((id) => {
+    const c = claudeUi.list().find(x => x.id === id);
+    const cards = ((c && c.pending) || []).filter(p => p && p.id);
+    const told = wakeTold.get(id) || new Set();
+    const fresh = cards.filter(p => !told.has(p.id));
+    wakeTold.set(id, new Set(cards.map(p => p.id)));
+    if (!cards.length) wakeTold.delete(id);
+    if (!c || !fresh.length) return;
+    wakeEngine.event('chat_waiting', { chat: c, what: fresh.map(p => p.kind === 'question' ? 'a question' : `permission for ${p.displayName || p.toolName || 'a tool'}`).join(' and ') });
+  });
+  // Every 30 s: the times, and a reading of the machine. Docker and the
+  // process list are read only while a trigger needs them.
+  let wakeCpus = osCpus();
+  setInterval(async () => {
+    try {
+      wakeEngine.scan();
+      const kinds = wakeEngine.kindsOn();
+      const cur = osCpus();
+      const sample = { cpuPct: cpuPercent(wakeCpus, cur), memPct: memoryPercent() };
+      wakeCpus = cur;
+      if (!kinds.size) return;
+      sample.chats = (claudeUi ? claudeUi.list() : []).map(c => ({ id: c.id, title: c.longTitle || c.title || '', project: c.project, collaborator: c.collaborator || null }));
+      sample.services = getAllServiceStatus().map(sv => ({ key: sv.key, name: sv.name, status: sv.status }));
+      if (kinds.has('container_unhealthy')) {
+        const d = await dockerMod.listContainers().catch(() => null);
+        if (d && d.ok) sample.containers = d.containers.map(c => ({ name: c.name, health: c.health || '' }));
+      }
+      if (kinds.has('process_started') || kinds.has('process_stopped')) sample.processes = await listProcessNames().catch(() => null) || undefined;
+      wakeEngine.sample(sample);
+    } catch (err) { console.warn('[voice] wake-up check failed:', err.message); }
+  }, 30 * 1000).unref();
   const voiceActions = makeVoiceActionTools({
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
     sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
@@ -2869,9 +2959,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     projectsDir: () => getProjectMode().projectsDir || '',
     registerProject: (alias, path, name) => { const r = registerProject(alias, path, name, { create: true }); broadcastState(); return r; },
     kanban, notes, mindmap, chatSchedule,
+    // Cru compacting or restarting its own conversation (after the turn).
+    conversation: { requestAfterTurn: (kind, summary) => voiceAgent.requestAfterTurn(kind, summary) },
+    onSettingsChanged: () => { for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'settings' })); } catch { /* gone */ } } },
     schedules: schedule,
     services: () => getAllServiceStatus().map(sv => ({ key: sv.key, name: sv.name })),
     voiceSettings,
+    wakeupDefs: wakeDefs,
     broadcast: (tool, input = {}) => {
       if (/kanban/.test(tool)) broadcastKanban(input.project);
       else if (/note/.test(tool)) broadcastNotes(input.project, {});
@@ -2880,11 +2974,36 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       else broadcastState();
     },
   }, voiceCtx);
+  // Full admin mode (switched on by hand in Settings): run_command, write_file.
+  // voiceOwnerVerdict is the speaker check of the turn being answered:
+  // true (the owner), false (another voice), null (typed, or no check).
+  let voiceOwnerVerdict = null;
+  // Is it the owner speaking? (voice/speaker.js: his enrolled voice, each
+  // utterance checked as it is heard, the verdict looked up by its turn.)
+  const voiceSpeaker = createVoiceSpeaker({ dir: join(config.dataDir, 'voice-memory') });
+  /**
+   * The voice rules for one turn: sets the admin tools' verdict and says
+   * whether changes are held back ("Only act on my voice").
+   * @param verdict  { owner, reason } of what was heard, or null (none found)
+   */
+  function voiceTurnRules({ typed = false, verdict = null } = {}) {
+    const p = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, ownerOnly: voiceSettings.getSettings().ownerOnly !== false, typed, verdict });
+    // admin: set as the turn starts (beforeTurn), never while another still runs.
+    return { unrecognised: p.unrecognised, voice: p.admin, speaker: { owner: verdict ? verdict.owner ?? null : null, unrecognised: p.unrecognised } };
+  }
+  const voiceAdminTools = makeVoiceAdminTools({
+    ownerVoice: () => voiceOwnerVerdict,
+    locked: () => voiceCtx.locked(),
+    logFile: join(config.dataDir, 'voice-memory', 'admin-log.jsonl'),
+    onChanged: () => { for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'settings' })); } catch { /* gone */ } } },
+  });
   // One memory (Phase 2): the conversation on disk, the notebook, search.
   const voiceMemory = createVoiceMemory({ dataDir: config.dataDir });
   const voiceBrainOpts = {
-    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool],
-    beforeTurn: ({ locked }) => { voiceCtx.locked = () => !!locked; voicePending.newTurn(); },
+    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...voiceAdminTools],
+    beforeTurn: ({ locked, unrecognised, voice }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceOwnerVerdict = voice || null; voicePending.newTurn(); },
+    // Cru speaking up by itself: nobody spoke, so with a voice enrolled no admin powers.
+    beforeReport: () => { voiceCtx.unrecognised = () => false; voiceOwnerVerdict = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, typed: false, verdict: null }).admin; },
     onTurnDone: (t) => voiceMemory.remember(t),
     onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
     persona: () => (voiceMemory.notebook.list().find(f => f.path === '/memories/persona.md') || {}).text || '',
@@ -4481,8 +4600,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const r = voiceSettings.updateSettings({
         model: body.model, monthlyLimitUsd: body.monthlyLimitUsd, deepgramLimitUsd: body.deepgramLimitUsd,
         anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey, anthropicAdminKey: body.anthropicAdminKey,
-        ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay, pauseMs: body.pauseMs, speechRate: body.speechRate,
+        ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay, pauseMs: body.pauseMs, speechRate: body.speechRate, volume: body.volume,
         brain: body.brain, screenCloseSeconds: body.screenCloseSeconds, cliIdleMinutes: body.cliIdleMinutes,
+        adminMode: typeof body.adminMode === 'boolean' ? body.adminMode : undefined,
+        ownerOnly: typeof body.ownerOnly === 'boolean' ? body.ownerOnly : undefined,
       });
       return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
     }
@@ -4492,8 +4613,36 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Optional (capability 'voice-assistant'): locked, the phone is on its lock screen.
       // The phone's own recogniser (over the Deepgram limit) mishears the names too.
       const said = fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
-      const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true });
+      // Whose voice (capability 'voice-speaker'): typed turns say typed:true;
+      // a spoken one finds the verdict its utterance got on /api/voice/listen.
+      const typed = body.typed === true;
+      const rules = voiceTurnRules({ typed, verdict: typed ? null : (voiceSpeaker.recent.lookup(body.text) || voiceSpeaker.recent.lookup(said)) });
+      const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, voice: rules.voice });
+      if (r && r.ok) r.speaker = rules.speaker;
+      // The volume to say it at (Cru may have just changed it).
+      if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
+    }
+    // The owner's voice (capability 'voice-speaker', voice/speaker.js): its
+    // status, enrolment one phrase at a time, and forgetting it.
+    if (path === '/api/voice/speaker' && req.method === 'GET') {
+      return json(res, { ok: true, ...(await voiceSpeaker.status()), ownerOnly: voiceSettings.getSettings().ownerOnly !== false });
+    }
+    if (path === '/api/voice/speaker' && req.method === 'DELETE') {
+      return json(res, { ...voiceSpeaker.forget(), ...(await voiceSpeaker.status()) });
+    }
+    if (path === '/api/voice/speaker/enrol' && req.method === 'POST') {
+      let audio;
+      try { audio = await readBodyBuffer(req, 4 * 1024 * 1024); } catch { return json(res, { ok: false, error: 'Recording too large (4 MB at most)' }, 413); }
+      let samples;
+      try { samples = decodeVoiceAudio(audio, String(req.headers['content-type'] || '')); } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+      if (samples.length > 16000 * 20) return json(res, { ok: false, error: 'One phrase at a time: 20 seconds at most' }, 400);
+      const r = await voiceSpeaker.enrolPhrase(samples, { restart: url.searchParams.get('restart') === '1' });
+      return json(res, r, r.ok ? 200 : 503);
+    }
+    if (path === '/api/voice/speaker/finish' && req.method === 'POST') {
+      const r = voiceSpeaker.finish();
+      return json(res, r.ok ? { ...r, ...(await voiceSpeaker.status()), ok: true } : r, r.ok ? 200 : 400);
     }
     // What Anthropic reports the whole account has cost this billing month
     // (needs an Admin API key; capability 'voice-account-usage').
@@ -4509,6 +4658,28 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
       try { return json(res, voiceMemory.notebook.save(String(body.path || ''), body.text)); }
       catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    }
+    // Cru's tickers and triggers (capability 'voice-wakeups', contract at the
+    // top of voice/wakeups.js): listed, switched on or off, or deleted by the owner.
+    if (path === '/api/voice/wakeups' && (req.method === 'GET' || req.method === 'POST')) {
+      if (req.method === 'POST') {
+        let body;
+        try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+        const id = String(body.id || '');
+        if (!wakeStore.find(id)) return json(res, { ok: false, error: 'No ticker or trigger with that id' }, 404);
+        try {
+          if (body.action === 'enable' || body.action === 'disable') wakeStore.setEnabled(id, body.action === 'enable');
+          else if (body.action === 'delete') wakeStore.remove(id);
+          else return json(res, { ok: false, error: 'action must be enable, disable or delete' }, 400);
+        } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+      }
+      return json(res, { ok: true, ...wakeStore.list(), kinds: WAKE_KINDS, limits: wakeEngine.limits() });
+    }
+    // Cru's conversation as chat bubbles (the voice screen's chat view): the
+    // latest turns, oldest first, paged back with ?before=<ms>.
+    if (path === '/api/voice/history' && req.method === 'GET') {
+      const turns = voiceMemory.turns({ before: Number(url.searchParams.get('before')) || 0, limit: Number(url.searchParams.get('limit')) || 50 });
+      return json(res, { ok: true, turns: turns.reverse(), more: turns.length >= (Number(url.searchParams.get('limit')) || 50) });
     }
     if (path === '/api/voice/memory/search' && req.method === 'GET') {
       return json(res, { ok: true, ...(await voiceMemory.index.search(String(url.searchParams.get('q') || ''))) });
@@ -4562,6 +4733,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/voice/warm' && req.method === 'POST') {
       return json(res, await voiceAgent.warm());
     }
+    // The voice screen's Compact button: the conversation so far becomes a summary.
+    if (path === '/api/voice/compact' && req.method === 'POST') {
+      const r = await voiceAgent.compact({ force: true });
+      return json(res, r.ok ? { ok: true } : { ok: false, error: r.skipped || 'Could not compact' });
+    }
     if (path === '/api/voice/reset' && req.method === 'POST') {
       voiceAgent.reset();
       return json(res, { ok: true });
@@ -4575,7 +4751,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         services: getAllServiceStatus().map(sv => sv.name),
       });
       if (!r.ok || url.searchParams.get('turn') !== '1') return json(res, r, r.ok ? 200 : 400);
-      const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1' }) : { ok: false, error: 'Nothing was heard' };
+      // Whose voice: a PCM recording is checked itself; anything else by what was heard.
+      let verdict = null;
+      if (r.text && voiceSpeaker.enrolled) {
+        try {
+          const sp = trimVoiceSilence(decodeVoiceAudio(audio, String(req.headers['content-type'] || '')));
+          verdict = await voiceSpeaker.verify(sp.samples, { seconds: sp.seconds });
+        } catch { verdict = voiceSpeaker.recent.lookup(r.text); }
+      }
+      const rules = voiceTurnRules({ typed: false, verdict });
+      const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, voice: rules.voice }) : { ok: false, error: 'Nothing was heard' };
+      if (answer && answer.ok) answer.speaker = rules.speaker;
+      if (answer && answer.ok) answer.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok || answer.cancelled ? 200 : 400);
     }
 
@@ -7666,12 +7853,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           // An open voice screen: reports are said here.
           voiceListeners.add(ws);
           ws.on('close', () => voiceListeners.delete(ws));
+          // Keyboard mode: no microphone and no Deepgram, only Cru's reports
+          // and settings changes come down this socket.
+          if (url.searchParams.get('keyboard') === '1') {
+            try { ws.send(JSON.stringify({ type: 'ready', keyboard: true })); } catch { /* gone */ }
+            ws.on('message', (data, isBinary) => { if (!isBinary && /"stop"/.test(String(data))) { try { ws.close(); } catch { /* gone */ } } });
+            return;
+          }
           voiceRelay(ws, {
             projects: allProjects().flatMap(p => [p.alias, p.name]),
             services: getAllServiceStatus().map(sv => sv.name),
             // The phone streams raw 16-bit PCM and says so; a browser sends WebM.
             audio: { encoding: url.searchParams.get('encoding'), sample_rate: url.searchParams.get('sample_rate') },
             pauseMs: voiceSettings.getSettings().pauseMs,
+            // Each utterance's voice checked against the owner's (voice/speaker.js).
+            speaker: voiceSpeaker,
           });
         });
         return;

@@ -183,6 +183,23 @@ export const CAPABILITIES = Object.freeze([
   // { type: 'discard' } for a phrase the owner cancelled, and takes
   // { type: 'discard' } to drop what it has heard so far.
   'voice-cancel',
+  // Cru's volume (settings.volume, set_volume) and the voice screen's Compact button (POST /api/voice/compact).
+  'voice-volume',
+  'voice-compact',
+  // GET /api/voice/history: Cru's turns as chat messages (the voice screen's chat view).
+  'voice-history',
+  // Keyboard mode: /api/voice/listen?keyboard=1 carries reports and settings only (no mic, no Deepgram).
+  'voice-keyboard',
+  // Cru's own tickers and triggers (src/voice/wakeups.js): GET /api/voice/wakeups,
+  // POST /api/voice/wakeups { id, action: 'enable'|'disable'|'delete' }, SSE 'voice-wakeups'.
+  'voice-wakeups',
+  // The owner's voice (src/voice/speaker.js): GET /api/voice/speaker,
+  // POST /api/voice/speaker/enrol (one phrase, audio/wav or audio/L16;rate=N;
+  // ?restart=1 starts over), POST /api/voice/speaker/finish, DELETE
+  // /api/voice/speaker; settings ownerOnly. Utterances on /api/voice/listen
+  // carry owner (true/false/null); /api/voice/turn takes typed:true for typed
+  // text and answers with speaker { owner, unrecognised }.
+  'voice-speaker',
   // Voice mode in a chat: the composer's mic sends "voice input: …" (spoken
   // through /api/voice/listen), and the chat's 'voice-say' events (Claude's
   // speak tool) are said aloud by the screen in voice mode, through

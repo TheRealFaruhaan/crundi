@@ -53,10 +53,25 @@ export function createVoiceBrain({ api, cli, settings = voiceSettings, logFile =
     return r;
   }
 
+  // Asked for by Cru during a turn (compact_conversation, start_fresh): done
+  // once the turn is over, never under it, and without holding up the reply.
+  let next = null;
+  function afterTurn(r) {
+    const n = next;
+    next = null;
+    if (!n) return r;
+    const b = pick();
+    const job = n.kind === 'fresh' && b.fresh ? Promise.resolve(b.fresh(n.summary)) : b.compact({ force: true });
+    job.catch(() => {});
+    return r;
+  }
+
   return {
     get which() { return which(); },
-    turn: (text, opts = {}) => timed(() => pick().turn(text, opts), { said: text }),
-    report: (note, opts = {}) => timed(() => pick().report(note, opts), { report: true, said: note }),
+    turn: (text, opts = {}) => timed(() => pick().turn(text, opts), { said: text }).then(afterTurn),
+    report: (note, opts = {}) => timed(() => pick().report(note, opts), { report: true, said: note }).then(afterTurn),
+    /** Cru's own wish: 'compact' (summarise everything) or 'fresh' (only [summary] goes on). */
+    requestAfterTurn(kind, summary = '') { next = { kind: kind === 'fresh' ? 'fresh' : 'compact', summary: String(summary || '').slice(0, 4000) }; },
     /** The owner cancelled what they said: whichever brain is answering stops. */
     cancel: () => {
       const a = api && api.cancel ? api.cancel() : { cancelled: false, acted: [] };

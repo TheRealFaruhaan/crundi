@@ -49,7 +49,7 @@ import * as voiceSettings from './settings.js';
 import { READ_ONLY_TOOL_NAMES } from './tools.js';
 
 /** Tools whose running changes nothing the owner would need told about when a request is cancelled. */
-const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice']);
+const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice', 'list_wakeups']);
 
 /** What an action did, in a few words, for "Cancelled. Already done: …". */
 export function describeAct(name, input = {}) {
@@ -94,6 +94,7 @@ How you answer:
 What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals, and widgets: view_widget shows you one as it looks on a desktop and a phone, so you can say how it looks and whether it works.
 - You watch the chats you send messages to or start, and any the owner asks you to follow (watch_chat). When one finishes or waits on the owner you get a [Report for the owner…] message: say what happened, briefly, as news ("Sir, the API chat has finished: the tests pass."). It is not something the owner said.
+- Tickers and triggers wake you without the owner speaking. A ticker repeats on a schedule (every so many minutes, or daily at a time) for a purpose, such as a morning briefing; a trigger fires when something happens (CPU or memory high, a chat opened, closed, finished or waiting on him, a service stopping, a container unhealthy, a process starting or stopping, a collaborator acting, or a one-off time), optionally only within certain hours or days. All are built-in and read-only, and off until switched on: switch one on yourself when it would genuinely help, or when the owner asks (add_ticker, add_trigger, set_ticker_enabled, set_trigger_enabled, list_wakeups). On a [Wake-up…] message decide: stay quiet (reply with nothing at all) when nothing deserves his attention, which is often; say something brief when it does; call alert_owner only when he must act now. When a ticker or trigger has nothing left to do (what it waited for has happened, the job is over), switch it off.
 - You can close yourself: when the owner is done ("close", "that's all", "goodbye"), call close_voice and reply with nothing at all: an empty reply closes the screen silently. Say a brief goodbye only when you are actually in a conversation with the owner and a word back is natural.
 - Silence is an answer. When what you hear needs nothing from you (the owner talking to someone else, thinking aloud, a remark that wants no reply, background speech), reply with nothing at all: nothing is spoken and the screen keeps listening.
 - You can act: turn background "Hey Cru" listening on the phone on for 15–120 minutes (or off), send messages into chats, start, close, park and resume chats, tell the owner when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
@@ -111,7 +112,20 @@ How you learn to be:
 Memory:
 - You are one assistant with one memory. Your notebook (the memory tool, files under /memories) is for what should last: the owner's preferences, standing facts about their projects, threads in progress. Keep it short and current; never put secrets in it. Look at it when a conversation starts or when something you may have noted comes up.
 - memory_search finds anything said before, across every conversation, including ones that have been summarised.
-- When the context says the phone is locked, answer questions as usual, but anything that would change something must wait until the owner unlocks the phone: say so briefly.`;
+- Admin mode: when the owner has switched it on (the context line says ADMIN MODE IS ON), run_command and write_file let you do anything the server user may do, with no confirmation, so be exact: look before you change, prefer reversible steps, never touch Crundi's own service (restarting it ends every chat) unless the owner says so, and report what you did. Only the owner switches it on, in Settings; you can switch it off (admin_mode_off), and do when he says so. When it is off those tools refuse; don't offer them.
+- Keep your conversation lean. When the owner moves to another project or a clearly different topic, call compact_conversation (everything so far becomes a summary) so the old detail is not carried into every turn; when almost nothing of it matters any more, call start_fresh with a few lines worth keeping instead. Do the same when the owner asks ("compact yourself", "start fresh"). Either happens after your reply, and nothing is lost: memory_search keeps every turn. Don't announce it unless asked.
+- When the context says the phone is locked, answer questions as usual, but anything that would change something must wait until the owner unlocks the phone: say so briefly.
+- When the context says the speaker was not recognised as the owner, answer questions as usual, but change nothing (those tools refuse): say briefly that you don't know who they are, e.g. "I couldn't recognise who you are, so I can't do that." or "You don't seem to be the owner, so I won't do that."`;
+
+/**
+ * What a report hands the brain: a watched chat's news (always said), or a
+ * wake-up from one of Cru's tickers or triggers (Cru decides; often silence).
+ */
+export function reportPrompt(note, { wake = false } = {}) {
+  const n = String(note).trim();
+  if (wake) return `[Wake-up, not said by the owner] ${n}\nNobody spoke: one of your own tickers or triggers woke you. Do what its purpose asks (look things up if it needs), then choose: reply with nothing at all when nothing deserves his attention (nothing is said or sent); or tell him in a sentence or two, detail after ---; or, only when he must know or act right now, also call alert_owner. If it has nothing left to do, switch it off.`;
+  return `[Report for the owner, not said by them] ${n}\nTell the owner now, unprompted, in a sentence or two; detail after ---. Don't ask a question unless something needs their decision.`;
+}
 
 /**
  * Split a reply into what is spoken and what is shown (D28).
@@ -125,9 +139,9 @@ export function splitReply(text) {
 }
 
 /** The volatile context that goes in front of what the owner said. */
-export function contextLine({ now = new Date(), where = '', locked = false } = {}) {
+export function contextLine({ now = new Date(), where = '', locked = false, unrecognised = false, admin = voiceSettings.adminOn() } = {}) {
   const when = now.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-  return `[${when}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the phone is locked: answer, but anything that would change something needs the owner to unlock first' : ''}]`;
+  return `[${when}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the phone is locked: answer, but anything that would change something needs the owner to unlock first' : ''}${unrecognised ? ' · the speaker was not recognised as the owner: answer questions, but change nothing, and if asked to, say you couldn\'t recognise who they are' : ''}${admin ? ' · ADMIN MODE IS ON: run_command and write_file work, without confirmation' : ''}]`;
 }
 
 /**
@@ -187,7 +201,7 @@ export async function runVoiceTool(t, name, input, signals) {
  * @param {Function} [opts.client]  (apiKey) => Anthropic-like client; tests pass a fake
  * @param {object}  [opts.settings] the settings module; tests pass a fake
  */
-export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '' } = {}) {
+export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '' } = {}) {
   /**
    * The persona notes for the start of a conversation. Put in its first
    * message, not the system prompt, so the cached system + tools prefix
@@ -263,7 +277,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * One spoken (or typed) request.
    * @returns {Promise<{ok:boolean, speak?:string, show?:string, tools?:string[], costUsd?:number, error?:string, limitReached?:boolean}>}
    */
-  async function turn(text, { where = '', locked = false, now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, now = new Date(), report = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     const s = settings.getSettings();
@@ -286,11 +300,11 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     try {
       // A new turn: the owner has spoken, so actions proposed before may now be
       // confirmed. Not for a report: the owner said nothing, so nothing is agreed.
-      if (!report) beforeTurn({ locked });
+      if (!report) beforeTurn({ locked, unrecognised, voice }); else beforeReport();
       // Too long for one conversation: compact it now rather than lose it.
       if (history.length > MAX_HISTORY_MESSAGES) { busy = false; const c = await compact({ force: true }); busy = true; if (!c.ok) { history = []; lastReq = null; } }
       start = history.length;
-      history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${contextLine({ now, where, locked })}\n${said}` });
+      history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${contextLine({ now, where, locked, unrecognised })}\n${said}` });
       settings.countTurn(now);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const req = buildRequest(model, history);
@@ -439,10 +453,10 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * finished, or is waiting on them): Cru turns [note] into a sentence or two
    * to say, unprompted. Waits for a turn in progress to end (up to 30 s).
    */
-  async function report(note, { now = new Date() } = {}) {
+  async function report(note, { now = new Date(), wake = false } = {}) {
     for (let i = 0; i < 60 && busy; i++) await new Promise(ok => setTimeout(ok, 500));
     if (busy) return { ok: false, error: 'busy' };
-    return turn(`[Report for the owner, not said by them] ${String(note).trim()}\nTell the owner now, unprompted, in a sentence or two; detail after ---. Don't ask a question unless something needs their decision.`, { where: 'a report', now, report: true });
+    return turn(reportPrompt(note, { wake }), { where: wake ? 'a wake-up' : 'a report', now, report: true });
   }
 
   return {
@@ -455,6 +469,20 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     /** Quiet since (ms epoch), for compaction while idle. */
     get lastActivity() { return lastActivity; },
     reset() { history = []; lastReq = null; save(); },
+    /** A fresh conversation that starts from [summary] alone (Cru's start_fresh). */
+    fresh(summary, now = new Date()) {
+      const s = String(summary || '').trim();
+      if (!s) { history = []; lastReq = null; save(); return { ok: true }; }
+      const when = now.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      history = [
+        { role: 'user', content: `${personaNote()}[A fresh start at ${when}. Carried over, in your own words:]\n${s}` },
+        { role: 'assistant', content: [{ type: 'text', text: 'Understood, Sir.' }] },
+      ];
+      lastReq = null;
+      try { onCompacted(s, now.getTime()); } catch { /* best effort */ }
+      save();
+      return { ok: true };
+    },
     /** Tests and diagnostics. */
     get history() { return history; },
     get toolNames() { return toolDefs.map(t => t.name); },

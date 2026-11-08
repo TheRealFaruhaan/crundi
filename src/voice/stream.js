@@ -5,13 +5,17 @@
  *   client ──audio chunks──▶ /api/voice/listen ──▶ Deepgram /v1/listen (WebSocket)
  *   client ◀──words as they're heard, then each finished utterance──┘
  *
- * The client sends the microphone as it records (WebM/Opus from a browser's
- * MediaRecorder; Deepgram reads the container itself) and gets back:
+ * The client sends the microphone as it records (16-bit PCM, declared with
+ * ?encoding=linear16&sample_rate=N, from the phone and the web client; an
+ * older browser client's WebM/Opus, which Deepgram reads itself, still works
+ * but its voice can't be checked) and gets back:
  *
  *   { type: 'ready', echoFilter: true }       Deepgram is listening; this server
  *                                             takes 'saying' / 'said' (below)
  *   { type: 'interim', text }                 words so far, may still change
- *   { type: 'utterance', text }               the owner finished a sentence
+ *   { type: 'utterance', text, owner }        the owner finished a sentence;
+ *                                             owner: the voice check (speaker.js),
+ *                                             true / false / null (can't tell)
  *   { type: 'speech' }                        the owner started speaking
  *   { type: 'error', error }                  and the socket closes
  *
@@ -37,6 +41,7 @@ import { getSettings, addDeepgramSpend, deepgramOverLimit } from './settings.js'
 import { keyterms } from './stt.js';
 import { fixNames, nameList } from './names.js';
 import { CUES } from './cues.js';
+import { createAudioRing, utteranceAudio, MIN_SECONDS } from './speaker.js';
 
 const STREAM_URL = 'wss://api.deepgram.com/v1/listen';
 /** Deepgram closes a stream after about 10 s without audio; it asks for a KeepAlive every 3–5 s. */
@@ -44,8 +49,8 @@ const KEEPALIVE_MS = 4000;
 
 /**
  * Raw audio formats a client may declare (?encoding=&sample_rate= on
- * /api/voice/listen). The phone records 16-bit PCM; a browser sends WebM/Opus
- * and declares nothing, because Deepgram reads the container itself.
+ * /api/voice/listen). The phone and the web client send 16-bit PCM; an older
+ * browser client sent WebM/Opus and declared nothing (Deepgram reads it).
  */
 export const RAW_ENCODINGS = ['linear16'];
 export const SAMPLE_RATES = [8000, 16000, 24000, 44100, 48000];
@@ -175,6 +180,8 @@ export function isCue(heard) {
  */
 export function createAssembler({ now = () => Date.now(), names = [] } = {}) {
   let parts = [];
+  // Where each kept word is in the stream ([start, end] seconds), for the voice check.
+  let spans = [];
   // Crundi's names put back into what was heard (names.js).
   const fix = (text) => (names.length ? fixNames(text, { names }) : text);
   let audioEnd = 0;
@@ -203,7 +210,12 @@ export function createAssembler({ now = () => Date.now(), names = [] } = {}) {
       // Cru's own voice heard back: never part of what the owner said.
       if (text && echo(text)) return msg.is_final ? sofar() : null;
       if (msg.is_final) {
-        if (text) parts.push(text);
+        if (text) {
+          parts.push(text);
+          const ws = msg.channel?.alternatives?.[0]?.words;
+          if (Array.isArray(ws) && ws.length) for (const w of ws) { const a = Number(w.start), b = Number(w.end); if (b > a) spans.push([a, b]); }
+          else if (end > (Number(msg.start) || 0)) spans.push([Number(msg.start) || 0, end]);
+        }
         return sofar();
       }
       if (!text) return null;
@@ -221,17 +233,19 @@ export function createAssembler({ now = () => Date.now(), names = [] } = {}) {
     /** Whatever was heard but not yet sent (the stream is ending). */
     flush,
     /** The owner threw away what they had said so far (the x). */
-    discard() { parts = []; },
+    discard() { parts = []; spans = []; },
     get seconds() { return audioEnd; },
   };
   function flush() {
     const heard = parts.join(' ').trim();
-    parts = [];
+    const said = spans;
+    parts = []; spans = [];
     // "…scratch that": nothing, or only what came after it, is the request.
     const d = applyDiscard(heard);
     if (d.discard) return { type: 'discard', text: heard };
     const text = d.text ? fix(d.text) : '';
-    return text ? { type: 'utterance', text } : null;
+    // spans: where its words are in the stream (the relay checks the voice, then drops them).
+    return text ? { type: 'utterance', text, spans: said } : null;
   }
 }
 
@@ -241,9 +255,43 @@ export function createAssembler({ now = () => Date.now(), names = [] } = {}) {
  * @param opts.projects, opts.services  names for keyterms
  * @param opts.audio  { encoding, sample_rate } for raw PCM (see rawAudio), or null
  * @param opts.WebSocketImpl  tests pass a fake
+ * @param opts.speaker  speaker.js createSpeaker(): each utterance's voice is
+ *                      checked (raw PCM streams only) and remembered for its turn
  */
-export function relay(client, { projects = [], services = [], audio = null, pauseMs = PAUSE_MS.default, WebSocketImpl = WebSocket } = {}) {
+export function relay(client, { projects = [], services = [], audio = null, pauseMs = PAUSE_MS.default, WebSocketImpl = WebSocket, speaker = null } = {}) {
   const send = (m) => { if (client.readyState === 1) client.send(JSON.stringify(m)); };
+  const raw = rawAudio(audio || {});
+  // The last 30 s as sent to Deepgram (its word times index it), for the voice check.
+  const ring = speaker && raw ? createAudioRing({ rate: raw.sample_rate }) : null;
+  // Events go out in order: while an utterance's voice is being checked
+  // (~50-100 ms, off the event loop), what comes after it waits behind it.
+  const outQ = [];
+  let pumping = false;
+  const idle = [];
+  async function pump() {
+    if (pumping) return;
+    pumping = true;
+    while (outQ.length) { try { const ev = await outQ.shift(); if (ev) send(ev); } catch { /* dropped */ } }
+    pumping = false;
+    for (const f of idle.splice(0)) f();
+  }
+  const out = (ev) => {
+    if (!pumping && !outQ.length && !(ev instanceof Promise)) { send(ev); return; }
+    outQ.push(ev); pump();
+  };
+  const whenIdle = () => (pumping || outQ.length ? new Promise((r) => idle.push(r)) : Promise.resolve());
+  /** An utterance from the assembler: its voice checked, the verdict remembered for the turn. */
+  function deliver(ev) {
+    if (!ev || ev.type !== 'utterance') { out(ev); return; }
+    const { spans, ...e } = ev;
+    if (!speaker) { out(e); return; }
+    const remember = (v) => { try { speaker.recent.remember(e.text, v); } catch { /* best effort */ } return { ...e, owner: v.owner ?? null }; };
+    if (!speaker.enrolled) { out(remember({ owner: null, reason: 'no-profile' })); return; }
+    const clip = ring ? utteranceAudio(ring, spans) : null;
+    if (!clip) { out(remember({ owner: null, reason: 'unavailable' })); return; }
+    if (clip.seconds < MIN_SECONDS) { out(remember({ owner: null, reason: 'short', seconds: clip.seconds })); return; }
+    out(speaker.verify(clip.samples, { seconds: clip.seconds }).then(remember, () => remember({ owner: null, reason: 'unavailable' })));
+  }
   const key = getSettings().deepgramKey;
   if (!key) {
     send({ type: 'error', error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' });
@@ -256,7 +304,7 @@ export function relay(client, { projects = [], services = [], audio = null, paus
     client.close();
     return;
   }
-  const dg = new WebSocketImpl(streamUrl(keyterms({ projects, services }), { audio: rawAudio(audio || {}), pauseMs }), { headers: { Authorization: `Token ${key}` } });
+  const dg = new WebSocketImpl(streamUrl(keyterms({ projects, services }), { audio: raw, pauseMs }), { headers: { Authorization: `Token ${key}` } });
   const asm = createAssembler({ names: nameList({ projects, services }) });
   const queue = [];
   let open = false;
@@ -275,24 +323,24 @@ export function relay(client, { projects = [], services = [], audio = null, paus
     done = true;
     clearInterval(keepAlive);
     const rest = asm.flush();
-    if (rest) send(rest);
-    if (err) send({ type: 'error', error: err });
+    if (rest) deliver(rest);
+    if (err) out({ type: 'error', error: err });
     if (asm.seconds > 0) addDeepgramSpend(asm.seconds);
     try { if (dg.readyState === 1) dg.send(JSON.stringify({ type: 'CloseStream' })); } catch { /* gone */ }
     setTimeout(() => { try { dg.close(); } catch { /* gone */ } }, 1500);
-    try { client.close(); } catch { /* gone */ }
+    whenIdle().then(() => { try { client.close(); } catch { /* gone */ } });
   }
 
   dg.on('open', () => {
     open = true;
     for (const chunk of queue.splice(0)) dg.send(chunk);
-    send({ type: 'ready', echoFilter: true });
+    out({ type: 'ready', echoFilter: true });
   });
   dg.on('message', (data) => {
     let msg;
     try { msg = JSON.parse(String(data)); } catch { return; }
     const ev = asm.push(msg);
-    if (ev) send(ev);
+    if (ev) deliver(ev);
   });
   dg.on('unexpected-response', (_req, res) => {
     finish(res.statusCode === 401 || res.statusCode === 403
@@ -317,7 +365,9 @@ export function relay(client, { projects = [], services = [], audio = null, paus
     }
     if (paused || done) return;
     lastAudio = Date.now();
-    if (open) dg.send(data); else if (queue.length < 200) queue.push(data);
+    if (open) dg.send(data); else if (queue.length < 200) queue.push(data); else return;
+    // Deepgram's timeline is the audio it was sent: the ring keeps the same.
+    if (ring) ring.push(data);
   });
   client.on('close', () => finish());
   client.on('error', () => finish());

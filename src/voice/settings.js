@@ -65,6 +65,14 @@ const DEFAULTS = {
   // How fast Cru talks: Deepgram Aura-2's speed (0.7 to 1.5), and the phone's
   // or browser's own voice at the same rate.
   speechRate: 1,
+  // How loud Cru talks, 10 to 100 (%): its replies and cues on every client.
+  volume: 100,
+  // Full admin mode (9 Nov): Cru may run any command as the user Crundi runs
+  // as. Switched on by hand only (Settings), never by Cru; Sonnet or above.
+  adminMode: false,
+  // "Only act on my voice" (speaker.js): with the owner's voice enrolled, a
+  // spoken request in another voice gets answers but changes nothing.
+  ownerOnly: true,
   // After this many seconds of silence the voice screen closes (every client;
   // "Hey Cru" opens it again).
   screenCloseSeconds: 60,
@@ -139,6 +147,11 @@ function spendNow(now) {
 }
 
 /** The whole record, keys included. Server side only. */
+/** Admin mode needs a capable model: Sonnet or above, never Haiku. */
+export function adminCapable(model) { return !/haiku/i.test(String(model || '')); }
+/** Is admin mode on right now (and its model able)? */
+export function adminOn(s = load()) { return s.adminMode === true && adminCapable(s.model || DEFAULT_MODEL); }
+
 export function getSettings() {
   return load();
 }
@@ -160,6 +173,10 @@ export function publicSettings(now = new Date()) {
     deepgramBillingDay: s.deepgramBillingDay,
     pauseMs: s.pauseMs,
     speechRate: s.speechRate || 1,
+    volume: Number.isFinite(s.volume) ? s.volume : 100,
+    adminMode: adminOn(s),
+    adminCapable: adminCapable(s.model || DEFAULT_MODEL),
+    ownerOnly: s.ownerOnly !== false,
     screenCloseSeconds: s.screenCloseSeconds || 60,
     cliIdleMinutes: s.cliIdleMinutes || 30,
     deepgramPeriodStart: ymd(dg.start),
@@ -187,6 +204,16 @@ export function updateSettings(patch = {}) {
   if (patch.model !== undefined) {
     if (!MODELS[patch.model]) return { ok: false, error: `Unknown model: ${patch.model}` };
     s.model = patch.model;
+    // Haiku may not hold admin mode: switching to it switches admin mode off.
+    if (!adminCapable(s.model)) s.adminMode = false;
+  }
+  if (patch.adminMode !== undefined) {
+    if (patch.adminMode === true && !adminCapable(s.model || DEFAULT_MODEL)) return { ok: false, error: 'Admin mode needs Sonnet or above. Choose another model first.' };
+    s.adminMode = patch.adminMode === true;
+  }
+  if (patch.ownerOnly !== undefined) {
+    if (typeof patch.ownerOnly !== 'boolean') return { ok: false, error: 'ownerOnly is true or false' };
+    s.ownerOnly = patch.ownerOnly;
   }
   if (patch.brain !== undefined) {
     if (!BRAINS.includes(patch.brain)) return { ok: false, error: `Unknown brain: ${patch.brain}` };
@@ -217,6 +244,11 @@ export function updateSettings(patch = {}) {
     const n = Number(patch.speechRate);
     if (!Number.isFinite(n) || n < 0.7 || n > 1.5) return { ok: false, error: 'Talking speed is 0.7 to 1.5 (1 is normal)' };
     s.speechRate = Math.round(n * 20) / 20;
+  }
+  if (patch.volume !== undefined) {
+    const n = Math.round(Number(patch.volume));
+    if (!Number.isFinite(n) || n < 10 || n > 100) return { ok: false, error: 'Volume is 10 to 100 (%)' };
+    s.volume = n;
   }
   if (patch.screenCloseSeconds !== undefined) {
     const n = Number(patch.screenCloseSeconds);

@@ -83,6 +83,21 @@ export function fuse(lists, k = RRF_K) {
  * @param {string} o.dir       <dataDir>/voice-memory
  * @param {object} [o.embedder] createEmbedder(); tests pass a fake
  */
+/** A remembered turn ("Owner: …\nCru: …\n<detail>") as its parts. */
+export function splitTurn({ id, at, text }) {
+  const s = String(text || '');
+  const cut = s.indexOf('\nCru: ');
+  let said = cut >= 0 ? s.slice(0, cut) : s;
+  const rest = cut >= 0 ? s.slice(cut + 6) : '';
+  said = said.replace(/^Owner: /, '');
+  const nl = rest.indexOf('\n');
+  const speak = nl >= 0 ? rest.slice(0, nl) : rest;
+  const show = nl >= 0 ? rest.slice(nl + 1) : '';
+  // Cru speaking up unprompted (a report, a ticker, a trigger): not the owner's words.
+  const report = /^\[(Report|Ticker|Trigger|Wake)/i.test(said);
+  return { id: Number(id), at: Number(at), said: report ? '' : said, speak, show, report };
+}
+
 export function createMemoryIndex({ dir, embedder } = {}) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(join(dir, 'index.db'));
@@ -157,6 +172,14 @@ export function createMemoryIndex({ dir, embedder } = {}) {
   return {
     add, search,
     /** Tests: let queued embeddings finish. */
+    /** The latest turns, newest first, before [before] (ms epoch): the voice screen's chat view. */
+    turns({ before = 0, limit = 50 } = {}) {
+      const n = Math.max(1, Math.min(200, Number(limit) || 50));
+      const rows = before > 0
+        ? db.prepare("SELECT id, at, text FROM entries WHERE kind = 'turn' AND at < ? ORDER BY at DESC, id DESC LIMIT ?").all(Number(before), n)
+        : db.prepare("SELECT id, at, text FROM entries WHERE kind = 'turn' ORDER BY at DESC, id DESC LIMIT ?").all(n);
+      return rows.map(splitTurn);
+    },
     async settle() { await drain(); },
     get embedder() { return emb.status; },
     count: () => db.prepare('SELECT COUNT(*) AS n FROM entries').get().n,

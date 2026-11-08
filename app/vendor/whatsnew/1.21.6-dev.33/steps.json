@@ -1,0 +1,54 @@
+{
+  "steps": [
+    {
+      "id": "cru-chat-keyboard",
+      "tag": "Voice",
+      "title": "Read and type to Cru",
+      "body": "Two new buttons on Cru's screen. The speech bubble shows your whole conversation with Cru as messages; the keyboard turns the microphone off so you can type, and Cru still answers aloud. Each device remembers your choice, and without a Deepgram key Cru simply opens in keyboard mode.",
+      "art": "chat-keyboard.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "cru-tones",
+      "tag": "Voice",
+      "title": "A new look and calm tones",
+      "body": "Cru has a new mark: sound bars that move while it listens or talks. Instead of saying \"one moment\", it now plays soft tones: up when it starts listening, down when your words are sent, and a quiet pulse while it works. Its reply scrolls along as it is spoken.",
+      "art": "tones.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "cru-self",
+      "tag": "Voice",
+      "title": "Cru looks after itself",
+      "body": "Ask Cru to speak louder or quieter, to make a card the top priority, or to compact itself. It also compacts on its own when you move to another project or topic, and there is a compact button on its screen.",
+      "keys": [ { "keys": ["Louder"], "text": "or quieter, any time" }, { "keys": ["Make it the top priority"], "text": "reorders the board" } ],
+      "art": "self.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "cru-wakeups",
+      "tag": "Voice",
+      "title": "Tickers and triggers",
+      "body": "Cru can wake up by itself: on a ticker (every so often, or each morning) or on a trigger, such as the CPU running hot, a chat finishing or waiting on you, a service stopping or a set time. It then decides whether to tell you, alert you or stay quiet. Ask Cru to set one up; they are listed in Settings, Voice assistant.",
+      "keys": [ { "keys": ["Tell me if the CPU stays above 90%"], "text": "a trigger" } ],
+      "art": "wakeups.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "cru-your-voice",
+      "tag": "Voice",
+      "title": "Cru knows your voice",
+      "body": "Enrol your voice in Settings, Voice assistant: read a few phrases and Cru learns how you sound, on your own server. With \"Only act on my voice\" on, anyone else still gets answers, but Cru changes nothing for them.",
+      "art": "your-voice.html",
+      "artTitle": "Settings"
+    },
+    {
+      "id": "cru-admin",
+      "tag": "Voice",
+      "title": "Admin mode",
+      "body": "Switch it on in Settings, Voice assistant, and Cru can run any command and edit any file on this server, with no confirmations. It needs Sonnet or above, obeys only your voice once enrolled, and shows ADMIN while it is on. Say \"admin mode off\" to end it.",
+      "art": "admin.html",
+      "artTitle": "Settings"
+    }
+  ]
+}

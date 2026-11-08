@@ -1,0 +1,75 @@
+#!/usr/bin/env node
+/**
+ * test-voice-self.mjs — Cru's hold on itself (9 Nov): its volume, reordering
+ * kanban cards, and compacting or restarting its own conversation after a turn.
+ * Run: node scripts/test-voice-self.mjs
+ */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'cru-self-'));
+const settings = await import('../src/voice/settings.js');
+const { makeActionTools: makeVoiceActionTools } = await import('../src/voice/actions.js');
+const { createVoiceBrain } = await import('../src/voice/brain.js');
+
+let failed = 0;
+const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
+
+// Volume: a setting, checked, public.
+ok(settings.publicSettings().volume === 100, 'volume starts at 100');
+ok(settings.updateSettings({ volume: 5 }).ok === false, 'below 10 is refused');
+ok(settings.updateSettings({ volume: 40 }).ok && settings.publicSettings().volume === 40, 'volume 40 is kept');
+
+const moved = [];
+let told = 0;
+const asked = [];
+const tools = makeVoiceActionTools({
+  voiceSettings: settings,
+  onSettingsChanged: () => { told++; },
+  listProjects: () => [{ alias: 'crundi', name: 'Crundi' }],
+  kanban: { moveTask: (...a) => { moved.push(a); return { ok: true }; } },
+  conversation: { requestAfterTurn: (k, s) => asked.push([k, s]) },
+}, { locked: () => true, pending: { newTurn() {}, propose() { return 'x'; }, take() { return {}; }, cancel() {} } });
+const tool = (n) => tools.find((t) => t.name === n);
+
+const v = await tool('set_volume').run({ volume: 70 });
+ok(v.ok && settings.publicSettings().volume === 70 && told === 1, 'set_volume changes it at once, even locked, and tells the screens');
+ok(!v.needsConfirmation, 'no confirmation for volume');
+
+ok(!!tool('move_kanban_task').input_schema.properties.position, 'move_kanban_task takes a position');
+
+await tool('compact_conversation').run({});
+await tool('start_fresh').run({ summary: 'Working on the inbox.' });
+ok(asked.length === 2 && asked[0][0] === 'compact' && asked[1][0] === 'fresh' && asked[1][1] === 'Working on the inbox.', 'compact and fresh are asked of the brain');
+
+// The brain does it after the turn, not during it.
+const log = [];
+const fake = {
+  turn: async () => { log.push('turn'); brain.requestAfterTurn('fresh', 'carry this'); return { ok: true, speak: 'Done.' }; },
+  report: async () => ({ ok: true }),
+  compact: async () => { log.push('compact'); return { ok: true }; },
+  fresh: (s) => { log.push('fresh:' + s); return { ok: true }; },
+  lastActivity: 0,
+};
+const brain = createVoiceBrain({ api: fake, cli: null });
+const r = await brain.turn('start over');
+await new Promise((ok2) => setTimeout(ok2, 10));
+ok(r.speak === 'Done.' && log.join(',') === 'turn,fresh:carry this', 'start_fresh runs after the turn, with its summary');
+await brain.turn('next');
+await new Promise((ok2) => setTimeout(ok2, 10));
+ok(log.filter((x) => x.startsWith('fresh')).length === 2, 'only once per request');
+
+// The chat view's history: remembered turns split back into messages.
+const { createMemoryIndex } = await import('../src/voice/memory-index.js');
+const idx = createMemoryIndex({ dir: join(process.env.DATA_DIR, 'idx'), embedder: { embed: async () => null, status: 'off' } });
+idx.add('turn', 'Owner: hello\nCru: Hi, Sir.\nThe detail', { at: 1000 });
+idx.add('turn', 'Owner: [Report for the owner, not said by them] a chat finished\nCru: Your chat is done.', { at: 2000 });
+idx.add('summary', 'not a turn', { at: 3000 });
+const th = idx.turns({ limit: 10 });
+ok(th.length === 2 && th[0].report && th[0].said === '' && th[0].speak === 'Your chat is done.', 'a report is Cru speaking up, newest first');
+ok(th[1].said === 'hello' && th[1].speak === 'Hi, Sir.' && th[1].show === 'The detail', 'a turn splits into said, spoken and shown');
+ok(idx.turns({ before: 2000 }).length === 1, 'paged back with before');
+idx.close();
+
+console.log(failed ? `\n${failed} FAILED` : '\nAll Cru-self checks passed');
+process.exit(failed ? 1 : 0);

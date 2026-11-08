@@ -5,6 +5,8 @@
  * (gated()):
  *
  *   - the phone is locked: nothing runs; the owner is asked to unlock (spec §4);
+ *   - the voice was not recognised as the owner's (speaker.js, "Only act on
+ *     my voice"): nothing runs, the safe ones included; questions still work;
  *   - the action needs a yes (the rules below): it is not run. It is parked
  *     with an id and the question, and the model is told to ask. It runs only
  *     through confirm_action, and only once the owner has said something since
@@ -37,7 +39,7 @@ export const ACTION_TOOL_NAMES = [
   'create_project',
   'list_chat_schedules', 'add_chat_schedule', 'delete_chat_schedule',
   'add_schedule', 'update_schedule', 'set_schedule_enabled', 'delete_schedule',
-  'set_voice_setting', 'set_background_listening',
+  'set_voice_setting', 'compact_conversation', 'start_fresh', 'set_volume', 'set_background_listening',
   'confirm_action', 'cancel_action', 'close_voice',
 ];
 
@@ -102,9 +104,13 @@ export function readBack(text) {
  *              closeChat(id), parkChat(id), resumeChat(id), listProjects(), projectsDir(),
  *              registerProject(alias, path, name), kanban, notes, mindmap, chatSchedule,
  *              schedules (schedule-store), services(), voiceSettings, onSettingsChanged(),
- *              broadcast(kind), watch(id, title, project)
- * @param ctx   { pending: createPending(), locked: () => boolean }
+ *              broadcast(kind), watch(id, title, project), wakeupDefs (wakeups.js wakeupToolDefs())
+ * @param ctx   { pending: createPending(), locked: () => boolean,
+ *              unrecognised: () => boolean (the voice was not the owner's: change nothing) }
  */
+/** What a change refuses with when the voice was not the owner's. */
+export const UNRECOGNISED = 'The speaker was not recognised as the owner. Nothing was changed. Tell them briefly, as not knowing who they are: "I couldn\'t recognise who you are, so I can\'t do that." The owner can type it, or say it himself.';
+
 export function makeActionTools(deps, ctx) {
   const project = (alias) => {
     const a = String(alias || '').toLowerCase();
@@ -209,11 +215,11 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'move_kanban_task',
-      description: 'Move a card to another column: backlog, todo, in_progress or done. Moving to todo starts a factory run, so that asks the owner first.',
-      input_schema: obj({ project: str('Project alias'), taskId: str('Card id'), status: str('Column', { enum: STATUSES }) }, ['project', 'taskId', 'status']),
+      description: 'Move a card to another column (backlog, todo, in_progress, done) and/or to a place in its column, to set its priority (position 0 = top). Moving to todo starts a factory run, so that asks the owner first.',
+      input_schema: obj({ project: str('Project alias'), taskId: str('Card id'), status: str('Column (the card\'s own column to only reorder it)', { enum: STATUSES }), position: { type: 'integer', minimum: 0, description: 'Optional place in the column, 0 = top (the highest priority). "Make it the top priority" is position 0 in its own column. Left out: the end of the column (or where it is, if the column is the same).' } }, ['project', 'taskId', 'status']),
       check: (i) => { project(i.project); if (!STATUSES.includes(i.status)) throw new Error('Unknown column'); },
       confirm: (i) => i.status === 'todo' ? `Moving it to To do starts a factory run on it. Move it?` : null,
-      run: (i) => deps.kanban.moveTask(project(i.project).alias, String(i.taskId), i.status),
+      run: (i) => deps.kanban.moveTask(project(i.project).alias, String(i.taskId), i.status, Number.isInteger(i.position) ? i.position : undefined),
     },
     {
       name: 'delete_kanban_task',
@@ -388,6 +394,33 @@ export function makeActionTools(deps, ctx) {
         return r;
       },
     },
+    // Cru's own conversation (9 Nov): compacted or begun again after this turn.
+    {
+      name: 'compact_conversation',
+      description: 'Compact your own conversation: once this reply is done, everything so far becomes a summary you carry on from (your notebook is kept, memory_search still finds every turn). Use it when the owner asks, or on your own when the talk moves to another project or topic.',
+      input_schema: obj({}),
+      safe: true,
+      run: () => { deps.conversation?.requestAfterTurn('compact'); return { ok: true, say: 'Compacted after this reply.' }; },
+    },
+    {
+      name: 'start_fresh',
+      description: 'Start a fresh conversation after this reply, carrying over only your notebook and the short summary you give here. Better than compacting when almost nothing said so far still matters.',
+      input_schema: obj({ summary: str('A few lines worth keeping (what is in progress, what was decided). May be empty.') }, []),
+      safe: true,
+      run: (i) => { deps.conversation?.requestAfterTurn('fresh', String(i.summary || '')); return { ok: true, say: 'A fresh conversation starts after this reply.' }; },
+    },
+    // How loud Cru is: changed at once, no yes needed (the owner's choice, 9 Nov).
+    {
+      name: 'set_volume',
+      description: 'Change how loud you speak, 10 to 100 (%), on every screen. No confirmation needed: do it when the owner asks ("louder", "quieter", "volume 50") or when you judge it right (say, he says it is late or he is in a meeting). Louder/quieter is about 20 up or down from the current volume (get_settings shows it).',
+      input_schema: obj({ volume: { type: 'integer', minimum: 10, maximum: 100, description: 'The new volume, 10 to 100' } }, ['volume']),
+      safe: true,
+      run: (i) => {
+        const r = deps.voiceSettings.updateSettings({ volume: Number(i.volume) });
+        if (r.ok) deps.onSettingsChanged?.();
+        return r.ok ? { ok: true, volume: Math.round(Number(i.volume)) } : r;
+      },
+    },
     // ─── "Hey Crundi" in the background (Phase 6, D4–D7, D32) ───
     {
       name: 'set_background_listening',
@@ -400,12 +433,18 @@ export function makeActionTools(deps, ctx) {
         return { ok: true, phoneAction: { type: 'background-listening', minutes: m }, say: m ? `The phone will listen for "Hey Cru" for ${m} minutes.` : 'The phone will stop listening.' };
       },
     },
+    // Cru's own tickers and triggers (voice/wakeups.js): read-only wake-ups,
+    // switched on and off by Cru itself without a yes (safe).
+    ...(deps.wakeupDefs || []),
   ];
 
   const byName = new Map(defs.map(d => [d.name, d]));
 
   async function gated(def, input) {
     if (def.read) return def.run(input);
+    // Another voice (or too short to tell) while "Only act on my voice" is on: questions only.
+    if (ctx.unrecognised?.()) return { done: false, unrecognised: true, say: UNRECOGNISED };
+    if (def.safe) { if (def.check) def.check(input); return def.run(input); }
     if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask the owner to unlock it for this; nothing was changed.' };
     if (def.check) def.check(input);
     const q = def.confirm ? def.confirm(input) : null;
@@ -425,6 +464,7 @@ export function makeActionTools(deps, ctx) {
     input_schema: obj({ id: str('The id the action gave') }, ['id']),
     run: async ({ id }) => {
       if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask the owner to unlock it; nothing was changed.' };
+      if (ctx.unrecognised?.()) return { done: false, unrecognised: true, say: UNRECOGNISED };
       const t = ctx.pending.take(id);
       if (t.error) return { done: false, error: t.error };
       const def = byName.get(t.action.tool);

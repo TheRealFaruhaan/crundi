@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as voiceSettings from './settings.js';
-import { SYSTEM_PROMPT, PERSONA_FILE, splitReply, contextLine, runVoiceTool } from './agent.js';
+import { SYSTEM_PROMPT, PERSONA_FILE, splitReply, contextLine, runVoiceTool, reportPrompt } from './agent.js';
 
 /** A turn that takes longer than this is abandoned (the process is restarted). */
 const TURN_MS = 180 * 1000;
@@ -74,7 +74,7 @@ const MEMORY_DEF = {
  */
 export function createCliVoiceAgent({
   tools, workdir, stateDir, apiUrl, claudeBin,
-  settings = voiceSettings, beforeTurn = () => {}, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '',
+  settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '',
   spawn = nodeSpawn,
 } = {}) {
   const byName = new Map(tools.map(t => [t.name, t]));
@@ -237,7 +237,7 @@ export function createCliVoiceAgent({
     });
   }
 
-  async function turn(text, { where = '', locked = false, now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, now = new Date(), report = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     if (busy) return { ok: false, error: 'Still answering the last request' };
@@ -252,13 +252,13 @@ export function createCliVoiceAgent({
     for (let i = 0; i < 50 && draining; i++) await new Promise(ok => setTimeout(ok, 100));
     if (draining) { draining = false; clearTimeout(drainTimer); stop(); }
     try {
-      if (!report) beforeTurn({ locked });
+      if (!report) beforeTurn({ locked, unrecognised, voice }); else beforeReport();
       const first = !state.sessionId;
       const lead = first ? `${personaNote()}${state.summary ? `[What we have been doing, summarised. Earlier detail is in memory_search.]\n${state.summary}\n` : ''}` : '';
       settings.countTurn(now);
       let r;
       const note = cancelledNote; cancelledNote = '';
-      try { r = await ask(model, `${lead}${note}${contextLine({ now, where, locked })}\n${said}`); }
+      try { r = await ask(model, `${lead}${note}${contextLine({ now, where, locked, unrecognised })}\n${said}`); }
       catch (e) { return { ok: false, error: String(e.message || e) }; }
       const tools = r.tools;
       if (r.cancelled) return { ok: false, cancelled: true, acted: turnSignals.acted, tools };
@@ -298,10 +298,10 @@ export function createCliVoiceAgent({
     return { ok: true, cancelled: true, acted };
   }
 
-  async function report(note, { now = new Date() } = {}) {
+  async function report(note, { now = new Date(), wake = false } = {}) {
     for (let i = 0; i < 60 && busy; i++) await new Promise(ok => setTimeout(ok, 500));
     if (busy) return { ok: false, error: 'busy' };
-    return turn(`[Report for the owner, not said by them] ${String(note).trim()}\nTell the owner now, unprompted, in a sentence or two; detail after ---. Don't ask a question unless something needs their decision.`, { where: 'a report', now, report: true });
+    return turn(reportPrompt(note, { wake }), { where: wake ? 'a wake-up' : 'a report', now, report: true });
   }
 
   /**
@@ -343,6 +343,15 @@ export function createCliVoiceAgent({
     },
     compact,
     reset() { stop(); state = { sessionId: '', turns: 0, summary: '' }; saveState(); },
+    /** A fresh conversation that starts from [summary] alone (Cru's start_fresh). */
+    fresh(summary, now = new Date()) {
+      const s = String(summary || '').trim();
+      stop();
+      state = { sessionId: '', turns: 0, summary: s };
+      saveState();
+      if (s) { try { onCompacted(s, now.getTime()); } catch { /* best effort */ } }
+      return { ok: true };
+    },
     stop,
     get lastActivity() { return lastActivity; },
     get token() { return token; },

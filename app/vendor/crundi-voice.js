@@ -249,13 +249,21 @@
 
   var CSS = '' +
     '.cv-ov{position:fixed;inset:0;z-index:9000;background:' + C.bg + ';display:flex;flex-direction:column;align-items:center;font-family:system-ui,-apple-system,sans-serif;color:' + C.text + '}' +
-    '.cv-top{width:100%;max-width:820px;display:flex;align-items:center;gap:8px;padding:16px 20px 0;color:' + C.text2 + ';font-size:12px;box-sizing:border-box}' +
-    '.cv-wm{font-family:ui-monospace,monospace;font-weight:700;letter-spacing:.06em;font-size:13px}' +
+    '.cv-top{width:100%;max-width:820px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:16px 20px 0;color:' + C.text2 + ';font-size:12px;box-sizing:border-box}' +
+    '.cv-wm{display:flex;align-items:center}.cv-wm .cru-ic .cru-b1,.cv-wm .cru-ic .cru-b2{transform-box:fill-box;transform-origin:50% 50%}.cv-wm .cru-ic.cru-live .cru-b1{animation:cru-p .9s ease-in-out infinite}.cv-wm .cru-ic.cru-live .cru-b2{animation:cru-p .9s ease-in-out .15s infinite}@keyframes cru-p{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.45)}}' +
     '.cv-pill{margin-left:auto;display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:14px;font-size:12px;font-weight:500;color:#d6d6f0;transition:background .4s,border-color .4s}' +
     '.cv-pill i{width:7px;height:7px;border-radius:50%;animation:cvp 1s ease-in-out infinite alternate}@keyframes cvp{from{opacity:.35}to{opacity:1}}' +
+    '.cv-admin{margin-left:8px;padding:2px 8px;border-radius:999px;font:700 10px/16px ui-monospace,monospace;letter-spacing:.08em;color:#fecaca;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.55)}' +
+    '.cv-chat{width:100%;max-width:680px;flex:1;overflow-y:auto;padding:10px 14px;box-sizing:border-box;display:flex;flex-direction:column}.cv-msgs{display:flex;flex-direction:column;gap:8px;margin-top:auto}' +
+    '.cv-m{max-width:82%;padding:8px 12px;border-radius:16px;font-size:14px;line-height:20px;white-space:pre-wrap;word-wrap:break-word}.cv-m.me{align-self:flex-end;background:#2b2b55;border-bottom-right-radius:5px}.cv-m.cru{align-self:flex-start;background:' + C.card + ';border:1px solid ' + C.border + ';border-bottom-left-radius:5px}.cv-m.live{opacity:.6;font-style:italic}' +
+    '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
+    '.cv-more{align-self:center;font-size:12px;color:' + C.text2 + ';cursor:pointer;padding:4px 10px;margin-bottom:6px;border-radius:12px;background:#1a1a28}' +
+    '.cv-x.on{background:' + C.accent + ';color:#fff}' +
+    '.cv-bot .cv-kbb{margin-left:0;flex:none}.cv-ov.kb .cv-mic,.cv-ov.kb .cv-ptt{display:none!important}' +
+    '.cv-ov.chat .cv-field,.cv-ov.chat .cv-words{display:none}.cv-ov.chat .cv-chat{display:flex}.cv-ov.chat .cv-mic{width:64px;height:64px}.cv-ov.chat .cv-mic canvas{left:-104px;top:-44px}' +
     '.cv-x{margin-left:10px;width:34px;height:34px;border-radius:50%;border:0;background:#1a1a28;color:' + C.text2 + ';cursor:pointer;font-size:0;display:flex;align-items:center;justify-content:center}' +
     '.cv-field{position:relative;width:100%;max-width:820px;flex:1.5;min-height:300px}.cv-field canvas{position:absolute;inset:0;width:100%;height:100%}' +
-    '.cv-leg{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 14px;font:11px ui-monospace,monospace;padding:4px 16px}.cv-leg span:before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:currentColor}' +
+    '.cv-leg{order:9;flex:1 1 100%;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;font:10.5px ui-monospace,monospace;padding:2px 2px 0;line-height:15px}.cv-leg span{white-space:nowrap}.cv-leg span:before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:currentColor}' +
     '.cv-words{width:100%;max-width:680px;flex:1;overflow:auto;text-align:center;padding:10px 24px;box-sizing:border-box}' +
     '.cv-heard{color:' + C.text2 + ';font-size:16px;line-height:23px;min-height:23px;display:flex;align-items:center;justify-content:center;gap:6px}' +
     '.cv-cx{flex:none;width:26px;height:26px;border-radius:50%;border:0;background:#1a1a28;color:' + C.text2 + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-cx:hover{color:' + C.text + ';background:#24243a}.cv-cx[hidden]{display:none}' +
@@ -291,14 +299,17 @@
     if (!document.getElementById('cv-css')) { var st = el('style'); st.id = 'cv-css'; st.textContent = CSS; document.head.appendChild(st); }
     var ov = el('div', 'cv-ov');
     ov.innerHTML =
-      '<div class="cv-top"><span class="cv-wm">CRU</span><span>' + (opts.host ? '· ' + esc(opts.host) : '') + '</span>' +
+      '<div class="cv-top"><span class="cv-wm" aria-label="Cru">' + cruIcon(22) + '</span><div class="cv-leg"></div>' +
       '<div class="cv-pill"><i></i><span class="cv-st">Waking</span></div>' +
+      '<span class="cv-admin" hidden title="Admin mode is on: Cru can run any command. Turn it off in Settings, or say: admin mode off">ADMIN</span>' +
+      '<button class="cv-x cv-cmp" title="Compact the conversation (Cru keeps a summary and its notebook)" aria-label="Compact the conversation"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg></button>' +
+      '<button class="cv-x cv-chatb" title="Chat view: the whole conversation as messages" aria-label="Chat view"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg></button>' +
       '<button class="cv-x" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
-      '<div class="cv-field"><canvas></canvas></div><div class="cv-leg"></div>' +
+      '<div class="cv-field"><canvas></canvas></div><div class="cv-chat" hidden><div class="cv-more" hidden>Earlier messages</div><div class="cv-msgs"></div></div>' +
       '<div class="cv-words"><div class="cv-heard"><span class="cv-ht"></span><button class="cv-cx" hidden title="Cancel what I said" aria-label="Cancel what I said"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden>Say yes or no</div><div class="cv-note" hidden></div></div>' +
       '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div>' +
-      '<div class="cv-bot"><input class="cv-type" placeholder="Or type to Cru…" aria-label="Type to Cru">' +
-      '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4"/></svg></div></div>';
+      '<div class="cv-bot"><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><input class="cv-type" placeholder="Or type to Cru…" aria-label="Type to Cru">' +
+      '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas></div></div>';
     document.body.appendChild(ov);
     var q = function (s) { return ov.querySelector(s); };
     // Under the button that opened it (a wide screen).
@@ -326,7 +337,24 @@
     ov.addEventListener('mouseenter', function () { if (S) clearTimeout(S.leaveTimer); });
     ov.addEventListener('mouseleave', function () { if (S) maybeLeave(); });
     ov.addEventListener('pointerdown', function () { if (S && S.how === 'hover') S.how = 'click'; });
-    q('.cv-x').onclick = close;
+    q('.cv-x:not(.cv-cmp):not(.cv-chatb)').onclick = close;
+    q('.cv-chatb').onclick = function (e) { e.stopPropagation(); chatView(!(S && S.chat)); };
+    // The owner scrolling Cru's words himself: they stop following the speech until the next reply.
+    ['wheel', 'touchstart', 'mousedown'].forEach(function (ev) { q('.cv-words').addEventListener(ev, function () { if (S) S.ownScroll = true; }, { passive: true }); });
+    q('.cv-kbb').onclick = function (e) { e.stopPropagation(); keyboard(!(S && S.kb), true); };
+    q('.cv-more').onclick = function (e) { e.stopPropagation(); loadChat(true); };
+    // The view the owner chose last time, on this device.
+    if (chatPref()) setTimeout(function () { if (S) chatView(true); }, 0);
+    q('.cv-cmp').onclick = function (e) {
+      e.stopPropagation();
+      if (!S) return;
+      S.notice = 'Compacting the conversation…'; render();
+      post('/api/voice/compact').then(function (r) {
+        if (!S) return;
+        S.notice = r && r.ok ? 'Compacted: Cru carries on from a summary, its notebook kept.' : ((r && (r.error || r.skipped)) ? 'Not compacted: ' + (r.error || r.skipped) : 'Not compacted');
+        render();
+      }, function () { if (S) { S.notice = 'Not compacted'; render(); } });
+    };
     q('.cv-cx').onclick = function (e) { e.stopPropagation(); cancelWords(); };
     q('.cv-mic').onclick = tapMic;
     // Keys go to the voice screen first while it is open (window, capture):
@@ -340,7 +368,7 @@
       if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); return; }
       var inp = S.ov.querySelector('.cv-type');
       if (e.target === inp) {
-        e.stopPropagation();
+        e.stopPropagation(); S.quietSince = Date.now();
         if (e.key === 'Enter' && inp.value.trim()) { e.preventDefault(); var t = inp.value.trim(); inp.value = ''; utter(t, true); }
       } else if (S.ov.contains(e.target) || e.target === document.body) e.stopPropagation();
     };
@@ -396,6 +424,7 @@
     try { if (s.ws) { s.ws.send(JSON.stringify({ type: 'stop' })); s.ws.close(); } } catch (e) { /* gone */ }
     try { if (s.proc) s.proc.disconnect(); if (s.stream) s.stream.getTracks().forEach(function (t) { t.stop(); }); if (s.ctx) s.ctx.close(); } catch (e) { /* gone */ }
     s.ov.remove();
+    liveMark();
   }
 
   // ─── the server ───
@@ -410,7 +439,9 @@
     var items = [];
     if (u.week != null) items.push([C.hover, 'wk ' + Math.round(u.week * 100) + '%']);
     if (u.five != null) items.push([C.sky, '5h ' + Math.round(u.five * 100) + '%']);
-    if (sp) { items.push([C.ask, 'Claude $' + (sp.claudeUsd || 0).toFixed(2) + ' / $' + S.settings.monthlyLimitUsd]); items.push([C.green, 'Deepgram $' + (sp.deepgramUsd || 0).toFixed(2) + ' / $' + (S.settings.deepgramLimitUsd || 200)]); }
+    // The Claude API's spend means nothing while Cru answers through Claude Code.
+    if (sp && (S.settings.brain || 'api') === 'api') items.push([C.ask, 'Claude $' + (sp.claudeUsd || 0).toFixed(2) + ' / $' + S.settings.monthlyLimitUsd]);
+    if (sp) { items.push([C.green, 'Deepgram $' + (sp.deepgramUsd || 0).toFixed(2) + ' / $' + (S.settings.deepgramLimitUsd || 200)]); }
     leg.innerHTML = items.map(function (i) { return '<span style="color:' + i[0] + '">' + esc(i[1]) + '</span>'; }).join('');
   }
 
@@ -419,10 +450,11 @@
     api('/api/voice/settings').then(function (s) {
       if (!S) return;
       if (!s || s.ok === false) { block(s && s.error ? s.error : 'The voice assistant is not available on this server.'); return; }
-      S.settings = s; refreshData();
+      S.settings = s; applyVolume(); refreshData();
       // The Claude Code brain needs no key: it runs on the subscription.
       if (!s.anthropicKeySet && s.brain !== 'claude-code') { block('There is no Claude API key on the server yet. Add one in Settings, Voice assistant.'); return; }
-      openMic();
+      // Keyboard mode when voice can't work here, or when the owner chose it last time on this device.
+      if (!voiceUsable(s) || kbPref()) keyboard(true, false); else openMic();
     }).catch(function (e) { block(e.message || 'Could not reach the server'); });
   }
 
@@ -473,12 +505,57 @@
       S.ws = ws;
       ws.onmessage = function (m) { var e; try { e = JSON.parse(m.data); } catch (x) { return; } heard(e); };
       ws.onclose = function () { if (S && S.ws === ws && S.phase !== 'ended') { S.notice = 'Live listening stopped. Type instead, or close and open again.'; render(); } };
-    }).catch(function () { block('The microphone is not allowed. Allow it for this site, or type instead.'); S && (S.phase = 'listen'); render(); });
+    }).catch(function () { if (!S) return; keyboard(true, false); S.notice = 'The microphone is not allowed here, so it is keyboard mode. Allow the microphone for this site to talk.'; render(); });
+  }
+
+  // ─── Keyboard mode: Cru without the microphone (and without Deepgram) ───
+  var KB_KEY = 'crundi_cru_keyboard';
+  function kbPref() { try { return localStorage.getItem(KB_KEY) === '1'; } catch (e) { return false; } }
+  function voiceUsable(s) { return !!(s && s.deepgramKeySet && !s.deepgramLimitReached); }
+  function keyboard(on, chosen) {
+    if (!S) return;
+    if (!on && !voiceUsable(S.settings)) { S.notice = S.settings && S.settings.deepgramLimitReached ? 'Voice is off: this month\'s Deepgram limit is reached.' : 'Voice needs a Deepgram key: add one in Settings, Voice assistant.'; render(); return; }
+    if (chosen) { try { localStorage.setItem(KB_KEY, on ? '1' : '0'); } catch (e) { /* private mode */ } }
+    S.kb = !!on;
+    S.ov.classList.toggle('kb', S.kb);
+    var b = S.ov.querySelector('.cv-kbb'); if (b) { b.classList.toggle('on', S.kb); b.title = S.kb ? 'Back to voice' : 'Keyboard mode: type to Cru, no microphone'; }
+    var input = S.ov.querySelector('.cv-type'); if (input) input.placeholder = S.kb ? 'Type to Cru…' : 'Or type to Cru…';
+    if (S.kb) {
+      stopMic();
+      // Cru still talks back: the speakers need their own audio context.
+      if (!S.ctx) { try { S.ctx = new (window.AudioContext || window.webkitAudioContext)(); outNode(); loadCues(); } catch (e) { /* silent then */ } }
+      reportSocket();
+      S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
+      if (input) setTimeout(function () { try { input.focus(); } catch (e) { /* gone */ } }, 0);
+    } else {
+      closeSocket();
+      S.phase = 'start';
+      openMic();
+    }
+    render();
+  }
+  /** Stop listening: the microphone, its processing and the stream to the server. */
+  function stopMic() {
+    closeSocket();
+    try { if (S.proc) { S.proc.onaudioprocess = null; S.proc.disconnect(); } if (S.src) S.src.disconnect(); } catch (e) { /* gone */ }
+    try { if (S.stream) S.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* gone */ }
+    S.proc = null; S.src = null; S.stream = null; S.live = false; S.streaming = false; S.held = false; S.mic = 0;
+  }
+  function closeSocket() {
+    var ws = S.ws; S.ws = null;
+    try { if (ws) { ws.send(JSON.stringify({ type: 'stop' })); ws.close(); } } catch (e) { /* gone */ }
+  }
+  /** Keyboard mode's line to the server: Cru's reports and settings changes, no audio. */
+  function reportSocket() {
+    var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    var ws = new WebSocket(proto + '://' + location.host + '/api/voice/listen?keyboard=1&token=' + encodeURIComponent(S.opts.token ? S.opts.token() : ''));
+    S.ws = ws;
+    ws.onmessage = function (m) { var e; try { e = JSON.parse(m.data); } catch (x) { return; } if (e.type === 'ready') return; heard(e); };
   }
 
   function heard(e) {
     if (!S) return;
-    if (e.type === 'ready') { S.live = !!e.echoFilter; if (S.phase === 'start') { S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
+    if (e.type === 'ready') { S.live = !!e.echoFilter; if (S.phase === 'start') { tone('listen'); S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
     else if (e.type === 'report') tell(e.speak || '', e.show || '');
     // The server dropped what he said ("scratch that"): clear it, or cancel the turn it started.
     else if (e.type === 'discard') takeBack(true);
@@ -491,6 +568,8 @@
     }
     else if (e.type === 'utterance') { if (S.phase === 'listen') S.pttSent = true; utter(e.text, false); }
     else if (e.type === 'error') { S.notice = e.error; }
+    // A setting changed on the server (Cru's volume, say): picked up at once.
+    else if (e.type === 'settings') { api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { S.settings = s; applyVolume(); render(); } }); return; }
     render();
   }
 
@@ -509,14 +588,61 @@
     if (S.phase === 'ended' && !typed) return;
     // "Hey Cru" while already awake: here at once, without asking Claude.
     if (isCalling(t)) { var h = hereLine(); S.asked = t; S.heard = ''; S.reply = h; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); speak(h); render(); return; }
-    ask(t);
+    ask(t, false, typed);
   }
 
   /** News, unasked (a watched chat finished or waits on the owner): said now if Cru is just listening, else once it is free. */
+  // ─── Chat view: the conversation as message bubbles, remembered on this device ───
+  var CHAT_KEY = 'crundi_cru_chat_view';
+  function chatPref() { try { return localStorage.getItem(CHAT_KEY) === '1'; } catch (e) { return false; } }
+  function chatView(on) {
+    if (!S) return;
+    S.chat = !!on;
+    try { localStorage.setItem(CHAT_KEY, on ? '1' : '0'); } catch (e) { /* private mode */ }
+    S.ov.classList.toggle('chat', S.chat);
+    var b = S.ov.querySelector('.cv-chatb'); if (b) { b.classList.toggle('on', S.chat); b.title = S.chat ? 'Back to the voice view' : 'Chat view: the whole conversation as messages'; }
+    if (S.chat && !S.msgs) loadChat(false); else renderChat(true);
+  }
+  function loadChat(older) {
+    if (!S) return;
+    var s = S, before = older && s.msgs && s.msgs.length ? s.msgs[0].at : 0;
+    api('/api/voice/history?limit=40' + (before ? '&before=' + before : '')).then(function (r) {
+      if (S !== s || !r || r.ok === false) return;
+      var got = r.turns || [];
+      s.msgs = older ? got.concat(s.msgs || []) : got.concat((s.msgs || []).filter(function (m) { return m.live; }));
+      s.moreChat = !!r.more;
+      renderChat(!older);
+    });
+  }
+  /** A finished exchange (or Cru speaking up) joins the chat view as it happens. */
+  function chatAdd(said, speak, show) {
+    if (!S || (!said && !speak && !show)) return;
+    if (!S.msgs) S.msgs = [];
+    S.msgs.push({ at: Date.now(), said: said || '', speak: speak || '', show: show || '', live: true });
+    if (S.chat) renderChat(true);
+  }
+  function renderChat(toEnd) {
+    if (!S || !S.chat) return;
+    var box = S.ov.querySelector('.cv-chat'), list = S.ov.querySelector('.cv-msgs');
+    var when = function (at) { var d = new Date(at); return d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
+    var h = '';
+    (S.msgs || []).forEach(function (m) {
+      if (m.said) h += '<div class="cv-m me">' + esc(m.said) + '<time>' + esc(when(m.at)) + '</time></div>';
+      if (m.speak || m.show) h += '<div class="cv-m cru">' + esc(m.speak || '') + (m.show ? '<span class="d">' + esc(m.show) + '</span>' : '') + (m.said ? '' : '<time>' + esc(when(m.at)) + '</time>') + '</div>';
+    });
+    // What is being heard right now, not yet sent.
+    if (S.heard && (S.phase === 'listen' || S.phase === 'think') && S.heard !== S.lastChatAsked) h += '<div class="cv-m me live">' + esc(S.heard) + '</div>';
+    var nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    list.innerHTML = h || '<div style="text-align:center;color:' + C.muted + ';font-size:13px">No messages yet.</div>';
+    S.ov.querySelector('.cv-more').hidden = !S.moreChat;
+    if (toEnd || nearEnd) box.scrollTop = box.scrollHeight;
+  }
+
   function tell(say, show) {
     if (!S) return;
     if (S.phase !== 'listen' || S.pending || S.heard) { S.reports.push({ speak: say, show: show }); return; }
     S.reply = say; S.detail = show; S.heard = ''; S.notice = ''; S.question = ''; S.quietSince = Date.now();
+    chatAdd('', say, show);
     if (say) speak(say);
     render();
   }
@@ -532,13 +658,20 @@
     return w.length > 0 && w.length <= 2 && w.every(function (x) { return /^(cru|crew|kru|krew|crue|crews)$/.test(x); });
   }
 
-  /** [keep]: the last answer stays on screen (it was cut short by what the owner said meanwhile). */
-  function ask(t, keep) {
+  /**
+   * [keep]: the last answer stays on screen (it was cut short by what the owner said meanwhile).
+   * [typed]: typed here, not spoken: the server's voice check does not apply (capability 'voice-speaker').
+   */
+  function ask(t, keep, typed) {
     S.phase = 'think'; S.asked = t; S.heard = t; if (!keep) { S.reply = ''; S.detail = ''; } S.question = ''; S.notice = ''; S.quietSince = Date.now();
     var turn = ++S.turn;
-    playCue();
+    // A soft "sent", then, while Cru thinks, a calm pulse every few seconds (no spoken "let me check").
+    tone('sent');
+    clearTimeout(S.thinkTimer);
+    var s0 = S, pulse = function () { if (S !== s0 || S.phase !== 'think' || S.turn !== turn) return; tone('think'); S.thinkTimer = setTimeout(pulse, 4000); };
+    S.thinkTimer = setTimeout(pulse, 1400);
     render();
-    post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false }).then(function (r) {
+    post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false, typed: !!typed }).then(function (r) {
       if (!S) return;
       // Cancelled: never said or shown as an error, just what it had already done.
       if (r && r.cancelled) { if (S.phase === 'listen' && !S.heard) { S.notice = cancelledNotice(r.acted); render(); } return; }
@@ -550,8 +683,13 @@
       // The owner is done: close once the goodbye has been said.
       S.closing = !!(ok && r.close);
       if (ok && r.phoneActions && r.phoneActions.length) S.notice = 'Background listening is for the phone: turn it on from the Crundi app.';
+      // Another voice ("Only act on my voice"): answered, but nothing was changed.
+      if (ok && r.speaker && r.speaker.unrecognised) S.notice = 'Cru could not recognise who was speaking, so nothing was changed.';
+      // Cru may have just turned itself up or down: the reply says so in the new volume.
+      if (ok && typeof r.volume === 'number' && S.settings) { S.settings.volume = r.volume; applyVolume(); }
       var say = ok ? S.reply : S.notice;
-      api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
+      if (ok) { S.lastChatAsked = S.asked; chatAdd(S.asked, S.reply, S.detail); }
+      api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; applyVolume(); refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
       // The owner spoke again while Crundi thought: that goes now, the answer stays on screen unsaid.
       if (S.pending) { var p = S.pending; S.pending = ''; S.closing = false; stopCue(); ask(p, true); render(); return; }
       if (say) speak(say); else { stopCue(); afterSpeech(); }
@@ -649,10 +787,22 @@
   }
 
   /** Where Crundi's voice is played into: an analyser (its level), then the loopback or the speakers. */
+  /** How loud Cru is (Settings, or Cru's own set_volume), 0.1 to 1. */
+  function volume() {
+    var v = S && S.settings && Number(S.settings.volume);
+    return v >= 10 && v <= 100 ? v / 100 : 1;
+  }
+  function applyVolume() {
+    if (S && S.outGain) { try { S.outGain.gain.value = volume(); } catch (e) { /* closing */ } }
+  }
+
   function outNode() {
-    if (S.out || !S.ctx) return S.out;
+    if (S.out || !S.ctx) return S.outGain || S.out;
+    // Cru's voice and cues -> its volume -> the level meter (the echo gate
+    // measures what really plays) -> the speakers or the loopback.
     var ctx = S.ctx, an = ctx.createAnalyser(); an.fftSize = 512; an.connect(ctx.destination);
-    S.out = an; S.outBuf = new Float32Array(an.fftSize);
+    var g = ctx.createGain(); g.gain.value = volume(); g.connect(an);
+    S.out = an; S.outGain = g; S.outBuf = new Float32Array(an.fftSize);
     var s = S;
     makeLoopback(ctx, window, 3000).then(function (lb) {
       if (S !== s) { lb.close(); return; }
@@ -660,7 +810,7 @@
       // Lost later: straight to the speakers again.
       lb.onlost = function () { if (S !== s || s.route !== 'loopback') return; try { an.disconnect(); } catch (e) { /* none */ } an.connect(ctx.destination); s.route = 'direct'; };
     }).catch(function () { /* played directly: the gate does the work */ });
-    return an;
+    return g;
   }
 
   /** Crundi's level now, as the microphone's scale. */
@@ -679,6 +829,8 @@
 
   function speak(text) {
     S.phase = 'speak'; S.speaking = true; S.lastSaid = text; S.loudFor = 0; S.spokeFor = 0; S.hintAt = 0; S.unknownVoice = false;
+    // The reply scrolls along as it is said (about 14 characters a second at normal speed).
+    S.sayFrom = Date.now(); S.sayFor = Math.max(1500, String(text || '').length / (14 * ((S.settings && S.settings.speechRate) || 1)) * 1000); S.ownScroll = false;
     // Nothing goes to the server while Crundi talks: the gate here listens for the owner.
     // The server is still told what it says (its transcript filter is the second net).
     // An older server is paused, as before.
@@ -728,6 +880,7 @@
     u.voice = vs.find(function (v) { return /en-GB/i.test(v.lang) && /male|daniel|george|arthur|ryan/i.test(v.name); }) || vs.find(function (v) { return /en-GB/i.test(v.lang); }) || null;
     u.lang = 'en-GB';
     u.rate = (S && S.settings && S.settings.speechRate) || 1;   // the talking speed, as Deepgram's
+    u.volume = volume();
     u.onboundary = function () { if (S) S.voiceBump = 0.6 + Math.random() * 0.35; };
     u.onend = function () { if (S && S.speaking) afterSpeech(); };
     stopCue();
@@ -743,6 +896,7 @@
     u.voice = vs.find(function (v) { return /en-GB/i.test(v.lang) && /male|daniel|george|arthur|ryan/i.test(v.name); }) || vs.find(function (v) { return /en-GB/i.test(v.lang); }) || null;
     u.lang = 'en-GB';
     u.rate = (S && S.settings && S.settings.speechRate) || 1;
+    u.volume = volume();
     return u;
   }
 
@@ -753,7 +907,37 @@
    * to say. An older server has no list: the browser's voice says ours, a
    * Deepgram voice plays none (it would not match).
    */
-  function loadCues() {
+  /**
+   * Cru's tones (9 Nov, replacing the spoken "one moment" cues): soft sine
+   * notes through Cru's own volume. 'listen': two notes up (awake and
+   * listening); 'sent': two notes down (what you said has gone); 'think': a
+   * slow, quiet bloom while Cru works. The app plays the same (Tones.kt).
+   */
+  var TONES = {
+    listen: [[659.25, 0, 0.11, 0.16], [880, 0.09, 0.16, 0.16]],
+    sent: [[880, 0, 0.08, 0.13], [659.25, 0.07, 0.14, 0.13]],
+    think: [[523.25, 0, 0.9, 0.07, 0.18], [783.99, 0, 0.9, 0.05, 0.18]],
+  };
+  function tone(kind) {
+    if (!S) return;
+    var notes = TONES[kind]; if (!notes) return;
+    try {
+      var ctx = S.ctx || (S.ctx = new (window.AudioContext || window.webkitAudioContext)());
+      var out = outNode() || ctx.destination, t0 = ctx.currentTime + 0.02;
+      notes.forEach(function (n) {
+        var o = ctx.createOscillator(), g = ctx.createGain(), at = t0 + n[1], dur = n[2], peak = n[3], rise = n[4] || 0.012;
+        o.type = 'sine'; o.frequency.value = n[0];
+        g.gain.setValueAtTime(0.0001, at);
+        g.gain.exponentialRampToValueAtTime(peak, at + rise);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+        o.connect(g); g.connect(out); o.start(at); o.stop(at + dur + 0.05);
+      });
+    } catch (e) { /* no audio here */ }
+  }
+
+  // The spoken cues are retired: tones say the same without words.
+  function loadCues() { if (S) S.cues = []; }
+  function loadCuesSpoken() {
     if (!S) return;
     var s = S, gen = s.cueGen = (s.cueGen || 0) + 1;
     var deviceVoice = !(s.settings && s.settings.ttsVoice) || (s.settings && s.settings.deepgramLimitReached);
@@ -897,9 +1081,13 @@
 
   // ─── the screen ───
   function render() {
+    liveMark();
     if (!S) return;
+    if (S.chat) renderChat(false);
     var q = function (s) { return S.ov.querySelector(s); };
     var ph = S.phase, pal = PALETTE[ph] || PALETTE.listen;
+    // Admin mode on: always in view while it is.
+    var adm = q('.cv-admin'); if (adm) adm.hidden = !(S.settings && S.settings.adminMode === true);
     q('.cv-st').textContent = ph === 'listen' ? 'Listening' : ph === 'think' ? 'Thinking' : ph === 'speak' ? 'Speaking' : ph === 'start' ? 'Waking' : 'Asleep';
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
     var h = (ph === 'listen' || ph === 'think') ? S.heard : S.asked;
@@ -912,9 +1100,21 @@
     q('.cv-mic').setAttribute('aria-label', ph === 'speak' ? 'Stop talking' : 'Talk');
   }
 
+  /** While Cru talks, keep the part being said in view (unless the owner scrolled himself). */
+  function followSpeech() {
+    if (!S || S.phase !== 'speak' || S.ownScroll || S.chat) return;
+    var w = S.ov.querySelector('.cv-words'), r = S.ov.querySelector('.cv-reply');
+    if (!w || !r || w.scrollHeight - w.clientHeight < 4) return;
+    var frac = Math.min(1, (Date.now() - (S.sayFrom || 0)) / (S.sayFor || 1));
+    var top = r.offsetTop - w.offsetTop, target = top + frac * r.offsetHeight - w.clientHeight / 3;
+    target = Math.max(0, Math.min(w.scrollHeight - w.clientHeight, target));
+    if (Math.abs(target - w.scrollTop) > 1) w.scrollTop += (target - w.scrollTop) * 0.12;
+  }
+
   function frame(ms) {
     if (!S) return;
     S.raf = requestAnimationFrame(frame);
+    followSpeech();
     var t = ms / 1000, ph = S.phase;
     // Crundi's level: the output analyser (streamed voice), or a bump on each word (browser voice).
     if (S.outAnalyser) { var b = new Uint8Array(S.outAnalyser.fftSize); S.outAnalyser.getByteTimeDomainData(b); var sum = 0; for (var i = 0; i < b.length; i++) { var x = (b[i] - 128) / 128; sum += x * x; } S.voice = Math.min(1, Math.sqrt(Math.sqrt(sum / b.length)) * 1.4); }
@@ -1069,22 +1269,30 @@
    * sky to violet to pink. An SVG string; [px] sets its size.
    */
   var iconSeq = 0;
+  /**
+   * Cru's mark (the owner's sketch, 9 Nov): three bars centred like a sound
+   * wave, the tall one running into a joined "Cru", all one stroke with a
+   * dark layer behind and a light edge on top. [px] is its height. While Cru
+   * listens or talks the two short bars move (.cru-live, see liveMark).
+   * The app draws the same (CruIcon.kt).
+   */
+  var CRU_WORD = 'M76.6 24C70.2 12 54.2 14 51 38C48.6 60 57.4 74 68.6 72C76.6 71 81.4 64 84.6 58C87.8 51 90.2 46 92.6 42L92.6 72L92.6 58C95.8 48 100.6 42 107 42C105.4 56 105.4 71 114.2 72C123 73 127.8 60 129.4 42C127.8 58 127.8 72 135.8 72C140.6 72 143.8 67 146.2 62';
   function cruIcon(px) {
-    var id = 'cru-g' + (++iconSeq), P = 96, lines = 14, disc = 2.6, gap = 0.5, swell = 2.4, seed = 1.9, out = '';
-    for (var i = 0; i < lines; i++) {
-      var f = (i + 1) / lines, base = disc + 0.5 + i * gap, amp = swell * f * f + 0.35 * f, d = '';
-      for (var k = 0; k <= P; k++) {
-        var an = k / P * Math.PI * 2, frac = Math.abs(k / P * 2 - 1);
-        var v = 0.5 + 0.5 * Math.sin((1 - frac) * 7 + seed) * Math.cos((1 - frac) * 3.1);
-        var sh = 0.55 * Math.sin(an * 3 + seed + f * 1.2) + 0.30 * Math.sin(an * 5 - seed * 0.7 + f * 2.1) + 0.15 * Math.sin(an * 2 + seed * 1.3);
-        var rr = base + amp * (0.35 + 0.65 * v) * (0.6 + 0.4 * sh) + amp * 0.5 * sh;
-        d += (k ? 'L' : 'M') + (12 + Math.cos(an - Math.PI / 2) * rr).toFixed(2) + ' ' + (12 + Math.sin(an - Math.PI / 2) * rr).toFixed(2);
-      }
-      out += '<path d="' + d + 'Z" stroke="url(#' + id + ')" opacity="' + Math.max(0.15, 1 - f * 0.7).toFixed(2) + '"/>';
-    }
-    return '<svg class="cru-ic" viewBox="0 0 24 24" width="' + px + '" height="' + px + '" fill="none" stroke-width="0.32" stroke-linejoin="round" aria-hidden="true">' +
-      '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38bdf8"/><stop offset=".45" stop-color="#6366f1"/><stop offset=".75" stop-color="#a78bfa"/><stop offset="1" stop-color="#e879f9"/></linearGradient></defs>' +
-      out + '<circle cx="12" cy="12" r="2.6" fill="#05050a" stroke="url(#' + id + ')" stroke-width="0.58"/></svg>';
+    var n = ++iconSeq, g = 'cru-g' + n, d = 'cru-d' + n, w = Math.round(px * 150 / 90);
+    var stops = function (cs) { return cs.map(function (c) { return '<stop offset="' + c[0] + '" stop-color="' + c[1] + '"/>'; }).join(''); };
+    var lines = '<path class="cru-b1" d="M15 35V55"/><path class="cru-b2" d="M28 25V65"/><path d="M41 10V80"/><path d="' + CRU_WORD + '"/>';
+    return '<svg class="cru-ic" viewBox="6 0 150 90" width="' + w + '" height="' + px + '" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<defs><linearGradient id="' + g + '" gradientUnits="userSpaceOnUse" x1="8" y1="90" x2="155" y2="0">' + stops([[0, '#38bdf8'], [0.4, '#6366f1'], [0.72, '#a78bfa'], [1, '#e879f9']]) + '</linearGradient>' +
+      '<linearGradient id="' + d + '" gradientUnits="userSpaceOnUse" x1="8" y1="90" x2="155" y2="0">' + stops([[0, '#0c4a6e'], [0.45, '#312e81'], [1, '#701a75']]) + '</linearGradient></defs>' +
+      '<g stroke="url(#' + d + ')" stroke-width="9" transform="translate(1.6 2.4)">' + lines + '</g>' +
+      '<g stroke="url(#' + g + ')" stroke-width="9">' + lines + '</g>' +
+      '<g stroke="#fff" stroke-opacity=".28" stroke-width="2.4" transform="translate(-1.2 -1.4)">' + lines + '</g></svg>';
+  }
+  /** The marks move while a voice screen is open and Cru listens, thinks or talks. */
+  function liveMark() {
+    var on = !!(S && S.phase && S.phase !== 'ended');
+    var list = document.querySelectorAll('.cru-ic');
+    for (var i = 0; i < list.length; i++) list[i].classList.toggle('cru-live', on);
   }
 
   function attach(button, getOpts) {
@@ -1093,11 +1301,12 @@
     // The top-bar button wears Cru's mark: no outline, no background.
     if (!document.getElementById('cru-btn-css')) {
       var bs = el('style'); bs.id = 'cru-btn-css';
-      bs.textContent = '.cru-btn,.cru-btn:hover{border:none!important;background:transparent!important;padding:2px!important}.cru-btn .cru-ic{display:block;transition:transform .2s}.cru-btn:hover .cru-ic{transform:scale(1.12)}';
+      bs.textContent = '.cru-btn,.cru-btn:hover{border:none!important;background:transparent!important;padding:2px!important;width:auto!important}.cru-btn .cru-ic{display:block;transition:transform .2s}.cru-btn:hover .cru-ic{transform:scale(1.08)}' +
+        '.cru-ic .cru-b1,.cru-ic .cru-b2{transform-box:fill-box;transform-origin:50% 50%}.cru-ic.cru-live .cru-b1{animation:cru-p .9s ease-in-out infinite}.cru-ic.cru-live .cru-b2{animation:cru-p .9s ease-in-out .15s infinite}@keyframes cru-p{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.45)}}';
       document.head.appendChild(bs);
     }
     button.classList.add('cru-btn');
-    button.innerHTML = cruIcon(26);
+    button.innerHTML = cruIcon(24);
     var hoverTimer = null;
     var openWith = function (how) { var o = getOpts() || {}; o.anchor = button; o.how = how; open(o); };
     button.addEventListener('click', function (e) { e.stopPropagation(); clearTimeout(hoverTimer); if (S) { if (S.how === 'hover') S.how = 'click'; else close(); } else openWith('click'); });

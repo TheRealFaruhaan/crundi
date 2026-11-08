@@ -65,5 +65,7 @@ export function createVoiceMemory({ dataDir, index: givenIndex } = {}) {
       index.add('turn', `Owner: ${said}\nCru: ${speak}${show ? '\n' + show : ''}`, { at });
     },
     rememberSummary(text, at = Date.now()) { index.add('summary', text, { at }); },
+    /** The latest turns, newest first (the voice screen's chat view). */
+    turns: (opts) => index.turns(opts),
   };
 }
