@@ -162,6 +162,19 @@ class VoiceController(
         if (keyboard) startKeyboard(voice) else startVoice(voice)
         tick = scope.launch { while (isActive) { delay(1000); dispatch(VoiceEvent.Tick(now())) } }
         if (_ui.value.chat && !_ui.value.historyLoaded) loadHistory(false)
+        // Cru's unheard reports: seen once the chat view is up, else counted for the chat button's dot.
+        if (VoiceApi.UNREAD in caps) {
+            if (_ui.value.chat) markSeen()
+            else scope.launch { runCatching { voice.unread() }.getOrNull()?.let { CruUnread.set(it.count) } }
+        }
+    }
+
+    /** The chat view is open: Cru's unheard reports are read now. */
+    private fun markSeen() {
+        if (VoiceApi.UNREAD !in _ui.value.caps) return
+        val v = voiceApi() ?: return
+        CruUnread.set(0)
+        scope.launch { v.seen() }
     }
 
     private fun micGranted() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -240,6 +253,7 @@ class VoiceController(
         VoicePrefs.setChatView(ctx, on)
         _ui.update { it.copy(chat = on) }
         if (on && !_ui.value.historyLoaded) loadHistory(false)
+        if (on) markSeen()
     }
 
     /** "Earlier messages". */

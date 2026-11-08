@@ -41,6 +41,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -268,7 +269,12 @@ private fun TopBarRight(data: ShellData, callbacks: ShellCallbacks, compact: Boo
                 Modifier.height(32.dp).clip(Dimens.ShapeSm).clickable(onClickLabel = "Talk to Cru", onClick = open)
                     .semantics { contentDescription = "Talk to Cru" }.padding(horizontal = 2.dp),
                 contentAlignment = Alignment.Center,
-            ) { mv.obitech.crundi.voice.CruIcon(24.dp) }
+            ) {
+                mv.obitech.crundi.voice.CruIcon(24.dp)
+                // Cru said something nobody heard: a red dot until the chat view is opened.
+                val unread by mv.obitech.crundi.voice.CruUnread.count.collectAsState()
+                if (unread > 0) Box(Modifier.align(Alignment.TopEnd).size(8.dp).clip(CircleShape).background(CrundiColors.Red).semantics { contentDescription = "Cru has $unread unheard" })
+            }
         }
         if (data.panels > 0) TopBarAct("panel", "Panels", data.panels.toString(), false, callbacks.onPanels)
         if (data.approvals > 0) TopBarAct("shield-alert", "Things waiting on you", data.approvals.toString(), true, callbacks.onApprovals, Modifier.miniTarget("top", "bell"))

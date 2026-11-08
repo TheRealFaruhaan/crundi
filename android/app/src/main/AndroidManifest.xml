@@ -117,6 +117,7 @@
             android:taskAffinity="mv.obitech.crundi.voice"
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
         <!-- What the side key's double press opens. Turned off with the assistant in App settings. -->
         <activity-alias

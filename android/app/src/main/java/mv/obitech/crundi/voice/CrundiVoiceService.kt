@@ -98,6 +98,14 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
         // The screen stays on while the overlay is open: on the window itself,
         // which Android honours for an assistant's window (the view's flag alone is not enough).
         runCatching { window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+        // Keyboard mode: the screen lays itself out round the soft keyboard (safeDrawing
+        // includes it), so the window must not also be panned or resized for it.
+        runCatching {
+            window?.window?.let { w ->
+                androidx.core.view.WindowCompat.setDecorFitsSystemWindows(w, false)
+                w.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            }
+        }
         owner.resume()
         val c = controller ?: VoiceController(context, "side key", ::locked, onFinish = { hide() }).also { controller = it }
         view?.setContent {

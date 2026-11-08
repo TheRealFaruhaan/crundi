@@ -121,6 +121,19 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         return rpc.read(rpc.post("/api/voice/wakeups", mapOf("id" to id, "action" to action)), null)
     }
 
+    // ─── Cru's unread reports (capability "voice-unread") ───
+
+    /** How many of Cru's reports nobody heard. Null from an older server (404). */
+    suspend fun unread(): VoiceUnread? {
+        val r = transport.exchange(ApiRequest("GET", "/api/voice/unread"))
+        if (r.status == 404) return null
+        if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(VoiceUnread.serializer(), CrundiJson.parseToJsonElement(r.text))
+    }
+
+    /** The owner has seen them (the chat view opened). Best effort; nothing on an older server. */
+    suspend fun seen() { runCatching { transport.exchange(ApiRequest("POST", "/api/voice/seen", json = Uploads.toJson(emptyMap<String, Any?>()))) } }
+
     // ─── the owner's voice (capability "voice-speaker") ───
 
     /** Whether Cru knows the owner's voice, and the phrases to enrol with. Null from an older server (404). */
@@ -259,6 +272,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val WAKEUPS = "voice-wakeups"
         /** The owner's voice: GET/DELETE /api/voice/speaker, enrol, finish; ownerOnly; utterances' owner. */
         const val SPEAKER = "voice-speaker"
+        /** GET /api/voice/unread, POST /api/voice/seen, the 'voice-unread' event, cruChat pushes. */
+        const val UNREAD = "voice-unread"
         const val SPEAKER_UNSUPPORTED = "Not supported by this server: update it to teach Cru your voice."
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
         const val STREAM_RATE = 24000
@@ -391,6 +406,10 @@ data class VoiceReply(
     /** The voice check on what was said (capability "voice-speaker"); null for typed words or an older server. */
     val speaker: SpeakerCheck? = null,
 )
+
+/** GET /api/voice/unread: Cru's reports nobody heard; [line] the latest one's words. */
+@Serializable
+data class VoiceUnread(val ok: Boolean = false, val count: Int = 0, val latestAt: Long = 0, val line: String = "")
 
 @Serializable
 data class SpeakerCheck(val owner: Boolean? = null, val unrecognised: Boolean = false)

@@ -279,4 +279,15 @@ class VoiceApiTest {
         CrundiClient(t).voice.save(ownerOnly = false)
         assertTrue(t.requests.last().json.toString().contains("\"ownerOnly\":false"))
     }
+
+    @Test fun unreadIsCountedAndMarkedSeen() = runBlocking {
+        val t = FakeTransport().on("GET /api/voice/unread", """{"ok":true,"count":2,"latestAt":1700000000000,"line":"The build finished."}""").on("POST /api/voice/seen", """{"ok":true}""")
+        val u = CrundiClient(t).voice.unread()!!
+        assertEquals(2, u.count)
+        assertEquals("The build finished.", u.line)
+        CrundiClient(t).voice.seen()
+        assertEquals("/api/voice/seen", t.requests.last().path)
+        assertEquals(null, CrundiClient(FakeTransport()).voice.unread())
+        CrundiClient(FakeTransport()).voice.seen()   // an older server: nothing, no error
+    }
 }

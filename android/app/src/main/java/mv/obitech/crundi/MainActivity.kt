@@ -138,6 +138,16 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             intent.removeExtra(AlertAnswers.EXTRA_ALERT)
             AlertAnswers.report(this, id, alertId, "attended")
         }
+        // Cru's unheard reports: the voice screen, straight into its chat view. Once.
+        if (mv.obitech.crundi.voice.CruUnread.isChatPath(path)) {
+            intent?.removeExtra(Notifier.EXTRA_PATH)
+            mv.obitech.crundi.voice.VoicePrefs.setChatView(this, true)
+            runCatching {
+                startActivity(Intent(this, mv.obitech.crundi.voice.VoiceActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(mv.obitech.crundi.voice.VoiceActivity.EXTRA_CHAT, true))
+            }
+            return
+        }
         DeepLinks.route(path)?.let { pendingRoute = it }
     }
 

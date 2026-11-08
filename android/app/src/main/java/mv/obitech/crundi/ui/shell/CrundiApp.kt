@@ -82,6 +82,13 @@ fun CrundiApp(
     }
     // Presence, reconnect on resume, pair again when signed out (API engineer).
     mv.obitech.crundi.api.LiveClientEffects(services.api, data.currentProject, host)
+    // Cru's unread reports (capability "voice-unread"): the count now, then as it changes.
+    val cruUnread = mv.obitech.crundi.api.VoiceApi.UNREAD in data.capabilities
+    LaunchedEffect(services.api, cruUnread) {
+        if (!cruUnread) { mv.obitech.crundi.voice.CruUnread.set(0); return@LaunchedEffect }
+        runCatching { services.api.voice.unread() }.getOrNull()?.let { mv.obitech.crundi.voice.CruUnread.set(it.count) }
+        services.api.events.changes("voice-unread").collect { ev -> mv.obitech.crundi.voice.CruUnread.countOf(ev.data)?.let { mv.obitech.crundi.voice.CruUnread.set(it) } }
+    }
 
     val atRoot = route == null || Routes.isAreaRoot(route)
     val ctx = LocalContext.current

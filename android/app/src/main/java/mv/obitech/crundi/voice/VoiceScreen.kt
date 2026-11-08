@@ -63,6 +63,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -144,7 +145,7 @@ fun VoiceScreen(
     Box(
         modifier.fillMaxSize().background(CrundiColors.BgPrimary),
     ) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             TopRow(ui, phase, more)
             // The usage, right under the top row (a phone has no room beside the mark).
             UsageLegend(arcs)
@@ -213,11 +214,16 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore) {
         if (ui.spend?.adminMode == true) AdminPill()
         StatusPill(statusText(ui, phase), phase)
         if (VoiceApi.COMPACT in ui.caps) CrundiIconButton("minimize-2", more.onCompact, contentDescription = "Compact the conversation", size = 16.dp, touch = 38.dp)
-        if (VoiceApi.HISTORY in ui.caps) CrundiIconButton(
-            "message-circle", { more.onChat(!ui.chat) },
-            contentDescription = if (ui.chat) "Back to the voice view" else "Chat view",
-            size = 17.dp, touch = 38.dp, tint = if (ui.chat) CrundiColors.AccentHover else CrundiColors.TextSecondary,
-        )
+        if (VoiceApi.HISTORY in ui.caps) Box {
+            CrundiIconButton(
+                "message-circle", { more.onChat(!ui.chat) },
+                contentDescription = if (ui.chat) "Back to the voice view" else "Chat view",
+                size = 17.dp, touch = 38.dp, tint = if (ui.chat) CrundiColors.AccentHover else CrundiColors.TextSecondary,
+            )
+            // Cru said something nobody heard: a red dot until the chat view is opened.
+            val unread by CruUnread.count.collectAsState()
+            if (unread > 0 && !ui.chat) Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp).size(8.dp).clip(CircleShape).background(CrundiColors.Red))
+        }
     }
 }
 

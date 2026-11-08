@@ -93,4 +93,18 @@ class CruChatTest {
         assertEquals(1f, CruMark.pulse(1f), 0.001f)
         assertEquals(CruMark.pulse(0.9f), CruMark.pulse(-0.1f), 0.001f)
     }
+
+    @Test fun unheardReportsCountAndTheirLink() {
+        val ev = kotlinx.serialization.json.Json.parseToJsonElement("""{"count":3,"latestAt":5}""") as kotlinx.serialization.json.JsonObject
+        assertEquals(3, CruUnread.countOf(ev))
+        assertEquals(null, CruUnread.countOf(kotlinx.serialization.json.JsonObject(emptyMap())))
+        assertTrue(CruUnread.isChatPath("/?cru=chat"))
+        assertTrue(CruUnread.isChatPath(CruUnread.CHAT_PATH))
+        assertTrue(CruUnread.isChatPath("/?x=1&cru=chat"))
+        assertFalse(CruUnread.isChatPath("/inbox?cru=chat"))
+        assertFalse(CruUnread.isChatPath("/chat/abc"))
+        assertFalse(CruUnread.isChatPath(""))
+        CruUnread.set(-2)
+        assertEquals(0, CruUnread.count.value)
+    }
 }

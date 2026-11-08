@@ -82,6 +82,7 @@ class VoiceActivity : ComponentActivity() {
         // The screen stays on while the voice screen is open.
         keepOn(true)
         // Asked to close: gone, not asleep listening for Hey Cru.
+        if (intent?.getBooleanExtra(EXTRA_CHAT, false) == true) VoicePrefs.setChatView(this, true)
         controller = VoiceController(this, "Cru", ::locked, onFinish = { asleep() }, onDismiss = { finish() })
         setContent {
             CrundiTheme {
@@ -150,6 +151,12 @@ class VoiceActivity : ComponentActivity() {
 
     private var asked = false
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_CHAT, false)) controller.setChat(true)
+    }
+
     private fun unlock() {
         val km = getSystemService(KeyguardManager::class.java) ?: return
         if (!km.isKeyguardLocked) { controller.unlocked(); return }
@@ -160,5 +167,7 @@ class VoiceActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_UNLOCK = "unlock"
+        /** Opened for Cru's unheard reports: straight into the chat view. */
+        const val EXTRA_CHAT = "cruChat"
     }
 }

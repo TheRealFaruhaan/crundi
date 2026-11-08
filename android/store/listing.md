@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.29 (en-US)
+
+Version code 60. Internal track. Since 1.1.3-dev.28 (code 59): keyboard-mode inset fix (VoiceActivity adjustResize), Cru unread dot and cruChat pushes (server 1.21.6-dev.35).
+
+```
+<en-US>
+Cru:
+- Keyboard mode: the text box now sits right above the keyboard.
+- A red dot on Cru's mark when it has unread messages; its notifications open Cru's chat view.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.28 (en-US)
 
 Version code 59. Internal track. Since 1.1.3-dev.27 (code 58): Cru parity with server 1.21.6-dev.33/34 (volume, compact, chat view, keyboard mode, new mark, tones, auto-scroll, admin mode, tickers and triggers, voice enrolment, usage in the top row) and the chat scroll fix.

@@ -157,7 +157,7 @@ object Notifier {
         val at = payload.optLong("at", System.currentTimeMillis())
         val chatJson = payload.optJSONObject("chat")?.takeIf { it.optString("id").isNotEmpty() }
         val chatId = chatJson?.optString("id").orEmpty()
-        val url = if (chatId.isNotEmpty()) "/chat/$chatId" else inboxPath(payload) ?: payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
+        val url = if (payload.optBoolean("cruChat")) mv.obitech.crundi.voice.CruUnread.CHAT_PATH else if (chatId.isNotEmpty()) "/chat/$chatId" else inboxPath(payload) ?: payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
         // Its own notification each time: one that only updated an earlier
         // alert still in the shade would buzz but never open full screen
         // (Android opens that only for a notification that is new).
@@ -630,7 +630,9 @@ object Notifier {
         // Something sent to the owner, with bubbles allowed: its inbox thread's own conversation and bubble.
         if (route == InboxNotify.Route.InboxBubble) { showInbox(ctx, server, payload, body, at); return }
         if (chatJson == null || chatJson.optString("id").isEmpty()) {
-            val url = inboxPath(payload) ?: payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
+            // Cru's report nobody heard: its chat view, not the inbox.
+            val url = if (payload.optBoolean("cruChat")) mv.obitech.crundi.voice.CruUnread.CHAT_PATH
+                else inboxPath(payload) ?: payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
             val kind = payload.optString("kind", "crundi")
             post(
                 ctx, "srv:${server.id}:$kind".hashCode(),
